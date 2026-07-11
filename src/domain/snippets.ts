@@ -96,6 +96,7 @@ const JS_TS = [
   "typescriptreact",
 ] as const;
 const BLADE = ["blade"] as const;
+const LATTE = ["latte"] as const;
 
 /**
  * Built-in PHP / Laravel snippets. Bodies use Monaco snippet syntax so Monaco
@@ -176,6 +177,39 @@ const BUILT_IN_SNIPPETS: readonly Snippet[] = [
     description: "Dispatch a job",
     languages: PHP,
     body: "${1:Job}::dispatch($0);",
+  },
+  {
+    prefix: "nact",
+    description: "Nette presenter action and render methods",
+    languages: PHP,
+    body:
+      "public function action${1:Default}(${2:}): void\n{\n\t${3:}\n}\n\npublic function render$1(${4:}): void\n{\n\t$0\n}",
+  },
+  {
+    prefix: "nhandle",
+    description: "Nette presenter signal handler",
+    languages: PHP,
+    body: "public function handle${1:Signal}(${2:}): void\n{\n\t$0\n}",
+  },
+  {
+    prefix: "ncomponent",
+    description: "Nette component factory method",
+    languages: PHP,
+    body:
+      "protected function createComponent${1:Name}(): ${2:Control}\n{\n\treturn new ${2:Control}($0);\n}",
+  },
+  {
+    prefix: "ninject",
+    description: "Nette injected property",
+    languages: PHP,
+    body: "#[Inject]\npublic ${1:Service} \\$${2:service};$0",
+  },
+  {
+    prefix: "nform",
+    description: "Nette Form factory method",
+    languages: PHP,
+    body:
+      "protected function createComponent${1:Form}(): Form\n{\n\t\\$form = new Form;\n\t\\$form->addText('${2:name}', '${3:Label}');\n\t\\$form->addSubmit('send', '${4:Submit}');\n\t\\$form->onSuccess[] = [\\$this, '${5:formSucceeded}'];\n\n\t$0\n\n\treturn \\$form;\n}",
   },
   // JavaScript / TypeScript (light mode, VS Code parity).
   {
@@ -290,6 +324,97 @@ const BUILT_IN_SNIPPETS: readonly Snippet[] = [
     description: "Blade echoed variable",
     languages: BLADE,
     body: "{{ \\$${1:variable} }}$0",
+  },
+  {
+    prefix: "{if",
+    description: "Latte {if} / {else}",
+    languages: LATTE,
+    body: "{if ${1:\\$condition}}\n\t${2:}\n{else}\n\t$0\n{/if}",
+  },
+  {
+    prefix: "{foreach",
+    description: "Latte {foreach} with iterator",
+    languages: LATTE,
+    body:
+      "{foreach ${1:\\$items} as ${2:\\$item}}\n\t{${3:\\$iterator->counter}}. $0\n{/foreach}",
+  },
+  {
+    prefix: "{ifset",
+    description: "Latte {ifset}",
+    languages: LATTE,
+    body: "{ifset ${1:\\$variable}}\n\t$0\n{/ifset}",
+  },
+  {
+    prefix: "{block",
+    description: "Latte named block",
+    languages: LATTE,
+    body: "{block ${1:content}}\n\t$0\n{/block}",
+  },
+  {
+    prefix: "{define",
+    description: "Latte block definition",
+    languages: LATTE,
+    body: "{define ${1:name}}\n\t$0\n{/define}",
+  },
+  {
+    prefix: "{include",
+    description: "Latte template include",
+    languages: LATTE,
+    body: "{include '${1:partial.latte}'}$0",
+  },
+  {
+    prefix: "{control",
+    description: "Latte component control",
+    languages: LATTE,
+    body: "{control ${1:component}}$0",
+  },
+  {
+    prefix: "{link",
+    description: "Latte presenter link",
+    languages: LATTE,
+    body: "{link ${1:Presenter}:${2:action}}$0",
+  },
+  {
+    prefix: "n:href",
+    description: "Latte n:href presenter link",
+    languages: LATTE,
+    body: 'n:href="${1:Presenter}:${2:action}"$0',
+  },
+  {
+    prefix: "{var",
+    description: "Latte variable declaration",
+    languages: LATTE,
+    body: "{var ${1:\\$name} = ${2:null}}$0",
+  },
+  {
+    prefix: "{default",
+    description: "Latte default variable",
+    languages: LATTE,
+    body: "{default ${1:\\$name} = ${2:null}}$0",
+  },
+  {
+    prefix: "{snippet",
+    description: "Latte dynamic snippet",
+    languages: LATTE,
+    body: "{snippet ${1:name}}\n\t$0\n{/snippet}",
+  },
+  {
+    prefix: "n:if",
+    description: "Latte conditional attribute",
+    languages: LATTE,
+    body: 'n:if="${1:\\$condition}"$0',
+  },
+  {
+    prefix: "n:foreach",
+    description: "Latte foreach attribute",
+    languages: LATTE,
+    body: 'n:foreach="${1:\\$items} as ${2:\\$item}"$0',
+  },
+  {
+    prefix: "{_",
+    description: "Latte translated string",
+    languages: LATTE,
+    body: "{_'${1:translation.key}'}$0",
   },
 ];
 

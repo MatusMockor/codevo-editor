@@ -16,6 +16,32 @@ const JS_TS_LANGUAGES = [
   "typescriptreact",
 ] as const;
 
+const LATTE_PREFIXES = [
+  "{if",
+  "{foreach",
+  "{ifset",
+  "{block",
+  "{define",
+  "{include",
+  "{control",
+  "{link",
+  "n:href",
+  "{var",
+  "{default",
+  "{snippet",
+  "n:if",
+  "n:foreach",
+  "{_",
+] as const;
+
+const NETTE_PHP_PREFIXES = [
+  "nact",
+  "nhandle",
+  "ncomponent",
+  "ninject",
+  "nform",
+] as const;
+
 /**
  * Minimal stand-in for the Monaco constants the snippet helper reads, so the
  * pure-domain helper can be unit tested without pulling in the editor runtime.
@@ -64,6 +90,7 @@ describe("snippetsForLanguage", () => {
     expect(snippetsForLanguage("javascript").length).toBeGreaterThan(0);
     expect(snippetsForLanguage("typescript").length).toBeGreaterThan(0);
     expect(snippetsForLanguage("blade").length).toBeGreaterThan(0);
+    expect(snippetsForLanguage("latte").length).toBeGreaterThan(0);
   });
 
   it("does not leak PHP snippets into javascript", () => {
@@ -109,11 +136,98 @@ describe("snippetsForLanguage", () => {
   });
 
   it("has unique prefixes per language", () => {
-    const phpPrefixes = snippetsForLanguage("php").map(
-      (snippet) => snippet.prefix,
+    for (const language of ["php", ...JS_TS_LANGUAGES, "blade", "latte"]) {
+      const prefixes = snippetsForLanguage(language).map((snippet) =>
+        snippet.prefix.toLowerCase(),
+      );
+
+      expect(new Set(prefixes).size).toBe(prefixes.length);
+    }
+  });
+});
+
+describe("Nette PHP built-in snippets", () => {
+  it("offers the agreed Nette prefixes under php", () => {
+    const prefixes = new Set(
+      snippetsForLanguage("php").map((snippet) => snippet.prefix),
     );
 
-    expect(new Set(phpPrefixes).size).toBe(phpPrefixes.length);
+    for (const expected of NETTE_PHP_PREFIXES) {
+      expect(prefixes.has(expected)).toBe(true);
+    }
+  });
+
+  it("uses linked placeholders and final tab stops in Nette bodies", () => {
+    const snippets = snippetsForLanguage("php").filter((snippet) =>
+      NETTE_PHP_PREFIXES.includes(
+        snippet.prefix as (typeof NETTE_PHP_PREFIXES)[number],
+      ),
+    );
+
+    expect(snippets).toHaveLength(NETTE_PHP_PREFIXES.length);
+    for (const snippet of snippets) {
+      expect(snippet.body).toContain("${1:");
+      expect(snippet.body).toContain("$0");
+    }
+  });
+
+  it("uses valid Nette presenter and component method shapes", () => {
+    const snippets = new Map(
+      snippetsForLanguage("php").map((snippet) => [snippet.prefix, snippet]),
+    );
+
+    expect(snippets.get("nact")?.body).toContain("public function action${1:");
+    expect(snippets.get("nact")?.body).toContain("public function render$1");
+    expect(snippets.get("nhandle")?.body).toContain("): void");
+    expect(snippets.get("ncomponent")?.body).toContain("return new ${2:");
+    expect(snippets.get("ninject")?.body).toContain("#[Inject]");
+    expect(snippets.get("nform")?.body).toContain("return \\$form;");
+  });
+});
+
+describe("Latte built-in snippets", () => {
+  it("offers the agreed Latte prefixes under the latte language id", () => {
+    const prefixes = new Set(
+      snippetsForLanguage("latte").map((snippet) => snippet.prefix),
+    );
+
+    for (const expected of LATTE_PREFIXES) {
+      expect(prefixes.has(expected)).toBe(true);
+    }
+  });
+
+  it("uses placeholders and final tab stops in every Latte body", () => {
+    const snippets = snippetsForLanguage("latte");
+
+    expect(snippets).toHaveLength(LATTE_PREFIXES.length);
+    for (const snippet of snippets) {
+      expect(snippet.body).toContain("${1:");
+      expect(snippet.body).toContain("$0");
+    }
+  });
+
+  it("uses valid closing macros and exposes the foreach iterator", () => {
+    const snippets = new Map(
+      snippetsForLanguage("latte").map((snippet) => [snippet.prefix, snippet]),
+    );
+
+    expect(snippets.get("{if")?.body).toContain("{/if}");
+    expect(snippets.get("{if")?.body).toContain("${1:\\$condition}");
+    expect(snippets.get("{foreach")?.body).toContain("{/foreach}");
+    expect(snippets.get("{foreach")?.body).toContain("\\$iterator->counter");
+    expect(snippets.get("{snippet")?.body).toContain("{/snippet}");
+    expect(snippets.get("{var")?.body).toContain("= ${2:null}");
+    expect(snippets.get("n:href")?.body).toContain('n:href="${1:Presenter}:${2:action}"');
+    expect(snippets.get("{_")?.body).toContain("{_'${1:translation.key}'}");
+  });
+
+  it("does not register Latte snippets under blade or php", () => {
+    expect(snippetsForLanguage("blade").map((snippet) => snippet.prefix)).not.toContain(
+      "{foreach",
+    );
+    expect(snippetsForLanguage("php").map((snippet) => snippet.prefix)).not.toContain(
+      "n:href",
+    );
   });
 });
 
