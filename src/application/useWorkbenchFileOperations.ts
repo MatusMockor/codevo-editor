@@ -456,6 +456,8 @@ export function useWorkbenchFileOperations(
       }
 
       try {
+        await applyPhpRenameEdits(oldPath, nextPath);
+
         const mayRename = await applyJavaScriptTypeScriptRenameEdits(
           oldPath,
           nextPath,
@@ -472,6 +474,7 @@ export function useWorkbenchFileOperations(
         filePrefetchCacheRef.current.invalidate(oldPath);
         filePrefetchCacheRef.current.invalidate(nextPath);
 
+        await notifyPhpFileRenamed(oldPath, nextPath);
         await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -572,6 +575,7 @@ export function useWorkbenchFileOperations(
       activeDocumentRef,
       activePath,
       applyJavaScriptTypeScriptRenameEdits,
+      applyPhpRenameEdits,
       clearLanguageServerDiagnosticsForPath,
       currentWorkspaceRootRef,
       documentsRef,
@@ -579,6 +583,7 @@ export function useWorkbenchFileOperations(
       javaScriptTypeScriptDiagnosticsByPath,
       languageServerDiagnosticsByPath,
       notifyJavaScriptTypeScriptFileRenamed,
+      notifyPhpFileRenamed,
       openPathsRef,
       phpLocalDiagnosticsByPath,
       previewPathRef,

@@ -16199,6 +16199,210 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
   });
 
+  it("asks the PHP language server for edits and re-syncs documents when renaming a folder", async () => {
+    const oldPath = "/workspace/app/Services";
+    const newPath = "/workspace/app/Domain";
+    const oldDocumentPath = "/workspace/app/Services/UserService.php";
+    const newDocumentPath = "/workspace/app/Domain/UserService.php";
+    const consumerPath = "/workspace/app/Services/Consumer.php";
+    const edit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "namespace App\\Domain;",
+            range: {
+              end: { character: 23, line: 1 },
+              start: { character: 0, line: 1 },
+            },
+          },
+        ],
+      },
+    };
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.willRenameFiles).mockResolvedValue(
+      edit,
+    );
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 627,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldDocumentPath) {
+          return "<?php\nnamespace App\\Services;\n";
+        }
+
+        return `<?php\n// ${path}\n`;
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(oldDocumentPath, "UserService.php"),
+      );
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Domain");
+
+    await act(async () => {
+      await getWorkbench().renameEntry({
+        kind: "directory",
+        name: "Services",
+        path: oldPath,
+      });
+    });
+
+    expect(languageServerFeaturesGateway.willRenameFiles).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      newPath,
+    );
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).toHaveBeenCalledWith("/workspace", edit, [oldDocumentPath]);
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(languageServerFeaturesGateway.didRenameFiles).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      newPath,
+    );
+    expect(
+      vi.mocked(languageServerFeaturesGateway.willRenameFiles).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(dependencies.workspaceGateways.files.renamePath).mock
+        .invocationCallOrder[0] ?? 0,
+    );
+    expect(
+      vi.mocked(dependencies.workspaceGateways.files.renamePath).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(languageServerFeaturesGateway.didRenameFiles).mock
+        .invocationCallOrder[0] ?? 0,
+    );
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didClose,
+    ).toHaveBeenCalledWith("/workspace", oldDocumentPath);
+    await flushAsyncTurns(24);
+    expect(
+      dependencies.languageServerDocumentSyncGateway.didOpen,
+    ).toHaveBeenCalledWith(
+      "/workspace",
+      expect.objectContaining({ path: newDocumentPath }),
+    );
+  });
+
+  it("notifies the PHP language server after a folder rename with no edits", async () => {
+    const oldPath = "/workspace/app/Services";
+    const newPath = "/workspace/app/Domain";
+    const languageServerFeaturesGateway = featuresGateway();
+    vi.mocked(languageServerFeaturesGateway.willRenameFiles).mockResolvedValue(
+      null,
+    );
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 628,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Domain");
+
+    await act(async () => {
+      await getWorkbench().renameEntry({
+        kind: "directory",
+        name: "Services",
+        path: oldPath,
+      });
+    });
+
+    expect(languageServerFeaturesGateway.willRenameFiles).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      newPath,
+    );
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+    expect(languageServerFeaturesGateway.didRenameFiles).toHaveBeenCalledWith(
+      "/workspace",
+      oldPath,
+      newPath,
+    );
+  });
+
+  it("does not call the PHP language server for a folder rename in light mode", async () => {
+    const oldPath = "/workspace/src/models";
+    const newPath = "/workspace/src/domain";
+    const languageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 629,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("domain");
+
+    await act(async () => {
+      await getWorkbench().renameEntry({
+        kind: "directory",
+        name: "models",
+        path: oldPath,
+      });
+    });
+
+    expect(languageServerFeaturesGateway.willRenameFiles).not.toHaveBeenCalled();
+    expect(languageServerFeaturesGateway.didRenameFiles).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+  });
+
   it("asks the PHP language server for file rename edits before renaming a PHP file", async () => {
     const oldPath = "/workspace/src/User.php";
     const newPath = "/workspace/src/Account.php";
