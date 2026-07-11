@@ -1,4 +1,5 @@
 pub mod composer;
+mod file_fuzzy_matcher;
 pub mod file_watcher;
 pub mod git;
 pub mod ignore_matcher;

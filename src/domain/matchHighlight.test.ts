@@ -2,59 +2,59 @@ import { describe, expect, it } from "vitest";
 import { splitQueryHighlight } from "./matchHighlight";
 
 describe("splitQueryHighlight", () => {
-  it("returns the whole text unmatched when the query is empty", () => {
-    expect(splitQueryHighlight("User.php", "")).toEqual({
-      before: "User.php",
-      match: "",
-      after: "",
-    });
+  it.each([
+    [
+      "contiguous",
+      "User.php",
+      "user",
+      [
+        { text: "User", highlighted: true },
+        { text: ".php", highlighted: false },
+      ],
+    ],
+    [
+      "camel subsequence",
+      "UserController.php",
+      "uc",
+      [
+        { text: "U", highlighted: true },
+        { text: "ser", highlighted: false },
+        { text: "C", highlighted: true },
+        { text: "ontroller.php", highlighted: false },
+      ],
+    ],
+    [
+      "multi-token",
+      "src/Http/Controllers/UserController.php",
+      "user controller",
+      [
+        { text: "src/Http/Controllers/", highlighted: false },
+        { text: "UserController", highlighted: true },
+        { text: ".php", highlighted: false },
+      ],
+    ],
+    [
+      "reversed multi-token",
+      "app/Models/User.php",
+      "user model",
+      [
+        { text: "app/", highlighted: false },
+        { text: "Model", highlighted: true },
+        { text: "s/", highlighted: false },
+        { text: "User", highlighted: true },
+        { text: ".php", highlighted: false },
+      ],
+    ],
+  ])("highlights a %s match", (_label, text, query, expected) => {
+    expect(splitQueryHighlight(text, query)).toEqual(expected);
   });
 
-  it("returns the whole text unmatched when the query is only whitespace", () => {
-    expect(splitQueryHighlight("User.php", "   ")).toEqual({
-      before: "User.php",
-      match: "",
-      after: "",
-    });
-  });
-
-  it("splits out the first case-insensitive substring match", () => {
-    expect(splitQueryHighlight("User.php", "user")).toEqual({
-      before: "",
-      match: "User",
-      after: ".php",
-    });
-  });
-
-  it("matches a substring in the middle of the text", () => {
-    expect(splitQueryHighlight("src/Domain/User.php", "domain")).toEqual({
-      before: "src/",
-      match: "Domain",
-      after: "/User.php",
-    });
-  });
-
-  it("preserves the original casing of the matched slice", () => {
-    expect(splitQueryHighlight("UserController", "usercontroller")).toEqual({
-      before: "",
-      match: "UserController",
-      after: "",
-    });
-  });
-
-  it("returns no match when the query is not found in the text", () => {
-    expect(splitQueryHighlight("User.php", "post")).toEqual({
-      before: "User.php",
-      match: "",
-      after: "",
-    });
-  });
-
-  it("matches only the first occurrence when the query repeats", () => {
-    expect(splitQueryHighlight("UserUser.php", "user")).toEqual({
-      before: "",
-      match: "User",
-      after: "User.php",
-    });
+  it.each([
+    ["empty query", "User.php", ""],
+    ["whitespace query", "User.php", "   "],
+    ["missing subsequence", "User.php", "post"],
+    ["literal extension wildcard", "User.php", "*.php"],
+  ])("returns no segments for %s", (_label, text, query) => {
+    expect(splitQueryHighlight(text, query)).toEqual([]);
   });
 });

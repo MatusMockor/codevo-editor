@@ -7,26 +7,28 @@ interface HighlightedTextProps {
   text: string;
 }
 
-// Wraps the substring of `text` that matched `query` in a <mark> so palette
-// rows (Quick Open, Search Everywhere) show *why* a result matched, mirroring
-// the existing text-search match highlight (PhpStorm/VS Code standard). An
-// empty query or no match renders the plain text untouched.
 export function HighlightedText({
   className = "match-highlight",
   query,
   text,
 }: HighlightedTextProps): ReactNode {
-  const { after, before, match } = splitQueryHighlight(text, query);
+  const segments = splitQueryHighlight(text, query);
 
-  if (!match) {
+  if (segments.length === 0) {
     return <>{text}</>;
   }
 
   return (
     <>
-      {before}
-      <mark className={className}>{match}</mark>
-      {after}
+      {segments.map((segment, index) =>
+        segment.highlighted ? (
+          <mark className={className} key={index}>
+            {segment.text}
+          </mark>
+        ) : (
+          segment.text
+        ),
+      )}
     </>
   );
 }

@@ -1,3 +1,4 @@
+use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatchRank};
 use crate::ignore_matcher::{GitignoreWorkspaceIgnoreMatcher, WorkspaceIgnoreMatcher};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -246,14 +247,24 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
             &matcher,
             &mut results,
         )?;
-        results.sort_by(|left, right| {
-            score_result(&left.relative_path, &normalized_query)
-                .cmp(&score_result(&right.relative_path, &normalized_query))
-                .then_with(|| left.relative_path.cmp(&right.relative_path))
+        let mut results = results
+            .into_iter()
+            .filter_map(|result| {
+                let rank = score_result(&result.relative_path, &normalized_query)?;
+                Some((result, rank))
+            })
+            .collect::<Vec<_>>();
+        results.sort_by(|(left, left_rank), (right, right_rank)| {
+            compare_ranked_paths(
+                &left.relative_path,
+                *left_rank,
+                &right.relative_path,
+                *right_rank,
+            )
         });
         results.truncate(capped_limit);
 
-        Ok(results)
+        Ok(results.into_iter().map(|(result, _)| result).collect())
     }
 
     fn write_text_file(&self, path: &Path, content: &str) -> io::Result<()> {
@@ -343,60 +354,12 @@ fn collect_file_results(
     Ok(())
 }
 
-fn score_result(relative_path: &str, query: &str) -> usize {
-    if query.is_empty() {
-        return relative_path.matches('/').count();
-    }
-
-    let lower_path = relative_path.to_lowercase();
-
-    if lower_path == query {
-        return 0;
-    }
-
-    if lower_path.ends_with(query) {
-        return 1;
-    }
-
-    if let Some(index) = lower_path.find(query) {
-        return index + 2;
-    }
-
-    let tokens = file_search_query_tokens(query);
-
-    if tokens.is_empty() || !tokens.iter().all(|token| lower_path.contains(token)) {
-        return usize::MAX - 1;
-    }
-
-    let token_score = tokens
-        .iter()
-        .filter_map(|token| lower_path.find(token))
-        .sum::<usize>();
-
-    10_000 + token_score + lower_path.matches('/').count()
+fn score_result(relative_path: &str, query: &str) -> Option<FileMatchRank> {
+    file_match_rank(relative_path, query)
 }
 
 fn file_search_matches(relative_path: &str, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-
-    let lower_path = relative_path.to_lowercase();
-
-    if lower_path.contains(query) {
-        return true;
-    }
-
-    let tokens = file_search_query_tokens(query);
-
-    !tokens.is_empty() && tokens.iter().all(|token| lower_path.contains(token))
-}
-
-fn file_search_query_tokens(query: &str) -> Vec<&str> {
-    query
-        .split_whitespace()
-        .filter(|token| !token.is_empty())
-        .collect()
+    file_match_rank(relative_path, query).is_some()
 }
 
 pub(crate) fn apply_text_edits_to_content(
@@ -478,8 +441,9 @@ fn normalize_path_string(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_text_edits_to_files, LocalWorkspaceFileRepository, WorkspaceFileRepository,
-        WorkspaceTextEdit, WorkspaceTextPosition, WorkspaceTextRange,
+        apply_text_edits_to_files, compare_ranked_paths, file_search_matches, score_result,
+        LocalWorkspaceFileRepository, WorkspaceFileRepository, WorkspaceTextEdit,
+        WorkspaceTextPosition, WorkspaceTextRange,
     };
     use std::{fs, time::SystemTime};
 
@@ -653,6 +617,73 @@ mod tests {
             "app/modules/customersModule/templates/RetentionAnalysisAdmin/show.latte"
         );
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn file_search_matcher_supports_fuzzy_queries() {
+        let cases = [
+            ("UserController.php", "uc", true),
+            ("UserController.php", "usrctrl", true),
+            (
+                "src/Http/Controllers/UserController.php",
+                "user controller",
+                true,
+            ),
+            ("src/Http/Controllers/UserController.php", "USER", true),
+            ("src/Http/Controllers/UserController.php", "*.php", false),
+            ("src/Http/Controllers/UserController.php", "", true),
+            ("UserController.php", "controller user", true),
+            ("app/Models/User.php", "user model", true),
+            ("app/Models/User.php", "user order", false),
+        ];
+
+        for (path, query, expected) in cases {
+            assert_eq!(
+                file_search_matches(path, query),
+                expected,
+                "path={path:?} query={query:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_search_score_prioritizes_fuzzy_quality_before_path_length() {
+        let cases = [
+            ("UserController.php", "ProductController.php", "uc"),
+            (
+                "very/deep/UserController.php",
+                "UserController.php.bak",
+                "UserController.php",
+            ),
+            (
+                "very/deep/ControllerGuide.php",
+                "a/AdminController.php",
+                "controller",
+            ),
+            (
+                "very/deep/AdminController.php",
+                "controller/a.php",
+                "controller",
+            ),
+            (
+                "src/UserController.php",
+                "src/very/deep/UserController.php",
+                "usrctrl",
+            ),
+        ];
+
+        for (better, worse, query) in cases {
+            assert!(
+                compare_ranked_paths(
+                    better,
+                    score_result(better, query).unwrap(),
+                    worse,
+                    score_result(worse, query).unwrap(),
+                )
+                .is_lt(),
+                "expected {better:?} to outrank {worse:?} for {query:?}"
+            );
+        }
     }
 
     #[test]

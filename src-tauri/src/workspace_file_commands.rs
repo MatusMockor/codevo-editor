@@ -1,3 +1,4 @@
+use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatchRank};
 use crate::workspace_registry::{validate_relative_path, WorkspaceId, WorkspaceRegistry};
 use crate::{search::TextSearchOptions, workspace::FileEntryKind};
 use ignore::{gitignore::GitignoreBuilder, overrides::OverrideBuilder, Match};
@@ -185,19 +186,8 @@ fn entry_rank(kind: &FileEntryKind) -> u8 {
         1
     }
 }
-fn file_score(path: &str, query: &str) -> (u8, usize) {
-    let name = Path::new(path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_lowercase();
-    if name == query {
-        return (0, path.len());
-    }
-    if name.starts_with(query) {
-        return (1, path.len());
-    }
-    (2, path.len())
+fn file_score(path: &str, query: &str) -> Option<FileMatchRank> {
+    file_match_rank(path, query)
 }
 fn text_matcher(query: &str, options: &TextSearchOptions) -> io::Result<Regex> {
     let pattern = if options.is_regex {
@@ -508,20 +498,31 @@ impl<'a> WorkspaceFileRepository<'a> {
         if !scope.as_os_str().is_empty() {
             validate_relative_path(scope)?;
         }
-        let mut files = collect_files(
+        let files = collect_files(
             &root,
             scope,
             limit.saturating_mul(10).min(5_000),
             &display_root,
         )?;
-        files.retain(|path| {
-            query.is_empty() || path.to_string_lossy().to_lowercase().contains(&query)
+        let mut files = files
+            .into_iter()
+            .filter_map(|path| {
+                let rank = file_score(&path.to_string_lossy(), &query)?;
+                Some((path, rank))
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|(left_path, left_rank), (right_path, right_rank)| {
+            compare_ranked_paths(
+                &left_path.to_string_lossy(),
+                *left_rank,
+                &right_path.to_string_lossy(),
+                *right_rank,
+            )
         });
-        files.sort_by_key(|path| (file_score(&path.to_string_lossy(), &query), path.clone()));
         files.truncate(limit);
         Ok(files
             .into_iter()
-            .map(|relative| DescriptorFileSearchResult {
+            .map(|(relative, _)| DescriptorFileSearchResult {
                 name: relative
                     .file_name()
                     .unwrap_or_default()
@@ -1894,6 +1895,105 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(1);
         NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    #[test]
+    fn descriptor_file_search_supports_and_ranks_fuzzy_queries() {
+        let cases = [
+            (
+                "uc",
+                vec![
+                    "src/Http/Controllers/UserController.php",
+                    "src/ProductController.php",
+                ],
+            ),
+            ("usrctrl", vec!["src/Http/Controllers/UserController.php"]),
+            (
+                "user controller",
+                vec!["src/Http/Controllers/UserController.php"],
+            ),
+            ("USER", vec!["src/Http/Controllers/UserController.php"]),
+            ("*.php", vec![]),
+            (
+                "controller",
+                vec![
+                    "src/Http/Controllers/UserController.php",
+                    "very/deep/AdminController.php",
+                    "src/ProductController.php",
+                    "controller/a.php",
+                ],
+            ),
+        ];
+
+        for (index, (query, expected)) in cases.into_iter().enumerate() {
+            let (registry, id, root) = fixture(&format!("fuzzy-search-{index}"));
+            fs::create_dir_all(root.join("src/Http/Controllers")).unwrap();
+            fs::create_dir_all(root.join("very/deep")).unwrap();
+            fs::create_dir_all(root.join("controller")).unwrap();
+            fs::write(root.join("src/Http/Controllers/UserController.php"), "").unwrap();
+            fs::write(root.join("src/ProductController.php"), "").unwrap();
+            fs::write(root.join("very/deep/AdminController.php"), "").unwrap();
+            fs::write(root.join("controller/a.php"), "").unwrap();
+            let repository = WorkspaceFileRepository::new(&registry);
+
+            let paths = repository
+                .search_files(&id, Path::new(""), query, 20)
+                .unwrap()
+                .into_iter()
+                .map(|result| result.relative_path)
+                .collect::<Vec<_>>();
+
+            assert_eq!(paths, expected, "query={query:?}");
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn descriptor_file_search_keeps_empty_query_and_shallow_ordering() {
+        let (registry, id, root) = fixture("fuzzy-search-empty");
+        fs::create_dir_all(root.join("deep/path")).unwrap();
+        fs::write(root.join("a.php"), "").unwrap();
+        fs::write(root.join("deep/path/a.php"), "").unwrap();
+        let repository = WorkspaceFileRepository::new(&registry);
+
+        let paths = repository
+            .search_files(&id, Path::new(""), "", 20)
+            .unwrap()
+            .into_iter()
+            .map(|result| result.relative_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["a.php", "deep/path/a.php"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn descriptor_file_score_preserves_exact_and_prefix_tiers() {
+        let cases = [
+            (
+                "very/deep/UserController.php",
+                "UserController.php.bak",
+                "UserController.php",
+            ),
+            (
+                "very/deep/ControllerGuide.php",
+                "a/AdminController.php",
+                "controller",
+            ),
+        ];
+
+        for (better, worse, query) in cases {
+            assert!(
+                compare_ranked_paths(
+                    better,
+                    file_score(better, query).unwrap(),
+                    worse,
+                    file_score(worse, query).unwrap(),
+                )
+                .is_lt(),
+                "expected {better:?} to outrank {worse:?} for {query:?}"
+            );
+        }
     }
 
     fn install_hook(

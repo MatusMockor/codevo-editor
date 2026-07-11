@@ -1,42 +1,94 @@
-// Search-result label highlighting for the Quick Open / Search Everywhere
-// palettes. The Rust file and symbol search backends both match with a plain
-// case-insensitive substring (see `score_result` in workspace.rs and the
-// `LIKE '%query%'` clause in index.rs), not a fuzzy subsequence, so this stays
-// a substring split rather than a fuzzy scorer: the highlighted range always
-// reflects the exact text that made the row match. Pure and presentation-free
-// so the palettes can render whatever markup they want around the segments.
-
-export interface QueryHighlightSegments {
-  before: string;
-  match: string;
-  after: string;
+export interface QueryHighlightSegment {
+  text: string;
+  highlighted: boolean;
 }
-
-const NO_MATCH = (text: string): QueryHighlightSegments => ({
-  before: text,
-  match: "",
-  after: "",
-});
 
 export function splitQueryHighlight(
   text: string,
   query: string,
-): QueryHighlightSegments {
-  const trimmedQuery = query.trim();
-
-  if (!trimmedQuery) {
-    return NO_MATCH(text);
+): QueryHighlightSegment[] {
+  const tokens = queryTokens(query);
+  if (tokens.length === 0) {
+    return [];
   }
 
-  const index = text.toLowerCase().indexOf(trimmedQuery.toLowerCase());
-
-  if (index < 0) {
-    return NO_MATCH(text);
+  const filenameStart = text.lastIndexOf("/") + 1;
+  const matchedIndexes = new Set<number>();
+  for (const token of tokens) {
+    const indexes =
+      matchTokenIndexes(text, token, filenameStart) ??
+      matchTokenIndexes(text, token, 0);
+    if (!indexes) {
+      return [];
+    }
+    for (const index of indexes) {
+      matchedIndexes.add(index);
+    }
   }
 
-  return {
-    before: text.slice(0, index),
-    match: text.slice(index, index + trimmedQuery.length),
-    after: text.slice(index + trimmedQuery.length),
-  };
+  const segments: QueryHighlightSegment[] = [];
+  let segmentStart = 0;
+  let segmentHighlighted = matchedIndexes.has(0);
+  for (let index = 1; index < text.length; index += 1) {
+    const highlighted = matchedIndexes.has(index);
+    if (highlighted === segmentHighlighted) {
+      continue;
+    }
+    segments.push({
+      text: text.slice(segmentStart, index),
+      highlighted: segmentHighlighted,
+    });
+    segmentStart = index;
+    segmentHighlighted = highlighted;
+  }
+  segments.push({
+    text: text.slice(segmentStart),
+    highlighted: segmentHighlighted,
+  });
+  return segments;
+}
+
+function matchTokenIndexes(
+  text: string,
+  token: string,
+  minimumStart: number,
+): number[] | null {
+  const wanted = Array.from(token);
+  const indexes: number[] = [];
+  let wantedIndex = 0;
+  let index = minimumStart;
+  for (const candidate of text.slice(minimumStart)) {
+    if (candidate.toLowerCase() !== wanted[wantedIndex]?.toLowerCase()) {
+      index += candidate.length;
+      continue;
+    }
+    for (let offset = 0; offset < candidate.length; offset += 1) {
+      indexes.push(index + offset);
+    }
+    wantedIndex += 1;
+    if (wantedIndex === wanted.length) {
+      return indexes;
+    }
+    index += candidate.length;
+  }
+  return null;
+}
+
+function queryTokens(query: string): string[] {
+  const tokens: string[] = [];
+  let token = "";
+  for (const character of query) {
+    if (character.trim() !== "") {
+      token += character;
+      continue;
+    }
+    if (token !== "") {
+      tokens.push(token);
+      token = "";
+    }
+  }
+  if (token !== "") {
+    tokens.push(token);
+  }
+  return tokens;
 }
