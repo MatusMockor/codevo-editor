@@ -205,6 +205,7 @@ export interface WorkspaceSessionState {
 
 export interface WorkspaceSessionViewState {
   column: number;
+  foldedLines?: number[];
   line: number;
   scrollTop?: number;
 }
@@ -1239,8 +1240,15 @@ function normalizeWorkspaceSessionViewStates(
       continue;
     }
 
+    const foldedLines = Array.isArray(viewState.foldedLines)
+      ? [...new Set(viewState.foldedLines.filter(isPositiveInteger))]
+          .sort((left, right) => left - right)
+          .slice(0, 500)
+      : [];
+
     normalized[path] = {
       column: viewState.column,
+      ...(foldedLines.length === 0 ? {} : { foldedLines }),
       line: viewState.line,
       ...(viewState.scrollTop === undefined
         ? {}

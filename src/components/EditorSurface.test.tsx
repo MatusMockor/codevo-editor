@@ -120,6 +120,25 @@ interface FakeEditor {
   updateOptions: ReturnType<typeof vi.fn>;
 }
 
+interface FakeFoldingRegion {
+  isCollapsed: boolean;
+  regionIndex: number;
+  startLineNumber: number;
+}
+
+interface FakeFoldingModel {
+  emitChange(): void;
+  onDidChange: ReturnType<typeof vi.fn>;
+  regions: {
+    getStartLineNumber(index: number): number;
+    isCollapsed(index: number): boolean;
+    length: number;
+    toRegion(index: number): FakeFoldingRegion;
+  };
+  setRegions(next: Array<{ collapsed: boolean; start: number }>): void;
+  toggleCollapseState: ReturnType<typeof vi.fn>;
+}
+
 interface FakeKeyDownEvent {
   browserEvent: {
     key: string;
@@ -325,6 +344,14 @@ describe("EditorSurface", () => {
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
+    const foldingModel = createFoldingModel([{ collapsed: false, start: 1 }]);
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel: vi.fn(async () => foldingModel) };
+      }
+
+      return null;
+    });
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = createMonaco(model);
 
@@ -333,17 +360,23 @@ describe("EditorSurface", () => {
         createElement(EditorSurface, {
           ...memoGuardProps(activeDocument),
           restoredViewStates: {
-            [activeDocument.path]: { column: 2, line: 2 },
+            [activeDocument.path]: {
+              column: 2,
+              foldedLines: [1],
+              line: 2,
+            },
           },
           workspaceRoot: "/workspace",
         }),
       );
+      await Promise.resolve();
       await Promise.resolve();
     });
     expect(editor.setPosition).toHaveBeenCalledWith({
       column: 2,
       lineNumber: 2,
     });
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
     editor.setPosition.mockClear();
 
     await act(async () => {
@@ -358,6 +391,7 @@ describe("EditorSurface", () => {
     });
 
     expect(editor.setPosition).not.toHaveBeenCalled();
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
   });
 
   it("captures a stable cursor and scroll position in memory", async () => {
@@ -395,6 +429,324 @@ describe("EditorSurface", () => {
       line: 2,
       scrollTop: 150,
     });
+  });
+
+  it("captures collapsed folding-region start lines and folding changes", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\nfour\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/example.txt",
+      savedContent: "one\ntwo\nthree\nfour\n",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const foldingModel = createFoldingModel([
+      { collapsed: true, start: 2 },
+      { collapsed: false, start: 4 },
+    ]);
+    const onEditorViewStateChange = vi.fn();
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel: vi.fn(async () => foldingModel) };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onEditorViewStateChange,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
+      activeDocument.path,
+      { column: 1, foldedLines: [2], line: 1, scrollTop: 10 },
+    );
+
+    foldingModel.setRegions([
+      { collapsed: false, start: 2 },
+      { collapsed: true, start: 4 },
+    ]);
+    await act(async () => foldingModel.emitChange());
+
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
+      activeDocument.path,
+      { column: 1, foldedLines: [4], line: 1, scrollTop: 10 },
+    );
+  });
+
+  it("restores valid folds after the folding model is ready and applies them once", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\nfour\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/example.txt",
+      savedContent: "one\ntwo\nthree\nfour\n",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 4),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const foldingModel = createFoldingModel([
+      { collapsed: false, start: 2 },
+      { collapsed: false, start: 4 },
+    ]);
+    let resolveFoldingModel: ((model: FakeFoldingModel) => void) | null = null;
+    const foldingModelPromise = new Promise<FakeFoldingModel>((resolve) => {
+      resolveFoldingModel = resolve;
+    });
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel: vi.fn(() => foldingModelPromise) };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStates: {
+            [activeDocument.path]: {
+              column: 1,
+              foldedLines: [2, 99],
+              line: 1,
+            },
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(foldingModel.toggleCollapseState).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveFoldingModel?.(foldingModel);
+      await foldingModelPromise;
+      await Promise.resolve();
+    });
+
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledWith([
+      expect.objectContaining({ startLineNumber: 2 }),
+    ]);
+
+    await act(async () => foldingModel.emitChange());
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
+  });
+
+  it("reapplies persisted scroll after restoring folds above the viewport", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\nfour\nfive\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/example.txt",
+      savedContent: "one\ntwo\nthree\nfour\nfive\n",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 5),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const foldingModel = createFoldingModel([
+      { collapsed: false, start: 1 },
+    ]);
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel: vi.fn(async () => foldingModel) };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStates: {
+            [activeDocument.path]: {
+              column: 1,
+              foldedLines: [1],
+              line: 5,
+              scrollTop: 240,
+            },
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(editor.setScrollTop).toHaveBeenLastCalledWith(240);
+    const scrollCallOrder = editor.setScrollTop.mock.invocationCallOrder;
+    expect(scrollCallOrder[scrollCallOrder.length - 1]).toBeGreaterThan(
+      foldingModel.toggleCollapseState.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not restore folds when the folding model resolves after switching files", async () => {
+    const firstDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "plaintext",
+      name: "first.txt",
+      path: "/workspace/first.txt",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const secondDocument: EditorDocument = {
+      content: "other\n",
+      language: "plaintext",
+      name: "second.txt",
+      path: "/workspace/second.txt",
+      savedContent: "other\n",
+    };
+    const firstModel: FakeModel = {
+      getLineCount: vi.fn(() => 3),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => firstDocument.content),
+      uri: { fsPath: firstDocument.path, path: firstDocument.path },
+    };
+    const secondModel: FakeModel = {
+      getLineCount: vi.fn(() => 1),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => secondDocument.content),
+      uri: { fsPath: secondDocument.path, path: secondDocument.path },
+    };
+    const editor = createEditor(firstModel);
+    const foldingModel = createFoldingModel([
+      { collapsed: false, start: 1 },
+    ]);
+    let resolveFoldingModel: ((model: FakeFoldingModel) => void) | null = null;
+    const foldingModelPromise = new Promise<FakeFoldingModel>((resolve) => {
+      resolveFoldingModel = resolve;
+    });
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel: vi.fn(() => foldingModelPromise) };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(firstModel);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(firstDocument),
+          openDocumentPaths: [firstDocument.path, secondDocument.path],
+          restoredViewStates: {
+            [firstDocument.path]: {
+              column: 1,
+              foldedLines: [1],
+              line: 1,
+            },
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    editor.getModel.mockReturnValue(secondModel);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(secondDocument),
+          openDocumentPaths: [firstDocument.path, secondDocument.path],
+          restoredViewStates: {},
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resolveFoldingModel?.(foldingModel);
+      await foldingModelPromise;
+      await Promise.resolve();
+    });
+
+    expect(foldingModel.toggleCollapseState).not.toHaveBeenCalled();
+  });
+
+  it("retries fold restoration once when asynchronous ranges arrive", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/example.ts",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 3),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const foldingModel = createFoldingModel([]);
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel: vi.fn(async () => foldingModel) };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStates: {
+            [activeDocument.path]: {
+              column: 1,
+              foldedLines: [2],
+              line: 1,
+            },
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    foldingModel.setRegions([{ collapsed: false, start: 2 }]);
+    await act(async () => foldingModel.emitChange());
+
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
+
+    foldingModel.setRegions([{ collapsed: false, start: 2 }]);
+    await act(async () => foldingModel.emitChange());
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
   });
 
   it("applies a restored per-file view when another restored tab activates", async () => {
@@ -12791,6 +13143,52 @@ function captureIdleCallbacks() {
       }
     },
   };
+}
+
+function createFoldingModel(
+  initialRegions: Array<{ collapsed: boolean; start: number }>,
+): FakeFoldingModel {
+  let changeHandler: (() => void) | null = null;
+  let source = initialRegions;
+  const model: FakeFoldingModel = {
+    emitChange: () => changeHandler?.(),
+    onDidChange: vi.fn((handler: () => void) => {
+      changeHandler = handler;
+
+      return {
+        dispose: vi.fn(() => {
+          if (changeHandler === handler) {
+            changeHandler = null;
+          }
+        }),
+      };
+    }),
+    regions: {
+      get length() {
+        return source.length;
+      },
+      getStartLineNumber: (index: number) => source[index].start,
+      isCollapsed: (index: number) => source[index].collapsed,
+      toRegion: (index: number) => ({
+        get isCollapsed() {
+          return source[index].collapsed;
+        },
+        regionIndex: index,
+        startLineNumber: source[index].start,
+      }),
+    },
+    setRegions: (next) => {
+      source = next;
+    },
+    toggleCollapseState: vi.fn((regions: FakeFoldingRegion[]) => {
+      for (const region of regions) {
+        source[region.regionIndex].collapsed =
+          !source[region.regionIndex].collapsed;
+      }
+    }),
+  };
+
+  return model;
 }
 
 function createEditor(model: FakeModel): FakeEditor {

@@ -724,6 +724,7 @@ describe("normalizeWorkspaceSession", () => {
         viewStates: {
           "/project/src/User.php": {
             column: 9,
+            foldedLines: [3, 12],
             line: 14,
             scrollTop: 320.5,
           },
@@ -738,6 +739,7 @@ describe("normalizeWorkspaceSession", () => {
       viewStates: {
         "/project/src/User.php": {
           column: 9,
+          foldedLines: [3, 12],
           line: 14,
           scrollTop: 320.5,
         },
@@ -757,7 +759,11 @@ describe("normalizeWorkspaceSession", () => {
           "/project/BadLine.php": { column: 2, line: 0 },
           "/project/BadColumn.php": { column: "2", line: 3 },
           "/project/BadScroll.php": { column: 2, line: 3, scrollTop: -1 },
-          "/project/User.php": { column: 2, line: 3 },
+          "/project/User.php": {
+            column: 2,
+            foldedLines: [1, 0, -1, 2.5, "3", 4, null],
+            line: 3,
+          },
         },
       }),
     ).toEqual({
@@ -766,8 +772,26 @@ describe("normalizeWorkspaceSession", () => {
       openPaths: ["/project/User.php"],
       sidebarView: "files",
       viewStates: {
-        "/project/User.php": { column: 2, line: 3 },
+        "/project/User.php": { column: 2, foldedLines: [1, 4], line: 3 },
       },
+    });
+
+    expect(
+      normalizeWorkspaceSession({
+        activePath: "/project/User.php",
+        bottomPanelView: "problems",
+        openPaths: ["/project/User.php"],
+        sidebarView: "files",
+        viewStates: {
+          "/project/User.php": {
+            column: 2,
+            foldedLines: { line: 3 },
+            line: 3,
+          },
+        },
+      }).viewStates,
+    ).toEqual({
+      "/project/User.php": { column: 2, line: 3 },
     });
 
     expect(
@@ -778,6 +802,40 @@ describe("normalizeWorkspaceSession", () => {
         sidebarView: "files",
       }),
     ).toEqual(defaultWorkspaceSessionState());
+  });
+
+  it("caps persisted folded lines", () => {
+    const foldedLines = Array.from({ length: 600 }, (_, index) => index + 1);
+
+    expect(
+      normalizeWorkspaceSession({
+        activePath: "/project/User.php",
+        bottomPanelView: "problems",
+        openPaths: ["/project/User.php"],
+        sidebarView: "files",
+        viewStates: {
+          "/project/User.php": { column: 2, foldedLines, line: 3 },
+        },
+      }).viewStates?.["/project/User.php"]?.foldedLines,
+    ).toEqual(foldedLines.slice(0, 500));
+  });
+
+  it("sorts and deduplicates persisted folded lines", () => {
+    expect(
+      normalizeWorkspaceSession({
+        activePath: "/project/User.php",
+        bottomPanelView: "problems",
+        openPaths: ["/project/User.php"],
+        sidebarView: "files",
+        viewStates: {
+          "/project/User.php": {
+            column: 2,
+            foldedLines: [3, 2, 2],
+            line: 3,
+          },
+        },
+      }).viewStates?.["/project/User.php"]?.foldedLines,
+    ).toEqual([2, 3]);
   });
 
   it("accepts history as a valid stored bottom panel view", () => {

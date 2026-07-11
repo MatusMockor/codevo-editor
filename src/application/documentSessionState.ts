@@ -220,9 +220,20 @@ function workspaceSessionViewStatesEqual(
     return (
       other?.line === viewState.line &&
       other.column === viewState.column &&
-      other.scrollTop === viewState.scrollTop
+      other.scrollTop === viewState.scrollTop &&
+      numberListsEqual(other.foldedLines, viewState.foldedLines)
     );
   });
+}
+
+function numberListsEqual(left?: number[], right?: number[]): boolean {
+  const normalizedLeft = left ?? [];
+  const normalizedRight = right ?? [];
+
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+  );
 }
 
 export function isSessionPathInWorkspace(

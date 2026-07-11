@@ -331,6 +331,27 @@ interface EditorSurfaceProps {
   ): Promise<PhpParameterNameInlayHint[]>;
 }
 
+interface FoldingRegionViewState {
+  isCollapsed: boolean;
+  regionIndex: number;
+  startLineNumber: number;
+}
+
+interface FoldingModelViewState {
+  onDidChange(listener: () => void): Monaco.IDisposable;
+  regions: {
+    getStartLineNumber(index: number): number;
+    isCollapsed(index: number): boolean;
+    length: number;
+    toRegion(index: number): FoldingRegionViewState;
+  };
+  toggleCollapseState(regions: FoldingRegionViewState[]): void;
+}
+
+interface FoldingControllerViewState {
+  getFoldingModel(): Promise<FoldingModelViewState | null> | null;
+}
+
 type GuardedQaDefinitionProvider = (
   source: string,
   offset: number,
@@ -2685,11 +2706,25 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const applyViewState = () => {
+    let active = true;
+    let positionApplied = false;
+    let retryDisposable: Monaco.IDisposable | null = null;
+
+    const activeModel = () => {
       const model = editorApi.getModel();
 
       if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
-        return;
+        return null;
+      }
+
+      return model;
+    };
+
+    const applyPosition = () => {
+      const model = activeModel();
+
+      if (!model || positionApplied) {
+        return false;
       }
 
       const lineNumber = Math.min(
@@ -2709,7 +2744,103 @@ function EditorSurfaceComponent({
         editorApi.setScrollTop(viewState.scrollTop);
       }
 
+      positionApplied = true;
+      return true;
+    };
+
+    const finish = () => {
+      if (!active) {
+        return;
+      }
+
       appliedRestoredViewStateKeysRef.current.add(applicationKey);
+    };
+
+    const finishFoldingRestore = () => {
+      if (!active || !activeModel()) {
+        return;
+      }
+
+      if (viewState.scrollTop !== undefined) {
+        editorApi.setScrollTop(viewState.scrollTop);
+      }
+
+      finish();
+    };
+
+    const collapsePersistedLines = (foldingModel: FoldingModelViewState) => {
+      const model = activeModel();
+
+      if (!model) {
+        return false;
+      }
+
+      const validFoldedLines = (viewState.foldedLines ?? []).filter(
+        (line) => line >= 1 && line <= model.getLineCount(),
+      );
+      const foldedLines = new Set(validFoldedLines);
+      const regions: FoldingRegionViewState[] = [];
+      let matched = validFoldedLines.length === 0;
+
+      for (let index = 0; index < foldingModel.regions.length; index += 1) {
+        const startLineNumber = foldingModel.regions.getStartLineNumber(index);
+
+        if (!foldedLines.has(startLineNumber)) {
+          continue;
+        }
+
+        matched = true;
+
+        if (foldingModel.regions.isCollapsed(index)) {
+          continue;
+        }
+
+        regions.push(foldingModel.regions.toRegion(index));
+      }
+
+      if (regions.length > 0) {
+        foldingModel.toggleCollapseState(regions);
+      }
+
+      return matched;
+    };
+
+    const applyFolding = async () => {
+      const foldingModel = await foldingModelForEditor(editorApi);
+
+      if (!active || !activeModel()) {
+        return;
+      }
+
+      if ((viewState.foldedLines?.length ?? 0) === 0) {
+        finish();
+        return;
+      }
+
+      if (!foldingModel) {
+        finishFoldingRestore();
+        return;
+      }
+
+      if (collapsePersistedLines(foldingModel)) {
+        finishFoldingRestore();
+        return;
+      }
+
+      retryDisposable = foldingModel.onDidChange(() => {
+        retryDisposable?.dispose();
+        retryDisposable = null;
+        collapsePersistedLines(foldingModel);
+        finishFoldingRestore();
+      });
+    };
+
+    const applyViewState = () => {
+      if (!applyPosition()) {
+        return;
+      }
+
+      void applyFolding();
     };
 
     applyViewState();
@@ -2720,7 +2851,11 @@ function EditorSurfaceComponent({
 
     const disposable = editorApi.onDidChangeModel(applyViewState);
 
-    return () => disposable.dispose();
+    return () => {
+      active = false;
+      disposable.dispose();
+      retryDisposable?.dispose();
+    };
   }, [activeDocument, editorApi, restoredViewStates, workspaceRoot]);
 
   useEffect(() => {
@@ -2728,7 +2863,11 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const captureViewState = () => {
+    let active = true;
+    let foldingModel: FoldingModelViewState | null = null;
+    let foldingDisposable: Monaco.IDisposable | null = null;
+
+    const captureViewState = async () => {
       const model = editorApi.getModel();
 
       if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
@@ -2741,19 +2880,65 @@ function EditorSurfaceComponent({
         return;
       }
 
+      if (!foldingModel) {
+        foldingModel = await foldingModelForEditor(editorApi);
+
+        if (!active) {
+          return;
+        }
+
+        if (foldingModel && !foldingDisposable) {
+          foldingDisposable = foldingModel.onDidChange(() => {
+            void captureViewState();
+          });
+        }
+      }
+
+      const currentModel = editorApi.getModel();
+
+      if (
+        !currentModel ||
+        !modelMatchesProject(currentModel, workspaceRoot, activeDocument.path)
+      ) {
+        return;
+      }
+
+      const foldedLines: number[] = [];
+
+      if (foldingModel) {
+        for (
+          let index = 0;
+          index < foldingModel.regions.length && foldedLines.length < 500;
+          index += 1
+        ) {
+          if (!foldingModel.regions.isCollapsed(index)) {
+            continue;
+          }
+
+          foldedLines.push(foldingModel.regions.getStartLineNumber(index));
+        }
+      }
+
       onEditorViewStateChange(activeDocument.path, {
         column: position.column,
+        ...(foldedLines.length === 0 ? {} : { foldedLines }),
         line: position.lineNumber,
         scrollTop: editorApi.getScrollTop(),
       });
     };
 
-    captureViewState();
-    const cursorDisposable = editorApi.onDidChangeCursorPosition(captureViewState);
-    const scrollDisposable = editorApi.onDidScrollChange(captureViewState);
+    void captureViewState();
+    const cursorDisposable = editorApi.onDidChangeCursorPosition(() => {
+      void captureViewState();
+    });
+    const scrollDisposable = editorApi.onDidScrollChange(() => {
+      void captureViewState();
+    });
 
     return () => {
+      active = false;
       cursorDisposable.dispose();
+      foldingDisposable?.dispose();
       scrollDisposable.dispose();
     };
   }, [activeDocument, editorApi, onEditorViewStateChange, workspaceRoot]);
@@ -5064,6 +5249,24 @@ function modelMatchesProject(
   return workspaceRoot
     ? modelMatchesWorkspacePath(model, workspaceRoot, path)
     : modelPath(model) === path;
+}
+
+async function foldingModelForEditor(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+): Promise<FoldingModelViewState | null> {
+  const contribution = editor.getContribution(
+    "editor.contrib.folding",
+  ) as unknown as FoldingControllerViewState | null;
+
+  if (typeof contribution?.getFoldingModel !== "function") {
+    return null;
+  }
+
+  try {
+    return await contribution.getFoldingModel();
+  } catch {
+    return null;
+  }
 }
 
 function breadcrumbFeaturesGateway(

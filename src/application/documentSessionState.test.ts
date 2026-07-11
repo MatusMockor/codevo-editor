@@ -241,5 +241,30 @@ describe("documentSessionState", () => {
         openPaths: ["/workspace/B.php", "/workspace/A.php"],
       }),
     ).toBe(false);
+
+    expect(
+      workspaceSessionsEqual(
+        {
+          ...session,
+          viewStates: {
+            "/workspace/A.php": {
+              column: 1,
+              foldedLines: [2],
+              line: 1,
+            },
+          },
+        },
+        {
+          ...session,
+          viewStates: {
+            "/workspace/A.php": {
+              column: 1,
+              foldedLines: [3],
+              line: 1,
+            },
+          },
+        },
+      ),
+    ).toBe(false);
   });
 });
