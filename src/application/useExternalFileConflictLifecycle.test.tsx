@@ -256,6 +256,81 @@ describe("useExternalFileConflictLifecycle", () => {
     act(() => test.root.unmount());
   });
 
+  it("resolves an in-flight overwrite for its original workspace without mutating the new workspace", async () => {
+    const pending = deferred<{
+      status: "success";
+      revision: ReturnType<typeof revision>;
+    }>();
+    const test = await createHarness(undefined, {
+      writeTextFile: vi.fn(() => pending.promise),
+    });
+    const live = test.refs.documentsRef.current[PATH];
+    act(() => {
+      test.lifecycle().detectSaveConflict(ROOT, live, {
+        content: "disk",
+        revision: revision(2),
+      });
+    });
+
+    let overwrite!: Promise<void>;
+    await act(async () => {
+      overwrite = test.lifecycle().action("overwrite");
+      await Promise.resolve();
+    });
+    const otherPath = "/other-workspace/file.php";
+    const otherDocument = editorDocument("other", "other");
+    otherDocument.path = otherPath;
+    test.refs.currentWorkspaceRootRef.current = "/other-workspace";
+    test.refs.documentsRef.current = { [otherPath]: otherDocument };
+    test.refs.activeDocumentRef.current = otherDocument;
+    await act(async () => {
+      pending.resolve({ status: "success", revision: revision(3) });
+      await overwrite;
+    });
+
+    expect(test.refs.documentsRef.current).toEqual({ [otherPath]: otherDocument });
+    expect(test.refs.activeDocumentRef.current).toBe(otherDocument);
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    act(() => test.root.unmount());
+  });
+
+  it("does not let an overlapping-root overwrite mutate the active workspace document", async () => {
+    const pending = deferred<{
+      status: "success";
+      revision: ReturnType<typeof revision>;
+    }>();
+    const test = await createHarness(undefined, {
+      writeTextFile: vi.fn(() => pending.promise),
+    });
+    const live = test.refs.documentsRef.current[PATH];
+    act(() => {
+      test.lifecycle().detectSaveConflict(ROOT, live, {
+        content: "disk",
+        revision: revision(2),
+      });
+    });
+
+    let overwrite!: Promise<void>;
+    await act(async () => {
+      overwrite = test.lifecycle().action("overwrite");
+      await Promise.resolve();
+    });
+    const overlappingRoot = `${ROOT}/packages/app`;
+    const overlappingDocument = editorDocument("overlapping", "overlapping");
+    test.refs.currentWorkspaceRootRef.current = overlappingRoot;
+    test.refs.documentsRef.current = { [PATH]: overlappingDocument };
+    test.refs.activeDocumentRef.current = overlappingDocument;
+    await act(async () => {
+      pending.resolve({ status: "success", revision: revision(3) });
+      await overwrite;
+    });
+
+    expect(test.refs.documentsRef.current[PATH]).toBe(overlappingDocument);
+    expect(test.refs.activeDocumentRef.current).toBe(overlappingDocument);
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    act(() => test.root.unmount());
+  });
+
   it("recreates a deleted file with create-if-absent and a revision-aware save", async () => {
     const createdRevision = revision(4);
     const savedRevision = revision(5);
@@ -283,6 +358,45 @@ describe("useExternalFileConflictLifecycle", () => {
     expect(test.refs.documentsRef.current[PATH].savedContent).toBe("local");
     expect(test.refs.documentsRef.current[PATH].revision).toEqual(savedRevision);
     expect(test.lifecycle().activeState.conflict).toBeNull();
+    act(() => test.root.unmount());
+  });
+
+  it("resolves an in-flight recreate for its original workspace without mutating the new workspace", async () => {
+    const pending = deferred<{
+      status: "success";
+      revision: ReturnType<typeof revision>;
+    }>();
+    const test = await createHarness(undefined, {
+      createTextFile: vi.fn(async () => undefined),
+      readTextFileSnapshot: vi.fn(async () => ({
+        content: "",
+        revision: revision(4),
+      })),
+      writeTextFile: vi.fn(() => pending.promise),
+    });
+    await act(async () => {
+      await test.lifecycle().handleFileChange({ ...modified(), kind: "deleted" });
+    });
+
+    let recreate!: Promise<void>;
+    await act(async () => {
+      recreate = test.lifecycle().action("recreate");
+      await Promise.resolve();
+    });
+    const otherPath = "/other-workspace/file.php";
+    const otherDocument = editorDocument("other", "other");
+    otherDocument.path = otherPath;
+    test.refs.currentWorkspaceRootRef.current = "/other-workspace";
+    test.refs.documentsRef.current = { [otherPath]: otherDocument };
+    test.refs.activeDocumentRef.current = otherDocument;
+    await act(async () => {
+      pending.resolve({ status: "success", revision: revision(5) });
+      await recreate;
+    });
+
+    expect(test.refs.documentsRef.current).toEqual({ [otherPath]: otherDocument });
+    expect(test.refs.activeDocumentRef.current).toBe(otherDocument);
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
     act(() => test.root.unmount());
   });
 

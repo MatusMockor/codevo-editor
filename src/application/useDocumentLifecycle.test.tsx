@@ -441,6 +441,48 @@ describe("useDocumentLifecycle", () => {
       harness.unmount();
     });
 
+    it("does not show a disk-change message when the workspace switches during the conflict read", async () => {
+      const snapshot = createDeferred<{
+        content: string;
+        revision: ReturnType<typeof revision>;
+      }>();
+      const document = {
+        ...editorDocument(`${ROOT}/src/User.php`, "editor", "baseline"),
+        revision: revision(1),
+      };
+      const detectSaveConflict = vi.fn();
+      const workspaceFiles = createFakeWorkspaceFiles({
+        readTextFileSnapshot: vi.fn(() => snapshot.promise),
+        writeTextFile: vi.fn(async () => ({
+          status: "conflict" as const,
+          message: "changed",
+        })),
+      });
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        detectSaveConflict,
+        workspaceFiles,
+      });
+
+      let save!: Promise<void>;
+      await act(async () => {
+        save = harness.lifecycle().saveActiveDocument();
+        await Promise.resolve();
+      });
+      harness.rootRef.current = "/other-workspace";
+      await act(async () => {
+        snapshot.resolve({ content: "disk", revision: revision(2) });
+        await save;
+      });
+
+      expect(detectSaveConflict).not.toHaveBeenCalled();
+      expect(harness.setMessage).not.toHaveBeenCalledWith(
+        "The file changed on disk. Review the conflict before saving.",
+      );
+      harness.unmount();
+    });
+
     it("uses the current save-conflict callback after dependency replacement", async () => {
       const document = {
         ...editorDocument(`${ROOT}/src/User.php`, "editor", "baseline"),

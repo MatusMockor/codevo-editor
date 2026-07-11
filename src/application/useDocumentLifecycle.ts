@@ -411,8 +411,8 @@ export function useDocumentLifecycle(
           const conflictedDocument = currentDocumentForSave();
           if (conflictedDocument) {
             detectSaveConflict(requestedRoot, conflictedDocument, disk);
+            setMessage("The file changed on disk. Review the conflict before saving.");
           }
-          setMessage("The file changed on disk. Review the conflict before saving.");
           return;
         }
         if (writeResult?.status === "error") {

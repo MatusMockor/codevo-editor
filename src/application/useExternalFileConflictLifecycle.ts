@@ -308,10 +308,25 @@ export function useExternalFileConflictLifecycle({
         );
       };
 
+      const resolveStaleAction = () => {
+        publish(
+          workspaceRoot,
+          activePath,
+          transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+            type: "resolved",
+            target,
+          }),
+        );
+      };
+
       const finishWrite = (
         writtenContent: string,
         revision: import("../domain/workspace").WorkspaceFileRevision | null,
       ) => {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          resolveStaleAction();
+          return;
+        }
         const current = documentsRef.current[activePath];
         if (!current) {
           return;
@@ -349,6 +364,10 @@ export function useExternalFileConflictLifecycle({
             live.content,
             expectedRevision,
           );
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+            resolveStaleAction();
+            return;
+          }
           if (!result || result.status === "error" || result.status === "conflict") {
             failAction(result?.message ?? "The overwrite did not return a trusted result.");
             return;
@@ -359,6 +378,10 @@ export function useExternalFileConflictLifecycle({
           }
           finishWrite(live.content, result.revision);
         } catch (error) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+            resolveStaleAction();
+            return;
+          }
           failAction(error instanceof Error ? error.message : String(error));
         }
         return;
@@ -372,7 +395,15 @@ export function useExternalFileConflictLifecycle({
         }
         try {
           await workspaceFiles.createTextFile(activePath);
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+            resolveStaleAction();
+            return;
+          }
           const created = await readWorkspaceTextFileSnapshot(workspaceFiles, activePath);
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+            resolveStaleAction();
+            return;
+          }
           if (!created.revision) {
             failAction("The recreated file has no trusted revision.");
             return;
@@ -382,6 +413,10 @@ export function useExternalFileConflictLifecycle({
             live.content,
             created.revision,
           );
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+            resolveStaleAction();
+            return;
+          }
           if (!result || result.status === "error" || result.status === "conflict") {
             failAction(result?.message ?? "The recreated file could not be saved safely.");
             return;
@@ -392,6 +427,10 @@ export function useExternalFileConflictLifecycle({
           }
           finishWrite(live.content, result.revision);
         } catch (error) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+            resolveStaleAction();
+            return;
+          }
           failAction(error instanceof Error ? error.message : String(error));
         }
         return;
