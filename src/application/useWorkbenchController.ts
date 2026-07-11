@@ -256,7 +256,6 @@ import {
   type MarkdownPreviewTab,
 } from "../domain/markdownPreview";
 import {
-  matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
 } from "../domain/keymap";
@@ -7234,6 +7233,7 @@ export function useWorkbenchController(
     workbenchMarkdownCommands({
       isActiveDocumentMarkdown: isMarkdownDocument(activeDocument),
       openMarkdownPreview,
+      shortcut,
     }).forEach((command) => registry.register(command));
 
     workbenchLanguageNavigationCommands({
@@ -7557,30 +7557,6 @@ export function useWorkbenchController(
     commandRegistry,
     doubleShiftDetectorRef,
   });
-
-  useEffect(() => {
-    function handleMarkdownPreviewShortcut(event: KeyboardEvent) {
-      if (!matchesShortcut(event, "Cmd+Shift+V")) {
-        return;
-      }
-
-      const command = commandRegistry.get("markdown.openPreview");
-
-      if (!command?.isEnabled(commandContext)) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      void Promise.resolve(command.run()).catch((error) =>
-        reportError("Markdown Preview", error),
-      );
-    }
-
-    window.addEventListener("keydown", handleMarkdownPreviewShortcut);
-    return () =>
-      window.removeEventListener("keydown", handleMarkdownPreviewShortcut);
-  }, [commandContext, commandRegistry, reportError]);
 
   useEffect(() => {
     if (!workspaceRoot) {

@@ -49,6 +49,18 @@ describe("keymap", () => {
     });
   });
 
+  it("defaults Markdown preview to Cmd+Shift+V", () => {
+    expect(defaultShortcutForCommand("markdown.openPreview", "mac")).toBe(
+      "Cmd+Shift+V",
+    );
+    expect(defaultShortcutForCommand("markdown.openPreview", "linux")).toBe(
+      "Ctrl+Shift+V",
+    );
+    expect(defaultKeymapSettings("mac")["markdown.openPreview"]).toBe(
+      "Cmd+Shift+V",
+    );
+  });
+
   it("registers the git stash commands without shortcut collisions", () => {
     const stashChanges = keymapCommands.find(
       (command) => command.id === "git.stashChanges",

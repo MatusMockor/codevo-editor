@@ -31,7 +31,8 @@ export function restoredActivePath(
 export function isPersistableEditorDocumentPath(path: string): boolean {
   return (
     !path.startsWith("mockor-git-diff:") &&
-    !path.startsWith("mockor-git-history-diff:")
+    !path.startsWith("mockor-git-history-diff:") &&
+    !path.startsWith("mockor-markdown-preview:")
   );
 }
 

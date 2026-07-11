@@ -38,6 +38,7 @@ const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
   "file.quickOpen",
   "editor.recentFiles",
   "editor.recentLocations",
+  "markdown.openPreview",
   "git.stashChanges",
   "git.showStashes",
   "git.switchBranch",

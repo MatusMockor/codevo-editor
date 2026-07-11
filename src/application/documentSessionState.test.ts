@@ -41,6 +41,20 @@ describe("documentSessionState", () => {
     ).toBe(false);
   });
 
+  it("explicitly excludes Markdown preview paths from persistence", () => {
+    expect(
+      isPersistableEditorDocumentPath(
+        "mockor-markdown-preview:/workspace/README.md",
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves real filesystem image paths eligible for document-backed filtering", () => {
+    expect(
+      isPersistableEditorDocumentPath("/workspace/assets/screenshot.png"),
+    ).toBe(true);
+  });
+
   it("keeps session paths scoped to the workspace root", () => {
     expect(isSessionPathInWorkspace("/workspace", "/workspace/src/A.php")).toBe(
       true,

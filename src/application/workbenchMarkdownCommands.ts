@@ -1,13 +1,16 @@
+import type { KeymapCommandId } from "../domain/keymap";
 import type { Command } from "./commandRegistry";
 
 interface WorkbenchMarkdownCommandsOptions {
   isActiveDocumentMarkdown: boolean;
   openMarkdownPreview(): void | Promise<void>;
+  shortcut(commandId: KeymapCommandId): string;
 }
 
 export function workbenchMarkdownCommands({
   isActiveDocumentMarkdown,
   openMarkdownPreview,
+  shortcut,
 }: WorkbenchMarkdownCommandsOptions): Command[] {
   return [
     {
@@ -18,7 +21,7 @@ export function workbenchMarkdownCommands({
         context.hasActiveDocument &&
         isActiveDocumentMarkdown,
       run: openMarkdownPreview,
-      shortcut: "Cmd+Shift+V",
+      shortcut: shortcut("markdown.openPreview"),
       title: "Markdown: Open Preview",
     },
   ];

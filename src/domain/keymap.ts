@@ -437,6 +437,12 @@ export const keymapCommands = [
     label: "Go Forward",
   },
   {
+    category: "Markdown",
+    defaultShortcut: "Cmd+Shift+V",
+    id: "markdown.openPreview",
+    label: "Markdown: Open Preview",
+  },
+  {
     category: "Search",
     defaultShortcut: "Cmd+Shift+F",
     id: "search.text",
