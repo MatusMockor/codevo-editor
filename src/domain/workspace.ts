@@ -68,6 +68,7 @@ export interface TextSearchOptions {
   caseSensitive: boolean;
   wholeWord: boolean;
   isRegex: boolean;
+  preserveCase: boolean;
   /**
    * Comma- or newline-separated glob list. A leading `!` excludes. Examples:
    * `*.php`, `app/**`, `!vendor`, `*.php,!**\/migrations\/**`.
@@ -80,6 +81,7 @@ export function defaultTextSearchOptions(): TextSearchOptions {
     caseSensitive: false,
     wholeWord: false,
     isRegex: false,
+    preserveCase: false,
     fileMask: "",
   };
 }

@@ -97,12 +97,69 @@ describe("createReplacePreview", () => {
     ).toBe("<FOO>");
   });
 
+  it.each([
+    ["upper", "FOO", "foo", "next", false, "NEXT"],
+    ["title", "Foo", "foo", "next value", false, "Next value"],
+    ["lower", "foo", "foo", "NextValue", false, "NextValue"],
+    ["mixed", "fOO", "foo", "NextValue", false, "NextValue"],
+    [
+      "mixed-separated-whole-match",
+      "FOO-bar",
+      "foo-bar",
+      "next-value",
+      false,
+      "next-value",
+    ],
+    [
+      "regex-expanded-first",
+      "FOO-FOO",
+      "(foo)-(foo)",
+      "${1}bar",
+      true,
+      "FOOBAR",
+    ],
+    ["literal-dollar", "FOO", "foo", "$text", false, "$TEXT"],
+  ])(
+    "preserves whole-match case for %s",
+    (_name, matchText, pattern, replacement, isRegex, expected) => {
+      expect(
+        preview(matchText, matchText, replacement, {
+          pattern,
+          isRegex,
+          caseSensitive: false,
+          preserveCase: true,
+        }),
+      ).toBe(expected);
+    },
+  );
+
+  it("leaves an exact case-sensitive match replacement as typed", () => {
+    expect(
+      preview("foo", "foo", "NextValue", {
+        pattern: "foo",
+        caseSensitive: true,
+        preserveCase: true,
+      }),
+    ).toBe("NextValue");
+  });
+
+  it("applies preserve case unconditionally to an upper case-sensitive match", () => {
+    expect(
+      preview("FOO", "FOO", "NextValue", {
+        pattern: "FOO",
+        caseSensitive: true,
+        preserveCase: true,
+      }),
+    ).toBe("NEXTVALUE");
+  });
+
   it("respects whole-word matching", () => {
     const compute = createReplacePreview({
       pattern: "cat",
       isRegex: false,
       caseSensitive: true,
       wholeWord: true,
+      preserveCase: false,
     });
 
     expect(compute("cat", "cat scatter", "dog", 0)).toBe("dog");
@@ -137,12 +194,14 @@ function preview(
     isRegex?: boolean;
     caseSensitive?: boolean;
     wholeWord?: boolean;
+    preserveCase?: boolean;
   },
 ): string | null {
   return createReplacePreview({
     isRegex: false,
     caseSensitive: true,
     wholeWord: false,
+    preserveCase: false,
     ...query,
   })(matchText, lineText, replacement, lineText.indexOf(matchText));
 }

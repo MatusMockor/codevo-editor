@@ -58,6 +58,7 @@ pub struct TextSearchOptions {
     pub case_sensitive: bool,
     pub whole_word: bool,
     pub is_regex: bool,
+    pub preserve_case: bool,
     /// Comma- or newline-separated glob list. A leading `!` excludes. Examples:
     /// `*.php`, `app/**`, `!vendor`, `*.php,!**/migrations/**`.
     pub file_mask: Option<String>,

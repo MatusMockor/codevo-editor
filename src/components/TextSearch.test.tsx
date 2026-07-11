@@ -56,6 +56,46 @@ describe("TextSearch", () => {
     );
   });
 
+  it("toggles preserve case and applies it to the inline preview", () => {
+    const onChangeOptions = vi.fn();
+    renderTextSearch({
+      onChangeOptions,
+      query: "foo",
+      replacement: "next",
+      results: [result({ lineText: "FOO", matchStart: 0, matchEnd: 3 })],
+    });
+
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Preserve case"]',
+    );
+
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+
+    act(() => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onChangeOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ preserveCase: true }),
+    );
+
+    renderTextSearch({
+      options: { ...defaultTextSearchOptions(), preserveCase: true },
+      query: "foo",
+      replacement: "next",
+      results: [result({ lineText: "FOO", matchStart: 0, matchEnd: 3 })],
+    });
+
+    expect(
+      host.querySelector('[aria-label="Preserve case"]')?.getAttribute(
+        "aria-pressed",
+      ),
+    ).toBe("true");
+    expect(host.querySelector(".text-search-replacement")?.textContent).toBe(
+      "NEXT",
+    );
+  });
+
   it("reflects the pressed state of an enabled toggle", () => {
     renderTextSearch({
       options: { ...defaultTextSearchOptions(), isRegex: true },
@@ -476,6 +516,7 @@ describe("defaultTextSearchOptions", () => {
       caseSensitive: false,
       wholeWord: false,
       isRegex: false,
+      preserveCase: false,
       fileMask: "",
     });
   });

@@ -124,10 +124,12 @@ export function TextSearch({
         isRegex: options.isRegex,
         caseSensitive: options.caseSensitive,
         wholeWord: options.wholeWord,
+        preserveCase: options.preserveCase,
       }),
     [
       options.caseSensitive,
       options.isRegex,
+      options.preserveCase,
       options.wholeWord,
       previewPattern,
     ],
@@ -154,7 +156,9 @@ export function TextSearch({
   const canReplace =
     !replaceBusy && Boolean(query.trim()) && results.length > 0;
 
-  const toggleOption = (key: "caseSensitive" | "wholeWord" | "isRegex") => {
+  const toggleOption = (
+    key: "caseSensitive" | "wholeWord" | "isRegex" | "preserveCase",
+  ) => {
     onChangeOptions({ ...options, [key]: !options[key] });
   };
 
@@ -228,6 +232,20 @@ export function TextSearch({
             }
             value={replacement}
           />
+          <button
+            aria-label="Preserve case"
+            aria-pressed={options.preserveCase}
+            className={
+              options.preserveCase
+                ? "text-search-toggle active"
+                : "text-search-toggle"
+            }
+            onClick={() => toggleOption("preserveCase")}
+            title="Preserve case"
+            type="button"
+          >
+            <span aria-hidden="true">AB</span>
+          </button>
           <button
             aria-label="Replace all"
             className="text-search-replace-all"

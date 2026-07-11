@@ -3,6 +3,7 @@ export interface ReplacePreviewQuery {
   isRegex: boolean;
   caseSensitive: boolean;
   wholeWord: boolean;
+  preserveCase: boolean;
 }
 
 export type ReplacePreview = (
@@ -44,7 +45,9 @@ export function createReplacePreview(
         continue;
       }
 
-      return expandRustReplacement(replacement, captures);
+      const expanded = expandRustReplacement(replacement, captures);
+
+      return adaptReplacementCase(matchText, expanded, query.preserveCase);
     }
 
     return null;
@@ -61,15 +64,81 @@ function createLiteralPreview(
     }
 
     if (!query.wholeWord) {
-      return replacement;
+      return adaptReplacementCase(matchText, replacement, query.preserveCase);
     }
 
     if (!hasAsciiWordBoundaries(lineText, matchStart, matchText)) {
       return null;
     }
 
-    return replacement;
+    return adaptReplacementCase(matchText, replacement, query.preserveCase);
   };
+}
+
+function adaptReplacementCase(
+  matchText: string,
+  replacement: string,
+  preserveCase: boolean,
+): string {
+  if (!preserveCase) {
+    return replacement;
+  }
+
+  if (isAllUpper(matchText)) {
+    return replacement.toUpperCase();
+  }
+
+  if (isTitleCase(matchText)) {
+    return capitalizeFirstLetter(replacement);
+  }
+
+  return replacement;
+}
+
+function isAllUpper(value: string): boolean {
+  const letters = casedLetters(value);
+
+  return letters.length > 0 && letters.every((letter) => isUpper(letter));
+}
+
+function isTitleCase(value: string): boolean {
+  const letters = casedLetters(value);
+  const first = letters[0];
+
+  if (!first || !isUpper(first)) {
+    return false;
+  }
+
+  return letters.slice(1).every((letter) => isLower(letter));
+}
+
+function casedLetters(value: string): string[] {
+  return Array.from(value).filter(isCased);
+}
+
+function isCased(value: string): boolean {
+  return value.toLowerCase() !== value.toUpperCase();
+}
+
+function isUpper(value: string): boolean {
+  return isCased(value) && value === value.toUpperCase();
+}
+
+function isLower(value: string): boolean {
+  return isCased(value) && value === value.toLowerCase();
+}
+
+function capitalizeFirstLetter(value: string): string {
+  const characters = Array.from(value);
+  const index = characters.findIndex(isCased);
+
+  if (index < 0) {
+    return value;
+  }
+
+  characters[index] = characters[index].toUpperCase();
+
+  return characters.join("");
 }
 
 function compileRegexPreview(

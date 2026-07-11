@@ -4234,9 +4234,14 @@ button.problem-row:focus-visible {
 }
 
 .text-search-replace {
-  grid-template-columns: 22px minmax(0, 1fr) auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
+}
+
+.text-search-replace .text-search-toggle {
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .text-search-replace-all {

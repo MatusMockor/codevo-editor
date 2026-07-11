@@ -149,10 +149,16 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
         "/selected/project",
         "before",
         "after",
-        undefined,
+        {
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
+          preserveCase: true,
+          fileMask: "",
+        },
         "/selected/project/src",
       )).resolves.toMatchObject({ status: "partial", files: [{ path: "/selected/project/src/a.ts" }], conflicts: [{ path: "/selected/project/src/b.ts" }] });
-    expect(invoke).toHaveBeenCalledWith("workspace_replace_in_path", { workspaceId: "ws-1", relativePath: "src", query: "before", replacement: "after", options: null });
+    expect(invoke).toHaveBeenCalledWith("workspace_replace_in_path", { workspaceId: "ws-1", relativePath: "src", query: "before", replacement: "after", options: { caseSensitive: false, wholeWord: false, isRegex: false, preserveCase: true, fileMask: "" } });
   });
 
   it("does not let background reads alter an explicit save revision", async () => {

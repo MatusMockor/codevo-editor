@@ -66844,6 +66844,7 @@ class PostRepository
           caseSensitive: true,
           wholeWord: true,
           isRegex: true,
+          preserveCase: false,
           fileMask: "*.php,!vendor",
         });
         getWorkbench().setTextSearchQuery("needle");
@@ -66854,6 +66855,7 @@ class PostRepository
           caseSensitive: true,
           wholeWord: true,
           isRegex: true,
+          preserveCase: false,
           fileMask: "*.php,!vendor",
         });
       });
@@ -66956,6 +66958,7 @@ class PostRepository
           caseSensitive: true,
           wholeWord: true,
           isRegex: false,
+          preserveCase: true,
           fileMask: "*.php",
         });
         getWorkbench().setTextSearchQuery("  needle  ");
@@ -66978,6 +66981,7 @@ class PostRepository
           caseSensitive: true,
           wholeWord: true,
           isRegex: false,
+          preserveCase: true,
           fileMask: "*.php",
         },
         undefined,
@@ -67035,6 +67039,7 @@ class PostRepository
           caseSensitive: false,
           wholeWord: false,
           isRegex: false,
+          preserveCase: false,
           fileMask: "*.php",
         });
         getWorkbench().setTextSearchQuery("needle");
@@ -67062,6 +67067,7 @@ class PostRepository
           caseSensitive: false,
           wholeWord: false,
           isRegex: false,
+          preserveCase: false,
           fileMask: "*.php",
         },
         "/workspace/a.php",

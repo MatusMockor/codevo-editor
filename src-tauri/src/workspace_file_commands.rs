@@ -274,6 +274,96 @@ fn text_matcher(query: &str, options: &TextSearchOptions) -> io::Result<Regex> {
         .build()
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
+
+fn replace_text(
+    matcher: &Regex,
+    content: &str,
+    replacement: &str,
+    options: &TextSearchOptions,
+) -> String {
+    if !options.preserve_case {
+        return replace_text_without_case_preservation(matcher, content, replacement, options);
+    }
+
+    if options.is_regex {
+        return matcher
+            .replace_all(content, |captures: &regex::Captures<'_>| {
+                let mut expanded = String::new();
+                captures.expand(replacement, &mut expanded);
+                adapt_replacement_case(captures.get(0).unwrap().as_str(), &expanded)
+            })
+            .into_owned();
+    }
+
+    matcher
+        .replace_all(content, |captures: &regex::Captures<'_>| {
+            adapt_replacement_case(captures.get(0).unwrap().as_str(), replacement)
+        })
+        .into_owned()
+}
+
+fn replace_text_without_case_preservation(
+    matcher: &Regex,
+    content: &str,
+    replacement: &str,
+    options: &TextSearchOptions,
+) -> String {
+    if options.is_regex {
+        return matcher.replace_all(content, replacement).into_owned();
+    }
+
+    matcher
+        .replace_all(content, NoExpand(replacement))
+        .into_owned()
+}
+
+fn adapt_replacement_case(matched: &str, replacement: &str) -> String {
+    if is_all_upper(matched) {
+        return replacement.to_uppercase();
+    }
+
+    if is_title_case(matched) {
+        return capitalize_first_letter(replacement);
+    }
+
+    replacement.to_string()
+}
+
+fn is_all_upper(value: &str) -> bool {
+    let letters: Vec<char> = value.chars().filter(|value| is_cased(*value)).collect();
+
+    !letters.is_empty() && letters.iter().all(|value| value.is_uppercase())
+}
+
+fn is_title_case(value: &str) -> bool {
+    let letters: Vec<char> = value.chars().filter(|value| is_cased(*value)).collect();
+    if letters.is_empty() {
+        return false;
+    }
+
+    letters[0].is_uppercase() && letters[1..].iter().all(|value| value.is_lowercase())
+}
+
+fn is_cased(value: char) -> bool {
+    value.is_lowercase() || value.is_uppercase()
+}
+
+fn capitalize_first_letter(value: &str) -> String {
+    let mut result = String::new();
+    let mut capitalized = false;
+
+    for character in value.chars() {
+        if !capitalized && is_cased(character) {
+            result.extend(character.to_uppercase());
+            capitalized = true;
+            continue;
+        }
+
+        result.push(character);
+    }
+
+    result
+}
 struct FileMask {
     matcher: ignore::overrides::Override,
     has_positive: bool,
@@ -798,12 +888,7 @@ impl<'a> WorkspaceFileRepository<'a> {
             if replacement_count == 0 {
                 continue;
             }
-            let updated = if options.is_regex {
-                matcher.replace_all(&snapshot.content, replacement)
-            } else {
-                matcher.replace_all(&snapshot.content, NoExpand(replacement))
-            }
-            .into_owned();
+            let updated = replace_text(&matcher, &snapshot.content, replacement, options);
             if updated == snapshot.content {
                 continue;
             }
@@ -3097,6 +3182,7 @@ mod tests {
             case_sensitive: true,
             whole_word: true,
             is_regex: true,
+            preserve_case: false,
             file_mask: Some("*.php".into()),
         };
         let result = WorkspaceFileRepository::new(&registry).replace_in_path(
@@ -3206,6 +3292,96 @@ mod tests {
             fs::read_to_string(root.join("a.txt")).unwrap(),
             "$user = 5 username $user = 5\n"
         );
+    }
+
+    #[test]
+    fn replace_preserve_case_uses_whole_match_rules_in_literal_and_regex_modes() {
+        let cases = [
+            ("upper", "FOO", "foo", "next", false, "NEXT"),
+            ("title", "Foo", "foo", "next value", false, "Next value"),
+            ("lower", "foo", "foo", "NextValue", false, "NextValue"),
+            ("mixed", "fOO", "foo", "NextValue", false, "NextValue"),
+            (
+                "mixed-separated-whole-match",
+                "FOO-bar",
+                "foo-bar",
+                "next-value",
+                false,
+                "next-value",
+            ),
+            (
+                "regex-expanded-first",
+                "FOO-FOO",
+                "(foo)-(foo)",
+                "${1}bar",
+                true,
+                "FOOBAR",
+            ),
+            ("literal-dollar", "FOO", "foo", "$text", false, "$TEXT"),
+        ];
+
+        for (name, content, query, replacement, is_regex, expected) in cases {
+            let (registry, id, root) = fixture(name);
+            fs::write(root.join("a.txt"), content).unwrap();
+            let options: TextSearchOptions = serde_json::from_value(serde_json::json!({
+                "caseSensitive": false,
+                "isRegex": is_regex,
+                "preserveCase": true
+            }))
+            .unwrap();
+
+            WorkspaceFileRepository::new(&registry).replace_in_path(
+                &id,
+                Path::new("a.txt"),
+                query,
+                replacement,
+                &options,
+            );
+
+            assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn replace_preserve_case_is_a_no_op_for_an_exact_case_sensitive_match() {
+        let (registry, id, root) = fixture("preserve-case-sensitive");
+        fs::write(root.join("a.txt"), "foo").unwrap();
+        let options: TextSearchOptions = serde_json::from_value(serde_json::json!({
+            "caseSensitive": true,
+            "preserveCase": true
+        }))
+        .unwrap();
+
+        WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("a.txt"),
+            "foo",
+            "NextValue",
+            &options,
+        );
+
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "NextValue");
+    }
+
+    #[test]
+    fn replace_preserve_case_applies_unconditionally_to_an_upper_case_sensitive_match() {
+        let (registry, id, root) = fixture("preserve-upper-case-sensitive");
+        fs::write(root.join("a.txt"), "FOO").unwrap();
+        let options: TextSearchOptions = serde_json::from_value(serde_json::json!({
+            "caseSensitive": true,
+            "preserveCase": true
+        }))
+        .unwrap();
+
+        WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("a.txt"),
+            "FOO",
+            "NextValue",
+            &options,
+        );
+
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "NEXTVALUE");
     }
 
     #[test]
