@@ -98,6 +98,26 @@ describe("detectMissingThisMember — method calls", () => {
     });
   });
 
+  it.each([
+    ["single argument", "$this->§send(1,);", ["int"]],
+    ["multiple arguments", "$this->§send(1, 'x',);", ["int", "string"]],
+    [
+      "multi-line arguments",
+      "$this->§send(\n            1,\n            'x',\n        );",
+      ["int", "string"],
+    ],
+  ])("ignores a trailing comma with %s", (_name, call, argTypes) => {
+    const { source, offset } = withMarker(
+      `    public function run(): void\n    {\n        ${call}\n    }`,
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes,
+      kind: "method",
+      name: "send",
+    });
+  });
+
   it("returns null when the called method already exists on the class", () => {
     const source = [
       "<?php",

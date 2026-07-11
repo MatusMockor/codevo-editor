@@ -172,6 +172,7 @@ export function buildPhpCreateClassCodeAction({
       reference.kind,
       shortName,
       destination.namespace,
+      { offset: range.start, source },
     );
 
     return {

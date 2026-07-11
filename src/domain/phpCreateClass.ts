@@ -1,4 +1,15 @@
 import type { Psr4Root } from "./workspace";
+import { renderConstructor } from "./phpConstructorCodeGen";
+import type { PhpPropertyMember } from "./phpClassStructure";
+import {
+  inferArgumentTypes,
+  matchingPairOffset as matchingPhpPairOffset,
+  readIdentifier as readPhpIdentifier,
+  renderCreateMethodStub,
+  skipWhitespace as skipPhpWhitespace,
+  splitArguments as splitPhpArguments,
+} from "./phpCreateFromUsage";
+import { maskPhpSource } from "./phpSourceMask";
 
 /**
  * Pure detection + PSR-4 destination + skeleton synthesis for the PhpStorm
@@ -51,6 +62,36 @@ export interface PhpCreateClassDestination {
    * Absolute path of the file to create.
    */
   path: string;
+}
+
+export interface PhpTypeUsageContext {
+  offset: number;
+  source: string;
+}
+
+interface PhpCreateClassMethod {
+  argTypes: (string | null)[];
+  isStatic: boolean;
+  name: string;
+}
+
+interface PhpCreateClassMembers {
+  constructorProperties: PhpPropertyMember[];
+  methods: PhpCreateClassMethod[];
+}
+
+interface ArgumentList {
+  end: number;
+  start: number;
+}
+
+interface UsageScope {
+  end: number;
+  start: number;
+}
+
+interface ReceiverWindow extends UsageScope {
+  receiver: string;
 }
 
 const NEW_LINE = "\n";
@@ -175,12 +216,357 @@ export function renderPhpTypeSkeleton(
   kind: PhpCreatableKind,
   shortName: string,
   namespace: string | null,
+  usage?: PhpTypeUsageContext,
 ): string {
   const header = namespace
     ? `<?php${NEW_LINE}${NEW_LINE}namespace ${namespace};${NEW_LINE}${NEW_LINE}`
     : `<?php${NEW_LINE}${NEW_LINE}`;
+  const members = usage ? inferCreateClassMembers(usage) : null;
 
-  return `${header}${kind} ${shortName}${NEW_LINE}{${NEW_LINE}}${NEW_LINE}`;
+  if (kind !== "class" || !members || !hasCreateClassMembers(members)) {
+    return `${header}${kind} ${shortName}${NEW_LINE}{${NEW_LINE}}${NEW_LINE}`;
+  }
+
+  const body = renderCreateClassMembers(members);
+
+  return `${header}${kind} ${shortName}${NEW_LINE}{${NEW_LINE}${body}${NEW_LINE}}${NEW_LINE}`;
+}
+
+function inferCreateClassMembers(
+  usageContext: PhpTypeUsageContext,
+): PhpCreateClassMembers | null {
+  const { offset, source } = usageContext;
+
+  if (!isOffsetInRange(source, offset)) {
+    return null;
+  }
+
+  const masked = maskPhpSource(source);
+  const token = referenceTokenAt(source, masked, offset);
+
+  if (!token) {
+    return null;
+  }
+
+  const scope = usageScope(masked, token.start);
+  const knownTypes = knownVariableTypes(source, masked, scope, token.start);
+  const constructorArguments = newExpressionArguments(masked, token);
+  const constructorProperties = constructorArguments
+    ? constructorPropertiesFromArguments(
+        source,
+        masked,
+        constructorArguments,
+        knownTypes,
+      )
+    : [];
+  const receiverWindows = assignedReceiverWindows(masked, token, scope);
+  const instanceMethods = receiverWindows.flatMap((window) =>
+    observedInstanceMethods(source, masked, window, knownTypes),
+  );
+  const staticMethod = staticMethodFromUsage(
+    source,
+    masked,
+    token,
+    knownTypes,
+  );
+  const methods = staticMethod
+    ? deduplicateMethods([staticMethod, ...instanceMethods])
+    : deduplicateMethods(instanceMethods);
+
+  return { constructorProperties, methods };
+}
+
+function hasCreateClassMembers(members: PhpCreateClassMembers): boolean {
+  return members.constructorProperties.length > 0 || members.methods.length > 0;
+}
+
+function renderCreateClassMembers(members: PhpCreateClassMembers): string {
+  const blocks: string[] = [];
+
+  if (members.constructorProperties.length > 0) {
+    blocks.push(
+      renderConstructor(members.constructorProperties, {
+        indent: "    ",
+        mode: "promoted",
+      }),
+    );
+  }
+
+  for (const method of members.methods) {
+    const stub = renderCreateMethodStub(method.name, method.argTypes, {
+      isStatic: method.isStatic,
+      target: { kind: "class", relationship: "external" },
+    });
+
+    if (stub) {
+      blocks.push(stub);
+    }
+  }
+
+  return blocks.join(`${NEW_LINE}${NEW_LINE}`);
+}
+
+function newExpressionArguments(
+  masked: string,
+  token: ReferenceToken,
+): ArgumentList | null {
+  if (keywordBefore(masked, token.start) !== "new") {
+    return null;
+  }
+
+  return argumentListAfter(masked, token.end);
+}
+
+function staticMethodFromUsage(
+  source: string,
+  masked: string,
+  token: ReferenceToken,
+  knownTypes: ReadonlyMap<string, string>,
+): PhpCreateClassMethod | null {
+  let cursor = skipPhpWhitespace(masked, token.end);
+
+  if (masked.slice(cursor, cursor + 2) !== "::") {
+    return null;
+  }
+
+  cursor = skipPhpWhitespace(masked, cursor + 2);
+  const name = readPhpIdentifier(masked, cursor);
+
+  if (!name) {
+    return null;
+  }
+
+  const args = argumentListAfter(masked, cursor + name.length);
+
+  if (!args) {
+    return null;
+  }
+
+  return {
+    argTypes: argumentTypes(source, masked, args, knownTypes),
+    isStatic: true,
+    name,
+  };
+}
+
+function constructorPropertiesFromArguments(
+  source: string,
+  masked: string,
+  args: ArgumentList,
+  knownTypes: ReadonlyMap<string, string>,
+): PhpPropertyMember[] {
+  const expressions = splitPhpArguments(source, masked, args.start, args.end);
+  const types = argumentTypes(source, masked, args, knownTypes);
+
+  return expressions.map((expression, index) => ({
+    defaultValue: null,
+    isReadonly: false,
+    isStatic: false,
+    name: variableName(expression) ?? `arg${index}`,
+    phpDoc: null,
+    type: types[index] ?? null,
+    visibility: "private",
+  }));
+}
+
+function observedInstanceMethods(
+  source: string,
+  masked: string,
+  window: ReceiverWindow,
+  knownTypes: ReadonlyMap<string, string>,
+): PhpCreateClassMethod[] {
+  const methods: PhpCreateClassMethod[] = [];
+  const pattern = new RegExp(`\\$${window.receiver}\\s*->\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`, "g");
+  pattern.lastIndex = window.start;
+
+  for (let match = pattern.exec(masked); match; match = pattern.exec(masked)) {
+    if (match.index >= window.end) {
+      break;
+    }
+
+    const openParen = pattern.lastIndex - 1;
+    const end = matchingPhpPairOffset(masked, openParen, "(", ")");
+
+    if (end === null || end > window.end) {
+      continue;
+    }
+
+    methods.push({
+      argTypes: argumentTypes(
+        source,
+        masked,
+        { end, start: openParen + 1 },
+        knownTypes,
+      ),
+      isStatic: false,
+      name: match[1] ?? "",
+    });
+  }
+
+  return methods.filter((method) => method.name.length > 0);
+}
+
+function deduplicateMethods(
+  methods: PhpCreateClassMethod[],
+): PhpCreateClassMethod[] {
+  const names = new Set<string>();
+
+  return methods.filter((method) => {
+    const name = method.name.toLowerCase();
+
+    if (names.has(name)) {
+      return false;
+    }
+
+    names.add(name);
+    return true;
+  });
+}
+
+function argumentTypes(
+  source: string,
+  masked: string,
+  args: ArgumentList,
+  knownTypes: ReadonlyMap<string, string>,
+): (string | null)[] {
+  const inferred = inferArgumentTypes(source, masked, {
+    argsEnd: args.end,
+    argsStart: args.start,
+    kind: "method",
+    name: "usage",
+  });
+  const expressions = splitPhpArguments(source, masked, args.start, args.end);
+
+  return inferred.map((type, index) => {
+    if (type) {
+      return type;
+    }
+
+    const name = variableName(expressions[index] ?? "");
+    return name ? knownTypes.get(name) ?? null : null;
+  });
+}
+
+function variableName(expression: string): string | null {
+  return /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression.trim())?.[1] ?? null;
+}
+
+function assignedReceiverWindows(
+  masked: string,
+  token: ReferenceToken,
+  scope: UsageScope,
+): ReceiverWindow[] {
+  if (keywordBefore(masked, token.start) !== "new") {
+    return [];
+  }
+
+  const className = escapeRegExp(token.text);
+  const pattern = new RegExp(
+    `\\$([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*new\\s+${className}\\s*\\(`,
+    "g",
+  );
+  const windows: ReceiverWindow[] = [];
+  pattern.lastIndex = scope.start;
+
+  for (let match = pattern.exec(masked); match; match = pattern.exec(masked)) {
+    if (match.index >= scope.end) {
+      break;
+    }
+
+    const receiver = match[1];
+    const openParen = pattern.lastIndex - 1;
+    const closeParen = matchingPhpPairOffset(masked, openParen, "(", ")");
+
+    if (!receiver || closeParen === null || closeParen >= scope.end) {
+      continue;
+    }
+
+    windows.push({
+      end: nextReceiverAssignment(masked, receiver, closeParen + 1, scope.end),
+      receiver,
+      start: closeParen + 1,
+    });
+  }
+
+  return windows;
+}
+
+function nextReceiverAssignment(
+  masked: string,
+  receiver: string,
+  start: number,
+  scopeEnd: number,
+): number {
+  const assignment = new RegExp(
+    `\\$${receiver}\\s*(?:\\?\\?|<<|>>|[+\\-*\\/.%&|^])?=(?![=>])`,
+    "g",
+  );
+  assignment.lastIndex = start;
+  const match = assignment.exec(masked);
+
+  if (!match || match.index >= scopeEnd) {
+    return scopeEnd;
+  }
+
+  return match.index;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function knownVariableTypes(
+  source: string,
+  masked: string,
+  scope: UsageScope,
+  usageOffset: number,
+): ReadonlyMap<string, string> {
+  const types = new Map<string, string>();
+  const pattern = /(?:^|[(,])\s*(\??[A-Za-z_\\][A-Za-z0-9_\\|&?]*)\s+\$([A-Za-z_][A-Za-z0-9_]*)/g;
+  const scopedMasked = masked.slice(scope.start, usageOffset);
+
+  for (let match = pattern.exec(scopedMasked); match; match = pattern.exec(scopedMasked)) {
+    const typeStart = scope.start + match.index + (match[0]?.indexOf(match[1] ?? "") ?? 0);
+    const type = source.slice(typeStart, typeStart + (match[1]?.length ?? 0));
+    const name = match[2];
+
+    if (name && type) {
+      types.set(name, type);
+    }
+  }
+
+  return types;
+}
+
+function usageScope(masked: string, offset: number): UsageScope {
+  let best: UsageScope = { end: masked.length, start: 0 };
+  const pattern = /\bfunction\b[^;{]*\{/g;
+
+  for (let match = pattern.exec(masked); match; match = pattern.exec(masked)) {
+    const openBrace = pattern.lastIndex - 1;
+    const end = matchingPhpPairOffset(masked, openBrace, "{", "}");
+
+    if (end === null || offset < match.index || offset > end) {
+      continue;
+    }
+
+    if (end - match.index < best.end - best.start) {
+      best = { end, start: match.index };
+    }
+  }
+
+  return best;
+}
+
+function argumentListAfter(masked: string, offset: number): ArgumentList | null {
+  const openParen = skipPhpWhitespace(masked, offset);
+
+  if (masked[openParen] !== "(") {
+    return null;
+  }
+
+  const end = matchingPhpPairOffset(masked, openParen, "(", ")");
+  return end === null ? null : { end, start: openParen + 1 };
 }
 
 interface ReferenceToken {

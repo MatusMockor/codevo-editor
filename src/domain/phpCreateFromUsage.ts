@@ -1158,7 +1158,7 @@ function findAssignmentStop(masked: string, start: number): number {
   return masked.length;
 }
 
-function inferArgumentTypes(
+export function inferArgumentTypes(
   source: string,
   masked: string,
   usage: MemberUsage,
@@ -1182,7 +1182,7 @@ function inferArgumentTypes(
  * drop the argument. Comma scanning still runs on the masked source so a comma
  * inside a string / nested call never splits an argument.
  */
-function splitArguments(
+export function splitArguments(
   source: string,
   masked: string,
   start: number,
@@ -1210,14 +1210,24 @@ function splitArguments(
     }
 
     if (character === "," && depth === 0) {
-      args.push(source.slice(segmentStart, index).trim());
+      pushArgument(args, source.slice(segmentStart, index));
       segmentStart = index + 1;
     }
   }
 
-  args.push(source.slice(segmentStart, end).trim());
+  pushArgument(args, source.slice(segmentStart, end));
 
   return args;
+}
+
+function pushArgument(args: string[], segment: string): void {
+  const argument = segment.trim();
+
+  if (!argument) {
+    return;
+  }
+
+  args.push(argument);
 }
 
 /**
@@ -1481,7 +1491,7 @@ function promotedConstructorPropertyExists(
   return promoted.test(parameters);
 }
 
-function readIdentifier(masked: string, start: number): string | null {
+export function readIdentifier(masked: string, start: number): string | null {
   const match = IDENTIFIER.exec(masked.slice(start));
 
   if (!match || match.index !== 0) {
@@ -1491,7 +1501,7 @@ function readIdentifier(masked: string, start: number): string | null {
   return match[0];
 }
 
-function skipWhitespace(masked: string, start: number): number {
+export function skipWhitespace(masked: string, start: number): number {
   let index = start;
 
   while (index < masked.length && /\s/.test(masked[index] || "")) {
@@ -1505,7 +1515,7 @@ function isIdentifierChar(character: string): boolean {
   return /[A-Za-z0-9_]/.test(character);
 }
 
-function matchingPairOffset(
+export function matchingPairOffset(
   source: string,
   openOffset: number,
   open: string,

@@ -519,4 +519,360 @@ describe("renderPhpTypeSkeleton", () => {
 
     expect(skeleton).toBe(`<?php\n\nclass GlobalThing\n{\n}\n`);
   });
+
+  it("renders promoted constructor properties inferred from typed variables", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(int $userId, float $orderTotal): void
+    {
+        new Foo($userId, $orderTotal);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", "App\\Models", {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toBe(`<?php
+
+namespace App\\Models;
+
+class Foo
+{
+    public function __construct(
+        private int $userId,
+        private float $orderTotal,
+    ) {}
+}
+`);
+  });
+
+  it("renders observed instance method stubs with inferred parameters", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(string $msg): void
+    {
+        $foo = new Foo(42);
+        $foo->send($msg, true);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toBe(`<?php
+
+class Foo
+{
+    public function __construct(
+        private int $arg0,
+    ) {}
+
+    public function send(string $arg0, bool $arg1)
+    {
+    }
+}
+`);
+  });
+
+  it("leaves unknown constructor and method arguments untyped", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(): void
+    {
+        $foo = new Foo($unknown);
+        $foo->send(makeMessage());
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toContain("private $unknown,");
+    expect(skeleton).toContain("public function send($arg0)");
+  });
+
+  it("keeps a bare no-argument new expression as an empty class", () => {
+    const source = `<?php\nnew Foo();\n`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toBe(`<?php\n\nclass Foo\n{\n}\n`);
+  });
+
+  it("renders observed methods without an empty constructor", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(): void
+    {
+        $foo = new Foo();
+        $foo->send('ready');
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toBe(`<?php
+
+class Foo
+{
+    public function send(string $arg0)
+    {
+    }
+}
+`);
+  });
+
+  it("renders a static method when the class is created from a static call", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(int $userId): void
+    {
+        Foo::make($userId);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toBe(`<?php
+
+class Foo
+{
+    public static function make(int $arg0)
+    {
+    }
+}
+`);
+  });
+
+  it.each([
+    ["single argument", "new Foo(1,);", ["private int $arg0,"]],
+    [
+      "multiple arguments",
+      "new Foo(1, 'x',);",
+      ["private int $arg0,", "private string $arg1,"],
+    ],
+    [
+      "multi-line arguments",
+      "new Foo(\n            1,\n            'x',\n        );",
+      ["private int $arg0,", "private string $arg1,"],
+    ],
+  ])("ignores a trailing comma with %s", (_name, expression, parameters) => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(): void
+    {
+        ${expression}
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    for (const parameter of parameters) {
+      expect(skeleton).toContain(parameter);
+    }
+
+    expect(skeleton).not.toContain("$arg2");
+    expect(skeleton).not.toContain("private $arg1,");
+  });
+
+  it.each([
+    ["single argument", "$foo->send(1,);", "public function send(int $arg0)"],
+    [
+      "multiple arguments",
+      "$foo->send(1, 'x',);",
+      "public function send(int $arg0, string $arg1)",
+    ],
+    [
+      "multi-line arguments",
+      "$foo->send(\n            1,\n            'x',\n        );",
+      "public function send(int $arg0, string $arg1)",
+    ],
+  ])(
+    "ignores a trailing comma in an observed method with %s",
+    (_name, call, signature) => {
+      const source = `<?php
+
+class Checkout
+{
+    public function run(): void
+    {
+        $foo = new Foo();
+        ${call}
+    }
+}
+`;
+      const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+        offset: source.indexOf("Foo"),
+        source,
+      });
+
+      expect(skeleton).toContain(signature);
+      expect(skeleton).not.toContain("$arg2");
+      expect(skeleton).not.toContain("string $arg1, $arg2");
+    },
+  );
+
+  it("stops observing methods at the next receiver reassignment", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(string $message): void
+    {
+        $foo = new Foo();
+        $foo->fromFoo($message);
+        $foo = new Bar();
+        $foo->fromBar($message);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toContain("public function fromFoo(string $arg0)");
+    expect(skeleton).not.toContain("fromBar");
+  });
+
+  it("keeps observing methods after a comparison on the receiver", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(string $message, Foo $cached): void
+    {
+        $foo = new Foo();
+        if ($foo === $cached) {
+            return;
+        }
+        if ($foo == $cached) {
+            return;
+        }
+        $foo->afterCompare($message);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo("),
+      source,
+    });
+
+    expect(skeleton).toContain("public function afterCompare(string $arg0)");
+  });
+
+  it("does not stop observing at an array key arrow after the receiver", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(string $message): void
+    {
+        $foo = new Foo();
+        $map = [$foo => $message];
+        $foo->afterArrow($message);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo("),
+      source,
+    });
+
+    expect(skeleton).toContain("public function afterArrow(string $arg0)");
+  });
+
+  it("starts observing methods at the selected class assignment", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(string $message): void
+    {
+        $foo = new Bar();
+        $foo->fromBar($message);
+        $foo = new Foo();
+        $foo->fromFoo($message);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toContain("public function fromFoo(string $arg0)");
+    expect(skeleton).not.toContain("fromBar");
+  });
+
+  it("observes two receivers assigned instances of the same class", () => {
+    const source = `<?php
+
+class Checkout
+{
+    public function run(): void
+    {
+        $first = new Foo();
+        $second = new Foo();
+        $first->one();
+        $second->two();
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toContain("public function one()");
+    expect(skeleton).toContain("public function two()");
+  });
+
+  it("infers members when an attribute shares the method declaration line", () => {
+    const source = `<?php
+
+class Checkout
+{
+    #[Route('/x')] public function run(int $userId): void
+    {
+        new Foo($userId);
+    }
+}
+`;
+    const skeleton = renderPhpTypeSkeleton("class", "Foo", null, {
+      offset: source.indexOf("Foo"),
+      source,
+    });
+
+    expect(skeleton).toContain("private int $userId,");
+  });
 });
