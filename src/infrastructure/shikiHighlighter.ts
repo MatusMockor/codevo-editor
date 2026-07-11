@@ -310,6 +310,7 @@ export const SHIKI_LANGS = [
   "scss",
   "html",
   "yaml",
+  "dotenv",
   "markdown",
   "sql",
   "vue",
@@ -404,6 +405,7 @@ export function createAppHighlighter(): Promise<HighlighterCore> {
       import("shiki/langs/scss.mjs"),
       import("shiki/langs/html.mjs"),
       import("shiki/langs/yaml.mjs"),
+      import("shiki/langs/dotenv.mjs"),
       import("shiki/langs/markdown.mjs"),
       import("shiki/langs/sql.mjs"),
       // Vue SFC grammar — highlights <template>/<script>/<style> blocks. The

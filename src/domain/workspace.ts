@@ -387,6 +387,14 @@ export function detectLanguage(path: string): string {
     return "blade";
   }
 
+  if (fileName === ".env" || fileName.startsWith(".env.")) {
+    return "dotenv";
+  }
+
+  if (fileName === "env") {
+    return "plaintext";
+  }
+
   const parts = fileName.split(".");
   const extension = parts[parts.length - 1]?.toLowerCase();
 
@@ -399,6 +407,7 @@ export function detectLanguage(path: string): string {
     html: "html",
     cjs: "javascript",
     cts: "typescript",
+    env: "dotenv",
     js: "javascript",
     json: "json",
     jsx: "javascript",

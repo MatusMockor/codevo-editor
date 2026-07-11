@@ -272,6 +272,21 @@ describe("createAppHighlighter", () => {
     expect(highlighter.getLoadedLanguages()).toContain("vue");
   });
 
+  it("ships and registers the bundled dotenv grammar", async () => {
+    const highlighter = await createAppHighlighter();
+    const { monaco, providers } = createMonacoStub();
+
+    await setupShikiTokenization(
+      monaco as unknown as Parameters<typeof setupShikiTokenization>[0],
+      "calm-dark",
+    );
+
+    expect(SHIKI_LANGS).toContain("dotenv");
+    expect(highlighter.getLoadedLanguages()).toContain("dotenv");
+    expect(monaco.languages.register).toHaveBeenCalledWith({ id: "dotenv" });
+    expect(providers.get("dotenv")).toBeDefined();
+  });
+
   it("loads the bundled official Ayu Mirage theme", async () => {
     const highlighter = await createAppHighlighter();
     expect(highlighter.getLoadedThemes()).toContain("ayu-mirage");

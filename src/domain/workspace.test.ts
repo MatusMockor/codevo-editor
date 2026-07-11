@@ -42,6 +42,18 @@ describe("workspace path helpers", () => {
     expect(detectLanguage("/project.v1/src/HelloWorld.vue")).toBe("vue");
   });
 
+  it.each([
+    ["/project/.env", "dotenv"],
+    ["/project/.env.local", "dotenv"],
+    ["/project/.env.example", "dotenv"],
+    ["/project/local.env", "dotenv"],
+    ["/project/env", "plaintext"],
+    ["/project/src/.env", "dotenv"],
+    ["/project/.environment", "plaintext"],
+  ])("detects dotenv files for %s", (path, language) => {
+    expect(detectLanguage(path)).toBe(language);
+  });
+
   it("detects Nette Latte templates and NEON config files", () => {
     expect(detectLanguage("/project/app/UI/Product/show.latte")).toBe("latte");
     expect(detectLanguage("/project/app/Presenters/templates/@layout.latte")).toBe(
