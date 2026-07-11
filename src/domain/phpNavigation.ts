@@ -29,6 +29,7 @@ import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
 import { phpLaravelRedisConnectionReferenceContextAt } from "./phpLaravelRedis";
 import { phpLaravelStorageDiskReferenceContextAt } from "./phpLaravelStorage";
 import { phpLaravelTranslationReferenceContextAt } from "./phpLaravelTranslations";
+import { phpLaravelValidationRuleTableReferenceAt } from "./phpLaravelValidation";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 
 export { resolvePhpClassName };
@@ -120,6 +121,10 @@ export type PhpIdentifierContext =
       viewName: string;
     }
   | {
+      kind: "laravelValidationTableString";
+      tableName: string;
+    }
+  | {
       kind: "methodCall";
       methodName: string;
       receiverExpression: string;
@@ -191,6 +196,18 @@ export function phpIdentifierContextAt(
   source: string,
   position: EditorPosition,
 ): PhpIdentifierContext | null {
+  const validationTable = phpLaravelValidationRuleTableReferenceAt(
+    source,
+    position,
+  );
+
+  if (validationTable) {
+    return {
+      kind: "laravelValidationTableString",
+      tableName: validationTable.tableName,
+    };
+  }
+
   const namedRoute = phpLaravelNamedRouteReferenceContextAt(source, position);
 
   if (namedRoute) {

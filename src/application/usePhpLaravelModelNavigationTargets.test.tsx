@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { WorkspaceDescriptor } from "../domain/workspace";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
@@ -49,6 +50,10 @@ function makeDeps(
     currentWorkspaceRootRef: { current: ROOT },
     isLaravelFrameworkActive: true,
     openNavigationTarget: vi.fn(async () => true),
+    projectSymbolSearch: {
+      searchProjectSymbols: vi.fn(async () => []),
+    },
+    providers: [phpLaravelFrameworkProvider],
     readNavigationFileContent: vi.fn(async () => modelSource()),
     resolvePhpClassSourcePaths: vi.fn(async () => [MODEL_PATH]),
     workspaceDescriptor: makeDescriptor(),
@@ -122,6 +127,96 @@ class Comment
 }
 
 describe("usePhpLaravelModelNavigationTargets", () => {
+  it("finds explicit validation table models before convention matches", async () => {
+    const accountPath = `${ROOT}/app/Models/Account.php`;
+    const userPath = `${ROOT}/app/Models/User.php`;
+    const searchProjectSymbols = vi.fn(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\User",
+        kind: "class" as const,
+        lineNumber: 3,
+        name: "User",
+        path: userPath,
+        relativePath: "app/Models/User.php",
+      },
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Account",
+        kind: "class" as const,
+        lineNumber: 3,
+        name: "Account",
+        path: accountPath,
+        relativePath: "app/Models/Account.php",
+      },
+    ]);
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      if (path === accountPath) {
+        return `<?php
+namespace App\\Models;
+class Account extends Model { protected $table = 'users'; }
+`;
+      }
+
+      return `<?php
+namespace App\\Models;
+class User extends Model {}
+`;
+    });
+    const deps = makeDeps({
+      projectSymbolSearch: { searchProjectSymbols },
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths: vi.fn(async (className) =>
+        className.endsWith("Account") ? [accountPath] : [userPath],
+      ),
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().findPhpLaravelValidationRuleModelTargets("users"),
+    ).resolves.toEqual([
+      {
+        label: "App\\Models\\Account",
+        path: accountPath,
+        position: { column: 7, lineNumber: 3 },
+      },
+    ]);
+    expect(searchProjectSymbols).toHaveBeenCalledWith(ROOT, "", 2000);
+
+    harness.unmount();
+  });
+
+  it("excludes indexed model candidates from another workspace", async () => {
+    const readNavigationFileContent = vi.fn(async () => modelSource());
+    const deps = makeDeps({
+      projectSymbolSearch: {
+        searchProjectSymbols: vi.fn(async () => [
+          {
+            column: 1,
+            containerName: null,
+            fullyQualifiedName: "App\\Models\\User",
+            kind: "class" as const,
+            lineNumber: 1,
+            name: "User",
+            path: `${OTHER_ROOT}/app/Models/User.php`,
+            relativePath: "app/Models/User.php",
+          },
+        ]),
+      },
+      readNavigationFileContent,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().findPhpLaravelValidationRuleModelTargets("users"),
+    ).resolves.toEqual([]);
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("opens dynamic where targets from model attributes", async () => {
     const openNavigationTarget = vi.fn(async () => true);
     const deps = makeDeps({ openNavigationTarget });

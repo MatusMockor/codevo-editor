@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   laravelBuiltInValidationRuleNames,
   phpLaravelValidationRuleCompletions,
+  phpLaravelValidationRuleTableReferenceAt,
   phpLaravelValidationRuleStringContextAt,
 } from "./phpLaravelValidation";
 
@@ -170,6 +171,145 @@ Validator::make('required', []);
     expect(names).toContain("required");
     expect(names.every((name) => name.startsWith("req"))).toBe(true);
     expect(names).not.toContain("email");
+  });
+
+  describe("validation rule table references", () => {
+    it.each([
+      ["exists", "exists:users,id"],
+      ["unique", "unique:users,email"],
+    ])("detects the %s rule table and exact range", (_, rule) => {
+      const source = `<?php
+
+$request->validate([
+    'email' => '${rule}',
+]);
+`;
+      const startOffset = source.indexOf("users");
+
+      expect(
+        phpLaravelValidationRuleTableReferenceAt(
+          source,
+          positionAtOffset(source, startOffset + 2),
+        ),
+      ).toEqual({
+        endOffset: startOffset + "users".length,
+        startOffset,
+        tableName: "users",
+      });
+    });
+
+    it("detects a table in a pipe-separated rule string", () => {
+      const source = `<?php
+
+$request->validate([
+    'user_id' => 'required|exists:users,id',
+]);
+`;
+      const startOffset = source.indexOf("users");
+
+      expect(
+        phpLaravelValidationRuleTableReferenceAt(
+          source,
+          positionAtOffset(source, startOffset + 1),
+        ),
+      ).toEqual({
+        endOffset: startOffset + "users".length,
+        startOffset,
+        tableName: "users",
+      });
+    });
+
+    it("detects a table in an array-form rule list", () => {
+      const source = `<?php
+
+$request->validate([
+    'user_id' => ['required', 'exists:users,id'],
+]);
+`;
+      const startOffset = source.indexOf("users");
+
+      expect(
+        phpLaravelValidationRuleTableReferenceAt(
+          source,
+          positionAtOffset(source, startOffset + 1),
+        ),
+      ).toEqual({
+        endOffset: startOffset + "users".length,
+        startOffset,
+        tableName: "users",
+      });
+    });
+
+    it("detects a table in a FormRequest rules method", () => {
+      const source = `<?php
+
+class StoreUserRequest extends FormRequest
+{
+    public function rules(): array
+    {
+        return ['user_id' => 'exists:users,id'];
+    }
+}
+`;
+      const startOffset = source.indexOf("users");
+
+      expect(
+        phpLaravelValidationRuleTableReferenceAt(
+          source,
+          positionAtOffset(source, startOffset + 1),
+        ),
+      ).toEqual({
+        endOffset: startOffset + "users".length,
+        startOffset,
+        tableName: "users",
+      });
+    });
+
+    it("excludes a dotted connection prefix from the table range", () => {
+      const source = `<?php
+
+$request->validate([
+    'user_id' => 'exists:mysql.users,id',
+]);
+`;
+      const startOffset = source.indexOf("users");
+
+      expect(
+        phpLaravelValidationRuleTableReferenceAt(
+          source,
+          positionAtOffset(source, startOffset + 1),
+        ),
+      ).toEqual({
+        endOffset: startOffset + "users".length,
+        startOffset,
+        tableName: "users",
+      });
+    });
+
+    it("does not detect the reference when the cursor is on the rule name", () => {
+      const source = `<?php
+
+$request->validate(['user_id' => 'exists:users,id']);
+`;
+
+      expect(
+        phpLaravelValidationRuleTableReferenceAt(
+          source,
+          positionAtOffset(source, source.indexOf("exists") + 2),
+        ),
+      ).toBeNull();
+    });
+
+    it("does not detect a rule outside a validation context", () => {
+      const source = "<?php $rule = 'exists:users,id';";
+
+      expect(
+        phpLaravelValidationRuleTableReferenceAt(
+          source,
+          positionAtOffset(source, source.indexOf("users") + 1),
+        ),
+      ).toBeNull();
+    });
   });
 });
 

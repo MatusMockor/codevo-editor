@@ -35,9 +35,11 @@ function makeDeps(
       collectNamedRouteTargets: vi.fn(async () => []),
       findConfigTarget: vi.fn(async () => null),
       findEnvTarget: vi.fn(async () => null),
+      findPhpLaravelValidationRuleModelTargets: vi.fn(async () => []),
       findTranslationTarget: vi.fn(async () => null),
       findViewTarget: vi.fn(async () => null),
     },
+    isLaravelFrameworkActive: true,
     openNavigationTarget: vi.fn(async () => true),
     providers: [phpLaravelFrameworkProvider],
     setMessage: vi.fn(),
@@ -264,6 +266,102 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       POSITION,
       "dashboard",
     );
+
+    harness.unmount();
+  });
+
+  it("opens validation rule table model targets only for Laravel", async () => {
+    const modelTarget = {
+      label: "App\\Models\\User",
+      path: `${ROOT}/app/Models/User.php`,
+      position: POSITION,
+    };
+    const findPhpLaravelValidationRuleModelTargets = vi.fn(async () => [
+      modelTarget,
+    ]);
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findPhpLaravelValidationRuleModelTargets,
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => null),
+      },
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().goToPhpFrameworkLiteralDefinition({
+        kind: "validationTable",
+        tableName: "users",
+      }),
+    ).resolves.toBe(true);
+    expect(findPhpLaravelValidationRuleModelTargets).toHaveBeenCalledWith(
+      "users",
+    );
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      modelTarget.path,
+      POSITION,
+      modelTarget.label,
+    );
+
+    harness.unmount();
+
+    const genericOpenNavigationTarget = vi.fn(async () => true);
+    const genericDeps = makeDeps({
+      frameworkLiteralNavigationDependencies:
+        deps.frameworkLiteralNavigationDependencies,
+      isLaravelFrameworkActive: false,
+      openNavigationTarget: genericOpenNavigationTarget,
+    });
+    const genericHarness = renderHook(genericDeps);
+
+    await expect(
+      genericHarness.api().goToPhpFrameworkLiteralDefinition({
+        kind: "validationTable",
+        tableName: "users",
+      }),
+    ).resolves.toBe(false);
+    expect(findPhpLaravelValidationRuleModelTargets).toHaveBeenCalledTimes(1);
+    expect(genericOpenNavigationTarget).not.toHaveBeenCalled();
+
+    genericHarness.unmount();
+  });
+
+  it("does not open validation model targets from another workspace", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const setMessage = vi.fn();
+    const deps = makeDeps({
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findPhpLaravelValidationRuleModelTargets: vi.fn(async () => [
+          {
+            label: "App\\Models\\User",
+            path: `${OTHER_ROOT}/app/Models/User.php`,
+            position: POSITION,
+          },
+        ]),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => null),
+      },
+      openNavigationTarget,
+      setMessage,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().goToPhpFrameworkLiteralDefinition({
+        kind: "validationTable",
+        tableName: "users",
+      }),
+    ).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+    expect(setMessage).not.toHaveBeenCalled();
 
     harness.unmount();
   });

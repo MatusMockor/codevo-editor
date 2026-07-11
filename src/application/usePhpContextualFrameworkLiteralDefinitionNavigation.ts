@@ -2,6 +2,7 @@ import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
+import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   type PhpFrameworkLiteralNavigationDependencies,
@@ -37,12 +38,17 @@ export type PhpContextualFrameworkLiteralDefinitionRequest =
       kind: "view";
       missingMessage: string;
       name: string;
+    }
+  | {
+      kind: "validationTable";
+      tableName: string;
     };
 
 export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   frameworkLiteralNavigationDependencies: PhpFrameworkLiteralNavigationDependencies;
+  isLaravelFrameworkActive?: boolean;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
@@ -65,6 +71,7 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
   activeDocument,
   currentWorkspaceRootRef,
   frameworkLiteralNavigationDependencies,
+  isLaravelFrameworkActive = false,
   openNavigationTarget,
   setMessage,
   supportsStringLiterals,
@@ -87,6 +94,10 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
         return false;
       }
 
+      if (request.kind === "validationTable" && !isLaravelFrameworkActive) {
+        return false;
+      }
+
       const target = await resolveContextualFrameworkLiteralTarget(
         request,
         activeDocument,
@@ -98,16 +109,37 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       }
 
       if (!target) {
-        setMessage(request.missingMessage);
+        if ("missingMessage" in request) {
+          setMessage(request.missingMessage);
+        }
+
         return false;
       }
 
-      return openNavigationTarget(target.path, target.position, target.label);
+      if (
+        request.kind === "validationTable" &&
+        workspaceRelativePath(requestedRoot, target.path) === null
+      ) {
+        return false;
+      }
+
+      const opened = await openNavigationTarget(
+        target.path,
+        target.position,
+        target.label,
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      return opened;
     },
     [
       activeDocument,
       currentWorkspaceRootRef,
       frameworkLiteralNavigationDependencies,
+      isLaravelFrameworkActive,
       openNavigationTarget,
       setMessage,
       supportsStringLiterals,
@@ -176,6 +208,23 @@ async function resolveContextualFrameworkLiteralTarget(
       ? {
           kind: "translation",
           label: target.key,
+          path: target.path,
+          position: target.position,
+        }
+      : null;
+  }
+
+  if (request.kind === "validationTable") {
+    const targets =
+      await dependencies.findPhpLaravelValidationRuleModelTargets?.(
+        request.tableName,
+      );
+    const target = targets?.[0];
+
+    return target
+      ? {
+          kind: "validationTable",
+          label: target.label,
           path: target.path,
           position: target.position,
         }

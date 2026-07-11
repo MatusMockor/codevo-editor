@@ -5525,12 +5525,15 @@ export function useWorkbenchController(
     });
 
   const {
+    findPhpLaravelValidationRuleModelTargets,
     openPhpLaravelDynamicWhereTarget,
     openPhpLaravelModelAttributeTarget,
   } = usePhpLaravelModelNavigationTargets({
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
     openNavigationTarget,
+    projectSymbolSearch,
+    providers: activePhpFrameworkProviders,
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
     workspaceDescriptor,
@@ -5718,8 +5721,11 @@ export function useWorkbenchController(
     usePhpContextualFrameworkLiteralDefinitionNavigation({
       activeDocument,
       currentWorkspaceRootRef,
-      frameworkLiteralNavigationDependencies:
-        phpFrameworkLiteralNavigationDependencies,
+      frameworkLiteralNavigationDependencies: {
+        ...phpFrameworkLiteralNavigationDependencies,
+        findPhpLaravelValidationRuleModelTargets,
+      },
+      isLaravelFrameworkActive: phpFrameworkRuntimeContext.isLaravel,
       openNavigationTarget,
       providers: activePhpFrameworkProviders,
       setMessage,

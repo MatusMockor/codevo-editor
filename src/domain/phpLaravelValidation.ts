@@ -120,6 +120,12 @@ export interface PhpLaravelValidationRuleCompletion {
   name: LaravelBuiltInValidationRuleName;
 }
 
+export interface PhpLaravelValidationRuleTableReference {
+  endOffset: number;
+  startOffset: number;
+  tableName: string;
+}
+
 interface PhpStringLiteral {
   closed: boolean;
   quote: "'" | "\"";
@@ -128,7 +134,7 @@ interface PhpStringLiteral {
   value: string;
 }
 
-const validationRulesArgumentIndexByCall = {
+export const validationRulesArgumentIndexByCall = {
   "$this->validate": 1,
   "Validator::make": 1,
   validate: 0,
@@ -147,19 +153,15 @@ export function phpLaravelValidationRuleStringContextAt(
     return null;
   }
 
-  const arrayOpen = enclosingShortArrayOpenAt(source, literal);
+  const arrayOpen = validationRulesArrayOpenAt(source, literal);
 
   if (arrayOpen === null) {
     return null;
   }
 
-  if (!isMapValueLiteral(source, arrayOpen, literal)) {
-    return null;
-  }
-
   const call = validationRulesArgumentCallAt(source, arrayOpen);
 
-  if (!call) {
+  if (!call && !isRulesMethodReturnArray(source, arrayOpen)) {
     return null;
   }
 
@@ -172,6 +174,49 @@ export function phpLaravelValidationRuleStringContextAt(
     position,
     prefix: rulePrefixAfterLastSeparator(valuePrefix),
   };
+}
+
+export function phpLaravelValidationRuleTableReferenceAt(
+  source: string,
+  position: EditorPosition,
+): PhpLaravelValidationRuleTableReference | null {
+  if (!phpLaravelValidationRuleStringContextAt(source, position)) {
+    return null;
+  }
+
+  const offset = offsetAtPosition(source, position);
+  const literal = stringLiteralAtOffset(source, offset);
+
+  if (!literal) {
+    return null;
+  }
+
+  const valueStart = literal.quoteStart + 1;
+  const value = source.slice(valueStart, literal.quoteEnd);
+  const pattern = /(?:^|\|)\s*(?:exists|unique)\s*:\s*([^,|]*)/gi;
+
+  for (const match of value.matchAll(pattern)) {
+    const parameter = match[1] ?? "";
+    const trimmedParameter = parameter.trim();
+    const tableName = trimmedParameter.split(".").pop()?.trim() ?? "";
+
+    if (!tableName) {
+      continue;
+    }
+
+    const parameterOffset = match.index + match[0].lastIndexOf(parameter);
+    const tableOffset = parameter.lastIndexOf(tableName);
+    const startOffset = valueStart + parameterOffset + tableOffset;
+    const endOffset = startOffset + tableName.length;
+
+    if (offset < startOffset || offset >= endOffset) {
+      continue;
+    }
+
+    return { endOffset, startOffset, tableName };
+  }
+
+  return null;
 }
 
 export function phpLaravelValidationRuleCompletions(
@@ -213,6 +258,89 @@ function isMapValueLiteral(
   const beforeLiteral = source.slice(itemStart, literal.quoteStart);
 
   return hasTopLevelDoubleArrow(beforeLiteral);
+}
+
+function validationRulesArrayOpenAt(
+  source: string,
+  literal: PhpStringLiteral,
+): number | null {
+  const arrayOpen = enclosingShortArrayOpenAt(source, literal);
+
+  if (arrayOpen === null) {
+    return null;
+  }
+
+  if (isMapValueLiteral(source, arrayOpen, literal)) {
+    return arrayOpen;
+  }
+
+  const parentArrayOpen = enclosingShortArrayOpenBefore(source, arrayOpen);
+
+  if (parentArrayOpen === null) {
+    return null;
+  }
+
+  if (!isMapValueOffset(source, parentArrayOpen, arrayOpen)) {
+    return null;
+  }
+
+  return parentArrayOpen;
+}
+
+function enclosingShortArrayOpenBefore(
+  source: string,
+  targetOffset: number,
+): number | null {
+  for (
+    let arrayOpen = source.lastIndexOf("[", targetOffset - 1);
+    arrayOpen >= 0;
+    arrayOpen = source.lastIndexOf("[", arrayOpen - 1)
+  ) {
+    const arrayClose = matchingBracketOffset(source, arrayOpen, "[", "]");
+
+    if (arrayClose === null || targetOffset <= arrayClose) {
+      return arrayOpen;
+    }
+  }
+
+  return null;
+}
+
+function isMapValueOffset(
+  source: string,
+  arrayOpen: number,
+  valueOffset: number,
+): boolean {
+  if (!isTopLevelBetween(source, arrayOpen + 1, valueOffset)) {
+    return false;
+  }
+
+  const itemStart = previousTopLevelArrayDelimiter(
+    source,
+    arrayOpen,
+    valueOffset,
+  );
+
+  return hasTopLevelDoubleArrow(source.slice(itemStart, valueOffset));
+}
+
+function isRulesMethodReturnArray(source: string, arrayOpen: number): boolean {
+  const pattern = /\bfunction\s+rules\s*\([^)]*\)\s*(?::\s*[^\{]+)?\s*\{/g;
+
+  for (const match of source.matchAll(pattern)) {
+    const bodyStart = (match.index ?? 0) + match[0].lastIndexOf("{");
+    const bodyEnd = matchingBracketOffset(source, bodyStart, "{", "}");
+
+    if (bodyEnd === null || arrayOpen <= bodyStart || arrayOpen >= bodyEnd) {
+      continue;
+    }
+
+    if (/\breturn\s*$/.test(source.slice(bodyStart + 1, arrayOpen))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function validationRulesArgumentCallAt(

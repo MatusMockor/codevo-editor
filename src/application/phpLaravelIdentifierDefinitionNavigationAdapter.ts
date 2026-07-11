@@ -109,6 +109,12 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
           name: context.viewName,
         });
 
+      case "laravelValidationTableString":
+        return dependencies.goToPhpFrameworkLiteralDefinition({
+          kind: "validationTable",
+          tableName: context.tableName,
+        });
+
       case "laravelRouteActionMethod":
         return goToRouteActionMethodDefinition(context, dependencies);
 

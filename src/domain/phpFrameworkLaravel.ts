@@ -5490,7 +5490,53 @@ function phpLaravelMigrationSchemaAttributesForModel(
   return Array.from(columns);
 }
 
-function phpLaravelModelTableNameFromSource(
+export interface PhpLaravelModelSourceCandidate {
+  className: string;
+  path: string;
+  source: string;
+}
+
+export function phpLaravelModelSourcesForTableName<
+  Candidate extends PhpLaravelModelSourceCandidate,
+>(tableName: string, candidates: readonly Candidate[]): Candidate[] {
+  const normalizedTableName = tableName.trim();
+
+  if (!normalizedTableName) {
+    return [];
+  }
+
+  const explicitMatches = candidates.filter(
+    (candidate) =>
+      phpLaravelExplicitModelTableNameFromSource(
+        candidate.source,
+        candidate.className,
+      ) === normalizedTableName,
+  );
+
+  if (explicitMatches.length > 0) {
+    return explicitMatches;
+  }
+
+  return candidates.filter(
+    (candidate) =>
+      phpLaravelModelTableNameFromSource(
+        candidate.source,
+        candidate.className,
+      ) === normalizedTableName,
+  );
+}
+
+export function phpLaravelModelTableNameFromSource(
+  source: string,
+  declaringClassName: string,
+): string | null {
+  return (
+    phpLaravelExplicitModelTableNameFromSource(source, declaringClassName) ??
+    phpLaravelConventionalModelTableName(declaringClassName)
+  );
+}
+
+function phpLaravelExplicitModelTableNameFromSource(
   source: string,
   declaringClassName: string,
 ): string | null {
@@ -5511,10 +5557,12 @@ function phpLaravelModelTableNameFromSource(
     }
   }
 
-  return phpLaravelConventionalModelTableName(declaringClassName);
+  return null;
 }
 
-function phpLaravelConventionalModelTableName(className: string): string | null {
+export function phpLaravelConventionalModelTableName(
+  className: string,
+): string | null {
   const shortName = className.trim().replace(/^\\+/, "").split("\\").pop();
 
   if (!shortName) {

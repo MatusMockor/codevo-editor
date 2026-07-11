@@ -15,7 +15,13 @@ export interface PhpFrameworkLiteralNavigationDocument {
 }
 
 export interface PhpFrameworkLiteralNavigationTarget {
-  kind: "config" | "env" | "route" | "translation" | "view";
+  kind:
+    | "config"
+    | "env"
+    | "route"
+    | "translation"
+    | "validationTable"
+    | "view";
   label: string;
   path: string;
   position: EditorPosition;
@@ -38,6 +44,11 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   findEnvTarget: (
     envName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
+  findPhpLaravelValidationRuleModelTargets?: (
+    tableName: string,
+  ) => Promise<
+    readonly { label: string; path: string; position: EditorPosition }[]
+  >;
   findTranslationTarget: (
     translationKey: string,
   ) => Promise<{ key: string; path: string; position: EditorPosition } | null>;
