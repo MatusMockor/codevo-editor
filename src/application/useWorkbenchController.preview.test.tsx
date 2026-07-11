@@ -65330,6 +65330,130 @@ interface GreeterContract
     expect(getWorkbench().activePath).not.toBe(testPath);
   });
 
+  it("loads package scripts on workspace open and runs palette commands by name", async () => {
+    const manifests = new Map([
+      [
+        "/workspace/composer.json",
+        '{"scripts":{"test":"touch should-not-run"}}',
+      ],
+      [
+        "/workspace/package.json",
+        '{"scripts":{"dev":"touch should-not-run"}}',
+      ],
+    ]);
+    const readTextFile = vi.fn(async (path: string) => {
+      const manifest = manifests.get(path);
+
+      if (manifest) {
+        return manifest;
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async () => [
+        fileEntry("/workspace/composer.json", "composer.json"),
+        fileEntry("/workspace/package.json", "package.json"),
+      ]),
+      readTextFile,
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        getWorkbench().commands
+          .filter((command) => command.id.startsWith("script."))
+          .map((command) => command.title),
+      ).toEqual(["composer: test", "npm: dev"]);
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(31);
+    });
+    await act(async () => {
+      await runCommand(getWorkbench(), "script.composer.test");
+      await runCommand(getWorkbench(), "script.npm.dev");
+    });
+
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenNthCalledWith(
+      1,
+      31,
+      "composer run-script test\r",
+    );
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenNthCalledWith(
+      2,
+      31,
+      "npm run dev\r",
+    );
+
+    manifests.set(
+      "/workspace/package.json",
+      '{"scripts":{"changed":"vite build"}}',
+    );
+    await flushAsyncTurns(24);
+
+    expect(
+      getWorkbench().commands.some(
+        (command) => command.id === "script.npm.changed",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps package script palette commands isolated across workspaces", async () => {
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === "/workspace-a/composer.json") {
+        return '{"scripts":{"test-a":"phpunit"}}';
+      }
+
+      if (path === "/workspace-b/package.json") {
+        return '{"scripts":{"dev-b":"vite"}}';
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path) =>
+        path === "/workspace-a"
+          ? [fileEntry(`${path}/composer.json`, "composer.json")]
+          : [fileEntry(`${path}/package.json`, "package.json")],
+      ),
+      readTextFile,
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        getWorkbench().commands.some(
+          (command) => command.id === "script.composer.test-a",
+        ),
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(
+        getWorkbench().commands.some(
+          (command) => command.id === "script.npm.dev-b",
+        ),
+      ).toBe(true);
+    });
+
+    expect(
+      getWorkbench().commands.some(
+        (command) => command.id === "script.composer.test-a",
+      ),
+    ).toBe(false);
+  });
+
   it("runs a gutter test by writing an artisan --filter command into the active terminal", async () => {
     const testPath = "/workspace/tests/Unit/InvoiceServiceTest.php";
     const testSource = `<?php

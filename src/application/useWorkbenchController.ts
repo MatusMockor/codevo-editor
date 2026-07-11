@@ -27,6 +27,7 @@ import { workbenchLanguagePanelCommands } from "./workbenchLanguagePanelCommands
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
+import { workbenchScriptCommands } from "./workbenchScriptCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
@@ -330,6 +331,11 @@ import {
   type WorkspaceSettings,
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
+import {
+  parseComposerScripts,
+  parsePackageJsonScripts,
+  type PackageScript,
+} from "../domain/packageScripts";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import {
@@ -488,11 +494,30 @@ export function useWorkbenchController(
     projectSymbols: projectSymbolSearch,
     textSearch,
   } = workspaceGateways;
+  const readTestFileIfExists = useCallback(
+    async (path: string): Promise<string | null> => {
+      try {
+        return await workspaceFiles.readTextFile(path);
+      } catch {
+        return null;
+      }
+    },
+    [workspaceFiles],
+  );
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [workspaceIdentityDescriptor, setWorkspaceIdentityDescriptor] =
     useState<WorkspaceIdentityDescriptor | null>(null);
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
+  const [packageScriptsByRoot, setPackageScriptsByRoot] = useState<
+    Record<
+      string,
+      { composerScripts: PackageScript[]; npmScripts: PackageScript[] }
+    >
+  >({});
+  const activePackageScripts = workspaceRoot
+    ? packageScriptsByRoot[workspaceRoot]
+    : null;
   const resetPhpClassMemberCacheRef = useRef<() => void>(() => {});
   const resetPhpFrameworkCachesRef = useRef<() => void>(() => {});
   const invalidatePhpFrameworkBindingCacheRef = useRef<() => void>(() => {});
@@ -2410,6 +2435,7 @@ export function useWorkbenchController(
     setWorkspaceRoot(null);
     setWorkspaceIdentityDescriptor(null);
     setWorkspaceDescriptor(null);
+    setPackageScriptsByRoot({});
     setWorkspaceTrust(null);
     setPhpTools(null);
     setLanguageServerPlan(null);
@@ -2536,6 +2562,7 @@ export function useWorkbenchController(
         if (options.clearMessage !== false) {
           setMessage(null);
         }
+        return entries;
       } catch (error) {
         if (!isActiveRoot()) {
           return;
@@ -2573,6 +2600,40 @@ export function useWorkbenchController(
       }
     },
     [reportError, workspaceFiles],
+  );
+
+  const loadPackageScripts = useCallback(
+    async (rootPath: string, entries: readonly FileEntry[]) => {
+      const hasComposerManifest = entries.some(
+        (entry) => entry.kind === "file" && entry.name === "composer.json",
+      );
+      const hasPackageManifest = entries.some(
+        (entry) => entry.kind === "file" && entry.name === "package.json",
+      );
+      const [composerJson, packageJson] = await Promise.all([
+        hasComposerManifest
+          ? readTestFileIfExists(joinWorkspacePath(rootPath, "composer.json"))
+          : null,
+        hasPackageManifest
+          ? readTestFileIfExists(joinWorkspacePath(rootPath, "package.json"))
+          : null,
+      ]);
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      setPackageScriptsByRoot((current) => ({
+        ...current,
+        [rootPath]: {
+          composerScripts: composerJson
+            ? parseComposerScripts(composerJson)
+            : [],
+          npmScripts: packageJson ? parsePackageJsonScripts(packageJson) : [],
+        },
+      }));
+    },
+    [readTestFileIfExists],
   );
 
   const restoreWorkspaceSession = useCallback(
@@ -2826,6 +2887,10 @@ export function useWorkbenchController(
       }
 
       setWorkspaceRoot(path);
+      setPackageScriptsByRoot((current) => ({
+        ...current,
+        [path]: { composerScripts: [], npmScripts: [] },
+      }));
       setWorkspaceIdentityDescriptor(identityDescriptor);
       if (identityDescriptor) {
         workspaceIdentityByRootRef.current[path] = identityDescriptor;
@@ -3003,19 +3068,16 @@ export function useWorkbenchController(
       // another project mid-flight never lets stale results mutate the active
       // workspace state.
       const loadDirectoryTask = async (): Promise<void> => {
-        if (cachedWorkspaceState?.entriesByDirectory[path]) {
-          return;
-        }
-
-        // Match the other concurrent sub-tasks: opt into the exact-root guard so
-        // a parent-workspace switch mid-load cannot let stale entries leak, and
-        // re-check the live root once more after the await before trusting that
-        // this open is still the active one.
-        await loadDirectory(path, { requireActiveRoot: true });
+        const cachedEntries = cachedWorkspaceState?.entriesByDirectory[path];
+        const entries = cachedEntries ?? (await loadDirectory(path, {
+          requireActiveRoot: true,
+        }));
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
           return;
         }
+
+        await loadPackageScripts(path, entries ?? []);
       };
 
       const loadTrustTask = async (): Promise<void> => {
@@ -3154,6 +3216,7 @@ export function useWorkbenchController(
       applyWorkspaceSettings,
       cacheCurrentWorkspaceState,
       loadDirectory,
+      loadPackageScripts,
       persistAppSettings,
       persistCurrentWorkspaceSession,
       runPhpWorkspaceProbe,
@@ -4340,20 +4403,6 @@ export function useWorkbenchController(
     [activeDocument, updateActiveDocument],
   );
 
-  // Returns the test file's content when it already exists, otherwise `null`.
-  // Existence is probed by reading the file (the gateway rejects for a missing
-  // path), so a successful read means "do not overwrite — open the existing one".
-  const readTestFileIfExists = useCallback(
-    async (path: string): Promise<string | null> => {
-      try {
-        return await workspaceFiles.readTextFile(path);
-      } catch {
-        return null;
-      }
-    },
-    [workspaceFiles],
-  );
-
   // PhpStorm-style "Create Test" (Ctrl+Shift+T): from the active PHP class,
   // derive the matching PHPUnit test path/namespace via PSR-4, render a skeleton
   // (one `test<Method>()` per public instance method) and open it. Conservative:
@@ -4683,6 +4732,7 @@ export function useWorkbenchController(
     hideBottomPanel,
     registerActiveTerminalSession,
     runAllTestsForActiveDocument,
+    runInActiveTerminal,
     runTestAt,
     runTestForActiveDocument,
     showBottomPanelView,
@@ -6773,6 +6823,12 @@ export function useWorkbenchController(
       runAllTestsForActiveDocument,
     }).forEach((command) => registry.register(command));
 
+    workbenchScriptCommands({
+      composerScripts: activePackageScripts?.composerScripts ?? [],
+      npmScripts: activePackageScripts?.npmScripts ?? [],
+      runInActiveTerminal,
+    }).forEach((command) => registry.register(command));
+
     workbenchFloatingSurfaceCommands({
       shortcut,
       canSearchWorkspaceSymbols: canSearchClassOpenSymbols,
@@ -6932,6 +6988,7 @@ export function useWorkbenchController(
     return registry;
   }, [
     activeDocument,
+    activePackageScripts,
     appSettings.keymap,
     closeDocument,
     createDirectory,
@@ -6942,6 +6999,7 @@ export function useWorkbenchController(
     isActiveDocumentPhpTest,
     runTestForActiveDocument,
     runAllTestsForActiveDocument,
+    runInActiveTerminal,
     goToDeclaration,
     canSearchClassOpenSymbols,
     markFloatingSurfaceActivated,
