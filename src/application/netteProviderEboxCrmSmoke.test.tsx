@@ -131,6 +131,7 @@ function makeNeonDeps(
     readFileContent,
     resolvePhpReceiverCompletions: vi.fn(async () => []),
     searchClassNames: vi.fn(async () => []),
+    setImplementationChooser: vi.fn(),
     synthesizeTypedReceiverSource: (variableName, typeName) => ({
       position: { column: variableName.length + 4, lineNumber: 3 },
       source: `<?php\n/** @var \\${typeName} $${variableName} */\n$${variableName}->`,

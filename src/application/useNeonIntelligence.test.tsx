@@ -51,6 +51,7 @@ function makeDeps(
     }),
     resolvePhpReceiverCompletions: vi.fn(async () => []),
     searchClassNames: vi.fn(async () => []),
+    setImplementationChooser: vi.fn(),
     synthesizeTypedReceiverSource: (variableName, typeName) => ({
       position: { column: variableName.length + 4, lineNumber: 2 },
       source: `<?php\n/** @var ${typeName} $${variableName} */\n$${variableName}->`,
@@ -323,6 +324,79 @@ class ProductPresenter {
       { column: 5, lineNumber: 2 },
       "Catalog",
     );
+    expect(deps.setImplementationChooser).not.toHaveBeenCalled();
+  });
+
+  it("offers every matching NEON service definition in the implementation chooser", async () => {
+    const workspace = buildNeonWorkspace({
+      "config/first.neon":
+        "services:\n    first: App\\Services\\Catalog\n",
+      "config/second.neon":
+        "services:\n    second: App\\Services\\Catalog\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const setImplementationChooser = vi.fn();
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/ProductPresenter.php` }),
+      listDirectory: workspace.listDirectory,
+      openTarget,
+      readFileContent: workspace.readFileContent,
+      setImplementationChooser,
+    });
+    const neon = createNeonIntelligence(() => deps);
+
+    await expect(
+      neon.providePhpNetteInjectionDefinition(
+        phpSource,
+        phpSource.lastIndexOf("Catalog") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(openTarget).not.toHaveBeenCalled();
+    expect(setImplementationChooser).toHaveBeenCalledWith({
+      targets: [
+        {
+          detail: "config/first.neon",
+          id: `${ROOT}/config/first.neon:2:5`,
+          label: "first.neon:2",
+          path: `${ROOT}/config/first.neon`,
+          position: { column: 5, lineNumber: 2 },
+        },
+        {
+          detail: "config/second.neon",
+          id: `${ROOT}/config/second.neon:2:5`,
+          label: "second.neon:2",
+          path: `${ROOT}/config/second.neon`,
+          position: { column: 5, lineNumber: 2 },
+        },
+      ],
+      title: "Choose service registration of Catalog",
+    });
+  });
+
+  it("falls through when no NEON service definition matches", async () => {
+    const workspace = buildNeonWorkspace({
+      "config/services.neon":
+        "services:\n    mailer: App\\Services\\Mailer\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const setImplementationChooser = vi.fn();
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/ProductPresenter.php` }),
+      listDirectory: workspace.listDirectory,
+      openTarget,
+      readFileContent: workspace.readFileContent,
+      setImplementationChooser,
+    });
+    const neon = createNeonIntelligence(() => deps);
+
+    await expect(
+      neon.providePhpNetteInjectionDefinition(
+        phpSource,
+        phpSource.lastIndexOf("Catalog") + 2,
+      ),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+    expect(setImplementationChooser).not.toHaveBeenCalled();
   });
 
   it("is gated off outside a Nette workspace", async () => {
@@ -347,6 +421,7 @@ class ProductPresenter {
         "services:\n    catalog: App\\Services\\Catalog\n",
     });
     const openTarget = vi.fn(async () => true);
+    const setImplementationChooser = vi.fn();
     const deps = makeDeps({
       currentWorkspaceRootRef: rootRef,
       getActiveDocument: () => ({ path: `${ROOT}/app/ProductPresenter.php` }),
@@ -357,6 +432,7 @@ class ProductPresenter {
       },
       openTarget,
       readFileContent: workspace.readFileContent,
+      setImplementationChooser,
     });
     const neon = createNeonIntelligence(() => deps);
 
@@ -367,6 +443,7 @@ class ProductPresenter {
       ),
     ).resolves.toBe(false);
     expect(openTarget).not.toHaveBeenCalled();
+    expect(setImplementationChooser).not.toHaveBeenCalled();
   });
 });
 

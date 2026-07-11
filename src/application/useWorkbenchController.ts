@@ -5833,6 +5833,7 @@ export function useWorkbenchController(
           .filter(isTypeProjectSymbol)
           .map((symbol) => symbol.fullyQualifiedName);
       },
+      setImplementationChooser,
       synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
       toRelativePath: relativeWorkspacePath,
       workspaceRoot,

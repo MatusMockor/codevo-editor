@@ -1,4 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { ImplementationTarget } from "../domain/implementationTargets";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { NeonCompletionItem } from "./neonCompletionItems";
 import type { NavigationRequest } from "./navigationRequest";
@@ -45,6 +46,10 @@ export interface NeonIntelligenceDependencies {
     prefix: string,
     maxResults: number,
   ): Promise<string[]>;
+  setImplementationChooser(chooser: {
+    targets: ImplementationTarget[];
+    title: string;
+  }): void;
   resolvePhpReceiverCompletions(
     source: string,
     position: EditorPosition,

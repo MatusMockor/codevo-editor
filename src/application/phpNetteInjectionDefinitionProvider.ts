@@ -1,5 +1,6 @@
 import { netteInjectionTypeReferenceAt } from "../domain/netteDiContainer";
-import type { NeonDefinitionDependencies } from "./neonDefinitionProvider";
+import { getFileName } from "../domain/workspace";
+import type { NeonIntelligenceDependencies } from "./neonIntelligenceContracts";
 import type { NeonRequestContext } from "./neonIntelligenceRuntime";
 import {
   loadNeonProjectConfig,
@@ -7,7 +8,7 @@ import {
 } from "./neonProjectConfigDiscovery";
 
 export async function providePhpNetteInjectionDefinition(
-  context: NeonRequestContext<NeonDefinitionDependencies>,
+  context: NeonRequestContext<NeonIntelligenceDependencies>,
   source: string,
   offset: number,
 ): Promise<boolean> {
@@ -23,7 +24,26 @@ export async function providePhpNetteInjectionDefinition(
     return false;
   }
 
-  const [location] = neonServiceDefinitionLocations(config, reference.className);
+  const locations = neonServiceDefinitionLocations(config, reference.className);
+
+  if (locations.length > 1) {
+    const targets = locations.map((location) => ({
+      detail: context.deps.toRelativePath(context.requestedRoot, location.path),
+      id: `${location.path}:${location.position.lineNumber}:${location.position.column}`,
+      label: `${getFileName(location.path)}:${location.position.lineNumber}`,
+      path: location.path,
+      position: location.position,
+    }));
+    const label = reference.type.split("\\").pop() ?? reference.type;
+
+    context.deps.setImplementationChooser({
+      targets,
+      title: `Choose service registration of ${label}`,
+    });
+    return true;
+  }
+
+  const [location] = locations;
 
   if (!location) {
     return false;
