@@ -14,6 +14,7 @@ import {
   useGitDiffWorkspace,
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
+import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
@@ -527,7 +528,11 @@ export function useWorkbenchController(
   const [packageScriptsByRoot, setPackageScriptsByRoot] = useState<
     Record<
       string,
-      { composerScripts: PackageScript[]; npmScripts: PackageScript[] }
+      {
+        composerScripts: PackageScript[];
+        hasArtisan: boolean;
+        npmScripts: PackageScript[];
+      }
     >
   >({});
   const activePackageScripts = workspaceRoot
@@ -2696,6 +2701,9 @@ export function useWorkbenchController(
       const hasPackageManifest = entries.some(
         (entry) => entry.kind === "file" && entry.name === "package.json",
       );
+      const hasArtisan = entries.some(
+        (entry) => entry.kind === "file" && entry.name === "artisan",
+      );
       const [composerJson, packageJson] = await Promise.all([
         hasComposerManifest
           ? readTestFileIfExists(joinWorkspacePath(rootPath, "composer.json"))
@@ -2715,6 +2723,7 @@ export function useWorkbenchController(
           composerScripts: composerJson
             ? parseComposerScripts(composerJson)
             : [],
+          hasArtisan,
           npmScripts: packageJson ? parsePackageJsonScripts(packageJson) : [],
         },
       }));
@@ -2975,7 +2984,7 @@ export function useWorkbenchController(
       setWorkspaceRoot(path);
       setPackageScriptsByRoot((current) => ({
         ...current,
-        [path]: { composerScripts: [], npmScripts: [] },
+        [path]: { composerScripts: [], hasArtisan: false, npmScripts: [] },
       }));
       setWorkspaceIdentityDescriptor(identityDescriptor);
       if (identityDescriptor) {
@@ -7180,6 +7189,11 @@ export function useWorkbenchController(
     workbenchScriptCommands({
       composerScripts: activePackageScripts?.composerScripts ?? [],
       npmScripts: activePackageScripts?.npmScripts ?? [],
+      runInActiveTerminal,
+    }).forEach((command) => registry.register(command));
+
+    workbenchArtisanCommands({
+      hasArtisan: activePackageScripts?.hasArtisan ?? false,
       runInActiveTerminal,
     }).forEach((command) => registry.register(command));
 

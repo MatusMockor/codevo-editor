@@ -66117,6 +66117,49 @@ interface GreeterContract
     ).toBe(false);
   });
 
+  it("keeps Artisan palette commands isolated across workspaces", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readDirectory: vi.fn(async (path) =>
+        path === "/workspace-a"
+          ? [fileEntry(`${path}/artisan`, "artisan")]
+          : [fileEntry(`${path}/Artisan`, "Artisan")],
+      ),
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        getWorkbench().commands
+          .filter((command) => command.id.startsWith("artisan."))
+          .map((command) => command.title),
+      ).toEqual([
+        "artisan: about",
+        "artisan: cache:clear",
+        "artisan: config:show",
+        "artisan: db:show",
+        "artisan: migrate:status",
+        "artisan: optimize:clear",
+        "artisan: queue:failed",
+        "artisan: route:list",
+      ]);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(
+        getWorkbench().commands.some((command) =>
+          command.id.startsWith("artisan."),
+        ),
+      ).toBe(false);
+    });
+  });
+
   it("runs a gutter test by writing an artisan --filter command into the active terminal", async () => {
     const testPath = "/workspace/tests/Unit/InvoiceServiceTest.php";
     const testSource = `<?php
