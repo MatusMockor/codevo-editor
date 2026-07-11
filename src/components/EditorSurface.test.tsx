@@ -108,11 +108,13 @@ interface FakeEditor {
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
   onDidChangeModel: ReturnType<typeof vi.fn>;
   onDidChangeModelContent: ReturnType<typeof vi.fn>;
+  onDidScrollChange: ReturnType<typeof vi.fn>;
   onKeyDown: ReturnType<typeof vi.fn>;
   onMouseDown: ReturnType<typeof vi.fn>;
   onMouseMove: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
   setPosition: ReturnType<typeof vi.fn>;
+  setScrollTop: ReturnType<typeof vi.fn>;
   setSelection: ReturnType<typeof vi.fn>;
   trigger: ReturnType<typeof vi.fn>;
   updateOptions: ReturnType<typeof vi.fn>;
@@ -255,6 +257,212 @@ describe("EditorSurface", () => {
     window.localStorage?.clear?.();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("restores and clamps a persisted view after synchronizing model content", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/nested/example.txt",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const calls: string[] = [];
+    let content = "";
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 3),
+      getLineMaxColumn: vi.fn((line: number) => [4, 4, 6][line - 1]),
+      getValue: vi.fn(() => content),
+      setValue: vi.fn((value: string) => {
+        calls.push("content");
+        content = value;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editor.setPosition.mockImplementation(() => calls.push("position"));
+    editor.setScrollTop.mockImplementation(() => calls.push("scroll"));
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStates: {
+            [activeDocument.path]: { column: 99, line: 99, scrollTop: 240 },
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: 6,
+      lineNumber: 3,
+    });
+    expect(editor.revealPositionInCenter).toHaveBeenCalledWith({
+      column: 6,
+      lineNumber: 3,
+    });
+    expect(editor.setScrollTop).toHaveBeenCalledWith(240);
+    expect(calls.indexOf("content")).toBeLessThan(calls.indexOf("position"));
+  });
+
+  it("does not apply one workspace's persisted view to another workspace", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/nested/example.txt",
+      savedContent: "one\ntwo\n",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 2),
+      getLineMaxColumn: vi.fn(() => 4),
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStates: {
+            [activeDocument.path]: { column: 2, line: 2 },
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: 2,
+      lineNumber: 2,
+    });
+    editor.setPosition.mockClear();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStates: {},
+          workspaceRoot: "/workspace/nested",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.setPosition).not.toHaveBeenCalled();
+  });
+
+  it("captures a stable cursor and scroll position in memory", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/example.txt",
+      savedContent: "one\ntwo\n",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const onEditorViewStateChange = vi.fn();
+    editor.getPosition.mockReturnValue({ column: 8, lineNumber: 2 });
+    editor.getScrollTop.mockReturnValue(150);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onEditorViewStateChange,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onEditorViewStateChange).toHaveBeenCalledWith(activeDocument.path, {
+      column: 8,
+      line: 2,
+      scrollTop: 150,
+    });
+  });
+
+  it("applies a restored per-file view when another restored tab activates", async () => {
+    const firstDocument: EditorDocument = {
+      content: "first\n",
+      language: "plaintext",
+      name: "first.txt",
+      path: "/workspace/first.txt",
+      savedContent: "first\n",
+    };
+    const secondDocument: EditorDocument = {
+      content: "one\ntwo\n",
+      language: "plaintext",
+      name: "second.txt",
+      path: "/workspace/second.txt",
+      savedContent: "one\ntwo\n",
+    };
+    const firstModel: FakeModel = {
+      getLineCount: vi.fn(() => 1),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => firstDocument.content),
+      uri: { fsPath: firstDocument.path, path: firstDocument.path },
+    };
+    const secondModel: FakeModel = {
+      getLineCount: vi.fn(() => 2),
+      getLineMaxColumn: vi.fn(() => 4),
+      getValue: vi.fn(() => secondDocument.content),
+      uri: { fsPath: secondDocument.path, path: secondDocument.path },
+    };
+    const editor = createEditor(firstModel);
+    const restoredViewStates = {
+      [firstDocument.path]: { column: 2, line: 1 },
+      [secondDocument.path]: { column: 3, line: 2, scrollTop: 90 },
+    };
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(firstModel);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(firstDocument),
+          openDocumentPaths: [firstDocument.path, secondDocument.path],
+          restoredViewStates,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+    editor.setPosition.mockClear();
+    editor.getModel.mockReturnValue(secondModel);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(secondDocument),
+          openDocumentPaths: [firstDocument.path, secondDocument.path],
+          restoredViewStates,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      column: 3,
+      lineNumber: 2,
+    });
+    expect(editor.setScrollTop).toHaveBeenCalledWith(90);
   });
 
   it("configures responsive suggestions and parameter hints", async () => {
@@ -12718,6 +12926,7 @@ function createEditor(model: FakeModel): FakeEditor {
         };
       },
     ),
+    onDidScrollChange: vi.fn(() => ({ dispose: vi.fn() })),
     onKeyDown: vi.fn((handler: (event: FakeKeyDownEvent) => void) => {
       editor.keyDownHandler = handler;
 
@@ -12740,6 +12949,7 @@ function createEditor(model: FakeModel): FakeEditor {
     setSelection: vi.fn((nextSelection) => {
       selection = nextSelection;
     }),
+    setScrollTop: vi.fn(),
     trigger: vi.fn(),
     updateOptions: vi.fn(),
   };

@@ -55,6 +55,7 @@ export interface WorkbenchCloseLifecycleDependencies {
     options?: OpenWorkspacePathOptions,
   ) => Promise<void>;
   clearActiveWorkspace: () => Promise<void>;
+  persistWorkspaceSession?: (rootPath: string) => Promise<void>;
   reportError: (source: string, error: unknown) => void;
 }
 
@@ -91,6 +92,7 @@ export function useWorkbenchCloseLifecycle(
     workspaceHasExternalFileConflicts,
     openWorkspacePath,
     clearActiveWorkspace,
+    persistWorkspaceSession = async () => undefined,
     reportError,
   } = dependencies;
 
@@ -204,6 +206,12 @@ export function useWorkbenchCloseLifecycle(
         return;
       }
 
+      try {
+        await persistWorkspaceSession(targetRootPath);
+      } catch (error) {
+        reportError("Session", error);
+      }
+
       openFileRequestTokenRef.current += 1;
       gitDiffRequestTokenRef.current += 1;
       editorGitBaselineRequestTokenRef.current += 1;
@@ -245,6 +253,7 @@ export function useWorkbenchCloseLifecycle(
       openWorkspaceRequestPathRef,
       openWorkspaceRequestTokenRef,
       persistAppSettings,
+      persistWorkspaceSession,
       prompter,
       reportError,
       workspaceRoot,
@@ -258,20 +267,36 @@ export function useWorkbenchCloseLifecycle(
       return;
     }
 
-    void invoke("quit_application").catch((error) =>
-      reportError("Application", error),
-    );
-  }, [reportError]);
+    void (async () => {
+      if (workspaceRoot) {
+        try {
+          await persistWorkspaceSession(workspaceRoot);
+        } catch (error) {
+          reportError("Session", error);
+        }
+      }
+
+      await invoke("quit_application");
+    })().catch((error) => reportError("Application", error));
+  }, [persistWorkspaceSession, reportError, workspaceRoot]);
 
   const closeApplicationWindow = useCallback(() => {
     if (!isTauri()) {
       return;
     }
 
-    void getCurrentWindow()
-      .close()
-      .catch((error) => reportError("Window", error));
-  }, [reportError]);
+    void (async () => {
+      if (workspaceRoot) {
+        try {
+          await persistWorkspaceSession(workspaceRoot);
+        } catch (error) {
+          reportError("Session", error);
+        }
+      }
+
+      await getCurrentWindow().close();
+    })().catch((error) => reportError("Window", error));
+  }, [persistWorkspaceSession, reportError, workspaceRoot]);
 
   return {
     closeApplicationWindow,

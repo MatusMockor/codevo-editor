@@ -58075,6 +58075,111 @@ final class InvoiceAdapter
     ).toBe(false);
   });
 
+  it("restores a persisted preview only when it belongs to the restored paths", async () => {
+    const pinnedPath = "/workspace/src/Pinned.ts";
+    const previewPath = "/workspace/src/Preview.ts";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => `// ${path}\n`),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        session: {
+          activePath: previewPath,
+          bottomPanelView: "problems",
+          openPaths: [pinnedPath, previewPath],
+          previewPath,
+          sidebarView: "files",
+        },
+      },
+    });
+
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().activePath).toBe(previewPath);
+    expect(getWorkbench().previewPath).toBe(previewPath);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      pinnedPath,
+      previewPath,
+    ]);
+  });
+
+  it("ignores a persisted preview outside the restored paths", async () => {
+    const pinnedPath = "/workspace/src/Pinned.ts";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => `// ${path}\n`),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        session: {
+          activePath: pinnedPath,
+          bottomPanelView: "problems",
+          openPaths: [pinnedPath],
+          previewPath: "/workspace/src/Missing.ts",
+          sidebarView: "files",
+        },
+      },
+    });
+
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().previewPath).toBeNull();
+  });
+
+  it("snapshots preview and view positions on workspace switch without leaking them", async () => {
+    const firstRoot = "/workspace-a";
+    const secondRoot = "/workspace-b";
+    const preview = fileEntry(`${firstRoot}/src/Preview.ts`, "Preview.ts");
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: firstRoot,
+        workspaceTabs: [firstRoot, secondRoot],
+      },
+      readTextFile: vi.fn(async (path: string) => `// ${path}\n`),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().previewFile(preview);
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().updateEditorViewState(preview.path, {
+        column: 6,
+        line: 4,
+        scrollTop: 180,
+      });
+    });
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(secondRoot);
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
+      firstRoot,
+      expect.objectContaining({
+        session: expect.objectContaining({
+          activePath: preview.path,
+          openPaths: [preview.path],
+          previewPath: preview.path,
+          viewStates: {
+            [preview.path]: { column: 6, line: 4, scrollTop: 180 },
+          },
+        }),
+      }),
+    );
+    expect(getWorkbench().workspaceRoot).toBe(secondRoot);
+    expect(getWorkbench().restoredEditorViewStates[preview.path]).toBeUndefined();
+  });
+
   it("opens a hover-prefetched file from cache without a second read", async () => {
     const readTextFile = vi.fn(
       async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,

@@ -75,6 +75,34 @@ describe("documentSessionState", () => {
     });
   });
 
+  it("captures a preview path and only view positions for persisted paths", () => {
+    expect(
+      currentWorkspaceSession(
+        "/workspace",
+        ["/workspace/Pinned.php"],
+        "/workspace/Preview.php",
+        "files",
+        "problems",
+        "/workspace/Preview.php",
+        {
+          "/other/Outside.php": { column: 1, line: 1 },
+          "/workspace/Pinned.php": { column: 3, line: 2, scrollTop: 80 },
+          "/workspace/Preview.php": { column: 7, line: 5 },
+        },
+      ),
+    ).toEqual({
+      activePath: "/workspace/Preview.php",
+      bottomPanelView: "problems",
+      openPaths: ["/workspace/Pinned.php", "/workspace/Preview.php"],
+      previewPath: "/workspace/Preview.php",
+      sidebarView: "files",
+      viewStates: {
+        "/workspace/Pinned.php": { column: 3, line: 2, scrollTop: 80 },
+        "/workspace/Preview.php": { column: 7, line: 5 },
+      },
+    });
+  });
+
   it("clears the active path when it is not in the persisted session paths", () => {
     expect(
       currentWorkspaceSession(

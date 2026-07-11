@@ -198,7 +198,15 @@ export interface WorkspaceSessionState {
   activePath: string | null;
   bottomPanelView: WorkspaceSessionBottomPanelView;
   openPaths: string[];
+  previewPath?: string | null;
   sidebarView: WorkspaceSessionSidebarView;
+  viewStates?: Record<string, WorkspaceSessionViewState>;
+}
+
+export interface WorkspaceSessionViewState {
+  column: number;
+  line: number;
+  scrollTop?: number;
 }
 
 export interface StatusBarItemVisibility {
@@ -572,8 +580,13 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
 
   const openPaths = normalizePathList(value.openPaths);
   const activePath = normalizeSessionActivePath(value.activePath, openPaths);
+  const previewPath = normalizeSessionPreviewPath(value.previewPath, openPaths);
+  const viewStates = normalizeWorkspaceSessionViewStates(
+    value.viewStates,
+    openPaths,
+  );
 
-  return {
+  const normalized: WorkspaceSessionState = {
     activePath,
     bottomPanelView: isWorkspaceSessionBottomPanelView(value.bottomPanelView)
       ? value.bottomPanelView
@@ -583,6 +596,16 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
       ? value.sidebarView
       : defaults.sidebarView,
   };
+
+  if (previewPath) {
+    normalized.previewPath = previewPath;
+  }
+
+  if (Object.keys(viewStates).length > 0) {
+    normalized.viewStates = viewStates;
+  }
+
+  return normalized;
 }
 
 export function normalizeStatusBarItemVisibility(
@@ -1165,4 +1188,73 @@ function normalizeSessionActivePath(
   }
 
   return activePath;
+}
+
+function normalizeSessionPreviewPath(
+  value: unknown,
+  openPaths: string[],
+): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const previewPath = value.trim();
+
+  if (!openPaths.includes(previewPath)) {
+    return null;
+  }
+
+  return previewPath;
+}
+
+function normalizeWorkspaceSessionViewStates(
+  value: unknown,
+  openPaths: string[],
+): Record<string, WorkspaceSessionViewState> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const normalized: Record<string, WorkspaceSessionViewState> = {};
+
+  for (const path of openPaths) {
+    const viewState = value[path];
+
+    if (!isRecord(viewState)) {
+      continue;
+    }
+
+    if (!isPositiveInteger(viewState.line)) {
+      continue;
+    }
+
+    if (!isPositiveInteger(viewState.column)) {
+      continue;
+    }
+
+    if (
+      viewState.scrollTop !== undefined &&
+      (!isFiniteNumber(viewState.scrollTop) || viewState.scrollTop < 0)
+    ) {
+      continue;
+    }
+
+    normalized[path] = {
+      column: viewState.column,
+      line: viewState.line,
+      ...(viewState.scrollTop === undefined
+        ? {}
+        : { scrollTop: viewState.scrollTop }),
+    };
+  }
+
+  return normalized;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return Number.isInteger(value) && typeof value === "number" && value > 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }

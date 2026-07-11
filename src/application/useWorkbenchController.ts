@@ -326,6 +326,7 @@ import {
   type SettingsSection,
   type StatusBarItemVisibility,
   type WorkspaceSessionState,
+  type WorkspaceSessionViewState,
   type WorkspaceSettings,
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
@@ -699,6 +700,9 @@ export function useWorkbenchController(
     defaultWorkspaceSettings(),
   );
   const workspaceSessionRestoredRef = useRef(false);
+  const workspaceEditorViewStatesRef = useRef<
+    Record<string, Record<string, WorkspaceSessionViewState>>
+  >({});
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const lastPhpIdeReadinessSignatureRef = useRef<string | null>(null);
   const openWorkspaceRequestTokenRef = useRef(0);
@@ -1557,6 +1561,41 @@ export function useWorkbenchController(
     ],
   );
 
+  const persistCurrentWorkspaceSession = useCallback(
+    async (rootPath: string) => {
+      if (!workspaceSessionRestoredRef.current) {
+        return;
+      }
+
+      const session = currentWorkspaceSession(
+        rootPath,
+        openPaths,
+        activePath,
+        sidebarView,
+        bottomPanelView,
+        previewPath,
+        workspaceEditorViewStatesRef.current[rootPath] ?? {},
+      );
+
+      if (workspaceSessionsEqual(workspaceSettingsRef.current.session, session)) {
+        return;
+      }
+
+      await persistWorkspaceSettings(rootPath, {
+        ...workspaceSettingsRef.current,
+        session,
+      });
+    },
+    [
+      activePath,
+      bottomPanelView,
+      openPaths,
+      persistWorkspaceSettings,
+      previewPath,
+      sidebarView,
+    ],
+  );
+
   const restoreCachedWorkspaceState = useCallback(
     (cached: CachedWorkspaceWorkbenchState) => {
       const restoredDocuments = Object.fromEntries(
@@ -2349,6 +2388,7 @@ export function useWorkbenchController(
     }
 
     workspaceSessionRestoredRef.current = false;
+    workspaceEditorViewStatesRef.current = {};
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
     workspaceIdentityByRootRef.current = {};
@@ -2579,10 +2619,29 @@ export function useWorkbenchController(
       });
 
       const nextActivePath = restoredActivePath(session.activePath, restoredPaths);
+      const restoredPreviewPath =
+        session.previewPath && restoredPaths.includes(session.previewPath)
+          ? session.previewPath
+          : null;
+      const restoredPinnedPaths = restoredPreviewPath
+        ? restoredPaths.filter((path) => path !== restoredPreviewPath)
+        : restoredPaths;
+      workspaceEditorViewStatesRef.current[rootPath] = Object.fromEntries(
+        restoredPaths.flatMap((path) => {
+          const viewState = session.viewStates?.[path];
+
+          if (!viewState) {
+            return [];
+          }
+
+          return [[path, viewState]];
+        }),
+      );
 
       setDocuments(restoredDocuments);
-      setOpenPaths(restoredPaths);
+      setOpenPaths(restoredPinnedPaths);
       setActivePath(nextActivePath);
+      setPreviewPath(restoredPreviewPath);
       setSidebarView(session.sidebarView);
       setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
 
@@ -2691,6 +2750,16 @@ export function useWorkbenchController(
 
       if (switchingWorkspace && shouldCachePreviousWorkspace) {
         openFileRequestTokenRef.current += 1;
+        try {
+          await persistCurrentWorkspaceSession(previousRootPath);
+        } catch (error) {
+          reportErrorForActiveWorkspaceRoot(previousRootPath, "Session", error);
+        }
+
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return;
+        }
+
         cacheCurrentWorkspaceState(previousRootPath);
       } else if (switchingWorkspace) {
         openFileRequestTokenRef.current += 1;
@@ -3084,8 +3153,10 @@ export function useWorkbenchController(
       cacheCurrentWorkspaceState,
       loadDirectory,
       persistAppSettings,
+      persistCurrentWorkspaceSession,
       runPhpWorkspaceProbe,
       reportError,
+      reportErrorForActiveWorkspaceRoot,
       restoreLanguageServerDiagnosticsForRoot,
       restoreCachedWorkspaceState,
       restoreJavaScriptTypeScriptDiagnosticsForRoot,
@@ -4003,6 +4074,7 @@ export function useWorkbenchController(
       workspaceHasExternalFileConflictsRef.current(root),
     openWorkspacePath,
     clearActiveWorkspace,
+    persistWorkspaceSession: persistCurrentWorkspaceSession,
     reportError,
   });
 
@@ -4064,6 +4136,21 @@ export function useWorkbenchController(
     clearExternalFileConflict: externalFileConflicts.clearConflict,
     detectSaveConflict: externalFileConflicts.detectSaveConflict,
   });
+
+  const updateEditorViewState = useCallback(
+    (path: string, viewState: WorkspaceSessionViewState) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
+      if (!rootPath || !isSessionPathInWorkspace(rootPath, path)) {
+        return;
+      }
+
+      const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
+      current[path] = viewState;
+      workspaceEditorViewStatesRef.current[rootPath] = current;
+    },
+    [],
+  );
 
   const setStatusBarItemVisibility = useCallback(
     async (key: keyof StatusBarItemVisibility, visible: boolean) => {
@@ -7058,6 +7145,8 @@ export function useWorkbenchController(
       activePath,
       sidebarView,
       bottomPanelView,
+      previewPath,
+      workspaceEditorViewStatesRef.current[workspaceRoot] ?? {},
     );
 
     if (workspaceSessionsEqual(workspaceSettingsRef.current.session, session)) {
@@ -7076,6 +7165,7 @@ export function useWorkbenchController(
     activePath,
     bottomPanelView,
     openPaths,
+    previewPath,
     persistWorkspaceSettings,
     reportErrorForActiveWorkspaceRoot,
     sidebarView,
@@ -8021,6 +8111,7 @@ export function useWorkbenchController(
     updateActiveDocument,
     activeEditorPosition,
     updateActiveEditorPosition,
+    updateEditorViewState,
     openPhpTreeNode,
     openSearchResult,
     openTextSearchResult,
@@ -8031,6 +8122,9 @@ export function useWorkbenchController(
       ? "trusted"
       : "legacyCompatibility",
     workspaceRoot,
+    restoredEditorViewStates: workspaceRoot
+      ? workspaceEditorViewStatesRef.current[workspaceRoot] ?? {}
+      : {},
     workspaceTabs: appSettings.workspaceTabs,
     workspaceSettings,
     workspaceTrust,

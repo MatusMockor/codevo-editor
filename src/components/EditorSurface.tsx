@@ -118,6 +118,7 @@ import {
   defaultEditorFontSize,
   monacoFontLigaturesForEditorSetting,
   type MonacoAppTheme,
+  type WorkspaceSessionViewState,
 } from "../domain/settings";
 import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
@@ -246,6 +247,7 @@ interface EditorSurfaceProps {
   monacoTheme: MonacoAppTheme;
   navigationHistoryPaths?: readonly string[];
   openDocumentPaths?: readonly string[];
+  restoredViewStates?: Record<string, WorkspaceSessionViewState>;
   transientWidgetDismissKey?: string;
   phpInlayHintsEnabled?: boolean;
   phpIdeReadinessVersion?: number;
@@ -255,6 +257,10 @@ interface EditorSurfaceProps {
   workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
+  onEditorViewStateChange?(
+    path: string,
+    viewState: WorkspaceSessionViewState,
+  ): void;
   onEditorMenuCommandRunnerChange?(runner: EditorMenuCommandRunner | null): void;
   onEditorSurfaceCommandRunnerChange?(
     runner: EditorSurfaceCommandRunner | null,
@@ -381,6 +387,7 @@ function EditorSurfaceComponent({
   monacoTheme,
   navigationHistoryPaths = EMPTY_PATHS,
   openDocumentPaths = EMPTY_PATHS,
+  restoredViewStates = {},
   transientWidgetDismissKey,
   phpInlayHintsEnabled = true,
   phpIdeReadinessVersion = 0,
@@ -390,6 +397,7 @@ function EditorSurfaceComponent({
   workspaceIdentityDescriptor = null,
   onCloseActiveTab,
   onCursorPositionChange,
+  onEditorViewStateChange,
   onEditorMenuCommandRunnerChange,
   onEditorSurfaceCommandRunnerChange,
   onGoBack,
@@ -2657,6 +2665,98 @@ function EditorSurfaceComponent({
 
     return () => modelChangeDisposable.dispose();
   }, [activeDocument, editorApi, workspaceRoot]);
+
+  const appliedRestoredViewStateKeysRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!editorApi || !activeDocument || !workspaceRoot) {
+      return;
+    }
+
+    const viewState = restoredViewStates[activeDocument.path];
+
+    if (!viewState) {
+      return;
+    }
+
+    const applicationKey = `${workspaceRoot}\0${activeDocument.path}`;
+
+    if (appliedRestoredViewStateKeysRef.current.has(applicationKey)) {
+      return;
+    }
+
+    const applyViewState = () => {
+      const model = editorApi.getModel();
+
+      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+        return;
+      }
+
+      const lineNumber = Math.min(
+        Math.max(viewState.line, 1),
+        Math.max(model.getLineCount(), 1),
+      );
+      const column = Math.min(
+        Math.max(viewState.column, 1),
+        model.getLineMaxColumn(lineNumber),
+      );
+      const position = { column, lineNumber };
+
+      editorApi.setPosition(position);
+      editorApi.revealPositionInCenter(position);
+
+      if (viewState.scrollTop !== undefined) {
+        editorApi.setScrollTop(viewState.scrollTop);
+      }
+
+      appliedRestoredViewStateKeysRef.current.add(applicationKey);
+    };
+
+    applyViewState();
+
+    if (appliedRestoredViewStateKeysRef.current.has(applicationKey)) {
+      return;
+    }
+
+    const disposable = editorApi.onDidChangeModel(applyViewState);
+
+    return () => disposable.dispose();
+  }, [activeDocument, editorApi, restoredViewStates, workspaceRoot]);
+
+  useEffect(() => {
+    if (!editorApi || !activeDocument || !onEditorViewStateChange) {
+      return;
+    }
+
+    const captureViewState = () => {
+      const model = editorApi.getModel();
+
+      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+        return;
+      }
+
+      const position = editorApi.getPosition();
+
+      if (!position) {
+        return;
+      }
+
+      onEditorViewStateChange(activeDocument.path, {
+        column: position.column,
+        line: position.lineNumber,
+        scrollTop: editorApi.getScrollTop(),
+      });
+    };
+
+    captureViewState();
+    const cursorDisposable = editorApi.onDidChangeCursorPosition(captureViewState);
+    const scrollDisposable = editorApi.onDidScrollChange(captureViewState);
+
+    return () => {
+      cursorDisposable.dispose();
+      scrollDisposable.dispose();
+    };
+  }, [activeDocument, editorApi, onEditorViewStateChange, workspaceRoot]);
 
   useEffect(() => {
     if (

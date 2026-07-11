@@ -1348,6 +1348,7 @@ function App() {
             monacoTheme={monacoTheme}
             navigationHistoryPaths={navigationHistoryPaths}
             openDocumentPaths={openDocumentPaths}
+            restoredViewStates={workbench.restoredEditorViewStates}
             transientWidgetDismissKey={transientEditorWidgetDismissKey}
             phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
             phpLanguageServerWorkspaceEditGateway={
@@ -1355,6 +1356,7 @@ function App() {
             }
             onCloseActiveTab={closeActiveTab}
             onCursorPositionChange={workbench.updateActiveEditorPosition}
+            onEditorViewStateChange={workbench.updateEditorViewState}
             onEditorMenuCommandRunnerChange={updateEditorMenuCommandRunner}
             onEditorSurfaceCommandRunnerChange={
               updateEditorSurfaceCommandRunner

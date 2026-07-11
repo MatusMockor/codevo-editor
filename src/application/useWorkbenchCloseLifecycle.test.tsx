@@ -302,13 +302,18 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.unmount();
   });
 
-  it("closes the current Tauri window through the workbench lifecycle", () => {
-    const harness = renderLifecycle();
+  it("persists the active workspace session before closing the Tauri window", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({ persistWorkspaceSession });
+    tauriMocks.closeWindow.mockClear();
 
-    act(() => {
+    await act(async () => {
       harness.lifecycle().closeApplicationWindow();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
+    expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
     expect(tauriMocks.closeWindow).toHaveBeenCalledTimes(1);
     harness.unmount();
   });

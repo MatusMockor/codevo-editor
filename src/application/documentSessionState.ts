@@ -2,6 +2,7 @@ import type {
   WorkspaceSessionBottomPanelView,
   WorkspaceSessionSidebarView,
   WorkspaceSessionState,
+  WorkspaceSessionViewState,
 } from "../domain/settings";
 
 export interface DocumentSessionDocument {
@@ -124,20 +125,47 @@ export function currentWorkspaceSession(
   activePath: string | null,
   sidebarView: WorkspaceSessionSidebarView,
   bottomPanelView: WorkspaceSessionBottomPanelView,
+  previewPath: string | null = null,
+  viewStates: Record<string, WorkspaceSessionViewState> = {},
 ): WorkspaceSessionState {
-  const sessionPaths = openPaths.filter(
+  const visiblePaths = previewPath
+    ? [...openPaths.filter((path) => path !== previewPath), previewPath]
+    : openPaths;
+  const sessionPaths = visiblePaths.filter(
     (path) =>
       isPersistableEditorDocumentPath(path) &&
       isSessionPathInWorkspace(rootPath, path),
   );
 
-  return {
+  const session: WorkspaceSessionState = {
     activePath:
       activePath && sessionPaths.includes(activePath) ? activePath : null,
     bottomPanelView: persistedBottomPanelView(bottomPanelView),
     openPaths: sessionPaths,
     sidebarView,
   };
+
+  if (previewPath && sessionPaths.includes(previewPath)) {
+    session.previewPath = previewPath;
+  }
+
+  const sessionViewStates = Object.fromEntries(
+    sessionPaths.flatMap((path) => {
+      const viewState = viewStates[path];
+
+      if (!viewState) {
+        return [];
+      }
+
+      return [[path, viewState]];
+    }),
+  );
+
+  if (Object.keys(sessionViewStates).length > 0) {
+    session.viewStates = sessionViewStates;
+  }
+
+  return session;
 }
 
 export function restoredBottomPanelView(
@@ -168,9 +196,33 @@ export function workspaceSessionsEqual(
     left.activePath === right.activePath &&
     left.bottomPanelView === right.bottomPanelView &&
     left.sidebarView === right.sidebarView &&
+    left.previewPath === right.previewPath &&
+    workspaceSessionViewStatesEqual(left.viewStates, right.viewStates) &&
     left.openPaths.length === right.openPaths.length &&
     left.openPaths.every((path, index) => path === right.openPaths[index])
   );
+}
+
+function workspaceSessionViewStatesEqual(
+  left: WorkspaceSessionState["viewStates"],
+  right: WorkspaceSessionState["viewStates"],
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightEntries = Object.entries(right ?? {});
+
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+
+  return leftEntries.every(([path, viewState]) => {
+    const other = right?.[path];
+
+    return (
+      other?.line === viewState.line &&
+      other.column === viewState.column &&
+      other.scrollTop === viewState.scrollTop
+    );
+  });
 }
 
 export function isSessionPathInWorkspace(

@@ -713,6 +713,73 @@ describe("normalizeLargeSmartDocumentPolicy", () => {
 });
 
 describe("normalizeWorkspaceSession", () => {
+  it("round trips preview and stable editor view positions", () => {
+    expect(
+      normalizeWorkspaceSession({
+        activePath: "/project/src/User.php",
+        bottomPanelView: "problems",
+        openPaths: ["/project/src/User.php"],
+        previewPath: "/project/src/User.php",
+        sidebarView: "files",
+        viewStates: {
+          "/project/src/User.php": {
+            column: 9,
+            line: 14,
+            scrollTop: 320.5,
+          },
+        },
+      }),
+    ).toEqual({
+      activePath: "/project/src/User.php",
+      bottomPanelView: "problems",
+      openPaths: ["/project/src/User.php"],
+      previewPath: "/project/src/User.php",
+      sidebarView: "files",
+      viewStates: {
+        "/project/src/User.php": {
+          column: 9,
+          line: 14,
+          scrollTop: 320.5,
+        },
+      },
+    });
+  });
+
+  it("safely drops malformed optional session fidelity fields", () => {
+    expect(
+      normalizeWorkspaceSession({
+        activePath: "/project/User.php",
+        bottomPanelView: "problems",
+        openPaths: ["/project/User.php"],
+        previewPath: "/project/Missing.php",
+        sidebarView: "files",
+        viewStates: {
+          "/project/BadLine.php": { column: 2, line: 0 },
+          "/project/BadColumn.php": { column: "2", line: 3 },
+          "/project/BadScroll.php": { column: 2, line: 3, scrollTop: -1 },
+          "/project/User.php": { column: 2, line: 3 },
+        },
+      }),
+    ).toEqual({
+      activePath: "/project/User.php",
+      bottomPanelView: "problems",
+      openPaths: ["/project/User.php"],
+      sidebarView: "files",
+      viewStates: {
+        "/project/User.php": { column: 2, line: 3 },
+      },
+    });
+
+    expect(
+      normalizeWorkspaceSession({
+        activePath: null,
+        bottomPanelView: "problems",
+        openPaths: [],
+        sidebarView: "files",
+      }),
+    ).toEqual(defaultWorkspaceSessionState());
+  });
+
   it("accepts history as a valid stored bottom panel view", () => {
     expect(
       normalizeWorkspaceSession({
