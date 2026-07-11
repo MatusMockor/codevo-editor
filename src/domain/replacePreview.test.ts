@@ -8,10 +8,20 @@ describe("createReplacePreview", () => {
     );
   });
 
-  it("expands unknown captures to empty in plain-text mode like the backend", () => {
+  it("keeps capture-like replacement text verbatim in plain-text mode", () => {
     expect(preview("a.b", "a.b", "value$1", { pattern: "a.b" })).toBe(
-      "value",
+      "value$1",
     );
+  });
+
+  it("keeps PHP variable replacement text verbatim in plain-text mode", () => {
+    expect(preview("x", "x", "$user = 5", { pattern: "x" })).toBe(
+      "$user = 5",
+    );
+  });
+
+  it("does not unescape double dollars in plain-text mode", () => {
+    expect(preview("x", "x", "$$", { pattern: "x" })).toBe("$$");
   });
 
   it("expands an unbraced numbered capture", () => {

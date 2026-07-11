@@ -76,8 +76,9 @@ pub trait TextSearcher {
 /// Replaces every match of `query` with `replacement` across the files under
 /// `root` that match the same filters Find-in-Path uses. In regex mode,
 /// `replacement` may reference capture groups (`$1`, `${name}`); in literal mode
-/// `$` is treated verbatim. Only the exact matched spans are rewritten - the
-/// surrounding text (including the rest of each line) is preserved byte-for-byte.
+/// the replacement is passed through `regex::NoExpand`, so every byte (including
+/// `$` and `$$`) is inserted verbatim. Only the exact matched spans are rewritten
+/// - the surrounding text (including the rest of each line) is preserved byte-for-byte.
 ///
 /// `scope_path`, when `Some`, restricts the run to that single file (used by
 /// "Replace in file"). It is matched exactly against the resolved path of each
@@ -431,7 +432,12 @@ impl TextReplacer for RipgrepTextReplacer {
                 continue;
             }
 
-            let updated = matcher.replace_all(&original, replacement).into_owned();
+            let updated = if options.is_regex {
+                matcher.replace_all(&original, replacement)
+            } else {
+                matcher.replace_all(&original, regex::NoExpand(replacement))
+            }
+            .into_owned();
 
             if updated == original {
                 continue;
@@ -830,6 +836,31 @@ mod tests {
 
         assert_eq!(read(&project, "a.txt"), "Z and axb\n");
         assert_eq!(result.total_replacements, 1);
+    }
+
+    #[test]
+    fn replace_literal_preserves_dollar_replacement_verbatim() {
+        if !rg_available() {
+            eprintln!(
+                "skipping replace_literal_preserves_dollar_replacement_verbatim: ripgrep (rg) not in PATH"
+            );
+            return;
+        }
+        let project = TempProject::new();
+        project.write("a.php", "x x\n");
+
+        let result = replace(
+            &project,
+            "x",
+            "$user = 5 / $100",
+            TextSearchOptions::default(),
+        );
+
+        assert_eq!(
+            read(&project, "a.php"),
+            "$user = 5 / $100 $user = 5 / $100\n"
+        );
+        assert_eq!(result.total_replacements, 2);
     }
 
     #[test]

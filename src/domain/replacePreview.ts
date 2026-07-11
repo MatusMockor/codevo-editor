@@ -61,24 +61,15 @@ function createLiteralPreview(
     }
 
     if (!query.wholeWord) {
-      return expandLiteralReplacement(matchText, replacement);
+      return replacement;
     }
 
     if (!hasAsciiWordBoundaries(lineText, matchStart, matchText)) {
       return null;
     }
 
-    return expandLiteralReplacement(matchText, replacement);
+    return replacement;
   };
-}
-
-function expandLiteralReplacement(
-  matchText: string,
-  replacement: string,
-): string {
-  const captures = [matchText] as unknown as RegExpMatchArray;
-
-  return expandRustReplacement(replacement, captures);
 }
 
 function compileRegexPreview(

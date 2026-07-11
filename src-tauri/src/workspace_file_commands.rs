@@ -2,7 +2,7 @@ use crate::file_fuzzy_matcher::{compare_ranked_paths, file_match_rank, FileMatch
 use crate::workspace_registry::{validate_relative_path, WorkspaceId, WorkspaceRegistry};
 use crate::{search::TextSearchOptions, workspace::FileEntryKind};
 use ignore::{gitignore::GitignoreBuilder, overrides::OverrideBuilder, Match};
-use regex::{Regex, RegexBuilder};
+use regex::{NoExpand, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, CString, OsStr},
@@ -754,9 +754,12 @@ impl<'a> WorkspaceFileRepository<'a> {
             if replacement_count == 0 {
                 continue;
             }
-            let updated = matcher
-                .replace_all(&snapshot.content, replacement)
-                .into_owned();
+            let updated = if options.is_regex {
+                matcher.replace_all(&snapshot.content, replacement)
+            } else {
+                matcher.replace_all(&snapshot.content, NoExpand(replacement))
+            }
+            .into_owned();
             if updated == snapshot.content {
                 continue;
             }
@@ -2944,6 +2947,86 @@ mod tests {
             0o640
         );
         assert_eq!(fs::read_to_string(root.join("b.txt")).unwrap(), "user-42\n");
+    }
+
+    #[test]
+    fn replace_literal_preserves_named_dollar_replacement_verbatim() {
+        let (registry, id, root) = fixture("replace-literal-named-dollar");
+        fs::write(root.join("a.php"), "x\n").unwrap();
+
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("a.php"),
+            "x",
+            "$user = 5",
+            &TextSearchOptions::default(),
+        );
+
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 1,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("a.php")).unwrap(),
+            "$user = 5\n"
+        );
+    }
+
+    #[test]
+    fn replace_literal_preserves_numeric_dollar_replacement_verbatim() {
+        let (registry, id, root) = fixture("replace-literal-numeric-dollar");
+        fs::write(root.join("a.txt"), "x\n").unwrap();
+
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("a.txt"),
+            "x",
+            "$100",
+            &TextSearchOptions::default(),
+        );
+
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 1,
+                ..
+            }
+        ));
+        assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "$100\n");
+    }
+
+    #[test]
+    fn replace_literal_preserves_whole_word_and_case_options() {
+        let (registry, id, root) = fixture("replace-literal-options");
+        fs::write(root.join("a.txt"), "User username user\n").unwrap();
+        let options = TextSearchOptions {
+            case_sensitive: false,
+            whole_word: true,
+            ..Default::default()
+        };
+
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path(
+            &id,
+            Path::new("a.txt"),
+            "user",
+            "$user = 5",
+            &options,
+        );
+
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 2,
+                ..
+            }
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "$user = 5 username $user = 5\n"
+        );
     }
 
     #[test]
