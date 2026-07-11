@@ -1,8 +1,11 @@
+#[cfg(test)]
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(test)]
+use std::fs;
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -27,6 +30,7 @@ pub struct TextSearchResult {
 /// ("Replaced N occurrences in M files").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 pub struct ReplaceInPathFileResult {
     pub path: String,
     pub relative_path: String,
@@ -39,6 +43,7 @@ pub struct ReplaceInPathFileResult {
 /// downstream "reload these tabs" logic only sees real edits.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 pub struct ReplaceInPathResult {
     pub files: Vec<ReplaceInPathFileResult>,
     pub total_replacements: u64,
@@ -78,6 +83,7 @@ pub trait TextSearcher {
 /// "Replace in file"). It is matched exactly against the resolved path of each
 /// candidate, so a user-supplied file mask cannot widen a single-file replace to
 /// other files.
+#[cfg(test)]
 pub trait TextReplacer {
     fn replace(
         &self,
@@ -91,6 +97,7 @@ pub trait TextReplacer {
 
 pub struct RipgrepTextSearcher;
 
+#[cfg(test)]
 pub struct RipgrepTextReplacer;
 
 /// ripgrep exit code returned when the pattern itself is invalid (e.g. a
@@ -342,6 +349,7 @@ fn byte_offset_to_char_offset(line: &str, byte_offset: u64) -> u64 {
     line[..byte_offset].chars().count() as u64
 }
 
+#[cfg(test)]
 impl TextReplacer for RipgrepTextReplacer {
     fn replace(
         &self,
@@ -460,6 +468,7 @@ impl TextReplacer for RipgrepTextReplacer {
 /// honouring the same filters as Find-in-Path. Uses ripgrep `--files-with-matches`
 /// (one path per line, no per-match cap) so a project-wide replace is never
 /// truncated by the find-result limit. Returns absolute paths.
+#[cfg(test)]
 fn list_matching_files(
     root: &Path,
     query: &str,
@@ -507,6 +516,7 @@ fn list_matching_files(
 
 /// True when `path` is itself a symlink (we must not replace a link with a
 /// regular file). Uses `symlink_metadata` so the link is not followed.
+#[cfg(test)]
 fn path_is_symlink(path: &Path) -> bool {
     path.symlink_metadata()
         .map(|metadata| metadata.file_type().is_symlink())
@@ -526,6 +536,7 @@ fn path_is_symlink(path: &Path) -> bool {
 /// In literal (non-regex) mode the query is escaped, so capture syntax in the
 /// replacement only applies in regex mode, which is where capture groups are
 /// expected.
+#[cfg(test)]
 fn build_replacement_regex(
     query: &str,
     options: &TextSearchOptions,
@@ -550,6 +561,7 @@ fn build_replacement_regex(
 /// canonicalized so symlinks and `..` cannot smuggle a write outside the
 /// workspace. If `candidate` cannot be canonicalized (e.g. it vanished between
 /// the search and the write), it is rejected.
+#[cfg(test)]
 fn is_path_within_root(root: &Path, candidate: &Path) -> bool {
     let Ok(canonical_root) = root.canonicalize() else {
         return false;
@@ -568,6 +580,7 @@ fn is_path_within_root(root: &Path, candidate: &Path) -> bool {
 /// mid-write leaves the original intact. Falls back to a direct write only if a
 /// temp file cannot be created (e.g. a read-only directory), preserving the
 /// previous behaviour rather than failing the whole run.
+#[cfg(test)]
 fn write_file_atomically(path: &Path, content: &str) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
