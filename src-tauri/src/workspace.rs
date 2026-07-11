@@ -8,6 +8,8 @@ use std::{
     path::Path,
 };
 
+const WORKSPACE_FILE_SEARCH_VISITED_LIMIT: usize = 200_000;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
@@ -235,34 +237,20 @@ impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
 
         let normalized_query = query.trim().to_lowercase();
         let capped_limit = limit.clamp(1, 500);
-        let scan_limit = capped_limit.saturating_mul(10).min(5_000);
         let mut results = Vec::new();
+        let mut visited = 0usize;
 
         let matcher = GitignoreWorkspaceIgnoreMatcher::load(root)?;
-        collect_file_results(
+        collect_ranked_file_results(
             root,
             root,
             &normalized_query,
-            scan_limit,
+            capped_limit,
+            WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
             &matcher,
+            &mut visited,
             &mut results,
         )?;
-        let mut results = results
-            .into_iter()
-            .filter_map(|result| {
-                let rank = score_result(&result.relative_path, &normalized_query)?;
-                Some((result, rank))
-            })
-            .collect::<Vec<_>>();
-        results.sort_by(|(left, left_rank), (right, right_rank)| {
-            compare_ranked_paths(
-                &left.relative_path,
-                *left_rank,
-                &right.relative_path,
-                *right_rank,
-            )
-        });
-        results.truncate(capped_limit);
 
         Ok(results.into_iter().map(|(result, _)| result).collect())
     }
@@ -293,20 +281,22 @@ fn file_entry_kind(metadata: &fs::Metadata) -> FileEntryKind {
     FileEntryKind::File
 }
 
-fn collect_file_results(
+fn collect_ranked_file_results(
     root: &Path,
     current: &Path,
     query: &str,
     limit: usize,
+    visited_limit: usize,
     matcher: &dyn WorkspaceIgnoreMatcher,
-    results: &mut Vec<FileSearchResult>,
+    visited: &mut usize,
+    results: &mut Vec<(FileSearchResult, FileMatchRank)>,
 ) -> io::Result<()> {
-    if results.len() >= limit {
+    if *visited >= visited_limit {
         return Ok(());
     }
 
     for entry in fs::read_dir(current)? {
-        if results.len() >= limit {
+        if *visited >= visited_limit {
             return Ok(());
         }
 
@@ -325,8 +315,19 @@ fn collect_file_results(
             continue;
         }
 
+        *visited += 1;
+
         if file_type.is_dir() {
-            collect_file_results(root, &path, query, limit, matcher, results)?;
+            collect_ranked_file_results(
+                root,
+                &path,
+                query,
+                limit,
+                visited_limit,
+                matcher,
+                visited,
+                results,
+            )?;
             continue;
         }
 
@@ -340,24 +341,50 @@ fn collect_file_results(
             .to_string_lossy()
             .replace('\\', "/");
 
-        if !file_search_matches(&relative_path, query) {
+        let Some(rank) = score_result(&relative_path, query) else {
             continue;
-        }
+        };
 
-        results.push(FileSearchResult {
-            name,
-            path: path.to_string_lossy().to_string(),
-            relative_path,
-        });
+        insert_ranked_result(
+            results,
+            FileSearchResult {
+                name,
+                path: path.to_string_lossy().to_string(),
+                relative_path,
+            },
+            rank,
+            limit,
+        );
     }
 
     Ok(())
+}
+
+fn insert_ranked_result(
+    results: &mut Vec<(FileSearchResult, FileMatchRank)>,
+    result: FileSearchResult,
+    rank: FileMatchRank,
+    limit: usize,
+) {
+    let index = results
+        .binary_search_by(|(existing, existing_rank)| {
+            compare_ranked_paths(
+                &existing.relative_path,
+                *existing_rank,
+                &result.relative_path,
+                rank,
+            )
+        })
+        .unwrap_or_else(|index| index);
+    results.insert(index, (result, rank));
+    results.truncate(limit);
 }
 
 fn score_result(relative_path: &str, query: &str) -> Option<FileMatchRank> {
     file_match_rank(relative_path, query)
 }
 
+#[cfg(test)]
 fn file_search_matches(relative_path: &str, query: &str) -> bool {
     file_match_rank(relative_path, query).is_some()
 }
@@ -616,6 +643,26 @@ mod tests {
             results[0].relative_path,
             "app/modules/customersModule/templates/RetentionAnalysisAdmin/show.latte"
         );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn search_files_scores_matches_beyond_the_initial_scan_window() {
+        let root = create_temp_dir("workspace-search-full-traversal");
+        for index in 0..11 {
+            fs::write(root.join(format!("unrelated-{index:02}.txt")), "")
+                .expect("write shallow file");
+        }
+        fs::create_dir_all(root.join("deep/path")).expect("create deep path");
+        fs::write(root.join("deep/path/needle"), "").expect("write exact match");
+        let repository = LocalWorkspaceFileRepository;
+
+        let results = repository
+            .search_files(&root, "needle", 1)
+            .expect("search files");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "deep/path/needle");
         fs::remove_dir_all(root).expect("cleanup");
     }
 

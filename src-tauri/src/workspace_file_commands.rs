@@ -19,6 +19,7 @@ use std::{
 const O_RESOLVE_BENEATH: libc::c_int = 0x0000_1000;
 const RENAME_EXCL: libc::c_uint = 0x0000_0004;
 const RENAME_SWAP: libc::c_uint = 0x0000_0002;
+const WORKSPACE_FILE_SEARCH_VISITED_LIMIT: usize = 200_000;
 
 struct DirectoryEntry {
     name: String,
@@ -143,6 +144,73 @@ fn collect_files(
         }
     }
     Ok(files)
+}
+
+fn collect_ranked_files(
+    root: &File,
+    scope: &Path,
+    query: &str,
+    limit: usize,
+    visited_limit: usize,
+    display_root: &Path,
+) -> io::Result<Vec<(PathBuf, FileMatchRank)>> {
+    let start = open_directory_path(root.as_raw_fd(), scope)?;
+    let mut stack = vec![(
+        scope.to_path_buf(),
+        start,
+        Vec::<Arc<ignore::gitignore::Gitignore>>::new(),
+    )];
+    let mut ranked = Vec::with_capacity(limit);
+    let mut visited = 0usize;
+    while let Some((relative, directory, inherited_ignores)) = stack.pop() {
+        let mut ignores = inherited_ignores;
+        if let Some(local) = load_directory_gitignore(&directory, &display_root.join(&relative))? {
+            ignores.push(Arc::new(local));
+        }
+        for entry in directory_entries(&directory)? {
+            let path = relative.join(&entry.name);
+            if crate::ignore_matcher::is_default_ignored_name(&entry.name)
+                || gitignore_stack_ignores(&ignores, &display_root.join(&path), entry.is_directory)
+            {
+                continue;
+            }
+            if visited >= visited_limit {
+                return Ok(ranked);
+            }
+            visited += 1;
+            if entry.is_directory {
+                let name = CString::new(entry.name).unwrap();
+                let child = open_directory_at(directory.as_raw_fd(), &name)?;
+                stack.push((path, child, ignores.clone()));
+                continue;
+            }
+            let Some(rank) = file_score(&path.to_string_lossy(), query) else {
+                continue;
+            };
+            insert_ranked_path(&mut ranked, path, rank, limit);
+        }
+    }
+    Ok(ranked)
+}
+
+fn insert_ranked_path(
+    ranked: &mut Vec<(PathBuf, FileMatchRank)>,
+    path: PathBuf,
+    rank: FileMatchRank,
+    limit: usize,
+) {
+    let index = ranked
+        .binary_search_by(|(existing_path, existing_rank)| {
+            compare_ranked_paths(
+                &existing_path.to_string_lossy(),
+                *existing_rank,
+                &path.to_string_lossy(),
+                rank,
+            )
+        })
+        .unwrap_or_else(|index| index);
+    ranked.insert(index, (path, rank));
+    ranked.truncate(limit);
 }
 
 fn load_directory_gitignore(
@@ -498,28 +566,14 @@ impl<'a> WorkspaceFileRepository<'a> {
         if !scope.as_os_str().is_empty() {
             validate_relative_path(scope)?;
         }
-        let files = collect_files(
+        let files = collect_ranked_files(
             &root,
             scope,
-            limit.saturating_mul(10).min(5_000),
+            &query,
+            limit,
+            WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
             &display_root,
         )?;
-        let mut files = files
-            .into_iter()
-            .filter_map(|path| {
-                let rank = file_score(&path.to_string_lossy(), &query)?;
-                Some((path, rank))
-            })
-            .collect::<Vec<_>>();
-        files.sort_by(|(left_path, left_rank), (right_path, right_rank)| {
-            compare_ranked_paths(
-                &left_path.to_string_lossy(),
-                *left_rank,
-                &right_path.to_string_lossy(),
-                *right_rank,
-            )
-        });
-        files.truncate(limit);
         Ok(files
             .into_iter()
             .map(|(relative, _)| DescriptorFileSearchResult {
@@ -1964,6 +2018,103 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(paths, vec!["a.php", "deep/path/a.php"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn descriptor_file_search_scores_matches_beyond_the_initial_scan_window() {
+        let (registry, id, root) = fixture("fuzzy-search-full-traversal");
+        for index in 0..11 {
+            fs::write(root.join(format!("unrelated-{index:02}.txt")), "").unwrap();
+        }
+        fs::create_dir_all(root.join("deep/path")).unwrap();
+        fs::write(root.join("deep/path/needle"), "").unwrap();
+        let repository = WorkspaceFileRepository::new(&registry);
+
+        let paths = repository
+            .search_files(&id, Path::new(""), "needle", 1)
+            .unwrap()
+            .into_iter()
+            .map(|result| result.relative_path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["deep/path/needle"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bounded_descriptor_file_search_matches_exhaustive_ranking() {
+        let (registry, id, root) = fixture("fuzzy-search-bounded-ranking");
+        let paths = [
+            "ControllerGuide.php",
+            "ProductController.php",
+            "UserController.php",
+            "controller/a.php",
+            "docs/controller-notes.md",
+            "src/AdminController.php",
+            "src/Http/Controllers/UserController.php",
+            "src/unrelated.txt",
+            "very/deep/AdminController.php",
+        ];
+        for relative in paths {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "").unwrap();
+        }
+        let root_file = registry.clone_root(&id).unwrap();
+        let display_root = registry.descriptor(&id).unwrap().canonical_root_path;
+
+        let actual = collect_ranked_files(
+            &root_file,
+            Path::new(""),
+            "controller",
+            4,
+            WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
+            &display_root,
+        )
+        .unwrap();
+        let mut expected = paths
+            .into_iter()
+            .filter_map(|path| Some((PathBuf::from(path), file_score(path, "controller")?)))
+            .collect::<Vec<_>>();
+        expected.sort_by(|(left_path, left_rank), (right_path, right_rank)| {
+            compare_ranked_paths(
+                &left_path.to_string_lossy(),
+                *left_rank,
+                &right_path.to_string_lossy(),
+                *right_rank,
+            )
+        });
+        expected.truncate(4);
+
+        assert_eq!(actual, expected);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ranked_file_search_counts_directories_toward_the_visited_limit() {
+        let (registry, id, root) = fixture("fuzzy-search-directory-cap");
+        fs::create_dir_all(root.join("a/b/c/d/e")).unwrap();
+        fs::write(root.join("a/b/c/d/e/needle.php"), "").unwrap();
+        let root_file = registry.clone_root(&id).unwrap();
+        let display_root = registry.descriptor(&id).unwrap().canonical_root_path;
+
+        let capped =
+            collect_ranked_files(&root_file, Path::new(""), "needle", 10, 3, &display_root)
+                .unwrap();
+        assert!(capped.is_empty());
+
+        let uncapped = collect_ranked_files(
+            &root_file,
+            Path::new(""),
+            "needle",
+            10,
+            WORKSPACE_FILE_SEARCH_VISITED_LIMIT,
+            &display_root,
+        )
+        .unwrap();
+        assert_eq!(uncapped.len(), 1);
+
         fs::remove_dir_all(root).unwrap();
     }
 
