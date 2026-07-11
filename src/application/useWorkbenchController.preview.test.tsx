@@ -4959,6 +4959,108 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
   });
 
+  it("publishes live dotenv duplicate warnings to markers and Problems, then clears them after a fix and close", async () => {
+    const path = "/workspace/.env";
+    const source = "APP_NAME=Codevo\nAPP_NAME=Editor\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => source),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, ".env"));
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument?.language).toBe("dotenv");
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toEqual([
+      expect.objectContaining({
+        character: 0,
+        endCharacter: 8,
+        line: 0,
+        message: "Duplicate key APP_NAME — overridden by a later assignment",
+        severity: "warning",
+      }),
+    ]);
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.groupKey === `php-local-diagnostics:${fileUriFromPath(path)}` &&
+          notice.message.includes("Duplicate key APP_NAME"),
+      ),
+    ).toBe(true);
+
+    act(() => {
+      getWorkbench().updateActiveDocument("APP_NAME=Editor\n");
+    });
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("Duplicate key APP_NAME"),
+      ),
+    ).toBe(false);
+
+    act(() => {
+      getWorkbench().updateActiveDocument(source);
+    });
+    act(() => {
+      getWorkbench().closeDocument(path);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("Duplicate key APP_NAME"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not publish dotenv warnings for another language or workspace", async () => {
+    const dotenvPath = "/workspace-a/.env";
+    const textPath = "/workspace-a/config.txt";
+    const source = "APP_NAME=Codevo\nAPP_NAME=Editor\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async () => source),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(textPath, "config.txt"));
+    });
+    expect(getWorkbench().languageServerDiagnosticsByPath[textPath]).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(dotenvPath, ".env"));
+    });
+    expect(getWorkbench().languageServerDiagnosticsByPath[dotenvPath]).toHaveLength(
+      1,
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().languageServerDiagnosticsByPath[dotenvPath]).toBeUndefined();
+    expect(
+      getWorkbench().notices.some((notice) =>
+        notice.message.includes("Duplicate key APP_NAME"),
+      ),
+    ).toBe(false);
+  });
+
   it("coalesces a burst of PHP diagnostics events into a single batched flush", async () => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)

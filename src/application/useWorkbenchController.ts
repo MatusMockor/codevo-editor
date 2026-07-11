@@ -213,6 +213,7 @@ import {
 } from "../domain/diagnosticsCoalescer";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
 import { filterPhpLanguageServerDiagnostics } from "../domain/phpLanguageServerDiagnosticFilters";
+import { dotenvDiagnosticsFromSource } from "../domain/dotenvDiagnostics";
 import {
   fileUriFromPath,
   isJavaScriptTypeScriptLanguageServerDocument,
@@ -7763,16 +7764,40 @@ export function useWorkbenchController(
   const fileStructureCanIncludeInheritedMembers = Boolean(
     activeDocument && isLanguageServerDocument(activeDocument),
   );
+  const activeDotenvDiagnosticsByPath = useMemo(() => {
+    if (!activeDocument || activeDocument.language !== "dotenv") {
+      return {};
+    }
+
+    if (isExternallyRemovedDocumentPath(activeDocument.path)) {
+      return {};
+    }
+
+    const diagnostics = dotenvDiagnosticsFromSource(activeDocument.content);
+
+    if (diagnostics.length === 0) {
+      return {};
+    }
+
+    return {
+      [activeDocument.path]: diagnostics,
+    };
+  }, [
+    activeDocument?.content,
+    activeDocument?.language,
+    activeDocument?.path,
+    isExternallyRemovedDocumentPath,
+  ]);
   const mergedLanguageServerDiagnosticsByPath = useMemo(
     () =>
       mergeDiagnosticsByPath(
-        mergeDiagnosticsByPath(
-          languageServerDiagnosticsByPath,
-          javaScriptTypeScriptDiagnosticsByPath,
-        ),
+        languageServerDiagnosticsByPath,
+        javaScriptTypeScriptDiagnosticsByPath,
         laravelDiagnosticsByPath,
+        activeDotenvDiagnosticsByPath,
       ),
     [
+      activeDotenvDiagnosticsByPath,
       javaScriptTypeScriptDiagnosticsByPath,
       languageServerDiagnosticsByPath,
       laravelDiagnosticsByPath,
@@ -7861,8 +7886,41 @@ export function useWorkbenchController(
     activeDocument?.path,
     activePhpLocalDiagnosticsByPath,
   ]);
+  const activeDotenvDiagnosticNotices = useMemo(() => {
+    if (!activeDocument || activeDocument.language !== "dotenv") {
+      return [];
+    }
+
+    const diagnostics = activeDotenvDiagnosticsByPath[activeDocument.path] ?? [];
+
+    if (diagnostics.length === 0) {
+      return [];
+    }
+
+    const uri = fileUriFromPath(activeDocument.path);
+    const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
+
+    return capDiagnosticNotices(
+      diagnostics.map((diagnostic) =>
+        createWorkbenchNotice(
+          languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+          diagnostic.source || "dotenv",
+          languageServerDiagnosticNoticeMessage(diagnostic, uri),
+          groupKey,
+          diagnosticNoticeNavigationTarget(uri, diagnostic),
+        ),
+      ),
+      DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+      (hiddenCount) =>
+        buildDiagnosticOverflowNotice("dotenv", groupKey, hiddenCount),
+    );
+  }, [
+    activeDocument?.language,
+    activeDocument?.path,
+    activeDotenvDiagnosticsByPath,
+  ]);
   const effectiveNotices = useMemo(() => {
-    if (!activeDocument || activeDocument.language !== "php") {
+    if (!activeDocument) {
       return notices;
     }
 
@@ -7870,6 +7928,22 @@ export function useWorkbenchController(
     const withoutActiveLocalDiagnostics = notices.filter(
       (notice) => notice.groupKey !== groupKey,
     );
+
+    if (activeDocument.language === "dotenv") {
+      if (activeDotenvDiagnosticNotices.length === 0) {
+        return withoutActiveLocalDiagnostics;
+      }
+
+      return capWorkbenchNotices(
+        [...withoutActiveLocalDiagnostics, ...activeDotenvDiagnosticNotices],
+        GLOBAL_NOTICE_LIMIT,
+        isCappableDiagnosticNotice,
+      );
+    }
+
+    if (activeDocument.language !== "php") {
+      return notices;
+    }
 
     if (activePhpLocalDiagnosticNotices.length === 0) {
       return withoutActiveLocalDiagnostics;
@@ -7883,6 +7957,7 @@ export function useWorkbenchController(
   }, [
     activeDocument?.language,
     activeDocument?.path,
+    activeDotenvDiagnosticNotices,
     activePhpLocalDiagnosticNotices,
     notices,
   ]);
