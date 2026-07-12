@@ -15,6 +15,10 @@ import {
   activeComposerManifestWorkspace,
   registerComposerManifestMonacoProviders,
 } from "./composerManifestMonacoProviders";
+import {
+  activeNpmManifestWorkspace,
+  registerNpmManifestMonacoProviders,
+} from "./npmManifestMonacoProviders";
 
 export interface EditorSurfaceLanguageProviderRegistrationDependencies {
   featuresGateway: LanguageServerFeaturesGateway;
@@ -94,8 +98,12 @@ export function useEditorSurfaceLanguageProviderRegistration({
       monacoApi,
       { getWorkspace: activeComposerManifestWorkspace },
     );
+    const npmManifestProviders = registerNpmManifestMonacoProviders(monacoApi, {
+      getWorkspace: activeNpmManifestWorkspace,
+    });
 
     return () => {
+      npmManifestProviders.dispose();
       composerManifestProviders.dispose();
       languageServerProviders.dispose();
     };

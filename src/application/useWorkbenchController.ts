@@ -143,6 +143,7 @@ import type {
 import {
   registerActiveComposerManifestWorkspace,
 } from "../components/composerManifestMonacoProviders";
+import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
 
 export type {
   PhpCodeActionDescriptor,
@@ -863,6 +864,13 @@ export function useWorkbenchController(
     return registerActiveComposerManifestWorkspace({
       packages: workspaceDescriptor.php?.packages ?? [],
       rootPath: workspaceRoot,
+    });
+  }, [workspaceDescriptor, workspaceRoot]);
+  useEffect(() => {
+    if (!workspaceRoot || !workspaceDescriptor) return;
+    if (!workspaceRootKeysEqual(workspaceRoot, workspaceDescriptor.rootPath)) return;
+    return registerActiveNpmManifestWorkspace({
+      packages: workspaceDescriptor.javaScriptTypeScript?.packages ?? [], rootPath: workspaceRoot,
     });
   }, [workspaceDescriptor, workspaceRoot]);
   const [packageScriptsByRoot, setPackageScriptsByRoot] = useState<

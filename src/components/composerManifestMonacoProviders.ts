@@ -4,7 +4,11 @@ import {
   composerPackageHoverMarkdown,
 } from "../domain/composerManifestIntelligence";
 import type { ComposerPackageDescriptor } from "../domain/workspace";
-import { modelPath } from "./phpMonacoDocumentContext";
+import {
+  jsonStringContentRangeAt,
+  manifestRequest,
+  monacoRangeForOffsets,
+} from "./jsonManifestMonacoProviderKit";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
@@ -71,7 +75,13 @@ export function provideComposerManifestHover(
   model: MonacoModel,
   position: MonacoPosition,
 ): Monaco.languages.Hover | null {
-  const request = composerManifestRequest(context, model, position);
+  const request = manifestRequest(
+    context,
+    model,
+    position,
+    "composer.json",
+    composerManifestContextAt,
+  );
 
   if (!request?.manifestContext.keyPosition || !request.manifestContext.packageName) {
     return null;
@@ -104,7 +114,13 @@ export function provideComposerManifestCompletions(
   model: MonacoModel,
   position: MonacoPosition,
 ): Monaco.languages.CompletionList | null {
-  const request = composerManifestRequest(context, model, position);
+  const request = manifestRequest(
+    context,
+    model,
+    position,
+    "composer.json",
+    composerManifestContextAt,
+  );
 
   if (!request?.manifestContext.keyPosition) {
     return null;
@@ -137,60 +153,6 @@ export function provideComposerManifestCompletions(
   return { suggestions };
 }
 
-function composerManifestRequest(
-  context: ComposerManifestMonacoProviderContext,
-  model: MonacoModel,
-  position: MonacoPosition,
-) {
-  const workspace = context.getWorkspace();
-
-  if (!workspace) {
-    return null;
-  }
-
-  const path = modelPath(model);
-
-  if (!path || !isComposerManifestPathInWorkspace(path, workspace.rootPath)) {
-    return null;
-  }
-
-  const source = model.getValue();
-  const offset = model.getOffsetAt(position);
-  const manifestContext = composerManifestContextAt(source, offset);
-
-  if (!manifestContext) {
-    return null;
-  }
-
-  return { manifestContext, offset, source, workspace };
-}
-
-function isComposerManifestPathInWorkspace(
-  path: string,
-  workspaceRoot: string,
-): boolean {
-  const normalizedPath = normalizedPathKey(path);
-  const normalizedRoot = normalizedPathKey(workspaceRoot).replace(/\/$/, "");
-
-  if (!normalizedRoot || !normalizedPath.startsWith(`${normalizedRoot}/`)) {
-    return false;
-  }
-
-  const segments = normalizedPath.split("/");
-
-  return segments[segments.length - 1] === "composer.json";
-}
-
-function normalizedPathKey(path: string): string {
-  const normalized = path.split("\\").join("/");
-
-  if (/^[A-Za-z]:\//.test(normalized)) {
-    return normalized.toLowerCase();
-  }
-
-  return normalized;
-}
-
 function composerManifestPackageNames(source: string): Set<string> {
   const parsed = JSON.parse(source) as Record<string, unknown>;
   const names = new Set<string>();
@@ -208,63 +170,4 @@ function composerManifestPackageNames(source: string): Set<string> {
   }
 
   return names;
-}
-
-function jsonStringContentRangeAt(
-  source: string,
-  offset: number,
-): { end: number; start: number } | null {
-  let start = -1;
-  let escaped = false;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-
-    if (start < 0) {
-      if (character === '"') {
-        start = index + 1;
-      }
-
-      continue;
-    }
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (character === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (character !== '"') {
-      continue;
-    }
-
-    if (offset >= start && offset <= index) {
-      return { end: index, start };
-    }
-
-    start = -1;
-  }
-
-  return null;
-}
-
-function monacoRangeForOffsets(
-  monaco: MonacoApi,
-  model: MonacoModel,
-  start: number,
-  end: number,
-): Monaco.Range {
-  const startPosition = model.getPositionAt(start);
-  const endPosition = model.getPositionAt(end);
-
-  return new monaco.Range(
-    startPosition.lineNumber,
-    startPosition.column,
-    endPosition.lineNumber,
-    endPosition.column,
-  );
 }

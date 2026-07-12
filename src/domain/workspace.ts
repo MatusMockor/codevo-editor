@@ -129,10 +129,19 @@ export interface JavaScriptTypeScriptProjectDescriptor {
   hasJsconfig: boolean;
   packageName: string | null;
   packageManager: string | null;
+  packages?: NpmPackageDescriptor[];
   frameworks: string[];
   typeScriptDependencyVersion: string | null;
   usesTypeScript: boolean;
   workspaceTypeScriptVersion: string | null;
+}
+
+export interface NpmPackageDescriptor {
+  declaredRange: string;
+  dev: boolean;
+  installedVersion: string | null;
+  installPath: string | null;
+  name: string;
 }
 
 export function javaScriptTypeScriptWorkspaceLabel(
