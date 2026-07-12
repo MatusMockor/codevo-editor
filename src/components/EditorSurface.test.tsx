@@ -11640,6 +11640,15 @@ class Foo
       symbolSegment.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
+    const menuItem = queryRequired<HTMLButtonElement>(
+      document.body,
+      ".breadcrumb-menu-item",
+    );
+
+    act(() => {
+      menuItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
     expect(editorSurfaceMocks.editor?.setPosition).toHaveBeenCalledWith({
       lineNumber: 1,
       column: 14,

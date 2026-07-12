@@ -52,3 +52,31 @@ export function breadcrumbPathFromCursorAndSymbols(
     ...breadcrumbPathFromCursorAndSymbols(cursor, containing.children),
   ];
 }
+
+export function breadcrumbSiblingsAt(
+  symbols: LanguageServerDocumentSymbol[],
+  path: LanguageServerDocumentSymbol[],
+  index: number,
+): LanguageServerDocumentSymbol[] {
+  if (!Number.isInteger(index) || index < 0 || index >= path.length) {
+    return [];
+  }
+
+  let siblings = symbols;
+
+  for (let pathIndex = 0; pathIndex < index; pathIndex += 1) {
+    const parent = path[pathIndex];
+
+    if (!parent || !siblings.includes(parent)) {
+      return [];
+    }
+
+    siblings = parent.children;
+  }
+
+  if (!siblings.includes(path[index])) {
+    return [];
+  }
+
+  return siblings;
+}

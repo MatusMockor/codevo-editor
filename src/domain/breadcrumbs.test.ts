@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   breadcrumbPathFromCursorAndSymbols,
+  breadcrumbSiblingsAt,
   symbolContainsCursorPosition,
 } from "./breadcrumbs";
 import type {
@@ -204,5 +205,77 @@ describe("breadcrumbPathFromCursorAndSymbols", () => {
       "MyComponent",
       "render",
     ]);
+  });
+});
+
+describe("breadcrumbSiblingsAt", () => {
+  const firstMethod = symbol({
+    name: "firstMethod",
+    startLine: 1,
+    startCharacter: 0,
+    endLine: 2,
+    endCharacter: 0,
+  });
+  const secondMethod = symbol({
+    name: "secondMethod",
+    startLine: 3,
+    startCharacter: 0,
+    endLine: 4,
+    endCharacter: 0,
+  });
+  const firstClass = symbol({
+    name: "FirstClass",
+    startLine: 0,
+    startCharacter: 0,
+    endLine: 5,
+    endCharacter: 0,
+    children: [firstMethod, secondMethod],
+  });
+  const secondClass = symbol({
+    name: "SecondClass",
+    startLine: 6,
+    startCharacter: 0,
+    endLine: 10,
+    endCharacter: 0,
+  });
+
+  it("returns top-level symbols in document order", () => {
+    const symbols = [firstClass, secondClass];
+
+    expect(breadcrumbSiblingsAt(symbols, [firstClass], 0)).toEqual(symbols);
+  });
+
+  it("returns the children of the parent for a nested path segment", () => {
+    expect(
+      breadcrumbSiblingsAt(
+        [firstClass, secondClass],
+        [firstClass, secondMethod],
+        1,
+      ),
+    ).toEqual([firstMethod, secondMethod]);
+  });
+
+  it("returns an empty list when the parent is missing or the path is invalid", () => {
+    const missingParent = symbol({
+      name: "Missing",
+      startLine: 0,
+      startCharacter: 0,
+      endLine: 1,
+      endCharacter: 0,
+      children: [firstMethod],
+    });
+
+    expect(
+      breadcrumbSiblingsAt(
+        [firstClass, secondClass],
+        [missingParent, firstMethod],
+        1,
+      ),
+    ).toEqual([]);
+    expect(breadcrumbSiblingsAt([firstClass], [firstClass], 2)).toEqual([]);
+  });
+
+  it("returns an empty list for an empty symbol tree", () => {
+    expect(breadcrumbSiblingsAt([], [], 0)).toEqual([]);
   });
 });

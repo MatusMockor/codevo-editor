@@ -2252,6 +2252,48 @@ button {
   opacity: 0.6;
 }
 
+.breadcrumb-menu {
+  position: fixed;
+  z-index: 120;
+  display: flex;
+  width: max-content;
+  min-width: 180px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  flex-direction: column;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-control);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+}
+
+.breadcrumb-menu-item {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.breadcrumb-menu-item:hover,
+.breadcrumb-menu-item:focus-visible {
+  background: var(--color-hover-strong);
+  color: var(--color-text-strong);
+  outline: none;
+}
+
+.breadcrumb-menu-item[aria-current="true"] {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
 .monaco-editor .editor-change-glyph {
   position: relative;
   width: 12px !important;

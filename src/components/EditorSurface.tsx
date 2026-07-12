@@ -3898,6 +3898,7 @@ function EditorSurfaceComponent({
           fileName={activeDocument.name}
           onNavigate={navigateToBreadcrumbSymbol}
           path={breadcrumbPath}
+          symbols={breadcrumbSymbols}
         />
       ) : null}
       <Editor
