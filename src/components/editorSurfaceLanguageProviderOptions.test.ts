@@ -64,6 +64,7 @@ describe("editor surface language provider options", () => {
       path: "/workspace/app/NewFile.php",
     } as PhpCodeActionNewFile;
     const error = new Error("boom");
+    const templateLanguageProviders = options.getTemplateLanguageProviders();
 
     expect(options.featuresGateway).toBe(featuresGateway);
     expect(options.refreshGateway).toBe(refreshGateway);
@@ -89,24 +90,29 @@ describe("editor surface language provider options", () => {
       options.flushPendingDocumentChange("/workspace/app/Example.php"),
     ).resolves.toBeUndefined();
     await expect(
-      options.provideBladeCodeActions?.("blade", codeActionRange),
+      templateLanguageProviders.blade.provideCodeActions(
+        "blade",
+        codeActionRange,
+      ),
     ).resolves.toEqual(codeActions);
     await expect(
-      options.provideBladeCompletions?.("blade", position),
+      templateLanguageProviders.blade.provideCompletions("blade", position),
     ).resolves.toEqual(bladeCompletions);
-    await expect(options.provideBladeDefinition?.("blade", 7)).resolves.toBe(
-      true,
-    );
     await expect(
-      options.provideLatteCompletions?.("latte", position),
+      templateLanguageProviders.blade.provideDefinition("blade", 7),
+    ).resolves.toBe(true);
+    await expect(
+      templateLanguageProviders.latte.provideCompletions("latte", position),
     ).resolves.toEqual(latteCompletions);
-    await expect(options.provideLatteDefinition?.("latte", 8)).resolves.toBe(
-      true,
-    );
     await expect(
-      options.provideNeonCompletions?.("neon", position),
+      templateLanguageProviders.latte.provideDefinition("latte", 8),
+    ).resolves.toBe(true);
+    await expect(
+      templateLanguageProviders.neon.provideCompletions("neon", position),
     ).resolves.toEqual(neonCompletions);
-    await expect(options.provideNeonDefinition?.("neon", 9)).resolves.toBe(true);
+    await expect(
+      templateLanguageProviders.neon.provideDefinition("neon", 9),
+    ).resolves.toBe(true);
     await expect(
       options.providePhpPresenterLinkDefinition?.("php", 10),
     ).resolves.toBe(true);
@@ -148,25 +154,27 @@ describe("editor surface language provider options", () => {
     expect(refs.flushPendingRef.current).toHaveBeenCalledWith(
       "/workspace/app/Example.php",
     );
-    expect(refs.bladeCodeActionsRef.current).toHaveBeenCalledWith(
-      "blade",
-      codeActionRange,
-    );
-    expect(refs.bladeCompletionsRef.current).toHaveBeenCalledWith(
-      "blade",
-      position,
-    );
-    expect(refs.bladeDefinitionRef.current).toHaveBeenCalledWith("blade", 7);
-    expect(refs.latteCompletionsRef.current).toHaveBeenCalledWith(
-      "latte",
-      position,
-    );
-    expect(refs.latteDefinitionRef.current).toHaveBeenCalledWith("latte", 8);
-    expect(refs.neonCompletionsRef.current).toHaveBeenCalledWith(
-      "neon",
-      position,
-    );
-    expect(refs.neonDefinitionRef.current).toHaveBeenCalledWith("neon", 9);
+    expect(
+      refs.templateLanguageProvidersRef.current.blade.provideCodeActions,
+    ).toHaveBeenCalledWith("blade", codeActionRange);
+    expect(
+      refs.templateLanguageProvidersRef.current.blade.provideCompletions,
+    ).toHaveBeenCalledWith("blade", position);
+    expect(
+      refs.templateLanguageProvidersRef.current.blade.provideDefinition,
+    ).toHaveBeenCalledWith("blade", 7);
+    expect(
+      refs.templateLanguageProvidersRef.current.latte.provideCompletions,
+    ).toHaveBeenCalledWith("latte", position);
+    expect(
+      refs.templateLanguageProvidersRef.current.latte.provideDefinition,
+    ).toHaveBeenCalledWith("latte", 8);
+    expect(
+      refs.templateLanguageProvidersRef.current.neon.provideCompletions,
+    ).toHaveBeenCalledWith("neon", position);
+    expect(
+      refs.templateLanguageProvidersRef.current.neon.provideDefinition,
+    ).toHaveBeenCalledWith("neon", 9);
     expect(refs.phpPresenterLinkDefinitionRef.current).toHaveBeenCalledWith(
       "php",
       10,
@@ -233,6 +241,19 @@ describe("editor surface language provider options", () => {
       ),
     ).toBe(false);
     expect(isDocumentSynced).not.toHaveBeenCalled();
+  });
+
+  it("reads the current template registry after options creation", () => {
+    const refs = registrationRefs();
+    const options = createEditorSurfaceLanguageProviderOptions({
+      dependencies: dependencies(),
+      refs,
+    });
+    const nextRegistry = registrationRefs().templateLanguageProvidersRef.current;
+
+    refs.templateLanguageProvidersRef.current = nextRegistry;
+
+    expect(options.getTemplateLanguageProviders()).toBe(nextRegistry);
   });
 
   it("keeps document sync isolated when no active workspace root is registered", () => {
@@ -318,18 +339,11 @@ function registrationRefs({
         ) => ({ kind: "accepted" as const }),
       ),
     ),
-    bladeCodeActionsRef: ref(vi.fn(async () => codeActions)),
-    bladeCompletionsRef: ref(vi.fn(async () => bladeCompletions)),
-    bladeDefinitionRef: ref(vi.fn(async () => true)),
     clearLanguageServerDiagnosticsForPathRef: ref(vi.fn()),
     errorReporterRef: ref(vi.fn()),
     flushPendingRef: ref(vi.fn(async () => undefined)),
     isLanguageServerDocumentSyncedRef: ref(undefined),
     largeSmartDocumentPolicyRef: ref(largeSmartDocumentPolicy),
-    latteCompletionsRef: ref(vi.fn(async () => latteCompletions)),
-    latteDefinitionRef: ref(vi.fn(async () => true)),
-    neonCompletionsRef: ref(vi.fn(async () => neonCompletions)),
-    neonDefinitionRef: ref(vi.fn(async () => true)),
     phpCodeActionsRef: ref(vi.fn(async () => codeActions)),
     phpFrameworkDefinitionRef: ref(vi.fn(async () => true)),
     phpFrameworkStringCompletionContextRef: ref(vi.fn(() => true)),
@@ -342,6 +356,21 @@ function registrationRefs({
     phpPresenterLinkDefinitionRef: ref(vi.fn(async () => true)),
     recordCompletionLatencyRef: ref(vi.fn()),
     runtimeStatusRef: ref(runtimeStatus),
+    templateLanguageProvidersRef: ref({
+      blade: {
+        provideCodeActions: vi.fn(async () => codeActions),
+        provideCompletions: vi.fn(async () => bladeCompletions),
+        provideDefinition: vi.fn(async () => true),
+      },
+      latte: {
+        provideCompletions: vi.fn(async () => latteCompletions),
+        provideDefinition: vi.fn(async () => true),
+      },
+      neon: {
+        provideCompletions: vi.fn(async () => neonCompletions),
+        provideDefinition: vi.fn(async () => true),
+      },
+    }),
     userSnippetsRef: ref(userSnippets),
   };
 }

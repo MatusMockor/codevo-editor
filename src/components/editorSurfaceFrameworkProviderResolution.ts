@@ -7,6 +7,9 @@ import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./languageServerMonacoProviders";
+import type {
+  TemplateLanguageProviderRegistry,
+} from "./templateLanguageMonacoTypes";
 
 export interface EditorSurfaceFrameworkIntelligenceProviders {
   provideBladeCodeActions?(
@@ -65,37 +68,7 @@ export interface EditorSurfaceFrameworkDefinitionProviders {
 }
 
 export interface ResolvedEditorSurfaceFrameworkProviders {
-  provideBladeCodeActions(
-    source: string,
-    range: PhpCodeActionRange,
-  ): Promise<PhpCodeActionDescriptor[]>;
-  provideBladeCompletions(
-    source: string,
-    position: EditorPosition,
-  ): Promise<BladeCompletion[]>;
-  provideBladeDefinition(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  provideLatteCompletions(
-    source: string,
-    position: EditorPosition,
-  ): Promise<LatteCompletion[]>;
-  provideLatteDefinition(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  provideNeonCompletions(
-    source: string,
-    position: EditorPosition,
-  ): Promise<NeonCompletion[]>;
-  provideNeonDefinition(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
+  templateLanguageProviders: TemplateLanguageProviderRegistry;
   providePhpPresenterLinkDefinition(
     source: string,
     offset: number,
@@ -126,27 +99,35 @@ export function resolveEditorSurfaceFrameworkProviders({
   return {
     providePhpFrameworkDefinition:
       providePhpFrameworkDefinition ?? noopPhpFrameworkDefinition,
-    provideBladeCodeActions:
-      frameworkIntelligenceProviders?.provideBladeCodeActions ??
-      noopPhpCodeActions,
-    provideBladeCompletions:
-      frameworkIntelligenceProviders?.provideBladeCompletions ??
-      noopBladeCompletions,
-    provideBladeDefinition:
-      frameworkIntelligenceProviders?.provideBladeDefinition ??
-      noopPhpFrameworkDefinition,
-    provideLatteCompletions:
-      frameworkIntelligenceProviders?.provideLatteCompletions ??
-      noopLatteCompletions,
-    provideLatteDefinition:
-      frameworkIntelligenceProviders?.provideLatteDefinition ??
-      noopPhpFrameworkDefinition,
-    provideNeonCompletions:
-      frameworkIntelligenceProviders?.provideNeonCompletions ??
-      noopNeonCompletions,
-    provideNeonDefinition:
-      frameworkIntelligenceProviders?.provideNeonDefinition ??
-      noopPhpFrameworkDefinition,
+    templateLanguageProviders: {
+      blade: {
+        provideCodeActions:
+          frameworkIntelligenceProviders?.provideBladeCodeActions ??
+          noopPhpCodeActions,
+        provideCompletions:
+          frameworkIntelligenceProviders?.provideBladeCompletions ??
+          noopBladeCompletions,
+        provideDefinition:
+          frameworkIntelligenceProviders?.provideBladeDefinition ??
+          noopPhpFrameworkDefinition,
+      },
+      latte: {
+        provideCompletions:
+          frameworkIntelligenceProviders?.provideLatteCompletions ??
+          noopLatteCompletions,
+        provideDefinition:
+          frameworkIntelligenceProviders?.provideLatteDefinition ??
+          noopPhpFrameworkDefinition,
+      },
+      neon: {
+        provideCompletions:
+          frameworkIntelligenceProviders?.provideNeonCompletions ??
+          noopNeonCompletions,
+        provideDefinition:
+          frameworkIntelligenceProviders?.provideNeonDefinition ??
+          noopPhpFrameworkDefinition,
+      },
+    },
     providePhpPresenterLinkDefinition:
       frameworkIntelligenceProviders?.providePhpPresenterLinkDefinition ??
       noopPhpFrameworkDefinition,

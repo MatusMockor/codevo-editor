@@ -10771,6 +10771,64 @@ function store($request): void
 });
 
 describe("registerLanguageServerMonacoProviders blade providers", () => {
+  it("keeps template registrations stable while requests use the latest registry", async () => {
+    const registered = createRegisteredProviders();
+    const activeDocument: EditorDocument = {
+      content: "@inc",
+      language: "blade",
+      name: "show.blade.php",
+      path: "/project/resources/views/show.blade.php",
+      savedContent: "@inc",
+    };
+    const firstCompletions = vi.fn(async () => [
+      { insertText: "@first", kind: "directive" as const, label: "@first" },
+    ]);
+    const latestCompletions = vi.fn(async () => [
+      { insertText: "@latest", kind: "directive" as const, label: "@latest" },
+    ]);
+    let registry = templateRegistry({ provideBladeCompletions: firstCompletions });
+    const context = providerContext({ activeDocument });
+    context.getTemplateLanguageProviders = () => registry;
+    const disposable = registerLanguageServerMonacoProviders(
+      registered.monaco,
+      context,
+    );
+    const providerModel = model({
+      content: activeDocument.content,
+      path: activeDocument.path,
+    });
+
+    await registered.bladeCompletionProvider.provideCompletionItems(
+      providerModel,
+      { column: 5, lineNumber: 1 },
+    );
+    registry = templateRegistry({ provideBladeCompletions: latestCompletions });
+    const result = await registered.bladeCompletionProvider.provideCompletionItems(
+      providerModel,
+      { column: 5, lineNumber: 1 },
+    );
+
+    expect(firstCompletions).toHaveBeenCalledTimes(1);
+    expect(latestCompletions).toHaveBeenCalledTimes(1);
+    expect(completionLabels(result.suggestions)).toEqual(["@latest"]);
+    expect(
+      registered.monaco.languages.registerCompletionItemProvider,
+    ).toHaveBeenCalledTimes(4);
+    expect(
+      registered.monaco.languages.registerDefinitionProvider,
+    ).toHaveBeenCalledTimes(4);
+
+    disposable.dispose();
+
+    expect(registered.bladeCompletionDispose).toHaveBeenCalledTimes(1);
+    expect(registered.bladeDefinitionDispose).toHaveBeenCalledTimes(1);
+    expect(registered.bladeCodeActionDispose).toHaveBeenCalledTimes(1);
+    expect(registered.latteCompletionDispose).toHaveBeenCalledTimes(1);
+    expect(registered.latteDefinitionDispose).toHaveBeenCalledTimes(1);
+    expect(registered.neonCompletionDispose).toHaveBeenCalledTimes(1);
+    expect(registered.neonDefinitionDispose).toHaveBeenCalledTimes(1);
+  });
+
   it("registers blade definition and completion providers and disposes them", () => {
     const registered = createRegisteredProviders();
     const disposable = registerLanguageServerMonacoProviders(
@@ -11934,6 +11992,7 @@ function createRegisteredProviders() {
   const latteCompletionDispose = vi.fn();
   const neonDefinitionDispose = vi.fn();
   const neonCompletionDispose = vi.fn();
+  const bladeCodeActionDispose = vi.fn();
   const codeActionDispose = vi.fn();
   const codeLensDispose = vi.fn();
   const commandDispose = vi.fn();
@@ -12065,7 +12124,7 @@ function createRegisteredProviders() {
     bladeCompletionDispose,
     bladeCompletionLanguage: null,
     bladeCompletionProvider: null,
-    bladeCodeActionDispose: codeActionDispose,
+    bladeCodeActionDispose,
     bladeCodeActionLanguage: null,
     bladeCodeActionMetadata: null,
     bladeCodeActionProvider: null,
@@ -12261,7 +12320,7 @@ function createRegisteredProviders() {
           registered.bladeCodeActionLanguage = language;
           registered.bladeCodeActionProvider = provider;
           registered.bladeCodeActionMetadata = metadata;
-          return { dispose: codeActionDispose };
+          return { dispose: bladeCodeActionDispose };
         }
 
         registered.codeActionLanguage = language;
@@ -12463,27 +12522,27 @@ function providerContext(
     isDocumentSynced(rootPath: string, path: string): boolean;
     isPhpInlayHintsEnabled(): boolean;
     limitNavigationResultsToOpenModels: boolean;
-    provideBladeCompletions: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCompletions"]
-    >;
-    provideBladeCodeActions: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeCodeActions"]
-    >;
-    provideBladeDefinition: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideBladeDefinition"]
-    >;
-    provideLatteCompletions: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideLatteCompletions"]
-    >;
-    provideLatteDefinition: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideLatteDefinition"]
-    >;
-    provideNeonCompletions: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNeonCompletions"]
-    >;
-    provideNeonDefinition: NonNullable<
-      Parameters<typeof registerLanguageServerMonacoProviders>[1]["provideNeonDefinition"]
-    >;
+    provideBladeCompletions: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["blade"]["provideCompletions"];
+    provideBladeCodeActions: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["blade"]["provideCodeActions"];
+    provideBladeDefinition: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["blade"]["provideDefinition"];
+    provideLatteCompletions: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["latte"]["provideCompletions"];
+    provideLatteDefinition: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["latte"]["provideDefinition"];
+    provideNeonCompletions: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["neon"]["provideCompletions"];
+    provideNeonDefinition: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["neon"]["provideDefinition"];
     providePhpPresenterLinkCompletions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpPresenterLinkCompletions"]
     >;
@@ -12531,19 +12590,34 @@ function providerContext(
     getActiveDocument: () => activeDocument,
     getLargeSmartDocumentPolicy: overrides.getLargeSmartDocumentPolicy,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),
+    getTemplateLanguageProviders: () => ({
+      blade: {
+        provideCodeActions:
+          overrides.provideBladeCodeActions ?? (async () => []),
+        provideCompletions:
+          overrides.provideBladeCompletions ?? (async () => []),
+        provideDefinition:
+          overrides.provideBladeDefinition ?? (async () => false),
+      },
+      latte: {
+        provideCompletions:
+          overrides.provideLatteCompletions ?? (async () => []),
+        provideDefinition:
+          overrides.provideLatteDefinition ?? (async () => false),
+      },
+      neon: {
+        provideCompletions:
+          overrides.provideNeonCompletions ?? (async () => []),
+        provideDefinition:
+          overrides.provideNeonDefinition ?? (async () => false),
+      },
+    }),
     getUserSnippets: overrides.getUserSnippets,
     getWorkspaceRoot: overrides.getWorkspaceRoot ?? (() => "/project"),
     isDocumentSynced: overrides.isDocumentSynced,
     isPhpInlayHintsEnabled: overrides.isPhpInlayHintsEnabled,
     limitNavigationResultsToOpenModels:
       overrides.limitNavigationResultsToOpenModels,
-    provideBladeCompletions: overrides.provideBladeCompletions,
-    provideBladeCodeActions: overrides.provideBladeCodeActions,
-    provideBladeDefinition: overrides.provideBladeDefinition,
-    provideLatteCompletions: overrides.provideLatteCompletions,
-    provideLatteDefinition: overrides.provideLatteDefinition,
-    provideNeonCompletions: overrides.provideNeonCompletions,
-    provideNeonDefinition: overrides.provideNeonDefinition,
     providePhpPresenterLinkCompletions:
       overrides.providePhpPresenterLinkCompletions,
     providePhpPresenterLinkDefinition:
@@ -12564,6 +12638,30 @@ function providerContext(
     refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,
+  };
+}
+
+function templateRegistry({
+  provideBladeCompletions = async () => [],
+}: {
+  provideBladeCompletions?: ReturnType<
+    Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+  >["blade"]["provideCompletions"];
+} = {}) {
+  return {
+    blade: {
+      provideCodeActions: async () => [],
+      provideCompletions: provideBladeCompletions,
+      provideDefinition: async () => false,
+    },
+    latte: {
+      provideCompletions: async () => [],
+      provideDefinition: async () => false,
+    },
+    neon: {
+      provideCompletions: async () => [],
+      provideDefinition: async () => false,
+    },
   };
 }
 

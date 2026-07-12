@@ -45,23 +45,21 @@ export function registerBladeTemplateMonacoProviders<
     provideCompletionItems: (model, position) =>
       provideBladeCompletionItems(monaco, context, model, position),
   });
-  const codeActions = context.provideBladeCodeActions
-    ? monaco.languages.registerCodeActionProvider(
-        "blade",
-        {
-          provideCodeActions: (model, range, actionContext) =>
-            provideBladeCodeActions(
-              monaco,
-              context,
-              handlers,
-              model,
-              range,
-              actionContext,
-            ),
-        },
-        { providedCodeActionKinds: ["quickfix"] },
-      )
-    : { dispose: () => undefined };
+  const codeActions = monaco.languages.registerCodeActionProvider(
+    "blade",
+    {
+      provideCodeActions: (model, range, actionContext) =>
+        provideBladeCodeActions(
+          monaco,
+          context,
+          handlers,
+          model,
+          range,
+          actionContext,
+        ),
+    },
+    { providedCodeActionKinds: ["quickfix"] },
+  );
 
   return {
     dispose: () => {
@@ -106,10 +104,6 @@ async function provideBladeDefinition(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.Location[] | null> {
-  if (!context.provideBladeDefinition) {
-    return null;
-  }
-
   const documentContext = activeTemplateDocumentContext(context, model, "blade");
 
   if (!documentContext) {
@@ -126,7 +120,9 @@ async function provideBladeDefinition(
   );
 
   try {
-    await context.provideBladeDefinition(source, offset, request);
+    await context
+      .getTemplateLanguageProviders()
+      .blade.provideDefinition(source, offset, request);
   } catch (error) {
     if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       context.reportError(error);
@@ -142,10 +138,6 @@ async function provideBladeCompletionItems(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.CompletionList> {
-  if (!context.provideBladeCompletions) {
-    return { suggestions: [] };
-  }
-
   const documentContext = activeTemplateDocumentContext(context, model, "blade");
 
   if (!documentContext) {
@@ -164,7 +156,9 @@ async function provideBladeCompletionItems(
   );
 
   try {
-    const completions = await context.provideBladeCompletions(source, position);
+    const completions = await context
+      .getTemplateLanguageProviders()
+      .blade.provideCompletions(source, position);
 
     if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       return { suggestions: [] };
@@ -205,7 +199,6 @@ async function provideBladeCodeActions<
   actionContext: Monaco.languages.CodeActionContext,
 ): Promise<Monaco.languages.CodeActionList> {
   if (
-    !context.provideBladeCodeActions ||
     !bladeQuickFixKindRequested(actionContext.only)
   ) {
     return emptyBladeCodeActions();
@@ -220,10 +213,9 @@ async function provideBladeCodeActions<
   const source = modelSource(model, documentContext.activeDocument.content);
 
   try {
-    const descriptors = await context.provideBladeCodeActions(
-      source,
-      codeActionOffsetRange(source, range),
-    );
+    const descriptors = await context
+      .getTemplateLanguageProviders()
+      .blade.provideCodeActions(source, codeActionOffsetRange(source, range));
 
     if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       return emptyBladeCodeActions();

@@ -13,21 +13,36 @@ describe("editor surface framework provider resolution", () => {
     await expect(resolved.providePhpFrameworkDefinition("", 0)).resolves.toBe(
       false,
     );
-    await expect(resolved.provideBladeCodeActions("", range())).resolves.toEqual(
-      [],
-    );
     await expect(
-      resolved.provideBladeCompletions("", position()),
+      resolved.templateLanguageProviders.blade.provideCodeActions("", range()),
     ).resolves.toEqual([]);
-    await expect(resolved.provideBladeDefinition("", 0)).resolves.toBe(false);
     await expect(
-      resolved.provideLatteCompletions("", position()),
+      resolved.templateLanguageProviders.blade.provideCompletions(
+        "",
+        position(),
+      ),
     ).resolves.toEqual([]);
-    await expect(resolved.provideLatteDefinition("", 0)).resolves.toBe(false);
     await expect(
-      resolved.provideNeonCompletions("", position()),
+      resolved.templateLanguageProviders.blade.provideDefinition("", 0),
+    ).resolves.toBe(false);
+    await expect(
+      resolved.templateLanguageProviders.latte.provideCompletions(
+        "",
+        position(),
+      ),
     ).resolves.toEqual([]);
-    await expect(resolved.provideNeonDefinition("", 0)).resolves.toBe(false);
+    await expect(
+      resolved.templateLanguageProviders.latte.provideDefinition("", 0),
+    ).resolves.toBe(false);
+    await expect(
+      resolved.templateLanguageProviders.neon.provideCompletions(
+        "",
+        position(),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      resolved.templateLanguageProviders.neon.provideDefinition("", 0),
+    ).resolves.toBe(false);
     await expect(
       resolved.providePhpPresenterLinkDefinition("", 0),
     ).resolves.toBe(false);
@@ -80,6 +95,12 @@ describe("editor surface framework provider resolution", () => {
     expect(resolved.providePhpPresenterLinkCompletions).toBe(
       providePhpPresenterLinkCompletions,
     );
+    expect(resolved.templateLanguageProviders.latte).not.toHaveProperty(
+      "providePhpPresenterLinkDefinition",
+    );
+    expect(resolved.templateLanguageProviders.latte).not.toHaveProperty(
+      "providePhpPresenterLinkCompletions",
+    );
   });
 
   it("preserves distinct callback identities for separate provider sets", () => {
@@ -97,13 +118,15 @@ describe("editor surface framework provider resolution", () => {
       frameworkIntelligenceProviders: secondProviders,
     });
 
-    expect(first.provideBladeDefinition).toBe(
+    expect(first.templateLanguageProviders.blade.provideDefinition).toBe(
       firstProviders.provideBladeDefinition,
     );
-    expect(second.provideBladeDefinition).toBe(
+    expect(second.templateLanguageProviders.blade.provideDefinition).toBe(
       secondProviders.provideBladeDefinition,
     );
-    expect(first.provideBladeDefinition).not.toBe(second.provideBladeDefinition);
+    expect(first.templateLanguageProviders.blade.provideDefinition).not.toBe(
+      second.templateLanguageProviders.blade.provideDefinition,
+    );
   });
 });
 

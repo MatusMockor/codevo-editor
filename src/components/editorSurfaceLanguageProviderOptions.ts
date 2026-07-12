@@ -18,15 +18,16 @@ import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
-  BladeCompletion,
   LanguageServerMonacoProviderContext,
   LatteCompletion,
-  NeonCompletion,
   PhpCodeActionDescriptor,
   PhpCodeActionNewFile,
   PhpCodeActionRange,
   PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
+import type {
+  TemplateLanguageProviderRegistry,
+} from "./templateLanguageMonacoTypes";
 import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
 import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
 import type { PhpDocumentSymbolRequest } from "../application/phpDocumentSymbolCoordinator";
@@ -69,14 +70,6 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
       context: PhpWorkspaceEditApplicationContext,
     ) => Promise<WorkspaceEditApplicationDecision>
   >;
-  bladeCodeActionsRef: CallbackRef<
-    (
-      source: string,
-      range: PhpCodeActionRange,
-    ) => Promise<PhpCodeActionDescriptor[]>
-  >;
-  bladeCompletionsRef: CallbackRef<PositionProvider<BladeCompletion[]>>;
-  bladeDefinitionRef: CallbackRef<OffsetProvider<boolean>>;
   clearLanguageServerDiagnosticsForPathRef: CallbackRef<(path: string) => void>;
   errorReporterRef: CallbackRef<(error: unknown) => void>;
   flushPendingRef: CallbackRef<(path: string) => Promise<void>>;
@@ -84,10 +77,6 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
     ((path: string) => boolean) | undefined
   >;
   largeSmartDocumentPolicyRef: MutableRefObject<LargeSmartDocumentPolicy>;
-  latteCompletionsRef: CallbackRef<PositionProvider<LatteCompletion[]>>;
-  latteDefinitionRef: CallbackRef<OffsetProvider<boolean>>;
-  neonCompletionsRef: CallbackRef<PositionProvider<NeonCompletion[]>>;
-  neonDefinitionRef: CallbackRef<OffsetProvider<boolean>>;
   phpCodeActionsRef: CallbackRef<
     (
       source: string,
@@ -118,6 +107,9 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
     ((durationMs: number, rootPath?: string) => void) | undefined
   >;
   runtimeStatusRef: MutableRefObject<LanguageServerRuntimeStatus | null>;
+  templateLanguageProvidersRef: MutableRefObject<
+    TemplateLanguageProviderRegistry
+  >;
   userSnippetsRef: MutableRefObject<readonly UserSnippet[]>;
 }
 
@@ -141,18 +133,11 @@ export function createEditorSurfaceLanguageProviderOptions({
     resolveDocumentForModelRef,
     applyPhpCodeActionNewFileRef,
     applyPhpWorkspaceEditRef,
-    bladeCodeActionsRef,
-    bladeCompletionsRef,
-    bladeDefinitionRef,
     clearLanguageServerDiagnosticsForPathRef,
     errorReporterRef,
     flushPendingRef,
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
-    latteCompletionsRef,
-    latteDefinitionRef,
-    neonCompletionsRef,
-    neonDefinitionRef,
     phpCodeActionsRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
@@ -165,6 +150,7 @@ export function createEditorSurfaceLanguageProviderOptions({
     phpPresenterLinkDefinitionRef,
     recordCompletionLatencyRef,
     runtimeStatusRef,
+    templateLanguageProvidersRef,
     userSnippetsRef,
   } = refs;
 
@@ -183,6 +169,7 @@ export function createEditorSurfaceLanguageProviderOptions({
       resolveDocumentForModelRef?.current(model) ?? activeDocumentRef.current,
     getLargeSmartDocumentPolicy: () => largeSmartDocumentPolicyRef.current,
     getRuntimeStatus: () => runtimeStatusRef.current,
+    getTemplateLanguageProviders: () => templateLanguageProvidersRef.current,
     getUserSnippets: () => userSnippetsRef.current,
     getWorkspaceRoot: () => workspaceRoot,
     getWorkspaceIdentityDescriptor: () => workspaceIdentityDescriptor ?? null,
@@ -191,20 +178,6 @@ export function createEditorSurfaceLanguageProviderOptions({
       Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),
     isPhpInlayHintsEnabled: () => phpInlayHintsEnabledRef.current,
     limitNavigationResultsToOpenModels: true,
-    provideBladeCodeActions: (source, range) =>
-      bladeCodeActionsRef.current(source, range),
-    provideBladeCompletions: (source, position) =>
-      bladeCompletionsRef.current(source, position),
-    provideBladeDefinition: (source, offset, request) =>
-      callOffsetProvider(bladeDefinitionRef.current, source, offset, request),
-    provideLatteCompletions: (source, position) =>
-      latteCompletionsRef.current(source, position),
-    provideLatteDefinition: (source, offset, request) =>
-      callOffsetProvider(latteDefinitionRef.current, source, offset, request),
-    provideNeonCompletions: (source, position) =>
-      neonCompletionsRef.current(source, position),
-    provideNeonDefinition: (source, offset, request) =>
-      callOffsetProvider(neonDefinitionRef.current, source, offset, request),
     providePhpPresenterLinkDefinition: (source, offset, request) =>
       callOffsetProvider(
         phpPresenterLinkDefinitionRef.current,

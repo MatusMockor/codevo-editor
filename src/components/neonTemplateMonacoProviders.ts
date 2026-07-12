@@ -77,10 +77,6 @@ async function provideNeonDefinition(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.Location[] | null> {
-  if (!context.provideNeonDefinition) {
-    return null;
-  }
-
   const documentContext = activeTemplateDocumentContext(context, model, "neon");
 
   if (!documentContext) {
@@ -97,7 +93,9 @@ async function provideNeonDefinition(
   );
 
   try {
-    await context.provideNeonDefinition(source, offset, request);
+    await context
+      .getTemplateLanguageProviders()
+      .neon.provideDefinition(source, offset, request);
   } catch (error) {
     if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       context.reportError(error);
@@ -113,10 +111,6 @@ async function provideNeonCompletionItems(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.CompletionList> {
-  if (!context.provideNeonCompletions) {
-    return { suggestions: [] };
-  }
-
   const documentContext = activeTemplateDocumentContext(context, model, "neon");
 
   if (!documentContext) {
@@ -128,7 +122,9 @@ async function provideNeonCompletionItems(
   const fallbackRange = templateCompletionFallbackRange(position, word);
 
   try {
-    const completions = await context.provideNeonCompletions(source, position);
+    const completions = await context
+      .getTemplateLanguageProviders()
+      .neon.provideCompletions(source, position);
 
     if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       return { suggestions: [] };

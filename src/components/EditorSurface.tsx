@@ -513,13 +513,7 @@ function EditorSurfaceComponent({
   const generatedSurfaceId = useId();
   const groupId = runtimeMembership?.groupId ?? generatedSurfaceId;
   const {
-    bladeCodeActionsRef,
-    bladeCompletionsRef,
-    bladeDefinitionRef,
-    latteCompletionsRef,
-    latteDefinitionRef,
-    neonCompletionsRef,
-    neonDefinitionRef,
+    templateLanguageProvidersRef,
     phpPresenterLinkCompletionsRef,
     phpPresenterLinkCompletionContextRef,
     phpPresenterLinkDefinitionRef,
@@ -1252,18 +1246,11 @@ function EditorSurfaceComponent({
     resolveDocumentForModelRef,
     applyPhpCodeActionNewFileRef,
     applyPhpWorkspaceEditRef,
-    bladeCodeActionsRef,
-    bladeCompletionsRef,
-    bladeDefinitionRef,
     clearLanguageServerDiagnosticsForPathRef,
     errorReporterRef,
     flushPendingRef,
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
-    latteCompletionsRef,
-    latteDefinitionRef,
-    neonCompletionsRef,
-    neonDefinitionRef,
     phpCodeActionsRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
@@ -1276,6 +1263,7 @@ function EditorSurfaceComponent({
     phpPresenterLinkDefinitionRef,
     recordCompletionLatencyRef,
     runtimeStatusRef,
+    templateLanguageProvidersRef,
     userSnippetsRef,
   };
   const runtimeRegistration: EditorRuntimeSurfaceRegistration = {
@@ -1411,31 +1399,40 @@ function EditorSurfaceComponent({
         openWorkspaceRootRef.current?.(path) ?? Promise.resolve(false),
       provideBladeDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
-          bladeDefinitionRef.current,
+          templateLanguageProvidersRef.current.blade.provideDefinition,
           source,
           offset,
           request,
         ),
       provideBladeCompletions: (source, position) =>
-        bladeCompletionsRef.current(source, position),
+        templateLanguageProvidersRef.current.blade.provideCompletions(
+          source,
+          position,
+        ),
       provideLatteDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
-          latteDefinitionRef.current,
+          templateLanguageProvidersRef.current.latte.provideDefinition,
           source,
           offset,
           request,
         ),
       provideLatteCompletions: (source, position) =>
-        latteCompletionsRef.current(source, position),
+        templateLanguageProvidersRef.current.latte.provideCompletions(
+          source,
+          position,
+        ),
       provideNeonDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
-          neonDefinitionRef.current,
+          templateLanguageProvidersRef.current.neon.provideDefinition,
           source,
           offset,
           request,
         ),
       provideNeonCompletions: (source, position) =>
-        neonCompletionsRef.current(source, position),
+        templateLanguageProvidersRef.current.neon.provideCompletions(
+          source,
+          position,
+        ),
       providePhpFrameworkDefinition: (source, offset, request) =>
         provideGuardedQaDefinition(
           phpFrameworkDefinitionRef.current,

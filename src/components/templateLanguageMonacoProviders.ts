@@ -17,6 +17,7 @@ export type {
   LatteCompletionKind,
   NeonCompletion,
   NeonCompletionKind,
+  TemplateLanguageProviderRegistry,
   TemplateLanguageMonacoProviderContext,
   TemplateLanguageMonacoProviderHandlers,
 } from "./templateLanguageMonacoTypes";

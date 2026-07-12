@@ -17,13 +17,7 @@ export function useEditorSurfaceFrameworkProviderRefs({
   frameworkIntelligenceProviders?: EditorSurfaceFrameworkIntelligenceProviders;
 } & EditorSurfaceFrameworkDefinitionProviders) {
   const {
-    provideBladeCodeActions: resolvedProvideBladeCodeActions,
-    provideBladeCompletions: resolvedProvideBladeCompletions,
-    provideBladeDefinition: resolvedProvideBladeDefinition,
-    provideLatteCompletions: resolvedProvideLatteCompletions,
-    provideLatteDefinition: resolvedProvideLatteDefinition,
-    provideNeonCompletions: resolvedProvideNeonCompletions,
-    provideNeonDefinition: resolvedProvideNeonDefinition,
+    templateLanguageProviders: resolvedTemplateLanguageProviders,
     providePhpPresenterLinkDefinition:
       resolvedProvidePhpPresenterLinkDefinition,
     providePhpPresenterLinkCompletions:
@@ -38,13 +32,9 @@ export function useEditorSurfaceFrameworkProviderRefs({
     providePhpFrameworkDefinition,
   });
 
-  const bladeCodeActionsRef = useRef(resolvedProvideBladeCodeActions);
-  const bladeCompletionsRef = useRef(resolvedProvideBladeCompletions);
-  const bladeDefinitionRef = useRef(resolvedProvideBladeDefinition);
-  const latteCompletionsRef = useRef(resolvedProvideLatteCompletions);
-  const latteDefinitionRef = useRef(resolvedProvideLatteDefinition);
-  const neonCompletionsRef = useRef(resolvedProvideNeonCompletions);
-  const neonDefinitionRef = useRef(resolvedProvideNeonDefinition);
+  const templateLanguageProvidersRef = useRef(
+    resolvedTemplateLanguageProviders,
+  );
   const phpPresenterLinkDefinitionRef = useRef(
     resolvedProvidePhpPresenterLinkDefinition,
   );
@@ -62,32 +52,8 @@ export function useEditorSurfaceFrameworkProviderRefs({
   );
 
   useEffect(() => {
-    bladeCodeActionsRef.current = resolvedProvideBladeCodeActions;
-  }, [resolvedProvideBladeCodeActions]);
-
-  useEffect(() => {
-    bladeCompletionsRef.current = resolvedProvideBladeCompletions;
-  }, [resolvedProvideBladeCompletions]);
-
-  useEffect(() => {
-    bladeDefinitionRef.current = resolvedProvideBladeDefinition;
-  }, [resolvedProvideBladeDefinition]);
-
-  useEffect(() => {
-    latteCompletionsRef.current = resolvedProvideLatteCompletions;
-  }, [resolvedProvideLatteCompletions]);
-
-  useEffect(() => {
-    latteDefinitionRef.current = resolvedProvideLatteDefinition;
-  }, [resolvedProvideLatteDefinition]);
-
-  useEffect(() => {
-    neonCompletionsRef.current = resolvedProvideNeonCompletions;
-  }, [resolvedProvideNeonCompletions]);
-
-  useEffect(() => {
-    neonDefinitionRef.current = resolvedProvideNeonDefinition;
-  }, [resolvedProvideNeonDefinition]);
+    templateLanguageProvidersRef.current = resolvedTemplateLanguageProviders;
+  }, [resolvedTemplateLanguageProviders]);
 
   useEffect(() => {
     phpPresenterLinkDefinitionRef.current =
@@ -114,13 +80,7 @@ export function useEditorSurfaceFrameworkProviderRefs({
   }, [resolvedProvidePhpFrameworkDefinition]);
 
   return {
-    bladeCodeActionsRef,
-    bladeCompletionsRef,
-    bladeDefinitionRef,
-    latteCompletionsRef,
-    latteDefinitionRef,
-    neonCompletionsRef,
-    neonDefinitionRef,
+    templateLanguageProvidersRef,
     phpPresenterLinkCompletionsRef,
     phpPresenterLinkCompletionContextRef,
     phpPresenterLinkDefinitionRef,

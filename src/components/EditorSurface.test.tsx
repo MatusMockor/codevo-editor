@@ -188,11 +188,15 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   } | null,
   registeredContext: null as {
     isDocumentSynced?: (rootPath: string, path: string) => boolean;
-    provideBladeCompletions?: (
-      source: string,
-      position: { column: number; lineNumber: number },
-    ) => unknown;
-    provideBladeDefinition?: (source: string, offset: number) => unknown;
+    getTemplateLanguageProviders?: () => {
+      blade: {
+        provideCompletions(
+          source: string,
+          position: { column: number; lineNumber: number },
+        ): unknown;
+        provideDefinition(source: string, offset: number): unknown;
+      };
+    };
     providePhpCodeActions?: (
       source: string,
       range: { end: number; start: number },
@@ -212,11 +216,15 @@ vi.mock("./languageServerMonacoProviders", async () => {
       monaco: unknown,
       context: {
         isDocumentSynced?: (rootPath: string, path: string) => boolean;
-        provideBladeCompletions?: (
-          source: string,
-          position: { column: number; lineNumber: number },
-        ) => unknown;
-        provideBladeDefinition?: (source: string, offset: number) => unknown;
+        getTemplateLanguageProviders?: () => {
+          blade: {
+            provideCompletions(
+              source: string,
+              position: { column: number; lineNumber: number },
+            ): unknown;
+            provideDefinition(source: string, offset: number): unknown;
+          };
+        };
         providePhpCodeActions?: (source: string) => unknown;
         providePhpFrameworkDefinition?: (
           source: string,
@@ -1516,11 +1524,17 @@ describe("EditorSurface", () => {
 
     const context = editorSurfaceMocks.registeredContext;
 
-    expect(context?.provideBladeDefinition).toEqual(expect.any(Function));
-    expect(context?.provideBladeCompletions).toEqual(expect.any(Function));
+    const templateLanguageProviders = context?.getTemplateLanguageProviders?.();
 
-    await context?.provideBladeDefinition?.(bladeSource, 12);
-    await context?.provideBladeCompletions?.(bladeSource, {
+    expect(templateLanguageProviders?.blade.provideDefinition).toEqual(
+      expect.any(Function),
+    );
+    expect(templateLanguageProviders?.blade.provideCompletions).toEqual(
+      expect.any(Function),
+    );
+
+    await templateLanguageProviders?.blade.provideDefinition(bladeSource, 12);
+    await templateLanguageProviders?.blade.provideCompletions(bladeSource, {
       column: 12,
       lineNumber: 1,
     });

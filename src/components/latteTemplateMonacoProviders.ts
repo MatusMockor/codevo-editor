@@ -77,10 +77,6 @@ async function provideLatteDefinition(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.Location[] | null> {
-  if (!context.provideLatteDefinition) {
-    return null;
-  }
-
   const documentContext = activeTemplateDocumentContext(context, model, "latte");
 
   if (!documentContext) {
@@ -97,7 +93,9 @@ async function provideLatteDefinition(
   );
 
   try {
-    await context.provideLatteDefinition(source, offset, request);
+    await context
+      .getTemplateLanguageProviders()
+      .latte.provideDefinition(source, offset, request);
   } catch (error) {
     if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       context.reportError(error);
@@ -113,10 +111,6 @@ async function provideLatteCompletionItems(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.CompletionList> {
-  if (!context.provideLatteCompletions) {
-    return { suggestions: [] };
-  }
-
   const documentContext = activeTemplateDocumentContext(context, model, "latte");
 
   if (!documentContext) {
@@ -128,7 +122,9 @@ async function provideLatteCompletionItems(
   const fallbackRange = templateCompletionFallbackRange(position, word);
 
   try {
-    const completions = await context.provideLatteCompletions(source, position);
+    const completions = await context
+      .getTemplateLanguageProviders()
+      .latte.provideCompletions(source, position);
 
     if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       return { suggestions: [] };

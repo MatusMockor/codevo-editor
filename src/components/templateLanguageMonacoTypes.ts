@@ -4,12 +4,12 @@ import type {
   PhpCodeActionRange,
 } from "../application/phpCodeActionTypes";
 import type { NavigationRequest } from "../application/navigationRequest";
+import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
-type MonacoPosition = Monaco.Position;
 
 /**
  * A single Blade completion item produced by the controller. Blade has no
@@ -86,41 +86,51 @@ export interface NeonCompletion {
   replaceEnd?: number;
 }
 
+export interface TemplateLanguageProviderRegistry {
+  blade: {
+    provideCodeActions(
+      source: string,
+      range: PhpCodeActionRange,
+    ): Promise<PhpCodeActionDescriptor[]>;
+    provideCompletions(
+      source: string,
+      position: EditorPosition,
+    ): Promise<BladeCompletion[]>;
+    provideDefinition(
+      source: string,
+      offset: number,
+      request?: NavigationRequest,
+    ): Promise<boolean>;
+  };
+  latte: {
+    provideCompletions(
+      source: string,
+      position: EditorPosition,
+    ): Promise<LatteCompletion[]>;
+    provideDefinition(
+      source: string,
+      offset: number,
+      request?: NavigationRequest,
+    ): Promise<boolean>;
+  };
+  neon: {
+    provideCompletions(
+      source: string,
+      position: EditorPosition,
+    ): Promise<NeonCompletion[]>;
+    provideDefinition(
+      source: string,
+      offset: number,
+      request?: NavigationRequest,
+    ): Promise<boolean>;
+  };
+}
+
 export interface TemplateLanguageMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
+  getTemplateLanguageProviders(): TemplateLanguageProviderRegistry;
   getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;
-  provideBladeDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  provideBladeCompletions?(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<BladeCompletion[]>;
-  provideBladeCodeActions?(
-    source: string,
-    range: PhpCodeActionRange,
-  ): Promise<PhpCodeActionDescriptor[]>;
-  provideLatteDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  provideLatteCompletions?(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<LatteCompletion[]>;
-  provideNeonDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  provideNeonCompletions?(
-    source: string,
-    position: MonacoPosition,
-  ): Promise<NeonCompletion[]>;
   reportError(error: unknown): void;
 }
 
