@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
 import {
@@ -10,6 +10,7 @@ import {
   type WorkbenchCloseLifecycle,
   type WorkbenchCloseLifecycleDependencies,
 } from "./useWorkbenchCloseLifecycle";
+import { DOCUMENT_SYNC_CLOSE_GRACE_MS } from "./closeCoordinator";
 
 const tauriMocks = vi.hoisted(() => ({
   closeWindow: vi.fn(async () => undefined),
@@ -29,6 +30,10 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 const WORKSPACE_A = "/workspace-a";
 const WORKSPACE_B = "/workspace-b";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -299,6 +304,49 @@ describe("useWorkbenchCloseLifecycle", () => {
         workspaceTabs: [WORKSPACE_B],
       }),
     );
+    harness.unmount();
+  });
+
+  it("stops workspace runtimes when synced document close hangs", async () => {
+    vi.useFakeTimers();
+    const neverClosed = new Promise<void>(() => undefined);
+    const closePhpDocuments = vi.fn(() => neverClosed);
+    const closeJavaScriptTypeScriptDocuments = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      closeSyncedJavaScriptTypeScriptDocumentsForRoot:
+        closeJavaScriptTypeScriptDocuments,
+      closeSyncedLanguageServerDocumentsForRoot: closePhpDocuments,
+    });
+
+    await act(async () => {
+      const closePromise = harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+      await Promise.resolve();
+      expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(DOCUMENT_SYNC_CLOSE_GRACE_MS);
+      await closePromise;
+    });
+
+    expect(closePhpDocuments).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
+    harness.unmount();
+  });
+
+  it("stops workspace runtimes when synced document close fails", async () => {
+    const closePhpDocuments = vi.fn(async () => {
+      throw new Error("close failed");
+    });
+    const harness = renderLifecycle({
+      closeSyncedLanguageServerDocumentsForRoot: closePhpDocuments,
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(closePhpDocuments).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
     harness.unmount();
   });
 

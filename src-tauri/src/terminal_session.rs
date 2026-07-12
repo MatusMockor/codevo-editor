@@ -16,6 +16,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,6 +40,9 @@ pub trait TerminalPtySpawner {
 
 pub trait TerminalChild: Send {
     fn clone_killer(&self) -> Box<dyn TerminalKiller>;
+    fn process_id(&self) -> Option<u32> {
+        None
+    }
     fn wait(&mut self) -> io::Result<TerminalExitStatus>;
 }
 
@@ -146,6 +150,10 @@ impl TerminalChild for PortableTerminalChild {
         })
     }
 
+    fn process_id(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+
     fn wait(&mut self) -> io::Result<TerminalExitStatus> {
         self.child.wait().map(|status| TerminalExitStatus {
             exit_code: Some(status.exit_code()),
@@ -165,13 +173,116 @@ impl TerminalKiller for PortableTerminalKiller {
 
 struct RunningTerminalSession {
     cwd: PathBuf,
-    killer: Box<dyn TerminalKiller>,
+    process_tree_terminator: ProcessTreeTerminator,
     reader: Option<JoinHandle<()>>,
     resizer: Box<dyn TerminalResizer>,
     sink: Arc<dyn TerminalEventSink>,
     stop_requested: Arc<AtomicBool>,
     waiter: Option<JoinHandle<()>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+}
+
+const TERMINAL_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+const TERMINAL_FORCE_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+const TERMINAL_THREAD_JOIN_TIMEOUT: Duration = Duration::from_millis(250);
+
+struct ProcessTreeTerminator {
+    fallback_killer: Box<dyn TerminalKiller>,
+    force_timeout: Duration,
+    graceful_timeout: Duration,
+    process_group_id: Option<i32>,
+    signal_sender: Box<dyn ProcessGroupSignalSender>,
+}
+
+trait ProcessGroupSignalSender: Send {
+    fn send(&self, process_group_id: i32, signal: i32) -> io::Result<()>;
+}
+
+struct SystemProcessGroupSignalSender;
+
+impl ProcessGroupSignalSender for SystemProcessGroupSignalSender {
+    #[cfg(unix)]
+    fn send(&self, process_group_id: i32, signal: i32) -> io::Result<()> {
+        let result = unsafe { libc::kill(-process_group_id, signal) };
+
+        if result == 0 {
+            return Ok(());
+        }
+
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+
+        Err(error)
+    }
+
+    #[cfg(not(unix))]
+    fn send(&self, _process_group_id: i32, _signal: i32) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Process-group signals are unavailable on this platform.",
+        ))
+    }
+}
+
+impl ProcessTreeTerminator {
+    fn new(process_id: Option<u32>, fallback_killer: Box<dyn TerminalKiller>) -> Self {
+        Self {
+            fallback_killer,
+            force_timeout: TERMINAL_FORCE_SHUTDOWN_TIMEOUT,
+            graceful_timeout: TERMINAL_GRACEFUL_SHUTDOWN_TIMEOUT,
+            process_group_id: process_id.and_then(|process_id| i32::try_from(process_id).ok()),
+            signal_sender: Box::new(SystemProcessGroupSignalSender),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_dependencies(
+        process_group_id: i32,
+        fallback_killer: Box<dyn TerminalKiller>,
+        signal_sender: Box<dyn ProcessGroupSignalSender>,
+        graceful_timeout: Duration,
+        force_timeout: Duration,
+    ) -> Self {
+        Self {
+            fallback_killer,
+            force_timeout,
+            graceful_timeout,
+            process_group_id: Some(process_group_id),
+            signal_sender,
+        }
+    }
+
+    fn terminate(&mut self, waiter: Option<&JoinHandle<()>>) {
+        if self.process_group_id.is_none() {
+            let _ = self.fallback_killer.kill();
+            wait_for_thread(waiter, self.force_timeout);
+            return;
+        }
+
+        if self.signal_process_group(libc::SIGTERM).is_err() {
+            let _ = self.fallback_killer.kill();
+        }
+        if wait_for_thread(waiter, self.graceful_timeout) {
+            return;
+        }
+
+        if self.signal_process_group(libc::SIGKILL).is_err() {
+            let _ = self.fallback_killer.kill();
+        }
+        wait_for_thread(waiter, self.force_timeout);
+    }
+
+    fn signal_process_group(&self, signal: i32) -> io::Result<()> {
+        let Some(process_group_id) = self.process_group_id else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Terminal process group is unavailable.",
+            ));
+        };
+        self.signal_sender.send(process_group_id, signal)
+    }
 }
 
 pub struct TerminalSupervisor {
@@ -218,6 +329,7 @@ impl TerminalSupervisor {
         let stop_requested = Arc::new(AtomicBool::new(false));
         let writer = Arc::new(Mutex::new(spawned.writer));
         let child = spawned.child;
+        let process_id = child.process_id();
         let killer = child.clone_killer();
         let reader = spawn_reader(
             spawned.reader,
@@ -242,7 +354,7 @@ impl TerminalSupervisor {
             session_id,
             RunningTerminalSession {
                 cwd,
-                killer,
+                process_tree_terminator: ProcessTreeTerminator::new(process_id, killer),
                 reader: Some(reader),
                 resizer: spawned.resizer,
                 sink: Arc::clone(&sink),
@@ -446,15 +558,48 @@ fn spawn_waiter(
 
 fn terminate_session(mut session: RunningTerminalSession) {
     session.stop_requested.store(true, Ordering::SeqCst);
-    let _ = session.killer.kill();
+    session
+        .process_tree_terminator
+        .terminate(session.waiter.as_ref());
 
-    if let Some(reader) = session.reader.take() {
+    drop(session.writer);
+    drop(session.resizer);
+
+    if let Some(reader) = take_finished_thread(&mut session.reader, TERMINAL_THREAD_JOIN_TIMEOUT) {
         let _ = reader.join();
     }
 
-    if let Some(waiter) = session.waiter.take() {
+    if let Some(waiter) = take_finished_thread(&mut session.waiter, TERMINAL_THREAD_JOIN_TIMEOUT) {
         let _ = waiter.join();
     }
+}
+
+fn wait_for_thread(thread: Option<&JoinHandle<()>>, timeout: Duration) -> bool {
+    let Some(thread) = thread else {
+        return true;
+    };
+    let deadline = Instant::now() + timeout;
+
+    while Instant::now() < deadline {
+        if thread.is_finished() {
+            return true;
+        }
+
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    thread.is_finished()
+}
+
+fn take_finished_thread(
+    thread: &mut Option<JoinHandle<()>>,
+    timeout: Duration,
+) -> Option<JoinHandle<()>> {
+    if !wait_for_thread(thread.as_ref(), timeout) {
+        return None;
+    }
+
+    thread.take()
 }
 
 fn pty_size(size: TerminalSize) -> PtySize {
@@ -704,7 +849,8 @@ fn shell_label(shell: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_builder, prepare_shell_integration, LocalTerminalProfileProvider, SpawnedTerminal,
+        command_builder, prepare_shell_integration, LocalTerminalProfileProvider,
+        PortablePtySpawner, ProcessGroupSignalSender, ProcessTreeTerminator, SpawnedTerminal,
         TerminalChild, TerminalExitStatus, TerminalKiller, TerminalLaunchRequest,
         TerminalProfileProvider, TerminalPtySpawner, TerminalResizer, TerminalSupervisor,
     };
@@ -906,6 +1052,88 @@ mod tests {
         assert!(sink
             .statuses()
             .contains(&TerminalRuntimeStatus::Stopped { session_id: 1 }));
+    }
+
+    #[test]
+    fn process_tree_terminator_escalates_without_blocking_on_stuck_waiter() {
+        let child = RecordingTerminalChild::blocking();
+        let killed = child.killed();
+        let signals = Arc::new(Mutex::new(Vec::new()));
+        let signal_sender = RecordingProcessGroupSignalSender {
+            signals: Arc::clone(&signals),
+        };
+        let mut terminator = ProcessTreeTerminator::with_dependencies(
+            42,
+            child.clone_killer(),
+            Box::new(signal_sender),
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+        );
+        let waiter = thread::spawn(|| thread::sleep(Duration::from_millis(100)));
+        let started = Instant::now();
+
+        terminator.terminate(Some(&waiter));
+
+        assert!(started.elapsed() < Duration::from_millis(80));
+        assert_eq!(
+            signals.lock().expect("signals").as_slice(),
+            &[(42, libc::SIGTERM), (42, libc::SIGKILL)]
+        );
+        assert_eq!(*killed.lock().expect("killed"), 0);
+        waiter.join().expect("waiter");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_reaps_shell_and_background_process_group() {
+        let test_dir = terminal_process_test_dir("process-group");
+        std::fs::create_dir_all(&test_dir).expect("create terminal process test directory");
+        let pid_file = test_dir.join("pids");
+        let supervisor = TerminalSupervisor::new();
+        let sink = Arc::new(RecordingTerminalSink::default());
+        let profile = TerminalProfile {
+            command: Some("/bin/sh".to_string()),
+            id: "integration-shell".to_string(),
+            label: "Integration Shell".to_string(),
+        };
+
+        supervisor
+            .start(
+                test_dir.clone(),
+                TerminalSize::default(),
+                profile,
+                None,
+                &PortablePtySpawner,
+                sink.clone(),
+            )
+            .expect("start real terminal");
+        supervisor
+            .write_input(1, "set +H; set +m\r")
+            .expect("disable shell job control");
+        thread::sleep(Duration::from_millis(50));
+        supervisor
+            .write_input(
+                1,
+                &format!(
+                    "sleep 30 & child=$!; printf '%s %s\\n' \"$$\" \"$child\" > '{}'\r",
+                    pid_file.display()
+                ),
+            )
+            .expect("start background terminal process");
+        wait_for(|| pid_file.is_file());
+        let process_ids = read_process_ids(&pid_file);
+
+        supervisor.stop(1).expect("stop real terminal");
+        wait_for(|| {
+            process_ids
+                .iter()
+                .all(|process_id| !process_exists(*process_id))
+        });
+
+        assert!(process_ids
+            .iter()
+            .all(|process_id| !process_exists(*process_id)));
+        let _ = std::fs::remove_dir_all(test_dir);
     }
 
     #[test]
@@ -1231,6 +1459,20 @@ mod tests {
         signal: Arc<(Mutex<bool>, Condvar)>,
     }
 
+    struct RecordingProcessGroupSignalSender {
+        signals: Arc<Mutex<Vec<(i32, i32)>>>,
+    }
+
+    impl ProcessGroupSignalSender for RecordingProcessGroupSignalSender {
+        fn send(&self, process_group_id: i32, signal: i32) -> io::Result<()> {
+            self.signals
+                .lock()
+                .expect("signals")
+                .push((process_group_id, signal));
+            Ok(())
+        }
+    }
+
     impl TerminalKiller for RecordingTerminalKiller {
         fn kill(&mut self) -> io::Result<()> {
             *self.killed.lock().expect("killed") += 1;
@@ -1285,6 +1527,33 @@ mod tests {
         }
 
         panic!("condition was not met");
+    }
+
+    #[cfg(unix)]
+    fn terminal_process_test_dir(name: &str) -> PathBuf {
+        std::env::current_dir()
+            .expect("current directory")
+            .join("target/terminal-process-tests")
+            .join(format!("{name}-{}", std::process::id()))
+    }
+
+    #[cfg(unix)]
+    fn read_process_ids(path: &Path) -> Vec<i32> {
+        std::fs::read_to_string(path)
+            .expect("terminal process ids")
+            .split_whitespace()
+            .map(|value| value.parse::<i32>().expect("terminal process id"))
+            .collect()
+    }
+
+    #[cfg(unix)]
+    fn process_exists(process_id: i32) -> bool {
+        let result = unsafe { libc::kill(process_id, 0) };
+        if result == 0 {
+            return true;
+        }
+
+        io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
     }
 
     fn default_test_profile() -> TerminalProfile {

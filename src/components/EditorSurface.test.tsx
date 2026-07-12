@@ -176,6 +176,7 @@ interface FakeMouseDownEvent {
 
 const editorSurfaceMocks = vi.hoisted(() => ({
   editor: null as FakeEditor | null,
+  editors: [] as FakeEditor[],
   monaco: null as ReturnType<typeof createMonaco> | null,
   renderCount: 0,
   props: null as {
@@ -244,14 +245,20 @@ vi.mock("@monaco-editor/react", async () => {
       onMount(editor: FakeEditor, monaco: ReturnType<typeof createMonaco>): void;
       options?: Record<string, unknown>;
     }) {
+      const editorRef = React.useRef<FakeEditor | null>(null);
       editorSurfaceMocks.renderCount += 1;
+      if (!editorRef.current) {
+        editorRef.current =
+          editorSurfaceMocks.editors.shift() ?? editorSurfaceMocks.editor;
+      }
+
       React.useEffect(() => {
-        if (!editorSurfaceMocks.editor || !editorSurfaceMocks.monaco) {
+        if (!editorRef.current || !editorSurfaceMocks.monaco) {
           throw new Error("EditorSurface test Monaco mocks were not prepared.");
         }
 
         editorSurfaceMocks.props = props;
-        props.onMount(editorSurfaceMocks.editor, editorSurfaceMocks.monaco);
+        props.onMount(editorRef.current, editorSurfaceMocks.monaco);
       }, [props]);
 
       return React.createElement("div", { "data-testid": "monaco-editor" });
@@ -274,6 +281,7 @@ describe("EditorSurface", () => {
     act(() => root.unmount());
     host.remove();
     editorSurfaceMocks.editor = null;
+    editorSurfaceMocks.editors = [];
     editorSurfaceMocks.monaco = null;
     editorSurfaceMocks.renderCount = 0;
     editorSurfaceMocks.props = null;
@@ -12326,6 +12334,175 @@ class Foo
     // memo skips the EditorSurface render because every prop is referentially
     // equal, so the unrelated parent update does not re-render the surface.
     expect(editorSurfaceMocks.renderCount).toBe(rendersAfterMount);
+  });
+
+  it.each([1, 2, 4])(
+    "keeps 43 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
+    async (paneCount) => {
+      const activeDocument: EditorDocument = {
+        content: "const value = 1;\n",
+        language: "typescript",
+        name: "example.ts",
+        path: "/workspace/src/example.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const actionDisposersByPane = Array.from(
+        { length: paneCount },
+        () => [] as Array<ReturnType<typeof vi.fn>>,
+      );
+      const editors = actionDisposersByPane.map((actionDisposers) => {
+        const editor = createEditor(model);
+        editor.addAction.mockImplementation(() => {
+          const dispose = vi.fn();
+          actionDisposers.push(dispose);
+          return { dispose };
+        });
+        return editor;
+      });
+      editorSurfaceMocks.editors = [...editors];
+      editorSurfaceMocks.monaco = createMonaco(model);
+
+      const keymap = defaultKeymapSettings();
+      const goBack = vi.fn();
+      const goToDefinition = vi.fn();
+      const renderPanes = (revision: number) =>
+        createElement(
+          "div",
+          null,
+          ...Array.from({ length: paneCount }, (_, paneIndex) =>
+            createElement(EditorSurface, {
+              ...memoGuardProps(activeDocument),
+              key: `pane-${paneIndex}`,
+              keymap,
+              onGoBack: () => goBack(revision, paneIndex),
+              onGoToDefinition: () =>
+                goToDefinition(revision, paneIndex),
+            }),
+          ),
+        );
+
+      await act(async () => {
+        root.render(renderPanes(1));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      editors.forEach((editor) => {
+        expect(editor.addAction).toHaveBeenCalledTimes(43);
+      });
+
+      await act(async () => {
+        root.render(renderPanes(2));
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      editors.forEach((editor) => {
+        expect(editor.addAction).toHaveBeenCalledTimes(43);
+      });
+      for (const [paneIndex, editor] of editors.entries()) {
+        const actions = editor.addAction.mock.calls.map(([action]) => action);
+        const goBackAction = actions.find(
+          (action) => action.id === "mockor.goBack",
+        );
+        const goToDefinitionAction = actions.find(
+          (action) => action.id === "mockor.goToDefinition",
+        );
+
+        await act(async () => {
+          await goBackAction?.run();
+          await goToDefinitionAction?.run();
+        });
+        expect(goBack).toHaveBeenCalledWith(2, paneIndex);
+        expect(goToDefinition).toHaveBeenCalledWith(2, paneIndex);
+        expect(goBack).not.toHaveBeenCalledWith(1, paneIndex);
+        expect(goToDefinition).not.toHaveBeenCalledWith(1, paneIndex);
+      }
+
+      await act(async () => {
+        root.unmount();
+      });
+
+      actionDisposersByPane.forEach((actionDisposers) => {
+        expect(actionDisposers).toHaveLength(43);
+        actionDisposers.forEach((dispose) => {
+          expect(dispose).toHaveBeenCalledTimes(1);
+        });
+      });
+      root = createRoot(host);
+    },
+  );
+
+  it("re-registers Monaco actions once when the keymap lifecycle changes", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const editor = createEditor(model);
+    const actionDisposers: Array<ReturnType<typeof vi.fn>> = [];
+    editor.addAction.mockImplementation(() => {
+      const dispose = vi.fn();
+      actionDisposers.push(dispose);
+      return { dispose };
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const firstKeymap = defaultKeymapSettings();
+    const secondKeymap = {
+      ...firstKeymap,
+      "navigation.back": "Cmd+Alt+Left",
+    };
+    const props = memoGuardProps(activeDocument);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, { ...props, keymap: firstKeymap }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(editor.addAction).toHaveBeenCalledTimes(43);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, { ...props, keymap: secondKeymap }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(editor.addAction).toHaveBeenCalledTimes(86);
+    actionDisposers.slice(0, 43).forEach((dispose) => {
+      expect(dispose).toHaveBeenCalledTimes(1);
+    });
+    actionDisposers.slice(43).forEach((dispose) => {
+      expect(dispose).not.toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      root.unmount();
+    });
+    actionDisposers.forEach((dispose) => {
+      expect(dispose).toHaveBeenCalledTimes(1);
+    });
+    root = createRoot(host);
   });
 
   it("force-syncs the editor model when its value diverges from the active document content so a freshly opened file never renders blank", async () => {

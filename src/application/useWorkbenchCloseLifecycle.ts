@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject } from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
@@ -8,6 +8,7 @@ import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspa
 import { documentNeedsAttention } from "../domain/externalFileConflict";
 import { isDirty } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { CloseCoordinator } from "./closeCoordinator";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
 interface CachedWorkspaceDirtyState {
@@ -95,6 +96,7 @@ export function useWorkbenchCloseLifecycle(
     persistWorkspaceSession = async () => undefined,
     reportError,
   } = dependencies;
+  const closeCoordinator = useMemo(() => new CloseCoordinator(), []);
 
   const disposeWorkspaceTabResources = useCallback(
     async (tabPath: string, targetRootPath: string) => {
@@ -120,16 +122,19 @@ export function useWorkbenchCloseLifecycle(
 
       forgetLatencyTrackerForRoot(targetRootPath);
       forgetLanguageServerRuntimeStatuses(targetRootPath);
-      await Promise.allSettled([
-        closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
-        closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
-      ]);
-      await stopProjectRuntimes(targetRootPath);
+      await closeCoordinator.close({
+        closeDocuments: [
+          () => closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
+          () => closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
+        ],
+        disposeRuntime: () => stopProjectRuntimes(targetRootPath),
+      });
       forgetLanguageServerRuntimeStatuses(targetRootPath);
     },
     [
       closeSyncedJavaScriptTypeScriptDocumentsForRoot,
       closeSyncedLanguageServerDocumentsForRoot,
+      closeCoordinator,
       clearExternalFileConflictsForRoot,
       editorConfigCacheRef,
       forgetLanguageServerRuntimeStatuses,

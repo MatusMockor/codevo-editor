@@ -5,6 +5,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -363,6 +364,19 @@ export interface EditorSurfaceProps {
   ): Promise<PhpParameterNameInlayHint[]>;
 }
 
+interface EditorActionCommandPort {
+  closeActiveTab(): void;
+  goBack(): void;
+  goForward(): void;
+  goToDefinition(): void;
+  goToImplementationAt(position: EditorPosition): void;
+  goToSuperMethod(): void;
+  openClass(): void;
+  openFile(): void;
+  openFileStructure(): void;
+  toggleGitBlame?(): void;
+}
+
 interface FoldingRegionViewState {
   isCollapsed: boolean;
   regionIndex: number;
@@ -520,8 +534,45 @@ function EditorSurfaceComponent({
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
   const onEditorFocusedRef = useRef(onEditorFocused);
+  const editorActionCommandPortRef = useRef<EditorActionCommandPort>({
+    closeActiveTab: onCloseActiveTab,
+    goBack: onGoBack,
+    goForward: onGoForward,
+    goToDefinition: onGoToDefinition,
+    goToImplementationAt: onGoToImplementationAt,
+    goToSuperMethod: onGoToSuperMethod,
+    openClass: onOpenClass,
+    openFile: onOpenFile,
+    openFileStructure: onOpenFileStructure,
+    toggleGitBlame: onToggleGitBlame,
+  });
   const editorInteractionActivationPendingRef = useRef(false);
   onEditorFocusedRef.current = onEditorFocused;
+  useLayoutEffect(() => {
+    editorActionCommandPortRef.current = {
+      closeActiveTab: onCloseActiveTab,
+      goBack: onGoBack,
+      goForward: onGoForward,
+      goToDefinition: onGoToDefinition,
+      goToImplementationAt: onGoToImplementationAt,
+      goToSuperMethod: onGoToSuperMethod,
+      openClass: onOpenClass,
+      openFile: onOpenFile,
+      openFileStructure: onOpenFileStructure,
+      toggleGitBlame: onToggleGitBlame,
+    };
+  }, [
+    onCloseActiveTab,
+    onGoBack,
+    onGoForward,
+    onGoToDefinition,
+    onGoToImplementationAt,
+    onGoToSuperMethod,
+    onOpenClass,
+    onOpenFile,
+    onOpenFileStructure,
+    onToggleGitBlame,
+  ]);
   const resolveDocumentForModelRef = useRef(
     (_model: Monaco.editor.ITextModel): EditorDocument | null => null,
   );
@@ -1738,7 +1789,7 @@ function EditorSurfaceComponent({
         label: "Go to Definition",
         keybindings: keybinding("editor.goToDefinition"),
         run: () => {
-          onGoToDefinition();
+          editorActionCommandPortRef.current.goToDefinition();
         },
       }),
       editorApi.addAction({
@@ -1759,7 +1810,7 @@ function EditorSurfaceComponent({
             return;
           }
 
-          onGoToImplementationAt(position);
+          editorActionCommandPortRef.current.goToImplementationAt(position);
         },
       }),
       editorApi.addAction({
@@ -1767,26 +1818,26 @@ function EditorSurfaceComponent({
         label: "Go to Super Method",
         keybindings: keybinding("editor.goToSuperMethod"),
         run: () => {
-          onGoToSuperMethod();
+          editorActionCommandPortRef.current.goToSuperMethod();
         },
       }),
       editorApi.addAction({
         id: "mockor.openClass",
         label: "Open Class",
         keybindings: keybinding("class.quickOpen"),
-        run: onOpenClass,
+        run: () => editorActionCommandPortRef.current.openClass(),
       }),
       editorApi.addAction({
         id: "mockor.openFile",
         label: "Open File",
         keybindings: keybinding("file.quickOpen"),
-        run: onOpenFile,
+        run: () => editorActionCommandPortRef.current.openFile(),
       }),
       editorApi.addAction({
         id: "mockor.fileStructure",
         label: "File Structure",
         keybindings: keybinding("editor.fileStructure"),
-        run: onOpenFileStructure,
+        run: () => editorActionCommandPortRef.current.openFileStructure(),
       }),
       editorApi.addAction({
         id: "mockor.gotoLine",
@@ -1805,7 +1856,7 @@ function EditorSurfaceComponent({
         label: "Annotate with Git Blame",
         keybindings: keybinding("editor.toggleGitBlame"),
         run: () => {
-          onToggleGitBlame?.();
+          editorActionCommandPortRef.current.toggleGitBlame?.();
         },
       }),
       editorApi.addAction({
@@ -2050,19 +2101,19 @@ function EditorSurfaceComponent({
         id: "mockor.closeTab",
         label: "Close Tab",
         keybindings: keybinding("editor.closeTab"),
-        run: onCloseActiveTab,
+        run: () => editorActionCommandPortRef.current.closeActiveTab(),
       }),
       editorApi.addAction({
         id: "mockor.goBack",
         label: "Go Back",
         keybindings: keybinding("navigation.back"),
-        run: onGoBack,
+        run: () => editorActionCommandPortRef.current.goBack(),
       }),
       editorApi.addAction({
         id: "mockor.goForward",
         label: "Go Forward",
         keybindings: keybinding("navigation.forward"),
-        run: onGoForward,
+        run: () => editorActionCommandPortRef.current.goForward(),
       }),
       editorApi.addAction({
         id: "mockor.nextChange",
@@ -2083,22 +2134,7 @@ function EditorSurfaceComponent({
     return () => {
       disposables.forEach((disposable) => disposable?.dispose());
     };
-  }, [
-    editorApi,
-    keymap,
-    monacoApi,
-    onCloseActiveTab,
-    onGoBack,
-    onGoForward,
-    onGoToDefinition,
-    onGoToImplementationAt,
-    onGoToSuperMethod,
-    onOpenClass,
-    onOpenFile,
-    onOpenFileStructure,
-    onToggleGitBlame,
-    setSurroundWithRequest,
-  ]);
+  }, [editorApi, keymap, monacoApi]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {
