@@ -26,6 +26,7 @@ describe("ProjectTabs", () => {
       root.render(
         <ProjectTabs
           activeRoot="/workspace/api"
+          dirtyCount={0}
           onActivate={vi.fn()}
           onClose={vi.fn()}
           workspaceTabs={["/workspace/api"]}
@@ -43,6 +44,7 @@ describe("ProjectTabs", () => {
       root.render(
         <ProjectTabs
           activeRoot="/workspace/api"
+          dirtyCount={0}
           onActivate={activate}
           onClose={vi.fn()}
           workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
@@ -70,6 +72,7 @@ describe("ProjectTabs", () => {
       root.render(
         <ProjectTabs
           activeRoot="/workspace/api/"
+          dirtyCount={0}
           onActivate={vi.fn()}
           onClose={vi.fn()}
           workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
@@ -85,6 +88,78 @@ describe("ProjectTabs", () => {
     ).toBe("page");
   });
 
+  it("shows a dirty dot on the active project when it has unsaved changes", async () => {
+    await act(async () => {
+      root.render(
+        <ProjectTabs
+          activeRoot="/workspace/api"
+          dirtyCount={1}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
+        />,
+      );
+    });
+
+    expect(
+      host.querySelector(".project-tab.active .dirty-dot"),
+    ).not.toBeNull();
+  });
+
+  it("does not show a dirty dot on the active project when it is clean", async () => {
+    await act(async () => {
+      root.render(
+        <ProjectTabs
+          activeRoot="/workspace/api"
+          dirtyCount={0}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
+        />,
+      );
+    });
+
+    expect(host.querySelector(".project-tab.active .dirty-dot")).toBeNull();
+  });
+
+  it("does not show a dirty dot on background projects", async () => {
+    await act(async () => {
+      root.render(
+        <ProjectTabs
+          activeRoot="/workspace/api"
+          dirtyCount={2}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
+        />,
+      );
+    });
+
+    expect(
+      host.querySelector(".project-tab:not(.active) .dirty-dot"),
+    ).toBeNull();
+  });
+
+  it("announces unsaved changes in the active project's aria-label", async () => {
+    await act(async () => {
+      root.render(
+        <ProjectTabs
+          activeRoot="/workspace/api"
+          dirtyCount={1}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
+        />,
+      );
+    });
+
+    expect(
+      host
+        .querySelector(".project-tab.active .project-tab-main")
+        ?.getAttribute("aria-label"),
+    ).toBe("api (unsaved changes)");
+  });
+
   it("closes project tabs with a middle click", async () => {
     const close = vi.fn();
 
@@ -92,6 +167,7 @@ describe("ProjectTabs", () => {
       root.render(
         <ProjectTabs
           activeRoot="/workspace/api"
+          dirtyCount={0}
           onActivate={vi.fn()}
           onClose={close}
           workspaceTabs={["/workspace/api", "/workspace/analytics-api"]}
@@ -115,6 +191,7 @@ describe("ProjectTabs", () => {
     const mapSpy = vi.spyOn(workspaceTabs, "map");
     const stableProps: React.ComponentProps<typeof ProjectTabs> = {
       activeRoot: "/workspace/api",
+      dirtyCount: 0,
       onActivate: vi.fn(),
       onClose: vi.fn(),
       workspaceTabs,

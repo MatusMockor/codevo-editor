@@ -1,10 +1,11 @@
-import { X } from "lucide-react";
+import { Circle, X } from "lucide-react";
 import { memo } from "react";
 import type { MouseEvent } from "react";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 interface ProjectTabsProps {
   activeRoot: string | null;
+  dirtyCount: number;
   onActivate(path: string): void;
   onClose(path: string): void;
   workspaceTabs: string[];
@@ -12,6 +13,7 @@ interface ProjectTabsProps {
 
 function ProjectTabsComponent({
   activeRoot,
+  dirtyCount,
   onActivate,
   onClose,
   workspaceTabs,
@@ -34,6 +36,7 @@ function ProjectTabsComponent({
     <nav aria-label="Open projects" className="project-tabs">
       {workspaceTabs.map((path) => {
         const active = workspaceRootKeysEqual(path, activeRoot);
+        const dirty = active && dirtyCount > 0;
         const label = workspaceTabLabel(path);
 
         return (
@@ -44,11 +47,15 @@ function ProjectTabsComponent({
           >
             <button
               aria-current={active ? "page" : undefined}
+              aria-label={dirty ? `${label} (unsaved changes)` : undefined}
               className="project-tab-main"
               onClick={() => onActivate(path)}
               title={path}
               type="button"
             >
+              {dirty ? (
+                <Circle aria-hidden="true" className="dirty-dot" size={8} />
+              ) : null}
               <span>{label}</span>
             </button>
             <button

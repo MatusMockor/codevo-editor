@@ -1172,6 +1172,7 @@ function App() {
       <section className="editor-workbench">
         <ProjectTabs
           activeRoot={workbench.workspaceRoot}
+          dirtyCount={workbench.dirtyCount}
           onActivate={workbench.activateWorkspaceTab}
           onClose={workbench.closeWorkspaceTab}
           workspaceTabs={workbench.workspaceTabs}

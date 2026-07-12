@@ -1963,6 +1963,7 @@ button {
   display: flex;
   min-width: 0;
   align-items: center;
+  gap: 7px;
   padding: 0 4px 0 10px;
   text-align: left;
 }
