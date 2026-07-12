@@ -13,6 +13,7 @@ import {
   bladeViewCandidateRelativePaths,
   bladeViewCandidateWorkspacePaths,
   isBladeComponentSourcePath,
+  isInsideMaskedRegion,
 } from "./bladeNavigation";
 
 /**
@@ -209,6 +210,22 @@ describe("detectBladeReferenceAt", () => {
     });
   });
 
+  it("detects a normal Livewire component tag", () => {
+    const source = "<livewire:admin.users />";
+
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "admin.users", 2)),
+    ).toMatchObject({ kind: "livewire", name: "admin.users" });
+  });
+
+  it("detects a normal @livewire directive", () => {
+    const source = "@livewire('admin.users')";
+
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "admin.users", 2)),
+    ).toMatchObject({ kind: "livewire", name: "admin.users" });
+  });
+
   it("detects @yield as a section reference", () => {
     const source = "@yield('content')";
     const offset = offsetOf(source, "content", 1);
@@ -291,6 +308,139 @@ describe("detectBladeReferenceAt", () => {
     expect(detectBladeReferenceAt(source, offset)?.name).toBe(
       "admin.partials.header",
     );
+  });
+
+  it("masks component and Livewire tags inside HTML comments", () => {
+    const source = "<!-- <x-old/> <livewire:admin.users/> -->";
+
+    expect(detectBladeReferenceAt(source, offsetOf(source, "old", 1))).toBeNull();
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "admin.users", 2)),
+    ).toBeNull();
+  });
+
+  it("resolves a real component immediately after a closed HTML comment", () => {
+    const source = "<!-- <x-old/> --><x-real/>";
+    const offset = offsetOf(source, "real", 2);
+
+    expect(detectBladeReferenceAt(source, offset)).toEqual({
+      kind: "component",
+      name: "real",
+      nameStart: source.indexOf("real"),
+      nameEnd: source.indexOf("real") + "real".length,
+    });
+  });
+
+  it("masks tag references inside quoted HTML attribute values", () => {
+    const source = "<div data-x=\"<x-foo/>\" data-y='<livewire:admin.users/>'>";
+
+    expect(detectBladeReferenceAt(source, offsetOf(source, "foo", 1))).toBeNull();
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "admin.users", 2)),
+    ).toBeNull();
+  });
+
+  it("does not treat an attribute value containing --> as an HTML comment close", () => {
+    const source = "<div data-x=\"a-->b<x-foo/>\">";
+
+    expect(detectBladeReferenceAt(source, offsetOf(source, "foo", 1))).toBeNull();
+  });
+
+  it("masks from an unclosed attribute quote through EOF", () => {
+    const source = "<div data-x=\"prefix <x-foo/>";
+
+    expect(detectBladeReferenceAt(source, offsetOf(source, "foo", 1))).toBeNull();
+    expect(isInsideMaskedRegion(source, source.length)).toBe(true);
+  });
+
+  it("treats backslash-escaped attribute quotes as part of the value", () => {
+    const source = '<div data-x="a\\"b<x-foo/>">';
+
+    expect(detectBladeReferenceAt(source, offsetOf(source, "foo", 1))).toBeNull();
+  });
+
+  it("does not mask a tag-like substring in a Blade echo string because the quote is outside an HTML tag", () => {
+    const source = "{{ '<x-foo>' }}";
+
+    expect(detectBladeReferenceAt(source, offsetOf(source, "foo", 1))?.name).toBe(
+      "foo",
+    );
+  });
+
+  it("resolves a multiline component tag when the target is on a later line", () => {
+    const source = "<div>\n<x-forms.input\n  name=\"email\"\n/>";
+
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "forms.input", 3)),
+    ).toMatchObject({ kind: "component", name: "forms.input" });
+  });
+
+  it("masks @livewire and view directives inside HTML comments", () => {
+    const source = "<!-- @livewire('admin.users') @include('partials.card') -->";
+
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "admin.users", 2)),
+    ).toBeNull();
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "partials.card", 2)),
+    ).toBeNull();
+  });
+
+  it("masks a Blade directive inside a quoted attribute value", () => {
+    const source = "<div data-view=\"@include('partials.card')\">";
+
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "partials.card", 2)),
+    ).toBeNull();
+  });
+
+  it("handles CRLF masking without blocking a later real reference", () => {
+    const source = "<!--\r\n<x-old/>\r\n-->\r\n<x-real/>";
+
+    expect(detectBladeReferenceAt(source, offsetOf(source, "old", 1))).toBeNull();
+    expect(
+      detectBladeReferenceAt(source, offsetOf(source, "real", 1)),
+    ).toMatchObject({ kind: "component", name: "real" });
+  });
+});
+
+describe("isInsideMaskedRegion", () => {
+  it("lets Blade comments take precedence when HTML comment syntax is nested inside", () => {
+    const source = "{{-- <!-- <x-old/> --}}<x-real/>";
+
+    expect(isInsideMaskedRegion(source, offsetOf(source, "old", 1))).toBe(true);
+    expect(isInsideMaskedRegion(source, offsetOf(source, "real", 1))).toBe(false);
+  });
+
+  it("lets an unclosed Blade comment nested in an HTML comment mask through EOF", () => {
+    const source = "<!-- {{-- <x-old/> --> <x-still-masked/>";
+
+    expect(isInsideMaskedRegion(source, offsetOf(source, "still-masked", 2))).toBe(
+      true,
+    );
+  });
+
+  it("pins HTML comment mask delimiter boundaries", () => {
+    const source = "<!-- body -->";
+    const openStart = source.indexOf("<!--");
+    const closeStart = source.indexOf("-->");
+
+    expect(isInsideMaskedRegion(source, openStart)).toBe(false);
+    expect(isInsideMaskedRegion(source, openStart + 3)).toBe(true);
+    expect(isInsideMaskedRegion(source, closeStart)).toBe(true);
+    expect(isInsideMaskedRegion(source, closeStart + 2)).toBe(true);
+  });
+
+  it("masks an unterminated trailing HTML comment through EOF", () => {
+    const source = "prefix <!-- <x-old/>";
+
+    expect(isInsideMaskedRegion(source, source.length)).toBe(true);
+  });
+
+  it("does not mask quotes that occur in plain text outside an HTML tag", () => {
+    const source = 'He said "hello" before <x-real/>';
+
+    expect(isInsideMaskedRegion(source, offsetOf(source, "real", 1))).toBe(false);
   });
 });
 
@@ -709,6 +859,22 @@ describe("detectBladeComponentCompletionAt", () => {
 
   it("does not fire inside Blade comments", () => {
     const source = "{{-- <x-al --}}";
+
+    expect(
+      detectBladeComponentCompletionAt(source, offsetOf(source, "al", 2)),
+    ).toBeNull();
+  });
+
+  it("does not fire inside HTML comments", () => {
+    const source = "<!-- <x-al -->";
+
+    expect(
+      detectBladeComponentCompletionAt(source, offsetOf(source, "al", 2)),
+    ).toBeNull();
+  });
+
+  it("does not fire inside quoted attribute values", () => {
+    const source = "<div data-x=\"<x-al\">";
 
     expect(
       detectBladeComponentCompletionAt(source, offsetOf(source, "al", 2)),

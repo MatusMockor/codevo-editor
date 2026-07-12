@@ -270,7 +270,7 @@ export function detectBladeComponentCompletionAt(
     return null;
   }
 
-  if (isInsideBladeComment(source, offset)) {
+  if (isInsideMaskedRegion(source, offset)) {
     return null;
   }
 
@@ -505,7 +505,7 @@ function componentReferenceAt(
   source: string,
   offset: number,
 ): BladeReference | null {
-  if (isInsideBladeComment(source, offset)) {
+  if (isInsideMaskedRegion(source, offset)) {
     return null;
   }
 
@@ -557,7 +557,7 @@ function livewireReferenceAt(
   source: string,
   offset: number,
 ): BladeReference | null {
-  if (isInsideBladeComment(source, offset)) {
+  if (isInsideMaskedRegion(source, offset)) {
     return null;
   }
 
@@ -604,7 +604,7 @@ function directiveReferenceAt(
     return null;
   }
 
-  if (isInsideBladeComment(source, literal.quoteStart)) {
+  if (isInsideMaskedRegion(source, offset)) {
     return null;
   }
 
@@ -924,6 +924,119 @@ export function isInsideBladeComment(source: string, offset: number): boolean {
     if (offset > start && offset < commentEnd) {
       return true;
     }
+  }
+
+  return false;
+}
+
+export function isInsideMaskedRegion(source: string, offset: number): boolean {
+  if (isInsideBladeComment(source, offset)) {
+    return true;
+  }
+
+  return isInsideHtmlMaskedRegion(source, offset);
+}
+
+function isInsideHtmlMaskedRegion(source: string, offset: number): boolean {
+  let index = 0;
+  let inTag = false;
+  let attributeQuote: "'" | "\"" | null = null;
+  let attributeQuoteStart = -1;
+  let htmlCommentStart: number | null = null;
+
+  while (index < source.length) {
+    if (
+      index > offset &&
+      attributeQuote === null &&
+      htmlCommentStart === null
+    ) {
+      return false;
+    }
+
+    if (source.startsWith("{{--", index)) {
+      const bladeCommentEnd = source.indexOf("--}}", index + 4);
+
+      if (bladeCommentEnd < 0) {
+        return false;
+      }
+
+      index = bladeCommentEnd + 4;
+      continue;
+    }
+
+    if (htmlCommentStart !== null) {
+      if (source.startsWith("-->", index)) {
+        const htmlCommentEnd = index + 3;
+
+        if (offset > htmlCommentStart && offset < htmlCommentEnd) {
+          return true;
+        }
+
+        htmlCommentStart = null;
+        index = htmlCommentEnd;
+        continue;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    const character = source[index] ?? "";
+
+    if (attributeQuote !== null) {
+      if (character === "\\") {
+        index += 2;
+        continue;
+      }
+
+      if (character === attributeQuote) {
+        if (offset > attributeQuoteStart && offset <= index) {
+          return true;
+        }
+
+        attributeQuote = null;
+        attributeQuoteStart = -1;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (inTag) {
+      if (character === "'" || character === "\"") {
+        attributeQuote = character;
+        attributeQuoteStart = index;
+        index += 1;
+        continue;
+      }
+
+      if (character === ">") {
+        inTag = false;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (source.startsWith("<!--", index)) {
+      htmlCommentStart = index;
+      index += 4;
+      continue;
+    }
+
+    if (character === "<" && /[A-Za-z!/]/.test(source[index + 1] ?? "")) {
+      inTag = true;
+    }
+
+    index += 1;
+  }
+
+  if (htmlCommentStart !== null && offset > htmlCommentStart) {
+    return offset <= source.length;
+  }
+
+  if (attributeQuote !== null && offset > attributeQuoteStart) {
+    return offset <= source.length;
   }
 
   return false;
