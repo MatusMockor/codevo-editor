@@ -13,13 +13,43 @@ export interface PhpFrameworkDiagnosticContextStrategyAdapterDependencies
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
 }
 
+export interface PhpFrameworkDiagnosticContextStrategyContribution {
+  readonly providerId: string;
+  create(): PhpDiagnosticContextStrategy;
+}
+
+export function activePhpFrameworkDiagnosticContextStrategy(
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">,
+  contributions: readonly PhpFrameworkDiagnosticContextStrategyContribution[],
+): PhpDiagnosticContextStrategy {
+  const contribution = contributions.find(({ providerId }) =>
+    frameworkRuntime.hasProvider(providerId),
+  );
+
+  if (!contribution) {
+    return genericPhpDiagnosticContextStrategy;
+  }
+
+  return contribution.create();
+}
+
 export function createPhpFrameworkDiagnosticContextStrategyAdapters({
   frameworkRuntime,
   ...laravelDependencies
 }: PhpFrameworkDiagnosticContextStrategyAdapterDependencies): PhpDiagnosticContextStrategy {
-  if (!frameworkRuntime.hasProvider("laravel")) {
-    return genericPhpDiagnosticContextStrategy;
-  }
+  const contributions: readonly PhpFrameworkDiagnosticContextStrategyContribution[] =
+    [
+      {
+        providerId: "laravel",
+        create: () =>
+          createPhpLaravelDiagnosticContextStrategyAdapter(
+            laravelDependencies,
+          ),
+      },
+    ];
 
-  return createPhpLaravelDiagnosticContextStrategyAdapter(laravelDependencies);
+  return activePhpFrameworkDiagnosticContextStrategy(
+    frameworkRuntime,
+    contributions,
+  );
 }
