@@ -42,7 +42,9 @@ describe("PHP test result helpers", () => {
     ["error", "testErrors", true],
     ["passed", "testPasses", false],
     ["skipped", "testSkipped", false],
-    ["failed", "with data set #0", false],
+    ["failed", "it does something", true],
+    ["failed", "", false],
+    ["failed", "has\ncontrol character", false],
     ["failed", null, false],
   ] as const)("checks whether a case can be re-run %#", (status, name, expected) => {
     expect(phpTestCaseCanRun(testCase(status, null, null, name))).toBe(expected);

@@ -51,6 +51,12 @@ const styles: Record<string, CSSProperties> = {
     padding: "2px 8px",
   },
   chipActive: { background: "var(--background-active, rgba(127, 127, 127, 0.2))" },
+  filtered: {
+    maxWidth: 320,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   header: { alignItems: "center", display: "flex", gap: 8, padding: "6px 8px" },
   message: { padding: 16 },
   muted: { color: "var(--text-muted)" },
@@ -115,7 +121,15 @@ export function PhpTestResultsPanel({
     <div aria-label="PHP test results" role="tabpanel" style={styles.panel}>
       <div style={styles.header}>
         <strong>PHP Tests</strong>
-        {filter ? <span>Filtered: {filter}</span> : null}
+        {filter ? (
+          <span
+            data-testid="php-test-filter"
+            style={styles.filtered}
+            title={filter}
+          >
+            Filtered: {filter}
+          </span>
+        ) : null}
         {filter ? (
           <button
             aria-label="Run all PHP tests"

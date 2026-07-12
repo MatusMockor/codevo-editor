@@ -82,18 +82,23 @@ describe("PhpTestResultsPanel", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("re-runs valid failed cases from their row without opening them", async () => {
+  it("re-runs Pest-style failed cases from their row without opening them", async () => {
     const onOpenCase = vi.fn();
     const onRunCase = vi.fn();
-    await render({ onOpenCase, onRunCase });
+    const testResult = result();
+    testResult.suites[0].cases[0].name = "it does something useful";
+    await render({ onOpenCase, onRunCase, result: testResult });
     const button = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Run testItWorks"]',
+      '[aria-label="Run it does something useful"]',
     );
 
     await act(async () => button?.click());
 
     expect(onRunCase).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ name: "testItWorks", status: "failed" }),
+      expect.objectContaining({
+        name: "it does something useful",
+        status: "failed",
+      }),
     );
     expect(onOpenCase).not.toHaveBeenCalled();
     expect(host.querySelector('[aria-label="Run testPasses"]')).toBeNull();
@@ -101,9 +106,13 @@ describe("PhpTestResultsPanel", () => {
 
   it("shows filtered state with a run-all affordance", async () => {
     const onRun = vi.fn();
-    await render({ filter: "testItWorks", onRun });
+    const filter = "it renders a very long Pest description with punctuation!";
+    await render({ filter, onRun });
 
-    expect(host.textContent).toContain("Filtered: testItWorks");
+    const badge = host.querySelector('[data-testid="php-test-filter"]');
+    expect(badge?.textContent).toBe(`Filtered: ${filter}`);
+    expect(badge?.getAttribute("title")).toBe(filter);
+    expect((badge as HTMLElement | null)?.style.textOverflow).toBe("ellipsis");
     await act(async () =>
       host
         .querySelector<HTMLButtonElement>('[aria-label="Run all PHP tests"]')
@@ -196,13 +205,10 @@ describe("PhpTestResultsPanel", () => {
 
   it("disables case reruns for invalid names and while running", async () => {
     const testResult = result();
-    testResult.suites[0].cases[0].name = "with data set #0";
+    testResult.suites[0].cases[0].name = "has\ncontrol character";
     await render({ result: testResult });
 
-    expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Run with data set #0"]')
-        ?.disabled,
-    ).toBe(true);
+    expect(findButton("Run has\ncontrol character")?.disabled).toBe(true);
 
     testResult.suites[0].cases[0].name = "testItWorks";
     await render({ isRunning: true, result: testResult });
@@ -254,6 +260,12 @@ describe("PhpTestResultsPanel", () => {
     return Array.from(
       host.querySelectorAll<HTMLElement>("[data-testid='php-test-suite-name']"),
       (element) => element.textContent,
+    );
+  }
+
+  function findButton(label: string): HTMLButtonElement | undefined {
+    return Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+      (button) => button.getAttribute("aria-label") === label,
     );
   }
 });

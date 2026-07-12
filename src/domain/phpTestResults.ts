@@ -1,5 +1,4 @@
 import type { EditorPosition } from "./languageServerFeatures";
-import { sanitizePhpTestFilter } from "./phpTestCommand";
 import { joinWorkspacePath, workspaceRelativePath } from "./workspace";
 
 export type PhpTestStatus = "passed" | "failed" | "error" | "skipped";
@@ -143,7 +142,15 @@ export function phpTestCaseCanRun(testCase: PhpTestCase): boolean {
     return false;
   }
 
-  return sanitizePhpTestFilter(testCase.name) !== null;
+  return isValidPhpTestFilter(testCase.name);
+}
+
+export function isValidPhpTestFilter(filter: string): boolean {
+  if (!filter) {
+    return false;
+  }
+
+  return !/[\x00-\x1f\x7f]/.test(filter);
 }
 
 export function phpTestTotalsSummary(totals: PhpTestTotals): string {

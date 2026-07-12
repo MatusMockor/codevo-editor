@@ -224,16 +224,32 @@ fn runner_args(runner: &TestRunner, result_path: &Path, filter: Option<&str>) ->
     };
     if let Some(filter) = filter {
         args.push("--filter".to_string());
-        args.push(format!("{filter}$"));
+        args.push(format!("{}$", escape_test_filter(filter)));
     }
     args
 }
 
+fn escape_test_filter(filter: &str) -> String {
+    let mut escaped = String::with_capacity(filter.len());
+    for character in filter.chars() {
+        if matches!(
+            character,
+            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
 fn is_valid_filter(filter: &str) -> bool {
-    !filter.is_empty()
-        && filter
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    if filter.is_empty() {
+        return false;
+    }
+    !filter
+        .bytes()
+        .any(|byte| matches!(byte, 0x00..=0x1f | 0x7f))
 }
 
 fn detect_runner(root: &Path) -> Result<Option<TestRunner>, String> {
@@ -556,8 +572,9 @@ fn with_stderr_tail(message: String, stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_runner, parse_junit, run_php_tests_blocking_with, runner_args, PhpTestRunResponse,
-        PhpTestStatus, TestRunner, MAX_CASES,
+        detect_runner, escape_test_filter, is_valid_filter, parse_junit,
+        run_php_tests_blocking_with, runner_args, PhpTestRunResponse, PhpTestStatus, TestRunner,
+        MAX_CASES,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -596,7 +613,11 @@ mod tests {
             ]
         );
         assert_eq!(
-            runner_args(&TestRunner::Artisan, result, Some("testItWorks")),
+            runner_args(
+                &TestRunner::Artisan,
+                result,
+                Some("it handles / paths (fast)."),
+            ),
             [
                 "artisan",
                 "test",
@@ -604,7 +625,7 @@ mod tests {
                 "/results/junit.xml",
                 "--no-interaction",
                 "--filter",
-                "testItWorks$",
+                "it handles / paths \\(fast\\)\\.$",
             ]
         );
     }
@@ -618,23 +639,57 @@ mod tests {
             ["--log-junit", "/results/junit.xml", "--no-interaction"]
         );
         assert_eq!(
-            runner_args(&runner, result, Some("testItWorks")),
+            runner_args(&runner, result, Some("it handles / paths (fast).")),
             [
                 "--log-junit",
                 "/results/junit.xml",
                 "--no-interaction",
                 "--filter",
-                "testItWorks$",
+                "it handles / paths \\(fast\\)\\.$",
             ]
         );
     }
 
     #[test]
-    fn php_test_rejects_invalid_filters_before_running() {
+    fn php_test_escapes_filter_regex_metacharacters() {
+        for (filter, expected) in [
+            ("has.dot", "has\\.dot"),
+            ("has(parens)", "has\\(parens\\)"),
+            (r#"has"double'quotes"#, r#"has"double'quotes"#),
+            ("has/slash\\backslash", "has/slash\\\\backslash"),
+            ("anchors^$", "anchors\\^\\$"),
+            ("quantifiers*+?", "quantifiers\\*\\+\\?"),
+            ("classes[]{}", "classes\\[\\]\\{\\}"),
+            ("alternation|", "alternation\\|"),
+            ("unicode žluťoučký", "unicode žluťoučký"),
+            ("dataset #1", "dataset #1"),
+            ("has spaces", "has spaces"),
+        ] {
+            assert_eq!(escape_test_filter(filter), expected);
+        }
+    }
+
+    #[test]
+    fn php_test_validates_description_filters() {
+        for (filter, expected) in [
+            ("", false),
+            ("it does something", true),
+            ("dataset #1 (fast)!", true),
+            ("line\nfeed", false),
+            ("tab\tcharacter", false),
+            ("delete\u{7f}character", false),
+            ("null\0character", false),
+        ] {
+            assert_eq!(is_valid_filter(filter), expected, "{filter:?}");
+        }
+    }
+
+    #[test]
+    fn php_test_rejects_control_character_filters_before_running() {
         let response = run_php_tests_blocking_with(
             "/missing/workspace",
             Path::new("/missing/app-data"),
-            Some("testItWorks.*"),
+            Some("testItWorks\n"),
             |_, _, _, _| panic!("runner must not execute"),
         );
 

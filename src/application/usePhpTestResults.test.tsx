@@ -143,7 +143,7 @@ describe("usePhpTestResults", () => {
         file: null,
         line: null,
         message: null,
-        name: "with data set #0",
+        name: "broken\u0000name",
         status: "failed",
         time: null,
       }),
