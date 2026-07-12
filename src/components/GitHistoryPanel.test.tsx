@@ -310,6 +310,176 @@ describe("GitHistoryPanel", () => {
     window.removeEventListener("mockor-git-commit-cherry-picked", listener);
   });
 
+  it("edits and saves the full message for an unpushed HEAD commit", async () => {
+    const selected = {
+      ...commitFixture("1111111111111111111111111111111111111111", "Old subject"),
+      labels: ["main"],
+    };
+    const details = {
+      ...commitDetailsFixture(selected),
+      body: "Old subject\n\nOld body",
+    };
+    const gateway = createGateway({
+      branches: { current: "main", local: ["main"], remotes: { origin: ["main"] } },
+      commitDetails: details,
+      commitLog: [selected],
+    });
+
+    await renderPanel(root, gateway);
+    const availability = { enabled: false };
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("mockor-query-reword-selected-git-commit", {
+          detail: availability,
+        }),
+      );
+    });
+    expect(availability.enabled).toBe(true);
+    act(() => {
+      host.querySelector<HTMLButtonElement>("button[title='Reword selected commit']")?.click();
+    });
+    const editor = host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Commit message']");
+    expect(editor?.value).toBe("Old subject\n\nOld body");
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    act(() => {
+      if (editor && setter) {
+        setter.call(editor, "New subject\n\nNew body");
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+    act(() => {
+      host.querySelector<HTMLButtonElement>("button[title='Save reworded commit message']")?.click();
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+
+    expect(gateway.rewordCommit).toHaveBeenCalledWith(
+      "/workspace",
+      selected.hash,
+      "New subject\n\nNew body",
+    );
+    expect(selectedCommitText(host)).toContain("New subject");
+  });
+
+  it("cancels the inline reword editor without changing the commit", async () => {
+    const selected = {
+      ...commitFixture("1111111111111111111111111111111111111111", "Original"),
+      labels: ["main"],
+    };
+    const gateway = createGateway({
+      branches: { current: "main", local: ["main"], remotes: {} },
+      commitLog: [selected],
+    });
+
+    await renderPanel(root, gateway);
+    act(() => {
+      host.querySelector<HTMLButtonElement>("button[title='Reword selected commit']")?.click();
+    });
+    act(() => {
+      host.querySelector<HTMLButtonElement>("button[title='Cancel rewording']")?.click();
+    });
+
+    expect(host.querySelector("textarea[aria-label='Commit message']")).toBeNull();
+    act(() => {
+      host.querySelector<HTMLButtonElement>("button[title='Reword selected commit']")?.click();
+    });
+    act(() => {
+      host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Commit message']")
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+    expect(host.querySelector("textarea[aria-label='Commit message']")).toBeNull();
+    expect(gateway.rewordCommit).not.toHaveBeenCalled();
+  });
+
+  it("hides reword for non-HEAD and pushed commits", async () => {
+    const head = {
+      ...commitFixture("1111111111111111111111111111111111111111", "Head"),
+      labels: ["main", "origin/main"],
+    };
+    const older = commitFixture("2222222222222222222222222222222222222222", "Older");
+    const gateway = createGateway({
+      branches: { current: "main", local: ["main"], remotes: { origin: ["main"] } },
+      commitDetails: {
+        ...commitDetailsFixture(head),
+        containingBranches: ["main", "origin/main"],
+      },
+      commitLog: [head, older],
+    });
+
+    await renderPanel(root, gateway);
+    expect(host.querySelector<HTMLButtonElement>("button[title='Reword selected commit']")?.hidden)
+      .toBe(true);
+    expect(host.textContent).toContain("Reword unavailable: Pushed commits cannot be reworded.");
+    const availability = { enabled: true };
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("mockor-query-reword-selected-git-commit", {
+          detail: availability,
+        }),
+      );
+    });
+    expect(availability.enabled).toBe(false);
+    act(() => {
+      rowByText(host, ".git-history-commit-row", "Older").click();
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+    expect(host.querySelector<HTMLButtonElement>("button[title='Reword selected commit']")?.hidden)
+      .toBe(true);
+  });
+
+  it("drops a reword result when the workspace root changes after await", async () => {
+    const selected = {
+      ...commitFixture("1111111111111111111111111111111111111111", "Original"),
+      labels: ["main"],
+    };
+    const gateway = createGateway({
+      branches: { current: "main", local: ["main"], remotes: {} },
+      commitLog: [selected],
+    });
+    let resolveReword: ((commit: Commit) => void) | null = null;
+    vi.mocked(gateway.rewordCommit).mockImplementationOnce(
+      () =>
+        new Promise<Commit>((resolve) => {
+          resolveReword = resolve;
+        }),
+    );
+    const listener = vi.fn();
+    window.addEventListener("mockor-git-commit-reworded", listener);
+
+    await renderPanel(root, gateway);
+    act(() => {
+      host.querySelector<HTMLButtonElement>("button[title='Reword selected commit']")?.click();
+    });
+    act(() => {
+      host.querySelector<HTMLButtonElement>("button[title='Save reworded commit message']")?.click();
+    });
+    await act(async () => {
+      root.render(
+        <GitHistoryPanel
+          gateway={gateway}
+          onOpenCommitFileDiff={vi.fn()}
+          rootPath="/other"
+        />,
+      );
+      await flushAsync();
+    });
+    await act(async () => {
+      resolveReword?.(
+        commitFixture("7777777777777777777777777777777777777777", "Reworded"),
+      );
+      await flushAsync();
+    });
+
+    expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener("mockor-git-commit-reworded", listener);
+  });
+
   it("supports an empty commit list fallback and allows re-fetch", async () => {
     const gateway = createGateway({
       branches: {
@@ -933,6 +1103,26 @@ function createGateway(seed: {
       currentCommitLog = [cherryPicked, ...currentCommitLog];
       commitDetailsByHash.set(cherryPicked.hash, commitDetailsFixture(cherryPicked));
       return cherryPicked;
+    }),
+    rewordCommit: vi.fn(async (_rootPath, commitHash, message) => {
+      const selected = currentCommitLog.find((commit) => commit.hash === commitHash);
+      const reworded = {
+        ...commitFixture(
+          "7777777777777777777777777777777777777777",
+          message.split("\n")[0] ?? "",
+          selected?.parents ?? [],
+        ),
+        labels: selected?.labels ?? [],
+      };
+      currentCommitLog = [
+        reworded,
+        ...currentCommitLog.filter((commit) => commit.hash !== commitHash),
+      ];
+      commitDetailsByHash.set(reworded.hash, {
+        ...commitDetailsFixture(reworded),
+        body: message,
+      });
+      return reworded;
     }),
     setCommitLog(next) {
       currentCommitLog = next;

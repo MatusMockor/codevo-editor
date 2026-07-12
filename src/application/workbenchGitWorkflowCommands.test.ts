@@ -26,6 +26,8 @@ describe("workbenchGitWorkflowCommands", () => {
       commitGitChanges: vi.fn(),
       revertSelectedGitCommit: vi.fn(),
       cherryPickSelectedGitCommit: vi.fn(),
+      rewordSelectedGitCommit: vi.fn(),
+      canRewordSelectedGitCommit: vi.fn(() => true),
     });
 
     expect(
@@ -73,6 +75,12 @@ describe("workbenchGitWorkflowCommands", () => {
         shortcut: undefined,
       },
       {
+        id: "git.rewordCommit",
+        title: "Git: Reword Selected Commit",
+        category: "Git",
+        shortcut: "shortcut:git.rewordCommit",
+      },
+      {
         id: "git.commit",
         title: "Git: Commit",
         category: "Git",
@@ -85,7 +93,7 @@ describe("workbenchGitWorkflowCommands", () => {
     const commands = createCommands();
 
     expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual(
-      [false, false, false, false, false, false, false],
+      [false, false, false, false, false, false, false, false],
     );
   });
 
@@ -93,6 +101,7 @@ describe("workbenchGitWorkflowCommands", () => {
     const commands = createCommands();
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
+      true,
       true,
       true,
       true,
@@ -110,6 +119,7 @@ describe("workbenchGitWorkflowCommands", () => {
     const commitGitChanges = vi.fn();
     const revertSelectedGitCommit = vi.fn();
     const cherryPickSelectedGitCommit = vi.fn();
+    const rewordSelectedGitCommit = vi.fn();
     const commands = workbenchGitWorkflowCommands({
       shortcut: (commandId) => commandId,
       openGitStashPanel,
@@ -118,6 +128,8 @@ describe("workbenchGitWorkflowCommands", () => {
       commitGitChanges,
       revertSelectedGitCommit,
       cherryPickSelectedGitCommit,
+      rewordSelectedGitCommit,
+      canRewordSelectedGitCommit: vi.fn(() => true),
     });
 
     for (const command of commands) {
@@ -130,6 +142,7 @@ describe("workbenchGitWorkflowCommands", () => {
     expect(commitGitChanges).toHaveBeenCalledTimes(1);
     expect(revertSelectedGitCommit).toHaveBeenCalledTimes(1);
     expect(cherryPickSelectedGitCommit).toHaveBeenCalledTimes(1);
+    expect(rewordSelectedGitCommit).toHaveBeenCalledTimes(1);
   });
 
   it("returns undefined while callbacks have pending promises", () => {
@@ -141,6 +154,8 @@ describe("workbenchGitWorkflowCommands", () => {
       commitGitChanges: vi.fn(() => new Promise<void>(() => {})),
       revertSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
       cherryPickSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
+      rewordSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
+      canRewordSelectedGitCommit: vi.fn(() => true),
     });
 
     expect(commands.map((command) => command.run())).toEqual([
@@ -151,11 +166,25 @@ describe("workbenchGitWorkflowCommands", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
     ]);
+  });
+
+  it("enables reword only when the selected commit is unpushed HEAD", () => {
+    const canRewordSelectedGitCommit = vi.fn(() => false);
+    const commands = createCommands({ canRewordSelectedGitCommit });
+    const reword = commands.find((command) => command.id === "git.rewordCommit");
+
+    expect(reword?.isEnabled(enabledContext)).toBe(false);
+    canRewordSelectedGitCommit.mockReturnValue(true);
+    expect(reword?.isEnabled(enabledContext)).toBe(true);
+    expect(reword?.isEnabled(disabledContext)).toBe(false);
   });
 });
 
-function createCommands() {
+function createCommands(overrides: {
+  canRewordSelectedGitCommit?: () => boolean;
+} = {}) {
   return workbenchGitWorkflowCommands({
     shortcut: (commandId) => commandId,
     openGitStashPanel: vi.fn(),
@@ -164,5 +193,8 @@ function createCommands() {
     commitGitChanges: vi.fn(),
     revertSelectedGitCommit: vi.fn(),
     cherryPickSelectedGitCommit: vi.fn(),
+    rewordSelectedGitCommit: vi.fn(),
+    canRewordSelectedGitCommit:
+      overrides.canRewordSelectedGitCommit ?? vi.fn(() => true),
   });
 }

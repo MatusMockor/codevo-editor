@@ -247,6 +247,11 @@ export interface GitHistoryGateway {
     filters: GitCommitFilters,
   ): Promise<Commit[]>;
   getRepoStatus(rootPath: string): Promise<GitRepoStatus>;
+  rewordCommit(
+    rootPath: string,
+    commitHash: string,
+    message: string,
+  ): Promise<Commit>;
   revertCommit(rootPath: string, commitHash: string): Promise<Commit>;
   cherryPickCommit(rootPath: string, commitHash: string): Promise<Commit>;
 }

@@ -387,6 +387,12 @@ export const keymapCommands = [
   },
   {
     category: "Git",
+    defaultShortcut: "",
+    id: "git.rewordCommit",
+    label: "Git: Reword Selected Commit",
+  },
+  {
+    category: "Git",
     // Commit the staged changes. Cmd+Enter is the VS Code / PhpStorm commit
     // accelerator and is free (distinct from Cmd+Shift+Enter complete-statement
     // and Alt+Enter context-actions by its modifier set).

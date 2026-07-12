@@ -244,6 +244,7 @@ pub trait GitRepositoryGateway {
     fn fetch(&self, root: &Path) -> io::Result<GitStatus>;
     fn pull(&self, root: &Path) -> io::Result<GitStatus>;
     fn push(&self, root: &Path) -> io::Result<GitStatus>;
+    fn reword(&self, root: &Path, commit_hash: &str, message: &str) -> io::Result<GitCommit>;
     fn revert_commit(&self, root: &Path, commit_hash: &str) -> io::Result<GitCommit>;
     fn cherry_pick_commit(&self, root: &Path, commit_hash: &str) -> io::Result<GitCommit>;
     fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
@@ -358,7 +359,15 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         refuse_amend_of_pushed_head(&root, self.trusted)?;
-        amend_selected_staged_changes(&root, message.trim(), changes, self.trusted)?;
+        let expected_head =
+            git_output_vec(&root, vec!["rev-parse", "--verify", "HEAD"], self.trusted)?;
+        amend_selected_staged_changes(
+            &root,
+            expected_head.trim(),
+            message.trim(),
+            changes,
+            self.trusted,
+        )?;
         self.status(&root)
     }
 
@@ -384,6 +393,46 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         parse_blame_porcelain(&output.stdout)
+    }
+
+    fn reword(&self, root: &Path, commit_hash: &str, message: &str) -> io::Result<GitCommit> {
+        let root = root.canonicalize()?;
+        refuse_amend_of_pushed_head(&root, self.trusted)?;
+
+        if message.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Commit message cannot be empty.",
+            ));
+        }
+
+        let commit_hash = safe_commit_sha(commit_hash)?;
+        let expected_head = git_output_vec(&root, vec!["rev-parse", "HEAD"], self.trusted)?;
+        let expected_head = expected_head.trim();
+
+        if commit_hash != expected_head {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "The selected commit is not HEAD.",
+            ));
+        }
+
+        reword_head_commit(&root, expected_head, message.trim(), self.trusted)?;
+        load_commit_log(
+            &root,
+            GitCommitFilters {
+                author: None,
+                branch: None,
+                cursor: None,
+                limit: Some(1),
+                path: None,
+                query: None,
+            },
+            self.trusted,
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Reworded commit not found."))
     }
 
     fn file_commit_diff(
@@ -2460,30 +2509,107 @@ fn refuse_amend_of_pushed_head(root: &Path, trusted: bool) -> io::Result<()> {
 
 fn amend_selected_staged_changes(
     root: &Path,
+    expected_head: &str,
     message: &str,
     changes: &[GitChangedFile],
     trusted: bool,
 ) -> io::Result<()> {
-    let tree = write_selected_staged_tree(root, changes, Some("HEAD"), trusted)?;
-    let parents = git_output_vec(
-        root,
-        vec!["rev-list", "--parents", "-n", "1", "HEAD"],
-        trusted,
-    )?;
+    let tree = write_selected_staged_tree(root, changes, Some(expected_head), trusted)?;
     let message = if message.is_empty() {
-        git_output_vec(root, vec!["log", "-1", "--format=%B", "HEAD"], trusted)?
+        git_output_vec(
+            root,
+            vec!["log", "-1", "--format=%B", expected_head],
+            trusted,
+        )?
     } else {
         message.to_string()
     };
-    let mut args = vec!["commit-tree".to_string(), tree.trim().to_string()];
+
+    rewrite_commit(
+        root,
+        expected_head,
+        tree.trim(),
+        message.trim_end(),
+        trusted,
+    )
+}
+
+fn reword_head_commit(
+    root: &Path,
+    expected_head: &str,
+    message: &str,
+    trusted: bool,
+) -> io::Result<()> {
+    let tree_ref = format!("{expected_head}^{{tree}}");
+    let tree = git_output_vec(root, vec!["rev-parse", &tree_ref], trusted)?;
+    rewrite_commit(
+        root,
+        expected_head,
+        tree.trim(),
+        message.trim_end(),
+        trusted,
+    )
+}
+
+fn rewrite_commit(
+    root: &Path,
+    expected_head: &str,
+    tree: &str,
+    message: &str,
+    trusted: bool,
+) -> io::Result<()> {
+    let parents = git_output_vec(
+        root,
+        vec!["rev-list", "--parents", "-n", "1", expected_head],
+        trusted,
+    )?;
+    let author = git_output_vec(
+        root,
+        vec!["show", "-s", "--format=%an%x1f%ae%x1f%aI", expected_head],
+        trusted,
+    )?;
+    let mut author_fields = author.trim_end().splitn(3, '\x1f');
+    let incomplete_author = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Commit author metadata is incomplete.",
+        )
+    };
+    let author_name = author_fields.next().ok_or_else(incomplete_author)?;
+    let author_email = author_fields.next().ok_or_else(incomplete_author)?;
+    let author_date = author_fields.next().ok_or_else(incomplete_author)?;
+
+    let mut args = vec!["commit-tree".to_string(), tree.to_string()];
+
     for parent in parents.split_whitespace().skip(1) {
         args.push("-p".to_string());
         args.push(parent.to_string());
     }
+
     args.push("-m".to_string());
-    args.push(message.trim_end().to_string());
-    let commit = git_output_vec(root, args, trusted)?;
-    run_git_vec(root, vec!["update-ref", "HEAD", commit.trim()], trusted)
+    args.push(message.to_string());
+    let output = git_command(trusted)
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_AUTHOR_NAME", author_name)
+        .env("GIT_AUTHOR_EMAIL", author_email)
+        .env("GIT_AUTHOR_DATE", author_date)
+        .output()?;
+
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    let commit = String::from_utf8_lossy(&output.stdout);
+    run_git_vec(
+        root,
+        vec!["update-ref", "HEAD", commit.trim(), expected_head],
+        trusted,
+    )
 }
 
 fn write_selected_staged_tree(
@@ -2782,12 +2908,13 @@ fn language_for_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_git_repositories, git_command, load_commit_details, load_commit_diff,
-        load_commit_files, load_commit_log, parse_blame_porcelain, parse_branch_list,
-        parse_diff_hunks, parse_file_history, parse_porcelain_status, parse_stash_list,
-        safe_branch_name, safe_commit_sha, safe_relative_path, safe_stash_index, single_hunk_patch,
-        CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitCommitFilters,
-        GitRepositoryGateway, DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH,
+        amend_selected_staged_changes, detect_git_repositories, git_command, load_commit_details,
+        load_commit_diff, load_commit_files, load_commit_log, parse_blame_porcelain,
+        parse_branch_list, parse_diff_hunks, parse_file_history, parse_porcelain_status,
+        parse_stash_list, reword_head_commit, safe_branch_name, safe_commit_sha,
+        safe_relative_path, safe_stash_index, single_hunk_patch, CommandGitRepositoryGateway,
+        GitChangeStatus, GitChangedFile, GitCommitFilters, GitRepositoryGateway,
+        DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH,
     };
     use std::{
         fs, io,
@@ -3890,6 +4017,250 @@ mod tests {
         assert_eq!(
             fixture.git_output(&fixture.workspace_a, ["show", "HEAD:local.txt"]),
             "two"
+        );
+    }
+
+    #[test]
+    fn amend_preserves_original_author_identity_and_date() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "committer@example.com"]);
+        repo.run(["config", "user.name", "Current Committer"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run([
+            "commit",
+            "--author=Original Author <original@example.com>",
+            "--date=2001-02-03T04:05:06+00:00",
+            "-m",
+            "original",
+        ]);
+        let original_author = repo.git_output(["show", "-s", "--format=%an%x1f%ae%x1f%aI", "HEAD"]);
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+
+        CommandGitRepositoryGateway::new(true)
+            .amend(
+                repo.path(),
+                "replacement",
+                &[git_changed_file(
+                    "file.txt",
+                    true,
+                    GitChangeStatus::Modified,
+                )],
+            )
+            .expect("amend");
+
+        assert_eq!(
+            repo.git_output(["show", "-s", "--format=%an%x1f%ae%x1f%aI", "HEAD"]),
+            original_author
+        );
+    }
+
+    #[test]
+    fn amend_compare_and_swap_refuses_moved_head() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "original"]);
+        let expected_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "external"]);
+        let external_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+
+        let error = amend_selected_staged_changes(
+            repo.path(),
+            &expected_head,
+            "replacement",
+            &[git_changed_file(
+                "file.txt",
+                true,
+                GitChangeStatus::Modified,
+            )],
+            true,
+        )
+        .expect_err("moved HEAD must fail");
+
+        assert!(!error.to_string().is_empty());
+        assert_eq!(repo.git_output(["rev-parse", "HEAD"]).trim(), external_head);
+    }
+
+    #[test]
+    fn reword_replaces_message_and_keeps_tree_and_parents() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("base.txt", "base\n");
+        repo.run(["add", "base.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "original"]);
+        let original_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        let original_tree = repo.git_output(["rev-parse", "HEAD^{tree}"]);
+        let original_parents = repo.git_output(["show", "-s", "--format=%P", "HEAD"]);
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+        repo.write("dirty.txt", "dirty\n");
+
+        let commit = CommandGitRepositoryGateway::new(true)
+            .reword(repo.path(), &original_head, "replacement\n\nbody")
+            .expect("reword");
+
+        assert_ne!(commit.hash, original_head);
+        assert_eq!(repo.git_output(["rev-parse", "HEAD^{tree}"]), original_tree);
+        assert_eq!(
+            repo.git_output(["show", "-s", "--format=%P", "HEAD"]),
+            original_parents
+        );
+        assert_eq!(
+            repo.git_output(["log", "-1", "--format=%B"]).trim_end(),
+            "replacement\n\nbody"
+        );
+        assert_eq!(repo.git_output(["show", "HEAD:file.txt"]), "one\n");
+        assert_eq!(
+            repo.git_output(["diff", "--cached", "--name-only"]),
+            "file.txt\n"
+        );
+        assert_eq!(repo.read("dirty.txt"), "dirty\n");
+    }
+
+    #[test]
+    fn reword_preserves_original_author_identity_and_date() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "committer@example.com"]);
+        repo.run(["config", "user.name", "Current Committer"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run([
+            "commit",
+            "--author=Original Author <original@example.com>",
+            "--date=2001-02-03T04:05:06+00:00",
+            "-m",
+            "original",
+        ]);
+        let original_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        let original_author = repo.git_output(["show", "-s", "--format=%an%x1f%ae%x1f%aI", "HEAD"]);
+
+        CommandGitRepositoryGateway::new(true)
+            .reword(repo.path(), &original_head, "replacement")
+            .expect("reword");
+
+        assert_eq!(
+            repo.git_output(["show", "-s", "--format=%an%x1f%ae%x1f%aI", "HEAD"]),
+            original_author
+        );
+    }
+
+    #[test]
+    fn reword_compare_and_swap_refuses_moved_head() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "original"]);
+        let expected_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "external"]);
+        let external_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+
+        let error = reword_head_commit(repo.path(), &expected_head, "replacement", true)
+            .expect_err("moved HEAD must fail");
+
+        assert!(!error.to_string().is_empty());
+        assert_eq!(repo.git_output(["rev-parse", "HEAD"]).trim(), external_head);
+    }
+
+    #[test]
+    fn reword_refuses_head_that_is_present_on_upstream() {
+        let fixture = RemoteGitFixture::new();
+        let original_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .reword(&fixture.workspace_a, original_head.trim(), "unsafe")
+            .expect_err("pushed reword must fail");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("cannot amend a pushed commit"));
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]),
+            original_head
+        );
+    }
+
+    #[test]
+    fn reword_checks_pushed_guard_before_message_validation() {
+        let fixture = RemoteGitFixture::new();
+        let original_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .reword(&fixture.workspace_a, original_head.trim(), "")
+            .expect_err("pushed guard must run first");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("cannot amend a pushed commit"));
+    }
+
+    #[test]
+    fn reword_refuses_non_head_selected_hash() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "first"]);
+        let selected = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+        repo.write("file.txt", "two\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "second"]);
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .reword(repo.path(), &selected, "replacement")
+            .expect_err("non-head reword must fail");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("selected commit is not HEAD"));
+    }
+
+    #[test]
+    fn reword_refuses_empty_message() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "original"]);
+        let original_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .reword(repo.path(), &original_head, " \n\t")
+            .expect_err("empty reword must fail");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("Commit message cannot be empty"));
+    }
+
+    #[test]
+    fn untrusted_reword_uses_hardened_git_argv() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "test@example.com"]);
+        repo.run(["config", "user.name", "Test User"]);
+        repo.write("file.txt", "one\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "original"]);
+        let original_head = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
+
+        CommandGitRepositoryGateway::new(false)
+            .reword(repo.path(), &original_head, "replacement")
+            .expect("untrusted reword");
+
+        assert_eq!(
+            repo.git_output(["log", "-1", "--format=%B"]).trim(),
+            "replacement"
         );
     }
 

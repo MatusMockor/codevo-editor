@@ -6185,6 +6185,18 @@ export function useWorkbenchController(
     window.dispatchEvent(new CustomEvent("mockor-cherry-pick-selected-git-commit"));
   }, []);
 
+  const rewordSelectedGitCommit = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("mockor-reword-selected-git-commit"));
+  }, []);
+
+  const canRewordSelectedGitCommit = useCallback(() => {
+    const detail = { enabled: false };
+    window.dispatchEvent(
+      new CustomEvent("mockor-query-reword-selected-git-commit", { detail }),
+    );
+    return detail.enabled;
+  }, []);
+
   useEffect(() => {
     const refreshAfterRevert = async (event: Event) => {
       const detail = (
@@ -6250,6 +6262,40 @@ export function useWorkbenchController(
 
     return () => {
       window.removeEventListener("mockor-git-commit-cherry-picked", listener);
+    };
+  }, [refreshGitStatus]);
+
+  useEffect(() => {
+    const refreshAfterReword = async (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ rootPath?: unknown; subject?: unknown }>
+      ).detail;
+
+      if (
+        typeof detail?.rootPath !== "string" ||
+        typeof detail.subject !== "string" ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, detail.rootPath)
+      ) {
+        return;
+      }
+
+      const requestedRoot = detail.rootPath;
+      await refreshGitStatus();
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      setMessage(`Reworded commit: ${detail.subject}`);
+    };
+    const listener = (event: Event) => {
+      void refreshAfterReword(event);
+    };
+
+    window.addEventListener("mockor-git-commit-reworded", listener);
+
+    return () => {
+      window.removeEventListener("mockor-git-commit-reworded", listener);
     };
   }, [refreshGitStatus]);
 
@@ -8373,6 +8419,8 @@ export function useWorkbenchController(
       commitGitChanges,
       revertSelectedGitCommit,
       cherryPickSelectedGitCommit,
+      rewordSelectedGitCommit,
+      canRewordSelectedGitCommit,
     }).forEach((command) => registry.register(command));
 
     appearanceCommands.workbenchCommands.forEach((command) =>
@@ -8531,6 +8579,8 @@ export function useWorkbenchController(
     commitGitChanges,
     revertSelectedGitCommit,
     cherryPickSelectedGitCommit,
+    rewordSelectedGitCommit,
+    canRewordSelectedGitCommit,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,

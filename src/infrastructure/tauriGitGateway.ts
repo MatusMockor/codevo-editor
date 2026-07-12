@@ -63,6 +63,31 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<GitStatus>;
   }
 
+  async rewordCommit(
+    rootPath: string,
+    commitHash: string,
+    message: string,
+  ): Promise<Commit> {
+    if (!this.isRuntimeAvailable()) {
+      return {
+        abbrevHash: "",
+        authorEmail: "",
+        authorName: "",
+        date: "",
+        hash: "",
+        labels: [],
+        parents: [],
+        subject: "",
+      };
+    }
+
+    return this.invokeCommand("reword_git_commit", {
+      commitHash,
+      message,
+      rootPath,
+    }) as Promise<Commit>;
+  }
+
   async detectRepositories(
     rootPath: string,
     maxDepth?: number,

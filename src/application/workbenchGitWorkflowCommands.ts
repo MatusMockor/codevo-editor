@@ -9,6 +9,8 @@ interface WorkbenchGitWorkflowCommandsOptions {
   commitGitChanges: Command["run"];
   revertSelectedGitCommit: Command["run"];
   cherryPickSelectedGitCommit: Command["run"];
+  rewordSelectedGitCommit: Command["run"];
+  canRewordSelectedGitCommit(): boolean;
 }
 
 export function workbenchGitWorkflowCommands({
@@ -19,6 +21,8 @@ export function workbenchGitWorkflowCommands({
   commitGitChanges,
   revertSelectedGitCommit,
   cherryPickSelectedGitCommit,
+  rewordSelectedGitCommit,
+  canRewordSelectedGitCommit,
 }: WorkbenchGitWorkflowCommandsOptions): Command[] {
   return [
     {
@@ -77,6 +81,17 @@ export function workbenchGitWorkflowCommands({
       isEnabled: (context) => context.hasWorkspace,
       run: () => {
         void cherryPickSelectedGitCommit();
+      },
+    },
+    {
+      id: "git.rewordCommit",
+      title: "Git: Reword Selected Commit",
+      category: "Git",
+      shortcut: shortcut("git.rewordCommit"),
+      isEnabled: (context) =>
+        context.hasWorkspace && canRewordSelectedGitCommit(),
+      run: () => {
+        void rewordSelectedGitCommit();
       },
     },
     {

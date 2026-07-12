@@ -2578,6 +2578,23 @@ async fn amend_git_commit(
 }
 
 #[tauri::command]
+async fn reword_git_commit(
+    root_path: String,
+    commit_hash: String,
+    message: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitCommit, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway::new(trusted)
+            .reword(&root, &commit_hash, &message)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn push_git_changes(
     root_path: String,
     trust: GitTrustState<'_>,
@@ -6194,11 +6211,12 @@ mod tests {
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
-        rename_git_branch, reveal_path_in_workspace, run_artisan_route_list_with_trust,
-        run_eslint_analysis_with_trust, run_phpstan_analysis_with_trust,
-        run_pint_format_with_trust, save_git_stash, search_files, stage_git_files, stage_git_hunk,
-        stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        rename_git_branch, reveal_path_in_workspace, reword_git_commit,
+        run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
+        run_phpstan_analysis_with_trust, run_pint_format_with_trust, save_git_stash, search_files,
+        stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
+        switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
+        workspace_text_edits_from_language_server,
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
@@ -7821,6 +7839,41 @@ mod tests {
     }
 
     #[test]
+    fn reword_git_commit_stays_isolated_per_workspace_root_off_thread() {
+        let root_a = temp_workspace("git-reword-iso-a");
+        let root_b = temp_workspace("git-reword-iso-b");
+        init_test_git_repo(&root_a);
+        init_test_git_repo(&root_b);
+        fs::write(root_a.join("tracked.txt"), "one\n").expect("file a");
+        fs::write(root_b.join("tracked.txt"), "one\n").expect("file b");
+        run_test_git(&root_a, &["add", "tracked.txt"]);
+        run_test_git(&root_b, &["add", "tracked.txt"]);
+        run_test_git(&root_a, &["commit", "-m", "initial a"]);
+        run_test_git(&root_b, &["commit", "-m", "initial b"]);
+        let old_a_head = test_git_output(&root_a, &["rev-parse", "HEAD"]);
+        let old_b_head = test_git_output(&root_b, &["rev-parse", "HEAD"]);
+
+        let commit = tauri::async_runtime::block_on(reword_git_commit(
+            path_string(&root_a),
+            old_a_head.clone(),
+            "reworded a".to_string(),
+            true,
+        ))
+        .expect("reword workspace A");
+
+        assert_ne!(commit.hash, old_a_head);
+        assert_eq!(test_git_output(&root_b, &["rev-parse", "HEAD"]), old_b_head);
+        assert_eq!(
+            test_git_output(&root_a, &["log", "-1", "--format=%B"]),
+            "reworded a"
+        );
+        assert_eq!(
+            test_git_output(&root_b, &["log", "-1", "--format=%B"]),
+            "initial b"
+        );
+    }
+
+    #[test]
     fn fetch_and_pull_stay_isolated_per_workspace_root_off_thread() {
         let host = temp_workspace("git-remote-commands");
         let remote = host.join("remote.git");
@@ -9298,6 +9351,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             amend_git_commit,
+            reword_git_commit,
             clear_workspace_index,
             apply_workspace_edit,
             commit_git_changes,

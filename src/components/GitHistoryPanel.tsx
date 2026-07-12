@@ -144,6 +144,31 @@ function emptyCommitDetails(commitHash: string): CommitDetails {
   };
 }
 
+function unavailableRewordReason(
+  selectedCommit: Commit | null,
+  selectedDetails: CommitDetails | null,
+  selectedCommitIsHead: boolean,
+  selectedCommitIsPushed: boolean,
+): string | null {
+  if (!selectedCommit) {
+    return "Select a commit to reword.";
+  }
+
+  if (!selectedCommitIsHead) {
+    return "Only the current HEAD commit can be reworded.";
+  }
+
+  if (selectedCommitIsPushed) {
+    return "Pushed commits cannot be reworded.";
+  }
+
+  if (!selectedDetails) {
+    return "Load commit details before rewording.";
+  }
+
+  return null;
+}
+
 function formatCommitDate(value: string): string {
   const date = new Date(value);
 
@@ -458,6 +483,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   const [revertingCommit, setRevertingCommit] = useState(false);
   const [cherryPickError, setCherryPickError] = useState<HistoryError>(null);
   const [cherryPickingCommit, setCherryPickingCommit] = useState(false);
+  const [rewordingCommit, setRewordingCommit] = useState(false);
+  const [rewordEditorOpen, setRewordEditorOpen] = useState(false);
+  const [rewordMessage, setRewordMessage] = useState("");
+  const [rewordError, setRewordError] = useState<HistoryError>(null);
   const [localExpanded, setLocalExpanded] = useState(true);
   const [remoteExpanded, setRemoteExpanded] = useState(true);
   const [commitGraph, setCommitGraph] = useState<RenderedCommitGraphNode[]>([]);
@@ -503,6 +532,36 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         ? commits.find((commit) => commit.hash === selectedCommitHash) ?? null
         : null,
     [commits, selectedCommitHash],
+  );
+
+  const remoteBranchNames = useMemo(
+    () =>
+      new Set(
+        Object.entries(branches.remotes).flatMap(([remote, names]) =>
+          names.map((name) => `${remote}/${name}`),
+        ),
+      ),
+    [branches.remotes],
+  );
+
+  const selectedCommitIsHead = Boolean(
+    selectedCommit &&
+      branches.current &&
+      selectedCommit.labels.includes(branches.current),
+  );
+  const selectedCommitIsPushed = Boolean(
+    selectedDetails?.containingBranches.some((branch) =>
+      remoteBranchNames.has(branch),
+    ),
+  );
+  const canRewordSelectedCommit = Boolean(
+    selectedDetails && selectedCommitIsHead && !selectedCommitIsPushed,
+  );
+  const rewordUnavailableReason = unavailableRewordReason(
+    selectedCommit,
+    selectedDetails,
+    selectedCommitIsHead,
+    selectedCommitIsPushed,
   );
 
   const effectiveCommitListHeight =
@@ -614,6 +673,10 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     setRevertingCommit(false);
     setCherryPickError(null);
     setCherryPickingCommit(false);
+    setRewordingCommit(false);
+    setRewordEditorOpen(false);
+    setRewordMessage("");
+    setRewordError(null);
   }, [rootPath]);
 
   const isCurrentRootPath = useCallback(
@@ -1191,6 +1254,109 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     }
   }, [cherryPickingCommit, gateway, isCurrentRootPath, loadCommits, rootPath]);
 
+  const startRewordSelectedCommit = useCallback(() => {
+    if (!canRewordSelectedCommit || !selectedDetails || rewordingCommit) {
+      return;
+    }
+
+    setRewordMessage(selectedDetails.body || selectedDetails.subject);
+    setRewordError(null);
+    setRewordEditorOpen(true);
+  }, [canRewordSelectedCommit, rewordingCommit, selectedDetails]);
+
+  const cancelRewordSelectedCommit = useCallback(() => {
+    if (rewordingCommit) {
+      return;
+    }
+
+    setRewordEditorOpen(false);
+    setRewordMessage("");
+    setRewordError(null);
+  }, [rewordingCommit]);
+
+  const saveRewordSelectedCommit = useCallback(async () => {
+    const requestedRoot = rootPath;
+    const commitHash = selectedCommitHashRef.current;
+    const message = rewordMessage.trim();
+
+    if (!requestedRoot || !commitHash || rewordingCommit) {
+      return;
+    }
+
+    if (!message) {
+      setRewordError("Commit message cannot be empty.");
+      return;
+    }
+
+    setRewordingCommit(true);
+    setRewordError(null);
+
+    try {
+      const commit = await gateway.rewordCommit(requestedRoot, commitHash, message);
+
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      selectedCommitHashRef.current = commit.hash;
+      setSelectedCommitHash(commit.hash);
+      setRewordEditorOpen(false);
+      setRewordMessage("");
+      await loadCommits();
+
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      window.dispatchEvent(
+        new CustomEvent("mockor-git-commit-reworded", {
+          detail: { rootPath: requestedRoot, subject: commit.subject },
+        }),
+      );
+    } catch (nextError: unknown) {
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      setRewordError(
+        nextError instanceof Error ? nextError.message : String(nextError),
+      );
+    } finally {
+      if (isCurrentRootPath(requestedRoot)) {
+        setRewordingCommit(false);
+      }
+    }
+  }, [gateway, isCurrentRootPath, loadCommits, rewordMessage, rewordingCommit, rootPath]);
+
+  useEffect(() => {
+    const startListener = () => {
+      startRewordSelectedCommit();
+    };
+    const availabilityListener = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled?: boolean }>).detail;
+
+      if (!detail) {
+        return;
+      }
+
+      detail.enabled = canRewordSelectedCommit;
+    };
+
+    window.addEventListener("mockor-reword-selected-git-commit", startListener);
+    window.addEventListener(
+      "mockor-query-reword-selected-git-commit",
+      availabilityListener,
+    );
+
+    return () => {
+      window.removeEventListener("mockor-reword-selected-git-commit", startListener);
+      window.removeEventListener(
+        "mockor-query-reword-selected-git-commit",
+        availabilityListener,
+      );
+    };
+  }, [canRewordSelectedCommit, startRewordSelectedCommit]);
+
   useEffect(() => {
     const listener = () => {
       void cherryPickSelectedCommit();
@@ -1471,6 +1637,45 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
         <section className="git-history-details">
           <header className="git-history-section-header">
             <span>Commit Details</span>
+            {rewordEditorOpen ? (
+              <div className="git-history-reword-editor">
+                <textarea
+                  aria-label="Commit message"
+                  autoFocus
+                  disabled={rewordingCommit}
+                  onChange={(event) => setRewordMessage(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Escape") {
+                      return;
+                    }
+
+                    event.preventDefault();
+                    cancelRewordSelectedCommit();
+                  }}
+                  value={rewordMessage}
+                />
+                <button
+                  className="git-history-refresh"
+                  disabled={rewordingCommit || !rewordMessage.trim()}
+                  onClick={() => {
+                    void saveRewordSelectedCommit();
+                  }}
+                  title="Save reworded commit message"
+                  type="button"
+                >
+                  {rewordingCommit ? "Saving" : "Save"}
+                </button>
+                <button
+                  className="git-history-refresh"
+                  disabled={rewordingCommit}
+                  onClick={cancelRewordSelectedCommit}
+                  title="Cancel rewording"
+                  type="button"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : null}
             <button
               className="git-history-refresh"
               onClick={onRefreshCommitDetails}
@@ -1479,6 +1684,16 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
             >
               <RefreshCw aria-hidden="true" size={13} />
               Refresh
+            </button>
+            <button
+              className="git-history-refresh"
+              disabled={!canRewordSelectedCommit || rewordingCommit}
+              hidden={!canRewordSelectedCommit || rewordEditorOpen}
+              onClick={startRewordSelectedCommit}
+              title="Reword selected commit"
+              type="button"
+            >
+              Reword commit
             </button>
             <button
               className="git-history-refresh"
@@ -1508,6 +1723,14 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
           ) : null}
           {cherryPickError ? (
             <small className="git-history-inline-error">{cherryPickError}</small>
+          ) : null}
+          {rewordUnavailableReason && selectedCommit ? (
+            <small className="git-history-inline-error">
+              Reword unavailable: {rewordUnavailableReason}
+            </small>
+          ) : null}
+          {rewordError ? (
+            <small className="git-history-inline-error">{rewordError}</small>
           ) : null}
           {!selectedCommit ? (
             <div className="git-history-empty">
