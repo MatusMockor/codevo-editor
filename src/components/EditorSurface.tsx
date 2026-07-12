@@ -99,8 +99,7 @@ import {
   isUncommittedBlameLine,
   type GitBlameLine,
 } from "../domain/git";
-import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
-import { PhpTestGutterTargetsCache } from "../domain/phpTestGutterTargetsCache";
+import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type {
@@ -637,15 +636,6 @@ function EditorSurfaceComponent({
   // or duplicate them when revisiting a file. null means no glyphs are applied.
   const implementationGutterDecoratedPathRef = useRef<string | null>(null);
   const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
-  // Caches gutter targets so navigating back to an unchanged PHP file reuses
-  // the previous parse instead of re-scanning the whole file on the navigation
-  // commit. A content change re-parses and refreshes glyphs. Cross-tab safety
-  // does not rely on per-tab instances (this surface is reused across tabs): it
-  // is keyed by absolute document path, which is globally unique per workspace
-  // root, plus full content, so a hit can never serve another file's targets.
-  const implementationGutterTargetsCacheRef = useRef(
-    new PhpImplementationGutterTargetsCache(),
-  );
   const testGutterDecorationIdsRef = useRef<string[]>([]);
   // The path whose glyphs currently occupy testGutterDecorationIdsRef (see the
   // implementation-gutter counterpart for why the debounced recompute needs a
@@ -655,11 +645,6 @@ function EditorSurfaceComponent({
   // gutter click can dispatch the exact test to run. Reset whenever the active
   // document changes so a stale tab's targets can never run.
   const testGutterTargetsRef = useRef(new Map<number, PhpTestGutterTarget>());
-  // Caches test gutter targets per absolute document path (globally unique per
-  // workspace root) plus full content. Mirrors the implementation gutter cache,
-  // so revisiting an unchanged test file reuses the previous parse and a hit can
-  // never serve another file's targets across open project tabs.
-  const testGutterTargetsCacheRef = useRef(new PhpTestGutterTargetsCache());
   // Bookmark gutter markers. Rendered in the lines-decorations margin (an
   // independent lane from the three glyph-margin lanes: Left=git, Center=impl,
   // Right=test-run) so they never collide with those glyphs or their click
@@ -2844,7 +2829,8 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const targets = implementationGutterTargetsCacheRef.current.resolve(
+    const targets = phpGutterTargetsCoordinator.resolveImplementation(
+      workspaceRoot,
       phpEditTick.path,
       phpEditTick.content,
     );
@@ -2936,7 +2922,8 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const targets = testGutterTargetsCacheRef.current.resolve(
+    const targets = phpGutterTargetsCoordinator.resolveTest(
+      workspaceRoot,
       phpEditTick.path,
       phpEditTick.content,
     );
