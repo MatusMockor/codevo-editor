@@ -51,6 +51,7 @@ describe("settings defaults", () => {
       defaultInsertSpaces: true,
       defaultTabSize: 4,
       extraIgnorePatterns: [],
+      eslintAnalyseOnSave: false,
       eslintPath: null,
       formatOnPaste: false,
       formatOnSave: false,
@@ -83,6 +84,7 @@ describe("settings defaults", () => {
       optimizeImportsOnSave: false,
       phpBackend: "auto",
       phpInlayHints: true,
+      phpstanAnalyseOnSave: false,
       phpstanPath: null,
       phpVersionOverride: null,
       phpactorPath: null,
@@ -393,6 +395,7 @@ describe("normalizeWorkspaceSettings", () => {
         defaultInsertSpaces: false,
         defaultTabSize: 6,
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
+        eslintAnalyseOnSave: true,
         eslintPath: " /tools/eslint ",
         formatOnPaste: true,
         formatOnSave: true,
@@ -430,6 +433,7 @@ describe("normalizeWorkspaceSettings", () => {
         optimizeImportsOnSave: true,
         phpBackend: "phpactor",
         phpInlayHints: false,
+        phpstanAnalyseOnSave: true,
         phpstanPath: " /tools/phpstan ",
         phpVersionOverride: "8.3",
         phpactorPath: " /tools/phpactor ",
@@ -462,6 +466,7 @@ describe("normalizeWorkspaceSettings", () => {
       defaultInsertSpaces: false,
       defaultTabSize: 6,
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
+      eslintAnalyseOnSave: true,
       eslintPath: "/tools/eslint",
       formatOnPaste: true,
       formatOnSave: true,
@@ -498,6 +503,7 @@ describe("normalizeWorkspaceSettings", () => {
       optimizeImportsOnSave: true,
       phpBackend: "phpactor",
       phpInlayHints: false,
+      phpstanAnalyseOnSave: true,
       phpstanPath: "/tools/phpstan",
       phpVersionOverride: "8.3",
       phpactorPath: "/tools/phpactor",
@@ -596,6 +602,27 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(false);
     expect(
       normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave,
+    ).toBe(true);
+  });
+
+  it("defaults analyse-on-save settings to false and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).eslintAnalyseOnSave).toBe(false);
+    expect(normalizeWorkspaceSettings({}).phpstanAnalyseOnSave).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ eslintAnalyseOnSave: "yes" })
+        .eslintAnalyseOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ phpstanAnalyseOnSave: "yes" })
+        .phpstanAnalyseOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ eslintAnalyseOnSave: true })
+        .eslintAnalyseOnSave,
+    ).toBe(true);
+    expect(
+      normalizeWorkspaceSettings({ phpstanAnalyseOnSave: true })
+        .phpstanAnalyseOnSave,
     ).toBe(true);
   });
 

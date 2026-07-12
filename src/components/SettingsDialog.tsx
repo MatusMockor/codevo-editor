@@ -300,6 +300,12 @@ export function SettingsDialog({
                       eslintPath: nullableInputValue(eslintPath),
                     })
                   }
+                  onChangeEslintAnalyseOnSave={(eslintAnalyseOnSave) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      eslintAnalyseOnSave,
+                    })
+                  }
                   onChangeDefaultInsertSpaces={(defaultInsertSpaces) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -511,6 +517,12 @@ export function SettingsDialog({
                       phpInlayHints,
                     })
                   }
+                  onChangePhpstanAnalyseOnSave={(phpstanAnalyseOnSave) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      phpstanAnalyseOnSave,
+                    })
+                  }
                   onChangePhpVersionOverride={(phpVersionOverride) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -657,6 +669,7 @@ interface GeneralSettingsProps {
   onChangeDefaultTabSize(defaultTabSize: number): void;
   onChangeFormatOnPaste(formatOnPaste: boolean): void;
   onChangeFormatOnSave(formatOnSave: boolean): void;
+  onChangeEslintAnalyseOnSave(enabled: boolean): void;
   onChangeEslintPath(path: string): void;
   onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
@@ -709,6 +722,7 @@ function GeneralSettings({
   onChangeDefaultTabSize,
   onChangeFormatOnPaste,
   onChangeFormatOnSave,
+  onChangeEslintAnalyseOnSave,
   onChangeEslintPath,
   onChangeOptimizeImportsOnSave,
   onChangeIntelligenceMode,
@@ -786,6 +800,18 @@ function GeneralSettings({
           placeholder="node_modules/.bin/eslint / Auto"
           value={workspaceSettings.eslintPath || ""}
         />
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.eslintAnalyseOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeEslintAnalyseOnSave(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>ESLint analyse on save</span>
       </label>
 
       <label className="settings-field">
@@ -1298,6 +1324,7 @@ interface PhpSettingsProps {
   workspaceSettings: WorkspaceSettings;
   onChangePhpBackend(backend: PhpBackendPreference): void;
   onChangePhpInlayHints(enabled: boolean): void;
+  onChangePhpstanAnalyseOnSave(enabled: boolean): void;
   onChangePhpVersionOverride(version: string): void;
   onChangeToolPath(
     key: "phpactorPath" | "intelephensePath" | "phpstanPath",
@@ -1309,6 +1336,7 @@ function PhpSettings({
   hasWorkspace,
   onChangePhpBackend,
   onChangePhpInlayHints,
+  onChangePhpstanAnalyseOnSave,
   onChangePhpVersionOverride,
   onChangeToolPath,
   phpTools,
@@ -1384,6 +1412,18 @@ function PhpSettings({
           placeholder="vendor/bin/phpstan / Auto"
           value={workspaceSettings.phpstanPath || ""}
         />
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.phpstanAnalyseOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangePhpstanAnalyseOnSave(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>PHPStan analyse on save</span>
       </label>
 
       <label className="settings-toggle">

@@ -499,6 +499,7 @@ export interface RunEslintWorkspaceAnalysisOptions {
   inFlightRef: { current: boolean };
   gateway: EslintDiagnosticsGateway;
   replaceEslintDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
+  showStartMessage?: boolean;
   setMessage(message: string | null): void;
   setRunning(running: boolean): void;
 }
@@ -510,6 +511,7 @@ export async function runEslintWorkspaceAnalysis({
   inFlightRef,
   gateway,
   replaceEslintDiagnostics,
+  showStartMessage = true,
   setMessage,
   setRunning,
 }: RunEslintWorkspaceAnalysisOptions): Promise<void> {
@@ -519,7 +521,9 @@ export async function runEslintWorkspaceAnalysis({
 
   inFlightRef.current = true;
   setRunning(true);
-  setMessage("ESLint: Analysing workspace…");
+  if (showStartMessage) {
+    setMessage("ESLint: Analysing workspace…");
+  }
 
   try {
     let result;
@@ -567,6 +571,7 @@ export interface RunPhpstanWorkspaceAnalysisOptions {
   inFlightRef: { current: boolean };
   gateway: PhpstanDiagnosticsGateway;
   replacePhpstanDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
+  showStartMessage?: boolean;
   setMessage(message: string | null): void;
   setRunning(running: boolean): void;
 }
@@ -578,6 +583,7 @@ export async function runPhpstanWorkspaceAnalysis({
   inFlightRef,
   gateway,
   replacePhpstanDiagnostics,
+  showStartMessage = true,
   setMessage,
   setRunning,
 }: RunPhpstanWorkspaceAnalysisOptions): Promise<void> {
@@ -587,7 +593,9 @@ export async function runPhpstanWorkspaceAnalysis({
 
   inFlightRef.current = true;
   setRunning(true);
-  setMessage("PHPStan: Analysing workspace…");
+  if (showStartMessage) {
+    setMessage("PHPStan: Analysing workspace…");
+  }
 
   try {
     let result;
@@ -2047,13 +2055,10 @@ export function useWorkbenchController(
     reportLanguageServerErrorForActiveWorkspaceRoot,
   });
 
-  const runEslintAnalysis = useCallback(async () => {
-    const rootPath = currentWorkspaceRootRef.current;
-
-    if (!rootPath) {
-      return;
-    }
-
+  const runEslintAnalysisForRoot = useCallback(async (
+    rootPath: string,
+    showStartMessage: boolean,
+  ) => {
     await runEslintWorkspaceAnalysis({
       rootPath,
       binaryPath: workspaceSettingsRef.current.eslintPath,
@@ -2061,10 +2066,37 @@ export function useWorkbenchController(
       inFlightRef: eslintAnalysisInFlightRef,
       gateway: eslintDiagnosticsGateway,
       replaceEslintDiagnostics,
+      showStartMessage,
       setMessage,
       setRunning: setEslintAnalysisRunning,
     });
   }, [replaceEslintDiagnostics]);
+
+  const runEslintAnalysis = useCallback(async () => {
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (!rootPath) {
+      return;
+    }
+
+    await runEslintAnalysisForRoot(rootPath, true);
+  }, [runEslintAnalysisForRoot]);
+
+  const runEslintAnalysisOnSave = useCallback((rootPath: string) => {
+    if (
+      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+      workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson !== true ||
+      eslintAnalysisRunning
+    ) {
+      return;
+    }
+
+    void runEslintAnalysisForRoot(rootPath, false);
+  }, [
+    eslintAnalysisRunning,
+    runEslintAnalysisForRoot,
+    workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson,
+  ]);
 
   useEffect(() => {
     const currentTabs = appSettings.workspaceTabs;
@@ -2081,13 +2113,10 @@ export function useWorkbenchController(
     eslintWorkspaceTabsRef.current = currentTabs;
   }, [appSettings.workspaceTabs, clearEslintDiagnosticsForRoot]);
 
-  const runPhpstanAnalysis = useCallback(async () => {
-    const rootPath = currentWorkspaceRootRef.current;
-
-    if (!rootPath) {
-      return;
-    }
-
+  const runPhpstanAnalysisForRoot = useCallback(async (
+    rootPath: string,
+    showStartMessage: boolean,
+  ) => {
     await runPhpstanWorkspaceAnalysis({
       rootPath,
       binaryPath: workspaceSettingsRef.current.phpstanPath,
@@ -2095,10 +2124,37 @@ export function useWorkbenchController(
       inFlightRef: phpstanAnalysisInFlightRef,
       gateway: phpstanDiagnosticsGateway,
       replacePhpstanDiagnostics,
+      showStartMessage,
       setMessage,
       setRunning: setPhpstanAnalysisRunning,
     });
   }, [replacePhpstanDiagnostics]);
+
+  const runPhpstanAnalysis = useCallback(async () => {
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (!rootPath) {
+      return;
+    }
+
+    await runPhpstanAnalysisForRoot(rootPath, true);
+  }, [runPhpstanAnalysisForRoot]);
+
+  const runPhpstanAnalysisOnSave = useCallback((rootPath: string) => {
+    if (
+      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+      !workspaceDescriptor?.php ||
+      phpstanAnalysisRunning
+    ) {
+      return;
+    }
+
+    void runPhpstanAnalysisForRoot(rootPath, false);
+  }, [
+    phpstanAnalysisRunning,
+    runPhpstanAnalysisForRoot,
+    workspaceDescriptor?.php,
+  ]);
 
   useEffect(() => {
     const currentTabs = appSettings.workspaceTabs;
@@ -4577,6 +4633,8 @@ export function useWorkbenchController(
     hasExternalFileConflict: externalFileConflicts.hasConflict,
     clearExternalFileConflict: externalFileConflicts.clearConflict,
     detectSaveConflict: externalFileConflicts.detectSaveConflict,
+    runEslintAnalysisOnSave,
+    runPhpstanAnalysisOnSave,
   });
 
   const closeDocument = useCallback(

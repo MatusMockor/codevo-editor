@@ -29,6 +29,47 @@ function options(
 }
 
 describe("runPhpstanWorkspaceAnalysis", () => {
+  it("drops an auto-triggered run silently when analysis is already in flight", async () => {
+    const input = options(Promise.resolve({ status: "unavailable" }));
+    input.inFlightRef.current = true;
+
+    await runPhpstanWorkspaceAnalysis({
+      ...input,
+      showStartMessage: false,
+    });
+
+    expect(input.gateway.analyse).not.toHaveBeenCalled();
+    expect(input.setMessage).not.toHaveBeenCalled();
+    expect(input.setRunning).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the transient auto-run status while updating diagnostics normally", async () => {
+    const result = deferred<PhpstanAnalysisResult>();
+    const input = options(result.promise);
+    const run = runPhpstanWorkspaceAnalysis({
+      ...input,
+      showStartMessage: false,
+    });
+
+    expect(input.setMessage).not.toHaveBeenCalledWith(
+      "PHPStan: Analysing workspace…",
+    );
+    result.resolve({
+      status: "ok",
+      diagnostics: [],
+      totals: { fileErrors: 0, generalErrors: 0, fileCount: 1 },
+    });
+    await run;
+
+    expect(input.replacePhpstanDiagnostics).toHaveBeenCalledWith(
+      "/workspace",
+      [],
+    );
+    expect(input.setMessage).toHaveBeenLastCalledWith(
+      "PHPStan: 0 problems in 1 files",
+    );
+  });
+
   it("guards double runs, invokes the configured binary, and reports a summary", async () => {
     const result = deferred<PhpstanAnalysisResult>();
     const input = options(result.promise);

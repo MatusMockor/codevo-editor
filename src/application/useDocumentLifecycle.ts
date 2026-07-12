@@ -17,6 +17,7 @@ import type {
 } from "../domain/git";
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import type { LocalHistoryGateway } from "../domain/localHistory";
+import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { WorkspaceSettings } from "../domain/settings";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import {
@@ -148,6 +149,8 @@ export interface DocumentLifecycleDependencies {
     document: EditorDocument,
     disk: Awaited<ReturnType<typeof readWorkspaceTextFileSnapshot>> | null,
   ) => void;
+  runEslintAnalysisOnSave: (rootPath: string) => void;
+  runPhpstanAnalysisOnSave: (rootPath: string) => void;
 }
 
 export interface DocumentLifecycle {
@@ -236,9 +239,81 @@ export function useDocumentLifecycle(
     hasExternalFileConflict = () => false,
     clearExternalFileConflict = () => {},
     detectSaveConflict = () => {},
+    runEslintAnalysisOnSave,
+    runPhpstanAnalysisOnSave,
   } = dependencies;
   const documentEpochByPathRef = useRef<Record<string, number>>({});
   const saveQueueByPathRef = useRef<Record<string, DocumentSaveQueueEntry>>({});
+  const eslintAnalysisOnSaveTimerRef = useRef<number | null>(null);
+  const phpstanAnalysisOnSaveTimerRef = useRef<number | null>(null);
+
+  const clearAnalysisOnSaveTimers = useCallback(() => {
+    if (eslintAnalysisOnSaveTimerRef.current !== null) {
+      window.clearTimeout(eslintAnalysisOnSaveTimerRef.current);
+      eslintAnalysisOnSaveTimerRef.current = null;
+    }
+    if (phpstanAnalysisOnSaveTimerRef.current !== null) {
+      window.clearTimeout(phpstanAnalysisOnSaveTimerRef.current);
+      phpstanAnalysisOnSaveTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearAnalysisOnSaveTimers, [
+    clearAnalysisOnSaveTimers,
+    workspaceRoot,
+  ]);
+
+  const scheduleAnalysisOnSave = useCallback(
+    (document: EditorDocument, requestedRoot: string) => {
+      if (
+        workspaceSettings.eslintAnalyseOnSave &&
+        isJavaScriptTypeScriptLanguageServerDocument(document)
+      ) {
+        if (eslintAnalysisOnSaveTimerRef.current !== null) {
+          window.clearTimeout(eslintAnalysisOnSaveTimerRef.current);
+        }
+        eslintAnalysisOnSaveTimerRef.current = window.setTimeout(() => {
+          eslintAnalysisOnSaveTimerRef.current = null;
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )
+          ) {
+            return;
+          }
+          runEslintAnalysisOnSave(requestedRoot);
+        }, 500);
+      }
+      if (
+        workspaceSettings.phpstanAnalyseOnSave &&
+        document.language === "php"
+      ) {
+        if (phpstanAnalysisOnSaveTimerRef.current !== null) {
+          window.clearTimeout(phpstanAnalysisOnSaveTimerRef.current);
+        }
+        phpstanAnalysisOnSaveTimerRef.current = window.setTimeout(() => {
+          phpstanAnalysisOnSaveTimerRef.current = null;
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )
+          ) {
+            return;
+          }
+          runPhpstanAnalysisOnSave(requestedRoot);
+        }, 500);
+      }
+    },
+    [
+      currentWorkspaceRootRef,
+      runEslintAnalysisOnSave,
+      runPhpstanAnalysisOnSave,
+      workspaceSettings.eslintAnalyseOnSave,
+      workspaceSettings.phpstanAnalyseOnSave,
+    ],
+  );
 
   // Records a Local History snapshot for a saved document, scoped to the
   // workspace root captured by the caller. Best-effort: a snapshot failure must
@@ -548,6 +623,7 @@ export function useDocumentLifecycle(
         }
 
         setMessage(`Saved ${documentToSave.name}`);
+        scheduleAnalysisOnSave(documentToSave, requestedRoot);
         return;
       }
     } catch (error) {
@@ -567,6 +643,7 @@ export function useDocumentLifecycle(
     organizedImportsContentForSave,
     reportErrorForActiveWorkspaceRoot,
     resolveEditorConfigForFile,
+    scheduleAnalysisOnSave,
     setDocuments,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,

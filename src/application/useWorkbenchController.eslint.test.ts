@@ -29,6 +29,47 @@ function options(
 }
 
 describe("runEslintWorkspaceAnalysis", () => {
+  it("drops an auto-triggered run silently when analysis is already in flight", async () => {
+    const input = options(Promise.resolve({ status: "unavailable" }));
+    input.inFlightRef.current = true;
+
+    await runEslintWorkspaceAnalysis({
+      ...input,
+      showStartMessage: false,
+    });
+
+    expect(input.gateway.analyse).not.toHaveBeenCalled();
+    expect(input.setMessage).not.toHaveBeenCalled();
+    expect(input.setRunning).not.toHaveBeenCalled();
+  });
+
+  it("suppresses the transient auto-run status while updating diagnostics normally", async () => {
+    const result = deferred<EslintAnalysisResult>();
+    const input = options(result.promise);
+    const run = runEslintWorkspaceAnalysis({
+      ...input,
+      showStartMessage: false,
+    });
+
+    expect(input.setMessage).not.toHaveBeenCalledWith(
+      "ESLint: Analysing workspace…",
+    );
+    result.resolve({
+      status: "ok",
+      diagnostics: [],
+      totals: { errorCount: 0, warningCount: 0, fileCount: 1 },
+    });
+    await run;
+
+    expect(input.replaceEslintDiagnostics).toHaveBeenCalledWith(
+      "/workspace",
+      [],
+    );
+    expect(input.setMessage).toHaveBeenLastCalledWith(
+      "ESLint: 0 problems in 1 files",
+    );
+  });
+
   it("guards double runs and reports uncapped error plus warning totals", async () => {
     const result = deferred<EslintAnalysisResult>();
     const input = options(result.promise);

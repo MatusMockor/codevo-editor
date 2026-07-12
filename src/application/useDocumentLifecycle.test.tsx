@@ -130,6 +130,8 @@ interface Harness {
   setMessage: ReturnType<typeof vi.fn>;
   reportError: ReturnType<typeof vi.fn>;
   reportErrorForActiveWorkspaceRoot: ReturnType<typeof vi.fn>;
+  runEslintAnalysisOnSave: ReturnType<typeof vi.fn>;
+  runPhpstanAnalysisOnSave: ReturnType<typeof vi.fn>;
   rerender: (overrides: Partial<DocumentLifecycleDependencies>) => void;
   unmount: () => void;
 }
@@ -241,6 +243,8 @@ function renderLifecycle(
   const setMessage = vi.fn();
   const reportError = vi.fn();
   const reportErrorForActiveWorkspaceRoot = vi.fn();
+  const runEslintAnalysisOnSave = vi.fn();
+  const runPhpstanAnalysisOnSave = vi.fn();
 
   const deps: DocumentLifecycleDependencies = {
     workspaceRoot: ROOT,
@@ -293,6 +297,8 @@ function renderLifecycle(
     gitChangeForDiffDocumentPath: () => null,
     reportError,
     reportErrorForActiveWorkspaceRoot,
+    runEslintAnalysisOnSave,
+    runPhpstanAnalysisOnSave,
     ...overrides,
   };
 
@@ -340,6 +346,8 @@ function renderLifecycle(
     setMessage,
     reportError,
     reportErrorForActiveWorkspaceRoot,
+    runEslintAnalysisOnSave,
+    runPhpstanAnalysisOnSave,
     rerender: (nextOverrides) => {
       Object.assign(deps, nextOverrides);
       act(() => {
@@ -1257,6 +1265,168 @@ describe("useDocumentLifecycle", () => {
       expect(harness.activeDocumentRef.current?.content).toBe("edited");
       expect(harness.activeDocumentRef.current?.savedContent).toBe("edited");
       harness.unmount();
+    });
+
+    it("keeps analyse on save off by default", async () => {
+      vi.useFakeTimers();
+      const harness = renderLifecycle();
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      expect(harness.runEslintAnalysisOnSave).not.toHaveBeenCalled();
+      expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+      harness.unmount();
+      vi.useRealTimers();
+    });
+
+    it("debounces successful PHP saves into one PHPStan analysis", async () => {
+      vi.useFakeTimers();
+      const settings = {
+        ...defaultWorkspaceSettings(),
+        eslintAnalyseOnSave: true,
+        phpstanAnalyseOnSave: true,
+      };
+      const harness = renderLifecycle({ workspaceSettings: settings });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+        await vi.advanceTimersByTimeAsync(300);
+        await harness.lifecycle().saveActiveDocument();
+        await vi.advanceTimersByTimeAsync(499);
+      });
+      expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+
+      expect(harness.runPhpstanAnalysisOnSave).toHaveBeenCalledOnce();
+      expect(harness.runPhpstanAnalysisOnSave).toHaveBeenCalledWith(ROOT);
+      expect(harness.runEslintAnalysisOnSave).not.toHaveBeenCalled();
+      harness.unmount();
+      vi.useRealTimers();
+    });
+
+    it.each([
+      ["javascript", "index.js"],
+      ["typescript", "index.ts"],
+      ["javascriptreact", "index.jsx"],
+      ["typescriptreact", "index.tsx"],
+      ["vue", "Component.vue"],
+    ])("routes %s saves only to ESLint", async (language, name) => {
+      vi.useFakeTimers();
+      const document = {
+        ...editorDocument(`${ROOT}/src/${name}`),
+        language,
+      };
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          eslintAnalyseOnSave: true,
+          phpstanAnalyseOnSave: true,
+        },
+      });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      expect(harness.runEslintAnalysisOnSave).toHaveBeenCalledWith(ROOT);
+      expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+      harness.unmount();
+      vi.useRealTimers();
+    });
+
+    it("does not analyse a non-matching saved document", async () => {
+      vi.useFakeTimers();
+      const document = {
+        ...editorDocument(`${ROOT}/README.md`),
+        language: "markdown",
+      };
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          eslintAnalyseOnSave: true,
+          phpstanAnalyseOnSave: true,
+        },
+      });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      expect(harness.runEslintAnalysisOnSave).not.toHaveBeenCalled();
+      expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+      harness.unmount();
+      vi.useRealTimers();
+    });
+
+    it("does not analyse failed or conflicted saves", async () => {
+      vi.useFakeTimers();
+      const settings = {
+        ...defaultWorkspaceSettings(),
+        phpstanAnalyseOnSave: true,
+      };
+      const failed = renderLifecycle({
+        workspaceSettings: settings,
+        workspaceFiles: createFakeWorkspaceFiles({
+          writeTextFile: vi.fn(async () => {
+            throw new Error("disk full");
+          }),
+        }),
+      });
+      const conflicted = renderLifecycle({
+        workspaceSettings: settings,
+        workspaceFiles: createFakeWorkspaceFiles({
+          writeTextFile: vi.fn(async () => ({
+            status: "conflict" as const,
+            message: "changed",
+          })),
+        }),
+      });
+
+      await act(async () => {
+        await failed.lifecycle().saveActiveDocument();
+        await conflicted.lifecycle().saveActiveDocument();
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      expect(failed.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+      expect(conflicted.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+      failed.unmount();
+      conflicted.unmount();
+      vi.useRealTimers();
+    });
+
+    it("cancels pending analysis when the workspace root changes", async () => {
+      vi.useFakeTimers();
+      const harness = renderLifecycle({
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          phpstanAnalyseOnSave: true,
+        },
+      });
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+      });
+      harness.rootRef.current = "/other";
+      harness.rerender({ workspaceRoot: "/other" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+
+      expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+      harness.unmount();
+      vi.useRealTimers();
     });
   });
 

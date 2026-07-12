@@ -148,6 +148,7 @@ export interface WorkspaceSettings {
   defaultInsertSpaces: boolean;
   defaultTabSize: number;
   extraIgnorePatterns: string[];
+  eslintAnalyseOnSave: boolean;
   eslintPath: string | null;
   formatOnPaste: boolean;
   formatOnSave: boolean;
@@ -192,6 +193,7 @@ export interface WorkspaceSettings {
   optimizeImportsOnSave: boolean;
   phpBackend: PhpBackendPreference;
   phpInlayHints: boolean;
+  phpstanAnalyseOnSave: boolean;
   phpstanPath: string | null;
   phpVersionOverride: string | null;
   phpactorPath: string | null;
@@ -320,6 +322,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     defaultInsertSpaces: defaultWorkspaceInsertSpaces,
     defaultTabSize: defaultWorkspaceTabSize,
     extraIgnorePatterns: [],
+    eslintAnalyseOnSave: false,
     eslintPath: null,
     formatOnPaste: false,
     formatOnSave: false,
@@ -349,6 +352,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     optimizeImportsOnSave: false,
     phpBackend: "auto",
     phpInlayHints: true,
+    phpstanAnalyseOnSave: false,
     phpstanPath: null,
     phpVersionOverride: null,
     phpactorPath: null,
@@ -463,6 +467,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.extraIgnorePatterns,
       defaults.extraIgnorePatterns,
     ),
+    eslintAnalyseOnSave: normalizeBoolean(
+      value.eslintAnalyseOnSave,
+      defaults.eslintAnalyseOnSave,
+    ),
     eslintPath: normalizeNullableString(value.eslintPath, defaults.eslintPath),
     formatOnPaste: normalizeBoolean(
       value.formatOnPaste,
@@ -576,6 +584,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     phpInlayHints: normalizeBoolean(
       value.phpInlayHints,
       defaults.phpInlayHints,
+    ),
+    phpstanAnalyseOnSave: normalizeBoolean(
+      value.phpstanAnalyseOnSave,
+      defaults.phpstanAnalyseOnSave,
     ),
     phpstanPath: normalizeNullableString(
       value.phpstanPath,
