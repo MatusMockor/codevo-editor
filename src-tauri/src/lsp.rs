@@ -82,6 +82,7 @@ pub trait JavaScriptTypeScriptLanguageServerPlanner {
     fn plan(
         &self,
         root: &Path,
+        trusted: bool,
         tools: &JavaScriptTypeScriptToolAvailability,
         settings: TypeScriptLanguageServerSettings,
     ) -> LanguageServerPlan;
@@ -577,9 +578,14 @@ where
     fn plan(
         &self,
         root: &Path,
+        trusted: bool,
         tools: &JavaScriptTypeScriptToolAvailability,
         settings: TypeScriptLanguageServerSettings,
     ) -> LanguageServerPlan {
+        if !trusted {
+            return blocked_plan("Trust this workspace to enable the TypeScript language server.");
+        }
+
         let Some(server) = tools.typescript_language_server.as_ref() else {
             return unavailable_javascript_typescript_plan(
                 "Managed TypeScript language server was not found.",
@@ -1218,6 +1224,23 @@ mod tests {
     }
 
     #[test]
+    fn untrusted_workspace_blocks_typescript_language_server_plan() {
+        let root = create_temp_dir("lsp-typescript-untrusted");
+        let planner = TypeScriptLanguageServerPlanner::new();
+        let plan = planner.plan(
+            &root,
+            false,
+            &tools_with_typescript_language_server(&root),
+            TypeScriptLanguageServerSettings::default(),
+        );
+
+        assert!(matches!(plan.status, LanguageServerPlanStatus::Blocked));
+        assert!(plan.command.is_none());
+        assert!(plan.initialize_request.is_none());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn trusted_php_workspace_builds_phpactor_initialize_plan() {
         let root = create_temp_dir("lsp-ready");
         let planner = planner_with_php(
@@ -1557,6 +1580,7 @@ mod tests {
         let planner = TypeScriptLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
+            true,
             &tools_with_typescript_language_server(&root),
             TypeScriptLanguageServerSettings::default(),
         );
@@ -1841,6 +1865,7 @@ mod tests {
         let planner = TypeScriptLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
+            true,
             &tools_with_typescript_language_server(&root),
             TypeScriptLanguageServerSettings {
                 auto_imports: false,
@@ -1926,6 +1951,7 @@ mod tests {
         let planner = TypeScriptLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
+            true,
             &tools_with_vue_typescript_plugin(&root, &plugin_location),
             TypeScriptLanguageServerSettings::default(),
         );
@@ -1963,11 +1989,13 @@ mod tests {
 
         let plan_a = planner.plan(
             &root_a,
+            true,
             &tools_with_vue_typescript_plugin(&root_a, &plugin_location_a),
             TypeScriptLanguageServerSettings::default(),
         );
         let plan_b = planner.plan(
             &root_b,
+            true,
             &tools_with_vue_typescript_plugin(&root_b, &plugin_location_b),
             TypeScriptLanguageServerSettings::default(),
         );
@@ -1995,6 +2023,7 @@ mod tests {
         let planner = TypeScriptLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
+            true,
             &tools_with_typescript_language_server(&root),
             TypeScriptLanguageServerSettings::default(),
         );
@@ -2016,6 +2045,7 @@ mod tests {
         let planner = TypeScriptLanguageServerPlanner::new();
         let plan = planner.plan(
             &root,
+            true,
             &tools_with_typescript_language_server(&root),
             TypeScriptLanguageServerSettings::default(),
         );

@@ -1739,6 +1739,7 @@ fn build_php_language_server_plan(
 
 fn build_javascript_typescript_language_server_plan(
     root_path: &str,
+    trust: &Mutex<WorkspaceTrustService>,
     type_script_version_preference: Option<&str>,
     auto_imports_enabled: Option<bool>,
     automatic_type_acquisition_enabled: Option<bool>,
@@ -1752,6 +1753,10 @@ fn build_javascript_typescript_language_server_plan(
     validation_enabled: Option<bool>,
 ) -> Result<LanguageServerPlan, String> {
     let root = PathBuf::from(root_path);
+    let trusted = {
+        let service = trust.lock().map_err(|error| error.to_string())?;
+        service.get(root_path).trusted
+    };
     let preference =
         javascript_typescript_tool_preference_from_setting(type_script_version_preference);
     let settings = TypeScriptLanguageServerSettings {
@@ -1774,7 +1779,7 @@ fn build_javascript_typescript_language_server_plan(
         .detect(Some(&root), preference)
         .map_err(|error| error.to_string())?;
 
-    Ok(TypeScriptLanguageServerPlanner::new().plan(&root, &tools, settings))
+    Ok(TypeScriptLanguageServerPlanner::new().plan(&root, trusted, &tools, settings))
 }
 
 fn javascript_typescript_tool_preference_from_setting(
@@ -1817,9 +1822,11 @@ fn plan_javascript_typescript_language_server(
     prefer_type_only_auto_imports: Option<bool>,
     quote_preference: Option<String>,
     validation_enabled: Option<bool>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<LanguageServerPlan, String> {
     build_javascript_typescript_language_server_plan(
         &root_path,
+        &trust,
         type_script_version_preference.as_deref(),
         auto_imports_enabled,
         automatic_type_acquisition_enabled,
@@ -3008,11 +3015,13 @@ fn start_javascript_typescript_language_server(
     quote_preference: Option<String>,
     validation_enabled: Option<bool>,
     app: AppHandle,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
     watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
 ) -> Result<Value, String> {
     let plan = build_javascript_typescript_language_server_plan(
         &root_path,
+        &trust,
         type_script_version_preference.as_deref(),
         auto_imports_enabled,
         automatic_type_acquisition_enabled,
@@ -5885,8 +5894,9 @@ fn hex_value(value: u8) -> Option<u8> {
 mod tests {
     use super::{
         amend_git_commit, apply_descriptor_workspace_edit, apply_workspace_edit,
-        cached_monospace_font_families, create_git_branch, delete_git_branch,
-        ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
+        build_javascript_typescript_language_server_plan, cached_monospace_font_families,
+        create_git_branch, delete_git_branch, ensure_local_history_relative_path,
+        ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
@@ -8481,6 +8491,113 @@ mod tests {
                 message: Some("Trust this workspace to run ESLint.".to_string()),
             }
         );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn untrusted_workspace_blocks_javascript_typescript_language_server_start_plan() {
+        let root = temp_workspace("typescript-language-server-untrusted");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let plan = build_javascript_typescript_language_server_plan(
+            &path_string(&root),
+            &trust,
+            Some("workspace"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("language server plan");
+
+        assert!(matches!(
+            plan.status,
+            crate::lsp::LanguageServerPlanStatus::Blocked
+        ));
+        assert_eq!(
+            plan.message,
+            "Trust this workspace to enable the TypeScript language server."
+        );
+        assert!(plan.command.is_none());
+        assert!(plan.initialize_request.is_none());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn trusted_workspace_keeps_javascript_typescript_language_server_start_plan_ready() {
+        let root = temp_workspace("typescript-language-server-trusted");
+        let language_server = root
+            .join("node_modules")
+            .join(".bin")
+            .join("typescript-language-server");
+        let typescript_server = root
+            .join("node_modules")
+            .join("typescript")
+            .join("lib")
+            .join("tsserver.js");
+        fs::create_dir_all(language_server.parent().expect("language server directory"))
+            .expect("create language server directory");
+        fs::create_dir_all(
+            typescript_server
+                .parent()
+                .expect("TypeScript server directory"),
+        )
+        .expect("create TypeScript server directory");
+        fs::write(&language_server, "#!/bin/sh\n").expect("write language server");
+        fs::write(&typescript_server, "").expect("write TypeScript server");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = fs::metadata(&language_server)
+                .expect("language server metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&language_server, permissions)
+                .expect("make language server executable");
+        }
+
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+
+        let plan = build_javascript_typescript_language_server_plan(
+            &path_string(&root),
+            &trust,
+            Some("workspace"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("language server plan");
+
+        assert!(matches!(
+            plan.status,
+            crate::lsp::LanguageServerPlanStatus::Ready
+        ));
+        assert_eq!(
+            plan.command.expect("language server command").executable,
+            path_string(&language_server)
+        );
+        assert!(plan.initialize_request.is_some());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
