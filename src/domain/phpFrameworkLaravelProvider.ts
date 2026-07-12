@@ -53,6 +53,7 @@ import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
 } from "./phpLaravelRoutes";
+import { resolveLaravelLivewireTarget } from "./phpLaravelLivewire";
 import {
   phpLaravelScopedStringCompletionAt,
   phpLaravelScopedStringCompletionContextAt,
@@ -77,6 +78,14 @@ import {
   phpLaravelViewReferenceContextAt,
 } from "./phpLaravelViews";
 import type { PhpProjectDescriptor } from "./workspace";
+
+interface PhpLaravelFrameworkProvider extends PhpFrameworkProvider {
+  livewire?: {
+    resolveLiteralTarget?: (context: {
+      literal: string;
+    }) => object | null;
+  };
+}
 
 /**
  * Text-search anchors for Laravel named routes declared outside the active
@@ -141,7 +150,7 @@ export function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {
   );
 }
 
-export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
+export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   id: "laravel",
   appliesTo: (php) => isLaravelPhpProject(php),
   completions: {
@@ -300,6 +309,9 @@ export const phpLaravelFrameworkProvider: PhpFrameworkProvider = {
     referenceAt: ({ position, source }) =>
       phpLaravelViewReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelViewTarget(literal),
+  },
+  livewire: {
+    resolveLiteralTarget: ({ literal }) => resolveLaravelLivewireTarget(literal),
   },
   viewData: {
     entryFromSource: ({ source }) => bladeViewDataEntryFromSource(source),

@@ -26,9 +26,15 @@ import {
   resolveLaravelWorkspaceFileTargets,
   type LaravelWorkspaceFileTarget,
 } from "./laravelPathResolution";
+import { phpLaravelLivewireCandidateRelativePaths } from "./phpLaravelLivewire";
 import { workspaceRelativePath } from "./workspace";
 
-export type BladeReferenceKind = "view" | "component" | "section" | "stack";
+export type BladeReferenceKind =
+  | "view"
+  | "component"
+  | "livewire"
+  | "section"
+  | "stack";
 
 export interface BladeReference {
   kind: BladeReferenceKind;
@@ -205,6 +211,12 @@ export function detectBladeReferenceAt(
   source: string,
   offset: number,
 ): BladeReference | null {
+  const livewireReference = livewireReferenceAt(source, offset);
+
+  if (livewireReference) {
+    return livewireReference;
+  }
+
   const componentReference = componentReferenceAt(source, offset);
 
   if (componentReference) {
@@ -367,6 +379,13 @@ export function bladeReferenceCandidateWorkspacePaths(
 
   if (reference.kind === "component") {
     return bladeComponentCandidateWorkspacePaths(rootPath, reference.name);
+  }
+
+  if (reference.kind === "livewire") {
+    return resolveLaravelWorkspaceFileTargets(
+      rootPath,
+      phpLaravelLivewireCandidateRelativePaths(reference.name),
+    );
   }
 
   return [];
@@ -534,6 +553,43 @@ function componentReferenceAt(
   return { kind: "component", name, nameStart: componentNameStart, nameEnd };
 }
 
+function livewireReferenceAt(
+  source: string,
+  offset: number,
+): BladeReference | null {
+  if (isInsideBladeComment(source, offset)) {
+    return null;
+  }
+
+  const tagPrefix = "livewire:";
+  const searchStart = Math.max(0, offset - 200);
+  const openAngle = lastTagOpenBefore(source, offset, searchStart);
+
+  if (openAngle === null) {
+    return null;
+  }
+
+  const nameStart = componentNameStartAfter(source, openAngle);
+
+  if (nameStart === null || !source.startsWith(tagPrefix, nameStart)) {
+    return null;
+  }
+
+  const componentNameStart = nameStart + tagPrefix.length;
+  const nameEnd = componentNameEnd(source, componentNameStart);
+  const name = source.slice(componentNameStart, nameEnd);
+
+  if (offset < componentNameStart || offset > nameEnd) {
+    return null;
+  }
+
+  if (phpLaravelLivewireCandidateRelativePaths(name).length === 0) {
+    return null;
+  }
+
+  return { kind: "livewire", name, nameStart: componentNameStart, nameEnd };
+}
+
 /**
  * Detects a `@directive('literal')` reference whose literal spans `offset` and
  * maps it to a view / section / stack reference per the directive's role.
@@ -565,6 +621,13 @@ function directiveReferenceAt(
   }
 
   if (!isUsableName(literal.value)) {
+    return null;
+  }
+
+  if (
+    kind === "livewire" &&
+    phpLaravelLivewireCandidateRelativePaths(literal.value).length === 0
+  ) {
     return null;
   }
 
@@ -678,6 +741,10 @@ function referenceKindForDirective(
   directive: string,
   literalIndex: number,
 ): BladeReferenceKind | null {
+  if (directive === "livewire" && literalIndex === 0) {
+    return "livewire";
+  }
+
   if (VIEW_DIRECTIVES_FIRST_ARG.has(directive) && literalIndex === 0) {
     return "view";
   }
