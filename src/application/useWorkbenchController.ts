@@ -529,6 +529,14 @@ interface OpenWorkspaceFileRequest {
   canOpen(): boolean;
 }
 
+interface InFlightDirectoryLoad {
+  generation: number;
+  path: string;
+  promise: Promise<FileEntry[]>;
+  requestId: symbol;
+  rootPath: string | null;
+}
+
 interface CachedWorkspaceWorkbenchState {
   activePath: string | null;
   bookmarks: Bookmark[];
@@ -1273,6 +1281,9 @@ export function useWorkbenchController(
   const lastPhpIdeReadinessSignatureRef = useRef<string | null>(null);
   const openWorkspaceRequestTokenRef = useRef(0);
   const openWorkspaceRequestPathRef = useRef<string | null>(null);
+  const inFlightDirectoryLoadsRef = useRef(
+    new Map<string, InFlightDirectoryLoad>(),
+  );
   const openFileRequestTokenRef = useRef(0);
   const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
   const emptyDocumentRefreshTimeoutsRef = useRef<Set<number>>(new Set());
@@ -3556,30 +3567,109 @@ export function useWorkbenchController(
         clearMessage?: boolean;
         requireActiveRoot?: boolean;
       } = {},
-    ) => {
+    ): Promise<FileEntry[] | undefined> => {
+      const rootPath = currentWorkspaceRootRef.current;
+      const generation = openWorkspaceRequestTokenRef.current;
+      const normalizedPath = normalizedWorkspaceRootKey(path);
+      const clearMessage = options.clearMessage !== false;
+      const requireActiveRoot = options.requireActiveRoot === true;
+      const requestKey = JSON.stringify([
+        normalizedWorkspaceRootKey(rootPath),
+        generation,
+        normalizedPath,
+      ]);
+      const activeRequest = inFlightDirectoryLoadsRef.current.get(requestKey);
+
       // Subdirectory loads stay valid as long as the path still belongs to the
       // live workspace root. The workspace-root load sub-task instead opts into
       // exact-root matching so that switching to a parent workspace (whose root
       // a now-stale nested root would still "belong to") cannot let stale
       // entries leak into the active tree.
       const isActiveRoot = () =>
-        options.requireActiveRoot
-          ? workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)
-          : workspacePathBelongsToRoot(path, currentWorkspaceRootRef.current);
+        openWorkspaceRequestTokenRef.current === generation &&
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+        (requireActiveRoot
+          ? workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              normalizedPath,
+            )
+          : workspacePathBelongsToRoot(
+              normalizedPath,
+              currentWorkspaceRootRef.current,
+            ));
 
-      setLoadingDirectories((current) => new Set(current).add(path));
+      let sharedRead = activeRequest?.promise;
+
+      if (!sharedRead) {
+        setLoadingDirectories((current) =>
+          new Set(current).add(normalizedPath),
+        );
+
+        const requestId = Symbol(requestKey);
+        const request = (async () => {
+          // Let the request enter the registry before a synchronous gateway
+          // failure can reach cleanup.
+          await Promise.resolve();
+
+          try {
+            return await workspaceFiles.readDirectory(normalizedPath);
+          } finally {
+            const registeredRequest =
+              inFlightDirectoryLoadsRef.current.get(requestKey);
+
+            if (registeredRequest?.requestId === requestId) {
+              inFlightDirectoryLoadsRef.current.delete(requestKey);
+            }
+
+            setLoadingDirectories((current) => {
+              const hasActiveRequestForPath = [
+                ...inFlightDirectoryLoadsRef.current.values(),
+              ].some(
+                (candidate) =>
+                  candidate.generation ===
+                    openWorkspaceRequestTokenRef.current &&
+                  workspaceRootKeysEqual(
+                    candidate.rootPath,
+                    currentWorkspaceRootRef.current,
+                  ) &&
+                  candidate.path === normalizedPath,
+              );
+
+              if (
+                hasActiveRequestForPath ||
+                !current.has(normalizedPath)
+              ) {
+                return current;
+              }
+
+              const next = new Set(current);
+              next.delete(normalizedPath);
+              return next;
+            });
+          }
+        })();
+
+        inFlightDirectoryLoadsRef.current.set(requestKey, {
+          generation,
+          path: normalizedPath,
+          promise: request,
+          requestId,
+          rootPath,
+        });
+        sharedRead = request;
+      }
 
       try {
-        const entries = await workspaceFiles.readDirectory(path);
+        const entries = await sharedRead;
         if (!isActiveRoot()) {
           return;
         }
 
         setEntriesByDirectory((current) => ({
           ...current,
-          [path]: entries,
+          [normalizedPath]: entries,
         }));
-        if (options.clearMessage !== false) {
+        if (clearMessage) {
           setMessage(null);
         }
         return entries;
@@ -3599,24 +3689,18 @@ export function useWorkbenchController(
 
         if (isMissingDirectory) {
           setEntriesByDirectory((current) => {
-            if (!(path in current)) {
+            if (!(normalizedPath in current)) {
               return current;
             }
 
             const next = { ...current };
-            delete next[path];
+            delete next[normalizedPath];
             return next;
           });
           return;
         }
 
         reportError("Workspace", error);
-      } finally {
-        setLoadingDirectories((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
       }
     },
     [reportError, workspaceFiles],

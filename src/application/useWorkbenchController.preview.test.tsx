@@ -59055,6 +59055,369 @@ final class InvoiceAdapter
     );
   });
 
+  it("coalesces concurrent loads for the same directory until the shared read settles", async () => {
+    const directoryPath = "/workspace/src";
+    const directoryRead = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === directoryPath) {
+        return directoryRead.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+    });
+    await flushAsyncTurns();
+    readDirectory.mockClear();
+
+    let firstLoad!: Promise<void>;
+    let secondLoad!: Promise<void>;
+    act(() => {
+      firstLoad = getWorkbench().toggleDirectory(directoryPath);
+      secondLoad = getWorkbench().toggleDirectory(directoryPath);
+    });
+
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledTimes(1);
+      expect(getWorkbench().loadingDirectories.has(directoryPath)).toBe(true);
+    });
+
+    await act(async () => {
+      directoryRead.resolve([fileEntry(`${directoryPath}/index.ts`, "index.ts")]);
+      await Promise.all([firstLoad, secondLoad]);
+    });
+
+    expect(getWorkbench().loadingDirectories.has(directoryPath)).toBe(false);
+    expect(getWorkbench().entriesByDirectory[directoryPath]).toEqual([
+      fileEntry(`${directoryPath}/index.ts`, "index.ts"),
+    ]);
+  });
+
+  it("loads different directories concurrently without coalescing them", async () => {
+    const firstPath = "/workspace/src";
+    const secondPath = "/workspace/tests";
+    const firstRead = createDeferred<FileEntry[]>();
+    const secondRead = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === firstPath) {
+        return firstRead.promise;
+      }
+
+      if (path === secondPath) {
+        return secondRead.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+    });
+    await flushAsyncTurns();
+    readDirectory.mockClear();
+
+    let firstLoad!: Promise<void>;
+    let secondLoad!: Promise<void>;
+    act(() => {
+      firstLoad = getWorkbench().toggleDirectory(firstPath);
+      secondLoad = getWorkbench().toggleDirectory(secondPath);
+    });
+
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledTimes(2);
+      expect(readDirectory).toHaveBeenCalledWith(firstPath);
+      expect(readDirectory).toHaveBeenCalledWith(secondPath);
+    });
+
+    await act(async () => {
+      firstRead.resolve([]);
+      secondRead.resolve([]);
+      await Promise.all([firstLoad, secondLoad]);
+    });
+  });
+
+  it("evicts a failed directory read so a later load can retry", async () => {
+    const directoryPath = "/workspace/src";
+    const failedRead = createDeferred<FileEntry[]>();
+    let directoryReadCount = 0;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path !== directoryPath) {
+        return [];
+      }
+
+      directoryReadCount += 1;
+      if (directoryReadCount === 1) {
+        return failedRead.promise;
+      }
+
+      return [fileEntry(`${directoryPath}/retry.ts`, "retry.ts")];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+    });
+    await flushAsyncTurns();
+    readDirectory.mockClear();
+
+    let failedLoad!: Promise<void>;
+    act(() => {
+      failedLoad = getWorkbench().toggleDirectory(directoryPath);
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      failedRead.reject(new Error("ENOENT: transient missing directory"));
+      await failedLoad;
+    });
+
+    await act(async () => {
+      await getWorkbench().toggleDirectory(directoryPath);
+    });
+    await act(async () => {
+      await getWorkbench().toggleDirectory(directoryPath);
+    });
+
+    expect(readDirectory).toHaveBeenCalledTimes(2);
+    expect(getWorkbench().entriesByDirectory[directoryPath]).toEqual([
+      fileEntry(`${directoryPath}/retry.ts`, "retry.ts"),
+    ]);
+  });
+
+  it("shares a read between callers with different message policies", async () => {
+    const directoryPath = "/workspace/src";
+    const directoryRead = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === "/workspace") {
+        return [directoryEntry(directoryPath, "src")];
+      }
+
+      if (path === directoryPath) {
+        return directoryRead.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+    });
+    await flushAsyncTurns();
+    readDirectory.mockClear();
+
+    let interactiveLoad!: Promise<void>;
+    act(() => {
+      getWorkbench().revealDirectoryInTree(`${directoryPath}/index.ts`);
+      interactiveLoad = getWorkbench().toggleDirectory(directoryPath);
+    });
+
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      directoryRead.resolve([]);
+      await interactiveLoad;
+    });
+  });
+
+  it("shares the active-root workspace read with a default-policy refresh", async () => {
+    const rootPath = "/workspace";
+    const rootRead = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === rootPath) {
+        return rootRead.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: rootPath,
+      },
+      readDirectory,
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledTimes(1);
+    });
+
+    const refreshCommand = getWorkbench().commands.find(
+      (command) => command.id === "workspace.refresh",
+    );
+    expect(refreshCommand).toBeDefined();
+    let refresh!: void | Promise<void>;
+    act(() => {
+      refresh = refreshCommand?.run();
+    });
+
+    await Promise.resolve();
+    expect(readDirectory).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rootRead.resolve([]);
+      await refresh;
+    });
+  });
+
+  it("coalesces normalized-equivalent paths and clears canonical loading state", async () => {
+    const directoryPath = "/workspace/src";
+    const equivalentPath = `${directoryPath}/`;
+    const directoryRead = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === directoryPath) {
+        return directoryRead.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory,
+    });
+    await flushAsyncTurns();
+    readDirectory.mockClear();
+
+    let firstLoad!: Promise<void>;
+    let secondLoad!: Promise<void>;
+    act(() => {
+      firstLoad = getWorkbench().toggleDirectory(directoryPath);
+      secondLoad = getWorkbench().toggleDirectory(equivalentPath);
+    });
+
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledTimes(1);
+      expect(readDirectory).toHaveBeenCalledWith(directoryPath);
+      expect(getWorkbench().loadingDirectories.has(directoryPath)).toBe(true);
+      expect(getWorkbench().loadingDirectories.has(equivalentPath)).toBe(false);
+    });
+
+    await act(async () => {
+      directoryRead.resolve([]);
+      await Promise.all([firstLoad, secondLoad]);
+    });
+
+    expect(getWorkbench().loadingDirectories.has(directoryPath)).toBe(false);
+    expect(getWorkbench().loadingDirectories.has(equivalentPath)).toBe(false);
+  });
+
+  it("keeps a canonical loading flag while a newer generation still owns it", async () => {
+    const rootPath = "/workspace";
+    const otherRoot = "/other";
+    const firstRead = createDeferred<FileEntry[]>();
+    const secondRead = createDeferred<FileEntry[]>();
+    let rootReadCount = 0;
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path !== rootPath) {
+        return [];
+      }
+
+      rootReadCount += 1;
+      return rootReadCount === 1 ? firstRead.promise : secondRead.promise;
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: rootPath,
+        workspaceTabs: [rootPath, otherRoot],
+      },
+      readDirectory,
+    });
+    await vi.waitFor(() => {
+      expect(rootReadCount).toBe(1);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(otherRoot);
+    });
+
+    let switchBack!: Promise<void>;
+    act(() => {
+      switchBack = getWorkbench().activateWorkspaceTab(rootPath);
+    });
+    await vi.waitFor(() => {
+      expect(rootReadCount).toBe(2);
+      expect(getWorkbench().loadingDirectories.has(rootPath)).toBe(true);
+    });
+
+    await act(async () => {
+      firstRead.resolve([]);
+      await firstRead.promise;
+    });
+    expect(getWorkbench().loadingDirectories.has(rootPath)).toBe(true);
+
+    await act(async () => {
+      secondRead.resolve([]);
+      await switchBack;
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().loadingDirectories.has(rootPath)).toBe(false);
+    });
+  });
+
+  it("drops a stale subdirectory result after switching to its parent workspace", async () => {
+    const nestedRoot = "/workspace/packages/app";
+    const parentRoot = "/workspace";
+    const staleDirectoryPath = `${nestedRoot}/src`;
+    const staleRead = createDeferred<FileEntry[]>();
+    const readDirectory = vi.fn(async (path: string) => {
+      if (path === staleDirectoryPath) {
+        return staleRead.promise;
+      }
+
+      return [];
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: nestedRoot,
+        workspaceTabs: [nestedRoot, parentRoot],
+      },
+      readDirectory,
+    });
+    await flushAsyncTurns();
+
+    let staleLoad!: Promise<void>;
+    act(() => {
+      staleLoad = getWorkbench().toggleDirectory(staleDirectoryPath);
+    });
+    await vi.waitFor(() => {
+      expect(readDirectory).toHaveBeenCalledWith(staleDirectoryPath);
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(parentRoot);
+    });
+    expect(getWorkbench().workspaceRoot).toBe(parentRoot);
+
+    await act(async () => {
+      staleRead.resolve([
+        fileEntry(`${staleDirectoryPath}/stale.ts`, "stale.ts"),
+      ]);
+      await staleLoad;
+    });
+
+    expect(getWorkbench().entriesByDirectory[staleDirectoryPath]).toBeUndefined();
+  });
+
   it("does not let a stale parent-workspace directory load overwrite the active nested tab", async () => {
     // loadDirectory's internal guard only checks subtree membership
     // (workspacePathBelongsToRoot). When switching from a nested project to its
