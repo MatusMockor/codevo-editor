@@ -20,20 +20,15 @@ import {
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
 import type { PhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDatabaseExpressionTypeAdapter";
-import { createPhpFrameworkDatabaseExpressionTypeAdapters } from "./phpFrameworkDatabaseExpressionTypeAdapters";
 import type { PhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
-import { phpFrameworkBuilderMagicExpressionTypeAdapters } from "./phpFrameworkBuilderMagicExpressionTypeAdapters";
 import type { PhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFrameworkModelFluentExpressionTypeAdapter";
-import { createPhpFrameworkModelFluentExpressionTypeAdapters } from "./phpFrameworkModelFluentExpressionTypeAdapters";
 import type { PhpFrameworkModelBuilderTransitionExpressionTypeAdapter } from "./phpFrameworkModelBuilderTransitionExpressionTypeAdapter";
-import { createPhpFrameworkModelBuilderTransitionExpressionTypeAdapters } from "./phpFrameworkModelBuilderTransitionExpressionTypeAdapters";
 import type { PhpFrameworkQueryCallbackVariableExpressionTypeAdapter } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapter";
-import { createPhpFrameworkQueryCallbackVariableExpressionTypeAdapters } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapters";
 import type { PhpFrameworkTerminalModelRecoveryExpressionTypeAdapter } from "./phpFrameworkTerminalModelRecoveryExpressionTypeAdapter";
-import { createPhpFrameworkTerminalModelRecoveryExpressionTypeAdapters } from "./phpFrameworkTerminalModelRecoveryExpressionTypeAdapters";
 import type { PhpLaravelModelTypeResolver } from "./usePhpLaravelModelTypeResolvers";
 import type { PhpMethodReturnTypeResolver } from "./usePhpMethodReturnTypeResolver";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { createPhpExpressionTypeAdapterBundle } from "./phpExpressionTypeAdapterRegistry";
 
 export type PhpExpressionTypeResolver = (
   source: string,
@@ -97,48 +92,31 @@ export function usePhpExpressionTypeResolver({
 }: UsePhpExpressionTypeResolverOptions) {
   const frameworkProviders =
     frameworkRuntime?.providers ?? activePhpFrameworkProviders;
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
-  const expressionTypeStrategy = useMemo(
+  const expressionTypeAdapterRuntime = useMemo(
     () =>
-      createPhpExpressionTypeStrategy({
-        builderMagicExpressionTypeAdapter:
-          phpFrameworkBuilderMagicExpressionTypeAdapters(
-            isLaravelFrameworkActive,
-            {
-              phpClassHasLaravelDynamicWhere,
-              phpClassHasLaravelLocalScope,
-            },
-          ),
-        databaseExpressionTypeAdapter:
-          createPhpFrameworkDatabaseExpressionTypeAdapters(
-            isLaravelFrameworkActive,
-          ),
-        modelFluentExpressionTypeAdapter:
-          createPhpFrameworkModelFluentExpressionTypeAdapters(
-            isLaravelFrameworkActive,
-          ),
-        modelBuilderTransitionExpressionTypeAdapter:
-          createPhpFrameworkModelBuilderTransitionExpressionTypeAdapters(
-            isLaravelFrameworkActive,
-          ),
-        queryCallbackVariableExpressionTypeAdapter:
-          createPhpFrameworkQueryCallbackVariableExpressionTypeAdapters(
-            isLaravelFrameworkActive,
-          ),
-        terminalModelRecoveryExpressionTypeAdapter:
-          createPhpFrameworkTerminalModelRecoveryExpressionTypeAdapters(
-            isLaravelFrameworkActive,
-            {
-              resolvePropertyOrRelationType:
-                resolvePhpClassPropertyOrRelationType,
-            },
-          ),
+      frameworkRuntime ?? {
+        hasProvider: (providerId: string) =>
+          providerId === "laravel" && legacyIsLaravelFrameworkActive,
+      },
+    [frameworkRuntime, legacyIsLaravelFrameworkActive],
+  );
+  const expressionTypeStrategy = useMemo(
+    () => {
+      const adapterBundle = createPhpExpressionTypeAdapterBundle({
+        frameworkRuntime: expressionTypeAdapterRuntime,
+        phpClassHasLaravelDynamicWhere,
+        phpClassHasLaravelLocalScope,
+        resolvePropertyOrRelationType: resolvePhpClassPropertyOrRelationType,
+      });
+
+      return createPhpExpressionTypeStrategy({
+        ...adapterBundle,
         resolvePhpEloquentBuilderModelType,
         resolvePhpLaravelCollectionModelType,
-      }),
+      });
+    },
     [
-      isLaravelFrameworkActive,
+      expressionTypeAdapterRuntime,
       phpClassHasLaravelDynamicWhere,
       phpClassHasLaravelLocalScope,
       resolvePhpClassPropertyOrRelationType,
