@@ -18,6 +18,7 @@ describe("BrowserSettingsGateway", () => {
       keymap: defaultKeymapSettings(),
       minimapEnabled: false,
       recentWorkspacePath: null,
+      recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       theme: "dark",
       userSnippets: [],
@@ -100,6 +101,7 @@ describe("BrowserSettingsGateway", () => {
       },
       minimapEnabled: false,
       recentWorkspacePath: "/project",
+      recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
       userSnippets: [
@@ -184,6 +186,7 @@ describe("BrowserSettingsGateway", () => {
       },
       minimapEnabled: false,
       recentWorkspacePath: "/project",
+      recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
       userSnippets: [
@@ -273,6 +276,7 @@ describe("BrowserSettingsGateway", () => {
       keymap: defaultKeymapSettings(),
       minimapEnabled: false,
       recentWorkspacePath: null,
+      recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       theme: "dark",
       userSnippets: [],

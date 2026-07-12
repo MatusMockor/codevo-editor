@@ -1,5 +1,50 @@
 import type { KeymapCommandId } from "../domain/keymap";
+import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import type { Command } from "./commandRegistry";
+
+interface WorkbenchRecentWorkspaceCommandsOptions {
+  recentWorkspacePaths: readonly string[];
+  workspaceTabs: readonly string[];
+  openWorkspacePath(path: string): void | Promise<void>;
+}
+
+export function workbenchRecentWorkspaceCommands({
+  recentWorkspacePaths,
+  workspaceTabs,
+  openWorkspacePath,
+}: WorkbenchRecentWorkspaceCommandsOptions): Command[] {
+  const openWorkspaceKeys = new Set(
+    workspaceTabs.map(normalizedWorkspaceRootKey),
+  );
+
+  return recentWorkspacePaths.flatMap((path, index) => {
+    if (openWorkspaceKeys.has(normalizedWorkspaceRootKey(path))) {
+      return [];
+    }
+
+    return [
+      {
+        id: `workspace.openRecent.${index}`,
+        title: recentWorkspaceCommandTitle(path),
+        category: "File",
+        isEnabled: () => true,
+        run: () => openWorkspacePath(path),
+      },
+    ];
+  });
+}
+
+export function recentWorkspaceCommandTitle(path: string): string {
+  const normalizedPath = path.replace(/[\\/]+$/, "");
+  const separatorIndex = Math.max(
+    normalizedPath.lastIndexOf("/"),
+    normalizedPath.lastIndexOf("\\"),
+  );
+  const name = normalizedPath.slice(separatorIndex + 1);
+  const parent = normalizedPath.slice(0, separatorIndex) || path[0] || ".";
+
+  return `Open Recent: ${name} (${parent})`;
+}
 
 interface WorkbenchFloatingSurfaceCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;

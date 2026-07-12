@@ -131,6 +131,7 @@ export interface AppSettings {
   minimapEnabled?: boolean;
   keymap: KeymapSettings;
   recentWorkspacePath: string | null;
+  recentWorkspacePaths?: string[];
   runtimePolicy: BackgroundRuntimePolicy;
   theme: AppTheme;
   /**
@@ -246,6 +247,7 @@ export function defaultAppSettings(): AppSettings {
     minimapEnabled: false,
     keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
+    recentWorkspacePaths: [],
     runtimePolicy: "keepAlive",
     theme: "dark",
     userSnippets: [],
@@ -385,10 +387,14 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     return defaults;
   }
 
-  const recentWorkspacePath = normalizeNullableString(
+  const legacyRecentWorkspacePath = normalizeNullableString(
     value.recentWorkspacePath,
     defaults.recentWorkspacePath,
   );
+  const recentWorkspacePaths = Array.isArray(value.recentWorkspacePaths)
+    ? normalizeRecentWorkspacePaths(value.recentWorkspacePaths)
+    : pushRecentWorkspacePath([], legacyRecentWorkspacePath ?? "");
+  const recentWorkspacePath = recentWorkspacePaths[0] ?? null;
   const editorFontSize =
     value.editorFontSize === undefined
       ? defaults.editorFontSize
@@ -420,6 +426,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     keymap,
     minimapEnabled,
     recentWorkspacePath,
+    recentWorkspacePaths,
     runtimePolicy,
     theme,
     userSnippets,
@@ -1159,6 +1166,29 @@ function normalizePathList(value: unknown): string[] {
   }
 
   return normalized;
+}
+
+export function normalizeRecentWorkspacePaths(value: unknown): string[] {
+  return normalizePathList(value).slice(0, 10);
+}
+
+export function pushRecentWorkspacePath(
+  currentPaths: unknown,
+  path: string,
+): string[] {
+  const normalizedPath = path.trim();
+  const current = normalizeRecentWorkspacePaths(currentPaths);
+
+  if (!normalizedPath) {
+    return current;
+  }
+
+  const key = normalizedWorkspaceRootKey(normalizedPath);
+  const remaining = current.filter(
+    (currentPath) => normalizedWorkspaceRootKey(currentPath) !== key,
+  );
+
+  return [normalizedPath, ...remaining].slice(0, 10);
 }
 
 function normalizeWorkspaceTabs(

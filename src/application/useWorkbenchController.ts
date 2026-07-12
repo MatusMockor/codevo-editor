@@ -19,7 +19,10 @@ import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
 import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
-import { workbenchFloatingSurfaceCommands } from "./workbenchFloatingSurfaceCommands";
+import {
+  workbenchFloatingSurfaceCommands,
+  workbenchRecentWorkspaceCommands,
+} from "./workbenchFloatingSurfaceCommands";
 import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
@@ -333,6 +336,7 @@ import {
   defaultEditorFontSize,
   defaultWorkspaceSettings,
   normalizeEditorFontSize,
+  pushRecentWorkspacePath,
   type AppSettings,
   type SettingsGateway,
   type SettingsSection,
@@ -3113,9 +3117,14 @@ export function useWorkbenchController(
           appSettingsRef.current.workspaceTabs,
           path,
         );
+        const recentWorkspacePaths = pushRecentWorkspacePath(
+          appSettingsRef.current.recentWorkspacePaths,
+          path,
+        );
         await persistAppSettings({
           ...appSettingsRef.current,
-          recentWorkspacePath: path,
+          recentWorkspacePath: recentWorkspacePaths[0] ?? null,
+          recentWorkspacePaths,
           workspaceTabs: nextWorkspaceTabs,
         });
         await stopBackgroundProjectRuntimes(
@@ -7228,6 +7237,12 @@ export function useWorkbenchController(
       workspaceTabs: appSettings.workspaceTabs,
     }).forEach((command) => registry.register(command));
 
+    workbenchRecentWorkspaceCommands({
+      recentWorkspacePaths: appSettings.recentWorkspacePaths ?? [],
+      workspaceTabs: appSettings.workspaceTabs,
+      openWorkspacePath,
+    }).forEach((command) => registry.register(command));
+
     workbenchPhpTestCommands({
       shortcut,
       isActiveDocumentPhp: activeDocument?.language === "php",
@@ -7424,6 +7439,7 @@ export function useWorkbenchController(
     activePackageScripts,
     activateWorkspaceTab,
     appSettings.keymap,
+    appSettings.recentWorkspacePaths,
     appSettings.workspaceTabs,
     closeDocument,
     createDirectory,
@@ -7460,6 +7476,7 @@ export function useWorkbenchController(
     options.editorSurfaceCommandRunner,
     navigationHistory,
     openWorkspace,
+    openWorkspacePath,
     refreshWorkspace,
     refreshGitStatus,
     refreshPhpTree,

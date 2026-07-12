@@ -1,7 +1,49 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KeymapCommandId } from "../domain/keymap";
 import type { Command, CommandContext } from "./commandRegistry";
-import { workbenchFloatingSurfaceCommands } from "./workbenchFloatingSurfaceCommands";
+import {
+  recentWorkspaceCommandTitle,
+  workbenchFloatingSurfaceCommands,
+  workbenchRecentWorkspaceCommands,
+} from "./workbenchFloatingSurfaceCommands";
+
+describe("workbenchRecentWorkspaceCommands", () => {
+  it("formats a recent workspace title from its basename and parent", () => {
+    expect(recentWorkspaceCommandTitle("/Users/dev/projects/editor/")).toBe(
+      "Open Recent: editor (/Users/dev/projects)",
+    );
+    expect(recentWorkspaceCommandTitle("C:\\Users\\dev\\editor")).toBe(
+      "Open Recent: editor (C:\\Users\\dev)",
+    );
+  });
+
+  it("generates MRU commands while excluding currently open workspace tabs", () => {
+    const openWorkspacePath = vi.fn();
+    const commands = workbenchRecentWorkspaceCommands({
+      recentWorkspacePaths: ["/work/one", "/work/two/", "/work/three"],
+      workspaceTabs: ["/work/two"],
+      openWorkspacePath,
+    });
+
+    expect(commands.map(({ id, title, category }) => ({ id, title, category })))
+      .toEqual([
+        {
+          id: "workspace.openRecent.0",
+          title: "Open Recent: one (/work)",
+          category: "File",
+        },
+        {
+          id: "workspace.openRecent.2",
+          title: "Open Recent: three (/work)",
+          category: "File",
+        },
+      ]);
+
+    commands[1].run();
+
+    expect(openWorkspacePath).toHaveBeenCalledWith("/work/three");
+  });
+});
 
 describe("workbenchFloatingSurfaceCommands", () => {
   it("returns floating surface commands in registry order with metadata and shortcuts", () => {

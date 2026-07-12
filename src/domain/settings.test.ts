@@ -11,8 +11,10 @@ import {
   monacoFontLigaturesForEditorSetting,
   normalizeAppSettings,
   normalizeEditorFontSize,
+  normalizeRecentWorkspacePaths,
   normalizeWorkspaceSession,
   normalizeWorkspaceSettings,
+  pushRecentWorkspacePath,
   resolveAppTheme,
   settingsIgnorePatternsFromText,
   settingsIgnorePatternsText,
@@ -37,6 +39,7 @@ describe("settings defaults", () => {
       minimapEnabled: false,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
+      recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       theme: "dark",
       userSnippets: [],
@@ -135,6 +138,7 @@ describe("normalizeAppSettings", () => {
       keymap: defaultKeymapSettings(),
       minimapEnabled: false,
       recentWorkspacePath: "/project",
+      recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
       theme: "dark",
       userSnippets: [],
@@ -162,6 +166,7 @@ describe("normalizeAppSettings", () => {
       },
       minimapEnabled: true,
       recentWorkspacePath: null,
+      recentWorkspacePaths: [],
       runtimePolicy: "suspendOnBackground",
       theme: "light",
       userSnippets: [],
@@ -180,6 +185,7 @@ describe("normalizeAppSettings", () => {
       keymap: defaultKeymapSettings(),
       minimapEnabled: false,
       recentWorkspacePath: null,
+      recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
       userSnippets: [],
@@ -219,6 +225,7 @@ describe("normalizeAppSettings", () => {
       keymap: defaultKeymapSettings(),
       minimapEnabled: false,
       recentWorkspacePath: null,
+      recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
       theme: "dark",
       userSnippets: [],
@@ -268,11 +275,62 @@ describe("normalizeAppSettings", () => {
       keymap: defaultKeymapSettings(),
       minimapEnabled: false,
       recentWorkspacePath: "/project/api",
+      recentWorkspacePaths: ["/project/api"],
       runtimePolicy: "keepAlive",
       theme: "dark",
       userSnippets: [],
       workspaceTabs: ["/project/api/", "/project/web"],
     });
+  });
+
+  it("seeds recent workspace paths from the legacy single path", () => {
+    expect(
+      normalizeAppSettings({ recentWorkspacePath: "/legacy/project" })
+        .recentWorkspacePaths,
+    ).toEqual(["/legacy/project"]);
+  });
+
+  it("defensively normalizes malformed recent workspace paths", () => {
+    expect(
+      normalizeRecentWorkspacePaths([
+        " /one ",
+        42,
+        "",
+        "/two/",
+        "/two",
+        ...Array.from({ length: 12 }, (_, index) => `/extra-${index}`),
+      ]),
+    ).toEqual([
+      "/one",
+      "/two/",
+      "/extra-0",
+      "/extra-1",
+      "/extra-2",
+      "/extra-3",
+      "/extra-4",
+      "/extra-5",
+      "/extra-6",
+      "/extra-7",
+    ]);
+    expect(normalizeRecentWorkspacePaths(null)).toEqual([]);
+  });
+
+  it("pushes recent workspaces in MRU order", () => {
+    const full = Array.from({ length: 10 }, (_, index) => `/project-${index}`);
+
+    expect(pushRecentWorkspacePath(full, "/project-4/")).toEqual([
+      "/project-4/",
+      "/project-0",
+      "/project-1",
+      "/project-2",
+      "/project-3",
+      "/project-5",
+      "/project-6",
+      "/project-7",
+      "/project-8",
+      "/project-9",
+    ]);
+    expect(pushRecentWorkspacePath(full, "   ")).toEqual(full);
   });
 
   it("falls back for invalid app settings", () => {
