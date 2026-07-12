@@ -16,6 +16,8 @@ describe("workbenchPhpTestCommands", () => {
       goToTestForActiveDocument: vi.fn(),
       runTestForActiveDocument: vi.fn(),
       runAllTestsForActiveDocument: vi.fn(),
+      hasPhpWorkspace: true,
+      openTestResultsPanel: vi.fn(),
     });
 
     expect(
@@ -50,11 +52,21 @@ describe("workbenchPhpTestCommands", () => {
         category: "PHP",
         shortcut: "shortcut:php.runTestFile",
       },
+      {
+        id: "php.runTestsWithResultsPanel",
+        title: "PHP: Run Tests with Results Panel",
+        category: "PHP",
+        shortcut: "shortcut:php.runTestsWithResultsPanel",
+      },
     ]);
     expect(shortcut).toHaveBeenNthCalledWith(1, "php.goToTest");
     expect(shortcut).toHaveBeenNthCalledWith(2, "php.runTest");
     expect(shortcut).toHaveBeenNthCalledWith(3, "php.runTestFile");
-    expect(shortcut).toHaveBeenCalledTimes(3);
+    expect(shortcut).toHaveBeenNthCalledWith(
+      4,
+      "php.runTestsWithResultsPanel",
+    );
+    expect(shortcut).toHaveBeenCalledTimes(4);
   });
 
   it("enables the first three commands only with a workspace, active document, and PHP document", () => {
@@ -134,6 +146,8 @@ describe("workbenchPhpTestCommands", () => {
     const goToTestForActiveDocument = vi.fn(() => goToResult);
     const runTestForActiveDocument = vi.fn(() => runTestResult);
     const runAllTestsForActiveDocument = vi.fn(() => runAllResult);
+    const panelResult = Promise.resolve();
+    const openTestResultsPanel = vi.fn(() => panelResult);
     const commands = workbenchPhpTestCommands({
       shortcut: (commandId) => commandId,
       isActiveDocumentPhp: true,
@@ -142,23 +156,58 @@ describe("workbenchPhpTestCommands", () => {
       goToTestForActiveDocument,
       runTestForActiveDocument,
       runAllTestsForActiveDocument,
+      hasPhpWorkspace: true,
+      openTestResultsPanel,
     });
 
     expect(commands[0].run()).toBe(generateResult);
     expect(commands[1].run()).toBe(goToResult);
     expect(commands[2].run()).toBe(runTestResult);
     expect(commands[3].run()).toBe(runAllResult);
+    expect(commands[4].run()).toBe(panelResult);
     expect(generateTestForActiveDocument).toHaveBeenCalledTimes(1);
     expect(goToTestForActiveDocument).toHaveBeenCalledTimes(1);
     expect(runTestForActiveDocument).toHaveBeenCalledTimes(1);
     expect(runAllTestsForActiveDocument).toHaveBeenCalledTimes(1);
+    expect(openTestResultsPanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables the results panel command for PHP workspaces", () => {
+    const enabled = createCommands({
+      hasPhpWorkspace: true,
+      isActiveDocumentPhp: false,
+      isActiveDocumentPhpTest: false,
+    })[4];
+    const disabled = createCommands({
+      hasPhpWorkspace: false,
+      isActiveDocumentPhp: true,
+      isActiveDocumentPhpTest: true,
+    })[4];
+
+    expect(
+      enabled.isEnabled(
+        context({ hasWorkspace: true, hasActiveDocument: false }),
+      ),
+    ).toBe(true);
+    expect(
+      enabled.isEnabled(
+        context({ hasWorkspace: false, hasActiveDocument: false }),
+      ),
+    ).toBe(false);
+    expect(
+      disabled.isEnabled(
+        context({ hasWorkspace: true, hasActiveDocument: true }),
+      ),
+    ).toBe(false);
   });
 });
 
 function createCommands({
+  hasPhpWorkspace,
   isActiveDocumentPhp,
   isActiveDocumentPhpTest,
 }: {
+  hasPhpWorkspace?: boolean;
   isActiveDocumentPhp: boolean;
   isActiveDocumentPhpTest: boolean;
 }): Command[] {
@@ -170,6 +219,8 @@ function createCommands({
     goToTestForActiveDocument: vi.fn(),
     runTestForActiveDocument: vi.fn(),
     runAllTestsForActiveDocument: vi.fn(),
+    hasPhpWorkspace: hasPhpWorkspace ?? true,
+    openTestResultsPanel: vi.fn(),
   });
 }
 

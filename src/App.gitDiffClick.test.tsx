@@ -329,6 +329,7 @@ function createWorkbench(overrides: Record<string, unknown>) {
       workspaceSymbolsOpen: false,
       workspaceTabs: ["/workspace"],
       workspaceTodos: [],
+      phpTestRunRequestVersion: 0,
       workspaceTrust: { trusted: true },
       ...overrides,
     },

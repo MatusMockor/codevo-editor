@@ -445,6 +445,12 @@ export const keymapCommands = [
   {
     category: "PHP",
     defaultShortcut: "",
+    id: "php.runTestsWithResultsPanel",
+    label: "Run Tests with Results Panel",
+  },
+  {
+    category: "PHP",
+    defaultShortcut: "",
     id: "pint.formatChangedFiles",
     label: "Pint: Format Changed Files",
   },

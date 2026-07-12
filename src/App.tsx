@@ -23,6 +23,7 @@ import {
 import type { EditorSurfaceEslintDisableRunner } from "./application/workbenchEslintDisableCommand";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
+import { usePhpTestResults } from "./application/usePhpTestResults";
 import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
@@ -143,6 +144,7 @@ import { TauriWorkspaceIdentityGateway } from "./infrastructure/tauriWorkspaceId
 import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
+import { TauriPhpTestGateway } from "./infrastructure/tauriPhpTestGateway";
 import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
 import "./App.css";
 
@@ -150,6 +152,7 @@ const workspaceIdentityGateway = new TauriWorkspaceIdentityGateway();
 const workspaceGateway = new TauriWorkspaceGateway(workspaceIdentityGateway);
 const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
 const artisanRoutesGateway = new TauriArtisanRoutesGateway();
+const phpTestGateway = new TauriPhpTestGateway();
 const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
 const workspaceGateways = {
   detection: workspaceGateway,
@@ -304,6 +307,15 @@ function App() {
       workbench.bottomPanelVisible &&
       String(workbench.bottomPanelView) === "routes",
     rootPath: workbench.workspaceRoot,
+  });
+  const phpTestResults = usePhpTestResults({
+    gateway: phpTestGateway,
+    isOpen:
+      workbench.bottomPanelVisible &&
+      String(workbench.bottomPanelView) === "testResults",
+    rootPath: workbench.workspaceRoot,
+    runRequestVersion: workbench.phpTestRunRequestVersion,
+    workspaceTrusted: workbench.workspaceTrust?.trusted === true,
   });
   const gitHistoryWorkspaceRootRef = useRef(workbench.workspaceRoot);
   const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
@@ -1522,12 +1534,14 @@ function App() {
             artisanRoutesTotal={artisanRoutes.total}
             artisanRoutesUnavailable={artisanRoutes.unavailable}
             hasArtisan={workbench.hasArtisan}
+            hasPhpWorkspace={Boolean(workbench.workspaceDescriptor?.php)}
             indexHealthLogs={workbench.indexHealthLogs}
             indexProgress={workbench.indexProgress}
             notices={workbench.notices}
             onClearProblems={workbench.clearNotices}
             onClose={() => {
               artisanRoutes.clear();
+              phpTestResults.clear();
               workbench.hideBottomPanel();
             }}
             onHardReindex={workbench.startHardReindex}
@@ -1536,6 +1550,10 @@ function App() {
               void workbench.openArtisanController(action);
             }}
             onRefreshArtisanRoutes={() => void artisanRoutes.refresh()}
+            onOpenPhpTestCase={(testCase) => {
+              void workbench.openPhpTestCase(testCase);
+            }}
+            onRunPhpTests={() => void phpTestResults.run()}
             onOpenProblem={workbench.openProblemNotice}
             onPhpReindex={workbench.startPhpReindex}
             onRevealDirectoryInTree={workbench.revealDirectoryInTree}
@@ -1557,6 +1575,10 @@ function App() {
             }
             terminalTheme={terminalTheme}
             workspaceTrusted={workbench.workspaceTrust?.trusted ?? false}
+            phpTestError={phpTestResults.error}
+            phpTestIsRunning={phpTestResults.isRunning}
+            phpTestResult={phpTestResults.result}
+            phpTestUnavailable={phpTestResults.unavailable}
             workspaceRoot={workbench.workspaceRoot}
           />
         ) : null}

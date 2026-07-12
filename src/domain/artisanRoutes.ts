@@ -17,7 +17,7 @@ export interface ArtisanRoutesGateway {
   list(rootPath: string): Promise<ArtisanRoutesResult>;
 }
 
-export type WorkbenchBottomPanelView = BottomPanelView | "routes";
+export type WorkbenchBottomPanelView = BottomPanelView | "routes" | "testResults";
 
 export interface ArtisanControllerAction {
   className: string;

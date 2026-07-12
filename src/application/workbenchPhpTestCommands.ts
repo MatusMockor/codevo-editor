@@ -9,6 +9,8 @@ interface WorkbenchPhpTestCommandsOptions {
   goToTestForActiveDocument: Command["run"];
   runTestForActiveDocument: Command["run"];
   runAllTestsForActiveDocument: Command["run"];
+  hasPhpWorkspace: boolean;
+  openTestResultsPanel: Command["run"];
 }
 
 export function workbenchPhpTestCommands({
@@ -19,6 +21,8 @@ export function workbenchPhpTestCommands({
   goToTestForActiveDocument,
   runTestForActiveDocument,
   runAllTestsForActiveDocument,
+  hasPhpWorkspace,
+  openTestResultsPanel,
 }: WorkbenchPhpTestCommandsOptions): Command[] {
   return [
     {
@@ -63,6 +67,14 @@ export function workbenchPhpTestCommands({
         context.hasActiveDocument &&
         isActiveDocumentPhpTest,
       run: runAllTestsForActiveDocument,
+    },
+    {
+      id: "php.runTestsWithResultsPanel",
+      title: "PHP: Run Tests with Results Panel",
+      category: "PHP",
+      shortcut: shortcut("php.runTestsWithResultsPanel"),
+      isEnabled: (context) => context.hasWorkspace && hasPhpWorkspace,
+      run: openTestResultsPanel,
     },
   ];
 }

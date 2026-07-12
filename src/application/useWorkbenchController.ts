@@ -209,6 +209,8 @@ import {
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { ArtisanControllerAction } from "../domain/artisanRoutes";
+import type { PhpTestCase } from "../domain/phpTestResults";
+import { phpTestCaseNavigationTarget } from "../domain/phpTestResults";
 import {
   applyIndexProgress,
   applyMetadataScanCompletion,
@@ -993,6 +995,7 @@ export function useWorkbenchController(
   const [bottomPanelView, setBottomPanelView] =
     useState<BottomPanelView>("problems");
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
+  const [phpTestRunRequestVersion, setPhpTestRunRequestVersion] = useState(0);
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [gitStatus, setGitStatus] = useState<GitStatus>(emptyGitStatus());
@@ -5986,6 +5989,35 @@ export function useWorkbenchController(
     setBottomPanelVisible(true);
   }, []);
 
+  const openPhpTestResultsPanel = useCallback(() => {
+    setBottomPanelView("testResults" as BottomPanelView);
+    setBottomPanelVisible(true);
+    setPhpTestRunRequestVersion((current) => current + 1);
+  }, []);
+
+  const openPhpTestCase = useCallback(
+    (testCase: PhpTestCase) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return Promise.resolve(false);
+      }
+
+      const target = phpTestCaseNavigationTarget(requestedRoot, testCase);
+
+      if (!target) {
+        return Promise.resolve(false);
+      }
+
+      return openNavigationTarget(
+        target.path,
+        target.position,
+        testCase.name ?? target.path,
+      );
+    },
+    [openNavigationTarget],
+  );
+
   const openArtisanController = useCallback(
     (action: ArtisanControllerAction) =>
       navigateToArtisanController(
@@ -8258,12 +8290,14 @@ export function useWorkbenchController(
 
     workbenchPhpTestCommands({
       shortcut,
+      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
       isActiveDocumentPhp: activeDocument?.language === "php",
       isActiveDocumentPhpTest,
       generateTestForActiveDocument,
       goToTestForActiveDocument,
       runTestForActiveDocument,
       runAllTestsForActiveDocument,
+      openTestResultsPanel: openPhpTestResultsPanel,
     }).forEach((command) => registry.register(command));
 
     workbenchPhpstanCommands({
@@ -8494,6 +8528,7 @@ export function useWorkbenchController(
     activePackageScripts,
     openArtisanMakePalette,
     openArtisanRoutesPanel,
+    openPhpTestResultsPanel,
     activateWorkspaceTab,
     appSettings.keymap,
     appSettings.recentWorkspacePaths,
@@ -9608,6 +9643,8 @@ export function useWorkbenchController(
     openClassSearchResult,
     openWorkspaceSymbolResult,
     openArtisanController,
+    openPhpTestCase,
+    phpTestRunRequestVersion,
     openWorkspaceSymbols,
     openPinnedFile,
     prefetchFile,

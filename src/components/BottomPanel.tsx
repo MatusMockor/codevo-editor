@@ -24,6 +24,8 @@ import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 import { workspaceRelativePath } from "../domain/pathDerivation";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { ArtisanRoutesPanel } from "./ArtisanRoutesPanel";
+import type { PhpTestCase, PhpTestRunOk } from "../domain/phpTestResults";
+import { PhpTestResultsPanel } from "./PhpTestResultsPanel";
 
 interface BottomPanelProps {
   activeView: WorkbenchBottomPanelView;
@@ -34,6 +36,7 @@ interface BottomPanelProps {
   artisanRoutesTotal?: number;
   artisanRoutesUnavailable?: string | null;
   hasArtisan?: boolean;
+  hasPhpWorkspace?: boolean;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
@@ -43,6 +46,8 @@ interface BottomPanelProps {
   onArtisanRoutesQueryChange?(query: string): void;
   onOpenArtisanController?(action: ArtisanControllerAction): void;
   onRefreshArtisanRoutes?(): void;
+  onOpenPhpTestCase?(testCase: PhpTestCase): void;
+  onRunPhpTests?(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onRevealDirectoryInTree?(path: string): void;
@@ -66,6 +71,10 @@ interface BottomPanelProps {
   terminalTheme: TerminalTheme;
   workspaceTrusted: boolean;
   workspaceRoot: string | null;
+  phpTestError?: string | null;
+  phpTestIsRunning?: boolean;
+  phpTestResult?: PhpTestRunOk | null;
+  phpTestUnavailable?: string | null;
 }
 
 const bottomPanelViews: WorkbenchBottomPanelView[] = [
@@ -90,6 +99,7 @@ export function BottomPanel({
   artisanRoutesTotal = 0,
   artisanRoutesUnavailable = null,
   hasArtisan = false,
+  hasPhpWorkspace = false,
   indexHealthLogs,
   indexProgress,
   notices,
@@ -99,6 +109,8 @@ export function BottomPanel({
   onArtisanRoutesQueryChange = () => undefined,
   onOpenArtisanController = () => undefined,
   onRefreshArtisanRoutes = () => undefined,
+  onOpenPhpTestCase = () => undefined,
+  onRunPhpTests = () => undefined,
   onOpenProblem,
   onPhpReindex,
   onRevealDirectoryInTree,
@@ -117,6 +129,10 @@ export function BottomPanel({
   terminalTheme,
   workspaceTrusted,
   workspaceRoot,
+  phpTestError = null,
+  phpTestIsRunning = false,
+  phpTestResult = null,
+  phpTestUnavailable = null,
 }: BottomPanelProps) {
   const [terminalMounted, setTerminalMounted] = useState(
     activeView === "terminal",
@@ -188,6 +204,10 @@ export function BottomPanel({
     artisanRoutesQuery,
     artisanRoutesTotal,
     artisanRoutesUnavailable,
+    phpTestError,
+    phpTestIsRunning,
+    phpTestResult,
+    phpTestUnavailable,
     indexHealthLogs,
     indexProgress,
     notices,
@@ -195,6 +215,8 @@ export function BottomPanel({
     onArtisanRoutesQueryChange,
     onOpenArtisanController,
     onRefreshArtisanRoutes,
+    onOpenPhpTestCase,
+    onRunPhpTests,
     onOpenProblem,
     onPhpReindex,
     onOpenCommitFileDiff,
@@ -224,6 +246,9 @@ export function BottomPanel({
           {[
             ...bottomPanelViews,
             ...(hasArtisan ? (["routes"] as const) : []),
+            ...(hasArtisan || hasPhpWorkspace
+              ? (["testResults"] as const)
+              : []),
           ].map((view) => (
             <button
               aria-selected={activeView === view}
@@ -237,7 +262,11 @@ export function BottomPanel({
               role="tab"
               type="button"
             >
-              {view === "routes" ? "Routes" : bottomPanelLabel(view)}
+              {view === "routes"
+                ? "Routes"
+                : view === "testResults"
+                  ? "Tests"
+                  : bottomPanelLabel(view)}
             </button>
           ))}
         </div>
@@ -373,6 +402,10 @@ interface RenderActivePanelOptions {
   artisanRoutesQuery: string;
   artisanRoutesTotal: number;
   artisanRoutesUnavailable: string | null;
+  phpTestError: string | null;
+  phpTestIsRunning: boolean;
+  phpTestResult: PhpTestRunOk | null;
+  phpTestUnavailable: string | null;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
@@ -380,6 +413,8 @@ interface RenderActivePanelOptions {
   onArtisanRoutesQueryChange(query: string): void;
   onOpenArtisanController(action: ArtisanControllerAction): void;
   onRefreshArtisanRoutes(): void;
+  onOpenPhpTestCase(testCase: PhpTestCase): void;
+  onRunPhpTests(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onSoftReindex(): void;
@@ -403,6 +438,10 @@ function renderActivePanel({
   artisanRoutesQuery,
   artisanRoutesTotal,
   artisanRoutesUnavailable,
+  phpTestError,
+  phpTestIsRunning,
+  phpTestResult,
+  phpTestUnavailable,
   indexHealthLogs,
   indexProgress,
   notices,
@@ -410,6 +449,8 @@ function renderActivePanel({
   onArtisanRoutesQueryChange,
   onOpenArtisanController,
   onRefreshArtisanRoutes,
+  onOpenPhpTestCase,
+  onRunPhpTests,
   onOpenProblem,
   onPhpReindex,
   onOpenCommitFileDiff,
@@ -420,6 +461,20 @@ function renderActivePanel({
   getLatencySnapshot,
   workspaceRoot,
 }: RenderActivePanelOptions) {
+  if (activeView === "testResults") {
+    return (
+      <PhpTestResultsPanel
+        error={phpTestError}
+        isRunning={phpTestIsRunning}
+        onOpenCase={onOpenPhpTestCase}
+        onRun={onRunPhpTests}
+        result={phpTestResult}
+        rootPath={workspaceRoot}
+        unavailable={phpTestUnavailable}
+      />
+    );
+  }
+
   if (activeView === "routes") {
     return (
       <ArtisanRoutesPanel

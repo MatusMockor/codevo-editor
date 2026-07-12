@@ -246,6 +246,7 @@ function createWorkbench() {
       workspaceSymbolsOpen: false,
       workspaceTabs: ["/workspace"],
       workspaceTodos: [],
+      phpTestRunRequestVersion: 0,
       workspaceTrust: { trusted: true },
     },
     {

@@ -343,6 +343,18 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["php.runTestFile"]).toBe("");
   });
 
+  it("leaves Run Tests with Results Panel unbound by default", () => {
+    expect(
+      defaultShortcutForCommand("php.runTestsWithResultsPanel", "mac"),
+    ).toBe("");
+    expect(
+      defaultShortcutForCommand("php.runTestsWithResultsPanel", "linux"),
+    ).toBe("");
+    expect(
+      defaultKeymapSettings("mac")["php.runTestsWithResultsPanel"],
+    ).toBe("");
+  });
+
   it("defaults complete current statement to Cmd+Shift+Enter on mac and Ctrl+Shift+Enter elsewhere", () => {
     expect(defaultShortcutForCommand("editor.completeStatement", "mac")).toBe(
       "Cmd+Shift+Enter",

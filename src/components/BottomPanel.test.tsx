@@ -169,6 +169,23 @@ describe("BottomPanel terminal links", () => {
 
     expect(onRevealDirectoryInTree).toHaveBeenCalledWith("/workspace/src");
   });
+
+  it("shows Tests but not Routes for a PHP workspace without Artisan", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      { hasArtisan: false, hasPhpWorkspace: true },
+    );
+    const labels = Array.from(
+      host.querySelectorAll<HTMLButtonElement>("[role='tab']"),
+      (button) => button.textContent,
+    );
+
+    expect(labels).toContain("Tests");
+    expect(labels).not.toContain("Routes");
+  });
 });
 
 function terminalProps(): CapturedTerminalPanelProps {
@@ -182,6 +199,7 @@ async function renderPanel(
   workspaceRoot: string | null,
   onOpenProblem: (notice: WorkbenchNotice) => Promise<boolean>,
   onRevealDirectoryInTree?: (path: string) => void,
+  overrides: Partial<Parameters<typeof BottomPanel>[0]> = {},
 ) {
   await act(async () => {
     root.render(
@@ -208,6 +226,7 @@ async function renderPanel(
         terminalTheme={terminalThemeForAppTheme("dark")}
         workspaceRoot={workspaceRoot}
         workspaceTrusted
+        {...overrides}
       />,
     );
     await Promise.resolve();
