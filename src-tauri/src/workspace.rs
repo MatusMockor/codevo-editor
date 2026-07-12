@@ -56,7 +56,6 @@ pub struct WorkspaceTextEdit {
 }
 
 pub trait WorkspaceFileRepository {
-    fn create_directory(&self, path: &Path) -> io::Result<()>;
     fn create_text_file(&self, path: &Path) -> io::Result<()>;
     fn delete_path(&self, path: &Path) -> io::Result<()>;
     fn read_directory(&self, path: &Path) -> io::Result<Vec<FileEntry>>;
@@ -114,10 +113,6 @@ pub fn apply_text_edits_to_files(
 pub struct LocalWorkspaceFileRepository;
 
 impl WorkspaceFileRepository for LocalWorkspaceFileRepository {
-    fn create_directory(&self, path: &Path) -> io::Result<()> {
-        fs::create_dir_all(path)
-    }
-
     fn create_text_file(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -538,37 +533,18 @@ mod tests {
     }
 
     #[test]
-    fn create_and_delete_directory() {
+    fn delete_directory_tree() {
         let root = create_temp_dir("workspace-directory-mutations");
         let directory_path = root.join("src").join("Domain");
         let repository = LocalWorkspaceFileRepository;
 
-        repository
-            .create_directory(&directory_path)
-            .expect("create directory");
+        fs::create_dir_all(&directory_path).expect("create directory");
         assert!(directory_path.is_dir());
 
         repository
             .delete_path(&root.join("src"))
             .expect("delete directory tree");
         assert!(!directory_path.exists());
-        fs::remove_dir_all(root).expect("cleanup");
-    }
-
-    #[test]
-    fn create_directory_is_idempotent_when_directory_already_exists() {
-        let root = create_temp_dir("workspace-existing-directory");
-        let directory_path = root.join("app").join("Services");
-        let repository = LocalWorkspaceFileRepository;
-
-        repository
-            .create_directory(&directory_path)
-            .expect("create directory");
-        repository
-            .create_directory(&directory_path)
-            .expect("ensure existing directory");
-
-        assert!(directory_path.is_dir());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
