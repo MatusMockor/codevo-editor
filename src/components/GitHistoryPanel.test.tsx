@@ -237,6 +237,41 @@ describe("GitHistoryPanel", () => {
     expect(host.textContent).toContain("Older.ts");
   });
 
+  it("reverts the selected commit and selects the new commit after refreshing history", async () => {
+    const selected = commitFixture(
+      "1111111111111111111111111111111111111111",
+      "Change settings",
+    );
+    const gateway = createGateway({ commitLog: [selected] });
+    const revertedEvents: unknown[] = [];
+    const listener = (event: Event) => {
+      revertedEvents.push((event as CustomEvent).detail);
+    };
+    window.addEventListener("mockor-git-commit-reverted", listener);
+
+    await renderPanel(root, gateway);
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>(
+        "button[title='Revert selected commit']",
+      )?.click();
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+
+    expect(gateway.revertCommit).toHaveBeenCalledWith("/workspace", selected.hash);
+    expect(selectedCommitText(host)).toContain('Revert "Change settings"');
+    expect(revertedEvents).toEqual([
+      {
+        rootPath: "/workspace",
+        subject: 'Revert "Change settings"',
+      },
+    ]);
+
+    window.removeEventListener("mockor-git-commit-reverted", listener);
+  });
+
   it("supports an empty commit list fallback and allows re-fetch", async () => {
     const gateway = createGateway({
       branches: {
@@ -839,6 +874,17 @@ function createGateway(seed: {
       path: "",
       status: "M" as const,
     })),
+    revertCommit: vi.fn(async (_rootPath, commitHash) => {
+      const selected = currentCommitLog.find((commit) => commit.hash === commitHash);
+      const reverted = commitFixture(
+        "9999999999999999999999999999999999999999",
+        `Revert "${selected?.subject ?? "commit"}"`,
+        [currentCommitLog[0]?.hash].filter((hash): hash is string => Boolean(hash)),
+      );
+      currentCommitLog = [reverted, ...currentCommitLog];
+      commitDetailsByHash.set(reverted.hash, commitDetailsFixture(reverted));
+      return reverted;
+    }),
     setCommitLog(next) {
       currentCommitLog = next;
     },

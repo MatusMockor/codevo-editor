@@ -5965,6 +5965,44 @@ export function useWorkbenchController(
     [openFileHistory, showBottomPanelView],
   );
 
+  const revertSelectedGitCommit = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("mockor-revert-selected-git-commit"));
+  }, []);
+
+  useEffect(() => {
+    const refreshAfterRevert = async (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ rootPath?: unknown; subject?: unknown }>
+      ).detail;
+
+      if (
+        typeof detail?.rootPath !== "string" ||
+        typeof detail.subject !== "string" ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, detail.rootPath)
+      ) {
+        return;
+      }
+
+      const requestedRoot = detail.rootPath;
+      await refreshGitStatus();
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      setMessage(`Reverted commit: ${detail.subject}`);
+    };
+    const listener = (event: Event) => {
+      void refreshAfterRevert(event);
+    };
+
+    window.addEventListener("mockor-git-commit-reverted", listener);
+
+    return () => {
+      window.removeEventListener("mockor-git-commit-reverted", listener);
+    };
+  }, [refreshGitStatus]);
+
   useEffect(() => {
     const reveal = (event: Event) => {
       const detail = (event as CustomEvent<{ path?: unknown; sha?: unknown }>).detail;
@@ -8056,6 +8094,7 @@ export function useWorkbenchController(
       openGitBranchPanel,
       createGitBranch,
       commitGitChanges,
+      revertSelectedGitCommit,
     }).forEach((command) => registry.register(command));
 
     appearanceCommands.workbenchCommands.forEach((command) =>
@@ -8204,6 +8243,7 @@ export function useWorkbenchController(
     openGitBranchPanel,
     createGitBranch,
     commitGitChanges,
+    revertSelectedGitCommit,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,

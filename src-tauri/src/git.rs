@@ -244,6 +244,7 @@ pub trait GitRepositoryGateway {
     fn fetch(&self, root: &Path) -> io::Result<GitStatus>;
     fn pull(&self, root: &Path) -> io::Result<GitStatus>;
     fn push(&self, root: &Path) -> io::Result<GitStatus>;
+    fn revert_commit(&self, root: &Path, commit_hash: &str) -> io::Result<GitCommit>;
     fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn status(&self, root: &Path) -> io::Result<GitStatus>;
@@ -511,6 +512,78 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
 
         run_git_remote(&root, ["push"], self.trusted)?;
         self.status(&root)
+    }
+
+    fn revert_commit(&self, root: &Path, commit_hash: &str) -> io::Result<GitCommit> {
+        let commit_hash = safe_commit_sha(commit_hash)?;
+        let root = root.canonicalize()?;
+        let status = git_command(self.trusted)
+            .arg("-C")
+            .arg(&root)
+            .args(["status", "--porcelain=v1", "--untracked-files=no"])
+            .output()?;
+
+        if !status.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&status.stderr).trim().to_string(),
+            ));
+        }
+
+        if !status.stdout.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Cannot revert a commit while the working tree has uncommitted changes. Commit or stash them first.",
+            ));
+        }
+
+        let output = git_command(self.trusted)
+            .arg("-C")
+            .arg(&root)
+            .args(["revert", "--no-edit", commit_hash.as_str()])
+            .output()?;
+
+        if output.status.success() {
+            let commits = load_commit_log(
+                &root,
+                GitCommitFilters {
+                    author: None,
+                    branch: None,
+                    cursor: None,
+                    limit: Some(1),
+                    path: None,
+                    query: None,
+                },
+                self.trusted,
+            )?;
+            return commits.into_iter().next().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Git revert succeeded but the new commit could not be loaded.",
+                )
+            });
+        }
+
+        let reverting = git_command(self.trusted)
+            .arg("-C")
+            .arg(&root)
+            .args(["rev-parse", "--verify", "--quiet", "REVERT_HEAD"])
+            .output()?
+            .status
+            .success();
+
+        if reverting {
+            run_git(&root, ["revert", "--abort"], self.trusted)?;
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "The commit could not be reverted because it conflicts with the current branch. The revert was aborted and the working tree was restored.",
+            ));
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
     }
 
     fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus> {
@@ -3715,6 +3788,128 @@ mod tests {
             fixture.git_output(&fixture.workspace_a, ["show", "HEAD:local.txt"]),
             "two"
         );
+    }
+
+    #[test]
+    fn revert_commit_creates_a_new_commit() {
+        let repo = branch_repo();
+        repo.write("file.txt", "before\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "before"]);
+        repo.write("file.txt", "after\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "change"]);
+        let reverted_hash = repo.git_output(["rev-parse", "HEAD"]);
+
+        let commit = CommandGitRepositoryGateway::new(true)
+            .revert_commit(repo.path(), reverted_hash.trim())
+            .expect("revert commit");
+
+        assert_ne!(commit.hash, reverted_hash.trim());
+        assert!(commit.subject.contains("Revert \"change\""));
+        assert_eq!(repo.read("file.txt"), "before\n");
+        assert_eq!(repo.git_output(["rev-list", "--count", "HEAD"]).trim(), "3");
+    }
+
+    #[test]
+    fn conflicting_revert_aborts_and_surfaces_a_clear_error() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.write("file.txt", "target\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "target"]);
+        let target = repo.git_output(["rev-parse", "--short", "HEAD"]);
+        repo.write("file.txt", "later\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "later"]);
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .revert_commit(repo.path(), target.trim())
+            .expect_err("conflicting revert must fail");
+
+        assert!(error.to_string().contains("conflicts"));
+        assert_eq!(repo.read("file.txt"), "later\n");
+        assert!(repo.git_output(["status", "--porcelain"]).is_empty());
+        let revert_head = git_command(true)
+            .arg("-C")
+            .arg(repo.path())
+            .args(["rev-parse", "--verify", "--quiet", "REVERT_HEAD"])
+            .output()
+            .expect("check revert head");
+        assert!(!revert_head.status.success());
+    }
+
+    #[test]
+    fn revert_commit_refuses_a_dirty_working_tree() {
+        let repo = branch_repo();
+        repo.write("file.txt", "before\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "before"]);
+        repo.write("file.txt", "after\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "change"]);
+        let target = repo.git_output(["rev-parse", "HEAD"]);
+        repo.write("file.txt", "dirty\n");
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .revert_commit(repo.path(), target.trim())
+            .expect_err("dirty revert must fail");
+
+        assert!(error.to_string().contains("uncommitted changes"));
+        assert_eq!(repo.git_output(["rev-list", "--count", "HEAD"]).trim(), "2");
+    }
+
+    #[test]
+    fn revert_commit_ignores_untracked_files() {
+        let repo = branch_repo();
+        repo.write("file.txt", "before\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "before"]);
+        repo.write("file.txt", "after\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "change"]);
+        let target = repo.git_output(["rev-parse", "HEAD"]);
+        repo.write("untracked.txt", "untracked\n");
+
+        let commit = CommandGitRepositoryGateway::new(true)
+            .revert_commit(repo.path(), target.trim())
+            .expect("revert with untracked files");
+
+        assert!(commit.subject.contains("Revert \"change\""));
+        assert_eq!(repo.read("file.txt"), "before\n");
+        assert_eq!(repo.read("untracked.txt"), "untracked\n");
+    }
+
+    #[test]
+    fn revert_commit_rejects_an_invalid_hash() {
+        let repo = TestGitRepo::new();
+        let error = CommandGitRepositoryGateway::new(true)
+            .revert_commit(repo.path(), "--no-edit")
+            .expect_err("invalid hash must fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("SHA is invalid"));
+    }
+
+    #[test]
+    fn untrusted_root_can_revert_commit_with_hardened_flags() {
+        let repo = branch_repo();
+        repo.write("file.txt", "before\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "before"]);
+        repo.write("file.txt", "after\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "change"]);
+        let target = repo.git_output(["rev-parse", "HEAD"]);
+
+        let commit = CommandGitRepositoryGateway::new(false)
+            .revert_commit(repo.path(), target.trim())
+            .expect("untrusted revert");
+
+        assert!(commit.subject.contains("Revert \"change\""));
+        assert_eq!(repo.read("file.txt"), "before\n");
     }
 
     #[test]

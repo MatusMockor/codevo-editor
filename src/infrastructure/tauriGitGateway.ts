@@ -352,6 +352,17 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<CommitDetails>;
   }
 
+  async revertCommit(rootPath: string, commitHash: string): Promise<Commit> {
+    if (!this.isRuntimeAvailable()) {
+      throw new Error("Git unavailable.");
+    }
+
+    return this.invokeCommand("revert_git_commit", {
+      commitHash,
+      rootPath,
+    }) as Promise<Commit>;
+  }
+
   async getCommitFiles(
     rootPath: string,
     commitHash: string,

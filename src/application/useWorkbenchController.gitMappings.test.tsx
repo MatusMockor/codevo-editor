@@ -750,6 +750,50 @@ describe("useWorkbenchController git repository mappings live re-discovery", () 
     expect(mappingPaths(getWorkbench())).not.toContain("packages/stale");
   });
 
+  it("drops the post-revert refresh result when the workspace switches mid-flight", async () => {
+    const refresh = createDeferred<GitStatus>();
+    const getStatus = vi.fn(async (rootPath: string) => repoStatus(rootPath));
+    const gitGateway = stubGitGateway({ getStatus });
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => ({
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      })),
+      loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({ gitGateway, settingsGateway });
+
+    await flushAsyncTurns();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    getStatus.mockImplementationOnce(() => refresh.promise);
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("mockor-git-commit-reverted", {
+          detail: { rootPath: "/workspace-a", subject: "Revert change" },
+        }),
+      );
+    });
+    await flushAsyncTurns(2);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      refresh.resolve(repoStatus("/workspace-a"));
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).not.toBe("Reverted commit: Revert change");
+    expect(getWorkbench().gitStatus.rootPath).not.toBe("/workspace-a");
+  });
+
   it("resolves mappings from detected and manual settings on open (extraction preserves open behaviour)", async () => {
     const detectRepositories = vi.fn(async () => ["", "packages/api/.git"]);
     const gitGateway = stubGitGateway({ detectRepositories });

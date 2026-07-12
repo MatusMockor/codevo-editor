@@ -7,6 +7,7 @@ interface WorkbenchGitWorkflowCommandsOptions {
   openGitBranchPanel: Command["run"];
   createGitBranch: Command["run"];
   commitGitChanges: Command["run"];
+  revertSelectedGitCommit: Command["run"];
 }
 
 export function workbenchGitWorkflowCommands({
@@ -15,6 +16,7 @@ export function workbenchGitWorkflowCommands({
   openGitBranchPanel,
   createGitBranch,
   commitGitChanges,
+  revertSelectedGitCommit,
 }: WorkbenchGitWorkflowCommandsOptions): Command[] {
   return [
     {
@@ -55,6 +57,15 @@ export function workbenchGitWorkflowCommands({
       isEnabled: (context) => context.hasWorkspace,
       run: () => {
         void createGitBranch();
+      },
+    },
+    {
+      id: "git.revertCommit",
+      title: "Git: Revert Selected Commit",
+      category: "Git",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void revertSelectedGitCommit();
       },
     },
     {

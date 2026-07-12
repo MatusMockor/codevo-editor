@@ -454,6 +454,8 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   const [, setBranchesError] = useState<HistoryError>(null);
   const [commitsError, setCommitsError] = useState<HistoryError>(null);
   const [detailsError, setDetailsError] = useState<HistoryError>(null);
+  const [revertError, setRevertError] = useState<HistoryError>(null);
+  const [revertingCommit, setRevertingCommit] = useState(false);
   const [localExpanded, setLocalExpanded] = useState(true);
   const [remoteExpanded, setRemoteExpanded] = useState(true);
   const [commitGraph, setCommitGraph] = useState<RenderedCommitGraphNode[]>([]);
@@ -606,6 +608,8 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
 
   useEffect(() => {
     currentRootPathRef.current = rootPath;
+    setRevertError(null);
+    setRevertingCommit(false);
   }, [rootPath]);
 
   const isCurrentRootPath = useCallback(
@@ -1079,6 +1083,64 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     void loadCommits();
   }, [loadCommits]);
 
+  const revertSelectedCommit = useCallback(async () => {
+    const requestedRoot = rootPath;
+    const commitHash = selectedCommitHashRef.current;
+
+    if (!requestedRoot || !commitHash || revertingCommit) {
+      return;
+    }
+
+    setRevertingCommit(true);
+    setRevertError(null);
+
+    try {
+      const commit = await gateway.revertCommit(requestedRoot, commitHash);
+
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      selectedCommitHashRef.current = commit.hash;
+      setSelectedCommitHash(commit.hash);
+      await loadCommits();
+
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      window.dispatchEvent(
+        new CustomEvent("mockor-git-commit-reverted", {
+          detail: { rootPath: requestedRoot, subject: commit.subject },
+        }),
+      );
+    } catch (nextError: unknown) {
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      setRevertError(
+        nextError instanceof Error ? nextError.message : String(nextError),
+      );
+    } finally {
+      if (isCurrentRootPath(requestedRoot)) {
+        setRevertingCommit(false);
+      }
+    }
+  }, [gateway, isCurrentRootPath, loadCommits, revertingCommit, rootPath]);
+
+  useEffect(() => {
+    const listener = () => {
+      void revertSelectedCommit();
+    };
+
+    window.addEventListener("mockor-revert-selected-git-commit", listener);
+
+    return () => {
+      window.removeEventListener("mockor-revert-selected-git-commit", listener);
+    };
+  }, [revertSelectedCommit]);
+
   const onRefreshCommitDetails = useCallback(() => {
     void loadSelectedCommitDetails();
   }, [loadSelectedCommitDetails]);
@@ -1356,7 +1418,21 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
               <RefreshCw aria-hidden="true" size={13} />
               Refresh
             </button>
+            <button
+              className="git-history-refresh"
+              disabled={!selectedCommit || revertingCommit}
+              onClick={() => {
+                void revertSelectedCommit();
+              }}
+              title="Revert selected commit"
+              type="button"
+            >
+              {revertingCommit ? "Reverting" : "Revert commit"}
+            </button>
           </header>
+          {revertError ? (
+            <small className="git-history-inline-error">{revertError}</small>
+          ) : null}
           {!selectedCommit ? (
             <div className="git-history-empty">
               <p>No commit selected</p>
