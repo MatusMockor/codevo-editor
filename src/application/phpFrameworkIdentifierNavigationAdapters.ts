@@ -23,6 +23,27 @@ export interface PhpFrameworkIdentifierNavigationAdapters {
   contextualAdapters: readonly PhpFrameworkIdentifierDefinitionNavigationAdapter[];
 }
 
+export interface PhpFrameworkIdentifierNavigationActivationAdapter {
+  readonly providerId: string;
+  create(): PhpFrameworkIdentifierNavigationAdapters;
+}
+
+export function activePhpFrameworkIdentifierNavigationAdapters(
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">,
+  activationAdapters: readonly PhpFrameworkIdentifierNavigationActivationAdapter[],
+): PhpFrameworkIdentifierNavigationAdapters {
+  const activeAdapters = activationAdapters
+    .filter((adapter) => frameworkRuntime.hasProvider(adapter.providerId))
+    .map((adapter) => adapter.create());
+
+  return {
+    adapters: activeAdapters.flatMap((adapter) => adapter.adapters),
+    contextualAdapters: activeAdapters.flatMap(
+      (adapter) => adapter.contextualAdapters,
+    ),
+  };
+}
+
 export function createPhpFrameworkIdentifierNavigationAdapters({
   activeDocument,
   frameworkRuntime,
@@ -30,33 +51,47 @@ export function createPhpFrameworkIdentifierNavigationAdapters({
   openPhpClassTarget,
   ...laravelDependencies
 }: PhpFrameworkIdentifierNavigationAdapterDependencies): PhpFrameworkIdentifierNavigationAdapters {
-  const adapters: PhpFrameworkIdentifierDefinitionNavigationAdapter[] = [];
-  const contextualAdapters: PhpFrameworkIdentifierDefinitionNavigationAdapter[] = [];
-
-  if (frameworkRuntime.hasProvider("laravel")) {
-    adapters.push(
-      createPhpLaravelIdentifierDefinitionNavigationAdapter({
-        ...laravelDependencies,
-        activeDocument,
+  const activationAdapters: PhpFrameworkIdentifierNavigationActivationAdapter[] = [
+    {
+      providerId: "laravel",
+      create: () => ({
+        adapters: [
+          createPhpLaravelIdentifierDefinitionNavigationAdapter({
+            ...laravelDependencies,
+            activeDocument,
+          }),
+        ],
+        contextualAdapters: [
+          createPhpLaravelIdentifierDefinitionNavigationAdapter({
+            ...laravelDependencies,
+            activeDocument,
+            openPhpClassTarget,
+          }),
+        ],
       }),
-    );
-    contextualAdapters.push(
-      createPhpLaravelIdentifierDefinitionNavigationAdapter({
-        ...laravelDependencies,
-        activeDocument,
-        openPhpClassTarget,
-      }),
-    );
-  }
+    },
+  ];
 
-  if (frameworkRuntime.hasProvider("nette") && netteDependencies) {
-    const netteAdapter = createPhpNetteIdentifierDefinitionNavigationAdapter({
-      ...netteDependencies,
-      activeDocument,
+  if (netteDependencies) {
+    activationAdapters.push({
+      providerId: "nette",
+      create: () => {
+        const netteAdapter =
+          createPhpNetteIdentifierDefinitionNavigationAdapter({
+            ...netteDependencies,
+            activeDocument,
+          });
+
+        return {
+          adapters: [netteAdapter],
+          contextualAdapters: [netteAdapter],
+        };
+      },
     });
-    adapters.push(netteAdapter);
-    contextualAdapters.push(netteAdapter);
   }
 
-  return { adapters, contextualAdapters };
+  return activePhpFrameworkIdentifierNavigationAdapters(
+    frameworkRuntime,
+    activationAdapters,
+  );
 }

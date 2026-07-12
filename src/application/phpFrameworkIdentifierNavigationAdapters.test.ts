@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import {
+  activePhpFrameworkIdentifierNavigationAdapters,
   createPhpFrameworkIdentifierNavigationAdapters,
+  type PhpFrameworkIdentifierNavigationActivationAdapter,
   type PhpFrameworkIdentifierNavigationAdapterDependencies,
 } from "./phpFrameworkIdentifierNavigationAdapters";
 
@@ -54,6 +56,62 @@ function makeDeps(
 }
 
 describe("phpFrameworkIdentifierNavigationAdapters", () => {
+  it("selects adapters by provider id and preserves registry order", () => {
+    const laravel = vi.fn(async () => false);
+    const nette = vi.fn(async () => false);
+    const registry: readonly PhpFrameworkIdentifierNavigationActivationAdapter[] = [
+      {
+        providerId: "laravel",
+        create: () => ({
+          adapters: [{ goToDefinition: laravel }],
+          contextualAdapters: [{ goToDefinition: laravel }],
+        }),
+      },
+      {
+        providerId: "nette",
+        create: () => ({
+          adapters: [{ goToDefinition: nette }],
+          contextualAdapters: [{ goToDefinition: nette }],
+        }),
+      },
+    ];
+
+    const active = activePhpFrameworkIdentifierNavigationAdapters(
+      {
+        hasProvider: (providerId) =>
+          providerId === "laravel" || providerId === "nette",
+      },
+      registry,
+    );
+
+    expect(active.adapters.map((adapter) => adapter.goToDefinition)).toEqual([
+      laravel,
+      nette,
+    ]);
+    expect(
+      active.contextualAdapters.map((adapter) => adapter.goToDefinition),
+    ).toEqual([laravel, nette]);
+  });
+
+  it("selects no adapters for a generic provider", () => {
+    const active = activePhpFrameworkIdentifierNavigationAdapters(
+      { hasProvider: (providerId) => providerId === "generic" },
+      [
+        {
+          providerId: "laravel",
+          create: () => ({ adapters: [], contextualAdapters: [] }),
+        },
+        {
+          providerId: "nette",
+          create: () => ({ adapters: [], contextualAdapters: [] }),
+        },
+      ],
+    );
+
+    expect(active.adapters).toEqual([]);
+    expect(active.contextualAdapters).toEqual([]);
+  });
+
   it("returns no adapters without the Laravel provider", () => {
     const adapters = createPhpFrameworkIdentifierNavigationAdapters(
       makeDeps({
