@@ -1,8 +1,10 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useId, useMemo, useState } from "react";
+import type { KeyboardEvent } from "react";
 import {
   AlertCircle,
   ChevronDown,
   ChevronRight,
+  Copy,
   Info,
   ListFilter,
   TriangleAlert,
@@ -43,6 +45,7 @@ function ProblemsPanelWorkspace({
 }: ProblemsPanelProps) {
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(new Set());
   const [filterText, setFilterText] = useState("");
+  const [activeNoticeId, setActiveNoticeId] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<ProblemsSeverityVisibility>({
     errors: true,
     warnings: true,
@@ -51,6 +54,23 @@ function ProblemsPanelWorkspace({
     () => buildProblemsView(notices, workspaceRoot, visibility, filterText),
     [filterText, notices, visibility, workspaceRoot],
   );
+  const visibleOptions = useMemo(
+    () => [
+      ...view.general.filter((notice) => !isOverflowNotice(notice)),
+      ...view.files.flatMap((file) =>
+        collapsedPaths.has(file.path)
+          ? []
+          : file.entries.filter((notice) => !isOverflowNotice(notice)),
+      ),
+    ],
+    [collapsedPaths, view],
+  );
+  const selectedNoticeId = visibleOptions.some(
+    (notice) => notice.id === activeNoticeId,
+  )
+    ? activeNoticeId
+    : (visibleOptions[0]?.id ?? null);
+  const hasVisibleRows = view.general.length > 0 || view.files.length > 0;
 
   const toggleCollapsed = (path: string) => {
     setCollapsedPaths((current) => {
@@ -127,31 +147,41 @@ function ProblemsPanelWorkspace({
         </div>
       </div>
       {notices.length === 0 ? <p>No problems</p> : null}
-      {notices.length > 0 &&
-      view.general.length === 0 &&
-      view.files.length === 0 ? (
+      {notices.length > 0 && !hasVisibleRows ? (
         <p>No problems match the current filters</p>
       ) : null}
-      {view.general.length > 0 ? (
-        <section aria-label="General problems" className="problems-general">
-          {view.general.map((notice) => (
-            <ProblemRow
-              key={notice.id}
-              notice={notice}
-              onOpen={onOpenNotice}
+      {hasVisibleRows ? (
+        <div aria-label="Problem list" role="listbox">
+          {view.general.length > 0 ? (
+            <section
+              aria-label="General problems"
+              className="problems-general"
+              role="group"
+            >
+              {view.general.map((notice) => (
+                <ProblemRow
+                  isSelected={notice.id === selectedNoticeId}
+                  key={notice.id}
+                  notice={notice}
+                  onOpen={onOpenNotice}
+                  onSelect={setActiveNoticeId}
+                />
+              ))}
+            </section>
+          ) : null}
+          {view.files.map((file) => (
+            <ProblemFileGroup
+              activeNoticeId={selectedNoticeId}
+              collapsed={collapsedPaths.has(file.path)}
+              file={file}
+              key={file.path}
+              onOpenNotice={onOpenNotice}
+              onSelectNotice={setActiveNoticeId}
+              onToggle={() => toggleCollapsed(file.path)}
             />
           ))}
-        </section>
+        </div>
       ) : null}
-      {view.files.map((file) => (
-        <ProblemFileGroup
-          collapsed={collapsedPaths.has(file.path)}
-          file={file}
-          key={file.path}
-          onOpenNotice={onOpenNotice}
-          onToggle={() => toggleCollapsed(file.path)}
-        />
-      ))}
     </div>
   );
 }
@@ -159,24 +189,36 @@ function ProblemsPanelWorkspace({
 export const ProblemsPanel = memo(ProblemsPanelComponent);
 
 interface ProblemFileGroupProps {
+  activeNoticeId: string | null;
   collapsed: boolean;
   file: ProblemsFileView;
   onOpenNotice(notice: WorkbenchNotice): void;
+  onSelectNotice(id: string): void;
   onToggle(): void;
 }
 
 function ProblemFileGroup({
+  activeNoticeId,
   collapsed,
   file,
   onOpenNotice,
+  onSelectNotice,
   onToggle,
 }: ProblemFileGroupProps) {
+  const headerId = useId();
+
   return (
-    <section className="problems-file-group">
+    <section
+      aria-labelledby={headerId}
+      className="problems-file-group"
+      role="group"
+    >
       <button
         aria-expanded={!collapsed}
         className="problems-file-header"
+        id={headerId}
         onClick={onToggle}
+        tabIndex={-1}
         title={file.path}
         type="button"
       >
@@ -196,9 +238,11 @@ function ProblemFileGroup({
         ? null
         : file.entries.map((notice) => (
             <ProblemRow
+              isSelected={notice.id === activeNoticeId}
               key={notice.id}
               notice={notice}
               onOpen={onOpenNotice}
+              onSelect={onSelectNotice}
             />
           ))}
     </section>
@@ -210,34 +254,123 @@ function severityCountLabel(count: number, severity: "error" | "warning") {
 }
 
 interface ProblemRowProps {
+  isSelected: boolean;
   notice: WorkbenchNotice;
   onOpen(notice: WorkbenchNotice): void;
+  onSelect(id: string): void;
 }
 
-function ProblemRowComponent({ notice, onOpen }: ProblemRowProps) {
-  if (isOverflowNotice(notice)) {
+function ProblemRowComponent({
+  isSelected,
+  notice,
+  onOpen,
+  onSelect,
+}: ProblemRowProps) {
+  const overflow = isOverflowNotice(notice);
+  const className = `problem-row ${overflow ? "overflow" : notice.severity}`;
+
+  const copyMessage = () => {
+    const write = navigator.clipboard?.writeText(notice.message);
+    void write?.catch(() => undefined);
+  };
+
+  if (overflow) {
     return (
-      <div className="problem-row overflow" data-testid="diagnostics-overflow">
-        <ProblemRowContent notice={notice} />
+      <div className="problem-row-container">
+        <div className={className} data-testid="diagnostics-overflow">
+          <ProblemRowContent notice={notice} />
+        </div>
+        <button
+          aria-label="Copy message"
+          className="problem-row-copy"
+          onClick={copyMessage}
+          tabIndex={-1}
+          title="Copy message"
+          type="button"
+        >
+          <Copy aria-hidden="true" size={13} />
+        </button>
       </div>
     );
   }
 
-  if (notice.navigationTarget) {
-    return (
-      <button
-        className={`problem-row ${notice.severity}`}
-        onClick={() => onOpen(notice)}
-        type="button"
-      >
-        <ProblemRowContent notice={notice} />
-      </button>
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      if (!notice.navigationTarget) {
+        return;
+      }
+
+      event.preventDefault();
+      onOpen(notice);
+      return;
+    }
+
+    const options = Array.from(
+      event.currentTarget
+        .closest('[role="listbox"]')
+        ?.querySelectorAll<HTMLElement>('[role="option"]') ?? [],
     );
-  }
+    const currentIndex = options.indexOf(event.currentTarget);
+    let nextIndex = currentIndex;
+
+    if (event.key === "ArrowDown") {
+      nextIndex = Math.min(currentIndex + 1, options.length - 1);
+    }
+
+    if (event.key === "ArrowUp") {
+      nextIndex = Math.max(currentIndex - 1, 0);
+    }
+
+    if (event.key === "Home") {
+      nextIndex = 0;
+    }
+
+    if (event.key === "End") {
+      nextIndex = options.length - 1;
+    }
+
+    if (nextIndex === currentIndex || nextIndex < 0) {
+      return;
+    }
+
+    event.preventDefault();
+    options[nextIndex].focus();
+  };
+
+  const rowProps = {
+    "aria-selected": isSelected,
+    className,
+    onFocus: () => onSelect(notice.id),
+    onKeyDown: handleKeyDown,
+    role: "option",
+    tabIndex: isSelected ? 0 : -1,
+  };
 
   return (
-    <div className={`problem-row ${notice.severity}`}>
-      <ProblemRowContent notice={notice} />
+    <div className="problem-row-container">
+      {notice.navigationTarget ? (
+        <button
+          {...rowProps}
+          onClick={() => onOpen(notice)}
+          type="button"
+        >
+          <ProblemRowContent notice={notice} />
+        </button>
+      ) : (
+        <div {...rowProps}>
+          <ProblemRowContent notice={notice} />
+        </div>
+      )}
+      <button
+        aria-label="Copy message"
+        className="problem-row-copy"
+        onClick={copyMessage}
+        tabIndex={-1}
+        title="Copy message"
+        type="button"
+      >
+        <Copy aria-hidden="true" size={13} />
+      </button>
     </div>
   );
 }

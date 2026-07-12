@@ -3667,6 +3667,43 @@ button {
   text-align: left;
 }
 
+.problem-row-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+}
+
+.problem-row[aria-selected="true"] {
+  background: var(--color-control);
+}
+
+.problem-row-copy {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+.problem-row-container:hover .problem-row-copy,
+.problem-row-container:focus-within .problem-row-copy {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.problem-row-copy:hover {
+  background: var(--color-panel-soft);
+  color: var(--color-text-strong);
+}
+
 button.problem-row {
   cursor: pointer;
 }
