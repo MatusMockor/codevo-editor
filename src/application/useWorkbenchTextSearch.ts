@@ -22,6 +22,7 @@ import {
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { searchQueryHistorySession } from "../domain/searchQueryHistory";
 
 const TEXT_SEARCH_RESULT_LIMIT = 100;
 
@@ -163,6 +164,8 @@ export function useWorkbenchTextSearch(
     setEditorRevealTarget,
     setMessage,
   } = dependencies;
+
+  searchQueryHistorySession.activate(workspaceRoot);
 
   const [textSearchOpen, setTextSearchOpen] = useState(false);
   const [textSearchQuery, setTextSearchQuery] = useState("");
@@ -582,6 +585,7 @@ export function useWorkbenchTextSearch(
     setTextSearchLoading(true);
 
     const timeout = window.setTimeout(() => {
+      searchQueryHistorySession.push(requestedRoot, textSearchQuery);
       textSearch
         .searchText(
           requestedRoot,

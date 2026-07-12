@@ -8,6 +8,7 @@ import {
   type TextSearchOptions,
   type TextSearchResult,
 } from "../domain/workspace";
+import { searchQueryHistorySession } from "../domain/searchQueryHistory";
 import { splitMatchHighlight, TextSearch } from "./TextSearch";
 
 describe("TextSearch", () => {
@@ -15,6 +16,7 @@ describe("TextSearch", () => {
   let root: Root;
 
   beforeEach(() => {
+    searchQueryHistorySession.clear();
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
     document.body.append(host);
@@ -251,6 +253,42 @@ describe("TextSearch", () => {
     pressKey("Escape");
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("recalls search history with Alt+Arrow keys while plain arrows navigate results", () => {
+    searchQueryHistorySession.push("/workspace", "newest");
+    searchQueryHistorySession.push("/workspace", "older");
+    searchQueryHistorySession.push("/workspace", "newest");
+    searchQueryHistorySession.activate("/workspace");
+    renderStatefulQueryTextSearch("draft");
+
+    pressKey("ArrowUp", { altKey: true });
+    expect(searchInput().value).toBe("newest");
+    pressKey("ArrowUp", { altKey: true });
+    expect(searchInput().value).toBe("older");
+    pressKey("ArrowDown", { altKey: true });
+    expect(searchInput().value).toBe("newest");
+    pressKey("ArrowDown", { altKey: true });
+    expect(searchInput().value).toBe("draft");
+  });
+
+  it("resets recall navigation after editing and leaves empty history unchanged", () => {
+    searchQueryHistorySession.activate("/workspace");
+    renderStatefulQueryTextSearch("draft");
+    pressKey("ArrowUp", { altKey: true });
+    expect(searchInput().value).toBe("draft");
+
+    searchQueryHistorySession.push("/workspace", "first");
+    searchQueryHistorySession.push("/workspace", "second");
+    pressKey("ArrowUp", { altKey: true });
+    expect(searchInput().value).toBe("second");
+
+    act(() => {
+      setReactInputValue(searchInput(), "edited");
+      searchInput().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    pressKey("ArrowUp", { altKey: true });
+    expect(searchInput().value).toBe("second");
   });
 
   it("renders the replace input and Replace All button", () => {
@@ -532,6 +570,36 @@ describe("TextSearch", () => {
     act(() => root.render(<StatefulTextSearch />));
   }
 
+  function renderStatefulQueryTextSearch(initialQuery: string) {
+    function StatefulQueryTextSearch() {
+      const [query, setQuery] = useState(initialQuery);
+
+      return (
+        <TextSearch
+          dismissedPaths={new Set()}
+          isLoading={false}
+          isOpen
+          onChangeOptions={vi.fn()}
+          onChangeQuery={setQuery}
+          onChangeReplacement={vi.fn()}
+          onClose={vi.fn()}
+          onDismissFile={vi.fn()}
+          onOpen={vi.fn()}
+          onReplaceAll={vi.fn()}
+          onReplaceInFile={vi.fn()}
+          onRestoreDismissedFiles={vi.fn()}
+          options={defaultTextSearchOptions()}
+          query={query}
+          replaceBusy={false}
+          replacement=""
+          results={[]}
+        />
+      );
+    }
+
+    act(() => root.render(<StatefulQueryTextSearch />));
+  }
+
   function renderRestorableTextSearch(results: TextSearchResult[]) {
     function RestorableTextSearch() {
       const [dismissedPaths, setDismissedPaths] = useState<ReadonlySet<string>>(
@@ -592,7 +660,19 @@ describe("TextSearch", () => {
     return toggle;
   }
 
-  function pressKey(key: string) {
+  function searchInput(): HTMLInputElement {
+    const input = host.querySelector<HTMLInputElement>(
+      '[aria-label="Search text"]',
+    );
+
+    if (!input) {
+      throw new Error("search input missing");
+    }
+
+    return input;
+  }
+
+  function pressKey(key: string, init: KeyboardEventInit = {}) {
     const input = host.querySelector('[aria-label="Search text"]');
 
     if (!input) {
@@ -600,7 +680,9 @@ describe("TextSearch", () => {
     }
 
     act(() => {
-      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key }));
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key, ...init }),
+      );
     });
   }
 

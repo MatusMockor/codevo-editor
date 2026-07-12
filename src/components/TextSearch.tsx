@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createReplacePreview } from "../domain/replacePreview";
+import { searchQueryHistorySession } from "../domain/searchQueryHistory";
 import type {
   TextSearchOptions,
   TextSearchResult,
@@ -123,6 +124,9 @@ export function TextSearch({
   dismissedPaths,
 }: TextSearchProps) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [historyDraft, setHistoryDraft] = useState("");
+  const activeHistoryRoot = searchQueryHistorySession.root();
   const previewPattern = typeof query === "string" ? query : "";
   const computeReplacePreview = useMemo(
     () =>
@@ -158,6 +162,11 @@ export function TextSearch({
   }, [query, options]);
 
   useEffect(() => {
+    setHistoryIndex(null);
+    setHistoryDraft("");
+  }, [activeHistoryRoot]);
+
+  useEffect(() => {
     setActiveIndex((current) =>
       Math.min(current, Math.max(visibleResults.length - 1, 0)),
     );
@@ -179,6 +188,40 @@ export function TextSearch({
     onChangeOptions({ ...options, [key]: !options[key] });
   };
 
+  const recallQuery = (direction: "older" | "newer") => {
+    const history = searchQueryHistorySession.active();
+
+    if (history.length === 0) {
+      return;
+    }
+
+    if (direction === "older") {
+      const nextIndex = Math.min((historyIndex ?? -1) + 1, history.length - 1);
+
+      if (historyIndex === null) {
+        setHistoryDraft(query);
+      }
+
+      setHistoryIndex(nextIndex);
+      onChangeQuery(history[nextIndex]);
+      return;
+    }
+
+    if (historyIndex === null) {
+      return;
+    }
+
+    if (historyIndex === 0) {
+      setHistoryIndex(null);
+      onChangeQuery(historyDraft);
+      return;
+    }
+
+    const nextIndex = historyIndex - 1;
+    setHistoryIndex(nextIndex);
+    onChangeQuery(history[nextIndex]);
+  };
+
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
       <section
@@ -191,10 +234,26 @@ export function TextSearch({
           <input
             aria-label="Search text"
             autoFocus
-            onChange={(event) => onChangeQuery(event.currentTarget.value)}
+            onChange={(event) => {
+              setHistoryIndex(null);
+              setHistoryDraft("");
+              onChangeQuery(event.currentTarget.value);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 onClose();
+                return;
+              }
+
+              if (event.altKey && event.key === "ArrowDown") {
+                event.preventDefault();
+                recallQuery("newer");
+                return;
+              }
+
+              if (event.altKey && event.key === "ArrowUp") {
+                event.preventDefault();
+                recallQuery("older");
                 return;
               }
 

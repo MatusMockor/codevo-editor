@@ -8,6 +8,7 @@ import {
   type TextSearchGateway,
   type TextSearchResult,
 } from "../domain/workspace";
+import { searchQueryHistorySession } from "../domain/searchQueryHistory";
 import {
   useWorkbenchTextSearch,
   type WorkbenchTextSearch,
@@ -30,6 +31,7 @@ describe("useWorkbenchTextSearch exclusions", () => {
   >;
 
   beforeEach(() => {
+    searchQueryHistorySession.clear();
     vi.useFakeTimers();
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     host = document.createElement("div");
@@ -100,6 +102,25 @@ describe("useWorkbenchTextSearch exclusions", () => {
     dependencies = { ...dependencies, workspaceRoot: "/workspace-a" };
     render();
     expect(current.dismissedTextSearchPaths.size).toBe(0);
+  });
+
+  it("records submitted queries in the active workspace history without cross-root leakage", async () => {
+    await renderAndSearch();
+    expect(searchQueryHistorySession.active()).toEqual(["needle"]);
+
+    dependencies.currentWorkspaceRootRef.current = "/workspace-b";
+    dependencies = { ...dependencies, workspaceRoot: "/workspace-b" };
+    render();
+    expect(searchQueryHistorySession.active()).toEqual([]);
+
+    act(() => current.setTextSearchQuery("other"));
+    await runSearchTimer();
+    expect(searchQueryHistorySession.active()).toEqual(["other"]);
+
+    dependencies.currentWorkspaceRootRef.current = "/workspace-a";
+    dependencies = { ...dependencies, workspaceRoot: "/workspace-a" };
+    render();
+    expect(searchQueryHistorySession.active()).toEqual(["needle"]);
   });
 
   it("restores only the active root's dismissed files and recovers visible counts", async () => {
