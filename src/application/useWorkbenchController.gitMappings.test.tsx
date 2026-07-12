@@ -294,7 +294,7 @@ function buildDependencies({
       mode: "basic" as const,
       status: "off" as const,
     })),
-    setMode: vi.fn(async (mode) => ({
+    setMode: vi.fn(async (_rootPath, mode) => ({
       message: "Updated",
       mode,
       status: "ready" as const,

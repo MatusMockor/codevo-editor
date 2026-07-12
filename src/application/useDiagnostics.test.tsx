@@ -19,6 +19,8 @@ import type { EditorDocument } from "../domain/workspace";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import type { WorkbenchNotice } from "./workbenchNotice";
 import { createWorkbenchNotice } from "./workbenchNotice";
+import { createWorkspaceSettingsByRootSnapshot } from "./workspaceSettingsForRoot";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { Dispatch, SetStateAction } from "react";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -199,7 +201,10 @@ function createHarness(): Harness {
     documentsRef,
     activeDocument: null,
     appSettingsRef,
-    workspaceSettingsRef,
+    workspaceSettingsForRoot: (rootPath) =>
+      workspaceRootKeysEqual(rootPath, currentRootRef.current)
+        ? workspaceSettingsRef.current
+        : null,
     setLanguageServerDiagnosticsByPath: languageServerDiagnostics.set,
     setJavaScriptTypeScriptDiagnosticsByPath:
       javaScriptTypeScriptDiagnostics.set,
@@ -264,9 +269,12 @@ function renderDiagnostics(deps: DiagnosticsDependencies) {
     return null;
   }
 
-  act(() => {
-    root.render(<Harness dependencies={deps} />);
-  });
+  const render = () => {
+    act(() => {
+      root.render(<Harness dependencies={deps} />);
+    });
+  };
+  render();
 
   return {
     api: (): Diagnostics => {
@@ -276,6 +284,7 @@ function renderDiagnostics(deps: DiagnosticsDependencies) {
 
       return captured.api;
     },
+    rerender: render,
     unmount: () => {
       act(() => {
         root.unmount();
@@ -352,6 +361,135 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
 });
 
 describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
+  it("leaves an unvisited open root untouched until its settings are known", async () => {
+    const harness = createHarness();
+    const backgroundPath = `${OTHER_ROOT}/src/background.ts`;
+    harness.appSettingsRef.current = {
+      workspaceTabs: [ROOT, OTHER_ROOT],
+    } as AppSettings;
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
+      OTHER_ROOT,
+      SESSION,
+    );
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({
+        rootPath: OTHER_ROOT,
+        uri: fileUriFromPath(backgroundPath),
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(harness.jstsByRootRef.current[OTHER_ROOT]).toBeUndefined();
+    expect(harness.jstsLastAppliedRef.current).toEqual({});
+    expect(harness.javaScriptTypeScriptDiagnostics.value).toEqual({});
+  });
+
+  it("retains root-scoped validation snapshots across workspace switches", async () => {
+    const harness = createHarness();
+    harness.appSettingsRef.current = {
+      workspaceTabs: [ROOT, OTHER_ROOT],
+    } as AppSettings;
+    harness.workspaceSettingsRef.current = {
+      javaScriptTypeScriptValidation: false,
+    } as WorkspaceSettings;
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
+      OTHER_ROOT,
+      SESSION,
+    );
+    const snapshot = createWorkspaceSettingsByRootSnapshot();
+    snapshot.capture(ROOT, harness.workspaceSettingsRef.current);
+    harness.deps.workspaceSettingsForRoot = snapshot.resolve;
+    const diagnostics = renderDiagnostics(harness.deps);
+
+    harness.currentRootRef.current = OTHER_ROOT;
+    harness.workspaceSettingsRef.current = {
+      javaScriptTypeScriptValidation: true,
+    } as WorkspaceSettings;
+    snapshot.capture(OTHER_ROOT, harness.workspaceSettingsRef.current);
+    diagnostics.rerender();
+
+    apiApplyBackgroundDiagnostics(diagnostics.api(), ROOT);
+    await flushMicrotasks();
+
+    expect(harness.jstsByRootRef.current[ROOT]).toBeUndefined();
+    expect(harness.javaScriptTypeScriptDiagnostics.value).toEqual({});
+  });
+
+  it("uses the event root settings for background diagnostics", async () => {
+    const harness = createHarness();
+    const backgroundPath = `${OTHER_ROOT}/src/background.ts`;
+    const settingsByRoot: Record<string, WorkspaceSettings> = {
+      [ROOT]: {
+        javaScriptTypeScriptValidation: false,
+      } as WorkspaceSettings,
+      [OTHER_ROOT]: {
+        javaScriptTypeScriptValidation: true,
+      } as WorkspaceSettings,
+    };
+    harness.appSettingsRef.current = {
+      workspaceTabs: [ROOT, OTHER_ROOT],
+    } as AppSettings;
+    harness.workspaceSettingsRef.current = settingsByRoot[ROOT];
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
+      OTHER_ROOT,
+      SESSION,
+    );
+    harness.deps.workspaceSettingsForRoot = (rootPath) =>
+      settingsByRoot[rootPath] ?? null;
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({
+        rootPath: OTHER_ROOT,
+        uri: fileUriFromPath(backgroundPath),
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(harness.javaScriptTypeScriptDiagnostics.value).toEqual({});
+    expect(
+      harness.jstsByRootRef.current[OTHER_ROOT][backgroundPath],
+    ).toHaveLength(1);
+  });
+
+  it("suppresses background diagnostics when only the event root disables validation", async () => {
+    const harness = createHarness();
+    const backgroundPath = `${OTHER_ROOT}/src/background.ts`;
+    const settingsByRoot: Record<string, WorkspaceSettings> = {
+      [ROOT]: {
+        javaScriptTypeScriptValidation: true,
+      } as WorkspaceSettings,
+      [OTHER_ROOT]: {
+        javaScriptTypeScriptValidation: false,
+      } as WorkspaceSettings,
+    };
+    harness.appSettingsRef.current = {
+      workspaceTabs: [ROOT, OTHER_ROOT],
+    } as AppSettings;
+    harness.workspaceSettingsRef.current = settingsByRoot[ROOT];
+    harness.jstsStatusByRootRef.current[OTHER_ROOT] = runningStatus(
+      OTHER_ROOT,
+      SESSION,
+    );
+    harness.deps.workspaceSettingsForRoot = (rootPath) =>
+      settingsByRoot[rootPath] ?? null;
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({
+        rootPath: OTHER_ROOT,
+        uri: fileUriFromPath(backgroundPath),
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(harness.javaScriptTypeScriptDiagnostics.value).toEqual({});
+    expect(harness.jstsByRootRef.current[OTHER_ROOT]).toBeUndefined();
+    expect(harness.notices.value).toEqual([]);
+  });
+
   it("applies TypeScript diagnostics to state and notices", async () => {
     const harness = createHarness();
     const { api } = renderDiagnostics(harness.deps);
@@ -389,7 +527,113 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     expect(harness.javaScriptTypeScriptDiagnostics.value[tsPath]).toBeUndefined();
     expect(harness.notices.value).toHaveLength(0);
   });
+
+  it("advances known-disabled diagnostic versions without accepting older errors after re-enable", async () => {
+    const harness = createHarness();
+    harness.workspaceSettingsRef.current = {
+      javaScriptTypeScriptValidation: false,
+    } as WorkspaceSettings;
+    const { api } = renderDiagnostics(harness.deps);
+    const tsPath = `${ROOT}/src/index.ts`;
+    const tsUri = fileUriFromPath(tsPath);
+
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({ uri: tsUri, version: 2 }),
+    );
+    await flushMicrotasks();
+
+    expect(Object.values(harness.jstsLastAppliedRef.current)).toEqual([2]);
+
+    harness.workspaceSettingsRef.current = {
+      javaScriptTypeScriptValidation: true,
+    } as WorkspaceSettings;
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({ uri: tsUri, version: 1 }),
+    );
+    await flushMicrotasks();
+
+    expect(harness.javaScriptTypeScriptDiagnostics.value[tsPath]).toBeUndefined();
+
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({ uri: tsUri, version: 3 }),
+    );
+    await flushMicrotasks();
+
+    expect(harness.javaScriptTypeScriptDiagnostics.value[tsPath]).toHaveLength(1);
+  });
 });
+
+describe("workspace settings root snapshot", () => {
+  it("resolves normalized aliases to the same workspace settings", () => {
+    const snapshot = createWorkspaceSettingsByRootSnapshot();
+    const settings = {
+      javaScriptTypeScriptValidation: true,
+    } as WorkspaceSettings;
+
+    snapshot.capture(`${ROOT}/`, settings);
+
+    expect(snapshot.resolve(ROOT)).toBe(settings);
+  });
+
+  it("rejects a stale load after a newer root snapshot was captured", () => {
+    const snapshot = createWorkspaceSettingsByRootSnapshot();
+    const loadRevision = snapshot.revision(OTHER_ROOT);
+    const currentSettings = {
+      javaScriptTypeScriptValidation: true,
+    } as WorkspaceSettings;
+    const staleSettings = {
+      javaScriptTypeScriptValidation: false,
+    } as WorkspaceSettings;
+
+    snapshot.capture(OTHER_ROOT, currentSettings);
+
+    expect(
+      snapshot.captureIfRevision(OTHER_ROOT, loadRevision, staleSettings),
+    ).toBe(false);
+    expect(snapshot.resolve(OTHER_ROOT)).toBe(currentSettings);
+  });
+
+  it("exposes save ownership through monotonic per-root revisions", () => {
+    const snapshot = createWorkspaceSettingsByRootSnapshot();
+    const firstSettings = {
+      javaScriptTypeScriptValidation: false,
+    } as WorkspaceSettings;
+    const latestSettings = {
+      javaScriptTypeScriptValidation: true,
+    } as WorkspaceSettings;
+
+    const firstSaveRevision = snapshot.capture(ROOT, firstSettings);
+    const latestSaveRevision = snapshot.capture(`${ROOT}/`, latestSettings);
+
+    expect(snapshot.revision(ROOT)).toBe(latestSaveRevision);
+    expect(snapshot.revision(ROOT)).not.toBe(firstSaveRevision);
+    expect(snapshot.resolve(ROOT)).toBe(latestSettings);
+  });
+
+  it("invalidates pending loads when a workspace snapshot is forgotten", () => {
+    const snapshot = createWorkspaceSettingsByRootSnapshot();
+    const loadRevision = snapshot.revision(OTHER_ROOT);
+    const staleSettings = {
+      javaScriptTypeScriptValidation: true,
+    } as WorkspaceSettings;
+
+    snapshot.forget(OTHER_ROOT);
+
+    expect(
+      snapshot.captureIfRevision(OTHER_ROOT, loadRevision, staleSettings),
+    ).toBe(false);
+    expect(snapshot.resolve(OTHER_ROOT)).toBeNull();
+  });
+});
+
+function apiApplyBackgroundDiagnostics(api: Diagnostics, rootPath: string): void {
+  api.applyJavaScriptTypeScriptLanguageServerDiagnostics(
+    diagnosticEvent({
+      rootPath,
+      uri: fileUriFromPath(`${rootPath}/src/background.ts`),
+    }),
+  );
+}
 
 describe("useDiagnostics - local PHP diagnostics", () => {
   it("adds then removes local PHP diagnostics and their notices", () => {

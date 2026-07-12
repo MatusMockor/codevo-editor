@@ -6,7 +6,7 @@ use crate::index::{
 use crate::index_scan::{
     IndexProgressEvent, InitialMetadataScanStart, InitialMetadataScanStartStatus,
     LocalWorkspaceMetadataScanner, MetadataScanCompletionEvent, MetadataScanError,
-    MetadataScanEventSink, MetadataScanReport, WorkspaceMetadataScanner, WorkspaceReindexMode,
+    MetadataScanEventSink, MetadataScanReport, WorkspaceReindexMode,
 };
 use crate::job_scheduler::WorkspaceIndexLifecycleToken;
 use crate::js_ts_symbols::{
@@ -199,7 +199,12 @@ pub(crate) fn run_workspace_reindex_with_progress(
     ensure_reindex_current(lifecycle_token)?;
     let index = SqliteWorkspaceIndex::open(&request.database_path)?;
     let scanner = LocalWorkspaceMetadataScanner::default();
-    let collection = scanner.collect_path(&request.root_path, &request.root_path)?;
+    let is_cancelled = || !lifecycle_token_is_current(lifecycle_token);
+    let collection = scanner.collect_path_with_cancellation(
+        &request.root_path,
+        &request.root_path,
+        &is_cancelled,
+    )?;
     ensure_reindex_current(lifecycle_token)?;
     let mut report = collection.report;
     let scanned_records = collection.records;

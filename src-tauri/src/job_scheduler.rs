@@ -698,6 +698,18 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_cancel_workspace_preserves_other_workspace_runs() {
+        let lifecycle = WorkspaceIndexLifecycle::new();
+        let workspace = lifecycle.begin_workspace_run("/workspace");
+        let other = lifecycle.begin_workspace_run("/other");
+
+        lifecycle.cancel_workspace("/workspace");
+
+        assert!(!workspace.is_current());
+        assert!(other.is_current());
+    }
+
+    #[test]
     fn lifecycle_guarded_write_runs_only_for_current_token() {
         let lifecycle = WorkspaceIndexLifecycle::new();
         let token = lifecycle.begin_workspace_run("/workspace");

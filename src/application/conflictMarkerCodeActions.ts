@@ -22,6 +22,10 @@ interface ConflictMarkerActionDefinition {
   variant: ConflictMarkerAcceptVariant;
 }
 
+export interface ConflictMarkerCodeActionOptions {
+  shouldInspectModel?(model: Monaco.editor.ITextModel): boolean;
+}
+
 const ACTION_DEFINITIONS: readonly ConflictMarkerActionDefinition[] = [
   { title: "Accept Current", variant: "current" },
   { title: "Accept Incoming", variant: "incoming" },
@@ -31,10 +35,16 @@ const ACTION_DEFINITIONS: readonly ConflictMarkerActionDefinition[] = [
 export function registerConflictMarkerCodeActions(
   monaco: typeof Monaco,
   editor: Monaco.editor.IStandaloneCodeEditor,
+  options: ConflictMarkerCodeActionOptions = {},
 ): Monaco.IDisposable[] {
   const provider = monaco.languages.registerCodeActionProvider("*", {
-    provideCodeActions: (model, range) =>
-      provideConflictMarkerCodeActions(model, range),
+    provideCodeActions: (model, range) => {
+      if (options.shouldInspectModel && !options.shouldInspectModel(model)) {
+        return emptyCodeActions();
+      }
+
+      return provideConflictMarkerCodeActions(model, range);
+    },
   });
   const command = monaco.editor.addCommand({
     id: CONFLICT_MARKER_COMMAND_ID,
@@ -48,6 +58,10 @@ export function registerConflictMarkerCodeActions(
   });
 
   return [provider, command];
+}
+
+function emptyCodeActions(): Monaco.languages.CodeActionList {
+  return { actions: [], dispose: () => undefined };
 }
 
 export function provideConflictMarkerCodeActions(

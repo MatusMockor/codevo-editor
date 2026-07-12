@@ -1,7 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
-import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
+import {
+  configureTypescriptJavascriptDefaults,
+  configureTypescriptJavascriptDefaultsOnce,
+} from "./typescriptJavascriptDefaults";
 
 describe("Monaco JavaScript and TypeScript built-ins", () => {
+  it("coalesces repeated effective configuration for one Monaco runtime", () => {
+    const typescriptDefaults = languageDefaults();
+    const javascriptDefaults = languageDefaults();
+    const monaco = monacoWithDefaults(typescriptDefaults, javascriptDefaults);
+
+    expect(configureTypescriptJavascriptDefaultsOnce(monaco as never)).toBe(true);
+    expect(configureTypescriptJavascriptDefaultsOnce(monaco as never)).toBe(false);
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(1);
+    expect(javascriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(1);
+
+    expect(
+      configureTypescriptJavascriptDefaultsOnce(monaco as never, {
+        managedLanguageServerActive: true,
+      }),
+    ).toBe(true);
+    expect(typescriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(2);
+    expect(javascriptDefaults.setCompilerOptions).toHaveBeenCalledTimes(2);
+  });
+
   it("configures compiler options, eager sync, and diagnostics for TypeScript and JavaScript", () => {
     const typescriptDefaults = languageDefaults();
     const javascriptDefaults = languageDefaults();

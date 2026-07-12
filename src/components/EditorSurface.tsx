@@ -71,6 +71,7 @@ import {
 import {
   defaultLargeSmartDocumentPolicy,
   isLargeSmartDocument,
+  normalizeLargeSmartDocumentPolicy,
   type LargeSmartDocumentPolicy,
 } from "../domain/largeDocumentPolicy";
 import { Breadcrumbs } from "./Breadcrumbs";
@@ -174,7 +175,6 @@ import { setupEmmet } from "../infrastructure/emmetSetup";
 import { loadJsonSchemaForDocument } from "../infrastructure/jsonSchemaLoader";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
-import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 import {
   modelMatchesWorkspacePath,
   modelPath,
@@ -670,6 +670,17 @@ function EditorSurfaceComponent({
   // is chosen or the picker is dismissed, so nothing leaks across tabs.
   const [surroundWithRequest, setSurroundWithRequest] =
     useState<SurroundWithRequest | null>(null);
+  const activeDocumentIsLargeSmart = useMemo(
+    () =>
+      activeDocument
+        ? isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
+        : false,
+    [
+      activeDocument?.content,
+      largeSmartDocumentPolicy.characterLimit,
+      largeSmartDocumentPolicy.lineLimit,
+    ],
+  );
 
   useEffect(() => {
     activeDocumentRef.current = activeDocument;
@@ -724,27 +735,6 @@ function EditorSurfaceComponent({
     javaScriptTypeScriptRuntimeStatusRef.current =
       javaScriptTypeScriptLanguageServerRuntimeStatus;
   }, [javaScriptTypeScriptLanguageServerRuntimeStatus]);
-
-  useEffect(() => {
-    if (!monacoApi) {
-      return;
-    }
-
-    configureTypescriptJavascriptDefaults(monacoApi, {
-      managedLanguageServerActive:
-        isJavaScriptTypeScriptRuntimeActiveForWorkspace(
-          javaScriptTypeScriptLanguageServerRuntimeStatus,
-          workspaceRoot,
-        ),
-      validationEnabled: javaScriptTypeScriptValidationEnabled,
-    });
-  }, [
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptValidationEnabled,
-    monacoApi,
-    workspaceIdentityDescriptor,
-    workspaceRoot,
-  ]);
 
   // Registers the local JSON Schema declared by the active document's `$schema`
   // (e.g. `.phpactor.json`) with Monaco so it validates inline. Without this,
@@ -1260,6 +1250,14 @@ function EditorSurfaceComponent({
       ...(runtimeMembership?.retainPaths ?? []),
     ],
     toMarker: (diagnostic) => toMonacoDiagnosticMarker(monacoApi!, diagnostic),
+    typescriptJavascriptDefaults: {
+      managedLanguageServerActive:
+        isJavaScriptTypeScriptRuntimeActiveForWorkspace(
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          workspaceRoot,
+        ),
+      validationEnabled: javaScriptTypeScriptValidationEnabled,
+    },
     workspaceIdentityDescriptor,
     workspaceRoot,
   };
@@ -1289,7 +1287,9 @@ function EditorSurfaceComponent({
     javaScriptTypeScriptCompleteFunctionCalls,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRefreshGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
+    javaScriptTypeScriptValidationEnabled,
     languageServerDiagnosticsByPath,
     languageServerFeaturesGateway,
     languageServerRefreshGateway,
@@ -1488,7 +1488,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)) {
+    if (activeDocumentIsLargeSmart) {
       tokenizer.stop();
       return;
     }
@@ -1506,7 +1506,7 @@ function EditorSurfaceComponent({
     tokenizer.start(model as unknown as BackgroundTokenizableModel);
 
     return () => tokenizer.stop();
-  }, [activeDocument, editorApi, largeSmartDocumentPolicy, workspaceRoot]);
+  }, [activeDocument, activeDocumentIsLargeSmart, editorApi, workspaceRoot]);
 
   // Permanent teardown so a disposed surface leaves no pending idle slice.
   useEffect(() => {
@@ -1516,6 +1516,19 @@ function EditorSurfaceComponent({
 
   useEffect(() => {
     if (!activeDocument || !workspaceRoot) {
+      return;
+    }
+
+    if (activeDocumentIsLargeSmart) {
+      setBreadcrumbSymbolsByPath((current) => {
+        if (!current[activeDocument.path]) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[activeDocument.path];
+        return next;
+      });
       return;
     }
 
@@ -1589,6 +1602,7 @@ function EditorSurfaceComponent({
     // synced state each tick (the re-trigger) without restarting the effect.
   }, [
     activeDocument,
+    activeDocumentIsLargeSmart,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     languageServerFeaturesGateway,
     workspaceRoot,
@@ -2091,7 +2105,10 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const disposables = registerConflictMarkerCodeActions(monacoApi, editorApi);
+    const disposables = registerConflictMarkerCodeActions(monacoApi, editorApi, {
+      shouldInspectModel: (model) =>
+        !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current),
+    });
 
     return () => {
       disposables.forEach((disposable) => disposable.dispose());
@@ -2110,9 +2127,11 @@ function EditorSurfaceComponent({
         model &&
         document &&
         modelMatchesProject(model, workspaceRootRef.current, document.path);
-      const decorations = matchesActiveDocument
-        ? conflictMarkerDecorations(model)
-        : [];
+      const decorations =
+        matchesActiveDocument &&
+        !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current)
+          ? conflictMarkerDecorations(model)
+          : [];
 
       conflictMarkerDecorationIdsRef.current = editorApi.deltaDecorations(
         conflictMarkerDecorationIdsRef.current,
@@ -2552,12 +2571,12 @@ function EditorSurfaceComponent({
   const phpEditTick = useDebouncedPhpEditTick(
     activeDocument &&
       activeDocument.language === "php" &&
-      !isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
+      !activeDocumentIsLargeSmart
       ? activeDocument.path
       : null,
     activeDocument &&
       activeDocument.language === "php" &&
-      !isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
+      !activeDocumentIsLargeSmart
       ? activeDocument.content
       : null,
   );
@@ -3272,7 +3291,7 @@ function EditorSurfaceComponent({
     if (
       !activeDocument ||
       activeDocument.language !== "php" ||
-      isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy) ||
+      activeDocumentIsLargeSmart ||
       !editorApi
     ) {
       return;
@@ -3319,9 +3338,9 @@ function EditorSurfaceComponent({
   }, [
     activeDocument?.language,
     activeDocument?.path,
+    activeDocumentIsLargeSmart,
     applyLocalPhpDiagnostics,
     editorApi,
-    largeSmartDocumentPolicy,
     workspaceRoot,
   ]);
 
@@ -3561,7 +3580,7 @@ function EditorSurfaceComponent({
 
     if (
       activeDocument.language === "php" &&
-      !isLargeSmartDocument(activeDocument, largeSmartDocumentPolicy)
+      !activeDocumentIsLargeSmart
     ) {
       return;
     }
@@ -3594,7 +3613,7 @@ function EditorSurfaceComponent({
     });
   }, [
     activeDocument,
-    largeSmartDocumentPolicy,
+    activeDocumentIsLargeSmart,
     monacoApi,
     workspaceRoot,
   ]);
@@ -4695,12 +4714,30 @@ function beforeMonacoMount(monaco: typeof Monaco, theme: MonacoAppTheme): void {
   // default white `vs` theme until the async Shiki setup below resolves and
   // calls `setTheme`, producing a white flash on dark themes.
   applyImmediateFallbackTheme(monaco, theme);
-  configureTypescriptJavascriptDefaults(monaco);
   configureShikiLanguageFeatures(monaco);
   setupEmmet(monaco);
   setupShikiTokenization(monaco, theme).catch((error) => {
     console.error("Shiki tokenization setup failed", error);
   });
+}
+
+function isLargeSmartModel(
+  model: Monaco.editor.ITextModel,
+  policy: LargeSmartDocumentPolicy,
+): boolean {
+  if (
+    typeof model.getValueLength !== "function" ||
+    typeof model.getLineCount !== "function"
+  ) {
+    return false;
+  }
+
+  const normalizedPolicy = normalizeLargeSmartDocumentPolicy(policy);
+  if (model.getValueLength() > normalizedPolicy.characterLimit) {
+    return true;
+  }
+
+  return model.getLineCount() > normalizedPolicy.lineLimit;
 }
 
 function isJavaScriptTypeScriptRuntimeActiveForWorkspace(

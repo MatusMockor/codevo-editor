@@ -62,6 +62,7 @@ import {
   type PhpFileOutlineGateway,
 } from "../domain/phpFileOutline";
 import type { PhpTreeGateway } from "../domain/phpTree";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   ProjectSymbolSearchGateway,
   ProjectSymbolSearchResult,
@@ -3357,6 +3358,88 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("waits for an in-flight settings save before reloading the same project tab", async () => {
+    const workspaceSettingsSave = createDeferred<void>();
+    const initialWorkspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      javaScriptTypeScriptValidation: false,
+    };
+    let persistedWorkspaceSettings = initialWorkspaceSettings;
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a", "/workspace-b"],
+    };
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => appSettings),
+      loadWorkspaceSettings: vi.fn(async (path: string) =>
+        path === "/workspace-a"
+          ? persistedWorkspaceSettings
+          : defaultWorkspaceSettings(),
+      ),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async (path, settings) => {
+        if (path !== "/workspace-a") {
+          return;
+        }
+
+        await workspaceSettingsSave.promise;
+        persistedWorkspaceSettings = settings;
+      }),
+    };
+    const { getWorkbench } = renderController({ appSettings, settingsGateway });
+    await flushAsyncTurns(24);
+
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        {
+          ...getWorkbench().workspaceSettings,
+          javaScriptTypeScriptValidation: true,
+        },
+        getWorkbench().workspaceTrust?.trusted ?? null,
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ javaScriptTypeScriptValidation: true }),
+      );
+    });
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    const workspaceALoadsBeforeReturn = vi
+      .mocked(settingsGateway.loadWorkspaceSettings)
+      .mock.calls.filter(([path]) => path === "/workspace-a").length;
+
+    let returnToWorkspaceA: Promise<void> = Promise.resolve();
+    act(() => {
+      returnToWorkspaceA = getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(
+      vi
+        .mocked(settingsGateway.loadWorkspaceSettings)
+        .mock.calls.filter(([path]) => path === "/workspace-a"),
+    ).toHaveLength(workspaceALoadsBeforeReturn);
+
+    await act(async () => {
+      workspaceSettingsSave.resolve(undefined);
+      await Promise.all([savePromise, returnToWorkspaceA]);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().workspaceSettings.javaScriptTypeScriptValidation).toBe(
+      true,
+    );
+  });
+
   it("does not continue a pending workspace open after closing its project tab", async () => {
     const workspaceSettingsLoad = createDeferred<
       ReturnType<typeof defaultWorkspaceSettings>
@@ -5044,7 +5127,27 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toHaveLength(1);
   });
 
-  it("caches JavaScript and TypeScript diagnostics for background project tabs", async () => {
+  it.each([
+    {
+      activeValidation: false,
+      backgroundRoot: "/workspace-b/",
+      backgroundValidation: true,
+      expectedCount: 1,
+      title: "caches JavaScript and TypeScript diagnostics using an aliased background root",
+    },
+    {
+      activeValidation: true,
+      backgroundRoot: "/workspace-b",
+      backgroundValidation: false,
+      expectedCount: 0,
+      title: "suppresses background diagnostics using the background root settings",
+    },
+  ])("$title", async ({
+    activeValidation,
+    backgroundRoot,
+    backgroundValidation,
+    expectedCount,
+  }) => {
     let publishDiagnostics:
       | ((event: LanguageServerDiagnosticEvent) => void)
       | null = null;
@@ -5080,19 +5183,35 @@ describe("useWorkbenchController preview tabs", () => {
       };
     const workspaceAPath = "/workspace-a/src/App.ts";
     const workspaceBPath = "/workspace-b/src/App.ts";
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a", "/workspace-b"],
+    };
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => appSettings),
+      loadWorkspaceSettings: vi.fn(async (rootPath) => ({
+        ...defaultWorkspaceSettings(),
+        javaScriptTypeScriptValidation: workspaceRootKeysEqual(
+          rootPath,
+          "/workspace-b",
+        )
+          ? backgroundValidation
+          : activeValidation,
+      })),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
     const { getWorkbench } = renderController({
-      appSettings: {
-        ...defaultAppSettings(),
-        recentWorkspacePath: "/workspace-a",
-        workspaceTabs: ["/workspace-a", "/workspace-b"],
-      },
+      appSettings,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
       javaScriptTypeScriptLanguageServerRuntimeGateway,
+      settingsGateway,
     });
     await flushAsyncTurns(24);
 
     act(() => {
-      publishRuntimeStatus?.(runningStatus("/workspace-b", 302));
+      publishRuntimeStatus?.(runningStatus(backgroundRoot, 302));
       publishDiagnostics?.({
         diagnostics: [
           {
@@ -5103,7 +5222,7 @@ describe("useWorkbenchController preview tabs", () => {
             source: "tsserver",
           },
         ],
-        rootPath: "/workspace-b",
+        rootPath: backgroundRoot,
         sessionId: 302,
         uri: fileUriFromPath(workspaceBPath),
         version: null,
@@ -5124,8 +5243,8 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns(24);
 
     expect(
-      getWorkbench().languageServerDiagnosticsByPath[workspaceBPath],
-    ).toHaveLength(1);
+      getWorkbench().languageServerDiagnosticsByPath[workspaceBPath]?.length ?? 0,
+    ).toBe(expectedCount);
   });
 
   it("caches PHP runtime status and diagnostics for background project tabs", async () => {
@@ -14477,6 +14596,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await vi.waitFor(() => {
       expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+        "/workspace-a",
         "fullSmart",
       );
     });
@@ -14525,6 +14645,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await vi.waitFor(() => {
       expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+        "/workspace-a",
         "fullSmart",
       );
     });
@@ -14560,7 +14681,7 @@ describe("useWorkbenchController preview tabs", () => {
         mode: "basic" as const,
         status: "off" as const,
       })),
-      setMode: vi.fn(async (mode) => {
+      setMode: vi.fn(async (_rootPath, mode) => {
         setModeCalls += 1;
 
         if (setModeCalls === 1) {
@@ -14583,7 +14704,10 @@ describe("useWorkbenchController preview tabs", () => {
       smartModeGateway,
     });
     await vi.waitFor(() => {
-      expect(smartModeGateway.setMode).toHaveBeenCalledWith("basic");
+      expect(smartModeGateway.setMode).toHaveBeenCalledWith(
+        "/workspace-a",
+        "basic",
+      );
     });
 
     await act(async () => {
@@ -14591,6 +14715,10 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await vi.waitFor(() => {
       expect(smartModeGateway.setMode).toHaveBeenCalledTimes(2);
+      expect(smartModeGateway.setMode).toHaveBeenLastCalledWith(
+        "/workspace-b",
+        "basic",
+      );
     });
     await flushAsyncTurns();
 
@@ -20843,9 +20971,59 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       vi
         .mocked(dependencies.smartModeGateway.setMode)
-        .mock.calls.some(([mode]) => mode === "fullSmart"),
+        .mock.calls.some(([, mode]) => mode === "fullSmart"),
     ).toBe(false);
     expect(getWorkbench().message).not.toBe("Settings saved.");
+  });
+
+  it("does not recreate smart mode state when a delayed settings save outlives workspace close", async () => {
+    const appSettingsSave = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.smartModeGateway.setMode).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockImplementationOnce(
+      async () => appSettingsSave.promise,
+    );
+
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        {
+          ...getWorkbench().workspaceSettings,
+          intelligenceMode: "fullSmart",
+        },
+        getWorkbench().workspaceTrust?.trusted ?? null,
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledOnce();
+    });
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+
+    await act(async () => {
+      appSettingsSave.resolve(undefined);
+      await savePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      vi
+        .mocked(dependencies.smartModeGateway.setMode)
+        .mock.calls.some(([, mode]) => mode === "fullSmart"),
+    ).toBe(false);
+    expect(getWorkbench().workspaceRoot).toBeNull();
   });
 
   it("ignores stale status bar setting rollbacks after switching project tabs", async () => {
@@ -68734,7 +68912,7 @@ class PostRepository
       .fn()
       .mockResolvedValueOnce({ status: "opened", descriptor: descriptorA })
       .mockResolvedValueOnce({ status: "opened", descriptor: descriptorB });
-    const { getWorkbench } = renderController({
+    const { dependencies, getWorkbench } = renderController({
       workspaceIdentityGateway: {
         getDescriptor: vi.fn(),
         openFromPicker,
@@ -68758,6 +68936,21 @@ class PostRepository
       descriptorA.selectedPath,
       descriptorB.selectedPath,
     ]);
+    expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+      descriptorA.canonicalRoot,
+      "basic",
+    );
+    expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+      descriptorB.canonicalRoot,
+      "basic",
+    );
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
+    });
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(descriptorA.canonicalRoot);
   });
 
   it("releases an unadopted descriptor when workspace opening throws", async () => {
@@ -69924,7 +70117,7 @@ function createControllerDependencies({
           mode: "basic" as const,
           status: "off" as const,
         })),
-        setMode: vi.fn(async (mode) => ({
+        setMode: vi.fn(async (_rootPath, mode) => ({
           message: "Updated",
           mode,
           status: "ready" as const,

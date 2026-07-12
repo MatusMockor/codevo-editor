@@ -37,6 +37,10 @@ import {
   registerJavaScriptTypeScriptLanguageServerMonacoProviders,
   type JavaScriptTypeScriptLanguageServerProviderContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
+import {
+  configureTypescriptJavascriptDefaultsOnce,
+  type TypescriptJavascriptDefaultsOptions,
+} from "./typescriptJavascriptDefaults";
 
 interface EditorRuntimeSurfaceRouting {
   activeDocumentRef: EditorRuntimeEditorMembership["activeDocumentRef"];
@@ -57,6 +61,7 @@ interface EditorRuntimeSurfaceRegistration {
   retainPaths: readonly string[];
   routing: EditorRuntimeSurfaceRouting;
   toMarker(diagnostic: LanguageServerDiagnostic): Monaco.editor.IMarkerData;
+  typescriptJavascriptDefaults: TypescriptJavascriptDefaultsOptions;
   workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
   workspaceRoot: string | null;
 }
@@ -166,9 +171,7 @@ export function EditorRuntimeHost({
       admittedWorkspaceRootRef.current = admittedWorkspaceRoot(
         registrationsRef.current,
       );
-      if (registrationOwnsRuntime(registration, admittedWorkspaceRootRef.current)) {
-        setRevision((current) => current + 1);
-      }
+      setRevision((current) => current + 1);
 
       return () => {
         const removedRegistration = registrationsRef.current.get(id);
@@ -187,7 +190,7 @@ export function EditorRuntimeHost({
         admittedWorkspaceRootRef.current = admittedWorkspaceRoot(
           registrationsRef.current,
         );
-        if (removedOwnedRuntime) {
+        if (removedOwnedRuntime || removedRegistration?.monacoApi) {
           setRevision((current) => current + 1);
         }
       };
@@ -284,6 +287,8 @@ export function EditorRuntimeHost({
   );
   const activeRegistration =
     focusedRegistration ?? owningRegistrations[0] ?? null;
+  const configurationRegistration =
+    activeRegistration ?? registrations.find(({ monacoApi }) => monacoApi) ?? null;
   activeRegistrationRef.current = activeRegistration;
 
   const routedProviderRefs = useMemo(
@@ -329,6 +334,20 @@ export function EditorRuntimeHost({
     activeRegistration?.monacoApi,
     activeRegistration?.workspaceRoot,
     routedJavaScriptTypeScriptContext,
+  ]);
+
+  useEffect(() => {
+    const monacoApi = configurationRegistration?.monacoApi;
+    const configuration = configurationRegistration?.typescriptJavascriptDefaults;
+    if (!monacoApi || !configuration) {
+      return;
+    }
+
+    configureTypescriptJavascriptDefaultsOnce(monacoApi, configuration);
+  }, [
+    configurationRegistration?.monacoApi,
+    configurationRegistration?.typescriptJavascriptDefaults.managedLanguageServerActive,
+    configurationRegistration?.typescriptJavascriptDefaults.validationEnabled,
   ]);
 
   useEffect(() => {
@@ -607,6 +626,10 @@ function registrationsStructurallyEqual(
     leftJavaScript.workspaceEditGateway ===
       rightJavaScript.workspaceEditGateway &&
     pathsEqual(left.retainPaths, right.retainPaths) &&
+    left.typescriptJavascriptDefaults.managedLanguageServerActive ===
+      right.typescriptJavascriptDefaults.managedLanguageServerActive &&
+    left.typescriptJavascriptDefaults.validationEnabled ===
+      right.typescriptJavascriptDefaults.validationEnabled &&
     left.workspaceIdentityDescriptor === right.workspaceIdentityDescriptor &&
     workspaceRootKeysEqual(left.workspaceRoot, right.workspaceRoot)
   );

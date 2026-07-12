@@ -83,7 +83,9 @@ impl LocalWorkspaceMetadataScanner {
         directory: &Path,
         matcher: &dyn WorkspaceIgnoreMatcher,
         collection: &mut MetadataScanCollection,
+        is_cancelled: &dyn Fn() -> bool,
     ) -> Result<(), MetadataScanError> {
+        ensure_collection_current(is_cancelled)?;
         let entries = match fs::read_dir(directory) {
             Ok(entries) => entries,
             Err(_) => {
@@ -96,6 +98,7 @@ impl LocalWorkspaceMetadataScanner {
         };
 
         for entry in entries {
+            ensure_collection_current(is_cancelled)?;
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(_) => {
@@ -106,7 +109,7 @@ impl LocalWorkspaceMetadataScanner {
                     continue;
                 }
             };
-            self.scan_entry(root_path, &entry.path(), matcher, collection)?;
+            self.scan_entry(root_path, &entry.path(), matcher, collection, is_cancelled)?;
         }
 
         Ok(())
@@ -118,7 +121,9 @@ impl LocalWorkspaceMetadataScanner {
         path: &Path,
         matcher: &dyn WorkspaceIgnoreMatcher,
         collection: &mut MetadataScanCollection,
+        is_cancelled: &dyn Fn() -> bool,
     ) -> Result<(), MetadataScanError> {
+        ensure_collection_current(is_cancelled)?;
         let file_type = match fs::symlink_metadata(path) {
             Ok(file_type) => file_type,
             Err(_) => {
@@ -147,7 +152,7 @@ impl LocalWorkspaceMetadataScanner {
         }
 
         if file_type.is_dir() {
-            self.scan_directory(root_path, path, matcher, collection)?;
+            self.scan_directory(root_path, path, matcher, collection, is_cancelled)?;
             return Ok(());
         }
 
@@ -160,6 +165,42 @@ impl LocalWorkspaceMetadataScanner {
         }
 
         self.scan_file(root_path, path, collection)
+    }
+
+    pub(crate) fn collect_path_with_cancellation(
+        &self,
+        root_path: &Path,
+        scan_path: &Path,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<MetadataScanCollection, MetadataScanError> {
+        ensure_collection_current(is_cancelled)?;
+        let root_path = root_path.canonicalize()?;
+        let scan_path = absolute_candidate(&root_path, scan_path);
+        let matcher =
+            match GitignoreWorkspaceIgnoreMatcher::load_with_cancellation(&root_path, is_cancelled)
+            {
+                Ok(matcher) => matcher,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted && is_cancelled() => {
+                    return Err(MetadataScanError::Cancelled);
+                }
+                Err(error) => return Err(MetadataScanError::Io(error)),
+            };
+        let mut collection = MetadataScanCollection::default();
+
+        ensure_collection_current(is_cancelled)?;
+        if !scan_path.exists() {
+            return Ok(collection);
+        }
+
+        self.scan_entry(
+            &root_path,
+            &scan_path,
+            &matcher,
+            &mut collection,
+            is_cancelled,
+        )?;
+
+        Ok(collection)
     }
 
     fn scan_file(
@@ -218,18 +259,7 @@ impl WorkspaceMetadataScanner for LocalWorkspaceMetadataScanner {
         root_path: &Path,
         scan_path: &Path,
     ) -> Result<MetadataScanCollection, MetadataScanError> {
-        let root_path = root_path.canonicalize()?;
-        let scan_path = absolute_candidate(&root_path, scan_path);
-        let matcher = GitignoreWorkspaceIgnoreMatcher::load(&root_path)?;
-        let mut collection = MetadataScanCollection::default();
-
-        if !scan_path.exists() {
-            return Ok(collection);
-        }
-
-        self.scan_entry(&root_path, &scan_path, &matcher, &mut collection)?;
-
-        Ok(collection)
+        self.collect_path_with_cancellation(root_path, scan_path, &|| false)
     }
 
     fn scan(
@@ -557,7 +587,8 @@ fn scan_background_workspace_with_progress(
     ensure_scan_current(lifecycle_token)?;
     let index = SqliteWorkspaceIndex::open(database_path)?;
     let scanner = LocalWorkspaceMetadataScanner::default();
-    let collection = scanner.collect_path(root_path, root_path)?;
+    let is_cancelled = || !lifecycle_token_is_current(lifecycle_token);
+    let collection = scanner.collect_path_with_cancellation(root_path, root_path, &is_cancelled)?;
     ensure_scan_current(lifecycle_token)?;
 
     let total_files = collection.records.len();
@@ -614,6 +645,14 @@ fn ensure_scan_current(
     lifecycle_token: Option<&WorkspaceIndexLifecycleToken>,
 ) -> Result<(), MetadataScanError> {
     if lifecycle_token_is_current(lifecycle_token) {
+        return Ok(());
+    }
+
+    Err(MetadataScanError::Cancelled)
+}
+
+fn ensure_collection_current(is_cancelled: &dyn Fn() -> bool) -> Result<(), MetadataScanError> {
+    if !is_cancelled() {
         return Ok(());
     }
 
@@ -683,7 +722,10 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{mpsc, Arc, Mutex},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc, Arc, Mutex,
+        },
         time::Duration,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -870,6 +912,62 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_interrupts_ignore_scope_discovery_before_metadata_traversal() {
+        let root = wide_workspace("cancel-ignore-scopes", 300);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed_files = Arc::new(AtomicUsize::new(0));
+        let scanner =
+            LocalWorkspaceMetadataScanner::new(Box::new(CancellationAwareLanguageDetector {
+                cancelled: Arc::clone(&cancelled),
+                observed_files: Arc::clone(&observed_files),
+            }));
+        let probe_count = AtomicUsize::new(0);
+        let cancellation_probe = || {
+            let should_cancel = probe_count.fetch_add(1, Ordering::SeqCst) >= 40;
+            if should_cancel {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+            should_cancel
+        };
+
+        let error = scanner
+            .collect_path_with_cancellation(&root, &root, &cancellation_probe)
+            .expect_err("collection cancelled during traversal");
+
+        assert!(matches!(error, super::MetadataScanError::Cancelled));
+        assert!(cancelled.load(Ordering::SeqCst));
+        assert!(probe_count.load(Ordering::SeqCst) <= 42);
+        assert_eq!(observed_files.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn cancellation_interrupts_metadata_traversal_without_classifying_later_files() {
+        let root = wide_workspace("cancel-metadata-traversal", 300);
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let observed_files = Arc::new(AtomicUsize::new(0));
+        let scanner =
+            LocalWorkspaceMetadataScanner::new(Box::new(CancellationAwareLanguageDetector {
+                cancelled: Arc::clone(&cancelled),
+                observed_files: Arc::clone(&observed_files),
+            }));
+        let cancellation_probe = || {
+            let should_cancel = observed_files.load(Ordering::SeqCst) >= 20;
+            if should_cancel {
+                cancelled.store(true, Ordering::SeqCst);
+            }
+            should_cancel
+        };
+
+        let error = scanner
+            .collect_path_with_cancellation(&root, &root, &cancellation_probe)
+            .expect_err("collection cancelled during metadata traversal");
+
+        assert!(matches!(error, super::MetadataScanError::Cancelled));
+        assert!(cancelled.load(Ordering::SeqCst));
+        assert_eq!(observed_files.load(Ordering::SeqCst), 20);
+    }
+
+    #[test]
     fn background_scan_writes_all_files_across_batch_boundaries() {
         // More files than one write batch (SCAN_WRITE_BATCH_SIZE): the batched scan must still
         // persist every metadata row across batch boundaries.
@@ -1018,6 +1116,17 @@ mod tests {
         root.canonicalize().expect("canonical workspace")
     }
 
+    fn wide_workspace(label: &str, file_count: usize) -> PathBuf {
+        let root = temp_workspace(label);
+        let source_directory = root.join("src");
+        fs::create_dir_all(&source_directory).expect("source directory");
+        for index in 0..file_count {
+            fs::write(source_directory.join(format!("File{index}.php")), "<?php")
+                .expect("source file");
+        }
+        root
+    }
+
     fn temp_database_path(label: &str) -> PathBuf {
         std::env::temp_dir()
             .join(format!("editor-scan-db-{label}-{}", unique_suffix()))
@@ -1047,6 +1156,22 @@ mod tests {
 
     struct ChannelMetadataScanEventSink {
         sender: Mutex<mpsc::Sender<MetadataScanCompletionEvent>>,
+    }
+
+    struct CancellationAwareLanguageDetector {
+        cancelled: Arc<AtomicBool>,
+        observed_files: Arc<AtomicUsize>,
+    }
+
+    impl MetadataLanguageDetector for CancellationAwareLanguageDetector {
+        fn language_for_path(&self, _path: &Path) -> String {
+            assert!(
+                !self.cancelled.load(Ordering::SeqCst),
+                "no file may be classified after cancellation"
+            );
+            self.observed_files.fetch_add(1, Ordering::SeqCst);
+            "php".to_string()
+        }
     }
 
     impl MetadataScanEventSink for ChannelMetadataScanEventSink {

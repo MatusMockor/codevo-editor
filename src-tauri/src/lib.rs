@@ -597,11 +597,12 @@ fn dispose_workspace_root(
     javascript_typescript_watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
     workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
     php_language_servers: State<'_, PhpLanguageServerRegistry>,
+    smart_mode_service: State<'_, Mutex<SmartModeService>>,
     terminal_sessions: State<'_, TerminalSupervisor>,
 ) -> Result<(), String> {
     let root = workspace_root_for_disposal(&root_path);
-
-    dispose_workspace_runtime_root(
+    let root_key = root.to_string_lossy().into_owned();
+    let disposal_result = dispose_workspace_runtime_root(
         &root,
         WorkspaceRuntimeDisposal {
             index_lifecycle: &*index_lifecycle,
@@ -611,7 +612,12 @@ fn dispose_workspace_root(
             php_language_servers: &*php_language_servers,
             terminal_sessions: &*terminal_sessions,
         },
-    )
+    );
+    smart_mode_service
+        .lock()
+        .map_err(|error| error.to_string())?
+        .remove_workspace(&root_key);
+    disposal_result
 }
 
 #[tauri::command]
@@ -625,10 +631,13 @@ fn detect_php_tools(workspace_root: Option<String>) -> Result<PhpToolAvailabilit
 
 #[tauri::command]
 fn get_smart_mode_state(
+    root_path: String,
     service: State<'_, Mutex<SmartModeService>>,
 ) -> Result<SmartModeState, String> {
+    let root = workspace_root_for_disposal(&root_path);
+    let root_key = root.to_string_lossy();
     let service = service.lock().map_err(|error| error.to_string())?;
-    Ok(service.state())
+    Ok(service.state(&root_key))
 }
 
 #[tauri::command]
@@ -2933,20 +2942,23 @@ async fn switch_git_branch(
 
 #[tauri::command]
 fn set_smart_mode(
+    root_path: String,
     mode: IntelligenceMode,
     service: State<'_, Mutex<SmartModeService>>,
     app: AppHandle,
 ) -> Result<SmartModeState, String> {
+    let root = workspace_root_for_disposal(&root_path);
+    let root_key = root.to_string_lossy();
     let disables_indexing = matches!(mode, IntelligenceMode::Basic);
 
     if disables_indexing {
         if let Some(index_lifecycle) = app.try_state::<WorkspaceIndexLifecycle>() {
-            index_lifecycle.cancel_all();
+            index_lifecycle.cancel_workspace(&root_key);
         }
     }
 
     let mut service = service.lock().map_err(|error| error.to_string())?;
-    Ok(service.set_mode(mode))
+    Ok(service.set_mode(&root_key, mode))
 }
 
 #[tauri::command]

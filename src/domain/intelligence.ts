@@ -9,8 +9,8 @@ export interface SmartModeState {
 }
 
 export interface SmartModeGateway {
-  getState(): Promise<SmartModeState>;
-  setMode(mode: IntelligenceMode): Promise<SmartModeState>;
+  getState(rootPath: string): Promise<SmartModeState>;
+  setMode(rootPath: string, mode: IntelligenceMode): Promise<SmartModeState>;
 }
 
 export function shouldIndexWorkspace(mode: IntelligenceMode): boolean {

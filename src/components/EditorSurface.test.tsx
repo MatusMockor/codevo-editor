@@ -37,6 +37,7 @@ interface FakeModel {
   getLineMaxColumn?: ReturnType<typeof vi.fn>;
   getOptions?: ReturnType<typeof vi.fn>;
   getValue?: ReturnType<typeof vi.fn>;
+  getValueLength?: ReturnType<typeof vi.fn>;
   getValueInRange?: ReturnType<typeof vi.fn>;
   getOffsetAt?: ReturnType<typeof vi.fn>;
   getPositionAt?: ReturnType<typeof vi.fn>;
@@ -1061,7 +1062,9 @@ describe("EditorSurface", () => {
     };
     let modelValue = activeDocument.content;
     const model: FakeModel = {
+      getLineCount: vi.fn(() => modelValue.split("\n").length),
       getValue: vi.fn(() => modelValue),
+      getValueLength: vi.fn(() => modelValue.length),
       uri: {
         fsPath: activeDocument.path,
         path: activeDocument.path,
@@ -1116,6 +1119,16 @@ describe("EditorSurface", () => {
       editor.modelContentChangeHandler?.({ changes: [{ text: "resolved" }] });
     });
 
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
+
+    modelValue = "x".repeat(257 * 1024);
+    model.getValue?.mockClear();
+    editor.deltaDecorations.mockClear();
+    act(() => {
+      editor.modelContentChangeHandler?.({ changes: [{ text: modelValue }] });
+    });
+
+    expect(model.getValue).not.toHaveBeenCalled();
     expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
 
@@ -6220,12 +6233,18 @@ class Foo
       savedContent: content,
     };
     const model: FakeModel = {
+      getLineCount: vi.fn(() => 2),
       getValue: vi.fn(() => content),
+      getValueLength: vi.fn(() => content.length),
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const monaco = createMonaco(model);
     const validate = vi.fn(async () => []);
     const onLocalPhpDiagnosticsChange = vi.fn();
+    const gateway = languageServerFeaturesGateway();
+    const documentSymbols = vi.fn(async () => []);
+    gateway.documentSymbols =
+      documentSymbols as unknown as typeof gateway.documentSymbols;
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = monaco;
 
@@ -6237,7 +6256,8 @@ class Foo
           editorRevealTarget={null}
           flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
           languageServerDiagnosticsByPath={{}}
-          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          isLanguageServerDocumentSynced={vi.fn(() => true)}
+          languageServerFeaturesGateway={gateway}
           languageServerRuntimeStatus={null}
           largeSmartDocumentPolicy={{ characterLimit: 16 * 1024, lineLimit: 500 }}
           keymap={defaultKeymapSettings()}
@@ -6272,6 +6292,7 @@ class Foo
     });
 
     expect(validate).not.toHaveBeenCalled();
+    expect(documentSymbols).not.toHaveBeenCalled();
     expect(onLocalPhpDiagnosticsChange).toHaveBeenCalledWith(
       activeDocument.path,
       [],
@@ -6281,6 +6302,14 @@ class Foo
         ([, owner]) => owner === "php-syntax",
       ),
     ).toEqual([[model, "php-syntax", []]]);
+
+    model.getValue?.mockClear();
+    act(() => {
+      editorSurfaceMocks.editor?.modelContentChangeHandlers.forEach((handler) =>
+        handler({ changes: [{ text: "x" }] }),
+      );
+    });
+    expect(model.getValue).not.toHaveBeenCalled();
   });
 
   it("retries open-time local PHP diagnostics when the first parser run fails", async () => {
@@ -11757,6 +11786,55 @@ class Foo
     expect(
       editorSurfaceMocks.editor?.revealPositionInCenter,
     ).toHaveBeenCalled();
+
+    const largeDocument = {
+      ...activeDocument,
+      content: `${activeDocument.content}${"x".repeat(17 * 1024)}`,
+    };
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={largeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          javaScriptTypeScriptLanguageServerFeaturesGateway={gateway}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          largeSmartDocumentPolicy={{ characterLimit: 16 * 1024, lineLimit: 500 }}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(documentSymbolsMock).toHaveBeenCalledTimes(1);
+    expect(
+      Array.from(host.querySelectorAll<HTMLElement>(".breadcrumb-segment")).map(
+        (segment) => segment.textContent,
+      ),
+    ).toEqual(["App.tsx"]);
   });
 
   it("does not fetch breadcrumb document symbols for a PHP document before it is synced", async () => {

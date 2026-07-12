@@ -132,6 +132,11 @@ import {
 } from "./useWorkbenchLanguageNavigation";
 import { useDocumentSync } from "./useDocumentSync";
 import { useDiagnostics } from "./useDiagnostics";
+import {
+  createWorkspaceSettingsByRootSnapshot,
+  type WorkspaceSettingsByRootSnapshot,
+} from "./workspaceSettingsForRoot";
+import { createWorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
 import { useLanguageServerDiagnosticsSubscriptions } from "./useLanguageServerDiagnosticsSubscriptions";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
 import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
@@ -1242,6 +1247,20 @@ export function useWorkbenchController(
   const workspaceSettingsRef = useRef<WorkspaceSettings>(
     defaultWorkspaceSettings(),
   );
+  const workspaceSettingsByRootRef = useRef<WorkspaceSettingsByRootSnapshot | null>(
+    null,
+  );
+  const workspaceSettingsByRoot =
+    workspaceSettingsByRootRef.current ?? createWorkspaceSettingsByRootSnapshot();
+  workspaceSettingsByRootRef.current = workspaceSettingsByRoot;
+  const workspaceSettingsSaveCoordinatorRef = useRef(
+    createWorkspaceSettingsSaveCoordinator(),
+  );
+  const workspaceSettingsSaveCoordinator =
+    workspaceSettingsSaveCoordinatorRef.current;
+  const workspaceSettingsLoadByRootRef = useRef<
+    Record<string, Promise<WorkspaceSettings>>
+  >({});
   const workspaceSessionRestoredRef = useRef(false);
   const workspaceEditorViewStatesRef = useRef<
     Record<string, Record<EditorGroupId, Record<string, WorkspaceSessionViewState>>>
@@ -1477,6 +1496,8 @@ export function useWorkbenchController(
   const workspaceIdentityByRootRef = useRef<
     Record<string, WorkspaceIdentityDescriptor>
   >({});
+  const workspaceRuntimeRootByTabRef = useRef<Record<string, string>>({});
+  const workspaceCloseGenerationByRootRef = useRef<Record<string, number>>({});
   const clearExternalFileConflictsForRootRef = useRef<(root: string) => void>(
     () => {},
   );
@@ -2033,6 +2054,50 @@ export function useWorkbenchController(
     setWorkspaceSettings(settings);
   }, []);
 
+  const loadWorkspaceSettingsForRoot = useCallback(
+    (rootPath: string): Promise<WorkspaceSettings> => {
+      const cached = workspaceSettingsByRoot.resolve(rootPath);
+      if (cached) {
+        return Promise.resolve(cached);
+      }
+
+      const rootKey = normalizedWorkspaceRootKey(rootPath);
+      const pending = workspaceSettingsLoadByRootRef.current[rootKey];
+      if (pending) {
+        return pending;
+      }
+
+      const requestedRevision = workspaceSettingsByRoot.revision(rootPath);
+      const request = settingsGateway
+        .loadWorkspaceSettings(rootPath)
+        .then((settings) => {
+          const captured = workspaceSettingsByRoot.captureIfRevision(
+            rootPath,
+            requestedRevision,
+            settings,
+          );
+          if (captured) {
+            workspaceSettingsSaveCoordinator.captureCommitted(rootPath, settings);
+          }
+          return settings;
+        })
+        .finally(() => {
+          if (workspaceSettingsLoadByRootRef.current[rootKey] !== request) {
+            return;
+          }
+
+          delete workspaceSettingsLoadByRootRef.current[rootKey];
+        });
+      workspaceSettingsLoadByRootRef.current[rootKey] = request;
+      return request;
+    },
+    [
+      settingsGateway,
+      workspaceSettingsByRoot,
+      workspaceSettingsSaveCoordinator,
+    ],
+  );
+
   const persistAppSettings = useCallback(
     async (nextSettings: AppSettings) => {
       const previousSettings = appSettingsRef.current;
@@ -2088,25 +2153,50 @@ export function useWorkbenchController(
 
   const persistWorkspaceSettings = useCallback(
     async (rootPath: string, nextSettings: WorkspaceSettings) => {
-      const previousSettings = workspaceSettingsRef.current;
       const isRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath);
+      const previousSettings =
+        workspaceSettingsByRoot.resolve(rootPath) ??
+        (isRootActive() ? workspaceSettingsRef.current : null);
+
+      const saveRevision = workspaceSettingsByRoot.capture(rootPath, nextSettings);
 
       if (isRootActive()) {
         applyWorkspaceSettings(nextSettings);
       }
 
       try {
-        await settingsGateway.saveWorkspaceSettings(rootPath, nextSettings);
+        await workspaceSettingsSaveCoordinator.save(
+          rootPath,
+          previousSettings,
+          nextSettings,
+          () => settingsGateway.saveWorkspaceSettings(rootPath, nextSettings),
+        );
       } catch (error) {
-        if (isRootActive()) {
-          applyWorkspaceSettings(previousSettings);
+        if (workspaceSettingsByRoot.revision(rootPath) !== saveRevision) {
+          throw error;
+        }
+
+        const committedSettings = workspaceSettingsSaveCoordinator.committed(rootPath);
+        if (committedSettings) {
+          workspaceSettingsByRoot.capture(rootPath, committedSettings);
+        }
+        if (!committedSettings) {
+          workspaceSettingsByRoot.forget(rootPath);
+        }
+        if (isRootActive() && committedSettings) {
+          applyWorkspaceSettings(committedSettings);
         }
 
         throw error;
       }
     },
-    [applyWorkspaceSettings, settingsGateway],
+    [
+      applyWorkspaceSettings,
+      settingsGateway,
+      workspaceSettingsByRoot,
+      workspaceSettingsSaveCoordinator,
+    ],
   );
 
   const cacheCurrentWorkspaceState = useCallback(
@@ -2412,7 +2502,7 @@ export function useWorkbenchController(
     documentsRef,
     activeDocument,
     appSettingsRef,
-    workspaceSettingsRef,
+    workspaceSettingsForRoot: workspaceSettingsByRoot.resolve,
     setLanguageServerDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
     setPhpLocalDiagnosticsByPath,
@@ -3329,7 +3419,9 @@ export function useWorkbenchController(
 
     if (currentRootPath) {
       clearPhpstanDiagnosticsForRoot(currentRootPath);
-      await stopProjectRuntimes(currentRootPath);
+      await stopProjectRuntimes(
+        workspaceRuntimeRootByTabRef.current[currentRootPath] ?? currentRootPath,
+      );
       languageServerDiagnosticsCoalescerRef.current?.dropRoot(currentRootPath);
       javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(
         currentRootPath,
@@ -3341,6 +3433,7 @@ export function useWorkbenchController(
     currentWorkspaceRootRef.current = null;
     workspaceStateCacheRef.current = {};
     workspaceIdentityByRootRef.current = {};
+    workspaceRuntimeRootByTabRef.current = {};
     editorConfigCacheRef.current = {};
     resetFilePrefetchState();
     languageServerRuntimeStatusByRootRef.current = {};
@@ -3749,6 +3842,19 @@ export function useWorkbenchController(
       clearJavaScriptTypeScriptLanguageServerDiagnostics();
       clearPhpLocalDiagnostics();
       let workspaceSettings = defaultWorkspaceSettings();
+      const pendingWorkspaceSettingsSave =
+        workspaceSettingsSaveCoordinator.waitForIdle(path);
+
+      if (pendingWorkspaceSettingsSave) {
+        await pendingWorkspaceSettingsSave;
+      }
+
+      if (!isCurrentOpenWorkspaceRequest()) {
+        return;
+      }
+
+      const workspaceSettingsRevisionAtLoad =
+        workspaceSettingsByRoot.revision(path);
 
       try {
         workspaceSettings = await settingsGateway.loadWorkspaceSettings(path);
@@ -3762,6 +3868,19 @@ export function useWorkbenchController(
 
       if (!isCurrentOpenWorkspaceRequest()) {
         return;
+      }
+
+      const capturedWorkspaceSettings = workspaceSettingsByRoot.captureIfRevision(
+        path,
+        workspaceSettingsRevisionAtLoad,
+        workspaceSettings,
+      );
+      if (capturedWorkspaceSettings) {
+        workspaceSettingsSaveCoordinator.captureCommitted(path, workspaceSettings);
+      }
+      if (!capturedWorkspaceSettings) {
+        workspaceSettings =
+          workspaceSettingsByRoot.resolve(path) ?? workspaceSettings;
       }
 
       if (options.identityDescriptor) {
@@ -3778,6 +3897,12 @@ export function useWorkbenchController(
           previousIdentity &&
           previousIdentity.workspaceId !== options.identityDescriptor.workspaceId
         ) {
+          delete workspaceRuntimeRootByTabRef.current[
+            previousIdentity.selectedPath
+          ];
+          delete workspaceRuntimeRootByTabRef.current[
+            previousIdentity.canonicalRoot
+          ];
           removeWorkspaceIdentityMappings(
             workspaceIdentityByRootRef.current,
             previousIdentity,
@@ -3798,6 +3923,10 @@ export function useWorkbenchController(
         workspaceIdentityByRootRef.current[path] = identityDescriptor;
         workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot] =
           identityDescriptor;
+        workspaceRuntimeRootByTabRef.current[path] =
+          identityDescriptor.canonicalRoot;
+        workspaceRuntimeRootByTabRef.current[identityDescriptor.canonicalRoot] =
+          identityDescriptor.canonicalRoot;
       }
       currentWorkspaceRootRef.current = path;
       lastLanguageServerCrashRef.current = null;
@@ -3948,6 +4077,7 @@ export function useWorkbenchController(
 
       try {
         const smartMode = await smartModeGateway.setMode(
+          identityDescriptor?.canonicalRoot ?? path,
           workspaceSettings.intelligenceMode,
         );
 
@@ -4155,6 +4285,8 @@ export function useWorkbenchController(
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
       workspaceDetection,
+      workspaceSettingsByRoot,
+      workspaceSettingsSaveCoordinator,
       workspaceTrustGateway,
       refreshJavaScriptTypeScriptLanguageServerPlan,
     ],
@@ -4205,6 +4337,7 @@ export function useWorkbenchController(
         ),
       );
       workspaceIdentityByRootRef.current = {};
+      workspaceRuntimeRootByTabRef.current = {};
       for (const workspaceId of workspaceIds) {
         void workspaceGateways.identity
           .unregister(workspaceId)
@@ -5085,6 +5218,22 @@ export function useWorkbenchController(
       ),
   ).length;
 
+  const stopProjectRuntimesForWorkspaceClose = useCallback(
+    (rootPath?: string) => {
+      if (!rootPath) {
+        return stopProjectRuntimes(rootPath);
+      }
+
+      const identityDescriptor = workspaceIdentityByRootRef.current[rootPath];
+      return stopProjectRuntimes(
+        workspaceRuntimeRootByTabRef.current[rootPath] ??
+          identityDescriptor?.canonicalRoot ??
+          rootPath,
+      );
+    },
+    [stopProjectRuntimes],
+  );
+
   const {
     closeApplicationWindow,
     closeWorkspaceTab: closeWorkspaceTabWithLifecycle,
@@ -5105,7 +5254,7 @@ export function useWorkbenchController(
     persistAppSettings,
     closeSyncedLanguageServerDocumentsForRoot,
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-    stopProjectRuntimes,
+    stopProjectRuntimes: stopProjectRuntimesForWorkspaceClose,
     forgetLanguageServerRuntimeStatuses,
     forgetLatencyTrackerForRoot,
     unregisterWorkspace: (workspaceId) =>
@@ -5122,6 +5271,10 @@ export function useWorkbenchController(
 
   const closeWorkspaceTab = useCallback(
     async (path: string) => {
+      const rootKey = normalizedWorkspaceRootKey(path);
+      const runtimeRootPath = workspaceRuntimeRootByTabRef.current[path] ?? path;
+      workspaceCloseGenerationByRootRef.current[rootKey] =
+        (workspaceCloseGenerationByRootRef.current[rootKey] ?? 0) + 1;
       await closeWorkspaceTabWithLifecycle(path);
 
       if (
@@ -5132,12 +5285,16 @@ export function useWorkbenchController(
         return;
       }
 
+      workspaceSettingsByRoot.forget(path);
+      delete workspaceRuntimeRootByTabRef.current[path];
+      delete workspaceRuntimeRootByTabRef.current[runtimeRootPath];
+
       recentlyClosedTabsRef.current = clearRecentlyClosedTabs(
         recentlyClosedTabsRef.current,
         path,
       );
     },
-    [closeWorkspaceTabWithLifecycle],
+    [closeWorkspaceTabWithLifecycle, workspaceSettingsByRoot],
   );
 
   const recentlyClosedDocumentViewState = useCallback(
@@ -5638,7 +5795,10 @@ export function useWorkbenchController(
 
       try {
         const previousMode = intelligenceMode;
-        const state = await smartModeGateway.setMode(mode);
+        const state = await smartModeGateway.setMode(
+          workspaceIdentityDescriptor?.canonicalRoot ?? requestedRoot,
+          mode,
+        );
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
@@ -5708,6 +5868,7 @@ export function useWorkbenchController(
       startInitialIndexScan,
       stopLanguageServerRuntime,
       workspaceDescriptor,
+      workspaceIdentityDescriptor,
       workspaceRoot,
     ],
   );
@@ -8026,6 +8187,25 @@ export function useWorkbenchController(
       nextTrusted: boolean | null,
     ) => {
       const requestedRoot = workspaceRoot;
+      const requestedRootGeneration = requestedRoot
+        ? workspaceCloseGenerationByRootRef.current[
+            normalizedWorkspaceRootKey(requestedRoot)
+          ] ?? 0
+        : null;
+      const requestIsCurrent = () => {
+        if (!requestedRoot) {
+          return false;
+        }
+
+        const currentRootGeneration =
+          workspaceCloseGenerationByRootRef.current[
+            normalizedWorkspaceRootKey(requestedRoot)
+          ] ?? 0;
+        return (
+          currentRootGeneration === requestedRootGeneration &&
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        );
+      };
 
       try {
         const previousAppSettings = appSettingsRef.current;
@@ -8039,7 +8219,7 @@ export function useWorkbenchController(
           return;
         }
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!requestIsCurrent()) {
           return;
         }
 
@@ -8050,9 +8230,9 @@ export function useWorkbenchController(
             null,
           );
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-            return;
-          }
+        if (!requestIsCurrent()) {
+          return;
+        }
         }
 
         const previousMode = intelligenceModeRef.current;
@@ -8060,10 +8240,11 @@ export function useWorkbenchController(
 
         if (nextWorkspaceSettings.intelligenceMode !== previousMode) {
           const smartMode = await smartModeGateway.setMode(
+            workspaceIdentityDescriptor?.canonicalRoot ?? requestedRoot,
             nextWorkspaceSettings.intelligenceMode,
           );
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
 
@@ -8130,7 +8311,7 @@ export function useWorkbenchController(
           autoStartedLanguageServerRootRef.current = requestedRoot;
           await stopLanguageServerRuntime(requestedRoot);
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
         }
@@ -8144,7 +8325,7 @@ export function useWorkbenchController(
 
         intelligenceModeRef.current = nextMode;
         await persistWorkspaceSettings(requestedRoot, resolvedWorkspaceSettings);
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!requestIsCurrent()) {
           return;
         }
 
@@ -8184,6 +8365,10 @@ export function useWorkbenchController(
           }
         }
 
+        if (!requestIsCurrent()) {
+          return;
+        }
+
         if (shouldRestartJavaScriptTypeScriptRuntime) {
           autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
           await refreshJavaScriptTypeScriptLanguageServerPlan(
@@ -8191,7 +8376,7 @@ export function useWorkbenchController(
             resolvedWorkspaceSettings.javaScriptTypeScriptVersion,
           );
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
 
@@ -8209,7 +8394,7 @@ export function useWorkbenchController(
           ) {
             await stopJavaScriptTypeScriptLanguageServerRuntime(requestedRoot);
 
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            if (!requestIsCurrent()) {
               return;
             }
           }
@@ -8231,7 +8416,7 @@ export function useWorkbenchController(
           await runPhpWorkspaceProbe(requestedRoot);
           refreshedPhpLanguageServerPlan = true;
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
         }
@@ -8241,7 +8426,7 @@ export function useWorkbenchController(
             requestedRoot,
             nextTrusted,
           );
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
 
@@ -8250,7 +8435,7 @@ export function useWorkbenchController(
           if (!trust.trusted) {
             await stopLanguageServerRuntime(requestedRoot);
 
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            if (!requestIsCurrent()) {
               return;
             }
           }
@@ -8259,7 +8444,7 @@ export function useWorkbenchController(
             await refreshLanguageServerPlan(requestedRoot);
             refreshedPhpLanguageServerPlan = true;
 
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+            if (!requestIsCurrent()) {
               return;
             }
           }
@@ -8276,7 +8461,7 @@ export function useWorkbenchController(
           ];
           await refreshLanguageServerPlan(requestedRoot);
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
         }
@@ -8284,7 +8469,7 @@ export function useWorkbenchController(
         if (!shouldIndexWorkspace(previousMode) && shouldIndexWorkspace(nextMode)) {
           await startInitialIndexScan(requestedRoot);
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
         }
@@ -8292,7 +8477,7 @@ export function useWorkbenchController(
         if (shouldIndexWorkspace(previousMode) && !shouldIndexWorkspace(nextMode)) {
           await clearWorkspaceIndex(requestedRoot);
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
         }
@@ -8300,12 +8485,12 @@ export function useWorkbenchController(
         if (shouldRediscoverGitRepositories) {
           await runGitRepositoryDiscovery(requestedRoot, resolvedWorkspaceSettings);
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          if (!requestIsCurrent()) {
             return;
           }
         }
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        if (!requestIsCurrent()) {
           return;
         }
 
@@ -8333,6 +8518,7 @@ export function useWorkbenchController(
       stopJavaScriptTypeScriptLanguageServerRuntime,
       stopLanguageServerRuntime,
       workspaceDescriptor,
+      workspaceIdentityDescriptor,
       workspaceRoot,
       workspaceTrust,
       workspaceTrustGateway,
@@ -9226,7 +9412,6 @@ export function useWorkbenchController(
         }
 
         applyAppSettings(settings);
-
         const workspacePath =
           settings.recentWorkspacePath ?? settings.workspaceTabs[0] ?? null;
 
@@ -9239,13 +9424,25 @@ export function useWorkbenchController(
         }
 
         void openWorkspacePath(workspacePath);
+        settings.workspaceTabs.forEach((rootPath) => {
+          if (workspaceRootKeysEqual(rootPath, workspacePath)) {
+            return;
+          }
+          void loadWorkspaceSettingsForRoot(rootPath).catch(() => undefined);
+        });
       })
       .catch((error) => reportError("Settings", error));
 
     return () => {
       active = false;
     };
-  }, [applyAppSettings, openWorkspacePath, reportError, settingsGateway]);
+  }, [
+    applyAppSettings,
+    loadWorkspaceSettingsForRoot,
+    openWorkspacePath,
+    reportError,
+    settingsGateway,
+  ]);
 
   useEffect(() => {
     let active = true;

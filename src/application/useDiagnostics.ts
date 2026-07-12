@@ -6,7 +6,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { EditorDocument } from "../domain/workspace";
-import type { AppSettings, WorkspaceSettings } from "../domain/settings";
+import type { AppSettings } from "../domain/settings";
 import {
   capDiagnosticNotices,
   capWorkbenchNotices,
@@ -46,6 +46,7 @@ import {
   normalizedWorkspaceRootKey,
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
+import type { WorkspaceSettingsForRoot } from "./workspaceSettingsForRoot";
 
 const PHPSTAN_DIAGNOSTIC_NOTICE_LIMIT = 500;
 const ESLINT_DIAGNOSTIC_NOTICE_LIMIT = 500;
@@ -72,7 +73,7 @@ export interface DiagnosticsDependencies {
 
   // Settings snapshots (shell-owned refs).
   appSettingsRef: MutableRefObject<AppSettings>;
-  workspaceSettingsRef: MutableRefObject<WorkspaceSettings>;
+  workspaceSettingsForRoot: WorkspaceSettingsForRoot;
 
   // Diagnostics state setters (shell-owned useState).
   setLanguageServerDiagnosticsByPath: Dispatch<
@@ -209,7 +210,7 @@ export function useDiagnostics(
     documentsRef,
     activeDocument,
     appSettingsRef,
-    workspaceSettingsRef,
+    workspaceSettingsForRoot,
     setLanguageServerDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
     setPhpLocalDiagnosticsByPath,
@@ -231,7 +232,6 @@ export function useDiagnostics(
     isLanguageServerSessionCurrentForRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   } = dependencies;
-
   const replaceEslintDiagnostics = useCallback(
     (rootPath: string, notices: WorkbenchNotice[]) => {
       const groupKey = `eslint:${rootPath}`;
@@ -1006,12 +1006,6 @@ export function useDiagnostics(
         return;
       }
 
-      if (typeof event.version === "number") {
-        javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
-          diagnosticUriSyncKey
-        ] = event.version;
-      }
-
       const groupKey = javaScriptTypeScriptDiagnosticNoticeGroup(event.uri);
       const diagnosticPath = pathFromLanguageServerUri(event.uri);
       const isActiveRoot = workspaceRootKeysEqual(
@@ -1019,7 +1013,20 @@ export function useDiagnostics(
         diagnosticsRootPath,
       );
 
-      if (!workspaceSettingsRef.current.javaScriptTypeScriptValidation) {
+      const diagnosticsWorkspaceSettings = workspaceSettingsForRoot(
+        diagnosticsRootPath,
+      );
+      if (!diagnosticsWorkspaceSettings) {
+        return;
+      }
+
+      if (typeof event.version === "number") {
+        javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
+          diagnosticUriSyncKey
+        ] = event.version;
+      }
+
+      if (!diagnosticsWorkspaceSettings.javaScriptTypeScriptValidation) {
         if (isActiveRoot) {
           setNotices((current) =>
             replaceWorkbenchNoticeGroup(current, groupKey, []),
@@ -1070,7 +1077,7 @@ export function useDiagnostics(
         );
       }
     },
-    [updateJavaScriptTypeScriptDiagnosticsForRoot],
+    [updateJavaScriptTypeScriptDiagnosticsForRoot, workspaceSettingsForRoot],
   );
 
   return {

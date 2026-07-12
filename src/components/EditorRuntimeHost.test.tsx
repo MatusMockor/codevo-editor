@@ -33,6 +33,7 @@ const runtimeMocks = vi.hoisted(() => ({
     runtimeMocks.javaScriptContext = context;
     return { dispose: vi.fn() };
   }),
+  configureTypescriptJavascriptDefaultsOnce: vi.fn(),
 }));
 
 vi.mock("./languageServerMonacoProviders", async (importOriginal) => ({
@@ -55,6 +56,11 @@ vi.mock(
       runtimeMocks.registerJavaScriptTypeScript,
   }),
 );
+vi.mock("./typescriptJavascriptDefaults", async (importOriginal) => ({
+  ...(await importOriginal()),
+  configureTypescriptJavascriptDefaultsOnce:
+    runtimeMocks.configureTypescriptJavascriptDefaultsOnce,
+}));
 
 describe("EditorRuntimeHost", () => {
   let container: HTMLDivElement;
@@ -93,6 +99,7 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.registerComposer).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.registerNpm).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.registerJavaScriptTypeScript).toHaveBeenCalledTimes(1);
+    expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.providerContext?.getActiveDocument()?.name).toBe(
       "left.php",
     );
@@ -123,6 +130,90 @@ describe("EditorRuntimeHost", () => {
 
     expect(runtimeMocks.registerLanguage).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.registerJavaScriptTypeScript).toHaveBeenCalledTimes(1);
+    expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
+  });
+
+  it("configures global TypeScript defaults once for one, two, or four surfaces", async () => {
+    const fixture = runtimeFixture();
+
+    for (const count of [1, 2, 4]) {
+      await act(async () => {
+        root.render(
+          <EditorRuntimeHost>
+            {Array.from({ length: count }, (_, index) => (
+              <RuntimeSurface
+                {...fixture}
+                groupId={`group-${index}`}
+                key={`group-${index}`}
+                name={`surface-${index}.ts`}
+              />
+            ))}
+          </EditorRuntimeHost>,
+        );
+      });
+
+      expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("reconfigures TypeScript defaults only when effective workspace settings change", async () => {
+    const fixture = runtimeFixture();
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface {...fixture} groupId="left" name="left.ts" />
+          <RuntimeSurface {...fixture} groupId="right" name="right.ts" />
+        </EditorRuntimeHost>,
+      );
+    });
+    expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-group='right']")?.click();
+    });
+    expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface
+            {...fixture}
+            groupId="left"
+            name="left.ts"
+            validationEnabled={false}
+          />
+          <RuntimeSurface
+            {...fixture}
+            groupId="right"
+            name="right.ts"
+            validationEnabled={false}
+          />
+        </EditorRuntimeHost>,
+      );
+    });
+    expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(2);
+    expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenLastCalledWith(
+      fixture.monaco,
+      { managedLanguageServerActive: false, validationEnabled: false },
+    );
+  });
+
+  it("configures Monaco defaults for a rootless surface without admitting provider or model ownership", async () => {
+    const fixture = runtimeFixture(null);
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface {...fixture} groupId="scratch" name="scratch.ts" />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledOnce();
+    expect(runtimeMocks.registerLanguage).not.toHaveBeenCalled();
+    expect(runtimeMocks.registerJavaScriptTypeScript).not.toHaveBeenCalled();
+    expect(fixture.model.dispose).not.toHaveBeenCalled();
   });
 
   it("focuses the registered Monaco editor for a command-selected group", async () => {
@@ -708,11 +799,13 @@ function RuntimeSurface({
   path,
   rightEditor,
   transitionWorkspaceRoot,
+  validationEnabled = true,
   workspaceRoot,
 }: ReturnType<typeof runtimeFixture> & {
   groupId: string;
   name: string;
   transitionWorkspaceRoot?: string;
+  validationEnabled?: boolean;
 }) {
   const runtime = useEditorRuntimeContext();
   const registrationRef = useRef<EditorRuntimeSurfaceRegistration | null>(null);
@@ -765,6 +858,10 @@ function RuntimeSurface({
         startColumn: 1,
         startLineNumber: 1,
       }),
+      typescriptJavascriptDefaults: {
+        managedLanguageServerActive: false,
+        validationEnabled,
+      },
       workspaceIdentityDescriptor: null,
       workspaceRoot,
     } as unknown as EditorRuntimeSurfaceRegistration;
@@ -780,6 +877,7 @@ function RuntimeSurface({
     monaco,
     rightEditor,
     runtime,
+    validationEnabled,
     workspaceRoot,
   ]);
 

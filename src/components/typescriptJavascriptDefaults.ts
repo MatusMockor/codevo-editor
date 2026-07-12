@@ -5,6 +5,26 @@ export interface TypescriptJavascriptDefaultsOptions {
   validationEnabled?: boolean;
 }
 
+const configuredDefaultsByMonaco = new WeakMap<object, string>();
+
+export function configureTypescriptJavascriptDefaultsOnce(
+  monaco: typeof Monaco,
+  options: TypescriptJavascriptDefaultsOptions = {},
+): boolean {
+  if (!monaco.languages.typescript) {
+    return false;
+  }
+
+  const configurationKey = defaultsConfigurationKey(options);
+  if (configuredDefaultsByMonaco.get(monaco) === configurationKey) {
+    return false;
+  }
+
+  configureTypescriptJavascriptDefaults(monaco, options);
+  configuredDefaultsByMonaco.set(monaco, configurationKey);
+  return true;
+}
+
 type ModernCompilerOptions = Monaco.languages.typescript.CompilerOptions & {
   allowImportingTsExtensions?: boolean;
   resolvePackageJsonExports?: boolean;
@@ -106,4 +126,13 @@ function supportsModernInferredProjectOptions(
     moduleResolutionKind.Bundler !== undefined ||
     moduleResolutionKind.NodeNext !== undefined
   );
+}
+
+function defaultsConfigurationKey(
+  options: TypescriptJavascriptDefaultsOptions,
+): string {
+  return [
+    options.managedLanguageServerActive ?? false,
+    options.validationEnabled ?? true,
+  ].join(":");
 }

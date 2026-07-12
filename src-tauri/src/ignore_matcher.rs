@@ -70,10 +70,30 @@ impl GitignoreWorkspaceIgnoreMatcher {
         Self::load_with_options(root, WorkspaceIgnoreOptions::default())
     }
 
+    pub fn load_with_cancellation(
+        root: &Path,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> io::Result<Self> {
+        Self::load_with_options_and_cancellation(
+            root,
+            WorkspaceIgnoreOptions::default(),
+            is_cancelled,
+        )
+    }
+
     pub fn load_with_options(root: &Path, options: WorkspaceIgnoreOptions) -> io::Result<Self> {
+        Self::load_with_options_and_cancellation(root, options, &|| false)
+    }
+
+    fn load_with_options_and_cancellation(
+        root: &Path,
+        options: WorkspaceIgnoreOptions,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> io::Result<Self> {
+        ensure_load_current(is_cancelled)?;
         let root = root.canonicalize()?;
         let mut scopes = Vec::new();
-        add_gitignore_scopes(&root, &options, &mut scopes)?;
+        add_gitignore_scopes(&root, &options, &mut scopes, is_cancelled)?;
 
         Ok(Self {
             options,
@@ -114,7 +134,9 @@ fn add_gitignore_scopes(
     directory: &Path,
     options: &WorkspaceIgnoreOptions,
     scopes: &mut Vec<GitignoreScope>,
+    is_cancelled: &dyn Fn() -> bool,
 ) -> io::Result<()> {
+    ensure_load_current(is_cancelled)?;
     let gitignore_path = directory.join(".gitignore");
 
     if gitignore_path.is_file() {
@@ -131,6 +153,7 @@ fn add_gitignore_scopes(
     }
 
     for entry in fs::read_dir(directory)? {
+        ensure_load_current(is_cancelled)?;
         let entry = entry?;
         let file_type = entry.file_type()?;
 
@@ -165,10 +188,21 @@ fn add_gitignore_scopes(
             continue;
         }
 
-        add_gitignore_scopes(&child, options, scopes)?;
+        add_gitignore_scopes(&child, options, scopes, is_cancelled)?;
     }
 
     Ok(())
+}
+
+fn ensure_load_current(is_cancelled: &dyn Fn() -> bool) -> io::Result<()> {
+    if !is_cancelled() {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Interrupted,
+        "workspace ignore matcher load cancelled",
+    ))
 }
 
 fn matches_gitignore_scopes(scopes: &[GitignoreScope], path: &Path, is_directory: bool) -> bool {

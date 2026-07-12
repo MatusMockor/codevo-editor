@@ -80,6 +80,27 @@ describe("conflict marker editor support", () => {
     ]);
   });
 
+  it("does not read or parse a model rejected by the caller's large-file policy", () => {
+    const model = createModel(conflict, "file:///workspace/large.php");
+    const getValue = vi.spyOn(model, "getValue");
+    const registration = providerRegistration();
+    const monaco = createMonaco(registration.registerCodeActionProvider);
+
+    const disposables = registerConflictMarkerCodeActions(
+      monaco as never,
+      { executeEdits: vi.fn(), getModel: vi.fn(() => model) } as never,
+      { shouldInspectModel: () => false },
+    );
+    const actions = registration.provider?.provideCodeActions(
+      model,
+      range(1, 1, 1, 1),
+    );
+
+    expect(actions?.actions).toEqual([]);
+    expect(getValue).not.toHaveBeenCalled();
+    disposables.forEach((disposable) => disposable.dispose());
+  });
+
   it("applies a provided quick fix through Monaco's plain command registry", () => {
     const model = createModel(conflict, "file:///workspace/example.ts");
     const registration = providerRegistration();
