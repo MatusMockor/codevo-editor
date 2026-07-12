@@ -1043,6 +1043,9 @@ export function useWorkbenchController(
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [artisanMakePaletteRoot, setArtisanMakePaletteRoot] = useState<
+    string | null
+  >(null);
   // Per-workspace bookmarks (PhpStorm parity). Cached/restored alongside the
   // rest of the per-tab workbench state so one project's bookmarks can never
   // leak into another project's editor gutter or panel.
@@ -1277,6 +1280,23 @@ export function useWorkbenchController(
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const artisanMakePaletteOpen = Boolean(
+    workspaceRoot &&
+      artisanMakePaletteRoot &&
+      workspaceRootKeysEqual(workspaceRoot, artisanMakePaletteRoot),
+  );
+  const openArtisanMakePalette = useCallback(() => {
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (!rootPath) {
+      return;
+    }
+
+    setArtisanMakePaletteRoot(rootPath);
+  }, []);
+  const closeArtisanMakePalette = useCallback(() => {
+    setArtisanMakePaletteRoot(null);
+  }, []);
   const reclassifyPhpLanguageServerDiagnosticsForRootRef = useRef<
     (rootPath: string) => void
   >(() => {});
@@ -3197,6 +3217,7 @@ export function useWorkbenchController(
     setOpenPaths([]);
     setActivePath(null);
     setPreviewPath(null);
+    setArtisanMakePaletteRoot(null);
     setRecentFiles([]);
     setRecentLocations([]);
     setBookmarks([]);
@@ -3544,6 +3565,7 @@ export function useWorkbenchController(
       const requestToken = openWorkspaceRequestTokenRef.current + 1;
       openWorkspaceRequestTokenRef.current = requestToken;
       openWorkspaceRequestPathRef.current = path;
+      setArtisanMakePaletteRoot(null);
       const isCurrentOpenWorkspaceRequest = () =>
         openWorkspaceRequestTokenRef.current === requestToken &&
         workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path);
@@ -8099,6 +8121,7 @@ export function useWorkbenchController(
 
     workbenchArtisanCommands({
       hasArtisan: activePackageScripts?.hasArtisan ?? false,
+      openArtisanMakePalette,
       openRoutesPanel: openArtisanRoutesPanel,
       runInActiveTerminal,
     }).forEach((command) => registry.register(command));
@@ -8278,6 +8301,7 @@ export function useWorkbenchController(
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
+    openArtisanMakePalette,
     openArtisanRoutesPanel,
     activateWorkspaceTab,
     appSettings.keymap,
@@ -9377,6 +9401,8 @@ export function useWorkbenchController(
     openWorkspaceTodo,
     todoPanelOpen,
     hasArtisan: activePackageScripts?.hasArtisan ?? false,
+    artisanMakePaletteOpen,
+    closeArtisanMakePalette,
     workspaceTodos,
     workspaceTodosLoading,
     openPhpFileOutlineNode,
@@ -9515,6 +9541,7 @@ export function useWorkbenchController(
     hideBottomPanel,
     showBottomPanelView,
     setPaletteOpen,
+    runInActiveTerminal,
     setClassOpenOpen,
     setWorkspaceSymbolsOpen,
     setWorkspaceSymbolsQuery,

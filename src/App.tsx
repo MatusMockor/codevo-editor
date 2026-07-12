@@ -21,6 +21,7 @@ import {
 import type { EditorSurfaceEslintDisableRunner } from "./application/workbenchEslintDisableCommand";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
+import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
@@ -1574,6 +1575,12 @@ function App() {
         isOpen={workbench.paletteOpen}
         onCommandError={workbench.reportCommandError}
         onClose={() => workbench.setPaletteOpen(false)}
+      />
+
+      <ArtisanMakePalette
+        isOpen={workbench.artisanMakePaletteOpen}
+        onClose={workbench.closeArtisanMakePalette}
+        runInActiveTerminal={workbench.runInActiveTerminal}
       />
 
       <QuickOpen

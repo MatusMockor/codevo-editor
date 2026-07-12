@@ -13,6 +13,7 @@ describe("workbenchArtisanCommands", () => {
     const runInActiveTerminal = vi.fn();
     const commands = workbenchArtisanCommands({
       hasArtisan: true,
+      openArtisanMakePalette: vi.fn(),
       openRoutesPanel: vi.fn(),
       runInActiveTerminal,
     });
@@ -38,6 +39,7 @@ describe("workbenchArtisanCommands", () => {
   it("omits the tinker command when artisan is not present", () => {
     const commands = workbenchArtisanCommands({
       hasArtisan: false,
+      openArtisanMakePalette: vi.fn(),
       openRoutesPanel: vi.fn(),
       runInActiveTerminal: vi.fn(),
     });
@@ -51,6 +53,7 @@ describe("workbenchArtisanCommands", () => {
     expect(
       workbenchArtisanCommands({
         hasArtisan: false,
+        openArtisanMakePalette: vi.fn(),
         openRoutesPanel: vi.fn(),
         runInActiveTerminal: vi.fn(),
       }),
@@ -58,6 +61,7 @@ describe("workbenchArtisanCommands", () => {
 
     const commands = workbenchArtisanCommands({
       hasArtisan: true,
+      openArtisanMakePalette: vi.fn(),
       openRoutesPanel: vi.fn(),
       runInActiveTerminal: vi.fn(),
     });
@@ -65,7 +69,11 @@ describe("workbenchArtisanCommands", () => {
     expect(
       commands
         .filter(({ id }) =>
-          !["artisan.tinker", "artisan.route:list.terminal"].includes(id),
+          ![
+            "artisan.make",
+            "artisan.tinker",
+            "artisan.route:list.terminal",
+          ].includes(id),
         )
         .map(({ id, title, category }) => ({ id, title, category })),
     ).toEqual([
@@ -112,13 +120,18 @@ describe("workbenchArtisanCommands", () => {
     const runInActiveTerminal = vi.fn();
     const commands = workbenchArtisanCommands({
       hasArtisan: true,
+      openArtisanMakePalette: vi.fn(),
       openRoutesPanel: vi.fn(),
       runInActiveTerminal,
     });
 
     commands
       .filter(({ id }) =>
-        !["artisan.tinker", "artisan.route:list"].includes(id),
+        ![
+          "artisan.make",
+          "artisan.tinker",
+          "artisan.route:list",
+        ].includes(id),
       )
       .forEach((command) => command.run());
 
@@ -147,6 +160,7 @@ describe("workbenchArtisanCommands", () => {
     const runInActiveTerminal = vi.fn();
     const commands = workbenchArtisanCommands({
       hasArtisan: true,
+      openArtisanMakePalette: vi.fn(),
       openRoutesPanel,
       runInActiveTerminal,
     });
@@ -155,5 +169,30 @@ describe("workbenchArtisanCommands", () => {
 
     expect(openRoutesPanel).toHaveBeenCalledOnce();
     expect(runInActiveTerminal).not.toHaveBeenCalled();
+  });
+
+  it("opens the make palette only when artisan is present", () => {
+    const openArtisanMakePalette = vi.fn();
+    const commands = workbenchArtisanCommands({
+      hasArtisan: true,
+      openArtisanMakePalette,
+      openRoutesPanel: vi.fn(),
+      runInActiveTerminal: vi.fn(),
+    });
+
+    commands.find(({ id }) => id === "artisan.make")?.run();
+
+    expect(commands.find(({ id }) => id === "artisan.make")?.title).toBe(
+      "artisan: make…",
+    );
+    expect(openArtisanMakePalette).toHaveBeenCalledOnce();
+    expect(
+      workbenchArtisanCommands({
+        hasArtisan: false,
+        openArtisanMakePalette,
+        openRoutesPanel: vi.fn(),
+        runInActiveTerminal: vi.fn(),
+      }).some(({ id }) => id === "artisan.make"),
+    ).toBe(false);
   });
 });

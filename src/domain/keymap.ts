@@ -431,6 +431,12 @@ export const keymapCommands = [
     label: "Run All Tests in File",
   },
   {
+    category: "PHP",
+    defaultShortcut: "",
+    id: "artisan.make",
+    label: "Artisan: Make",
+  },
+  {
     category: "Navigation",
     defaultShortcut: "Cmd+[",
     id: "navigation.back",

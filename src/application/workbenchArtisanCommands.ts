@@ -2,6 +2,7 @@ import type { Command } from "./commandRegistry";
 
 interface WorkbenchArtisanCommandsOptions {
   hasArtisan: boolean;
+  openArtisanMakePalette(): void;
   openRoutesPanel(): void;
   runInActiveTerminal(command: string): void;
 }
@@ -19,6 +20,7 @@ const artisanCommandNames = [
 
 export function workbenchArtisanCommands({
   hasArtisan,
+  openArtisanMakePalette,
   openRoutesPanel,
   runInActiveTerminal,
 }: WorkbenchArtisanCommandsOptions): Command[] {
@@ -27,6 +29,13 @@ export function workbenchArtisanCommands({
   }
 
   return [
+    {
+      id: "artisan.make",
+      title: "artisan: make…",
+      category: "Artisan",
+      isEnabled: (context) => context.hasWorkspace,
+      run: openArtisanMakePalette,
+    },
     ...artisanCommandNames.map<Command>((name) => ({
       id: `artisan.${name}`,
       title: `artisan: ${name}`,

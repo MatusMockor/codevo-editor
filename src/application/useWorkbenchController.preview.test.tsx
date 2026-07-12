@@ -66267,6 +66267,7 @@ interface GreeterContract
         "artisan: cache:clear",
         "artisan: config:show",
         "artisan: db:show",
+        "artisan: make…",
         "artisan: migrate:status",
         "artisan: optimize:clear",
         "artisan: queue:failed",
@@ -66275,6 +66276,11 @@ interface GreeterContract
         "artisan: tinker",
       ]);
     });
+
+    act(() => {
+      getWorkbench().commands.find(({ id }) => id === "artisan.make")?.run();
+    });
+    expect(getWorkbench().artisanMakePaletteOpen).toBe(true);
 
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
@@ -66286,6 +66292,7 @@ interface GreeterContract
         ),
       ).toBe(false);
     });
+    expect(getWorkbench().artisanMakePaletteOpen).toBe(false);
   });
 
   it("runs a gutter test by writing an artisan --filter command into the active terminal", async () => {
