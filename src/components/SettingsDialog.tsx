@@ -618,6 +618,12 @@ export function SettingsDialog({
                       editorFontSize: normalizeEditorFontSize(editorFontSize),
                     })
                   }
+                  onChangeMinimapEnabled={(minimapEnabled) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      minimapEnabled,
+                    })
+                  }
                   onChangeTheme={(theme) =>
                     updateAppSettings({
                       ...draftAppSettingsRef.current,
@@ -1747,6 +1753,7 @@ interface AppearanceSettingsProps {
   onChangeEditorFontFamily(value: string): void;
   onChangeEditorFontLigatures(enabled: boolean): void;
   onChangeEditorFontSize(value: number): void;
+  onChangeMinimapEnabled(enabled: boolean): void;
   onChangeTheme(theme: AppTheme): void;
 }
 
@@ -1756,6 +1763,7 @@ function AppearanceSettings({
   onChangeEditorFontFamily,
   onChangeEditorFontLigatures,
   onChangeEditorFontSize,
+  onChangeMinimapEnabled,
   onChangeTheme,
 }: AppearanceSettingsProps) {
   const [fontFamilyOptions, setFontFamilyOptions] = useState<string[]>([]);
@@ -1856,6 +1864,17 @@ function AppearanceSettings({
           type="checkbox"
         />
         <span>Font ligatures</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={appSettings.minimapEnabled === true}
+          onChange={(event) =>
+            onChangeMinimapEnabled(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Minimap</span>
       </label>
     </div>
   );

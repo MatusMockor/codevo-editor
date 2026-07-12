@@ -7,6 +7,7 @@ interface WorkbenchAppearanceCommandsOptions {
   zoomEditorFontOut: Command["run"];
   resetEditorFontSize: Command["run"];
   toggleEditorFontLigatures: Command["run"];
+  toggleMinimap?: Command["run"];
   openSettingsPanel: Command["run"];
   openAppearanceSettingsPanel: Command["run"];
 }
@@ -22,6 +23,7 @@ export function workbenchAppearanceCommands({
   zoomEditorFontOut,
   resetEditorFontSize,
   toggleEditorFontLigatures,
+  toggleMinimap = () => undefined,
   openSettingsPanel,
   openAppearanceSettingsPanel,
 }: WorkbenchAppearanceCommandsOptions): WorkbenchAppearanceCommands {
@@ -61,6 +63,13 @@ export function workbenchAppearanceCommands({
       },
     ],
     workbenchCommands: [
+      {
+        id: "workbench.toggleMinimap",
+        title: "View: Toggle Minimap",
+        category: "View",
+        isEnabled: () => true,
+        run: toggleMinimap,
+      },
       {
         id: "workbench.openSettings",
         title: "Open Settings",

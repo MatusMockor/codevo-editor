@@ -215,6 +215,7 @@ interface EditorSurfaceProps {
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
+  minimapEnabled?: boolean;
   isOpeningFile?: boolean;
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
@@ -382,6 +383,7 @@ function EditorSurfaceComponent({
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
+  minimapEnabled = false,
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => ({
     kind: "accepted",
@@ -1136,8 +1138,15 @@ function EditorSurfaceComponent({
       fontFamily: editorFontFamily,
       fontLigatures: monacoFontLigatures,
       fontSize: editorFontSize,
+      minimap: { enabled: minimapEnabled },
     });
-  }, [editorApi, editorFontFamily, monacoFontLigatures, editorFontSize]);
+  }, [
+    editorApi,
+    editorFontFamily,
+    monacoFontLigatures,
+    editorFontSize,
+    minimapEnabled,
+  ]);
 
   // Apply resolved `.editorconfig` indent + EOL to the ACTIVE model only, so a
   // file with a matching `.editorconfig` mirrors VS Code / PhpStorm. Guarded by
@@ -3613,7 +3622,7 @@ function EditorSurfaceComponent({
       // lines blows the frame budget and makes fast scrolling lag. Mirrors the
       // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
       maxTokenizationLineLength: 2000,
-      minimap: { enabled: false },
+      minimap: { enabled: minimapEnabled },
       // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so Cmd/Ctrl+Click
       // stays bound to go-to-definition (same as Cmd+B). Add a cursor with Alt+Click;
       // toggle persistent column/box selection with the `editor.toggleColumnSelection`
@@ -3643,6 +3652,7 @@ function EditorSurfaceComponent({
       editorFontSize,
       formatOnPaste,
       isReadOnly,
+      minimapEnabled,
       monacoFontLigatures,
     ],
   );

@@ -15,6 +15,28 @@ const enabledContext: CommandContext = {
 };
 
 describe("workbenchAppearanceCommands", () => {
+  it("toggles the persisted minimap setting", async () => {
+    const appSettings = { minimapEnabled: false };
+    const commands = allCommands(
+      workbenchAppearanceCommands({
+        shortcut: () => "",
+        zoomEditorFontIn: vi.fn(),
+        zoomEditorFontOut: vi.fn(),
+        resetEditorFontSize: vi.fn(),
+        toggleEditorFontLigatures: vi.fn(),
+        toggleMinimap: vi.fn(() => {
+          appSettings.minimapEnabled = !appSettings.minimapEnabled;
+        }),
+        openSettingsPanel: vi.fn(),
+        openAppearanceSettingsPanel: vi.fn(),
+      }),
+    );
+
+    await commands.find(({ id }) => id === "workbench.toggleMinimap")?.run();
+
+    expect(appSettings.minimapEnabled).toBe(true);
+  });
+
   it("returns appearance and settings commands in registry order with metadata", () => {
     const commands = allCommands(
       workbenchAppearanceCommands({
@@ -33,13 +55,15 @@ describe("workbenchAppearanceCommands", () => {
       "editor.fontZoomOut",
       "editor.fontZoomReset",
       "editor.toggleFontLigatures",
+      "workbench.toggleMinimap",
       "workbench.openSettings",
       "workbench.openAppearanceSettings",
     ]);
     expect(commands.slice(0, 4).every((command) => command.category === "Editor"))
       .toBe(true);
+    expect(commands[4].category).toBe("View");
     expect(
-      commands.slice(4).every((command) => command.category === "Workbench"),
+      commands.slice(5).every((command) => command.category === "Workbench"),
     ).toBe(true);
   });
 
@@ -87,6 +111,12 @@ describe("workbenchAppearanceCommands", () => {
         title: "Toggle Editor Font Ligatures",
         category: "Editor",
         shortcut: "shortcut:editor.toggleFontLigatures",
+      },
+      {
+        id: "workbench.toggleMinimap",
+        title: "View: Toggle Minimap",
+        category: "View",
+        shortcut: undefined,
       },
       {
         id: "workbench.openSettings",
@@ -141,9 +171,10 @@ describe("workbenchAppearanceCommands", () => {
     );
 
     expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual(
-      [true, true, true, true, true, true],
+      [true, true, true, true, true, true, true],
     );
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
+      true,
       true,
       true,
       true,
@@ -158,6 +189,7 @@ describe("workbenchAppearanceCommands", () => {
     const zoomEditorFontOut = vi.fn();
     const resetEditorFontSize = vi.fn();
     const toggleEditorFontLigatures = vi.fn();
+    const toggleMinimap = vi.fn();
     const openSettingsPanel = vi.fn();
     const openAppearanceSettingsPanel = vi.fn();
     const commands = allCommands(
@@ -167,6 +199,7 @@ describe("workbenchAppearanceCommands", () => {
         zoomEditorFontOut,
         resetEditorFontSize,
         toggleEditorFontLigatures,
+        toggleMinimap,
         openSettingsPanel,
         openAppearanceSettingsPanel,
       }),
@@ -180,6 +213,7 @@ describe("workbenchAppearanceCommands", () => {
     expect(zoomEditorFontOut).toHaveBeenCalledTimes(1);
     expect(resetEditorFontSize).toHaveBeenCalledTimes(1);
     expect(toggleEditorFontLigatures).toHaveBeenCalledTimes(1);
+    expect(toggleMinimap).toHaveBeenCalledTimes(1);
     expect(openSettingsPanel).toHaveBeenCalledTimes(1);
     expect(openAppearanceSettingsPanel).toHaveBeenCalledTimes(1);
   });

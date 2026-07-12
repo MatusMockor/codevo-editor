@@ -34,6 +34,7 @@ describe("settings defaults", () => {
         "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       editorFontLigatures: false,
       editorFontSize: 14,
+      minimapEnabled: false,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
@@ -112,6 +113,19 @@ describe("settings defaults", () => {
 });
 
 describe("normalizeAppSettings", () => {
+  it("round-trips a persisted minimap setting", () => {
+    expect(normalizeAppSettings({ minimapEnabled: true }).minimapEnabled).toBe(
+      true,
+    );
+    expect(normalizeAppSettings({ minimapEnabled: false }).minimapEnabled).toBe(
+      false,
+    );
+  });
+
+  it("defaults a legacy app setting without minimap state to false", () => {
+    expect(normalizeAppSettings({}).minimapEnabled).toBe(false);
+  });
+
   it("accepts valid persisted app settings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: "/project" })).toEqual({
       editorFontFamily:
@@ -119,6 +133,7 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
+      minimapEnabled: false,
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "dark",
@@ -131,6 +146,7 @@ describe("normalizeAppSettings", () => {
         editorFontLigatures: true,
         editorFontSize: 18,
         keymap: { "editor.save": "Cmd+Shift+S" },
+        minimapEnabled: true,
         recentWorkspacePath: null,
         runtimePolicy: "suspendOnBackground",
         theme: "light",
@@ -144,6 +160,7 @@ describe("normalizeAppSettings", () => {
         ...defaultKeymapSettings(),
         "editor.save": "Cmd+Shift+S",
       },
+      minimapEnabled: true,
       recentWorkspacePath: null,
       runtimePolicy: "suspendOnBackground",
       theme: "light",
@@ -161,6 +178,7 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
+      minimapEnabled: false,
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
@@ -199,6 +217,7 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
+      minimapEnabled: false,
       recentWorkspacePath: null,
       runtimePolicy: "keepAlive",
       theme: "dark",
@@ -247,6 +266,7 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
+      minimapEnabled: false,
       recentWorkspacePath: "/project/api",
       runtimePolicy: "keepAlive",
       theme: "dark",

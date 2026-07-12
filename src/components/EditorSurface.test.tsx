@@ -12245,6 +12245,58 @@ class Foo
     );
   });
 
+  it("passes the minimap setting to Monaco and updates it without remounting", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          minimapEnabled: false,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const editorElement = host.querySelector('[data-testid="monaco-editor"]');
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ minimap: { enabled: false } }),
+    );
+    editor.updateOptions.mockClear();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          minimapEnabled: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="monaco-editor"]')).toBe(
+      editorElement,
+    );
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ minimap: { enabled: true } }),
+    );
+    expect(editor.updateOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ minimap: { enabled: true } }),
+    );
+  });
+
   it("recomputes the Monaco options when the read-only state changes", async () => {
     const editableDocument: EditorDocument = {
       content: "const value = 1;\n",

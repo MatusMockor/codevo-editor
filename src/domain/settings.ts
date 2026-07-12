@@ -128,6 +128,7 @@ export interface AppSettings {
   editorFontFamily: string;
   editorFontLigatures: boolean;
   editorFontSize: number;
+  minimapEnabled?: boolean;
   keymap: KeymapSettings;
   recentWorkspacePath: string | null;
   runtimePolicy: BackgroundRuntimePolicy;
@@ -242,6 +243,7 @@ export function defaultAppSettings(): AppSettings {
     editorFontFamily: defaultEditorFontFamily,
     editorFontLigatures: defaultEditorFontLigatures,
     editorFontSize: defaultEditorFontSize,
+    minimapEnabled: false,
     keymap: defaultKeymapSettings(),
     recentWorkspacePath: null,
     runtimePolicy: "keepAlive",
@@ -400,6 +402,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     defaults.editorFontLigatures,
   );
   const keymap = normalizeKeymapSettings(value.keymap);
+  const minimapEnabled = normalizeBoolean(value.minimapEnabled, false);
   const runtimePolicy = isBackgroundRuntimePolicy(value.runtimePolicy)
     ? value.runtimePolicy
     : defaults.runtimePolicy;
@@ -415,6 +418,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     editorFontLigatures,
     editorFontSize,
     keymap,
+    minimapEnabled,
     recentWorkspacePath,
     runtimePolicy,
     theme,

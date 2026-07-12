@@ -1193,6 +1193,7 @@ describe("SettingsDialog", () => {
     ]);
     expect(inputWithLabel("Font size").type).toBe("number");
     expect(checkboxWithLabel("Font ligatures").checked).toBe(false);
+    expect(checkboxWithLabel("Minimap").checked).toBe(false);
   });
 
   it("ignores stale font family refresh results", async () => {
@@ -1328,6 +1329,25 @@ describe("SettingsDialog", () => {
         editorFontFamily: "Fira Code, monospace",
         editorFontLigatures: true,
         editorFontSize: 16,
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+
+    await act(async () => {
+      checkboxWithLabel("Minimap").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code, monospace",
+        editorFontLigatures: true,
+        editorFontSize: 16,
+        minimapEnabled: true,
       },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
