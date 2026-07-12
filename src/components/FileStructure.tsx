@@ -1,7 +1,13 @@
 import { Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { CSSProperties } from "react";
-import type { KeyboardEvent } from "react";
 import {
   flattenPhpFileOutlineNodes,
   isNavigablePhpFileOutlineNode,
@@ -41,11 +47,46 @@ export function FileStructure({
   const [activeIndex, setActiveIndex] = useState(0);
   const [query, setQuery] = useState("");
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const popupRef = useRef<HTMLElement | null>(null);
+  const listboxId = useId();
   const rows = useMemo(
     () => filteredRows(structureRows(outline?.nodes ?? []), query),
     [outline, query],
   );
   const activeRow = rows[activeIndex];
+
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const focusInput = () => {
+      const input = inputRef.current;
+      const popup = popupRef.current;
+
+      if (!input || !popup) {
+        return;
+      }
+
+      if (document.activeElement && popup.contains(document.activeElement)) {
+        return;
+      }
+
+      input.focus({ preventScroll: true });
+    };
+    focusInput();
+
+    const animationFrame = window.requestAnimationFrame?.(focusInput);
+    const timeout = window.setTimeout(focusInput, 0);
+
+    return () => {
+      if (animationFrame !== undefined) {
+        window.cancelAnimationFrame?.(animationFrame);
+      }
+      window.clearTimeout(timeout);
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -68,42 +109,81 @@ export function FileStructure({
     });
   }, [activeIndex, rows.length]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      const hasTextModifier = event.altKey || event.ctrlKey || event.metaKey;
+      const targetIsInsidePopup = containsEventTarget(
+        popupRef.current,
+        event.target,
+      );
+
+      if (event.key === "Escape") {
+        consumePopupKey(event, inputRef.current);
+        onClose();
+        return;
+      }
+
+      if (hasTextModifier || event.isComposing) {
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        consumePopupKey(event, inputRef.current);
+        setActiveIndex((current) =>
+          Math.min(current + 1, Math.max(rows.length - 1, 0)),
+        );
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        consumePopupKey(event, inputRef.current);
+        setActiveIndex((current) => Math.max(current - 1, 0));
+        return;
+      }
+
+      if (event.key === "Enter" && shouldOpenActiveElement(event.target)) {
+        consumePopupKey(event, inputRef.current);
+
+        if (activeRow) {
+          onOpenNode(activeRow.node);
+          onClose();
+        }
+        return;
+      }
+
+      if (event.key === "Backspace") {
+        if (targetIsInsidePopup && event.target !== inputRef.current) {
+          return;
+        }
+
+        routeTextKey(event, inputRef.current, () =>
+          setQuery((current) => current.slice(0, -1)),
+        );
+        return;
+      }
+
+      if (event.key.length === 1) {
+        if (targetIsInsidePopup && event.target !== inputRef.current) {
+          return;
+        }
+
+        routeTextKey(event, inputRef.current, () =>
+          setQuery((current) => `${current}${event.key}`),
+        );
+      }
+    };
+
+    window.addEventListener("keydown", handleWindowKeyDown, true);
+    return () => window.removeEventListener("keydown", handleWindowKeyDown, true);
+  }, [activeRow, isOpen, onClose, onOpenNode, rows.length]);
+
   if (!isOpen) {
     return null;
   }
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActiveIndex((current) =>
-        Math.min(current + 1, Math.max(rows.length - 1, 0)),
-      );
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((current) => Math.max(current - 1, 0));
-      return;
-    }
-
-    if (!shouldOpenActiveRow(event)) {
-      return;
-    }
-
-    if (activeRow) {
-      event.preventDefault();
-      onOpenNode(activeRow.node);
-      onClose();
-    }
-  };
 
   return (
     <div className="palette-backdrop" role="presentation" onMouseDown={onClose}>
@@ -111,17 +191,25 @@ export function FileStructure({
         aria-label="File structure"
         aria-modal="true"
         className="file-structure"
-        onKeyDown={handleKeyDown}
         onMouseDown={(event) => event.stopPropagation()}
+        ref={popupRef}
         role="dialog"
       >
         <div className="palette-search">
           <Search aria-hidden="true" size={17} />
           <input
+            aria-activedescendant={
+              activeRow ? structureOptionId(listboxId, activeIndex) : undefined
+            }
+            aria-autocomplete="list"
+            aria-controls={listboxId}
+            aria-expanded="true"
             aria-label="Search symbols"
             autoFocus
             onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder={structurePlaceholder(fileName, scope)}
+            ref={inputRef}
+            role="combobox"
             value={query}
           />
         </div>
@@ -142,7 +230,7 @@ export function FileStructure({
           </label>
         ) : null}
 
-        <div className="quick-open-results" role="listbox">
+        <div className="quick-open-results" id={listboxId} role="listbox">
           {isLoading ? <div className="quick-open-state">Loading symbols...</div> : null}
           {!isLoading && !outline ? (
             <div className="quick-open-state">Open a supported file first</div>
@@ -159,6 +247,7 @@ export function FileStructure({
                   : "quick-open-result"
               }
               disabled={!isNavigablePhpFileOutlineNode(row.node)}
+              id={structureOptionId(listboxId, index)}
               key={row.node.id}
               onClick={() => {
                 onOpenNode(row.node);
@@ -248,13 +337,7 @@ function structureRows(nodes: PhpFileOutlineNode[]): FlatPhpFileOutlineNode[] {
   return flattenPhpFileOutlineNodes(nodes);
 }
 
-function shouldOpenActiveRow(event: KeyboardEvent<HTMLElement>): boolean {
-  if (event.key !== "Enter") {
-    return false;
-  }
-
-  const target = event.target;
-
+function shouldOpenActiveElement(target: EventTarget | null): boolean {
   if (target instanceof HTMLButtonElement) {
     return false;
   }
@@ -264,6 +347,44 @@ function shouldOpenActiveRow(event: KeyboardEvent<HTMLElement>): boolean {
   }
 
   return true;
+}
+
+function containsEventTarget(
+  container: HTMLElement | null,
+  target: EventTarget | null,
+): boolean {
+  return container !== null && target instanceof Node && container.contains(target);
+}
+
+function structureOptionId(listboxId: string, index: number): string {
+  return `${listboxId}-option-${index}`;
+}
+
+function consumePopupKey(
+  event: globalThis.KeyboardEvent,
+  input: HTMLInputElement | null,
+): void {
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  input?.focus({ preventScroll: true });
+}
+
+function routeTextKey(
+  event: globalThis.KeyboardEvent,
+  input: HTMLInputElement | null,
+  updateQuery: () => void,
+): void {
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+
+  if (event.target === input) {
+    return;
+  }
+
+  event.preventDefault();
+  input?.focus({ preventScroll: true });
+  updateQuery();
 }
 
 function memberRowsForNode(node: PhpFileOutlineNode): FlatPhpFileOutlineNode[] {
