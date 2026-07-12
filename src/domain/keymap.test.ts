@@ -201,6 +201,47 @@ describe("keymap", () => {
     }
   });
 
+  it("registers workspace tab cycling with platform defaults and no conflicts", () => {
+    expect(
+      keymapCommands.find((command) => command.id === "workspace.nextTab"),
+    ).toMatchObject({
+      category: "Workspace",
+      defaultShortcut: "Cmd+Alt+ArrowRight",
+      label: "Next Workspace Tab",
+    });
+    expect(
+      keymapCommands.find((command) => command.id === "workspace.previousTab"),
+    ).toMatchObject({
+      category: "Workspace",
+      defaultShortcut: "Cmd+Alt+ArrowLeft",
+      label: "Previous Workspace Tab",
+    });
+
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const keymap = defaultKeymapSettings(platform);
+
+      expect(findKeymapConflicts(keymap, "workspace.nextTab", platform)).toEqual(
+        [],
+      );
+      expect(
+        findKeymapConflicts(keymap, "workspace.previousTab", platform),
+      ).toEqual([]);
+    }
+
+    expect(defaultShortcutForCommand("workspace.nextTab", "mac")).toBe(
+      "Cmd+Alt+ArrowRight",
+    );
+    expect(defaultShortcutForCommand("workspace.previousTab", "mac")).toBe(
+      "Cmd+Alt+ArrowLeft",
+    );
+    expect(defaultShortcutForCommand("workspace.nextTab", "linux")).toBe(
+      "Ctrl+Alt+ArrowRight",
+    );
+    expect(defaultShortcutForCommand("workspace.previousTab", "windows")).toBe(
+      "Ctrl+Alt+ArrowLeft",
+    );
+  });
+
   it("defaults Go to Super Method to Cmd+U on mac and Ctrl+U elsewhere (PhpStorm parity)", () => {
     expect(defaultShortcutForCommand("editor.goToSuperMethod", "mac")).toBe(
       "Cmd+U",

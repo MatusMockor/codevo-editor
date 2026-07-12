@@ -14,6 +14,11 @@ interface DispatchWorkbenchShortcutCommandOptions {
   keymap: KeymapSettings;
 }
 
+const WORKSPACE_TAB_SHORTCUT_COMMAND_IDS = [
+  "workspace.nextTab",
+  "workspace.previousTab",
+] as const satisfies readonly KeymapCommandId[];
+
 export function dispatchWorkbenchShortcutCommand({
   commandContext,
   commandIds,
@@ -21,7 +26,10 @@ export function dispatchWorkbenchShortcutCommand({
   event,
   keymap,
 }: DispatchWorkbenchShortcutCommandOptions): boolean {
-  for (const commandId of commandIds) {
+  for (const commandId of [
+    ...commandIds,
+    ...WORKSPACE_TAB_SHORTCUT_COMMAND_IDS,
+  ]) {
     if (!matchesShortcut(event, shortcutForCommand(keymap, commandId))) {
       continue;
     }

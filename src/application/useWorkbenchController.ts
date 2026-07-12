@@ -34,6 +34,7 @@ import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
+import { workbenchWorkspaceTabCommands } from "./workbenchWorkspaceTabCommands";
 import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
@@ -7220,6 +7221,13 @@ export function useWorkbenchController(
       deleteActiveDocument,
     }).forEach((command) => registry.register(command));
 
+    workbenchWorkspaceTabCommands({
+      activateWorkspaceTab,
+      activeWorkspaceRoot: workspaceRoot,
+      shortcut,
+      workspaceTabs: appSettings.workspaceTabs,
+    }).forEach((command) => registry.register(command));
+
     workbenchPhpTestCommands({
       shortcut,
       isActiveDocumentPhp: activeDocument?.language === "php",
@@ -7414,7 +7422,9 @@ export function useWorkbenchController(
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
+    activateWorkspaceTab,
     appSettings.keymap,
+    appSettings.workspaceTabs,
     closeDocument,
     createDirectory,
     createFile,

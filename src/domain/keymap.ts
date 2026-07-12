@@ -477,6 +477,18 @@ export const keymapCommands = [
     label: "Open Appearance Settings",
   },
   {
+    category: "Workspace",
+    defaultShortcut: "Cmd+Alt+ArrowRight",
+    id: "workspace.nextTab",
+    label: "Next Workspace Tab",
+  },
+  {
+    category: "Workspace",
+    defaultShortcut: "Cmd+Alt+ArrowLeft",
+    id: "workspace.previousTab",
+    label: "Previous Workspace Tab",
+  },
+  {
     category: "Workbench",
     defaultShortcut: "Cmd+J",
     id: "panel.toggle",
