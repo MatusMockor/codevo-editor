@@ -7,6 +7,7 @@ use std::{
 };
 
 const MAX_DIAGNOSTICS: usize = 2_000;
+const PHPSTAN_MEMORY_LIMIT: &str = "--memory-limit=1G";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -202,6 +203,7 @@ fn phpstan_args(config_path: Option<&str>) -> Vec<String> {
         "analyse".to_string(),
         "--error-format=json".to_string(),
         "--no-progress".to_string(),
+        PHPSTAN_MEMORY_LIMIT.to_string(),
     ];
     if let Some(config_path) = config_path {
         args.push("-c".to_string());
@@ -502,7 +504,12 @@ mod tests {
     fn builds_contract_argv_with_optional_config() {
         assert_eq!(
             phpstan_args(None),
-            vec!["analyse", "--error-format=json", "--no-progress"]
+            vec![
+                "analyse",
+                "--error-format=json",
+                "--no-progress",
+                "--memory-limit=1G"
+            ]
         );
         assert_eq!(
             phpstan_args(Some("phpstan.neon")),
@@ -510,6 +517,7 @@ mod tests {
                 "analyse",
                 "--error-format=json",
                 "--no-progress",
+                "--memory-limit=1G",
                 "-c",
                 "phpstan.neon"
             ]

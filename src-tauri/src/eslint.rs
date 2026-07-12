@@ -7,6 +7,9 @@ use std::{
 };
 
 const MAX_DIAGNOSTICS: usize = 2_000;
+const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x100000001b3;
+const ESLINT_CACHE_DIR: &str = "eslint-cache";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,8 +76,11 @@ fn run_eslint_analysis_blocking(
         Ok(None) => return EslintAnalysisResponse::Unavailable,
         Err(message) => return EslintAnalysisResponse::Error { message },
     };
+    let cache_base = std::env::temp_dir()
+        .join("mockor-editor")
+        .join(ESLINT_CACHE_DIR);
     let output = match Command::new(binary)
-        .args(eslint_args())
+        .args(eslint_args(&root, &cache_base))
         .env("LC_ALL", "C")
         .current_dir(&root)
         .output()
@@ -175,8 +181,38 @@ fn parse_eslint_output(root: &Path, stdout: &[u8]) -> Result<EslintAnalysisRespo
     })
 }
 
-fn eslint_args() -> [&'static str; 4] {
-    [".", "--format", "json", "--no-color"]
+fn eslint_args(root: &Path, cache_base: &Path) -> Vec<String> {
+    let mut args = vec![
+        ".".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+        "--no-color".to_string(),
+    ];
+    let cache_dir = workspace_cache_dir(cache_base, root);
+
+    if fs::create_dir_all(&cache_dir).is_ok() {
+        args.push("--cache".to_string());
+        args.push("--cache-location".to_string());
+        args.push(cache_dir.to_string_lossy().into_owned());
+    }
+
+    args
+}
+
+fn workspace_cache_dir(cache_base: &Path, root: &Path) -> PathBuf {
+    let normalized_root = root.to_string_lossy().replace('\\', "/");
+    cache_base.join(format!("{:016x}", stable_hash(&normalized_root)))
+}
+
+fn stable_hash(value: &str) -> u64 {
+    let mut hash = FNV_OFFSET_BASIS;
+
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    hash
 }
 
 fn resolve_binary(root: &Path, binary_path: Option<&str>) -> Result<Option<PathBuf>, String> {
@@ -235,8 +271,8 @@ fn stderr_tail(stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        eslint_args, parse_eslint_output, run_eslint_analysis_blocking, EslintAnalysisResponse,
-        MAX_DIAGNOSTICS,
+        eslint_args, parse_eslint_output, run_eslint_analysis_blocking, workspace_cache_dir,
+        EslintAnalysisResponse, MAX_DIAGNOSTICS,
     };
     use serde_json::json;
     use std::{
@@ -394,8 +430,40 @@ mod tests {
     }
 
     #[test]
-    fn builds_contract_argv() {
-        assert_eq!(eslint_args(), [".", "--format", "json", "--no-color"]);
+    fn builds_contract_argv_with_per_workspace_cache() {
+        let cache_base = temp_workspace("eslint-cache-base");
+        let root = Path::new("/workspace/project");
+        let cache_dir = cache_base.join("3d0ae75b40dc9e45");
+
+        assert_eq!(workspace_cache_dir(&cache_base, root), cache_dir);
+
+        assert_eq!(
+            eslint_args(root, &cache_base),
+            vec![
+                ".".to_string(),
+                "--format".to_string(),
+                "json".to_string(),
+                "--no-color".to_string(),
+                "--cache".to_string(),
+                "--cache-location".to_string(),
+                cache_dir.to_string_lossy().into_owned(),
+            ]
+        );
+        assert!(cache_dir.is_dir());
+        fs::remove_dir_all(cache_base).expect("cleanup cache base");
+    }
+
+    #[test]
+    fn omits_cache_argv_when_cache_directory_cannot_be_created() {
+        let root = temp_workspace("eslint-cache-fallback");
+        let cache_base = root.join("not-a-directory");
+        fs::write(&cache_base, "occupied").expect("create blocking file");
+
+        assert_eq!(
+            eslint_args(&root, &cache_base),
+            vec![".", "--format", "json", "--no-color"]
+        );
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     fn eslint_file(
