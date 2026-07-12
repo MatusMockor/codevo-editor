@@ -420,6 +420,69 @@ describe("EditorRuntimeHost", () => {
     root = createRoot(container);
   });
 
+  it("writes identical local PHP markers once for panes sharing a model", async () => {
+    const fixture = runtimeFixture();
+    const localMarkers = [localPhpMarker("Unexpected token")];
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface
+            {...fixture}
+            groupId="left"
+            key="left"
+            localMarkers={localMarkers}
+            name="shared.php"
+          />
+          <RuntimeSurface
+            {...fixture}
+            groupId="right"
+            key="right"
+            localMarkers={localMarkers}
+            name="shared.php"
+          />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    expect(
+      vi.mocked(fixture.monaco.editor.setModelMarkers).mock.calls.filter(
+        ([, owner]) => owner === "php-syntax",
+      ),
+    ).toEqual([[fixture.model, "php-syntax", localMarkers]]);
+  });
+
+  it("does not let a rejected foreign-workspace pane write local PHP markers", async () => {
+    const admitted = runtimeFixture("/workspace");
+    const foreign = runtimeFixture("/foreign");
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface
+            {...admitted}
+            groupId="left"
+            localMarkers={[localPhpMarker("Admitted marker")]}
+            name="shared.php"
+          />
+          <RuntimeSurface
+            {...foreign}
+            groupId="foreign"
+            localMarkers={[localPhpMarker("Foreign marker")]}
+            name="foreign.php"
+          />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    expect(admitted.monaco.editor.setModelMarkers).toHaveBeenCalledWith(
+      admitted.model,
+      "php-syntax",
+      [localPhpMarker("Admitted marker")],
+    );
+    expect(foreign.monaco.editor.setModelMarkers).not.toHaveBeenCalled();
+  });
+
   it("keeps a shared model alive when StrictMode splits one surface into two", async () => {
     const fixture = runtimeFixture();
 
@@ -832,6 +895,7 @@ function RuntimeSurface({
   groupId,
   featuresGateway,
   leftEditor,
+  localMarkers,
   model,
   monaco,
   name,
@@ -844,6 +908,7 @@ function RuntimeSurface({
 }: ReturnType<typeof runtimeFixture> & {
   groupId: string;
   name: string;
+  localMarkers?: readonly Monaco.editor.IMarkerData[];
   onMarkerUrisChanged?: (uris: readonly Monaco.Uri[]) => void;
   transitionWorkspaceRoot?: string;
   validationEnabled?: boolean;
@@ -924,6 +989,14 @@ function RuntimeSurface({
     workspaceRoot,
   ]);
 
+  useEffect(() => {
+    if (!localMarkers) {
+      return;
+    }
+
+    runtime?.writeLocalPhpMarkers(groupId, monaco, model, localMarkers);
+  }, [groupId, localMarkers, model, monaco, runtime]);
+
   return (
     <>
       <button data-group={groupId} onClick={() => runtime?.focusGroup(groupId)} />
@@ -985,6 +1058,17 @@ function RuntimeSurface({
       ) : null}
     </>
   );
+}
+
+function localPhpMarker(message: string): Monaco.editor.IMarkerData {
+  return {
+    endColumn: 2,
+    endLineNumber: 1,
+    message,
+    severity: 8,
+    startColumn: 1,
+    startLineNumber: 1,
+  };
 }
 
 function runtimeFixture(

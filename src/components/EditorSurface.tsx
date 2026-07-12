@@ -696,7 +696,6 @@ function EditorSurfaceComponent({
   const clearLanguageServerDiagnosticsForPathRef = useRef(
     clearLanguageServerDiagnosticsForPath,
   );
-  const lastLocalPhpValidationKeyRef = useRef<string | null>(null);
   const pendingLocalPhpValidationKeyRef = useRef<string | null>(null);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
@@ -890,7 +889,6 @@ function EditorSurfaceComponent({
   }, [clearLanguageServerDiagnosticsForPath]);
 
   useEffect(() => {
-    lastLocalPhpValidationKeyRef.current = null;
     pendingLocalPhpValidationKeyRef.current = null;
   }, [activeDocument?.path]);
 
@@ -2742,8 +2740,14 @@ function EditorSurfaceComponent({
           applyLocalPhpValidationSnapshot(
             coordinated.immediate,
             monacoApi,
-            model,
             path,
+            (markers) =>
+              runtime.writeLocalPhpMarkers(
+                generatedSurfaceId,
+                monacoApi,
+                model,
+                markers,
+              ),
             onLocalPhpDiagnosticsChange,
             setSyntaxDiagnosticsByPath,
             setPhpInspectionDiagnosticCountsByPath,
@@ -2759,14 +2763,19 @@ function EditorSurfaceComponent({
         applyLocalPhpValidationSnapshot(
           result,
           monacoApi,
-          model,
           path,
+          (markers) =>
+            runtime.writeLocalPhpMarkers(
+              generatedSurfaceId,
+              monacoApi,
+              model,
+              markers,
+            ),
           onLocalPhpDiagnosticsChange,
           setSyntaxDiagnosticsByPath,
           setPhpInspectionDiagnosticCountsByPath,
         );
 
-        lastLocalPhpValidationKeyRef.current = validationKey;
         return true;
       } catch (error) {
         errorReporterRef.current(error);
@@ -3603,7 +3612,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    monacoApi.editor.setModelMarkers(model, "php-syntax", []);
+    runtime?.writeLocalPhpMarkers(generatedSurfaceId, monacoApi, model, []);
     onLocalPhpDiagnosticsChange(activeDocument.path, []);
     setSyntaxDiagnosticsByPath((current) => {
       if (!current[activeDocument.path]) {
@@ -3627,6 +3636,8 @@ function EditorSurfaceComponent({
     activeDocument,
     activeDocumentIsLargeSmart,
     monacoApi,
+    generatedSurfaceId,
+    runtime,
     workspaceRoot,
   ]);
 
@@ -5452,8 +5463,8 @@ function applyLocalPhpValidationSnapshot(
     PhpInspectionDiagnostic
   >,
   monaco: typeof Monaco,
-  model: Monaco.editor.ITextModel,
   path: string,
+  writeMarkers: (markers: readonly Monaco.editor.IMarkerData[]) => void,
   onDiagnosticsChange: (
     path: string,
     diagnostics: LanguageServerDiagnostic[],
@@ -5494,7 +5505,7 @@ function applyLocalPhpValidationSnapshot(
     delete next[path];
     return next;
   });
-  monaco.editor.setModelMarkers(model, "php-syntax", [
+  writeMarkers([
     ...syntaxDiagnostics.map((diagnostic) =>
       toMonacoSyntaxDiagnosticMarker(monaco, diagnostic),
     ),

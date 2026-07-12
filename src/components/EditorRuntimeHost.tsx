@@ -48,6 +48,7 @@ import {
   type LocalPhpValidationComputation,
   type LocalPhpValidationRequest,
 } from "./localPhpValidationCoordinator";
+import { LocalPhpMarkerWriter } from "./localPhpMarkerWriter";
 
 export interface LocalPhpValidationSnapshot<TSyntax, TInspection> {
   inspectionDiagnostics: TInspection[];
@@ -92,6 +93,12 @@ interface EditorRuntimeContextValue {
     LocalPhpValidationSnapshot<TSyntax, TInspection>
   >;
   focusGroup(groupId: string): void;
+  writeLocalPhpMarkers(
+    consumerId: string,
+    monacoApi: typeof Monaco,
+    model: Monaco.editor.ITextModel,
+    markers: readonly Monaco.editor.IMarkerData[],
+  ): void;
   registerSurface(
     id: string,
     registration: EditorRuntimeSurfaceRegistration,
@@ -150,6 +157,7 @@ export function EditorRuntimeHost({
   const localPhpValidationCoordinatorRef = useRef(
     new LocalPhpValidationCoordinator<unknown, unknown>(),
   );
+  const localPhpMarkerWriterRef = useRef(new LocalPhpMarkerWriter());
 
   const coordinateLocalPhpValidation = useCallback(
     <TSyntax, TInspection>(
@@ -166,6 +174,23 @@ export function EditorRuntimeHost({
         LocalPhpValidationSnapshot<TSyntax, TInspection>,
         LocalPhpValidationSnapshot<TSyntax, TInspection>
       >,
+    [],
+  );
+
+  const writeLocalPhpMarkers = useCallback(
+    (
+      consumerId: string,
+      monacoApi: typeof Monaco,
+      model: Monaco.editor.ITextModel,
+      markers: readonly Monaco.editor.IMarkerData[],
+    ) => {
+      const registration = registrationsRef.current.get(consumerId);
+      if (!registration || registration.monacoApi !== monacoApi) {
+        return;
+      }
+
+      localPhpMarkerWriterRef.current.write(monacoApi, model, markers);
+    },
     [],
   );
 
@@ -568,12 +593,14 @@ export function EditorRuntimeHost({
       focusGroup,
       registerSurface,
       updateSurface,
+      writeLocalPhpMarkers,
     }),
     [
       coordinateLocalPhpValidation,
       focusGroup,
       registerSurface,
       updateSurface,
+      writeLocalPhpMarkers,
     ],
   );
 
