@@ -26,6 +26,7 @@ pub mod php_parser;
 pub mod php_symbols;
 pub mod php_tree;
 mod phpstan;
+mod pint;
 mod project;
 mod runtime_observability;
 mod search;
@@ -696,6 +697,35 @@ async fn run_phpstan_analysis_with_trust(
     }
 
     phpstan::run_phpstan_analysis(root_path, binary_path, config_path).await
+}
+
+#[tauri::command]
+async fn run_pint_format(
+    root_path: String,
+    relative_path: Option<String>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<pint::PintFormatResponse, String> {
+    run_pint_format_with_trust(root_path, relative_path, &trust).await
+}
+
+async fn run_pint_format_with_trust(
+    root_path: String,
+    relative_path: Option<String>,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<pint::PintFormatResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(pint::PintFormatResponse::Unavailable {
+            message: Some("Trust this workspace to run Pint.".to_string()),
+        });
+    }
+
+    pint::run_pint_format(root_path, relative_path).await
 }
 
 #[tauri::command]
@@ -6165,10 +6195,10 @@ mod tests {
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
         rename_git_branch, reveal_path_in_workspace, run_artisan_route_list_with_trust,
-        run_eslint_analysis_with_trust, run_phpstan_analysis_with_trust, save_git_stash,
-        search_files, stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git,
-        stash_pop_git, switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server,
+        run_eslint_analysis_with_trust, run_phpstan_analysis_with_trust,
+        run_pint_format_with_trust, save_git_stash, search_files, stage_git_files, stage_git_hunk,
+        stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
@@ -6187,6 +6217,7 @@ mod tests {
     use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use crate::php_file_outline::PhpFileOutlineNodeKind;
     use crate::phpstan::PhpStanAnalysisResponse;
+    use crate::pint::PintFormatResponse;
     use crate::trust::WorkspaceTrustService;
     use crate::workspace::FileEntryKind;
     use crate::workspace_file_commands::WorkspaceEditResult;
@@ -8976,6 +9007,45 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_workspace_blocks_pint_before_dispatch() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_workspace("pint-untrusted");
+        let binary = root.join("vendor/bin/pint");
+        let marker = root.join("pint-ran");
+        fs::create_dir_all(binary.parent().expect("binary parent"))
+            .expect("create binary directory");
+        fs::write(
+            &binary,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .expect("write pint sentinel");
+        let mut permissions = fs::metadata(&binary).expect("pint metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary, permissions).expect("make pint executable");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let response = tauri::async_runtime::block_on(run_pint_format_with_trust(
+            path_string(&root),
+            None,
+            &trust,
+        ))
+        .expect("pint response");
+
+        assert_eq!(
+            response,
+            PintFormatResponse::Unavailable {
+                message: Some("Trust this workspace to run Pint.".to_string()),
+            }
+        );
+        assert!(!marker.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     #[test]
     fn untrusted_workspace_blocks_artisan_route_list() {
         let root = temp_workspace("artisan-untrusted");
@@ -9313,6 +9383,7 @@ pub fn run() {
             revert_git_files,
             run_eslint_analysis,
             run_phpstan_analysis,
+            run_pint_format,
             run_artisan_route_list,
             search_files,
             search_project_symbols,

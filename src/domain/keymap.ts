@@ -439,6 +439,18 @@ export const keymapCommands = [
   {
     category: "PHP",
     defaultShortcut: "",
+    id: "pint.formatChangedFiles",
+    label: "Pint: Format Changed Files",
+  },
+  {
+    category: "PHP",
+    defaultShortcut: "",
+    id: "pint.formatActiveFile",
+    label: "Pint: Format Active File",
+  },
+  {
+    category: "PHP",
+    defaultShortcut: "",
     id: "artisan.make",
     label: "Artisan: Make",
   },

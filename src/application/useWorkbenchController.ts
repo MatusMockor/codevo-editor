@@ -38,6 +38,7 @@ import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistory
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpstanCommands } from "./workbenchPhpstanCommands";
+import { workbenchPintCommands } from "./workbenchPintCommands";
 import { workbenchScriptCommands } from "./workbenchScriptCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
@@ -46,6 +47,7 @@ import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands
 import { workbenchWorkspaceTabCommands } from "./workbenchWorkspaceTabCommands";
 import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
+import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpLaravelEnvTargetResolver } from "./usePhpLaravelEnvTargetResolver";
@@ -276,6 +278,7 @@ import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
+import { TauriPintGateway } from "../infrastructure/tauriPintGateway";
 import {
   clearEslintDiagnosticsForFile,
   parseEslintDiagnostics,
@@ -538,6 +541,7 @@ function languageServerDiagnosticsEqual(
 const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const eslintDiagnosticsGateway = new TauriEslintDiagnosticsGateway();
 const phpstanDiagnosticsGateway = new TauriPhpstanDiagnosticsGateway();
+const pintGateway = new TauriPintGateway();
 
 export interface RunEslintWorkspaceAnalysisOptions {
   rootPath: string;
@@ -8064,6 +8068,18 @@ export function useWorkbenchController(
   });
 
   const {
+    formatActiveFile: formatActiveFileWithPint,
+    formatChangedFiles: formatChangedFilesWithPint,
+    isRunning: pintRunning,
+  } = useWorkbenchPintCommand({
+    activeDocument,
+    currentWorkspaceRootRef,
+    gateway: pintGateway,
+    setMessage,
+    workspaceRoot,
+  });
+
+  const {
     openSettingsPanel,
     openAppearanceSettingsPanel,
     closeFloatingSurface,
@@ -8212,6 +8228,17 @@ export function useWorkbenchController(
       isActiveBufferClean: activePhpstanBufferClean,
       isWorkspaceTrusted: workspaceTrust?.trusted === true,
       ignoreIssueAtCursor: ignorePhpstanIssueAtCursor,
+    }).forEach((command) => registry.register(command));
+
+    workbenchPintCommands({
+      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
+      isRunning: pintRunning,
+      isWorkspaceTrusted: workspaceTrust?.trusted === true,
+      hasActivePhpDocument:
+        activeDocument?.language === "php" &&
+        activeDocument.path.endsWith(".php"),
+      formatChangedFiles: formatChangedFilesWithPint,
+      formatActiveFile: formatActiveFileWithPint,
     }).forEach((command) => registry.register(command));
 
     workbenchEslintCommands({
@@ -8439,6 +8466,9 @@ export function useWorkbenchController(
     activePhpstanBufferClean,
     hasPhpstanDiagnosticAtCursor,
     ignorePhpstanIssueAtCursor,
+    formatActiveFileWithPint,
+    formatChangedFilesWithPint,
+    pintRunning,
     runEslintAnalysis,
     eslintAnalysisRunning,
     activeEslintBufferClean,
