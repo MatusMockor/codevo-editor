@@ -1248,6 +1248,7 @@ function EditorSurfaceComponent({
     editor: editorApi,
     groupId,
     monacoApi,
+    onModelContentChange: (content) => onChangeRef.current(content),
     providerDependencies: {
       featuresGateway: languageServerFeaturesGateway,
       monacoApi,
@@ -3769,14 +3770,6 @@ function EditorSurfaceComponent({
   // div.
   const isReadOnly = activeDocument?.readOnly === true;
 
-  // Stable handler identity for the wrapped @monaco-editor/react Editor. It reads
-  // the latest parent onChange through a ref so the Editor never receives a fresh
-  // reference (which would dispose/recreate its model-content listener on every
-  // re-render) while still routing to the current handler (no stale closure).
-  const handleEditorChange = useCallback((value: string | undefined) => {
-    onChangeRef.current(value || "");
-  }, []);
-
   // beforeMount only depends on the theme, so a cursor move keeps the same
   // reference and never re-runs Monaco's first-frame theme/feature setup.
   const handleBeforeMount = useCallback(
@@ -3891,7 +3884,6 @@ function EditorSurfaceComponent({
         keepCurrentModel
         language={activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE}
         loading={EDITOR_LOADING_PLACEHOLDER}
-        onChange={handleEditorChange}
         onMount={handleMount}
         options={editorOptions}
         path={

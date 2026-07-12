@@ -1136,7 +1136,9 @@ describe("EditorSurface", () => {
       editor.modelContentChangeHandler?.({ changes: [{ text: modelValue }] });
     });
 
-    expect(model.getValue).not.toHaveBeenCalled();
+    // Host-owned document sync reads the shared model once; the conflict
+    // decoration path still avoids its own full-buffer read for a large edit.
+    expect(model.getValue).toHaveBeenCalledOnce();
     expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
 
@@ -13057,7 +13059,7 @@ class Foo
     );
   });
 
-  it("forwards the current parent onChange handler even though the prop identity is stable", async () => {
+  it("routes model content through the latest host registration callback", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",
@@ -13082,8 +13084,6 @@ class Foo
       await Promise.resolve();
     });
 
-    const stableOnChange = editorSurfaceMocks.props?.onChange;
-
     const secondOnChange = vi.fn();
     await act(async () => {
       root.render(
@@ -13095,13 +13095,9 @@ class Foo
       await Promise.resolve();
     });
 
-    // The wrapped Editor receives the same stable onChange reference so its memo
-    // is never broken by a fresh handler...
-    expect(editorSurfaceMocks.props?.onChange).toBe(stableOnChange);
-
-    // ...yet invoking it routes to the latest parent handler (no stale closure).
     act(() => {
-      editorSurfaceMocks.props?.onChange?.("next");
+      (model.setValue as (value: string) => void)("next");
+      editorSurfaceMocks.editor?.modelContentChangeHandler?.({ changes: [] });
     });
 
     expect(firstOnChange).not.toHaveBeenCalled();
@@ -14081,6 +14077,25 @@ function createEditor(model: FakeModel): FakeEditor {
         buffer = next;
       });
   }
+  const modelContentHandlers: Array<() => void> = [];
+  const contentObservableModel = model as FakeModel & {
+    onDidChangeContent?: (handler: () => void) => { dispose(): void };
+  };
+  if (!contentObservableModel.onDidChangeContent) {
+    contentObservableModel.onDidChangeContent = vi.fn(
+      (handler: () => void) => {
+        modelContentHandlers.push(handler);
+        return {
+          dispose: vi.fn(() => {
+            const index = modelContentHandlers.indexOf(handler);
+            if (index >= 0) {
+              modelContentHandlers.splice(index, 1);
+            }
+          }),
+        };
+      },
+    );
+  }
 
   let selection: {
     endColumn: number;
@@ -14196,6 +14211,9 @@ function createEditor(model: FakeModel): FakeEditor {
       ) => {
         editor.modelContentChangeHandlers.push(handler);
         editor.modelContentChangeHandler = (event) => {
+          modelContentHandlers.forEach((registeredHandler) =>
+            registeredHandler(),
+          );
           editor.modelContentChangeHandlers.forEach((registeredHandler) =>
             registeredHandler(event),
           );

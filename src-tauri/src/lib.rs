@@ -188,6 +188,8 @@ const OPEN_APPEARANCE_SETTINGS_MENU_ID: &str = "open-appearance-settings";
 #[cfg(target_os = "macos")]
 const QUIT_APPLICATION_MENU_ID: &str = "quit-application";
 #[cfg(target_os = "macos")]
+const NATIVE_CLOSE_REQUEST_EVENT: &str = "mockor-native-close-requested";
+#[cfg(target_os = "macos")]
 const TOGGLE_FONT_LIGATURES_EVENT: &str = "mockor-toggle-font-ligatures";
 #[cfg(target_os = "macos")]
 const TOGGLE_FONT_LIGATURES_MENU_ID: &str = "toggle-font-ligatures";
@@ -234,6 +236,26 @@ fn install_managed_phpactor(app: AppHandle, root: String) {
 fn quit_application(app: AppHandle) {
     shutdown_runtime_processes(&app);
     app.exit(0);
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum NativeCloseKind {
+    Close,
+    Quit,
+}
+
+#[tauri::command]
+fn confirm_native_shutdown(app: AppHandle, kind: NativeCloseKind) {
+    shutdown_runtime_processes(&app);
+    match kind {
+        NativeCloseKind::Quit => app.exit(0),
+        NativeCloseKind::Close => {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.destroy();
+            }
+        }
+    }
 }
 
 /// Process-wide cache of monospace font families. System fonts do not change
@@ -9395,8 +9417,7 @@ pub fn run() {
                     let _ = app.emit(OPEN_APPEARANCE_SETTINGS_EVENT, ());
                 }
                 QUIT_APPLICATION_MENU_ID => {
-                    shutdown_runtime_processes(app);
-                    app.exit(0);
+                    let _ = app.emit(NATIVE_CLOSE_REQUEST_EVENT, "quit");
                 }
                 TOGGLE_FONT_LIGATURES_MENU_ID => {
                     let _ = app.emit(TOGGLE_FONT_LIGATURES_EVENT, ());
@@ -9406,10 +9427,13 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
-            ) {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit(NATIVE_CLOSE_REQUEST_EVENT, "close");
+                return;
+            }
+
+            if matches!(event, WindowEvent::Destroyed) {
                 shutdown_runtime_processes(window.app_handle());
             }
         })
@@ -9510,6 +9534,7 @@ pub fn run() {
             rename_git_branch,
             switch_git_branch,
             quit_application,
+            confirm_native_shutdown,
             read_directory,
             read_text_file,
             remove_workspace_index_file,

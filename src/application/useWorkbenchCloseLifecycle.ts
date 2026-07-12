@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useCallback, useMemo, type MutableRefObject } from "react";
+import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
@@ -66,6 +66,10 @@ export interface WorkbenchCloseLifecycle {
   quitApplication: () => void;
 }
 
+const NATIVE_CLOSE_REQUEST_EVENT = "mockor-native-close-requested";
+
+type NativeCloseKind = "close" | "quit";
+
 export function useWorkbenchCloseLifecycle(
   dependencies: WorkbenchCloseLifecycleDependencies,
 ): WorkbenchCloseLifecycle {
@@ -97,6 +101,70 @@ export function useWorkbenchCloseLifecycle(
     reportError,
   } = dependencies;
   const closeCoordinator = useMemo(() => new CloseCoordinator(), []);
+  const nativeCloseInFlightRef = useRef(false);
+
+  const persistCurrentWorkspaceSession = useCallback(async () => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    try {
+      await persistWorkspaceSession(workspaceRoot);
+    } catch (error) {
+      reportError("Session", error);
+    }
+  }, [persistWorkspaceSession, reportError, workspaceRoot]);
+
+  const confirmNativeShutdown = useCallback(
+    async (kind: NativeCloseKind) => {
+      await persistCurrentWorkspaceSession();
+      await invoke("confirm_native_shutdown", { kind });
+    },
+    [persistCurrentWorkspaceSession],
+  );
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    let active = true;
+    let unlisten: TauriUnlistenFn | null = null;
+    listen<NativeCloseKind>(NATIVE_CLOSE_REQUEST_EVENT, (event) => {
+      if (nativeCloseInFlightRef.current) {
+        return;
+      }
+
+      nativeCloseInFlightRef.current = true;
+      if (
+        dirtyCount > 0 &&
+        !prompter.confirm("Quit and discard unsaved changes?")
+      ) {
+        queueMicrotask(() => {
+          nativeCloseInFlightRef.current = false;
+        });
+        return;
+      }
+
+      void confirmNativeShutdown(event.payload).catch((error) => {
+        nativeCloseInFlightRef.current = false;
+        reportError("Application", error);
+      });
+    })
+      .then((dispose) => {
+        if (!active) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      })
+      .catch((error) => reportError("Application", error));
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [confirmNativeShutdown, dirtyCount, prompter, reportError]);
 
   const disposeWorkspaceTabResources = useCallback(
     async (tabPath: string, targetRootPath: string) => {
@@ -273,17 +341,10 @@ export function useWorkbenchCloseLifecycle(
     }
 
     void (async () => {
-      if (workspaceRoot) {
-        try {
-          await persistWorkspaceSession(workspaceRoot);
-        } catch (error) {
-          reportError("Session", error);
-        }
-      }
-
+      await persistCurrentWorkspaceSession();
       await invoke("quit_application");
     })().catch((error) => reportError("Application", error));
-  }, [persistWorkspaceSession, reportError, workspaceRoot]);
+  }, [persistCurrentWorkspaceSession, reportError]);
 
   const closeApplicationWindow = useCallback(() => {
     if (!isTauri()) {
@@ -291,17 +352,9 @@ export function useWorkbenchCloseLifecycle(
     }
 
     void (async () => {
-      if (workspaceRoot) {
-        try {
-          await persistWorkspaceSession(workspaceRoot);
-        } catch (error) {
-          reportError("Session", error);
-        }
-      }
-
-      await getCurrentWindow().close();
+      await confirmNativeShutdown("close");
     })().catch((error) => reportError("Window", error));
-  }, [persistWorkspaceSession, reportError, workspaceRoot]);
+  }, [confirmNativeShutdown, reportError]);
 
   return {
     closeApplicationWindow,

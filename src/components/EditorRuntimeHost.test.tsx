@@ -959,8 +959,16 @@ function runtimeFixture(
           dispose: vi.fn(),
           uri: URI.parse(`file://${path}`),
         } as unknown as Monaco.editor.ITextModel));
-  const leftEditor = { focus: vi.fn(), getModel: vi.fn(() => model) };
-  const rightEditor = { focus: vi.fn(), getModel: vi.fn(() => model) };
+  const leftEditor = {
+    focus: vi.fn(),
+    getModel: vi.fn(() => model),
+    onDidChangeModel: vi.fn(() => ({ dispose: vi.fn() })),
+  };
+  const rightEditor = {
+    focus: vi.fn(),
+    getModel: vi.fn(() => model),
+    onDidChangeModel: vi.fn(() => ({ dispose: vi.fn() })),
+  };
   const monaco = monacoOverride ?? runtimeMonaco([model]);
 
   return {
@@ -989,6 +997,7 @@ function providerRefsFor(
 
 function runtimeModel(workspaceRoot: string, path: string) {
   let disposed = false;
+  let contentChangeHandler: (() => void) | null = null;
   return {
     dispose: vi.fn(() => {
       disposed = true;
@@ -1000,6 +1009,16 @@ function runtimeModel(workspaceRoot: string, path: string) {
       return "<?php";
     }),
     isDisposed: vi.fn(() => disposed),
+    onDidChangeContent: vi.fn((handler: () => void) => {
+      contentChangeHandler = handler;
+      return {
+        dispose: vi.fn(() => {
+          if (contentChangeHandler === handler) {
+            contentChangeHandler = null;
+          }
+        }),
+      };
+    }),
     uri: URI.parse(workspaceModelUri(workspaceRoot, path)!),
   } as unknown as Monaco.editor.ITextModel;
 }

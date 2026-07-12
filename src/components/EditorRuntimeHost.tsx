@@ -41,6 +41,7 @@ import {
   configureTypescriptJavascriptDefaultsOnce,
   type TypescriptJavascriptDefaultsOptions,
 } from "./typescriptJavascriptDefaults";
+import { EditorModelContentSyncCoordinator } from "./editorModelContentSyncCoordinator";
 
 interface EditorRuntimeSurfaceRouting {
   activeDocumentRef: EditorRuntimeEditorMembership["activeDocumentRef"];
@@ -57,6 +58,7 @@ interface EditorRuntimeSurfaceRegistration {
   editor: Monaco.editor.IStandaloneCodeEditor | null;
   groupId: string;
   monacoApi: typeof Monaco | null;
+  onModelContentChange(content: string): void;
   providerDependencies: EditorSurfaceLanguageProviderRegistrationDependencies;
   retainPaths: readonly string[];
   routing: EditorRuntimeSurfaceRouting;
@@ -117,6 +119,12 @@ export function EditorRuntimeHost({
   const focusRequestGenerationRef = useRef(0);
   const pendingFocusFrameRef = useRef<number | null>(null);
   const workspaceLeaseOwnerRef = useRef(Symbol("editor-runtime-host"));
+  const contentSyncCoordinatorRef = useRef<EditorModelContentSyncCoordinator | null>(
+    null,
+  );
+  if (!contentSyncCoordinatorRef.current) {
+    contentSyncCoordinatorRef.current = new EditorModelContentSyncCoordinator();
+  }
 
   const updateSurface = useCallback(
     (id: string, registration: EditorRuntimeSurfaceRegistration) => {
@@ -282,6 +290,9 @@ export function EditorRuntimeHost({
         admittedWorkspaceRootRef.current,
       ),
   );
+  const contentSyncRegistrations = admittedWorkspaceRootRef.current
+    ? owningRegistrations
+    : registrations;
   const focusedRegistration = owningRegistrations.find(
     (registration) => registration.groupId === focusedGroupRef.current,
   );
@@ -290,6 +301,30 @@ export function EditorRuntimeHost({
   const configurationRegistration =
     activeRegistration ?? registrations.find(({ monacoApi }) => monacoApi) ?? null;
   activeRegistrationRef.current = activeRegistration;
+  useEffect(() => {
+    contentSyncCoordinatorRef.current?.update(
+      contentSyncRegistrations.map((registration) => ({
+        activePath: registration.activePath,
+        editor: registration.editor,
+        getModel: () => {
+          const model = registration.editor?.getModel() ?? null;
+          if (!model || !registration.activePath) {
+            return null;
+          }
+          if (!registration.workspaceRoot) {
+            return model;
+          }
+          return registration.routing.resolveDocumentForModel(model)?.path ===
+            registration.activePath
+            ? model
+            : null;
+        },
+        groupId: registration.groupId,
+        onChange: registration.onModelContentChange,
+      })),
+      focusedGroupRef.current,
+    );
+  });
 
   const routedProviderRefs = useMemo(
     () => routedRefs(activeRegistrationRef, registrationsRef, focusedGroupRef),
@@ -446,6 +481,8 @@ export function EditorRuntimeHost({
       });
     };
   }, []);
+
+  useEffect(() => () => contentSyncCoordinatorRef.current?.dispose(), []);
 
   const value = useMemo<EditorRuntimeContextValue>(
     () => ({ focusGroup, registerSurface, updateSurface }),

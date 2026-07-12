@@ -13,8 +13,8 @@ import {
 import { DOCUMENT_SYNC_CLOSE_GRACE_MS } from "./closeCoordinator";
 
 const tauriMocks = vi.hoisted(() => ({
-  closeWindow: vi.fn(async () => undefined),
   invoke: vi.fn(async () => undefined),
+  listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -22,10 +22,13 @@ vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
 }));
 
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({
-    close: tauriMocks.closeWindow,
-  }),
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(
+    async (event: string, handler: (event: { payload: unknown }) => void) => {
+      tauriMocks.listeners.set(event, handler);
+      return () => tauriMocks.listeners.delete(event);
+    },
+  ),
 }));
 
 const WORKSPACE_A = "/workspace-a";
@@ -33,7 +36,14 @@ const WORKSPACE_B = "/workspace-b";
 
 afterEach(() => {
   vi.useRealTimers();
+  tauriMocks.invoke.mockReset();
+  tauriMocks.invoke.mockResolvedValue(undefined);
+  tauriMocks.listeners.clear();
 });
+
+function requestNativeClose(kind: "close" | "quit" = "close"): void {
+  tauriMocks.listeners.get("mockor-native-close-requested")?.({ payload: kind });
+}
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -155,7 +165,7 @@ function renderLifecycle(
       return captured.lifecycle;
     },
     persistAppSettings,
-    prompter,
+    prompter: dependencies.prompter as Harness["prompter"],
     stopProjectRuntimes,
     unmount: () => root.unmount(),
     workspaceStateCacheRef,
@@ -353,7 +363,6 @@ describe("useWorkbenchCloseLifecycle", () => {
   it("persists the active workspace session before closing the Tauri window", async () => {
     const persistWorkspaceSession = vi.fn(async () => undefined);
     const harness = renderLifecycle({ persistWorkspaceSession });
-    tauriMocks.closeWindow.mockClear();
 
     await act(async () => {
       harness.lifecycle().closeApplicationWindow();
@@ -362,7 +371,71 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
-    expect(tauriMocks.closeWindow).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
+      kind: "close",
+    });
+    harness.unmount();
+  });
+
+  it("blocks a native close when dirty changes are not confirmed", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      dirtyCount: 1,
+      persistWorkspaceSession,
+      prompter: { confirm: vi.fn(() => false), prompt: vi.fn(() => null) },
+    });
+
+    await act(async () => {
+      requestNativeClose();
+      requestNativeClose();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledTimes(1);
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(tauriMocks.invoke).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("persists the session and confirms a clean native close", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({ persistWorkspaceSession });
+
+    await act(async () => {
+      requestNativeClose();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
+      kind: "close",
+    });
+    harness.unmount();
+  });
+
+  it("coalesces repeated native close requests while shutdown is in flight", async () => {
+    const persistence = createDeferred<void>();
+    const persistWorkspaceSession = vi.fn(() => persistence.promise);
+    const harness = renderLifecycle({ dirtyCount: 1, persistWorkspaceSession });
+
+    await act(async () => {
+      requestNativeClose("quit");
+      requestNativeClose("quit");
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledTimes(1);
+    expect(persistWorkspaceSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      persistence.resolve();
+      await persistence.promise;
+      await Promise.resolve();
+    });
+
+    expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
+      kind: "quit",
+    });
     harness.unmount();
   });
 });
