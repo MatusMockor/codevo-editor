@@ -19,6 +19,7 @@ import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
 import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
+import { workbenchEslintCommands } from "./workbenchEslintCommands";
 import {
   workbenchFloatingSurfaceCommands,
   workbenchRecentWorkspaceCommands,
@@ -255,7 +256,12 @@ import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
+import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
+import {
+  parseEslintDiagnostics,
+  type EslintDiagnosticsGateway,
+} from "../domain/eslintDiagnostics";
 import {
   parsePhpstanDiagnostics,
   type PhpstanDiagnosticsGateway,
@@ -483,7 +489,76 @@ function languageServerDiagnosticsEqual(
 }
 
 const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
+const eslintDiagnosticsGateway = new TauriEslintDiagnosticsGateway();
 const phpstanDiagnosticsGateway = new TauriPhpstanDiagnosticsGateway();
+
+export interface RunEslintWorkspaceAnalysisOptions {
+  rootPath: string;
+  binaryPath: string | null;
+  currentWorkspaceRootRef: { current: string | null };
+  inFlightRef: { current: boolean };
+  gateway: EslintDiagnosticsGateway;
+  replaceEslintDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
+  setMessage(message: string | null): void;
+  setRunning(running: boolean): void;
+}
+
+export async function runEslintWorkspaceAnalysis({
+  rootPath,
+  binaryPath,
+  currentWorkspaceRootRef,
+  inFlightRef,
+  gateway,
+  replaceEslintDiagnostics,
+  setMessage,
+  setRunning,
+}: RunEslintWorkspaceAnalysisOptions): Promise<void> {
+  if (inFlightRef.current) {
+    return;
+  }
+
+  inFlightRef.current = true;
+  setRunning(true);
+  setMessage("ESLint: Analysing workspace…");
+
+  try {
+    let result;
+
+    try {
+      result = await gateway.analyse(rootPath, binaryPath);
+    } catch (error) {
+      result = {
+        status: "error" as const,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      setMessage(null);
+      return;
+    }
+
+    replaceEslintDiagnostics(rootPath, parseEslintDiagnostics(result, rootPath));
+
+    if (result.status === "ok") {
+      const problemCount = result.totals.errorCount + result.totals.warningCount;
+      setMessage(
+        `ESLint: ${problemCount} problems in ${result.totals.fileCount} files`,
+      );
+      return;
+    }
+
+    if (result.status === "unavailable") {
+      setMessage("ESLint: unavailable");
+      return;
+    }
+
+    setMessage(`ESLint: ${result.message}`);
+  } finally {
+    inFlightRef.current = false;
+    setRunning(false);
+  }
+}
 
 export interface RunPhpstanWorkspaceAnalysisOptions {
   rootPath: string;
@@ -782,6 +857,8 @@ export function useWorkbenchController(
     useWorkbenchImplementationChooserState();
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
+  const eslintAnalysisInFlightRef = useRef(false);
+  const [eslintAnalysisRunning, setEslintAnalysisRunning] = useState(false);
   const phpstanAnalysisInFlightRef = useRef(false);
   const [phpstanAnalysisRunning, setPhpstanAnalysisRunning] = useState(false);
   const noticesRef = useRef<WorkbenchNotice[]>(notices);
@@ -789,6 +866,7 @@ export function useWorkbenchController(
   const [appSettings, setAppSettings] =
     useState<AppSettings>(defaultAppSettings);
   const phpstanWorkspaceTabsRef = useRef<string[]>([]);
+  const eslintWorkspaceTabsRef = useRef<string[]>([]);
   const [workspaceSettings, setWorkspaceSettings] =
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
   // Resolved `.editorconfig` settings for the active document. Empty when no
@@ -1923,6 +2001,8 @@ export function useWorkbenchController(
   );
 
   const {
+    replaceEslintDiagnostics,
+    clearEslintDiagnosticsForRoot,
     replacePhpstanDiagnostics,
     clearPhpstanDiagnosticsForRoot,
     clearLanguageServerDiagnostics,
@@ -1966,6 +2046,40 @@ export function useWorkbenchController(
     isLanguageServerSessionCurrentForRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   });
+
+  const runEslintAnalysis = useCallback(async () => {
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (!rootPath) {
+      return;
+    }
+
+    await runEslintWorkspaceAnalysis({
+      rootPath,
+      binaryPath: workspaceSettingsRef.current.eslintPath,
+      currentWorkspaceRootRef,
+      inFlightRef: eslintAnalysisInFlightRef,
+      gateway: eslintDiagnosticsGateway,
+      replaceEslintDiagnostics,
+      setMessage,
+      setRunning: setEslintAnalysisRunning,
+    });
+  }, [replaceEslintDiagnostics]);
+
+  useEffect(() => {
+    const currentTabs = appSettings.workspaceTabs;
+
+    eslintWorkspaceTabsRef.current.forEach((previousRoot) => {
+      if (
+        !currentTabs.some((currentRoot) =>
+          workspaceRootKeysEqual(currentRoot, previousRoot),
+        )
+      ) {
+        clearEslintDiagnosticsForRoot(previousRoot);
+      }
+    });
+    eslintWorkspaceTabsRef.current = currentTabs;
+  }, [appSettings.workspaceTabs, clearEslintDiagnosticsForRoot]);
 
   const runPhpstanAnalysis = useCallback(async () => {
     const rootPath = currentWorkspaceRootRef.current;
@@ -7375,6 +7489,13 @@ export function useWorkbenchController(
       runPhpstanAnalysis,
     }).forEach((command) => registry.register(command));
 
+    workbenchEslintCommands({
+      hasPackageJson:
+        workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson === true,
+      isRunning: eslintAnalysisRunning,
+      runEslintAnalysis,
+    }).forEach((command) => registry.register(command));
+
     workbenchScriptCommands({
       composerScripts: activePackageScripts?.composerScripts ?? [],
       npmScripts: activePackageScripts?.npmScripts ?? [],
@@ -7574,6 +7695,8 @@ export function useWorkbenchController(
     runAllTestsForActiveDocument,
     runPhpstanAnalysis,
     phpstanAnalysisRunning,
+    runEslintAnalysis,
+    eslintAnalysisRunning,
     runInActiveTerminal,
     goToDeclaration,
     canSearchClassOpenSymbols,

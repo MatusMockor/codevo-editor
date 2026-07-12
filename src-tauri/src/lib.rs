@@ -1,4 +1,5 @@
 pub mod composer;
+mod eslint;
 mod file_fuzzy_matcher;
 pub mod file_watcher;
 pub mod git;
@@ -8680,6 +8681,7 @@ pub fn run() {
             remove_workspace_index_file,
             resize_terminal_session,
             revert_git_files,
+            eslint::run_eslint_analysis,
             phpstan::run_phpstan_analysis,
             search_files,
             search_project_symbols,

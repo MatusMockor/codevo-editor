@@ -559,6 +559,40 @@ describe("useDiagnostics - PHPStan notice groups", () => {
   });
 });
 
+describe("useDiagnostics - ESLint notice groups", () => {
+  it("replaces, caps, and clears a root group", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+    const notices = Array.from({ length: 507 }, (_, index) =>
+      createWorkbenchNotice(
+        "warning",
+        "ESLint",
+        `problem ${index + 1}`,
+        `eslint:${ROOT}`,
+      ),
+    );
+
+    api().replaceEslintDiagnostics(ROOT, notices);
+
+    const eslintNotices = harness.notices.value.filter(
+      (notice) => notice.groupKey === `eslint:${ROOT}`,
+    );
+    expect(eslintNotices).toHaveLength(501);
+    expect(eslintNotices[eslintNotices.length - 1]).toMatchObject({
+      kind: "overflow",
+      message:
+        "Showing 500 of 507 ESLint problems — narrow the analysis or fix reported issues.",
+    });
+
+    api().clearEslintDiagnosticsForRoot(ROOT);
+    expect(
+      harness.notices.value.some(
+        (notice) => notice.groupKey === `eslint:${ROOT}`,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("useDiagnostics - delete / rename path cleanup", () => {
   it("removes a path from php, jsts, laravel, and local caches plus notices", () => {
     const harness = createHarness();

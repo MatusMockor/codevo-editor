@@ -294,6 +294,12 @@ export function SettingsDialog({
                       formatOnSave,
                     })
                   }
+                  onChangeEslintPath={(eslintPath) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      eslintPath: nullableInputValue(eslintPath),
+                    })
+                  }
                   onChangeDefaultInsertSpaces={(defaultInsertSpaces) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -651,6 +657,7 @@ interface GeneralSettingsProps {
   onChangeDefaultTabSize(defaultTabSize: number): void;
   onChangeFormatOnPaste(formatOnPaste: boolean): void;
   onChangeFormatOnSave(formatOnSave: boolean): void;
+  onChangeEslintPath(path: string): void;
   onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeJavaScriptTypeScriptService(
@@ -702,6 +709,7 @@ function GeneralSettings({
   onChangeDefaultTabSize,
   onChangeFormatOnPaste,
   onChangeFormatOnSave,
+  onChangeEslintPath,
   onChangeOptimizeImportsOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
@@ -768,6 +776,16 @@ function GeneralSettings({
           <option value="auto">Auto</option>
           <option value="off">Off</option>
         </select>
+      </label>
+
+      <label className="settings-field">
+        <span>ESLint path</span>
+        <input
+          disabled={!hasWorkspace}
+          onChange={(event) => onChangeEslintPath(event.currentTarget.value)}
+          placeholder="node_modules/.bin/eslint / Auto"
+          value={workspaceSettings.eslintPath || ""}
+        />
       </label>
 
       <label className="settings-field">

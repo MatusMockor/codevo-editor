@@ -48,6 +48,7 @@ import {
 } from "../domain/workspaceRootKey";
 
 const PHPSTAN_DIAGNOSTIC_NOTICE_LIMIT = 500;
+const ESLINT_DIAGNOSTIC_NOTICE_LIMIT = 500;
 
 /**
  * Collaborators the workbench shell owns and injects into the diagnostics hook.
@@ -144,6 +145,11 @@ export interface DiagnosticsDependencies {
 }
 
 export interface Diagnostics {
+  replaceEslintDiagnostics: (
+    rootPath: string,
+    notices: WorkbenchNotice[],
+  ) => void;
+  clearEslintDiagnosticsForRoot: (rootPath: string) => void;
   replacePhpstanDiagnostics: (
     rootPath: string,
     notices: WorkbenchNotice[],
@@ -225,6 +231,44 @@ export function useDiagnostics(
     isLanguageServerSessionCurrentForRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   } = dependencies;
+
+  const replaceEslintDiagnostics = useCallback(
+    (rootPath: string, notices: WorkbenchNotice[]) => {
+      const groupKey = `eslint:${rootPath}`;
+      const diagnosticNotices = capDiagnosticNotices(
+        notices,
+        ESLINT_DIAGNOSTIC_NOTICE_LIMIT,
+        (hiddenCount) => {
+          const totalCount = ESLINT_DIAGNOSTIC_NOTICE_LIMIT + hiddenCount;
+          return createWorkbenchNotice(
+            "info",
+            "ESLint",
+            `Showing ${ESLINT_DIAGNOSTIC_NOTICE_LIMIT} of ${totalCount} ESLint problems — narrow the analysis or fix reported issues.`,
+            groupKey,
+            undefined,
+            "overflow",
+          );
+        },
+      );
+
+      setNotices((current) =>
+        capWorkbenchNotices(
+          replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+          GLOBAL_NOTICE_LIMIT,
+          (notice) =>
+            notice.groupKey?.startsWith("eslint:") === true ||
+            isCappableDiagnosticNotice(notice),
+        ),
+      );
+    },
+    [],
+  );
+
+  const clearEslintDiagnosticsForRoot = useCallback((rootPath: string) => {
+    setNotices((current) =>
+      replaceWorkbenchNoticeGroup(current, `eslint:${rootPath}`, []),
+    );
+  }, []);
 
   const replacePhpstanDiagnostics = useCallback(
     (rootPath: string, notices: WorkbenchNotice[]) => {
@@ -1030,6 +1074,8 @@ export function useDiagnostics(
   );
 
   return {
+    replaceEslintDiagnostics,
+    clearEslintDiagnosticsForRoot,
     replacePhpstanDiagnostics,
     clearPhpstanDiagnosticsForRoot,
     clearLanguageServerDiagnostics,

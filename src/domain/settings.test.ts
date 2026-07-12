@@ -51,6 +51,7 @@ describe("settings defaults", () => {
       defaultInsertSpaces: true,
       defaultTabSize: 4,
       extraIgnorePatterns: [],
+      eslintPath: null,
       formatOnPaste: false,
       formatOnSave: false,
       gitCommitMessageHistory: [],
@@ -392,6 +393,7 @@ describe("normalizeWorkspaceSettings", () => {
         defaultInsertSpaces: false,
         defaultTabSize: 6,
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
+        eslintPath: " /tools/eslint ",
         formatOnPaste: true,
         formatOnSave: true,
         gitDirectoryMappings: [
@@ -460,6 +462,7 @@ describe("normalizeWorkspaceSettings", () => {
       defaultInsertSpaces: false,
       defaultTabSize: 6,
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
+      eslintPath: "/tools/eslint",
       formatOnPaste: true,
       formatOnSave: true,
       gitCommitMessageHistory: [],
@@ -748,6 +751,7 @@ describe("normalizeWorkspaceSettings", () => {
     expect(
       normalizeWorkspaceSettings({
         extraIgnorePatterns: ["var/cache", 4],
+        eslintPath: 10,
         defaultInsertSpaces: "yes",
         defaultTabSize: 0,
         intelligenceMode: "unknown",

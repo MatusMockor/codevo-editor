@@ -148,6 +148,7 @@ export interface WorkspaceSettings {
   defaultInsertSpaces: boolean;
   defaultTabSize: number;
   extraIgnorePatterns: string[];
+  eslintPath: string | null;
   formatOnPaste: boolean;
   formatOnSave: boolean;
   gitCommitMessageHistory: string[];
@@ -319,6 +320,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     defaultInsertSpaces: defaultWorkspaceInsertSpaces,
     defaultTabSize: defaultWorkspaceTabSize,
     extraIgnorePatterns: [],
+    eslintPath: null,
     formatOnPaste: false,
     formatOnSave: false,
     gitCommitMessageHistory: [],
@@ -461,6 +463,7 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
       value.extraIgnorePatterns,
       defaults.extraIgnorePatterns,
     ),
+    eslintPath: normalizeNullableString(value.eslintPath, defaults.eslintPath),
     formatOnPaste: normalizeBoolean(
       value.formatOnPaste,
       defaults.formatOnPaste,

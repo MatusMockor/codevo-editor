@@ -78,6 +78,44 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("edits and normalizes the ESLint binary path", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="general"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("ESLint path"), " /tools/eslint ");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        eslintPath: "/tools/eslint",
+      },
+    });
+  });
+
   it("autosaves setting changes without a Save button", async () => {
     const onSave = vi.fn(async () => undefined);
 
