@@ -56,6 +56,26 @@ describe("GitBranchPanel", () => {
     return props;
   }
 
+  function typeFilter(value: string) {
+    const input = host.querySelector<HTMLInputElement>(
+      '[aria-label="Filter branches"]',
+    );
+
+    act(() => {
+      if (!input) {
+        return;
+      }
+
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    return input;
+  }
+
   it("renders nothing when closed", () => {
     renderPanel({ isOpen: false });
 
@@ -113,6 +133,92 @@ describe("GitBranchPanel", () => {
     expect(
       host.querySelector('[aria-label="Check out remote branch origin/feature-x"]'),
     ).not.toBeNull();
+  });
+
+  it("filters local branches by substring case-insensitively", () => {
+    renderPanel();
+
+    typeFilter("LOGIN");
+
+    const rows = Array.from(host.querySelectorAll(".git-branch-row"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].textContent).toContain("feature/login");
+    expect(host.textContent).not.toContain("main");
+  });
+
+  it("filters and auto-expands remote branches case-insensitively", () => {
+    renderPanel();
+
+    typeFilter("RELEASE");
+
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[aria-controls="git-remote-branch-list"]',
+    );
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector("#git-remote-branch-list")?.textContent).toContain(
+      "upstream/release/v2",
+    );
+    expect(host.textContent).not.toContain("origin/feature-x");
+  });
+
+  it("shows filtered remote branch counts", () => {
+    renderPanel();
+
+    typeFilter("FEATURE");
+
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[aria-controls="git-remote-branch-list"]',
+    );
+    expect(toggle?.textContent).toContain("Remote branches");
+    expect(toggle?.querySelector(".git-remote-branches-count")?.textContent).toBe(
+      "1",
+    );
+  });
+
+  it("shows an empty state when no branches match the filter", () => {
+    renderPanel();
+
+    typeFilter("missing");
+
+    expect(host.textContent).toContain("No branches match");
+    expect(host.querySelectorAll(".git-branch-row")).toHaveLength(0);
+    expect(host.querySelector("#git-remote-branch-list")).toBeNull();
+  });
+
+  it("clears the filter on first Escape and closes on second Escape", () => {
+    const props = renderPanel();
+    const input = typeFilter("login");
+
+    act(() => {
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+    });
+
+    expect(input?.value).toBe("");
+    expect(props.onClose).not.toHaveBeenCalled();
+
+    act(() => {
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+    });
+
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets the filter when the panel closes and reopens", () => {
+    const props = renderPanel();
+    typeFilter("login");
+
+    renderPanel({ ...props, isOpen: false });
+    renderPanel({ ...props, isOpen: true });
+
+    expect(
+      host.querySelector<HTMLInputElement>('[aria-label="Filter branches"]')
+        ?.value,
+    ).toBe("");
+    expect(host.querySelectorAll(".git-branch-row")).toHaveLength(2);
   });
 
   it("checks out a remote branch and disables remote rows while loading", () => {

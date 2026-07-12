@@ -5,6 +5,7 @@ import {
   GitBranch,
   Pencil,
   Plus,
+  Search,
   Trash2,
   X,
 } from "lucide-react";
@@ -55,6 +56,7 @@ export function GitBranchPanel({
   const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [remoteBranchesExpanded, setRemoteBranchesExpanded] = useState(false);
+  const [filterValue, setFilterValue] = useState("");
 
   useEffect(() => {
     if (!isOpen) {
@@ -70,6 +72,7 @@ export function GitBranchPanel({
     }
 
     setRemoteBranchesExpanded(false);
+    setFilterValue("");
   }, [isOpen]);
 
   useEffect(() => {
@@ -101,12 +104,29 @@ export function GitBranchPanel({
     return null;
   }
 
+  const normalizedFilter = filterValue.toLocaleLowerCase();
+  const filterActive = filterValue.length > 0;
+  const filteredBranches = branches.filter((branch) =>
+    branch.name.toLocaleLowerCase().includes(normalizedFilter),
+  );
+  const filteredRemoteBranches = remoteBranches.filter((branch) =>
+    branch.name.toLocaleLowerCase().includes(normalizedFilter),
+  );
+  const remoteSectionExpanded = filterActive
+    ? filteredRemoteBranches.length > 0
+    : remoteBranchesExpanded;
+
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Escape") {
       return;
     }
 
     event.preventDefault();
+    if (filterActive) {
+      setFilterValue("");
+      return;
+    }
+
     onClose();
   };
 
@@ -167,6 +187,17 @@ export function GitBranchPanel({
           </button>
         </header>
 
+        <label className="git-branch-filter">
+          <Search aria-hidden="true" size={14} />
+          <input
+            aria-label="Filter branches"
+            onChange={(event) => setFilterValue(event.target.value)}
+            placeholder="Filter branches"
+            type="text"
+            value={filterValue}
+          />
+        </label>
+
         <div className="git-branch-actions-bar">
           <button
             aria-label="Create new branch"
@@ -185,10 +216,16 @@ export function GitBranchPanel({
             {isLoading ? (
               <div className="file-history-empty">Loading branches</div>
             ) : null}
-            {!isLoading && branches.length === 0 ? (
+            {!isLoading && !filterActive && branches.length === 0 ? (
               <div className="file-history-empty">No branches</div>
             ) : null}
-            {branches.map((branch) => (
+            {!isLoading &&
+            filterActive &&
+            filteredBranches.length === 0 &&
+            filteredRemoteBranches.length === 0 ? (
+              <div className="file-history-empty">No branches match</div>
+            ) : null}
+            {filteredBranches.map((branch) => (
               <GitBranchRow
                 branch={branch}
                 forceDelete={forceDeleteBranch === branch.name}
@@ -208,26 +245,26 @@ export function GitBranchPanel({
             <div className="git-remote-branches-section">
               <button
                 aria-controls="git-remote-branch-list"
-                aria-expanded={remoteBranchesExpanded}
+                aria-expanded={remoteSectionExpanded}
                 className="git-remote-branches-toggle"
                 onClick={() =>
                   setRemoteBranchesExpanded((expanded) => !expanded)
                 }
                 type="button"
               >
-                {remoteBranchesExpanded ? (
+                {remoteSectionExpanded ? (
                   <ChevronDown aria-hidden="true" size={14} />
                 ) : (
                   <ChevronRight aria-hidden="true" size={14} />
                 )}
                 <span>Remote branches</span>
                 <span className="git-remote-branches-count">
-                  {remoteBranches.length}
+                  {filteredRemoteBranches.length}
                 </span>
               </button>
-              {remoteBranchesExpanded ? (
+              {remoteSectionExpanded ? (
                 <div id="git-remote-branch-list" role="list">
-                  {remoteBranches.map((branch) => (
+                  {filteredRemoteBranches.map((branch) => (
                     <button
                       aria-label={`Check out remote branch ${branch.name}`}
                       className="git-remote-branch-row"
