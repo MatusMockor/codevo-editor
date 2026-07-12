@@ -33,7 +33,10 @@ import {
   applicableEslintFixes,
   type EslintFix,
 } from "../domain/eslintDiagnostics";
-import type { EditorSurfaceBufferFixRunner } from "../application/useWorkbenchController";
+import type {
+  EditorSurfaceBufferFixRunner,
+  EditorSurfacePhpstanIgnoreRunner,
+} from "../application/useWorkbenchController";
 import type {
   EditorPosition,
   EditorRevealTarget,
@@ -278,6 +281,9 @@ interface EditorSurfaceProps {
   onEditorSurfaceBufferFixRunnerChange?(
     runner: EditorSurfaceBufferFixRunner | null,
   ): void;
+  onEditorSurfacePhpstanIgnoreRunnerChange?(
+    runner: EditorSurfacePhpstanIgnoreRunner | null,
+  ): void;
   onGoBack(): void;
   onGoForward(): void;
   onGoToDefinition(): void;
@@ -437,6 +443,7 @@ function EditorSurfaceComponent({
   onEditorMenuCommandRunnerChange,
   onEditorSurfaceCommandRunnerChange,
   onEditorSurfaceBufferFixRunnerChange,
+  onEditorSurfacePhpstanIgnoreRunnerChange,
   onGoBack,
   onGoForward,
   onGoToDefinition,
@@ -1055,6 +1062,68 @@ function EditorSurfaceComponent({
     editorApi,
     monacoApi,
     onEditorSurfaceBufferFixRunnerChange,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!onEditorSurfacePhpstanIgnoreRunnerChange) {
+      return;
+    }
+
+    if (!editorApi || !monacoApi || !activeDocument) {
+      onEditorSurfacePhpstanIgnoreRunnerChange(null);
+      return;
+    }
+
+    const targetPath = activeDocument.path;
+    const runner: EditorSurfacePhpstanIgnoreRunner = (
+      expectedContent,
+      lineNumber,
+      identifiers,
+    ) => {
+      const model = editorApi.getModel();
+
+      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
+        return null;
+      }
+
+      if (model.getValue() !== expectedContent) {
+        return null;
+      }
+
+      if (
+        identifiers.length === 0 ||
+        lineNumber < 1 ||
+        lineNumber > model.getLineCount()
+      ) {
+        return 0;
+      }
+
+      const indentation =
+        /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
+      const edit = {
+        forceMoveMarkers: true,
+        range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
+        text: `${indentation}// @phpstan-ignore ${identifiers.join(", ")}\n`,
+      };
+
+      if (!editorApi.executeEdits("phpstan.ignoreIssueAtCursor", [edit])) {
+        return null;
+      }
+
+      return identifiers.length;
+    };
+
+    onEditorSurfacePhpstanIgnoreRunnerChange(runner);
+
+    return () => {
+      onEditorSurfacePhpstanIgnoreRunnerChange(null);
+    };
+  }, [
+    activeDocument?.path,
+    editorApi,
+    monacoApi,
+    onEditorSurfacePhpstanIgnoreRunnerChange,
     workspaceRoot,
   ]);
 

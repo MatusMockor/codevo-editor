@@ -2941,6 +2941,73 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("publishes a guarded PHPStan runner that inserts one indented combined ignore edit", async () => {
+    const content = "<?php\n    broken();\n";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "example.php",
+      path: "/workspace/src/example.php",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn(() => "    broken();"),
+      getLineCount: vi.fn(() => 2),
+      getValue: vi.fn(() => content),
+      setValue: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const phpstanRunnerChange = vi.fn();
+    const editor = createEditor(model);
+    editor.executeEdits.mockReturnValue(true);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          {...memoGuardProps(activeDocument)}
+          onEditorSurfacePhpstanIgnoreRunnerChange={phpstanRunnerChange}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const runner = phpstanRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+
+    editor.getModel.mockReturnValueOnce({
+      ...model,
+      uri: {
+        fsPath: "/workspace/src/other.php",
+        path: "/workspace/src/other.php",
+      },
+    });
+    expect(runner(content, 2, ["argument.type"])).toBeNull();
+    model.getValue?.mockReturnValueOnce("dirty");
+    expect(runner(content, 2, ["argument.type"])).toBeNull();
+
+    expect(runner(content, 2, ["argument.type", "return.type"])).toBe(2);
+    expect(editor.executeEdits).toHaveBeenCalledOnce();
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "phpstan.ignoreIssueAtCursor",
+      [
+        expect.objectContaining({
+          forceMoveMarkers: true,
+          range: expect.objectContaining({
+            startLineNumber: 2,
+            startColumn: 1,
+            endLineNumber: 2,
+            endColumn: 1,
+          }),
+          text: "    // @phpstan-ignore argument.type, return.type\n",
+        }),
+      ],
+    );
+  });
+
   it("clears the window chrome edit menu runner when no document is targetable", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",

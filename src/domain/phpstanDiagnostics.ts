@@ -9,6 +9,16 @@ export interface PhpstanDiagnostic {
   ignorable: boolean;
 }
 
+export interface RetainedPhpstanDiagnostic {
+  identifier: string;
+  line: number;
+}
+
+export type PhpstanDiagnosticsByRoot = Record<
+  string,
+  Record<string, RetainedPhpstanDiagnostic[]>
+>;
+
 export type PhpstanAnalysisResult =
   | {
       status: "ok";
@@ -28,6 +38,54 @@ export interface PhpstanDiagnosticsGateway {
 
 export function phpstanNoticeGroup(rootPath: string): string {
   return `phpstan:${rootPath}`;
+}
+
+export function replacePhpstanDiagnosticsForRoot(
+  current: PhpstanDiagnosticsByRoot,
+  rootPath: string,
+  result: PhpstanAnalysisResult,
+): PhpstanDiagnosticsByRoot {
+  const diagnosticsByPath: Record<string, RetainedPhpstanDiagnostic[]> = {};
+
+  if (result.status === "ok") {
+    result.diagnostics.forEach((diagnostic) => {
+      if (
+        !diagnostic.filePath ||
+        !diagnostic.identifier ||
+        !diagnostic.ignorable ||
+        diagnostic.line === null
+      ) {
+        return;
+      }
+
+      const path = joinWorkspacePath(rootPath, diagnostic.filePath);
+      diagnosticsByPath[path] = [
+        ...(diagnosticsByPath[path] ?? []),
+        {
+          identifier: diagnostic.identifier,
+          line: Math.max(1, diagnostic.line),
+        },
+      ];
+    });
+  }
+
+  return { ...current, [rootPath]: diagnosticsByPath };
+}
+
+export function clearPhpstanDiagnosticsForFile(
+  current: PhpstanDiagnosticsByRoot,
+  rootPath: string,
+  filePath: string,
+): PhpstanDiagnosticsByRoot {
+  const rootDiagnostics = current[rootPath];
+
+  if (!rootDiagnostics?.[filePath]) {
+    return current;
+  }
+
+  const nextRootDiagnostics = { ...rootDiagnostics };
+  delete nextRootDiagnostics[filePath];
+  return { ...current, [rootPath]: nextRootDiagnostics };
 }
 
 export function parsePhpstanDiagnostics(

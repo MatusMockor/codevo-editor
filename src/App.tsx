@@ -16,6 +16,7 @@ import type {
 import {
   useWorkbenchController,
   type EditorSurfaceBufferFixRunner,
+  type EditorSurfacePhpstanIgnoreRunner,
 } from "./application/useWorkbenchController";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { BookmarksPanel } from "./components/BookmarksPanel";
@@ -246,6 +247,8 @@ function App() {
     useState<EditorSurfaceCommandRunner | null>(null);
   const [editorSurfaceBufferFixRunner, setEditorSurfaceBufferFixRunner] =
     useState<EditorSurfaceBufferFixRunner | null>(null);
+  const [editorSurfacePhpstanIgnoreRunner, setEditorSurfacePhpstanIgnoreRunner] =
+    useState<EditorSurfacePhpstanIgnoreRunner | null>(null);
   const [gitHistoryDiff, setGitHistoryDiff] = useState<GitFileDiff | null>(null);
   const [gitHistoryDiffLoading, setGitHistoryDiffLoading] = useState(false);
   const [gitHistoryDiffDocumentPath, setGitHistoryDiffDocumentPath] =
@@ -277,7 +280,11 @@ function App() {
     terminalGateway,
     settingsGateway,
     workbenchPrompter,
-    { editorSurfaceBufferFixRunner, editorSurfaceCommandRunner },
+    {
+      editorSurfaceBufferFixRunner,
+      editorSurfaceCommandRunner,
+      editorSurfacePhpstanIgnoreRunner,
+    },
   );
   const gitHistoryWorkspaceRootRef = useRef(workbench.workspaceRoot);
   const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
@@ -678,6 +685,12 @@ function App() {
   const updateEditorSurfaceBufferFixRunner = useCallback(
     (runner: EditorSurfaceBufferFixRunner | null) => {
       setEditorSurfaceBufferFixRunner(() => runner);
+    },
+    [],
+  );
+  const updateEditorSurfacePhpstanIgnoreRunner = useCallback(
+    (runner: EditorSurfacePhpstanIgnoreRunner | null) => {
+      setEditorSurfacePhpstanIgnoreRunner(() => runner);
     },
     [],
   );
@@ -1399,6 +1412,9 @@ function App() {
             }
             onEditorSurfaceBufferFixRunnerChange={
               updateEditorSurfaceBufferFixRunner
+            }
+            onEditorSurfacePhpstanIgnoreRunnerChange={
+              updateEditorSurfacePhpstanIgnoreRunner
             }
             onCloseFloatingSurface={workbench.closeFloatingSurface}
             onGoBack={goBack}

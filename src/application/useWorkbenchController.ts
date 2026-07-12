@@ -268,7 +268,12 @@ import {
   type EslintFix,
 } from "../domain/eslintDiagnostics";
 import {
+  clearPhpstanDiagnosticsForFile,
   parsePhpstanDiagnostics,
+  replacePhpstanDiagnosticsForRoot,
+  type PhpstanAnalysisResult,
+  type PhpstanDiagnosticsByRoot,
+  type RetainedPhpstanDiagnostic,
   type PhpstanDiagnosticsGateway,
 } from "../domain/phpstanDiagnostics";
 import {
@@ -428,6 +433,7 @@ export interface WorkbenchControllerOptions {
    */
   diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
   editorSurfaceBufferFixRunner?: EditorSurfaceBufferFixRunner | null;
+  editorSurfacePhpstanIgnoreRunner?: EditorSurfacePhpstanIgnoreRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
 }
@@ -435,6 +441,12 @@ export interface WorkbenchControllerOptions {
 export type EditorSurfaceBufferFixRunner = (
   expectedContent: string,
   fixes: EslintFix[],
+) => number | null;
+
+export type EditorSurfacePhpstanIgnoreRunner = (
+  expectedContent: string,
+  lineNumber: number,
+  identifiers: string[],
 ) => number | null;
 
 interface OpenWorkspacePathOptions {
@@ -635,6 +647,10 @@ export interface RunPhpstanWorkspaceAnalysisOptions {
   inFlightRef: { current: boolean };
   gateway: PhpstanDiagnosticsGateway;
   replacePhpstanDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
+  replacePhpstanRetainedDiagnostics?(
+    rootPath: string,
+    result: PhpstanAnalysisResult,
+  ): void;
   showStartMessage?: boolean;
   setMessage(message: string | null): void;
   setRunning(running: boolean): void;
@@ -648,6 +664,7 @@ export async function runPhpstanWorkspaceAnalysis({
   inFlightRef,
   gateway,
   replacePhpstanDiagnostics,
+  replacePhpstanRetainedDiagnostics,
   showStartMessage = true,
   setMessage,
   setRunning,
@@ -684,6 +701,7 @@ export async function runPhpstanWorkspaceAnalysis({
       return;
     }
 
+    replacePhpstanRetainedDiagnostics?.(rootPath, result);
     replacePhpstanDiagnostics(
       rootPath,
       parsePhpstanDiagnostics(result, rootPath),
@@ -708,6 +726,62 @@ export async function runPhpstanWorkspaceAnalysis({
     inFlightRef.current = false;
     setRunning(false);
   }
+}
+
+export function runPhpstanIgnoreAtCursor({
+  currentRoot,
+  requestedRoot,
+  document,
+  lineNumber,
+  diagnostics,
+  runner,
+  setMessage,
+  workspaceTrusted,
+}: {
+  currentRoot: string | null;
+  requestedRoot: string | null;
+  document: EditorDocument | null;
+  lineNumber: number;
+  diagnostics: readonly RetainedPhpstanDiagnostic[];
+  runner: EditorSurfacePhpstanIgnoreRunner | null;
+  setMessage(message: string): void;
+  workspaceTrusted: boolean;
+}): number | null {
+  if (!requestedRoot || !document || document.readOnly || !workspaceTrusted) {
+    return null;
+  }
+
+  if (!workspaceRootKeysEqual(currentRoot, requestedRoot)) {
+    return null;
+  }
+
+  if (document.content !== document.savedContent || !runner) {
+    return null;
+  }
+
+  const identifiers = [
+    ...new Set(
+      diagnostics
+        .filter((diagnostic) => diagnostic.line === lineNumber)
+        .map((diagnostic) => diagnostic.identifier),
+    ),
+  ];
+
+  if (identifiers.length === 0) {
+    return null;
+  }
+
+  const appliedCount = runner(document.content, lineNumber, identifiers);
+
+  if (!appliedCount) {
+    return appliedCount;
+  }
+
+  const noun = appliedCount === 1 ? "issue" : "issues";
+  setMessage(
+    `PHPStan: Ignored ${appliedCount} ${noun} (${identifiers.join(", ")})`,
+  );
+  return appliedCount;
 }
 
 export type SidebarView = "files" | "git" | "php";
@@ -960,6 +1034,8 @@ export function useWorkbenchController(
   >({});
   const phpstanAnalysisInFlightRef = useRef(false);
   const [phpstanAnalysisRunning, setPhpstanAnalysisRunning] = useState(false);
+  const [phpstanDiagnosticsByRoot, setPhpstanDiagnosticsByRoot] =
+    useState<PhpstanDiagnosticsByRoot>({});
   const noticesRef = useRef<WorkbenchNotice[]>(notices);
   noticesRef.current = notices;
   const [appSettings, setAppSettings] =
@@ -2276,6 +2352,11 @@ export function useWorkbenchController(
       inFlightRef: phpstanAnalysisInFlightRef,
       gateway: phpstanDiagnosticsGateway,
       replacePhpstanDiagnostics,
+      replacePhpstanRetainedDiagnostics: (analysedRoot, result) => {
+        setPhpstanDiagnosticsByRoot((current) =>
+          replacePhpstanDiagnosticsForRoot(current, analysedRoot, result),
+        );
+      },
       showStartMessage,
       setMessage,
       setRunning: setPhpstanAnalysisRunning,
@@ -2292,6 +2373,46 @@ export function useWorkbenchController(
 
     await runPhpstanAnalysisForRoot(rootPath, true);
   }, [runPhpstanAnalysisForRoot]);
+
+  const activePhpstanDiagnostics = workspaceRoot && activeDocument
+    ? phpstanDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ?? []
+    : [];
+  const activePhpstanBufferClean = Boolean(
+    activeDocument &&
+      !activeDocument.readOnly &&
+      activeDocument.content === activeDocument.savedContent,
+  );
+  const hasPhpstanDiagnosticAtCursor = activePhpstanDiagnostics.some(
+    (diagnostic) => diagnostic.line === activeEditorPosition?.lineNumber,
+  );
+  const ignorePhpstanIssueAtCursor = useCallback(() => {
+    const requestedRoot = workspaceRoot;
+    const requestedDocument = activeDocumentRef.current;
+    const lineNumber = activeEditorPositionRef.current?.lineNumber;
+    const diagnostics = requestedRoot && requestedDocument
+      ? phpstanDiagnosticsByRoot[requestedRoot]?.[requestedDocument.path] ?? []
+      : [];
+
+    if (!lineNumber) {
+      return;
+    }
+
+    runPhpstanIgnoreAtCursor({
+      currentRoot: currentWorkspaceRootRef.current,
+      requestedRoot,
+      document: requestedDocument,
+      lineNumber,
+      diagnostics,
+      runner: options.editorSurfacePhpstanIgnoreRunner ?? null,
+      setMessage,
+      workspaceTrusted: workspaceTrust?.trusted === true,
+    });
+  }, [
+    options.editorSurfacePhpstanIgnoreRunner,
+    phpstanDiagnosticsByRoot,
+    workspaceRoot,
+    workspaceTrust?.trusted,
+  ]);
 
   const runPhpstanAnalysisOnSave = useCallback((rootPath: string) => {
     if (!workspaceTrust?.trusted) {
@@ -2324,6 +2445,11 @@ export function useWorkbenchController(
         )
       ) {
         clearPhpstanDiagnosticsForRoot(previousRoot);
+        setPhpstanDiagnosticsByRoot((current) => {
+          const next = { ...current };
+          delete next[previousRoot];
+          return next;
+        });
       }
     });
     phpstanWorkspaceTabsRef.current = currentTabs;
@@ -4797,6 +4923,14 @@ export function useWorkbenchController(
 
   const closeDocument = useCallback(
     (path: string) => {
+      const rootPath = currentWorkspaceRootRef.current;
+
+      if (rootPath) {
+        setPhpstanDiagnosticsByRoot((current) =>
+          clearPhpstanDiagnosticsForFile(current, rootPath, path),
+        );
+      }
+
       const markdownPreview = markdownPreviewTabsRef.current[path];
 
       if (!imageTabsRef.current[path] && !markdownPreview) {
@@ -4841,6 +4975,14 @@ export function useWorkbenchController(
       closeDocument(activePath);
       return;
     }
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (rootPath && activePath) {
+      setPhpstanDiagnosticsByRoot((current) =>
+        clearPhpstanDiagnosticsForFile(current, rootPath, activePath),
+      );
+    }
+
     closeTextSurface();
   }, [activePath, closeDocument, closeTextSurface]);
 
@@ -7703,6 +7845,10 @@ export function useWorkbenchController(
       hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
       isRunning: phpstanAnalysisRunning,
       runPhpstanAnalysis,
+      hasDiagnosticAtCursor: hasPhpstanDiagnosticAtCursor,
+      isActiveBufferClean: activePhpstanBufferClean,
+      isWorkspaceTrusted: workspaceTrust?.trusted === true,
+      ignoreIssueAtCursor: ignorePhpstanIssueAtCursor,
     }).forEach((command) => registry.register(command));
 
     workbenchEslintCommands({
@@ -7915,6 +8061,9 @@ export function useWorkbenchController(
     runAllTestsForActiveDocument,
     runPhpstanAnalysis,
     phpstanAnalysisRunning,
+    activePhpstanBufferClean,
+    hasPhpstanDiagnosticAtCursor,
+    ignorePhpstanIssueAtCursor,
     runEslintAnalysis,
     eslintAnalysisRunning,
     activeEslintBufferClean,

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  runPhpstanIgnoreAtCursor,
   runPhpstanWorkspaceAnalysis,
   type RunPhpstanWorkspaceAnalysisOptions,
 } from "./useWorkbenchController";
@@ -23,6 +24,7 @@ function options(
     inFlightRef: { current: false },
     gateway: { analyse: vi.fn(() => resultPromise) },
     replacePhpstanDiagnostics: vi.fn(),
+    replacePhpstanRetainedDiagnostics: vi.fn(),
     setMessage: vi.fn(),
     setRunning: vi.fn(),
   };
@@ -180,7 +182,93 @@ describe("runPhpstanWorkspaceAnalysis", () => {
     await run;
 
     expect(input.replacePhpstanDiagnostics).not.toHaveBeenCalled();
+    expect(input.replacePhpstanRetainedDiagnostics).not.toHaveBeenCalled();
     expect(input.setMessage).toHaveBeenLastCalledWith(null);
     expect(input.setRunning).toHaveBeenLastCalledWith(false);
+  });
+
+  it("retains successful diagnostics only after the awaited run remains current", async () => {
+    const analysis = {
+      status: "ok" as const,
+      diagnostics: [
+        {
+          filePath: "src/A.php",
+          line: 4,
+          message: "Issue",
+          identifier: "argument.type",
+          ignorable: true,
+        },
+      ],
+      totals: { fileErrors: 1, generalErrors: 0, fileCount: 1 },
+    };
+    const input = options(Promise.resolve(analysis));
+
+    await runPhpstanWorkspaceAnalysis(input);
+
+    expect(input.replacePhpstanRetainedDiagnostics).toHaveBeenCalledWith(
+      "/workspace",
+      analysis,
+    );
+  });
+});
+
+describe("runPhpstanIgnoreAtCursor", () => {
+  const document = {
+    path: "/workspace/src/A.php",
+    name: "A.php",
+    language: "php",
+    content: "<?php\n    broken();\n",
+    savedContent: "<?php\n    broken();\n",
+  };
+
+  it("combines unique identifiers on the cursor line and reports their count", () => {
+    const runner = vi.fn(() => 2);
+    const setMessage = vi.fn();
+
+    expect(
+      runPhpstanIgnoreAtCursor({
+        currentRoot: "/workspace",
+        requestedRoot: "/workspace",
+        document,
+        lineNumber: 2,
+        diagnostics: [
+          { line: 2, identifier: "argument.type" },
+          { line: 2, identifier: "return.type" },
+          { line: 2, identifier: "argument.type" },
+        ],
+        runner,
+        setMessage,
+        workspaceTrusted: true,
+      }),
+    ).toBe(2);
+    expect(runner).toHaveBeenCalledWith(
+      document.content,
+      2,
+      ["argument.type", "return.type"],
+    );
+    expect(setMessage).toHaveBeenCalledWith(
+      "PHPStan: Ignored 2 issues (argument.type, return.type)",
+    );
+  });
+
+  it.each([
+    ["stale root", { currentRoot: "/other" }],
+    ["untrusted workspace", { workspaceTrusted: false }],
+    ["dirty document", { document: { ...document, content: "dirty" } }],
+    ["no cursor diagnostic", { lineNumber: 3 }],
+  ])("drops the action for a %s", (_label, overrides) => {
+    const runner = vi.fn();
+    runPhpstanIgnoreAtCursor({
+      currentRoot: "/workspace",
+      requestedRoot: "/workspace",
+      document,
+      lineNumber: 2,
+      diagnostics: [{ line: 2, identifier: "argument.type" }],
+      runner,
+      setMessage: vi.fn(),
+      workspaceTrusted: true,
+      ...overrides,
+    });
+    expect(runner).not.toHaveBeenCalled();
   });
 });
