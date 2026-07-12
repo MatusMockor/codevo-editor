@@ -21,12 +21,18 @@ function makeDeps(
 }
 
 describe("phpFrameworkMethodCompletionProviderAdapters", () => {
-  it("selects the generic adapter when Laravel is not an active provider", async () => {
+  it.each([
+    { activeProviderId: null, label: "generic" },
+    { activeProviderId: "nette", label: "Nette" },
+    { activeProviderId: "custom", label: "custom" },
+  ])("keeps $label providers inert", async ({ activeProviderId }) => {
     const ensurePhpFrameworkSourceCollectionsLoaded = vi.fn(
       async () => undefined,
     );
     const frameworkRuntime = {
-      hasProvider: vi.fn(() => false),
+      hasProvider: vi.fn(
+        (providerId: string) => providerId === activeProviderId,
+      ),
       isLaravel: true,
     };
     const adapter = createPhpFrameworkMethodCompletionProviderAdapters(

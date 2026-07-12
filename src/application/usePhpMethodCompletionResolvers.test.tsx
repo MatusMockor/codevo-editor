@@ -175,6 +175,10 @@ describe("usePhpMethodCompletionResolvers", () => {
     const deps = makeDeps({
       collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
         method("whereEmail", { kind: "magic-where" }),
+        method("whereEmail", {
+          declaringClassName: "App\\Models\\Duplicate",
+          kind: "magic-where",
+        }),
       ]),
       collectPhpMethodsForClass,
       resolvePhpEloquentBuilderModelType: vi.fn(
@@ -199,6 +203,10 @@ describe("usePhpMethodCompletionResolvers", () => {
       "published",
       "whereEmail",
     ]);
+    expect(
+      completions.find((completion) => completion.name === "whereEmail")
+        ?.declaringClassName,
+    ).toBe("App\\Models\\Post");
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "Illuminate\\Database\\Eloquent\\Builder",
     );

@@ -1,4 +1,5 @@
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { activePhpFrameworkMethodCompletionAdapter } from "./phpFrameworkMethodCompletionAdapterRegistry";
 import {
   genericPhpFrameworkMethodCompletionProviderAdapter,
   type PhpFrameworkMethodCompletionProviderAdapter,
@@ -17,9 +18,15 @@ export function createPhpFrameworkMethodCompletionProviderAdapters({
   frameworkRuntime,
   ...laravelDependencies
 }: PhpFrameworkMethodCompletionProviderAdapterDependencies): PhpFrameworkMethodCompletionProviderAdapter {
-  if (!frameworkRuntime.hasProvider("laravel")) {
-    return genericPhpFrameworkMethodCompletionProviderAdapter;
-  }
-
-  return createPhpLaravelMethodCompletionProviderAdapter(laravelDependencies);
+  return activePhpFrameworkMethodCompletionAdapter(
+    frameworkRuntime,
+    genericPhpFrameworkMethodCompletionProviderAdapter,
+    [
+      {
+        providerId: "laravel",
+        createAdapter: () =>
+          createPhpLaravelMethodCompletionProviderAdapter(laravelDependencies),
+      },
+    ],
+  );
 }

@@ -31,7 +31,11 @@ function makeDeps(
 }
 
 describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
-  it("returns generic method completion semantics without the Laravel provider", async () => {
+  it.each([
+    { activeProviderId: null, label: "generic" },
+    { activeProviderId: "nette", label: "Nette" },
+    { activeProviderId: "custom", label: "custom" },
+  ])("keeps $label providers inert", async ({ activeProviderId }) => {
     const collectPhpLaravelDynamicWhereMethodsForClass = vi.fn(async () => [
       method("whereEmail", { kind: "magic-where" }),
     ]);
@@ -39,7 +43,9 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
       async () => "App\\Models\\Post",
     );
     const frameworkRuntime = {
-      hasProvider: vi.fn(() => false),
+      hasProvider: vi.fn(
+        (providerId: string) => providerId === activeProviderId,
+      ),
       isLaravel: true,
     };
     const adapter = createPhpFrameworkMethodCompletionSemanticsAdapters(

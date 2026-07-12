@@ -1,4 +1,5 @@
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { activePhpFrameworkMethodCompletionAdapter } from "./phpFrameworkMethodCompletionAdapterRegistry";
 import {
   genericPhpMethodCompletionSemantics,
   type PhpFrameworkMethodCompletionSemanticsAdapter,
@@ -17,11 +18,17 @@ export function createPhpFrameworkMethodCompletionSemanticsAdapters({
   frameworkRuntime,
   ...laravelDependencies
 }: PhpFrameworkMethodCompletionSemanticsAdapterDependencies): PhpFrameworkMethodCompletionSemanticsAdapter {
-  if (!frameworkRuntime.hasProvider("laravel")) {
-    return genericPhpMethodCompletionSemantics;
-  }
-
-  return createPhpLaravelMethodCompletionSemanticsAdapter(
-    laravelDependencies,
+  return activePhpFrameworkMethodCompletionAdapter(
+    frameworkRuntime,
+    genericPhpMethodCompletionSemantics,
+    [
+      {
+        providerId: "laravel",
+        createAdapter: () =>
+          createPhpLaravelMethodCompletionSemanticsAdapter(
+            laravelDependencies,
+          ),
+      },
+    ],
   );
 }
