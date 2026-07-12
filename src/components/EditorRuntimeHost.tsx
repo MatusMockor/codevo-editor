@@ -42,6 +42,17 @@ import {
   type TypescriptJavascriptDefaultsOptions,
 } from "./typescriptJavascriptDefaults";
 import { EditorModelContentSyncCoordinator } from "./editorModelContentSyncCoordinator";
+import {
+  LocalPhpValidationCoordinator,
+  type CoordinatedLocalPhpValidation,
+  type LocalPhpValidationComputation,
+  type LocalPhpValidationRequest,
+} from "./localPhpValidationCoordinator";
+
+export interface LocalPhpValidationSnapshot<TSyntax, TInspection> {
+  inspectionDiagnostics: TInspection[];
+  syntaxDiagnostics: TSyntax[];
+}
 
 interface EditorRuntimeSurfaceRouting {
   activeDocumentRef: EditorRuntimeEditorMembership["activeDocumentRef"];
@@ -70,6 +81,16 @@ interface EditorRuntimeSurfaceRegistration {
 }
 
 interface EditorRuntimeContextValue {
+  coordinateLocalPhpValidation<TSyntax, TInspection>(
+    request: LocalPhpValidationRequest,
+    compute: () => LocalPhpValidationComputation<
+      LocalPhpValidationSnapshot<TSyntax, TInspection>,
+      LocalPhpValidationSnapshot<TSyntax, TInspection>
+    >,
+  ): CoordinatedLocalPhpValidation<
+    LocalPhpValidationSnapshot<TSyntax, TInspection>,
+    LocalPhpValidationSnapshot<TSyntax, TInspection>
+  >;
   focusGroup(groupId: string): void;
   registerSurface(
     id: string,
@@ -126,6 +147,27 @@ export function EditorRuntimeHost({
   if (!contentSyncCoordinatorRef.current) {
     contentSyncCoordinatorRef.current = new EditorModelContentSyncCoordinator();
   }
+  const localPhpValidationCoordinatorRef = useRef(
+    new LocalPhpValidationCoordinator<unknown, unknown>(),
+  );
+
+  const coordinateLocalPhpValidation = useCallback(
+    <TSyntax, TInspection>(
+      request: LocalPhpValidationRequest,
+      compute: () => LocalPhpValidationComputation<
+        LocalPhpValidationSnapshot<TSyntax, TInspection>,
+        LocalPhpValidationSnapshot<TSyntax, TInspection>
+      >,
+    ) =>
+      localPhpValidationCoordinatorRef.current.coordinate(
+        request,
+        compute as () => LocalPhpValidationComputation<unknown, unknown>,
+      ) as CoordinatedLocalPhpValidation<
+        LocalPhpValidationSnapshot<TSyntax, TInspection>,
+        LocalPhpValidationSnapshot<TSyntax, TInspection>
+      >,
+    [],
+  );
 
   const updateSurface = useCallback(
     (id: string, registration: EditorRuntimeSurfaceRegistration) => {
@@ -195,6 +237,7 @@ export function EditorRuntimeHost({
         if (!removed) {
           return;
         }
+        localPhpValidationCoordinatorRef.current.releaseConsumer(id);
 
         admittedWorkspaceRootRef.current = admittedWorkspaceRoot(
           registrationsRef.current,
@@ -511,11 +554,27 @@ export function EditorRuntimeHost({
     };
   }, []);
 
-  useEffect(() => () => contentSyncCoordinatorRef.current?.dispose(), []);
+  useEffect(
+    () => () => {
+      contentSyncCoordinatorRef.current?.dispose();
+      localPhpValidationCoordinatorRef.current.dispose();
+    },
+    [],
+  );
 
   const value = useMemo<EditorRuntimeContextValue>(
-    () => ({ focusGroup, registerSurface, updateSurface }),
-    [focusGroup, registerSurface, updateSurface],
+    () => ({
+      coordinateLocalPhpValidation,
+      focusGroup,
+      registerSurface,
+      updateSurface,
+    }),
+    [
+      coordinateLocalPhpValidation,
+      focusGroup,
+      registerSurface,
+      updateSurface,
+    ],
   );
 
   return (

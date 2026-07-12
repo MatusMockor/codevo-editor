@@ -11,7 +11,9 @@ import {
   useState,
   useId,
   type CSSProperties,
+  type Dispatch,
   type MutableRefObject,
+  type SetStateAction,
 } from "react";
 import type * as Monaco from "monaco-editor";
 import type {
@@ -155,6 +157,7 @@ import {
   EditorRuntimeHost,
   useEditorRuntimeContext,
   type EditorRuntimeSurfaceRegistration,
+  type LocalPhpValidationSnapshot,
 } from "./EditorRuntimeHost";
 import type { EditorRuntimeMembershipInput } from "./editorRuntimeMembership";
 import {
@@ -2672,13 +2675,16 @@ function EditorSurfaceComponent({
     async (
       path: string,
       content: string,
+      model: Monaco.editor.ITextModel,
       isActive: () => boolean = () => true,
     ): Promise<boolean> => {
-      if (!monacoApi) {
+      if (!monacoApi || !runtime) {
         return false;
       }
 
-      const validationKey = `${path}\0${content}`;
+      const version =
+        typeof model.getVersionId === "function" ? model.getVersionId() : 0;
+      const validationKey = `${path}\0${model.uri.toString()}\0${version}\0${content}`;
 
       if (pendingLocalPhpValidationKeyRef.current === validationKey) {
         return false;
@@ -2686,112 +2692,79 @@ function EditorSurfaceComponent({
 
       pendingLocalPhpValidationKeyRef.current = validationKey;
 
-      const immediateDiagnostics = [
-        ...structuralPhpSyntaxDiagnostics(content),
-        ...suspiciousPhpBareIdentifierDiagnostics(content),
-      ];
-      const immediateInspectionDiagnostics = phpInspectionDiagnostics(content);
-
-      if (isActive()) {
-        onLocalPhpDiagnosticsChange(path, [
-          ...immediateDiagnostics.map((diagnostic) =>
-            toLocalPhpDiagnostic(diagnostic, "PHP Syntax", "error"),
-          ),
-          ...immediateInspectionDiagnostics.map((diagnostic) =>
-            toLocalPhpDiagnostic(diagnostic, "PHP Inspection", "warning"),
-          ),
-        ]);
-        setSyntaxDiagnosticsByPath((current) => ({
-          ...current,
-          [path]: immediateDiagnostics,
-        }));
-        setPhpInspectionDiagnosticCountsByPath((current) => {
-          if (immediateInspectionDiagnostics.length === 0) {
-            if (current[path] === undefined) {
-              return current;
-            }
-
-            const next = { ...current };
-            delete next[path];
-            return next;
-          }
-
-          return {
-            ...current,
-            [path]: immediateInspectionDiagnostics.length,
-          };
-        });
-
-        const model = modelForPath(monacoApi, workspaceRoot, path);
-
-        if (model) {
-          monacoApi.editor.setModelMarkers(model, "php-syntax", [
-            ...immediateDiagnostics.map((diagnostic) =>
-              toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
-            ),
-            ...immediateInspectionDiagnostics.map((diagnostic) =>
-              toMonacoInspectionMarker(monacoApi, diagnostic),
-            ),
-          ]);
-        }
-      }
-
       try {
-        const diagnostics = await phpSyntaxDiagnosticsGateway.validate(content);
+        const coordinated = runtime.coordinateLocalPhpValidation<
+          PhpSyntaxDiagnostic,
+          PhpInspectionDiagnostic
+        >(
+          {
+            consumerId: generatedSurfaceId,
+            content,
+            documentPath: path,
+            modelUri: model.uri.toString(),
+            version,
+            workspaceRoot: workspaceRoot ?? "",
+          },
+          () => {
+            const structuralDiagnostics =
+              structuralPhpSyntaxDiagnostics(content);
+            const suspiciousDiagnostics =
+              suspiciousPhpBareIdentifierDiagnostics(content);
+            const immediateSyntaxDiagnostics = [
+              ...structuralDiagnostics,
+              ...suspiciousDiagnostics,
+            ];
+            const immediateInspectionDiagnostics =
+              phpInspectionDiagnostics(content);
 
-        if (!isActive()) {
+            return {
+              immediate: {
+                inspectionDiagnostics: immediateInspectionDiagnostics,
+                syntaxDiagnostics: immediateSyntaxDiagnostics,
+              },
+              result: phpSyntaxDiagnosticsGateway.validate(content).then(
+                (diagnostics) => ({
+                  inspectionDiagnostics: immediateInspectionDiagnostics,
+                  syntaxDiagnostics: [
+                    ...diagnostics,
+                    ...(diagnostics.length === 0
+                      ? structuralDiagnostics
+                      : []),
+                    ...suspiciousDiagnostics,
+                  ],
+                }),
+              ),
+            };
+          },
+        );
+
+        if (isActive()) {
+          applyLocalPhpValidationSnapshot(
+            coordinated.immediate,
+            monacoApi,
+            model,
+            path,
+            onLocalPhpDiagnosticsChange,
+            setSyntaxDiagnosticsByPath,
+            setPhpInspectionDiagnosticCountsByPath,
+          );
+        }
+
+        const result = await coordinated.result;
+
+        if (!result || !isActive()) {
           return false;
         }
 
-        const localDiagnostics = [
-          ...(diagnostics.length === 0
-            ? structuralPhpSyntaxDiagnostics(content)
-            : []),
-          ...suspiciousPhpBareIdentifierDiagnostics(content),
-        ];
-        const allDiagnostics = [...diagnostics, ...localDiagnostics];
-        const inspectionDiagnostics = phpInspectionDiagnostics(content);
-
-        onLocalPhpDiagnosticsChange(path, [
-          ...allDiagnostics.map((diagnostic) =>
-            toLocalPhpDiagnostic(diagnostic, "PHP Syntax", "error"),
-          ),
-          ...inspectionDiagnostics.map((diagnostic) =>
-            toLocalPhpDiagnostic(diagnostic, "PHP Inspection", "warning"),
-          ),
-        ]);
-        setSyntaxDiagnosticsByPath((current) => ({
-          ...current,
-          [path]: allDiagnostics,
-        }));
-        setPhpInspectionDiagnosticCountsByPath((current) => {
-          if (inspectionDiagnostics.length === 0) {
-            if (current[path] === undefined) {
-              return current;
-            }
-
-            const next = { ...current };
-            delete next[path];
-            return next;
-          }
-
-          return {
-            ...current,
-            [path]: inspectionDiagnostics.length,
-          };
-        });
-        const model = modelForPath(monacoApi, workspaceRoot, path);
-
-        if (model) {
-          monacoApi.editor.setModelMarkers(model, "php-syntax", [
-            ...allDiagnostics.map((diagnostic) =>
-              toMonacoSyntaxDiagnosticMarker(monacoApi, diagnostic),
-            ),
-            ...inspectionDiagnostics.map((diagnostic) =>
-              toMonacoInspectionMarker(monacoApi, diagnostic),
-            ),
-          ]);
-        }
+        applyLocalPhpValidationSnapshot(
+          result,
+          monacoApi,
+          model,
+          path,
+          onLocalPhpDiagnosticsChange,
+          setSyntaxDiagnosticsByPath,
+          setPhpInspectionDiagnosticCountsByPath,
+        );
 
         lastLocalPhpValidationKeyRef.current = validationKey;
         return true;
@@ -2808,6 +2781,8 @@ function EditorSurfaceComponent({
       monacoApi,
       onLocalPhpDiagnosticsChange,
       phpSyntaxDiagnosticsGateway,
+      runtime,
+      generatedSurfaceId,
       workspaceRoot,
     ],
   );
@@ -3401,6 +3376,7 @@ function EditorSurfaceComponent({
       void applyLocalPhpDiagnostics(
         activeDocument.path,
         model.getValue(),
+        model,
         () => active,
       ).then((wasApplied) => {
         if (wasApplied) {
@@ -3665,7 +3641,17 @@ function EditorSurfaceComponent({
     }
 
     let active = true;
-    applyLocalPhpDiagnostics(phpEditTick.path, phpEditTick.content, () => active);
+    const model = modelForPath(monacoApi, workspaceRoot, phpEditTick.path);
+    if (!model) {
+      return;
+    }
+
+    applyLocalPhpDiagnostics(
+      phpEditTick.path,
+      phpEditTick.content,
+      model,
+      () => active,
+    );
 
     return () => {
       active = false;
@@ -5458,6 +5444,64 @@ function toLocalPhpDiagnostic(
     tags:
       "unnecessary" in diagnostic && diagnostic.unnecessary ? [1] : undefined,
   };
+}
+
+function applyLocalPhpValidationSnapshot(
+  snapshot: LocalPhpValidationSnapshot<
+    PhpSyntaxDiagnostic,
+    PhpInspectionDiagnostic
+  >,
+  monaco: typeof Monaco,
+  model: Monaco.editor.ITextModel,
+  path: string,
+  onDiagnosticsChange: (
+    path: string,
+    diagnostics: LanguageServerDiagnostic[],
+  ) => void,
+  setSyntaxDiagnostics: Dispatch<
+    SetStateAction<Record<string, PhpSyntaxDiagnostic[]>>
+  >,
+  setInspectionDiagnosticCounts: Dispatch<
+    SetStateAction<Record<string, number>>
+  >,
+): void {
+  const { inspectionDiagnostics, syntaxDiagnostics } = snapshot;
+
+  onDiagnosticsChange(path, [
+    ...syntaxDiagnostics.map((diagnostic) =>
+      toLocalPhpDiagnostic(diagnostic, "PHP Syntax", "error"),
+    ),
+    ...inspectionDiagnostics.map((diagnostic) =>
+      toLocalPhpDiagnostic(diagnostic, "PHP Inspection", "warning"),
+    ),
+  ]);
+  setSyntaxDiagnostics((current) => ({
+    ...current,
+    [path]: syntaxDiagnostics,
+  }));
+  setInspectionDiagnosticCounts((current) => {
+    if (inspectionDiagnostics.length > 0) {
+      return {
+        ...current,
+        [path]: inspectionDiagnostics.length,
+      };
+    }
+    if (current[path] === undefined) {
+      return current;
+    }
+
+    const next = { ...current };
+    delete next[path];
+    return next;
+  });
+  monaco.editor.setModelMarkers(model, "php-syntax", [
+    ...syntaxDiagnostics.map((diagnostic) =>
+      toMonacoSyntaxDiagnosticMarker(monaco, diagnostic),
+    ),
+    ...inspectionDiagnostics.map((diagnostic) =>
+      toMonacoInspectionMarker(monaco, diagnostic),
+    ),
+  ]);
 }
 
 function localPhpDiagnosticsFromVisibleMarkers(
