@@ -1,6 +1,5 @@
 import {
   createPhpFrameworkProviderCapabilityRegistry,
-  phpFrameworkProviderSignature,
   type FrameworkProfile,
   type PhpFrameworkProviderCapabilityRegistry,
   type PhpFrameworkProvider,
@@ -28,18 +27,19 @@ export function createPhpFrameworkIntelligence(
   resolution: PhpFrameworkResolution,
 ): PhpFrameworkIntelligence {
   const providerIds = resolution.providers.map((provider) => provider.id);
+  const capabilities = createPhpFrameworkProviderCapabilityRegistry(
+    resolution.providers,
+  );
 
   return {
     matchedProviderIds: resolution.matchedProviderIds,
     profile: resolution.profile,
     providerIds,
-    providerSignature: phpFrameworkProviderSignature(resolution.providers),
+    providerSignature: capabilities.providerSignature,
     providers: resolution.providers,
-    capabilities: createPhpFrameworkProviderCapabilityRegistry(
-      resolution.providers,
-    ),
-    isLaravel: resolution.profile === "laravel",
-    isNette: resolution.profile === "nette",
-    hasProvider: (providerId) => providerIds.includes(providerId),
+    capabilities,
+    isLaravel: capabilities.hasProvider("laravel"),
+    isNette: capabilities.hasProvider("nette"),
+    hasProvider: (providerId) => capabilities.hasProvider(providerId),
   };
 }

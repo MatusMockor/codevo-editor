@@ -835,6 +835,7 @@ export type PhpFrameworkProviderCapability =
 
 export interface PhpFrameworkProviderCapabilityRegistry {
   readonly providerSignature: string;
+  hasProvider(providerId: string): boolean;
   supports(capability: PhpFrameworkProviderCapability): boolean;
   supportsTargetCollection(kind: PhpFrameworkTargetCollectionKind): boolean;
 }
@@ -874,6 +875,8 @@ export function createPhpFrameworkProviderCapabilityRegistry(
 ): PhpFrameworkProviderCapabilityRegistry {
   return {
     providerSignature: phpFrameworkProviderSignature(providers),
+    hasProvider: (providerId) =>
+      isPhpFrameworkProviderActive(providers, providerId),
     supports: (capability) =>
       phpFrameworkProvidersSupportCapability(providers, capability),
     supportsTargetCollection: (kind) =>

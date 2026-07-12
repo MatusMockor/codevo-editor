@@ -48,6 +48,17 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.isNette).toBe(true);
   });
 
+  it("derives framework activation from providers instead of profile labels", () => {
+    const intelligence = createPhpFrameworkIntelligence({
+      matchedProviderIds: ["nette"],
+      profile: "generic",
+      providers: [phpNetteFrameworkProvider],
+    });
+
+    expect(intelligence.isLaravel).toBe(false);
+    expect(intelligence.isNette).toBe(true);
+  });
+
   it("keeps generic workspaces provider-empty", () => {
     const intelligence = createPhpFrameworkIntelligence({
       matchedProviderIds: [],

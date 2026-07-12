@@ -1542,6 +1542,15 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
   });
 
   describe("exclusive framework provider resolution", () => {
+    it("exposes active framework identity through the capability registry", () => {
+      const registry = createPhpFrameworkProviderCapabilityRegistry([
+        phpNetteFrameworkProvider,
+      ]);
+
+      expect(registry.hasProvider("nette")).toBe(true);
+      expect(registry.hasProvider("laravel")).toBe(false);
+    });
+
     it("activates only the highest-priority provider when several frameworks match", () => {
       // PhpProjectDescriptor.packages carries require + require-dev + the whole
       // composer.lock / installed.json (transitive) tree, so a Laravel app that
