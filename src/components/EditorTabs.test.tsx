@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorDocument } from "../domain/workspace";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import { EditorTabs } from "./EditorTabs";
+import { EDITOR_TAB_MIME } from "./editorTabDrag";
 
 describe("EditorTabs", () => {
   let host: HTMLDivElement;
@@ -333,7 +334,7 @@ describe("EditorTabs", () => {
     );
   });
 
-  it("keeps a reordered preview tab unpinned and inactive state unchanged", async () => {
+  it("pins a preview when dragging it while keeping active state unchanged", async () => {
     const activate = vi.fn();
     const pin = vi.fn();
     const reorder = vi.fn();
@@ -380,7 +381,94 @@ describe("EditorTabs", () => {
       "App.tsx",
     );
     expect(activate).not.toHaveBeenCalled();
-    expect(pin).not.toHaveBeenCalled();
+    expect(pin).toHaveBeenCalledWith(previewPath);
+  });
+
+  it("moves a tab between groups and accepts an empty strip drop", async () => {
+    const move = vi.fn();
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData(EDITOR_TAB_MIME, JSON.stringify({
+      version: 1,
+      projectId: "project-a",
+      sourceGroupId: "left",
+      path: "/workspace/src/App.tsx",
+    }));
+    await act(async () => {
+      root.render(
+        <EditorTabs
+          activePath={null}
+          documents={[]}
+          groupId="right"
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          onMove={move}
+          onPin={vi.fn()}
+          previewPath={null}
+          projectId="project-a"
+        />,
+      );
+    });
+    act(() => dispatchDragEvent(host.querySelector(".editor-tabs")!, "drop", dataTransfer, 0));
+    expect(move).toHaveBeenCalledWith("left", "right", "/workspace/src/App.tsx");
+  });
+
+  it("rejects malformed and cross-project drops", async () => {
+    const move = vi.fn();
+    await act(async () => {
+      root.render(
+        <EditorTabs activePath={null} documents={[]} groupId="right" onActivate={vi.fn()}
+          onClose={vi.fn()} onMove={move} onPin={vi.fn()} previewPath={null} projectId="project-a" />,
+      );
+    });
+    for (const payload of ["not-json", JSON.stringify({
+      version: 1, projectId: "project-b", sourceGroupId: "left", path: "/foreign.ts",
+    })]) {
+      const dataTransfer = createDataTransfer();
+      dataTransfer.setData(EDITOR_TAB_MIME, payload);
+      act(() => dispatchDragEvent(host.querySelector(".editor-tabs")!, "drop", dataTransfer, 0));
+    }
+    expect(move).not.toHaveBeenCalled();
+  });
+
+  it("checks only MIME presence during dragover and reads data on drop", async () => {
+    const reorder = vi.fn();
+    const dataTransfer = createDataTransfer();
+    dataTransfer.setData(EDITOR_TAB_MIME, JSON.stringify({
+      version: 1,
+      projectId: "project-a",
+      sourceGroupId: "left",
+      path: "/workspace/src/App.tsx",
+    }));
+    const getData = vi.spyOn(dataTransfer, "getData");
+    await act(async () => {
+      root.render(
+        <EditorTabs
+          activePath="/workspace/src/App.tsx"
+          documents={[
+            doc("/workspace/src/App.tsx", "App.tsx"),
+            doc("/workspace/src/main.tsx", "main.tsx"),
+          ]}
+          groupId="left"
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          onPin={vi.fn()}
+          onReorder={reorder}
+          previewPath={null}
+          projectId="project-a"
+        />,
+      );
+    });
+    const target = host.querySelectorAll<HTMLElement>(".editor-tab")[1];
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue(rectangle(100, 200));
+    act(() => dispatchDragEvent(target, "dragover", dataTransfer, 125));
+    expect(getData).not.toHaveBeenCalled();
+    act(() => dispatchDragEvent(target, "drop", dataTransfer, 125));
+    expect(getData).toHaveBeenCalledTimes(1);
+    expect(reorder).toHaveBeenCalledWith(
+      "/workspace/src/App.tsx",
+      "/workspace/src/main.tsx",
+      "before",
+    );
   });
 });
 
@@ -390,6 +478,9 @@ function createDataTransfer() {
   return {
     dropEffect: "move",
     effectAllowed: "move",
+    get types() {
+      return [...values.keys()];
+    },
     getData(type: string) {
       return values.get(type) ?? "";
     },

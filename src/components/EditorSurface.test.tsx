@@ -79,6 +79,7 @@ interface FakeEditor {
   cursorPositionHandler:
     | ((event: { position: EditorPosition }) => void)
     | null;
+  focusEditorWidgetHandler: (() => void) | null;
   keyDownHandler: ((event: FakeKeyDownEvent) => void) | null;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   mouseMoveHandler: ((event: FakeMouseDownEvent) => void) | null;
@@ -107,6 +108,7 @@ interface FakeEditor {
   modelChangeHandler: (() => void) | null;
   modelChangeHandlers: Array<() => void>;
   onDidChangeCursorPosition: ReturnType<typeof vi.fn>;
+  onDidFocusEditorWidget: ReturnType<typeof vi.fn>;
   onDidChangeModel: ReturnType<typeof vi.fn>;
   onDidChangeModelContent: ReturnType<typeof vi.fn>;
   onDidScrollChange: ReturnType<typeof vi.fn>;
@@ -176,6 +178,7 @@ const editorSurfaceMocks = vi.hoisted(() => ({
   monaco: null as ReturnType<typeof createMonaco> | null,
   renderCount: 0,
   props: null as {
+    keepCurrentModel?: boolean;
     options?: Record<string, unknown>;
     onChange?: (value: string | undefined) => void;
     beforeMount?: (monaco: unknown) => void;
@@ -957,6 +960,94 @@ describe("EditorSurface", () => {
         suggestOnTriggerCharacters: true,
       }),
     );
+    expect(editorSurfaceMocks.props?.keepCurrentModel).toBe(true);
+  });
+
+  it("notifies the owning group for native focus and already-focused mouse interaction", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const shared = true;\n",
+      language: "typescript",
+      name: "shared.ts",
+      path: "/workspace/shared.ts",
+      savedContent: "const shared = true;\n",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const monaco = createMonaco(model);
+    const onEditorFocused = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={onEditorFocused}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.onDidFocusEditorWidget).toHaveBeenCalledOnce();
+    await act(async () => {
+      editor.focusEditorWidgetHandler?.();
+      await Promise.resolve();
+    });
+    expect(onEditorFocused).toHaveBeenCalledOnce();
+
+    onEditorFocused.mockClear();
+    const mouseEvent: FakeMouseDownEvent = {
+      event: {
+        leftButton: true,
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+      },
+      target: {
+        position: { column: 1, lineNumber: 1 },
+        type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+      },
+    };
+    await act(async () => {
+      editor.mouseDownHandler?.(mouseEvent);
+      await Promise.resolve();
+    });
+    expect(onEditorFocused).toHaveBeenCalledOnce();
+
+    onEditorFocused.mockClear();
+    await act(async () => {
+      editor.mouseDownHandler?.(mouseEvent);
+      editor.focusEditorWidgetHandler?.();
+      await Promise.resolve();
+    });
+    expect(onEditorFocused).toHaveBeenCalledOnce();
   });
 
   it("registers language-agnostic conflict actions and refreshes conflict decorations on edits", async () => {
@@ -1241,6 +1332,7 @@ describe("EditorSurface", () => {
           providePhpCodeActions={providePhpCodeActions}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -1311,6 +1403,7 @@ describe("EditorSurface", () => {
           providePhpFrameworkDefinition={providePhpFrameworkDefinition}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -1392,6 +1485,7 @@ describe("EditorSurface", () => {
           }}
           providePhpMethodCompletions={vi.fn(async () => [])}
           providePhpMethodSignature={vi.fn(async () => null)}
+          workspaceRoot="/workspace"
         />,
       );
       await Promise.resolve();
@@ -5245,6 +5339,7 @@ class InvoiceServiceTest extends TestCase
               },
             ],
           }}
+          workspaceRoot="/workspace"
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
           keymap={defaultKeymapSettings()}
@@ -5361,6 +5456,7 @@ class InvoiceServiceTest extends TestCase
             editorRevealTarget={null}
             flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
             languageServerDiagnosticsByPath={diagnostics}
+            workspaceRoot="/workspace"
             languageServerFeaturesGateway={languageServerFeaturesGateway()}
             languageServerRuntimeStatus={null}
             keymap={defaultKeymapSettings()}
@@ -6852,6 +6948,7 @@ class Foo
             editorRevealTarget={null}
             flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
             languageServerDiagnosticsByPath={diagnostics as never}
+            workspaceRoot="/workspace"
             languageServerFeaturesGateway={languageServerFeaturesGateway()}
             languageServerRuntimeStatus={null}
             keymap={defaultKeymapSettings()}
@@ -6935,6 +7032,7 @@ class Foo
             editorRevealTarget={null}
             flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
             languageServerDiagnosticsByPath={diagnostics as never}
+            workspaceRoot="/workspace"
             languageServerFeaturesGateway={languageServerFeaturesGateway()}
             languageServerRuntimeStatus={null}
             keymap={defaultKeymapSettings()}
@@ -7040,6 +7138,7 @@ class Foo
             editorRevealTarget={null}
             flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
             languageServerDiagnosticsByPath={diagnostics}
+            workspaceRoot="/workspace"
             languageServerFeaturesGateway={languageServerFeaturesGateway()}
             languageServerRuntimeStatus={null}
             keymap={defaultKeymapSettings()}
@@ -7143,6 +7242,7 @@ class Foo
             editorRevealTarget={null}
             flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
             languageServerDiagnosticsByPath={diagnostics as never}
+            workspaceRoot="/workspace"
             languageServerFeaturesGateway={languageServerFeaturesGateway()}
             languageServerRuntimeStatus={null}
             keymap={defaultKeymapSettings()}
@@ -7266,6 +7366,7 @@ class Foo
             editorRevealTarget={null}
             flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
             languageServerDiagnosticsByPath={diagnostics}
+            workspaceRoot="/workspace"
             languageServerFeaturesGateway={languageServerFeaturesGateway()}
             languageServerRuntimeStatus={null}
             keymap={defaultKeymapSettings()}
@@ -13786,6 +13887,7 @@ function createEditor(model: FakeModel): FakeEditor {
     getScrollTop: vi.fn(() => 10),
     getTopForLineNumber: vi.fn((lineNumber: number) => lineNumber * 20),
     cursorPositionHandler: null,
+    focusEditorWidgetHandler: null,
     keyDownHandler: null,
     mouseDownHandler: null,
     mouseMoveHandler: null,
@@ -13800,6 +13902,16 @@ function createEditor(model: FakeModel): FakeEditor {
         return { dispose: vi.fn() };
       },
     ),
+    onDidFocusEditorWidget: vi.fn((handler: () => void) => {
+      editor.focusEditorWidgetHandler = handler;
+      return {
+        dispose: vi.fn(() => {
+          if (editor.focusEditorWidgetHandler === handler) {
+            editor.focusEditorWidgetHandler = null;
+          }
+        }),
+      };
+    }),
     onDidChangeModel: vi.fn((handler: () => void) => {
       editor.modelChangeHandlers.push(handler);
       editor.modelChangeHandler = () => {

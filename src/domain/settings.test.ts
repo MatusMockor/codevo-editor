@@ -92,10 +92,16 @@ describe("settings defaults", () => {
       phpactorPath: null,
       revealActiveFileInTree: true,
       session: {
-        activePath: null,
         bottomPanelView: "problems",
-        openPaths: [],
+        editor: {
+          activeGroupId: "editor-main",
+          groups: {
+            "editor-main": { activePath: null, openPaths: [], previewPath: null },
+          },
+          layout: { groupId: "editor-main", kind: "group" },
+        },
         sidebarView: "files",
+        version: 1,
       },
       statusBar: {
         activePath: true,
@@ -113,10 +119,16 @@ describe("settings defaults", () => {
       },
     });
     expect(defaultWorkspaceSessionState()).toEqual({
-      activePath: null,
       bottomPanelView: "problems",
-      openPaths: [],
+      editor: {
+        activeGroupId: "editor-main",
+        groups: {
+          "editor-main": { activePath: null, openPaths: [], previewPath: null },
+        },
+        layout: { groupId: "editor-main", kind: "group" },
+      },
       sidebarView: "files",
+      version: 1,
     });
   });
 });
@@ -535,10 +547,20 @@ describe("normalizeWorkspaceSettings", () => {
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
       session: {
-        activePath: "/project/src/User.php",
         bottomPanelView: "history",
-        openPaths: ["/project/src/User.php", "/project/README.md"],
+        editor: {
+          activeGroupId: "editor-main",
+          groups: {
+            "editor-main": {
+              activePath: "/project/src/User.php",
+              openPaths: ["/project/src/User.php", "/project/README.md"],
+              previewPath: null,
+            },
+          },
+          layout: { groupId: "editor-main", kind: "group" },
+        },
         sidebarView: "git",
+        version: 1,
       },
       statusBar: {
         activePath: true,
@@ -854,163 +876,100 @@ describe("normalizeLargeSmartDocumentPolicy", () => {
 });
 
 describe("normalizeWorkspaceSession", () => {
-  it("round trips preview and stable editor view positions", () => {
-    expect(
-      normalizeWorkspaceSession({
-        activePath: "/project/src/User.php",
-        bottomPanelView: "problems",
-        openPaths: ["/project/src/User.php"],
-        previewPath: "/project/src/User.php",
-        sidebarView: "files",
-        viewStates: {
-          "/project/src/User.php": {
-            column: 9,
-            foldedLines: [3, 12],
-            line: 14,
-            scrollTop: 320.5,
-          },
-        },
-      }),
-    ).toEqual({
-      activePath: "/project/src/User.php",
-      bottomPanelView: "problems",
-      openPaths: ["/project/src/User.php"],
-      previewPath: "/project/src/User.php",
-      sidebarView: "files",
-      viewStates: {
-        "/project/src/User.php": {
-          column: 9,
-          foldedLines: [3, 12],
-          line: 14,
-          scrollTop: 320.5,
-        },
-      },
-    });
-  });
-
-  it("safely drops malformed optional session fidelity fields", () => {
-    expect(
-      normalizeWorkspaceSession({
-        activePath: "/project/User.php",
-        bottomPanelView: "problems",
-        openPaths: ["/project/User.php"],
-        previewPath: "/project/Missing.php",
-        sidebarView: "files",
-        viewStates: {
-          "/project/BadLine.php": { column: 2, line: 0 },
-          "/project/BadColumn.php": { column: "2", line: 3 },
-          "/project/BadScroll.php": { column: 2, line: 3, scrollTop: -1 },
-          "/project/User.php": {
-            column: 2,
-            foldedLines: [1, 0, -1, 2.5, "3", 4, null],
-            line: 3,
-          },
-        },
-      }),
-    ).toEqual({
-      activePath: "/project/User.php",
-      bottomPanelView: "problems",
-      openPaths: ["/project/User.php"],
-      sidebarView: "files",
-      viewStates: {
-        "/project/User.php": { column: 2, foldedLines: [1, 4], line: 3 },
-      },
-    });
-
-    expect(
-      normalizeWorkspaceSession({
-        activePath: "/project/User.php",
-        bottomPanelView: "problems",
-        openPaths: ["/project/User.php"],
-        sidebarView: "files",
-        viewStates: {
-          "/project/User.php": {
-            column: 2,
-            foldedLines: { line: 3 },
-            line: 3,
-          },
-        },
-      }).viewStates,
-    ).toEqual({
-      "/project/User.php": { column: 2, line: 3 },
-    });
-
-    expect(
-      normalizeWorkspaceSession({
-        activePath: null,
-        bottomPanelView: "problems",
-        openPaths: [],
-        sidebarView: "files",
-      }),
-    ).toEqual(defaultWorkspaceSessionState());
-  });
-
-  it("caps persisted folded lines", () => {
-    const foldedLines = Array.from({ length: 600 }, (_, index) => index + 1);
-
-    expect(
-      normalizeWorkspaceSession({
-        activePath: "/project/User.php",
-        bottomPanelView: "problems",
-        openPaths: ["/project/User.php"],
-        sidebarView: "files",
-        viewStates: {
-          "/project/User.php": { column: 2, foldedLines, line: 3 },
-        },
-      }).viewStates?.["/project/User.php"]?.foldedLines,
-    ).toEqual(foldedLines.slice(0, 500));
-  });
-
-  it("sorts and deduplicates persisted folded lines", () => {
-    expect(
-      normalizeWorkspaceSession({
-        activePath: "/project/User.php",
-        bottomPanelView: "problems",
-        openPaths: ["/project/User.php"],
-        sidebarView: "files",
-        viewStates: {
-          "/project/User.php": {
-            column: 2,
-            foldedLines: [3, 2, 2],
-            line: 3,
-          },
-        },
-      }).viewStates?.["/project/User.php"]?.foldedLines,
-    ).toEqual([2, 3]);
-  });
-
-  it("accepts history as a valid stored bottom panel view", () => {
-    expect(
-      normalizeWorkspaceSession({
-        activePath: "/project/src/User.php",
-        bottomPanelView: "history",
-        openPaths: ["/project/src/User.php"],
-        sidebarView: "files",
-      }),
-    ).toEqual({
-      activePath: "/project/src/User.php",
+  it("migrates legacy flat fields into the primary group and unpins preview", () => {
+    const normalized = normalizeWorkspaceSession({
+      activePath: "/project/Preview.php",
       bottomPanelView: "history",
-      openPaths: ["/project/src/User.php"],
-      sidebarView: "files",
+      openPaths: ["/project/A.php", "/project/Preview.php"],
+      previewPath: "/project/Preview.php",
+      sidebarView: "git",
+      viewStates: {
+        "/project/Preview.php": { column: 9, foldedLines: [3, 2, 2], line: 14 },
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      bottomPanelView: "history",
+      editor: {
+        activeGroupId: "editor-main",
+        groups: {
+          "editor-main": {
+            activePath: "/project/Preview.php",
+            openPaths: ["/project/A.php"],
+            previewPath: "/project/Preview.php",
+          },
+        },
+        layout: { groupId: "editor-main", kind: "group" },
+      },
+      sidebarView: "git",
+      version: 1,
+      viewStates: {
+        "editor-main": {
+          "/project/Preview.php": { column: 9, foldedLines: [2, 3], line: 14 },
+        },
+      },
     });
   });
 
-  it("falls back for invalid layout values and inactive paths", () => {
-    expect(
-      normalizeWorkspaceSession({
-        activePath: "/project/missing.php",
-        bottomPanelView: "unknown",
-        openPaths: ["/project/User.php", 12],
-        sidebarView: "unknown",
-      }),
-    ).toEqual({
-      activePath: null,
-      bottomPanelView: "problems",
-      openPaths: ["/project/User.php"],
-      sidebarView: "files",
+  it("keeps independent same-file view states in split groups", () => {
+    const normalized = normalizeWorkspaceSession(splitSessionFixture());
+    expect(normalized.viewStates).toEqual({
+      left: { "/project/A.php": { column: 2, line: 3 } },
+      right: { "/project/A.php": { column: 8, line: 9 } },
     });
+  });
+
+  it("repairs corrupt layouts through editor group normalization", () => {
+    const normalized = normalizeWorkspaceSession({
+      ...splitSessionFixture(),
+      editor: {
+        activeGroupId: "missing",
+        groups: {
+          valid: { activePath: "/project/A.php", openPaths: ["/project/A.php"], previewPath: null },
+          "": { activePath: null, openPaths: [], previewPath: null },
+        },
+        layout: { kind: "group", groupId: "missing" },
+      },
+    });
+    expect(normalized.editor).toMatchObject({
+      activeGroupId: "valid",
+      layout: { groupId: "valid", kind: "group" },
+    });
+  });
+
+  it("returns the safe default for unsupported explicit versions", () => {
+    expect(normalizeWorkspaceSession({ version: 2, sidebarView: "git" }))
+      .toEqual(defaultWorkspaceSessionState());
   });
 });
+
+function splitSessionFixture() {
+  return {
+    version: 1,
+    bottomPanelView: "problems",
+    editor: {
+      activeGroupId: "right",
+      groups: {
+        left: { activePath: "/project/A.php", openPaths: ["/project/A.php"], previewPath: null },
+        right: { activePath: "/project/A.php", openPaths: ["/project/A.php"], previewPath: null },
+      },
+      layout: {
+        kind: "split",
+        orientation: "horizontal",
+        sizes: [0.4, 0.6],
+        children: [
+          { kind: "group", groupId: "left" },
+          { kind: "group", groupId: "right" },
+        ],
+      },
+    },
+    sidebarView: "files",
+    viewStates: {
+      left: { "/project/A.php": { column: 2, line: 3 } },
+      right: { "/project/A.php": { column: 8, line: 9 } },
+    },
+  };
+}
 
 describe("workspace commit message history", () => {
   it("defaults legacy workspace settings to empty history", () => {

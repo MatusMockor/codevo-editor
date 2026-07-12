@@ -1,19 +1,26 @@
 import path from "node:path";
 
+export function debugAppLaunchExecutable(repoRoot) {
+  return path.join(
+    repoRoot,
+    "src-tauri",
+    "target",
+    "debug",
+    "bundle",
+    "macos",
+    "Codevo Editor.app",
+    "Contents",
+    "MacOS",
+    "codevo-editor",
+  );
+}
+
 export function debugAppExecutables(repoRoot) {
   const debugRoot = path.join(repoRoot, "src-tauri", "target", "debug");
 
   return [
     path.join(debugRoot, "codevo-editor"),
-    path.join(
-      debugRoot,
-      "bundle",
-      "macos",
-      "Codevo Editor.app",
-      "Contents",
-      "MacOS",
-      "codevo-editor",
-    ),
+    debugAppLaunchExecutable(repoRoot),
     path.join(debugRoot, "mockor-editor"),
     path.join(
       debugRoot,

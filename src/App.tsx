@@ -17,21 +17,23 @@ import type {
 } from "react";
 import {
   useWorkbenchController,
-  type EditorSurfaceBufferFixRunner,
-  type EditorSurfacePhpstanIgnoreRunner,
 } from "./application/useWorkbenchController";
-import type { EditorSurfaceEslintDisableRunner } from "./application/workbenchEslintDisableCommand";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { usePhpTestResults } from "./application/usePhpTestResults";
+import { useScopedEditorSurfaceRunners } from "./application/useScopedEditorSurfaceRunners";
+import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort";
+import { gitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
-import { EditorSurface } from "./components/EditorSurface";
-import { EditorTabs } from "./components/EditorTabs";
+import { ScopedEditorSurface } from "./components/ScopedEditorSurface";
+import { EditorArea } from "./components/EditorArea";
+import type { EditorGroupSurface } from "./components/EditorGroupView";
+import { EditorRuntimeHost } from "./components/EditorRuntimeHost";
 import { ExternalFileConflictBar } from "./components/ExternalFileConflictBar";
 import { ExternalFileCompareDialog } from "./components/ExternalFileCompareDialog";
 import { FileHistoryPanel } from "./components/FileHistoryPanel";
@@ -89,11 +91,14 @@ import {
 } from "./domain/settings";
 import type {
   EditorMenuCommand,
-  EditorMenuCommandRunner,
 } from "./domain/editorMenuCommand";
-import type { EditorSurfaceCommandRunner } from "./domain/editorSurfaceCommand";
 import { isDirty, javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
-import type { EditorDocument, IntelligenceMode } from "./domain/workspace";
+import type { EditorDocument, ImageTab, IntelligenceMode } from "./domain/workspace";
+import {
+  createInitialEditorGroupsState,
+  editorGroupVisiblePaths,
+  type EditorGroupId,
+} from "./domain/editorGroups";
 import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
@@ -253,16 +258,33 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [bottomPanelHeight, setBottomPanelHeight] = useState(152);
   const [activeFileRevealSignal, setActiveFileRevealSignal] = useState(0);
-  const [editorMenuCommandRunner, setEditorMenuCommandRunner] =
-    useState<EditorMenuCommandRunner | null>(null);
-  const [editorSurfaceCommandRunner, setEditorSurfaceCommandRunner] =
-    useState<EditorSurfaceCommandRunner | null>(null);
-  const [editorSurfaceBufferFixRunner, setEditorSurfaceBufferFixRunner] =
-    useState<EditorSurfaceBufferFixRunner | null>(null);
-  const [editorSurfaceEslintDisableRunner, setEditorSurfaceEslintDisableRunner] =
-    useState<EditorSurfaceEslintDisableRunner | null>(null);
-  const [editorSurfacePhpstanIgnoreRunner, setEditorSurfacePhpstanIgnoreRunner] =
-    useState<EditorSurfacePhpstanIgnoreRunner | null>(null);
+  const editorGroupFocusRunnerRef = useRef<EditorGroupFocusRunner | null>(null);
+  const editorGroupFocusRunner = useCallback<EditorGroupFocusRunner>(
+    (groupId) => editorGroupFocusRunnerRef.current?.(groupId) ?? false,
+    [],
+  );
+  const updateEditorGroupFocusRunner = useCallback(
+    (runner: EditorGroupFocusRunner | null) => {
+      editorGroupFocusRunnerRef.current = runner;
+    },
+    [],
+  );
+  const editorRunners = useScopedEditorSurfaceRunners("editor-main");
+  const {
+    activateGroup: activateRunnerGroup,
+    updateBufferFix: updateEditorSurfaceBufferFixRunner,
+    updateCommand: updateEditorSurfaceCommandRunner,
+    updateEslintDisable: updateEditorSurfaceEslintDisableRunner,
+    updateMenu: updateEditorMenuCommandRunner,
+    updatePhpstanIgnore: updateEditorSurfacePhpstanIgnoreRunner,
+  } = editorRunners;
+  const {
+    bufferFix: editorSurfaceBufferFixRunner,
+    command: editorSurfaceCommandRunner,
+    eslintDisable: editorSurfaceEslintDisableRunner,
+    menu: editorMenuCommandRunner,
+    phpstanIgnore: editorSurfacePhpstanIgnoreRunner,
+  } = editorRunners.activeRunners;
   const [gitHistoryDiff, setGitHistoryDiff] = useState<GitFileDiff | null>(null);
   const [gitHistoryDiffLoading, setGitHistoryDiffLoading] = useState(false);
   const [gitHistoryDiffDocumentPath, setGitHistoryDiffDocumentPath] =
@@ -299,6 +321,7 @@ function App() {
       editorSurfaceCommandRunner,
       editorSurfaceEslintDisableRunner,
       editorSurfacePhpstanIgnoreRunner,
+      editorGroupFocusRunner,
     },
   );
   const artisanRoutes = useArtisanRoutes({
@@ -405,6 +428,62 @@ function App() {
     () => workbench.openDocuments.map((document) => document.path),
     [openDocumentPathsKey],
   );
+  const editorAreaDocuments = useMemo(() => {
+    const tabs = Array.isArray(workbench.openTabs)
+      ? workbench.openTabs
+      : workbench.openDocuments;
+    if (
+      !workbench.activePath ||
+      tabs.some((tab) => tab.path === workbench.activePath)
+    ) {
+      return tabs;
+    }
+    const active = workbench.activeDocument;
+    if (active) {
+      return [...tabs, active];
+    }
+    return [...tabs, {
+      content: "",
+      language: "plaintext" as const,
+      name: workbench.activePath.split("/").pop() ?? workbench.activePath,
+      path: workbench.activePath,
+      readOnly: true,
+      savedContent: "",
+    }];
+  }, [
+    workbench.activeDocument,
+    workbench.activePath,
+    workbench.openDocuments,
+    workbench.openTabs,
+  ]);
+  const editorGroupsState = useMemo(
+    () => {
+      const candidate: unknown = workbench.editorGroups;
+      if (
+        candidate &&
+        typeof candidate === "object" &&
+        "groups" in candidate &&
+        "layout" in candidate &&
+        "activeGroupId" in candidate
+      ) {
+        return candidate as typeof workbench.editorGroups;
+      }
+      return createInitialEditorGroupsState("editor-main", {
+          activePath: workbench.activePath,
+          openPaths: editorAreaDocuments.map((document) => document.path),
+          previewPath: workbench.previewPath,
+        });
+    },
+    [
+      workbench.activePath,
+      workbench.editorGroups,
+      editorAreaDocuments,
+      workbench.previewPath,
+    ],
+  );
+  useEffect(() => {
+    activateRunnerGroup(editorGroupsState.activeGroupId);
+  }, [activateRunnerGroup, editorGroupsState.activeGroupId]);
   // Distinct file paths reachable via back/forward navigation history. Their
   // Monaco models must be kept alive so Back/Forward is a cheap model-swap
   // instead of a dispose+recreate+re-tokenization (lag). Go-to-definition
@@ -724,36 +803,6 @@ function App() {
     },
     [bottomPanelHeight],
   );
-  const updateEditorMenuCommandRunner = useCallback(
-    (runner: EditorMenuCommandRunner | null) => {
-      setEditorMenuCommandRunner(() => runner);
-    },
-    [],
-  );
-  const updateEditorSurfaceCommandRunner = useCallback(
-    (runner: EditorSurfaceCommandRunner | null) => {
-      setEditorSurfaceCommandRunner(() => runner);
-    },
-    [],
-  );
-  const updateEditorSurfaceBufferFixRunner = useCallback(
-    (runner: EditorSurfaceBufferFixRunner | null) => {
-      setEditorSurfaceBufferFixRunner(() => runner);
-    },
-    [],
-  );
-  const updateEditorSurfaceEslintDisableRunner = useCallback(
-    (runner: EditorSurfaceEslintDisableRunner | null) => {
-      setEditorSurfaceEslintDisableRunner(() => runner);
-    },
-    [],
-  );
-  const updateEditorSurfacePhpstanIgnoreRunner = useCallback(
-    (runner: EditorSurfacePhpstanIgnoreRunner | null) => {
-      setEditorSurfacePhpstanIgnoreRunner(() => runner);
-    },
-    [],
-  );
   const runEditMenuCommand = useCallback(
     (command: EditorMenuCommand) => {
       editorMenuCommandRunner?.(command);
@@ -938,107 +987,44 @@ function App() {
     gitHistoryDiffRequestTokenRef.current += 1;
   }, []);
 
-  const activateEditorTab = useCallback(
-    (path: string) => {
+  const activateEditorGroupTab = useCallback(
+    (groupId: EditorGroupId, path: string) => {
       const historyDiff = gitHistoryDiffsByDocumentPathRef.current[path] ?? null;
-
       if (historyDiff) {
         setGitHistoryDiffLoading(false);
         setGitHistoryDiff(historyDiff);
         setGitHistoryDiffDocumentPath(path);
-      } else if (gitHistoryDiffDocumentPath) {
-        clearGitHistoryDiff();
       }
-
+      if (workbench.activateEditorGroupTab) {
+        workbench.activateEditorGroupTab(groupId, path);
+        return;
+      }
       workbench.setActivePath(path);
     },
-    [clearGitHistoryDiff, gitHistoryDiffDocumentPath, workbench.setActivePath],
+    [workbench],
   );
 
-  const closeEditorTab = useCallback(
-    (path: string) => {
-      const remainingDocumentPaths = workbench.openDocuments
-        .map((document) => document.path)
-        .filter((documentPath) => documentPath !== path);
-      const nextActivePath =
-        workbench.activePath === path
-          ? remainingDocumentPaths[remainingDocumentPaths.length - 1] ?? null
-          : workbench.activePath;
+  const closeEditorGroupTab = useCallback(
+    (groupId: EditorGroupId, path: string) => {
+      const membershipCount = Object.values(editorGroupsState.groups).filter(
+        (group) => editorGroupVisiblePaths(group).includes(path),
+      ).length;
+      if (workbench.closeDocumentInEditorGroup) {
+        workbench.closeDocumentInEditorGroup(groupId, path);
+      } else {
+        workbench.closeDocument(path);
+      }
+      if (membershipCount > 1 || !path.startsWith("mockor-git-history-diff:")) {
+        return;
+      }
       const nextHistoryDiffs = { ...gitHistoryDiffsByDocumentPathRef.current };
       delete nextHistoryDiffs[path];
       gitHistoryDiffsByDocumentPathRef.current = nextHistoryDiffs;
-
       if (path === gitHistoryDiffDocumentPath) {
-        const nextHistoryDiff = nextActivePath
-          ? nextHistoryDiffs[nextActivePath] ?? null
-          : null;
-
-        if (nextHistoryDiff && nextActivePath) {
-          setGitHistoryDiffLoading(false);
-          setGitHistoryDiff(nextHistoryDiff);
-          setGitHistoryDiffDocumentPath(nextActivePath);
-        } else {
-          clearGitHistoryDiff();
-        }
+        clearGitHistoryDiff();
       }
-
-      workbench.closeDocument(path);
     },
-    [
-      clearGitHistoryDiff,
-      gitHistoryDiffDocumentPath,
-      workbench.activePath,
-      workbench.closeDocument,
-      workbench.openDocuments,
-    ],
-  );
-
-  const closeGitHistoryDiff = useCallback(() => {
-    if (gitHistoryDiffDocumentPath) {
-      closeEditorTab(gitHistoryDiffDocumentPath);
-    } else {
-      clearGitHistoryDiff();
-    }
-  }, [clearGitHistoryDiff, closeEditorTab, gitHistoryDiffDocumentPath]);
-
-  const closeActiveTab = useCallback(() => {
-    if (workbench.activeMarkdownPreview) {
-      closeEditorTab(workbench.activeMarkdownPreview.path);
-      return;
-    }
-    if (workbench.activeImage) {
-      closeEditorTab(workbench.activeImage.path);
-      return;
-    }
-    if (workbench.activeDocument) {
-      closeEditorTab(workbench.activeDocument.path);
-    }
-  }, [
-    closeEditorTab,
-    workbench.activeDocument,
-    workbench.activeImage,
-    workbench.activeMarkdownPreview,
-  ]);
-
-  const isActiveGitHistoryDiffDocument = Boolean(
-    gitHistoryDiffDocumentPath &&
-      workbench.activePath === gitHistoryDiffDocumentPath,
-  );
-  const isShowingGitHistoryDiff = Boolean(
-    isActiveGitHistoryDiffDocument &&
-      (gitHistoryDiffLoading || gitHistoryDiff),
-  );
-  const gitDiffPreview = isShowingGitHistoryDiff ? gitHistoryDiff : workbench.gitDiffPreview;
-  const gitDiffLoading = isShowingGitHistoryDiff
-    ? gitHistoryDiffLoading
-    : workbench.gitDiffLoading;
-  const closeGitDiff = isShowingGitHistoryDiff
-    ? closeGitHistoryDiff
-    : workbench.closeGitDiffPreview;
-  const shouldShowGitDiff = Boolean(
-    isShowingGitHistoryDiff ||
-      workbench.selectedGitChange ||
-      workbench.gitDiffLoading,
+    [clearGitHistoryDiff, editorGroupsState.groups, gitHistoryDiffDocumentPath, workbench],
   );
   useEffect(() => {
     if (gitHistoryWorkspaceRootRef.current === workbench.workspaceRoot) {
@@ -1052,25 +1038,242 @@ function App() {
     setGitHistoryDiff(null);
     setGitHistoryDiffDocumentPath(null);
   }, [workbench.workspaceRoot]);
-  useEffect(() => {
-    if (
-      !gitHistoryDiffDocumentPath ||
-      workbench.activePath === gitHistoryDiffDocumentPath
-    ) {
-      return;
-    }
+  const renderEditorDocumentForGroup = useCallback(
+    (document: EditorDocument | null, groupId: EditorGroupId) => {
+      const groupIsActive = editorGroupsState.activeGroupId === groupId;
+      const group = editorGroupsState.groups[groupId];
+      return (
+        <ScopedEditorSurface
+          activeDocument={document}
+          embeddedInGroupPanel
+          editorConfig={groupIsActive ? workbench.activeEditorConfig : {}}
+          editorFontFamily={workbench.appSettings.editorFontFamily}
+          editorFontLigatures={workbench.appSettings.editorFontLigatures}
+          editorFontSize={workbench.appSettings.editorFontSize}
+          wordWrapEnabled={workbench.appSettings.wordWrapEnabled}
+          isOpeningFile={workbench.isOpeningFile}
+          applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
+            workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
+          }
+          applyPhpCodeActionNewFile={workbench.applyPhpCodeActionNewFile}
+          applyPhpLanguageServerWorkspaceEdit={
+            workbench.applyPhpLanguageServerWorkspaceEdit
+          }
+          clearLanguageServerDiagnosticsForPath={
+            workbench.clearLanguageServerDiagnosticsForPath
+          }
+          bookmarkedLineNumbers={groupIsActive ? activeBookmarkedLineNumbers : []}
+          changeHunks={groupIsActive ? activeEditorChangeHunks : []}
+          editorRevealTarget={groupIsActive ? workbench.editorRevealTarget : null}
+          flushPendingLanguageServerDocument={
+            workbench.flushPendingLanguageServerDocument
+          }
+          flushPendingJavaScriptTypeScriptLanguageServerDocument={
+            workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
+          }
+          formatOnPaste={workbench.workspaceSettings.formatOnPaste}
+          gitBlameEnabled={groupIsActive && workbench.isActiveDocumentGitBlameEnabled}
+          isActiveDocumentPhpTest={groupIsActive && workbench.isActiveDocumentPhpTest}
+          isLanguageServerDocumentSynced={workbench.isLanguageServerDocumentSynced}
+          javaScriptTypeScriptLanguageServerFeaturesGateway={
+            javaScriptTypeScriptLanguageServerFeaturesGateway
+          }
+          javaScriptTypeScriptLanguageServerRuntimeStatus={
+            workbench.javaScriptTypeScriptLanguageServerRuntimeStatus
+          }
+          javaScriptTypeScriptLanguageServerRefreshGateway={
+            javaScriptTypeScriptLanguageServerRefreshGateway
+          }
+          javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
+            javaScriptTypeScriptLanguageServerWorkspaceEditGateway
+          }
+          javaScriptTypeScriptCompleteFunctionCalls={
+            workbench.workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls
+          }
+          javaScriptTypeScriptValidationEnabled={
+            workbench.workspaceSettings.javaScriptTypeScriptValidation
+          }
+          languageServerFeaturesGateway={languageServerFeaturesGateway}
+          languageServerRefreshGateway={languageServerRefreshGateway}
+          languageServerDiagnosticsByPath={workbench.languageServerDiagnosticsByPath}
+          languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
+          largeSmartDocumentPolicy={workbench.workspaceSettings.largeFileMode}
+          keymap={workbench.appSettings.keymap}
+          monacoTheme={monacoTheme}
+          navigationHistoryPaths={navigationHistoryPaths}
+          openDocumentPaths={openDocumentPaths}
+          restoredViewStates={
+            workbench.restoredEditorViewStatesByGroup?.[groupId] ??
+              workbench.restoredEditorViewStates ?? {}
+          }
+          restoredViewStateRevision={workbench.restoredEditorViewStateRevision}
+          transientWidgetDismissKey={transientEditorWidgetDismissKey}
+          phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
+          phpLanguageServerWorkspaceEditGateway={
+            phpLanguageServerWorkspaceEditGateway
+          }
+          group={group}
+          groupId={groupId}
+          onBufferFixRunnerChange={updateEditorSurfaceBufferFixRunner}
+          onCommandRunnerChange={updateEditorSurfaceCommandRunner}
+          onEslintDisableRunnerChange={updateEditorSurfaceEslintDisableRunner}
+          onMenuCommandRunnerChange={updateEditorMenuCommandRunner}
+          onPhpstanIgnoreRunnerChange={updateEditorSurfacePhpstanIgnoreRunner}
+          onCloseActiveTab={() => {
+            const path = editorGroupsState.groups[groupId]?.activePath;
+            if (path) {
+              if (workbench.closeDocumentInEditorGroup) {
+                workbench.closeDocumentInEditorGroup(groupId, path);
+              } else {
+                workbench.closeDocument(path);
+              }
+            }
+          }}
+          onCursorPositionChange={workbench.updateActiveEditorPosition}
+          onEditorViewStateChange={(path, viewState) => {
+            if (workbench.updateEditorGroupViewState) {
+              workbench.updateEditorGroupViewState(groupId, path, viewState);
+              return;
+            }
+            workbench.updateEditorViewState(path, viewState);
+          }}
+          onCloseFloatingSurface={workbench.closeFloatingSurface}
+          onGoBack={goBack}
+          onGoForward={goForward}
+          onGoToDefinition={goToDefinition}
+          onGoToImplementationAt={goToImplementationAt}
+          onGoToSuperMethod={goToSuperMethod}
+          onRunTestAt={workbench.runTestAt}
+          onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
+          onToggleGitBlame={workbench.toggleGitBlame}
+          provideGitBlame={workbench.provideGitBlame}
+          readWorkspaceFile={workbench.readWorkspaceFile}
+          onEditorFocused={() => {
+            workbench.activateEditorGroup?.(groupId);
+            markActiveFileRevealSignal();
+          }}
+          onOpenClass={openClass}
+          onOpenFile={openFile}
+          onOpenWorkspaceFile={workbench.openWorkspaceFile}
+          onOpenWorkspaceRoot={workbench.openWorkspaceRoot}
+          onOpenFileStructure={workbench.openFileStructure}
+          onChange={workbench.updateActiveDocument}
+          onLanguageServerError={workbench.reportLanguageServerError}
+          onRecordCompletionLatency={workbench.recordCompletionLatency}
+          onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
+          onRevealTargetHandled={workbench.clearEditorRevealTarget}
+          onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
+          phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
+          frameworkIntelligenceProviders={workbench.frameworkIntelligenceProviders}
+          providePhpCodeActions={workbench.providePhpCodeActions}
+          providePhpFrameworkDefinition={workbench.providePhpFrameworkDefinition}
+          phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}
+          providePhpMethodCompletions={workbench.providePhpMethodCompletions}
+          providePhpMethodSignature={workbench.providePhpMethodSignature}
+          providePhpParameterInlayHints={workbench.providePhpParameterInlayHints}
+          userSnippets={workbench.appSettings.userSnippets}
+          workspaceRoot={workbench.workspaceRoot}
+          workspaceIdentityDescriptor={workbench.workspaceIdentityDescriptor}
+        />
+      );
+    },
+    [
+      activeBookmarkedLineNumbers,
+      activeEditorChangeHunks,
+      editorGroupsState,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRefreshGateway,
+      javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
+      languageServerFeaturesGateway,
+      languageServerRefreshGateway,
+      markActiveFileRevealSignal,
+      monacoTheme,
+      navigationHistoryPaths,
+      openClass,
+      openDocumentPaths,
+      openFile,
+      phpLanguageServerWorkspaceEditGateway,
+      transientEditorWidgetDismissKey,
+      workbench,
+    ],
+  );
 
-    if (gitHistoryDiffLoading) {
-      gitHistoryDiffRequestTokenRef.current += 1;
-      setGitHistoryDiffLoading(false);
-    }
-    setGitHistoryDiff(null);
-    setGitHistoryDiffDocumentPath(null);
-  }, [
-    gitHistoryDiffDocumentPath,
-    gitHistoryDiffLoading,
-    workbench.activePath,
-  ]);
+  const renderEditorGroupContent = useCallback(
+    (surface: EditorGroupSurface, groupId: EditorGroupId) => {
+      if (surface.kind === "empty") {
+        return renderEditorDocumentForGroup(null, groupId);
+      }
+      const path = surface.path;
+      const historyDiff = gitHistoryDiffsByDocumentPathRef.current[path] ??
+        (path === gitHistoryDiffDocumentPath ? gitHistoryDiff : null);
+      const historyDiffLoading = path === gitHistoryDiffDocumentPath &&
+        gitHistoryDiffLoading;
+      const worktreeDiffPath = workbench.selectedGitChange
+        ? gitDiffDocumentPath(workbench.selectedGitChange)
+        : null;
+      if (
+        path.startsWith("mockor-git-history-diff:") &&
+        (historyDiffLoading || historyDiff)
+      ) {
+        return (
+          <ErrorBoundary title="Could not render this diff" resetKeys={[path]}>
+            <GitDiffPreview
+              diff={historyDiff}
+              isLoading={historyDiffLoading}
+              monacoTheme={monacoTheme}
+              editorFontFamily={workbench.appSettings.editorFontFamily}
+              editorFontLigatures={workbench.appSettings.editorFontLigatures}
+              editorFontSize={workbench.appSettings.editorFontSize}
+              onClose={() => closeEditorGroupTab(groupId, path)}
+            />
+          </ErrorBoundary>
+        );
+      }
+      if (
+        path === worktreeDiffPath &&
+        (workbench.selectedGitChange || workbench.gitDiffLoading)
+      ) {
+        return (
+          <ErrorBoundary title="Could not render this diff" resetKeys={[path]}>
+            <GitDiffPreview
+              diff={workbench.gitDiffPreview}
+              isLoading={workbench.gitDiffLoading}
+              monacoTheme={monacoTheme}
+              editorFontFamily={workbench.appSettings.editorFontFamily}
+              editorFontLigatures={workbench.appSettings.editorFontLigatures}
+              editorFontSize={workbench.appSettings.editorFontSize}
+              gitOperationLoading={workbench.gitOperationLoading}
+              loadFileHunks={workbench.loadGitFileHunks}
+              onClose={() => closeEditorGroupTab(groupId, path)}
+              onRevertFile={(change) => workbench.revertGitChanges([change])}
+              onStageHunk={workbench.stageGitHunk}
+              onUnstageHunk={workbench.unstageGitHunk}
+            />
+          </ErrorBoundary>
+        );
+      }
+      const markdownPreview = workbench.markdownPreviewTabs[path];
+      if (markdownPreview) {
+        return <MarkdownPreview preview={markdownPreview} />;
+      }
+      if (!("content" in surface.document)) {
+        return <ImageViewer image={surface.document as ImageTab} />;
+      }
+      return renderEditorDocumentForGroup(
+        surface.document as EditorDocument,
+        groupId,
+      );
+    },
+    [
+      closeEditorGroupTab,
+      gitHistoryDiff,
+      gitHistoryDiffDocumentPath,
+      gitHistoryDiffLoading,
+      monacoTheme,
+      renderEditorDocumentForGroup,
+      workbench,
+    ],
+  );
 
   return (
     <main
@@ -1328,20 +1531,6 @@ function App() {
             </button>
           ) : null}
         </header>
-        <EditorTabs
-          activePath={workbench.activePath}
-          documents={
-            Array.isArray(workbench.openTabs)
-              ? workbench.openTabs
-              : workbench.openDocuments
-          }
-          fileStatusesByPath={fileStatusesByPath}
-          onActivate={activateEditorTab}
-          onClose={closeEditorTab}
-          onPin={workbench.pinDocument}
-          onReorder={workbench.reorderOpenTabs}
-          previewPath={workbench.previewPath}
-        />
         {workbench.externalFileConflictState.conflict ? (
           <ExternalFileConflictBar
             busyAction={
@@ -1359,173 +1548,37 @@ function App() {
             onAction={workbench.handleExternalFileConflictAction}
           />
         ) : null}
-        {shouldShowGitDiff ? (
-          <ErrorBoundary
-            title="Could not render this diff"
-            resetKeys={[
-              gitDiffPreview?.change.relativePath ?? null,
-              gitDiffPreview?.change.isStaged ?? false,
-            ]}
-          >
-            <GitDiffPreview
-              diff={gitDiffPreview}
-              isLoading={gitDiffLoading}
-              monacoTheme={monacoTheme}
-              editorFontFamily={workbench.appSettings.editorFontFamily}
-              editorFontLigatures={workbench.appSettings.editorFontLigatures}
-              editorFontSize={workbench.appSettings.editorFontSize}
-              gitOperationLoading={
-                isShowingGitHistoryDiff ? false : workbench.gitOperationLoading
-              }
-              loadFileHunks={
-                isShowingGitHistoryDiff ? undefined : workbench.loadGitFileHunks
-              }
-              onClose={closeGitDiff}
-              onRevertFile={
-                isShowingGitHistoryDiff
-                  ? undefined
-                  : (change) => workbench.revertGitChanges([change])
-              }
-              onStageHunk={
-                isShowingGitHistoryDiff ? undefined : workbench.stageGitHunk
-              }
-              onUnstageHunk={
-                isShowingGitHistoryDiff ? undefined : workbench.unstageGitHunk
-              }
-            />
-          </ErrorBoundary>
-        ) : workbench.activeMarkdownPreview ? (
-          <MarkdownPreview preview={workbench.activeMarkdownPreview} />
-        ) : workbench.activeImage ? (
-          <ImageViewer image={workbench.activeImage} />
-        ) : (
-          <EditorSurface
-            activeDocument={workbench.activeDocument}
-            editorConfig={workbench.activeEditorConfig}
-            editorFontFamily={workbench.appSettings.editorFontFamily}
-            editorFontLigatures={workbench.appSettings.editorFontLigatures}
-            editorFontSize={workbench.appSettings.editorFontSize}
-            wordWrapEnabled={workbench.appSettings.wordWrapEnabled}
-            isOpeningFile={workbench.isOpeningFile}
-            applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
-              workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit
+        <EditorRuntimeHost
+          onGroupFocusRunnerChange={updateEditorGroupFocusRunner}
+        >
+          <EditorArea
+            documents={editorAreaDocuments}
+            fileStatusesByPath={fileStatusesByPath}
+            onActivateGroup={(groupId) => workbench.activateEditorGroup?.(groupId)}
+            onActivateTab={activateEditorGroupTab}
+            onCloseTab={closeEditorGroupTab}
+            onMoveTab={(fromGroupId, toGroupId, path) =>
+              workbench.moveEditorGroupTab?.(fromGroupId, toGroupId, path)
             }
-            applyPhpCodeActionNewFile={workbench.applyPhpCodeActionNewFile}
-            applyPhpLanguageServerWorkspaceEdit={
-              workbench.applyPhpLanguageServerWorkspaceEdit
+            onPinTab={(groupId, path) =>
+              workbench.pinEditorGroupTab?.(groupId, path)
             }
-            clearLanguageServerDiagnosticsForPath={
-              workbench.clearLanguageServerDiagnosticsForPath
+            onReorderTab={(groupId, fromPath, toPath, position) =>
+              workbench.reorderEditorGroupTab?.(
+                groupId,
+                fromPath,
+                toPath,
+                position,
+              )
             }
-            bookmarkedLineNumbers={activeBookmarkedLineNumbers}
-            changeHunks={activeEditorChangeHunks}
-            editorRevealTarget={workbench.editorRevealTarget}
-            flushPendingLanguageServerDocument={
-              workbench.flushPendingLanguageServerDocument
+            onResizeSplit={(splitPath, sizes) =>
+              workbench.resizeEditorSplit?.(splitPath, sizes)
             }
-            flushPendingJavaScriptTypeScriptLanguageServerDocument={
-              workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
-            }
-            formatOnPaste={workbench.workspaceSettings.formatOnPaste}
-            gitBlameEnabled={workbench.isActiveDocumentGitBlameEnabled}
-            isActiveDocumentPhpTest={workbench.isActiveDocumentPhpTest}
-            isLanguageServerDocumentSynced={
-              workbench.isLanguageServerDocumentSynced
-            }
-            javaScriptTypeScriptLanguageServerFeaturesGateway={
-              javaScriptTypeScriptLanguageServerFeaturesGateway
-            }
-            javaScriptTypeScriptLanguageServerRuntimeStatus={
-              workbench.javaScriptTypeScriptLanguageServerRuntimeStatus
-            }
-            javaScriptTypeScriptLanguageServerRefreshGateway={
-              javaScriptTypeScriptLanguageServerRefreshGateway
-            }
-            javaScriptTypeScriptLanguageServerWorkspaceEditGateway={
-              javaScriptTypeScriptLanguageServerWorkspaceEditGateway
-            }
-            javaScriptTypeScriptCompleteFunctionCalls={
-              workbench.workspaceSettings.javaScriptTypeScriptCompleteFunctionCalls
-            }
-            javaScriptTypeScriptValidationEnabled={
-              workbench.workspaceSettings.javaScriptTypeScriptValidation
-            }
-            languageServerFeaturesGateway={languageServerFeaturesGateway}
-            languageServerRefreshGateway={languageServerRefreshGateway}
-            languageServerDiagnosticsByPath={
-              workbench.languageServerDiagnosticsByPath
-            }
-            languageServerRuntimeStatus={workbench.languageServerRuntimeStatus}
-            largeSmartDocumentPolicy={workbench.workspaceSettings.largeFileMode}
-            keymap={workbench.appSettings.keymap}
-            monacoTheme={monacoTheme}
-            navigationHistoryPaths={navigationHistoryPaths}
-            openDocumentPaths={openDocumentPaths}
-            restoredViewStates={workbench.restoredEditorViewStates}
-            restoredViewStateRevision={
-              workbench.restoredEditorViewStateRevision
-            }
-            transientWidgetDismissKey={transientEditorWidgetDismissKey}
-            phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
-            phpLanguageServerWorkspaceEditGateway={
-              phpLanguageServerWorkspaceEditGateway
-            }
-            onCloseActiveTab={closeActiveTab}
-            onCursorPositionChange={workbench.updateActiveEditorPosition}
-            onEditorViewStateChange={workbench.updateEditorViewState}
-            onEditorMenuCommandRunnerChange={updateEditorMenuCommandRunner}
-            onEditorSurfaceCommandRunnerChange={
-              updateEditorSurfaceCommandRunner
-            }
-            onEditorSurfaceBufferFixRunnerChange={
-              updateEditorSurfaceBufferFixRunner
-            }
-            onEditorSurfaceEslintDisableRunnerChange={
-              updateEditorSurfaceEslintDisableRunner
-            }
-            onEditorSurfacePhpstanIgnoreRunnerChange={
-              updateEditorSurfacePhpstanIgnoreRunner
-            }
-            onCloseFloatingSurface={workbench.closeFloatingSurface}
-            onGoBack={goBack}
-            onGoForward={goForward}
-            onGoToDefinition={goToDefinition}
-            onGoToImplementationAt={goToImplementationAt}
-            onGoToSuperMethod={goToSuperMethod}
-            onRunTestAt={workbench.runTestAt}
-            onToggleBookmarkAtLine={workbench.toggleBookmarkAtLine}
-            onToggleGitBlame={workbench.toggleGitBlame}
-            provideGitBlame={workbench.provideGitBlame}
-            readWorkspaceFile={workbench.readWorkspaceFile}
-            onEditorFocused={markActiveFileRevealSignal}
-            onOpenClass={openClass}
-            onOpenFile={openFile}
-            onOpenWorkspaceFile={workbench.openWorkspaceFile}
-            onOpenWorkspaceRoot={workbench.openWorkspaceRoot}
-            onOpenFileStructure={workbench.openFileStructure}
-            onChange={workbench.updateActiveDocument}
-            onLanguageServerError={workbench.reportLanguageServerError}
-            onRecordCompletionLatency={workbench.recordCompletionLatency}
-            onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
-            onRevealTargetHandled={workbench.clearEditorRevealTarget}
-            onRevertChangeHunk={workbench.revertActiveEditorChangeHunk}
-            phpSyntaxDiagnosticsGateway={phpSyntaxDiagnosticsGateway}
-            frameworkIntelligenceProviders={
-              workbench.frameworkIntelligenceProviders
-            }
-            providePhpCodeActions={workbench.providePhpCodeActions}
-            providePhpFrameworkDefinition={workbench.providePhpFrameworkDefinition}
-            phpInlayHintsEnabled={workbench.workspaceSettings.phpInlayHints}
-            providePhpMethodCompletions={workbench.providePhpMethodCompletions}
-            providePhpMethodSignature={workbench.providePhpMethodSignature}
-            providePhpParameterInlayHints={
-              workbench.providePhpParameterInlayHints
-            }
-            userSnippets={workbench.appSettings.userSnippets}
-            workspaceRoot={workbench.workspaceRoot}
-            workspaceIdentityDescriptor={workbench.workspaceIdentityDescriptor}
+            projectId={workbench.workspaceRoot ?? "no-workspace"}
+            renderContent={renderEditorGroupContent}
+            state={editorGroupsState}
           />
-        )}
+        </EditorRuntimeHost>
         {workbench.bottomPanelVisible ? (
           <BottomPanel
             activeView={workbench.bottomPanelView}

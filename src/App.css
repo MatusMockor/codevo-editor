@@ -7222,3 +7222,33 @@ kbd {
   margin-left: 0;
   padding-left: 16px;
 }
+.editor-area {
+  flex: 1;
+  overflow: hidden;
+}
+
+.editor-group {
+  background: var(--editor-bg, #15181d);
+  border: 1px solid transparent;
+  overflow: hidden;
+}
+
+.editor-group.active {
+  border-color: color-mix(in srgb, var(--accent, #6fb7ad) 35%, transparent);
+}
+
+.editor-group .editor-panel {
+  position: relative;
+}
+
+.editor-split-resizer {
+  background: var(--border-color, #2d333d);
+  outline: none;
+  transition: background-color 120ms ease;
+  z-index: 3;
+}
+
+.editor-split-resizer:hover,
+.editor-split-resizer:focus-visible {
+  background: var(--accent, #6fb7ad);
+}

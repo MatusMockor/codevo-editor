@@ -12,6 +12,48 @@ export const keymapCommands = [
     label: "Close Tab or Window",
   },
   {
+    category: "Editor Groups",
+    defaultShortcut: "Cmd+\\",
+    id: "editor.splitRight",
+    label: "Split Editor Right",
+  },
+  {
+    category: "Editor Groups",
+    defaultShortcut: "",
+    id: "editor.splitDown",
+    label: "Split Editor Down",
+  },
+  {
+    category: "Editor Groups",
+    defaultShortcut: "",
+    id: "editor.focusNextGroup",
+    label: "Focus Next Editor Group",
+  },
+  {
+    category: "Editor Groups",
+    defaultShortcut: "",
+    id: "editor.focusPreviousGroup",
+    label: "Focus Previous Editor Group",
+  },
+  {
+    category: "Editor Groups",
+    defaultShortcut: "",
+    id: "editor.moveTabToNextGroup",
+    label: "Move Tab to Next Group",
+  },
+  {
+    category: "Editor Groups",
+    defaultShortcut: "",
+    id: "editor.moveTabToPreviousGroup",
+    label: "Move Tab to Previous Group",
+  },
+  {
+    category: "Editor Groups",
+    defaultShortcut: "",
+    id: "editor.closeGroup",
+    label: "Close Editor Group",
+  },
+  {
     category: "Editor",
     defaultShortcut: "",
     id: "editor.reopenClosedTab",

@@ -1,19 +1,17 @@
-export function getTabId(path: string): string {
-  return `tab-${toSafeElementId(path)}`;
+export function getTabId(path: string, groupId?: string): string {
+  return `tab-${groupPrefix(groupId)}${toSafeElementId(path)}`;
 }
 
-export function getTabPanelId(path: string): string {
-  return `tabpanel-${toSafeElementId(path)}`;
+export function getTabPanelId(path: string, groupId?: string): string {
+  return `tabpanel-${groupPrefix(groupId)}${toSafeElementId(path)}`;
+}
+
+function groupPrefix(groupId: string | undefined): string {
+  return groupId ? `${toSafeElementId(groupId)}-` : "";
 }
 
 function toSafeElementId(value: string): string {
-  return Array.from(value)
-    .map((character) => {
-      if (/^[a-zA-Z0-9_-]$/.test(character)) {
-        return character;
-      }
-
-      return `_${character.charCodeAt(0).toString(16)}_`;
-    })
-    .join("");
+  return Array.from({ length: value.length }, (_, index) =>
+    value.charCodeAt(index).toString(16).padStart(4, "0")
+  ).join("");
 }

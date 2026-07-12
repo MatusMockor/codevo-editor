@@ -35,7 +35,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
   dependencies,
   refs,
 }: {
-  dependencies: EditorSurfaceLanguageProviderRegistrationDependencies;
+  dependencies: EditorSurfaceLanguageProviderRegistrationDependencies | null;
   refs: EditorSurfaceLanguageProviderRegistrationRefs;
 }) {
   const {
@@ -45,9 +45,10 @@ export function useEditorSurfaceLanguageProviderRegistration({
     workspaceEditGateway,
     workspaceIdentityDescriptor,
     workspaceRoot,
-  } = dependencies;
+  } = dependencies ?? ({} as Partial<EditorSurfaceLanguageProviderRegistrationDependencies>);
   const {
     activeDocumentRef,
+    resolveDocumentForModelRef,
     applyPhpCodeActionNewFileRef,
     applyPhpWorkspaceEditRef,
     bladeCodeActionsRef,
@@ -77,7 +78,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
   } = refs;
 
   useEffect(() => {
-    if (!monacoApi) {
+    if (!dependencies || !featuresGateway || !monacoApi) {
       return;
     }
 
@@ -89,7 +90,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
           refreshGateway,
           workspaceEditGateway,
           workspaceIdentityDescriptor,
-          workspaceRoot,
+          workspaceRoot: workspaceRoot ?? null,
         },
         refs,
       }),
@@ -109,6 +110,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
     };
   }, [
     activeDocumentRef,
+    resolveDocumentForModelRef,
     applyPhpCodeActionNewFileRef,
     applyPhpWorkspaceEditRef,
     bladeCodeActionsRef,

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { spawnDebugApp } from "./debug-tauri-launcher.mjs";
 import { debugAppExecutables } from "./debug-tauri-processes.mjs";
 
 const args = process.argv.slice(2);
@@ -273,12 +274,6 @@ function killRuntimeProcesses() {
   }, 750).unref();
 }
 
-function spawnDebugApp() {
-  return spawn(bundledDebugExecutable, {
-    stdio: "inherit",
-  });
-}
-
 async function cleanupAndVerifySmoke(baselinePids) {
   const processes = listProcesses();
   const appPids = new Set(
@@ -366,7 +361,7 @@ async function runSmoke() {
   });
 
   console.log(`Starting debug app for ${smokeRunMs}ms...`);
-  const tauri = spawnDebugApp();
+  const tauri = spawnDebugApp(repoRoot);
   smokeChild = tauri;
   let exited = false;
   let exitCode = null;
@@ -403,7 +398,7 @@ function runDebug() {
     stdio: "inherit",
   });
 
-  const tauri = spawnDebugApp();
+  const tauri = spawnDebugApp(repoRoot);
 
   function shutdown(signal) {
     if (shuttingDown) {

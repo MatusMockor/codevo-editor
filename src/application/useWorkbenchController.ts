@@ -10,6 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import { CommandRegistry } from "./commandRegistry";
+import type { EditorGroupFocusRunner } from "./editorGroupFocusPort";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
 import { useFloatingSurfaces } from "./useFloatingSurfaces";
@@ -27,6 +28,7 @@ import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
 import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
+import { workbenchEditorGroupCommands } from "./workbenchEditorGroupCommands";
 import { workbenchEslintCommands } from "./workbenchEslintCommands";
 import {
   runEslintDisableAtCursor,
@@ -84,9 +86,10 @@ import {
 } from "./useDocumentLifecycle";
 import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
 import {
-  currentWorkspaceSession,
+  currentWorkspaceSessionForEditorGroups,
   isPersistableEditorDocumentPath,
   isSessionPathInWorkspace,
+  restoreWorkspaceSession as restorePersistedWorkspaceSession,
   restoredActivePath,
   restoredBottomPanelView,
   workspaceSessionsEqual,
@@ -419,15 +422,25 @@ import {
   type RecentFileEntry,
 } from "../domain/recentFiles";
 import { type TabDropPosition } from "../domain/tabOrdering";
+import { editorGroupIdsInLayout } from "../domain/editorLayout";
 import {
   activateEditorGroupPath,
+  closeEditorGroup,
+  closeEditorGroupTab,
   closeEditorGroupPath,
   createEditorGroup,
+  createInitialEditorGroupsState,
+  editorGroupVisiblePaths,
+  editorGroupsReducer,
+  editorGroupsUniquePaths,
   openEditorGroupPath,
   reorderEditorGroupTabs,
+  transferEditorGroupTab,
   updateEditorGroupOpenPaths,
   updateEditorGroupPreviewPath,
-  type EditorGroup,
+  type EditorGroupId,
+  type EditorGroupsState,
+  type EditorSplitDirection,
 } from "../domain/editorGroups";
 import { type RecentLocation } from "../domain/recentLocations";
 import {
@@ -486,6 +499,7 @@ export interface WorkbenchControllerOptions {
   editorSurfaceEslintDisableRunner?: EditorSurfaceEslintDisableRunner | null;
   editorSurfacePhpstanIgnoreRunner?: EditorSurfacePhpstanIgnoreRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
+  editorGroupFocusRunner?: EditorGroupFocusRunner | null;
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
 }
 
@@ -524,6 +538,7 @@ interface CachedWorkspaceWorkbenchState {
   indexProgress: IndexProgressState;
   manuallyCollapsedDirectories: Set<string>;
   navigationHistory: NavigationHistory;
+  editorGroups?: EditorGroupsState;
   openPaths: string[];
   previewPath: string | null;
   recentFiles: RecentFileEntry[];
@@ -1074,38 +1089,80 @@ export function useWorkbenchController(
   const [markdownPreviewTabs, setMarkdownPreviewTabs] = useState<
     Record<string, MarkdownPreviewTab>
   >({});
-  const activeGroupId = 0 as const;
-  const [groups, setGroups] = useState<[EditorGroup]>(() => [
-    createEditorGroup(),
-  ]);
-  const activeGroup = groups[activeGroupId];
+  const [editorGroups, setEditorGroupsState] = useState<EditorGroupsState>(() =>
+    createInitialEditorGroupsState("editor-main"),
+  );
+  const editorGroupsRef = useRef(editorGroups);
+  const nextEditorGroupIdRef = useRef(1);
+  const updateEditorGroups = useCallback(
+    (update: (current: EditorGroupsState) => EditorGroupsState) => {
+      setEditorGroupsState((current) => {
+        const next = update(current);
+        editorGroupsRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+  const activeGroupId = editorGroups.activeGroupId;
+  const activeGroup = editorGroups.groups[activeGroupId] ?? createEditorGroup();
   const { activePath, openPaths, previewPath } = activeGroup;
   const setActivePath = useCallback<Dispatch<SetStateAction<string | null>>>(
     (update) => {
-      setGroups((current) => [
-        activateEditorGroupPath(
-          current[activeGroupId],
-          resolveStateUpdate(current[activeGroupId].activePath, update),
-        ),
-      ]);
+      updateEditorGroups((current) => {
+        const group = current.groups[current.activeGroupId];
+        if (!group) {
+          return current;
+        }
+        return {
+          ...current,
+          groups: {
+            ...current.groups,
+            [current.activeGroupId]: activateEditorGroupPath(
+              group,
+              resolveStateUpdate(group.activePath, update),
+            ),
+          },
+        };
+      });
     },
-    [],
+    [updateEditorGroups],
   );
   const setOpenPaths = useCallback<Dispatch<SetStateAction<string[]>>>(
     (update) => {
-      setGroups((current) => [
-        updateEditorGroupOpenPaths(current[activeGroupId], update),
-      ]);
+      updateEditorGroups((current) => {
+        const group = current.groups[current.activeGroupId];
+        if (!group) {
+          return current;
+        }
+        return {
+          ...current,
+          groups: {
+            ...current.groups,
+            [current.activeGroupId]: updateEditorGroupOpenPaths(group, update),
+          },
+        };
+      });
     },
-    [],
+    [updateEditorGroups],
   );
   const setPreviewPath = useCallback<Dispatch<SetStateAction<string | null>>>(
     (update) => {
-      setGroups((current) => [
-        updateEditorGroupPreviewPath(current[activeGroupId], update),
-      ]);
+      updateEditorGroups((current) => {
+        const group = current.groups[current.activeGroupId];
+        if (!group) {
+          return current;
+        }
+        return {
+          ...current,
+          groups: {
+            ...current.groups,
+            [current.activeGroupId]: updateEditorGroupPreviewPath(group, update),
+          },
+        };
+      });
     },
-    [],
+    [updateEditorGroups],
   );
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -1187,7 +1244,7 @@ export function useWorkbenchController(
   );
   const workspaceSessionRestoredRef = useRef(false);
   const workspaceEditorViewStatesRef = useRef<
-    Record<string, Record<string, WorkspaceSessionViewState>>
+    Record<string, Record<EditorGroupId, Record<string, WorkspaceSessionViewState>>>
   >({});
   const [restoredEditorViewStateRevision, setRestoredEditorViewStateRevision] =
     useState(0);
@@ -1350,6 +1407,15 @@ export function useWorkbenchController(
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const resetEditorGroups = useCallback(() => {
+    const next = createInitialEditorGroupsState("editor-main");
+    editorGroupsRef.current = next;
+    nextEditorGroupIdRef.current = 1;
+    openPathsRef.current = [];
+    previewPathRef.current = null;
+    activeDocumentRef.current = null;
+    setEditorGroupsState(next);
+  }, []);
   const artisanMakePaletteOpen = Boolean(
     workspaceRoot &&
       artisanMakePaletteRoot &&
@@ -1502,8 +1568,8 @@ export function useWorkbenchController(
     return isPhpTestRelativePath(relativePath, psr4Roots);
   }, [activeDocument, workspaceDescriptor, workspaceRoot]);
   const openDocumentPaths = useMemo(
-    () => visibleEditorPaths(openPaths, previewPath),
-    [openPaths, previewPath],
+    () => editorGroupsUniquePaths(editorGroups),
+    [editorGroups],
   );
   const openDocuments = useMemo(
     () =>
@@ -2085,6 +2151,7 @@ export function useWorkbenchController(
         indexProgress,
         manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
         navigationHistory,
+        editorGroups,
         openPaths: cacheableOpenPaths,
         previewPath: cacheablePreviewPath,
         recentFiles,
@@ -2100,6 +2167,7 @@ export function useWorkbenchController(
       bottomPanelVisible,
       documents,
       entriesByDirectory,
+      editorGroups,
       manuallyCollapsedDirectories,
       expandedDirectories,
       imageTabs,
@@ -2122,14 +2190,13 @@ export function useWorkbenchController(
         return;
       }
 
-      const session = currentWorkspaceSession(
+      const session = currentWorkspaceSessionForEditorGroups(
         rootPath,
-        openPaths.filter((path) => Boolean(documents[path])),
-        activePath && documents[activePath] ? activePath : null,
+        editorGroups,
         sidebarView,
         bottomPanelView,
-        previewPath,
         workspaceEditorViewStatesRef.current[rootPath] ?? {},
+        new Set(Object.keys(documents)),
       );
 
       if (workspaceSessionsEqual(workspaceSettingsRef.current.session, session)) {
@@ -2142,12 +2209,10 @@ export function useWorkbenchController(
       });
     },
     [
-      activePath,
       bottomPanelView,
       documents,
-      openPaths,
+      editorGroups,
       persistWorkspaceSettings,
-      previewPath,
       sidebarView,
     ],
   );
@@ -2200,9 +2265,35 @@ export function useWorkbenchController(
       setImageTabs(restoredImageTabs);
       markdownPreviewTabsRef.current = restoredMarkdownPreviewTabs;
       setMarkdownPreviewTabs(restoredMarkdownPreviewTabs);
-      setOpenPaths(restoredOpenPaths);
-      setActivePath(nextActivePath);
-      setPreviewPath(restoredPreviewPath);
+      const cachedEditorGroups = cached.editorGroups ??
+        createInitialEditorGroupsState("editor-main", {
+          activePath: nextActivePath,
+          openPaths: restoredOpenPaths,
+          previewPath: restoredPreviewPath,
+        });
+      const availablePaths = new Set([
+        ...Object.keys(restoredDocuments),
+        ...Object.keys(restoredImageTabs),
+        ...Object.keys(restoredMarkdownPreviewTabs),
+      ]);
+      updateEditorGroups(() => {
+        const groups = Object.fromEntries(
+          Object.entries(cachedEditorGroups.groups).map(([groupId, group]) => {
+            const visiblePaths = editorGroupVisiblePaths(group).filter((path) =>
+              availablePaths.has(path),
+            );
+            const previewPath = group.previewPath && availablePaths.has(group.previewPath)
+              ? group.previewPath
+              : null;
+            return [groupId, {
+              activePath: restoredActivePath(group.activePath, visiblePaths),
+              openPaths: visiblePaths.filter((path) => path !== previewPath),
+              previewPath,
+            }];
+          }),
+        );
+        return { ...cachedEditorGroups, groups };
+      });
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
@@ -2212,7 +2303,7 @@ export function useWorkbenchController(
       setBottomPanelView(cached.bottomPanelView);
       setBottomPanelVisible(cached.bottomPanelVisible);
     },
-    [restoreHistory],
+    [restoreHistory, updateEditorGroups],
   );
 
   const {
@@ -3284,9 +3375,7 @@ export function useWorkbenchController(
     setImageTabs({});
     markdownPreviewTabsRef.current = {};
     setMarkdownPreviewTabs({});
-    setOpenPaths([]);
-    setActivePath(null);
-    setPreviewPath(null);
+    resetEditorGroups();
     setArtisanMakePaletteRoot(null);
     setRecentFiles([]);
     setRecentLocations([]);
@@ -3357,6 +3446,7 @@ export function useWorkbenchController(
     clearPhpstanDiagnosticsForRoot,
     resetActiveEditorPosition,
     resetFilePrefetchState,
+    resetEditorGroups,
     resetHistory,
     resetGitDiffWorkspaceState,
     resetSearchEverywhere,
@@ -3479,78 +3569,48 @@ export function useWorkbenchController(
 
   const restoreWorkspaceSession = useCallback(
     async (rootPath: string, session: WorkspaceSessionState) => {
-      const paths = session.openPaths.filter(
-        (path) =>
-          isPersistableEditorDocumentPath(path) &&
-          isSessionPathInWorkspace(rootPath, path),
-      );
-
-      if (paths.length === 0) {
+      if (editorGroupsUniquePaths(session.editor).length === 0) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+          return;
+        }
+        workspaceEditorViewStatesRef.current[rootPath] = session.viewStates ?? {};
         setSidebarView(session.sidebarView);
         setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
         return;
       }
-
-      const reads = await Promise.allSettled(
-        paths.map((path) => workspaceFiles.readTextFile(path)),
+      const openFileRequestToken = openFileRequestTokenRef.current;
+      const restored = await restorePersistedWorkspaceSession(
+        rootPath,
+        session,
+        async (path): Promise<EditorDocument> => {
+          const content = await workspaceFiles.readTextFile(path);
+          return {
+            content,
+            language: detectLanguage(path),
+            name: getFileName(path),
+            path,
+            savedContent: content,
+          };
+        },
       );
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
         return;
       }
-
-      const restoredDocuments: Record<string, EditorDocument> = {};
-      const restoredPaths: string[] = [];
-      let failedCount = 0;
-
-      paths.forEach((path, index) => {
-        const read = reads[index];
-
-        if (read.status !== "fulfilled") {
-          failedCount += 1;
-          return;
-        }
-
-        const content = read.value;
-        restoredDocuments[path] = {
-          content,
-          language: detectLanguage(path),
-          name: getFileName(path),
-          path,
-          savedContent: content,
-        };
-        restoredPaths.push(path);
-      });
-
-      const nextActivePath = restoredActivePath(session.activePath, restoredPaths);
-      const restoredPreviewPath =
-        session.previewPath && restoredPaths.includes(session.previewPath)
-          ? session.previewPath
-          : null;
-      const restoredPinnedPaths = restoredPreviewPath
-        ? restoredPaths.filter((path) => path !== restoredPreviewPath)
-        : restoredPaths;
-      workspaceEditorViewStatesRef.current[rootPath] = Object.fromEntries(
-        restoredPaths.flatMap((path) => {
-          const viewState = session.viewStates?.[path];
-
-          if (!viewState) {
-            return [];
-          }
-
-          return [[path, viewState]];
-        }),
-      );
-
-      setDocuments(restoredDocuments);
-      setOpenPaths(restoredPinnedPaths);
-      setActivePath(nextActivePath);
-      setPreviewPath(restoredPreviewPath);
+      if (openFileRequestTokenRef.current !== openFileRequestToken) {
+        return;
+      }
+      workspaceEditorViewStatesRef.current[rootPath] = restored.viewStates;
+      setDocuments(restored.documents);
+      updateEditorGroups(() => restored.editor);
       setSidebarView(session.sidebarView);
       setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
 
-      const restoredActiveDocument = nextActivePath
-        ? restoredDocuments[nextActivePath]
+      const restoredActivePath = restored.editor.groups[
+        restored.editor.activeGroupId
+      ]?.activePath;
+      const restoredActiveDocument = restoredActivePath
+        ? restored.documents[restoredActivePath]
         : null;
 
       if (restoredActiveDocument?.language === "php") {
@@ -3560,7 +3620,7 @@ export function useWorkbenchController(
         );
       }
 
-      if (failedCount === 0) {
+      if (restored.failedPaths.length === 0) {
         return;
       }
 
@@ -3568,12 +3628,12 @@ export function useWorkbenchController(
         createWorkbenchNotice(
           "warning",
           "Session",
-          `Could not restore ${failedCount} tab${failedCount === 1 ? "" : "s"}.`,
+          `Could not restore ${restored.failedPaths.length} tab${restored.failedPaths.length === 1 ? "" : "s"}.`,
         ),
         ...current,
       ]);
     },
-    [updateLocalPhpDiagnostics, workspaceFiles],
+    [updateEditorGroups, updateLocalPhpDiagnostics, workspaceFiles],
   );
 
   // Monotonic token guarding git-repository discovery against re-entrancy: the
@@ -3755,9 +3815,7 @@ export function useWorkbenchController(
         setImageTabs({});
         markdownPreviewTabsRef.current = {};
         setMarkdownPreviewTabs({});
-        setOpenPaths([]);
-        setActivePath(null);
-        setPreviewPath(null);
+        resetEditorGroups();
         setRecentFiles([]);
         setRecentLocations([]);
         setBookmarks([]);
@@ -4079,6 +4137,7 @@ export function useWorkbenchController(
       restoreWorkspaceSession,
       runGitRepositoryDiscovery,
       resetActiveEditorPosition,
+      resetEditorGroups,
       resetFilePrefetchState,
       resetGitDiffWorkspaceState,
       resetJavaScriptTypeScriptFileStructure,
@@ -5083,7 +5142,9 @@ export function useWorkbenchController(
 
   const recentlyClosedDocumentViewState = useCallback(
     (rootPath: string, path: string) =>
-      workspaceEditorViewStatesRef.current[rootPath]?.[path],
+      workspaceEditorViewStatesRef.current[rootPath]?.[
+        editorGroupsRef.current.activeGroupId
+      ]?.[path],
     [],
   );
 
@@ -5117,7 +5178,8 @@ export function useWorkbenchController(
       }
 
       const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
-      current[path] = viewState;
+      const groupId = editorGroupsRef.current.activeGroupId;
+      current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
       workspaceEditorViewStatesRef.current[rootPath] = current;
       setRestoredEditorViewStateRevision((revision) => revision + 1);
       setEditorRevealTarget({
@@ -5236,27 +5298,239 @@ export function useWorkbenchController(
         : null;
       setImageTabs(nextImages);
       setMarkdownPreviewTabs(nextMarkdownPreviews);
-      setGroups((current) => [
-        closeEditorGroupPath(current[activeGroupId], path),
-      ]);
+      updateEditorGroups((current) => ({
+        ...current,
+        groups: {
+          ...current.groups,
+          [current.activeGroupId]: closeEditorGroupPath(
+            current.groups[current.activeGroupId],
+            path,
+          ),
+        },
+      }));
     },
-    [activePath, closeTextDocument],
+    [activePath, closeTextDocument, updateEditorGroups],
+  );
+
+  const activateEditorGroup = useCallback((groupId: EditorGroupId) => {
+    updateEditorGroups((current) =>
+      editorGroupsReducer(current, { type: "activate-group", groupId }),
+    );
+  }, [updateEditorGroups]);
+
+  const activateEditorGroupTab = useCallback(
+    (groupId: EditorGroupId, path: string) => {
+      updateEditorGroups((current) => {
+        const activated = editorGroupsReducer(current, {
+          type: "activate-group",
+          groupId,
+        });
+        return editorGroupsReducer(activated, {
+          type: "activate-tab",
+          groupId,
+          path,
+        });
+      });
+    },
+    [updateEditorGroups],
+  );
+
+  const splitActiveEditorGroup = useCallback(
+    (direction: EditorSplitDirection) => {
+      updateEditorGroups((current) => {
+        let newGroupId = `editor-${nextEditorGroupIdRef.current++}`;
+        while (Object.prototype.hasOwnProperty.call(current.groups, newGroupId)) {
+          newGroupId = `editor-${nextEditorGroupIdRef.current++}`;
+        }
+        return editorGroupsReducer(current, {
+          type: "split-group",
+          direction,
+          newGroupId,
+        });
+      });
+    },
+    [updateEditorGroups],
+  );
+
+  const closeDocumentInEditorGroup = useCallback(
+    (groupId: EditorGroupId, path: string, options: DocumentCloseOptions = {}) => {
+      const current = editorGroupsRef.current;
+      const result = closeEditorGroupTab(current, groupId, path);
+      if (!result.membershipRemoved) {
+        return;
+      }
+      if (!result.finalMembershipRemoved) {
+        updateEditorGroups(() => result.state);
+        return;
+      }
+
+      const target = current.groups[groupId];
+      if (!target) {
+        return;
+      }
+      const activated = {
+        ...current,
+        activeGroupId: groupId,
+        groups: {
+          ...current.groups,
+          [groupId]: activateEditorGroupPath(target, path),
+        },
+      };
+      editorGroupsRef.current = activated;
+      openPathsRef.current = target.openPaths;
+      previewPathRef.current = target.previewPath;
+      activeDocumentRef.current = documentsRef.current[path] ?? null;
+      updateEditorGroups(() => activated);
+      closeDocument(path, options);
+    },
+    [closeDocument, updateEditorGroups],
+  );
+
+  const closeActiveEditorGroup = useCallback(() => {
+    const current = editorGroupsRef.current;
+    const groupId = current.activeGroupId;
+    const group = current.groups[groupId];
+    if (!group) {
+      return;
+    }
+    const visiblePaths = editorGroupVisiblePaths(group);
+    const finalMembershipPaths = closeEditorGroup(
+      current,
+      groupId,
+    ).finalMembershipPaths;
+    const shouldAbort = finalMembershipPaths.some((path) => {
+      const document = documentsRef.current[path];
+      const hasConflict = externalFileConflicts.hasConflict(workspaceRoot, path);
+      if (!document || (!isDirty(document) && !hasConflict)) {
+        return false;
+      }
+      return !prompter.confirm(
+        hasConflict
+          ? "Close file with an unresolved external conflict?"
+          : "Discard changes?",
+      );
+    });
+    if (shouldAbort) {
+      return;
+    }
+    visiblePaths.forEach((path) => closeDocumentInEditorGroup(groupId, path, {
+      skipConfirmation: true,
+    }));
+    updateEditorGroups((state) => closeEditorGroup(state, groupId).state);
+  }, [
+    closeDocumentInEditorGroup,
+    externalFileConflicts,
+    prompter,
+    updateEditorGroups,
+    workspaceRoot,
+  ]);
+
+  const focusAdjacentEditorGroup = useCallback((offset: -1 | 1) => {
+    const current = editorGroupsRef.current;
+    const groupIds = editorGroupIdsInLayout(current.layout);
+    if (groupIds.length < 2) {
+      return;
+    }
+
+    const activeIndex = groupIds.indexOf(current.activeGroupId);
+    const nextIndex = (activeIndex + offset + groupIds.length) % groupIds.length;
+    const targetGroupId = groupIds[nextIndex];
+    updateEditorGroups((state) => editorGroupsReducer(state, {
+      type: "activate-group",
+      groupId: targetGroupId,
+    }));
+    options.editorGroupFocusRunner?.(targetGroupId);
+  }, [options.editorGroupFocusRunner, updateEditorGroups]);
+
+  const moveActiveTabToAdjacentGroup = useCallback((offset: -1 | 1) => {
+    updateEditorGroups((current) => {
+      const groupIds = editorGroupIdsInLayout(current.layout);
+      if (groupIds.length < 2) {
+        return current;
+      }
+      const sourceIndex = groupIds.indexOf(current.activeGroupId);
+      const targetIndex = (sourceIndex + offset + groupIds.length) % groupIds.length;
+      const path = current.groups[current.activeGroupId]?.activePath;
+      if (!path) {
+        return current;
+      }
+      return transferEditorGroupTab(
+        current,
+        current.activeGroupId,
+        groupIds[targetIndex],
+        path,
+        "move",
+      );
+    });
+  }, [updateEditorGroups]);
+
+  const moveEditorGroupTab = useCallback(
+    (fromGroupId: EditorGroupId, toGroupId: EditorGroupId, path: string) => {
+      updateEditorGroups((current) => transferEditorGroupTab(
+        current,
+        fromGroupId,
+        toGroupId,
+        path,
+        "move",
+      ));
+    },
+    [updateEditorGroups],
+  );
+
+  const reorderEditorGroupTab = useCallback(
+    (
+      groupId: EditorGroupId,
+      fromPath: string,
+      toPath: string,
+      position: TabDropPosition,
+    ) => {
+      updateEditorGroups((current) => editorGroupsReducer(current, {
+        type: "reorder-tab",
+        fromPath,
+        groupId,
+        position,
+        toPath,
+      }));
+    },
+    [updateEditorGroups],
+  );
+
+  const pinEditorGroupTab = useCallback(
+    (groupId: EditorGroupId, path: string) => {
+      updateEditorGroups((current) => editorGroupsReducer(current, {
+        type: "pin-tab",
+        groupId,
+        path,
+      }));
+    },
+    [updateEditorGroups],
+  );
+
+  const resizeEditorSplit = useCallback(
+    (splitPath: readonly number[], sizes: readonly [number, number]) => {
+      updateEditorGroups((current) => editorGroupsReducer(current, {
+        type: "resize-split",
+        sizes,
+        splitPath,
+      }));
+    },
+    [updateEditorGroups],
   );
 
   const reorderOpenTabs = useCallback(
     (fromPath: string, toPath: string, position: TabDropPosition) => {
-      setGroups((current) => [
-        reorderEditorGroupTabs(
-          {
-            ...current[activeGroupId],
-            openPaths: openPathsRef.current,
-            previewPath: previewPathRef.current,
-          },
-          { fromPath, toPath, position },
-        ),
-      ]);
+      updateEditorGroups((current) => ({
+        ...current,
+        groups: {
+          ...current.groups,
+          [current.activeGroupId]: reorderEditorGroupTabs(
+            current.groups[current.activeGroupId],
+            { fromPath, toPath, position },
+          ),
+        },
+      }));
     },
-    [],
+    [updateEditorGroups],
   );
 
   const closeActiveSurface = useCallback(() => {
@@ -5282,6 +5556,20 @@ export function useWorkbenchController(
     closeTextSurface();
   }, [activePath, closeDocument, closeTextSurface]);
 
+  const closeActiveEditorGroupSurface = useCallback(() => {
+    const current = editorGroupsRef.current;
+    const group = current.groups[current.activeGroupId];
+    if (group?.activePath) {
+      closeDocumentInEditorGroup(current.activeGroupId, group.activePath);
+      return;
+    }
+    if (Object.keys(current.groups).length > 1) {
+      closeActiveEditorGroup();
+      return;
+    }
+    closeActiveSurface();
+  }, [closeActiveEditorGroup, closeActiveSurface, closeDocumentInEditorGroup]);
+
   const updateEditorViewState = useCallback(
     (path: string, viewState: WorkspaceSessionViewState) => {
       const rootPath = currentWorkspaceRootRef.current;
@@ -5291,7 +5579,25 @@ export function useWorkbenchController(
       }
 
       const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
-      current[path] = viewState;
+      const groupId = editorGroupsRef.current.activeGroupId;
+      current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
+      workspaceEditorViewStatesRef.current[rootPath] = current;
+    },
+    [],
+  );
+
+  const updateEditorGroupViewState = useCallback(
+    (
+      groupId: EditorGroupId,
+      path: string,
+      viewState: WorkspaceSessionViewState,
+    ) => {
+      const rootPath = currentWorkspaceRootRef.current;
+      if (!rootPath || !isSessionPathInWorkspace(rootPath, path)) {
+        return;
+      }
+      const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
+      current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
       workspaceEditorViewStatesRef.current[rootPath] = current;
     },
     [],
@@ -5512,13 +5818,20 @@ export function useWorkbenchController(
     previewPathRef.current = null;
     activeDocumentRef.current = null;
     setMarkdownPreviewTabs(nextMarkdownPreviews);
-    setGroups((current) => [
-      openEditorGroupPath(current[activeGroupId], {
-        nextActivePath: path,
-        nextOpenPaths,
-        nextPreviewPath: null,
-      }),
-    ]);
+    updateEditorGroups((current) => ({
+      ...current,
+      groups: {
+        ...current.groups,
+        [current.activeGroupId]: openEditorGroupPath(
+          current.groups[current.activeGroupId],
+          {
+            nextActivePath: path,
+            nextOpenPaths,
+            nextPreviewPath: null,
+          },
+        ),
+      },
+    }));
 
     try {
       const html = await markdownPreviewRenderer(source.content);
@@ -8472,10 +8785,23 @@ export function useWorkbenchController(
           isTauri(),
       ),
       saveActiveDocument,
-      closeActiveSurface,
+      closeActiveSurface: closeActiveEditorGroupSurface,
       canReopenClosedDocument,
       reopenClosedDocument,
       editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
+    }).forEach((command) => registry.register(command));
+
+    workbenchEditorGroupCommands({
+      canCloseGroup: Object.keys(editorGroups.groups).length > 1,
+      canMoveBetweenGroups: Object.keys(editorGroups.groups).length > 1,
+      closeActiveGroup: closeActiveEditorGroup,
+      focusNextGroup: () => focusAdjacentEditorGroup(1),
+      focusPreviousGroup: () => focusAdjacentEditorGroup(-1),
+      moveActiveTabToNextGroup: () => moveActiveTabToAdjacentGroup(1),
+      moveActiveTabToPreviousGroup: () => moveActiveTabToAdjacentGroup(-1),
+      shortcut,
+      splitDown: () => splitActiveEditorGroup("down"),
+      splitRight: () => splitActiveEditorGroup("right"),
     }).forEach((command) => registry.register(command));
 
     workbenchMarkdownCommands({
@@ -8616,8 +8942,13 @@ export function useWorkbenchController(
     appSettings.recentWorkspacePaths,
     appSettings.workspaceTabs,
     canReopenClosedDocument,
-    closeActiveSurface,
+    closeActiveEditorGroup,
+    closeActiveEditorGroupSurface,
     closeDocument,
+    editorGroups,
+    focusAdjacentEditorGroup,
+    moveActiveTabToAdjacentGroup,
+    splitActiveEditorGroup,
     createDirectory,
     createFile,
     deleteActiveDocument,
@@ -8848,14 +9179,13 @@ export function useWorkbenchController(
       return;
     }
 
-    const session = currentWorkspaceSession(
+    const session = currentWorkspaceSessionForEditorGroups(
       workspaceRoot,
-      openPaths,
-      activePath,
+      editorGroups,
       sidebarView,
       bottomPanelView,
-      previewPath,
       workspaceEditorViewStatesRef.current[workspaceRoot] ?? {},
+      new Set(Object.keys(documents)),
     );
 
     if (workspaceSessionsEqual(workspaceSettingsRef.current.session, session)) {
@@ -8871,10 +9201,9 @@ export function useWorkbenchController(
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Session", error),
     );
   }, [
-    activePath,
     bottomPanelView,
-    openPaths,
-    previewPath,
+    documents,
+    editorGroups,
     persistWorkspaceSettings,
     reportErrorForActiveWorkspaceRoot,
     sidebarView,
@@ -9624,6 +9953,20 @@ export function useWorkbenchController(
     closeTypeHierarchy: () => setTypeHierarchyView(null),
     closeReferencesPanel: () => setReferencesView(null),
     closeDocument,
+    closeDocumentInEditorGroup,
+    closeActiveEditorGroup,
+    focusNextEditorGroup: () => focusAdjacentEditorGroup(1),
+    focusPreviousEditorGroup: () => focusAdjacentEditorGroup(-1),
+    moveActiveTabToNextGroup: () => moveActiveTabToAdjacentGroup(1),
+    moveActiveTabToPreviousGroup: () => moveActiveTabToAdjacentGroup(-1),
+    activateEditorGroup,
+    activateEditorGroupTab,
+    splitActiveEditorGroup,
+    moveEditorGroupTab,
+    reorderEditorGroupTab,
+    pinEditorGroupTab,
+    resizeEditorSplit,
+    editorGroups,
     closeGitDiffPreview,
     closeWorkspaceTab,
     amendGitChanges,
@@ -9921,6 +10264,7 @@ export function useWorkbenchController(
     activeEditorPosition,
     updateActiveEditorPosition,
     updateEditorViewState,
+    updateEditorGroupViewState,
     openPhpTreeNode,
     openSearchResult,
     openTextSearchResult,
@@ -9932,6 +10276,9 @@ export function useWorkbenchController(
       : "legacyCompatibility",
     workspaceRoot,
     restoredEditorViewStates: workspaceRoot
+      ? workspaceEditorViewStatesRef.current[workspaceRoot]?.[activeGroupId] ?? {}
+      : {},
+    restoredEditorViewStatesByGroup: workspaceRoot
       ? workspaceEditorViewStatesRef.current[workspaceRoot] ?? {}
       : {},
     restoredEditorViewStateRevision,

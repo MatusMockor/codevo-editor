@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   currentWorkspaceSession,
+  currentWorkspaceSessionForEditorGroups,
   documentSessionPathTransitionForOpenedPath,
   isPersistableEditorDocumentPath,
   isSessionPathInWorkspace,
@@ -8,9 +9,11 @@ import {
   replaceableDocumentSessionPreview,
   restoredActivePath,
   restoredBottomPanelView,
+  restoreWorkspaceSession,
   workspaceSessionsEqual,
 } from "./documentSessionState";
 import type { WorkspaceSessionState } from "../domain/settings";
+import type { EditorGroupsState } from "../domain/editorGroups";
 
 describe("documentSessionState", () => {
   it("restores the requested active path when it is still available", () => {
@@ -67,6 +70,59 @@ describe("documentSessionState", () => {
       .toBe(false);
   });
 
+  it("lexically resolves dot segments before checking project isolation", () => {
+    expect(
+      isSessionPathInWorkspace(
+        "/Users/matus/Developer/project-a",
+        "/Users/matus/Developer/project-a/./src/../src/A.ts",
+      ),
+    ).toBe(true);
+    expect(
+      isSessionPathInWorkspace(
+        "/Users/matus/Developer/project-a/./",
+        "/Users/matus/Developer/project-a/src/A.ts",
+      ),
+    ).toBe(true);
+    expect(
+      isSessionPathInWorkspace(
+        "/Users/Matus Mockor/Developer/Project A",
+        "/Users/Matus Mockor/Developer/Project A/src/Feature.ts",
+      ),
+    ).toBe(true);
+    expect(
+      isSessionPathInWorkspace(
+        "/Users/matus/Developer/project-a",
+        "/Users/matus/Developer/project-a/../project-b/Secret.ts",
+      ),
+    ).toBe(false);
+    expect(
+      isSessionPathInWorkspace(
+        "C:\\projects\\project-a",
+        "C:\\projects\\project-a\\src\\..\\..\\project-b\\Secret.ts",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps UNC authorities immutable during lexical traversal", () => {
+    expect(
+      isSessionPathInWorkspace(
+        "\\\\server\\share",
+        "\\\\server\\share\\project\\A.ts",
+      ),
+    ).toBe(true);
+    expect(
+      isSessionPathInWorkspace(
+        "\\\\foreign-server\\foreign-share",
+        "\\\\server\\share\\..\\..\\foreign-server\\foreign-share\\Secret.ts",
+      ),
+    ).toBe(false);
+  });
+
+  it("treats a Windows drive root as the parent of its drive paths", () => {
+    expect(isSessionPathInWorkspace("C:\\", "C:\\project\\A.ts")).toBe(true);
+    expect(isSessionPathInWorkspace("C:\\", "D:\\project\\A.ts")).toBe(false);
+  });
+
   it("builds a persisted workspace session from visible pinned editor paths", () => {
     expect(
       currentWorkspaceSession(
@@ -81,11 +137,19 @@ describe("documentSessionState", () => {
         "php",
         "terminal",
       ),
-    ).toEqual({
-      activePath: "/workspace/D.php",
+    ).toMatchObject({
       bottomPanelView: "problems",
-      openPaths: ["/workspace/A.php", "/workspace/D.php"],
+      editor: {
+        groups: {
+          "editor-main": {
+            activePath: "/workspace/D.php",
+            openPaths: ["/workspace/A.php", "/workspace/D.php"],
+            previewPath: null,
+          },
+        },
+      },
       sidebarView: "php",
+      version: 1,
     });
   });
 
@@ -104,15 +168,23 @@ describe("documentSessionState", () => {
           "/workspace/Preview.php": { column: 7, line: 5 },
         },
       ),
-    ).toEqual({
-      activePath: "/workspace/Preview.php",
+    ).toMatchObject({
       bottomPanelView: "problems",
-      openPaths: ["/workspace/Pinned.php", "/workspace/Preview.php"],
-      previewPath: "/workspace/Preview.php",
+      editor: {
+        groups: {
+          "editor-main": {
+            activePath: "/workspace/Preview.php",
+            openPaths: ["/workspace/Pinned.php"],
+            previewPath: "/workspace/Preview.php",
+          },
+        },
+      },
       sidebarView: "files",
       viewStates: {
-        "/workspace/Pinned.php": { column: 3, line: 2, scrollTop: 80 },
-        "/workspace/Preview.php": { column: 7, line: 5 },
+        "editor-main": {
+          "/workspace/Pinned.php": { column: 3, line: 2, scrollTop: 80 },
+          "/workspace/Preview.php": { column: 7, line: 5 },
+        },
       },
     });
   });
@@ -125,8 +197,8 @@ describe("documentSessionState", () => {
         "mockor-git-diff:worktree:/workspace/B.php",
         "git",
         "history",
-      ).activePath,
-    ).toBeNull();
+      ).editor.groups["editor-main"].activePath,
+    ).toBe("/workspace/A.php");
   });
 
   it("computes preview replacement paths without dropping pinned tabs", () => {
@@ -227,10 +299,16 @@ describe("documentSessionState", () => {
         "git",
         "problems",
       ),
-    ).toEqual({
-      activePath: null,
+    ).toMatchObject({
       bottomPanelView: "problems",
-      openPaths: ["/workspace/A.php"],
+      editor: {
+        groups: {
+          "editor-main": {
+            activePath: "/workspace/A.php",
+            openPaths: ["/workspace/A.php"],
+          },
+        },
+      },
       sidebarView: "git",
     });
   });
@@ -241,44 +319,190 @@ describe("documentSessionState", () => {
   });
 
   it("compares workspace sessions by active path, views, and ordered paths", () => {
-    const session: WorkspaceSessionState = {
-      activePath: "/workspace/A.php",
-      bottomPanelView: "problems",
-      openPaths: ["/workspace/A.php", "/workspace/B.php"],
-      sidebarView: "files",
+    const session = currentWorkspaceSession(
+      "/workspace",
+      ["/workspace/A.php", "/workspace/B.php"],
+      "/workspace/A.php",
+      "files",
+      "problems",
+    );
+
+    const reordered: WorkspaceSessionState = {
+      ...session,
+      editor: {
+        ...session.editor,
+        groups: {
+          "editor-main": {
+            ...session.editor.groups["editor-main"],
+            openPaths: ["/workspace/B.php", "/workspace/A.php"],
+          },
+        },
+      },
     };
 
     expect(workspaceSessionsEqual(session, { ...session })).toBe(true);
-    expect(
-      workspaceSessionsEqual(session, {
-        ...session,
-        openPaths: ["/workspace/B.php", "/workspace/A.php"],
-      }),
-    ).toBe(false);
+    expect(workspaceSessionsEqual(session, reordered)).toBe(false);
 
     expect(
       workspaceSessionsEqual(
         {
           ...session,
           viewStates: {
-            "/workspace/A.php": {
-              column: 1,
-              foldedLines: [2],
-              line: 1,
+            "editor-main": {
+              "/workspace/A.php": { column: 1, foldedLines: [2], line: 1 },
             },
           },
         },
         {
           ...session,
           viewStates: {
-            "/workspace/A.php": {
-              column: 1,
-              foldedLines: [3],
-              line: 1,
+            "editor-main": {
+              "/workspace/A.php": { column: 1, foldedLines: [3], line: 1 },
             },
           },
         },
       ),
     ).toBe(false);
   });
+
+  it("persists and restores split groups while reading each unique path once", async () => {
+    const editor = splitEditorFixture();
+    const session = currentWorkspaceSessionForEditorGroups(
+      "/workspace",
+      editor,
+      "files",
+      "problems",
+      {
+        left: { "/workspace/shared.ts": { column: 2, line: 3 } },
+        right: { "/workspace/shared.ts": { column: 8, line: 9 } },
+      },
+    );
+    const reads: string[] = [];
+    const restored = await restoreWorkspaceSession(
+      "/workspace",
+      session,
+      async (path) => {
+        reads.push(path);
+        if (path.endsWith("missing.ts")) {
+          throw new Error("missing");
+        }
+        return { path };
+      },
+    );
+
+    expect(reads.sort()).toEqual([
+      "/workspace/left.ts",
+      "/workspace/missing.ts",
+      "/workspace/shared.ts",
+    ]);
+    expect(restored.failedPaths).toEqual(["/workspace/missing.ts"]);
+    expect(restored.editor.groups.left).toMatchObject({
+      activePath: "/workspace/shared.ts",
+      openPaths: ["/workspace/shared.ts", "/workspace/left.ts"],
+    });
+    expect(restored.editor.groups.right).toMatchObject({
+      activePath: "/workspace/shared.ts",
+      openPaths: ["/workspace/shared.ts"],
+    });
+    expect(restored.viewStates).toEqual({
+      left: { "/workspace/shared.ts": { column: 2, line: 3 } },
+      right: { "/workspace/shared.ts": { column: 8, line: 9 } },
+    });
+    expect(restored.editor.layout).toEqual(editor.layout);
+    expect(reads).not.toContain("/workspace/../project-b/Secret.ts");
+  });
+
+  it("does not restore a UNC traversal alias from a foreign authority", async () => {
+    const validPath = "\\\\foreign-server\\foreign-share\\Valid.ts";
+    const traversalPath =
+      "\\\\server\\share\\..\\..\\foreign-server\\foreign-share\\Secret.ts";
+    const reads: string[] = [];
+    const restored = await restoreWorkspaceSession(
+      "\\\\foreign-server\\foreign-share",
+      workspaceSessionForPaths([validPath, traversalPath]),
+      async (path) => {
+        reads.push(path);
+        return { path };
+      },
+    );
+
+    expect(reads).toEqual([validPath]);
+    expect(restored.editor.groups.main.openPaths).toEqual([validPath]);
+  });
+
+  it("restores documents beneath a Windows drive root", async () => {
+    const drivePath = "C:\\project\\A.ts";
+    const reads: string[] = [];
+    const restored = await restoreWorkspaceSession(
+      "C:\\",
+      workspaceSessionForPaths([drivePath, "D:\\project\\B.ts"]),
+      async (path) => {
+        reads.push(path);
+        return { path };
+      },
+    );
+
+    expect(reads).toEqual([drivePath]);
+    expect(restored.editor.groups.main).toMatchObject({
+      activePath: drivePath,
+      openPaths: [drivePath],
+    });
+  });
 });
+
+function workspaceSessionForPaths(paths: string[]): WorkspaceSessionState {
+  return {
+    bottomPanelView: "problems",
+    editor: {
+      activeGroupId: "main",
+      groups: {
+        main: { activePath: paths[0] ?? null, openPaths: paths, previewPath: null },
+      },
+      layout: { groupId: "main", kind: "group" },
+    },
+    sidebarView: "files",
+    version: 1,
+  };
+}
+
+function splitEditorFixture(): EditorGroupsState {
+  return {
+    activeGroupId: "right",
+    groups: {
+      left: {
+        activePath: "/workspace/missing.ts",
+        openPaths: ["/workspace/shared.ts", "/workspace/missing.ts", "/workspace/left.ts"],
+        previewPath: null,
+      },
+      right: {
+        activePath: "/workspace/shared.ts",
+        openPaths: [
+          "/workspace/shared.ts",
+          "/workspace/missing.ts",
+          "/outside.ts",
+          "/workspace/../project-b/Secret.ts",
+          "mockor-git-diff:worktree:/workspace/transient.ts",
+        ],
+        previewPath: null,
+      },
+      empty: { activePath: null, openPaths: [], previewPath: null },
+    },
+    layout: {
+      kind: "split",
+      orientation: "horizontal",
+      sizes: [0.5, 0.5],
+      children: [
+        { kind: "group", groupId: "left" },
+        {
+          kind: "split",
+          orientation: "vertical",
+          sizes: [0.5, 0.5],
+          children: [
+            { kind: "group", groupId: "right" },
+            { kind: "group", groupId: "empty" },
+          ],
+        },
+      ],
+    },
+  };
+}

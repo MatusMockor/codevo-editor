@@ -1,4 +1,5 @@
 import type * as Monaco from "monaco-editor";
+import type { EditorDocument } from "../domain/workspace";
 import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
@@ -277,6 +278,7 @@ const PHP_SEMANTIC_TOKENS_LEGEND = {
 export interface LanguageServerMonacoProviderContext
   extends TemplateLanguageMonacoProviderContext,
     PhpFrameworkMonacoProviderContext {
+  getDocumentForModel?(model: MonacoModel): EditorDocument | null;
   getWorkspaceIdentityDescriptor?(): WorkspaceIdentityDescriptor | null;
   /**
    * Persists a PHP code action's new file (e.g. "Extract interface" writes a

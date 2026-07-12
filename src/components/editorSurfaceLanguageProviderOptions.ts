@@ -51,6 +51,9 @@ export interface EditorSurfaceLanguageProviderOptionsDependencies {
 
 export interface EditorSurfaceLanguageProviderRegistrationRefs {
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
+  resolveDocumentForModelRef?: MutableRefObject<
+    (model: import("monaco-editor").editor.ITextModel) => EditorDocument | null
+  >;
   applyPhpCodeActionNewFileRef: CallbackRef<
     (newFile: PhpCodeActionNewFile) => Promise<boolean>
   >;
@@ -128,6 +131,7 @@ export function createEditorSurfaceLanguageProviderOptions({
   } = dependencies;
   const {
     activeDocumentRef,
+    resolveDocumentForModelRef,
     applyPhpCodeActionNewFileRef,
     applyPhpWorkspaceEditRef,
     bladeCodeActionsRef,
@@ -167,6 +171,8 @@ export function createEditorSurfaceLanguageProviderOptions({
     featuresGateway,
     flushPendingDocumentChange: (path) => flushPendingRef.current(path),
     getActiveDocument: () => activeDocumentRef.current,
+    getDocumentForModel: (model: import("monaco-editor").editor.ITextModel) =>
+      resolveDocumentForModelRef?.current(model) ?? activeDocumentRef.current,
     getLargeSmartDocumentPolicy: () => largeSmartDocumentPolicyRef.current,
     getRuntimeStatus: () => runtimeStatusRef.current,
     getUserSnippets: () => userSnippetsRef.current,

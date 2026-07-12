@@ -12,12 +12,19 @@ import {
 import { isDirty } from "../domain/workspace";
 import type { TabDropPosition } from "../domain/tabOrdering";
 import { getTabId, getTabPanelId } from "./tabIds";
+import {
+  hasEditorTabDragType,
+  readEditorTabDragPayload,
+  writeEditorTabDragPayload,
+} from "./editorTabDrag";
 
-interface EditorTabsProps {
+export interface EditorTabsProps {
   documents: Array<EditorDocument | ImageTab | MarkdownPreviewTab>;
   fileStatusesByPath?: Record<string, GitChangeStatus>;
   activePath: string | null;
   previewPath: string | null;
+  groupId?: string;
+  projectId?: string;
   onActivate(path: string): void;
   onClose(path: string): void;
   onPin(path: string): void;
@@ -26,6 +33,7 @@ interface EditorTabsProps {
     toPath: string,
     position: TabDropPosition,
   ): void;
+  onMove?(fromGroupId: string, toGroupId: string, path: string): void;
 }
 
 function EditorTabsComponent({
@@ -33,19 +41,18 @@ function EditorTabsComponent({
   fileStatusesByPath,
   activePath,
   previewPath,
+  groupId,
+  projectId = "default",
   onActivate,
   onClose,
   onPin,
   onReorder,
+  onMove,
 }: EditorTabsProps) {
   const [dropTarget, setDropTarget] = useState<{
     path: string;
     position: TabDropPosition;
   } | null>(null);
-
-  if (documents.length === 0) {
-    return <div className="editor-tabs empty" />;
-  }
 
   function handleKeyDown(index: number, event: KeyboardEvent<HTMLButtonElement>) {
     const nextIndex = getNextTabIndex(index, documents.length, event.key);
@@ -58,7 +65,7 @@ function EditorTabsComponent({
     const nextDocument = documents[nextIndex];
     onActivate(nextDocument.path);
     requestAnimationFrame(() => {
-      document.getElementById(getTabId(nextDocument.path))?.focus();
+      document.getElementById(getTabId(nextDocument.path, groupId))?.focus();
     });
   }
 
@@ -76,11 +83,20 @@ function EditorTabsComponent({
   }
 
   function handleDragStart(path: string, event: DragEvent<HTMLDivElement>) {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", path);
+    if (path === previewPath) {
+      onPin(path);
+    }
+    writeEditorTabDragPayload(event.dataTransfer, {
+      path,
+      projectId,
+      sourceGroupId: groupId ?? "editor-main",
+    });
   }
 
   function handleDragOver(path: string, event: DragEvent<HTMLDivElement>) {
+    if (!hasEditorTabDragType(event.dataTransfer)) {
+      return;
+    }
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     const position = dropPosition(event);
@@ -88,19 +104,51 @@ function EditorTabsComponent({
   }
 
   function handleDrop(path: string, event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const fromPath = event.dataTransfer.getData("text/plain");
+    const payload = readEditorTabDragPayload(event.dataTransfer, projectId);
     setDropTarget(null);
 
-    if (!fromPath || fromPath === path) {
+    if (!payload) {
       return;
     }
+    event.preventDefault();
+    event.stopPropagation();
+    const targetGroupId = groupId ?? "editor-main";
+    if (payload.sourceGroupId !== targetGroupId) {
+      onMove?.(payload.sourceGroupId, targetGroupId, payload.path);
+      return;
+    }
+    if (payload.path === path) {
+      return;
+    }
+    onReorder?.(payload.path, path, dropPosition(event));
+  }
 
-    onReorder?.(fromPath, path, dropPosition(event));
+  function handleStripDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!hasEditorTabDragType(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function handleStripDrop(event: DragEvent<HTMLDivElement>) {
+    const payload = readEditorTabDragPayload(event.dataTransfer, projectId);
+    const targetGroupId = groupId ?? "editor-main";
+    if (!payload || payload.sourceGroupId === targetGroupId) {
+      return;
+    }
+    event.preventDefault();
+    onMove?.(payload.sourceGroupId, targetGroupId, payload.path);
   }
 
   return (
-    <div aria-label="Open files" className="editor-tabs" role="tablist">
+    <div
+      aria-label="Open files"
+      className={`editor-tabs${documents.length === 0 ? " empty" : ""}`}
+      onDragOver={handleStripDragOver}
+      onDrop={handleStripDrop}
+      role="tablist"
+    >
       {documents.map((document, index) => {
         const dirty = isEditorDocument(document) && isDirty(document);
         const active = document.path === activePath;
@@ -127,10 +175,10 @@ function EditorTabsComponent({
             onDrop={(event) => handleDrop(document.path, event)}
           >
             <button
-              aria-controls={getTabPanelId(document.path)}
+              aria-controls={getTabPanelId(document.path, groupId)}
               aria-selected={active}
               className="tab-main"
-              id={getTabId(document.path)}
+              id={getTabId(document.path, groupId)}
               onDoubleClick={() => onPin(document.path)}
               onKeyDown={(event) => handleKeyDown(index, event)}
               onClick={() => onActivate(document.path)}

@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useId,
   type CSSProperties,
   type MutableRefObject,
 } from "react";
@@ -134,7 +135,6 @@ import {
   type WorkspaceSessionViewState,
 } from "../domain/settings";
 import {
-  registerJavaScriptTypeScriptLanguageServerMonacoProviders,
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
@@ -148,7 +148,13 @@ import {
   conflictMarkerDecorations,
   registerConflictMarkerCodeActions,
 } from "../application/conflictMarkerCodeActions";
-import { useEditorSurfaceLanguageProviderRegistration } from "./useEditorSurfaceLanguageProviderRegistration";
+import type { EditorSurfaceLanguageProviderRegistrationRefs } from "./useEditorSurfaceLanguageProviderRegistration";
+import {
+  EditorRuntimeHost,
+  useEditorRuntimeContext,
+  type EditorRuntimeSurfaceRegistration,
+} from "./EditorRuntimeHost";
+import type { EditorRuntimeMembershipInput } from "./editorRuntimeMembership";
 import {
   useEditorSurfaceFrameworkProviderRefs,
   type EditorSurfaceFrameworkIntelligenceProviders,
@@ -170,10 +176,8 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { getTabId, getTabPanelId } from "./tabIds";
 import { configureTypescriptJavascriptDefaults } from "./typescriptJavascriptDefaults";
 import {
-  disposeWorkspaceModels,
   modelMatchesWorkspacePath,
   modelPath,
-  registerWorkspaceIdentityDescriptor,
   type WorkspaceIdentityDescriptor,
   workspaceModelUri,
 } from "./phpMonacoDocumentContext";
@@ -212,7 +216,7 @@ function shouldTriggerLatteMemberSuggest(
   );
 }
 
-interface EditorSurfaceProps {
+export interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
   /**
    * Resolved `.editorconfig` settings for the active document. Empty `{}` (the
@@ -224,6 +228,7 @@ interface EditorSurfaceProps {
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
+  embeddedInGroupPanel?: boolean;
   minimapEnabled?: boolean;
   wordWrapEnabled?: boolean;
   isOpeningFile?: boolean;
@@ -262,6 +267,7 @@ interface EditorSurfaceProps {
   monacoTheme: MonacoAppTheme;
   navigationHistoryPaths?: readonly string[];
   openDocumentPaths?: readonly string[];
+  runtimeMembership?: EditorRuntimeMembershipInput;
   restoredViewStates?: Record<string, WorkspaceSessionViewState>;
   restoredViewStateRevision?: number;
   transientWidgetDismissKey?: string;
@@ -403,6 +409,7 @@ function EditorSurfaceComponent({
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
+  embeddedInGroupPanel = false,
   minimapEnabled = false,
   wordWrapEnabled = false,
   isOpeningFile = false,
@@ -436,6 +443,7 @@ function EditorSurfaceComponent({
   monacoTheme,
   navigationHistoryPaths = EMPTY_PATHS,
   openDocumentPaths = EMPTY_PATHS,
+  runtimeMembership,
   restoredViewStates = {},
   restoredViewStateRevision = 0,
   transientWidgetDismissKey,
@@ -485,6 +493,9 @@ function EditorSurfaceComponent({
   providePhpMethodSignature,
   providePhpParameterInlayHints = async () => [],
 }: EditorSurfaceProps) {
+  const runtime = useEditorRuntimeContext();
+  const generatedSurfaceId = useId();
+  const groupId = runtimeMembership?.groupId ?? generatedSurfaceId;
   const {
     bladeCodeActionsRef,
     bladeCompletionsRef,
@@ -508,6 +519,12 @@ function EditorSurfaceComponent({
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
+  const onEditorFocusedRef = useRef(onEditorFocused);
+  const editorInteractionActivationPendingRef = useRef(false);
+  onEditorFocusedRef.current = onEditorFocused;
+  const resolveDocumentForModelRef = useRef(
+    (_model: Monaco.editor.ITextModel): EditorDocument | null => null,
+  );
   const workspaceRootRef = useRef(workspaceRoot);
   const previousActiveDocumentPathRef = useRef<string | null>(
     activeDocument?.path ?? null,
@@ -613,18 +630,6 @@ function EditorSurfaceComponent({
   const languageServerDiagnosticsByPathRef = useRef(
     languageServerDiagnosticsByPath,
   );
-  // Tracks the diagnostics map seen on the previous run and the set of model
-  // objects already given language-server markers, so the marker effect can
-  // re-apply markers only for paths whose diagnostics actually changed (or for
-  // new/reopened model objects) instead of every open model. A WeakSet keys on
-  // the model object: a model disposed on close and recreated on reopen is a new
-  // object, so it is correctly re-marked even when its diagnostics are unchanged.
-  const previousLanguageServerDiagnosticsByPathRef = useRef<
-    Record<string, LanguageServerDiagnostic[]>
-  >({});
-  const markedLanguageServerModelsRef = useRef<
-    WeakSet<Monaco.editor.ITextModel>
-  >(new WeakSet());
   // Tracks the active document's path + total diagnostic count from the previous
   // diagnostics-decoration run, so a stale content hover can be dismissed when
   // that count drops (markers removed/cleared) for the same document.
@@ -673,39 +678,6 @@ function EditorSurfaceComponent({
   useEffect(() => {
     workspaceRootRef.current = workspaceRoot;
   }, [workspaceRoot]);
-
-  const workspaceIdentityRegistration = useMemo(() => {
-    if (
-      !workspaceIdentityDescriptor ||
-      !workspaceRoot ||
-      !workspaceIdentityDescriptor.policy ||
-      (!workspaceIdentityDescriptor.selectedPath &&
-        !workspaceIdentityDescriptor.canonicalRoot)
-    ) {
-      return null;
-    }
-
-    return {
-      root: workspaceRoot,
-      unregister: registerWorkspaceIdentityDescriptor(
-        workspaceIdentityDescriptor,
-        workspaceRoot,
-      ),
-    };
-  }, [workspaceIdentityDescriptor, workspaceRoot]);
-
-  useEffect(() => {
-    if (!workspaceRoot) {
-      return;
-    }
-
-    return () => {
-      if (monacoApi) {
-        disposeWorkspaceModels(monacoApi, workspaceRoot);
-      }
-      workspaceIdentityRegistration?.unregister();
-    };
-  }, [monacoApi, workspaceIdentityRegistration, workspaceRoot]);
 
   // A document switch must never apply a wrap meant for the previous file, so
   // any pending Surround With request is dropped when the active document
@@ -1198,8 +1170,44 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
-  useEditorSurfaceLanguageProviderRegistration({
-    dependencies: {
+  const runtimeProviderRefs: EditorSurfaceLanguageProviderRegistrationRefs = {
+    activeDocumentRef,
+    resolveDocumentForModelRef,
+    applyPhpCodeActionNewFileRef,
+    applyPhpWorkspaceEditRef,
+    bladeCodeActionsRef,
+    bladeCompletionsRef,
+    bladeDefinitionRef,
+    clearLanguageServerDiagnosticsForPathRef,
+    errorReporterRef,
+    flushPendingRef,
+    isLanguageServerDocumentSyncedRef,
+    largeSmartDocumentPolicyRef,
+    latteCompletionsRef,
+    latteDefinitionRef,
+    neonCompletionsRef,
+    neonDefinitionRef,
+    phpCodeActionsRef,
+    phpFrameworkDefinitionRef,
+    phpFrameworkStringCompletionContextRef,
+    phpInlayHintsEnabledRef,
+    phpMethodCompletionsRef,
+    phpMethodSignatureRef,
+    phpParameterInlayHintsRef,
+    phpPresenterLinkCompletionsRef,
+    phpPresenterLinkCompletionContextRef,
+    phpPresenterLinkDefinitionRef,
+    recordCompletionLatencyRef,
+    runtimeStatusRef,
+    userSnippetsRef,
+  };
+  const runtimeRegistration: EditorRuntimeSurfaceRegistration = {
+    activePath: activeDocument?.path ?? null,
+    diagnosticsByPath: languageServerDiagnosticsByPath,
+    editor: editorApi,
+    groupId,
+    monacoApi,
+    providerDependencies: {
       featuresGateway: languageServerFeaturesGateway,
       monacoApi,
       refreshGateway: languageServerRefreshGateway,
@@ -1207,46 +1215,9 @@ function EditorSurfaceComponent({
       workspaceIdentityDescriptor,
       workspaceRoot,
     },
-    refs: {
+    routing: {
       activeDocumentRef,
-      applyPhpCodeActionNewFileRef,
-      applyPhpWorkspaceEditRef,
-      bladeCodeActionsRef,
-      bladeCompletionsRef,
-      bladeDefinitionRef,
-      clearLanguageServerDiagnosticsForPathRef,
-      errorReporterRef,
-      flushPendingRef,
-      isLanguageServerDocumentSyncedRef,
-      largeSmartDocumentPolicyRef,
-      latteCompletionsRef,
-      latteDefinitionRef,
-      neonCompletionsRef,
-      neonDefinitionRef,
-      phpCodeActionsRef,
-      phpFrameworkDefinitionRef,
-      phpFrameworkStringCompletionContextRef,
-      phpInlayHintsEnabledRef,
-      phpMethodCompletionsRef,
-      phpMethodSignatureRef,
-      phpParameterInlayHintsRef,
-      phpPresenterLinkCompletionsRef,
-      phpPresenterLinkCompletionContextRef,
-      phpPresenterLinkDefinitionRef,
-      recordCompletionLatencyRef,
-      runtimeStatusRef,
-      userSnippetsRef,
-    },
-  });
-
-  useEffect(() => {
-    if (!monacoApi) {
-      return;
-    }
-
-    const disposable = registerJavaScriptTypeScriptLanguageServerMonacoProviders(
-      monacoApi,
-      {
+      javaScriptTypeScriptProviderContext: {
         applyWorkspaceEdit: (edit, editContext) =>
           applyJavaScriptTypeScriptWorkspaceEditRef.current(edit, editContext),
         completeFunctionCalls: javaScriptTypeScriptCompleteFunctionCalls,
@@ -1264,15 +1235,72 @@ function EditorSurfaceComponent({
         workspaceEditGateway:
           javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
       },
-    );
+      providerRefs: runtimeProviderRefs,
+      resolveDocumentForModel: (model) => {
+        const resolved = runtimeMembership?.resolveDocumentForModel?.(model);
+        if (resolved) {
+          return resolved;
+        }
 
-    return () => disposable.dispose();
+        const document = activeDocumentRef.current;
+        if (
+          !document ||
+          !workspaceRoot ||
+          !modelMatchesWorkspacePath(model, workspaceRoot, document.path)
+        ) {
+          return null;
+        }
+
+        return document;
+      },
+    },
+    retainPaths: [
+      ...openDocumentPaths,
+      ...navigationHistoryPaths,
+      ...(runtimeMembership?.retainPaths ?? []),
+    ],
+    toMarker: (diagnostic) => toMonacoDiagnosticMarker(monacoApi!, diagnostic),
+    workspaceIdentityDescriptor,
+    workspaceRoot,
+  };
+  resolveDocumentForModelRef.current =
+    runtimeRegistration.routing.resolveDocumentForModel;
+  const runtimeRegistrationRef = useRef(runtimeRegistration);
+  runtimeRegistrationRef.current = runtimeRegistration;
+
+  useEffect(() => {
+    if (!runtime) {
+      return;
+    }
+
+    return runtime.registerSurface(
+      generatedSurfaceId,
+      runtimeRegistrationRef.current,
+    );
+  }, [generatedSurfaceId, runtime]);
+
+  useEffect(() => {
+    runtime?.updateSurface(generatedSurfaceId, runtimeRegistrationRef.current);
   }, [
+    activeDocument?.path,
+    editorApi,
+    generatedSurfaceId,
+    groupId,
+    javaScriptTypeScriptCompleteFunctionCalls,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRefreshGateway,
     javaScriptTypeScriptLanguageServerWorkspaceEditGateway,
-    javaScriptTypeScriptCompleteFunctionCalls,
+    languageServerDiagnosticsByPath,
+    languageServerFeaturesGateway,
+    languageServerRefreshGateway,
     monacoApi,
+    navigationHistoryPaths,
+    openDocumentPaths,
+    phpLanguageServerWorkspaceEditGateway,
+    runtime,
+    runtimeMembership?.resolveDocumentForModel,
+    runtimeMembership?.retainPaths,
+    workspaceIdentityDescriptor,
     workspaceRoot,
   ]);
 
@@ -1341,6 +1369,30 @@ function EditorSurfaceComponent({
     setEditorApi(_editor);
     setMonacoApi(monaco);
   }, []);
+
+  const activateEditorGroupFromInteraction = useCallback(() => {
+    runtime?.focusGroup(groupId);
+    if (editorInteractionActivationPendingRef.current) {
+      return;
+    }
+
+    editorInteractionActivationPendingRef.current = true;
+    onEditorFocusedRef.current();
+    queueMicrotask(() => {
+      editorInteractionActivationPendingRef.current = false;
+    });
+  }, [groupId, runtime]);
+
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    const disposable = editorApi.onDidFocusEditorWidget(
+      activateEditorGroupFromInteraction,
+    );
+    return () => disposable.dispose();
+  }, [activateEditorGroupFromInteraction, editorApi]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -2118,6 +2170,7 @@ function EditorSurfaceComponent({
     const mouseDownPlatform = detectKeymapPlatform();
 
     const disposable = editorApi.onMouseDown((event) => {
+      activateEditorGroupFromInteraction();
       const targetType = event.target.type;
 
       if (
@@ -2256,6 +2309,7 @@ function EditorSurfaceComponent({
 
     return () => disposable.dispose();
   }, [
+    activateEditorGroupFromInteraction,
     editorApi,
     monacoApi,
     onGoToDefinition,
@@ -3272,87 +3326,6 @@ function EditorSurfaceComponent({
   ]);
 
   useEffect(() => {
-    if (!monacoApi) {
-      return;
-    }
-
-    // The diagnostics map gets a fresh identity on every language-server event,
-    // but typically only one path's diagnostics actually change. Re-applying
-    // markers to every open model on each event is wasteful (large projects can
-    // have many models open). Re-apply markers only for models we have not marked
-    // yet (a freshly opened model, or one disposed-and-recreated for the same
-    // path on reopen, is a new object the WeakSet has not seen) or whose
-    // diagnostics array identity changed since the previous run. The result is
-    // identical to a full re-apply, with far less per-event work.
-    const previousDiagnosticsByPath =
-      previousLanguageServerDiagnosticsByPathRef.current;
-    const markedModels = markedLanguageServerModelsRef.current;
-
-    monacoApi.editor.getModels().forEach((model) => {
-      const path = modelPath(model);
-
-      if (!path || !modelMatchesProject(model, workspaceRoot, path)) {
-        return;
-      }
-
-      const diagnostics = languageServerDiagnosticsByPath[path] ?? [];
-      const isNewModel = !markedModels.has(model);
-      const diagnosticsChanged =
-        previousDiagnosticsByPath[path] !== languageServerDiagnosticsByPath[path];
-
-      if (!isNewModel && !diagnosticsChanged) {
-        return;
-      }
-
-      monacoApi.editor.setModelMarkers(
-        model,
-        "php-language-server",
-        diagnostics.map((diagnostic) =>
-          toMonacoDiagnosticMarker(monacoApi, diagnostic),
-        ),
-      );
-      markedModels.add(model);
-    });
-
-    previousLanguageServerDiagnosticsByPathRef.current =
-      languageServerDiagnosticsByPath;
-    // Re-key on the active document's *path* (a stable string), not its object
-    // identity. `activeDocument` is replaced with a fresh `{ ...doc, content }`
-    // on every keystroke, which would otherwise re-run for every open model on
-    // each character typed even though diagnostics are unchanged. The path still
-    // changes when a new file is opened/activated, so a freshly opened model
-    // that already has diagnostics still gets its markers (handled by the
-    // newly-seen-path branch above); real diagnostic changes are covered by the
-    // `languageServerDiagnosticsByPath` dependency and the per-path diff.
-  }, [
-    activeDocument?.path,
-    languageServerDiagnosticsByPath,
-    monacoApi,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (!monacoApi || !workspaceRoot) {
-      return;
-    }
-
-    const departingRoot = workspaceRoot;
-
-    return () => {
-      monacoApi.editor.getModels().forEach((model) => {
-        const path = modelPath(model);
-
-        if (!path || !modelMatchesWorkspacePath(model, departingRoot, path)) {
-          return;
-        }
-
-        monacoApi.editor.setModelMarkers(model, "php-language-server", []);
-        monacoApi.editor.setModelMarkers(model, "php-syntax", []);
-      });
-    };
-  }, [monacoApi, workspaceRoot]);
-
-  useEffect(() => {
     if (!activeDocument || activeDocument.language !== "php" || !monacoApi) {
       return;
     }
@@ -3484,64 +3457,6 @@ function EditorSurfaceComponent({
     activeDocument?.language,
     activeDocument?.path,
     onLocalPhpDiagnosticsChange,
-  ]);
-
-  useEffect(() => {
-    if (!monacoApi) {
-      return;
-    }
-
-    // @monaco-editor/react gets-or-creates one model per visited path and never
-    // disposes it on a path switch, so every file ever opened keeps its text
-    // buffer + tokenization + undo stack alive for the whole app session
-    // (a slow per-file memory leak) and bloats the diagnostics marker loop,
-    // which iterates every model on each diagnostics event. Dispose the model of
-    // a document that is no longer open so closing a file actually frees it.
-    //
-    // The "keep alive" set is the live open document paths for the active
-    // workspace plus the active document's path as defence-in-depth: the active
-    // model is never disposed out from under the editor, and a document still
-    // open in another tab/split keeps its path in openDocumentPaths so its model
-    // survives. The placeholder model (shown when no document is open) is kept
-    // because Monaco is currently displaying it.
-    //
-    // Navigation history paths (back + forward stacks) are also kept alive:
-    // go-to-definition turns the source file into a clean-preview replacement,
-    // so its path leaves openDocumentPaths even though Back/Forward still
-    // navigates to it. Without this, the source model would be disposed and Back
-    // would force a synchronous dispose+recreate+re-tokenization (lag). Keeping
-    // the history models alive makes Back/Forward a cheap model-swap.
-    //
-    // Workspace isolation falls out for free: openDocumentPaths and
-    // navigationHistoryPaths are reset/restored per workspace tab, and paths are
-    // workspace-scoped, so only the closing document's (or closing workspace's)
-    // models are disposed. A file that is neither open nor in navigation history
-    // is still disposed, preserving the leak fix.
-    const keepAlivePaths = new Set([
-      ...openDocumentPaths,
-      ...navigationHistoryPaths,
-      PLACEHOLDER_PATH,
-    ]);
-
-    if (activeDocument) {
-      keepAlivePaths.add(activeDocument.path);
-    }
-
-    monacoApi.editor.getModels().forEach((model) => {
-      const path = modelPath(model);
-
-      if (!path || !modelMatchesProject(model, workspaceRoot, path) || keepAlivePaths.has(path)) {
-        return;
-      }
-
-      model.dispose();
-    });
-  }, [
-    activeDocument,
-    monacoApi,
-    navigationHistoryPaths,
-    openDocumentPaths,
-    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -3892,12 +3807,20 @@ function EditorSurfaceComponent({
 
   return (
     <div
-      aria-labelledby={activeDocument ? getTabId(activeDocument.path) : undefined}
+      aria-labelledby={!embeddedInGroupPanel && activeDocument
+        ? getTabId(activeDocument.path, groupId)
+        : undefined}
       className="editor-panel"
-      id={activeDocument ? getTabPanelId(activeDocument.path) : undefined}
-      onFocusCapture={onEditorFocused}
-      onMouseDown={onEditorFocused}
-      role="tabpanel"
+      id={!embeddedInGroupPanel && activeDocument
+        ? getTabPanelId(activeDocument.path, groupId)
+        : undefined}
+      onFocusCapture={() => {
+        activateEditorGroupFromInteraction();
+      }}
+      onMouseDown={() => {
+        activateEditorGroupFromInteraction();
+      }}
+      role={embeddedInGroupPanel ? undefined : "tabpanel"}
     >
       {activeDocument ? (
         <Breadcrumbs
@@ -3910,6 +3833,7 @@ function EditorSurfaceComponent({
       <Editor
         beforeMount={handleBeforeMount}
         height="100%"
+        keepCurrentModel
         language={activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE}
         loading={EDITOR_LOADING_PLACEHOLDER}
         onChange={handleEditorChange}
@@ -4032,7 +3956,23 @@ function EditorSurfaceComponent({
 // IDE events (index progress, runtime status, …) re-render App without touching
 // the editor's props. memo lets the surface skip those renders, re-rendering
 // only when one of its props actually changes (active document, diagnostics, …).
-export const EditorSurface = memo(EditorSurfaceComponent);
+const MemoizedEditorSurfaceComponent = memo(EditorSurfaceComponent);
+
+export const EditorSurface = memo(function EditorSurface(
+  props: EditorSurfaceProps,
+) {
+  const runtime = useEditorRuntimeContext();
+
+  if (runtime) {
+    return <MemoizedEditorSurfaceComponent {...props} />;
+  }
+
+  return (
+    <EditorRuntimeHost>
+      <MemoizedEditorSurfaceComponent {...props} />
+    </EditorRuntimeHost>
+  );
+});
 
 function editorActionForMenuCommand(command: EditorMenuCommand): string {
   switch (command) {

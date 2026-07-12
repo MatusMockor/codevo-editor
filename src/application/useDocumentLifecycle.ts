@@ -179,6 +179,7 @@ export interface DocumentLifecycleDependencies {
 
 export interface DocumentCloseOptions {
   recordRecentlyClosed?: boolean;
+  skipConfirmation?: boolean;
 }
 
 export interface DocumentLifecycle {
@@ -766,6 +767,7 @@ export function useDocumentLifecycle(
 
       if (
         document &&
+        options.skipConfirmation !== true &&
         (isDirty(document) || hasExternalFileConflict(workspaceRoot, path)) &&
         !prompter.confirm(
           hasExternalFileConflict(workspaceRoot, path)

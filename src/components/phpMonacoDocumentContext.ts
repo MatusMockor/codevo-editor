@@ -87,6 +87,7 @@ function workspaceRootAliasKey(
 
 export interface PhpMonacoDocumentContextProvider {
   getActiveDocument(): EditorDocument | null;
+  getDocumentForModel?(model: MonacoModel): EditorDocument | null;
   getRuntimeStatus(): LanguageServerRuntimeStatus | null;
   getWorkspaceRoot?(): string | null;
 }
@@ -102,7 +103,8 @@ export function activePhpDocumentContext(
   context: PhpMonacoDocumentContextProvider,
   model: MonacoModel,
 ): PhpMonacoDocumentContext | null {
-  const activeDocument = context.getActiveDocument();
+  const activeDocument =
+    context.getDocumentForModel?.(model) ?? context.getActiveDocument();
   const rootPath = context.getWorkspaceRoot?.() ?? null;
 
   if (!activeDocument || !rootPath) {
@@ -401,6 +403,7 @@ function compatibilityWorkspaceRootFromRawPath(rootPath: string) {
 export function disposeWorkspaceModels(
   monaco: typeof Monaco,
   rootPath: string,
+  options: { preserveWorkspaceMappings?: boolean } = {},
 ): void {
   monaco.editor.getModels().forEach((model) => {
     const workspacePath = workspacePathForModel(model);
@@ -413,9 +416,15 @@ export function disposeWorkspaceModels(
       return;
     }
 
-    workspacePathsByMonacoUri.delete(model.uri.toString());
+    if (!options.preserveWorkspaceMappings) {
+      workspacePathsByMonacoUri.delete(model.uri.toString());
+    }
     model.dispose();
   });
+
+  if (options.preserveWorkspaceMappings) {
+    return;
+  }
 
   for (const [uri, workspacePath] of workspacePathsByMonacoUri) {
     const expectedKey = workspacePathKey(rootPath, workspacePath.nativePath);

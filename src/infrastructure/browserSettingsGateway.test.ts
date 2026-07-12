@@ -5,8 +5,73 @@ import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
   LARGE_SMART_DOCUMENT_LINE_LIMIT,
 } from "../domain/largeDocumentPolicy";
+import { defaultWorkspaceSettings } from "../domain/settings";
 
 describe("BrowserSettingsGateway", () => {
+  it("isolates split sessions per project even when group IDs match", async () => {
+    const gateway = new BrowserSettingsGateway(memoryStorage());
+    const sessionFor = (path: string) => ({
+      bottomPanelView: "problems" as const,
+      editor: {
+        activeGroupId: "main",
+        groups: {
+          main: { activePath: path, openPaths: [path], previewPath: null },
+        },
+        layout: { kind: "group" as const, groupId: "main" },
+      },
+      sidebarView: "files" as const,
+      version: 1 as const,
+    });
+
+    await gateway.saveWorkspaceSettings("/project-a", {
+      ...defaultWorkspaceSettings(),
+      session: sessionFor("/project-a/A.ts"),
+    });
+    await gateway.saveWorkspaceSettings("/project-b", {
+      ...defaultWorkspaceSettings(),
+      session: sessionFor("/project-b/B.ts"),
+    });
+
+    await expect(gateway.loadWorkspaceSettings("/project-a"))
+      .resolves.toMatchObject({ session: sessionFor("/project-a/A.ts") });
+    await expect(gateway.loadWorkspaceSettings("/project-b"))
+      .resolves.toMatchObject({ session: sessionFor("/project-b/B.ts") });
+  });
+
+  it("migrates and round trips a legacy flat session as version one", async () => {
+    const storage = memoryStorage();
+    const key = "editor.settings.workspace:%2Flegacy";
+    storage.setItem(key, JSON.stringify({
+      session: {
+        activePath: "/legacy/Preview.ts",
+        bottomPanelView: "history",
+        openPaths: ["/legacy/A.ts", "/legacy/Preview.ts"],
+        previewPath: "/legacy/Preview.ts",
+        sidebarView: "git",
+      },
+    }));
+    const gateway = new BrowserSettingsGateway(storage);
+    const settings = await gateway.loadWorkspaceSettings("/legacy");
+
+    expect(settings.session).toMatchObject({
+      version: 1,
+      editor: {
+        groups: {
+          "editor-main": {
+            activePath: "/legacy/Preview.ts",
+            openPaths: ["/legacy/A.ts"],
+            previewPath: "/legacy/Preview.ts",
+          },
+        },
+      },
+    });
+
+    await gateway.saveWorkspaceSettings("/legacy", settings);
+    expect(JSON.parse(storage.getItem(key) ?? "{}").session).toEqual(
+      settings.session,
+    );
+  });
+
   it("returns defaults when settings are missing", async () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
 
@@ -71,10 +136,16 @@ describe("BrowserSettingsGateway", () => {
       phpactorPath: null,
       revealActiveFileInTree: true,
       session: {
-        activePath: null,
         bottomPanelView: "problems",
-        openPaths: [],
+        editor: {
+          activeGroupId: "editor-main",
+          groups: {
+            "editor-main": { activePath: null, openPaths: [], previewPath: null },
+          },
+          layout: { groupId: "editor-main", kind: "group" },
+        },
         sidebarView: "files",
+        version: 1,
       },
       statusBar: {
         activePath: true,
@@ -167,10 +238,20 @@ describe("BrowserSettingsGateway", () => {
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
       session: {
-        activePath: "/project/src/User.php",
         bottomPanelView: "index",
-        openPaths: ["/project/src/User.php", "/project/README.md"],
+        editor: {
+          activeGroupId: "main",
+          groups: {
+            main: {
+              activePath: "/project/src/User.php",
+              openPaths: ["/project/src/User.php", "/project/README.md"],
+              previewPath: null,
+            },
+          },
+          layout: { groupId: "main", kind: "group" },
+        },
         sidebarView: "php",
+        version: 1,
       },
       statusBar: {
         activePath: true,
@@ -258,10 +339,20 @@ describe("BrowserSettingsGateway", () => {
       phpactorPath: "/tools/phpactor",
       revealActiveFileInTree: false,
       session: {
-        activePath: "/project/src/User.php",
         bottomPanelView: "index",
-        openPaths: ["/project/src/User.php", "/project/README.md"],
+        editor: {
+          activeGroupId: "main",
+          groups: {
+            main: {
+              activePath: "/project/src/User.php",
+              openPaths: ["/project/src/User.php", "/project/README.md"],
+              previewPath: null,
+            },
+          },
+          layout: { groupId: "main", kind: "group" },
+        },
         sidebarView: "php",
+        version: 1,
       },
       statusBar: {
         activePath: true,
@@ -347,10 +438,16 @@ describe("BrowserSettingsGateway", () => {
       phpactorPath: null,
       revealActiveFileInTree: true,
       session: {
-        activePath: null,
         bottomPanelView: "problems",
-        openPaths: [],
+        editor: {
+          activeGroupId: "editor-main",
+          groups: {
+            "editor-main": { activePath: null, openPaths: [], previewPath: null },
+          },
+          layout: { groupId: "editor-main", kind: "group" },
+        },
         sidebarView: "files",
+        version: 1,
       },
       statusBar: {
         activePath: true,

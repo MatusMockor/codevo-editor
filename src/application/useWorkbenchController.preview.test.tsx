@@ -69,8 +69,10 @@ import type {
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
+  normalizeWorkspaceSession,
   type SettingsGateway,
 } from "../domain/settings";
+import { createInitialEditorGroupsState } from "../domain/editorGroups";
 import { defaultKeymapSettings } from "../domain/keymap";
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustGateway } from "../domain/trust";
@@ -208,8 +210,6 @@ describe("useWorkbenchController preview tabs", () => {
       imageA.path,
       secondText.path,
     ]);
-    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
-
     await act(async () => {
       await getWorkbench().activateWorkspaceTab("/workspace-b");
     });
@@ -222,8 +222,14 @@ describe("useWorkbenchController preview tabs", () => {
       "/workspace-a",
       expect.objectContaining({
         session: expect.objectContaining({
-          activePath: null,
-          openPaths: [firstText.path, secondText.path],
+          editor: expect.objectContaining({
+            groups: expect.objectContaining({
+              "editor-main": expect.objectContaining({
+                activePath: firstText.path,
+                openPaths: [firstText.path, secondText.path],
+              }),
+            }),
+          }),
         }),
       }),
     );
@@ -438,8 +444,14 @@ describe("useWorkbenchController preview tabs", () => {
       "/workspace",
       expect.objectContaining({
         session: expect.objectContaining({
-          activePath: null,
-          openPaths: [file.path],
+          editor: expect.objectContaining({
+            groups: expect.objectContaining({
+              "editor-main": expect.objectContaining({
+                activePath: file.path,
+                openPaths: [file.path],
+              }),
+            }),
+          }),
         }),
       }),
     );
@@ -479,9 +491,15 @@ describe("useWorkbenchController preview tabs", () => {
       "/workspace",
       expect.objectContaining({
         session: expect.objectContaining({
-          activePath: preview.path,
-          openPaths: [second.path, first.path, preview.path],
-          previewPath: preview.path,
+          editor: expect.objectContaining({
+            groups: expect.objectContaining({
+              "editor-main": expect.objectContaining({
+                activePath: preview.path,
+                openPaths: [second.path, first.path],
+                previewPath: preview.path,
+              }),
+            }),
+          }),
         }),
       }),
     );
@@ -19026,8 +19044,11 @@ describe("useWorkbenchController preview tabs", () => {
               ...defaultWorkspaceSettings(),
               session: {
                 ...defaultWorkspaceSettings().session,
-                activePath: childConsumerPath,
-                openPaths: [childConsumerPath],
+                editor: createInitialEditorGroupsState("editor-main", {
+                  activePath: childConsumerPath,
+                  openPaths: [childConsumerPath],
+                  previewPath: null,
+                }),
               },
             };
           }
@@ -20921,7 +20942,13 @@ describe("useWorkbenchController preview tabs", () => {
         "/workspace-a",
         expect.objectContaining({
           session: expect.objectContaining({
-            activePath: "/workspace-a/src/User.php",
+            editor: expect.objectContaining({
+              groups: expect.objectContaining({
+                "editor-main": expect.objectContaining({
+                  activePath: "/workspace-a/src/User.php",
+                }),
+              }),
+            }),
           }),
         }),
       );
@@ -59051,11 +59078,19 @@ final class InvoiceAdapter
       firstRoot,
       expect.objectContaining({
         session: expect.objectContaining({
-          activePath: preview.path,
-          openPaths: [preview.path],
-          previewPath: preview.path,
+          editor: expect.objectContaining({
+            groups: expect.objectContaining({
+              "editor-main": expect.objectContaining({
+                activePath: preview.path,
+                openPaths: [],
+                previewPath: preview.path,
+              }),
+            }),
+          }),
           viewStates: {
-            [preview.path]: { column: 6, line: 4, scrollTop: 180 },
+            "editor-main": {
+              [preview.path]: { column: 6, line: 4, scrollTop: 180 },
+            },
           },
         }),
       }),
@@ -68827,8 +68862,257 @@ class PostRepository
     expect(unregister).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a shared split document alive until its final group membership closes", async () => {
+    const path = "/workspace/src/Shared.ts";
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 91,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export const shared = true;\n"),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile({ kind: "file", name: "Shared.ts", path });
+    });
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+
+    const split = getWorkbench().editorGroups;
+    const groupIds = Object.keys(split.groups);
+    expect(groupIds).toHaveLength(2);
+    expect(groupIds.every((groupId) =>
+      split.groups[groupId].activePath === path,
+    )).toBe(true);
+    vi.mocked(dependencies.documentSyncGateway.didClose).mockClear();
+
+    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[0], path));
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([path]);
+    expect(dependencies.documentSyncGateway.didClose).not.toHaveBeenCalled();
+
+    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[1], path));
+    await flushAsyncTurns(12);
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledOnce();
+    expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      path,
+    );
+  });
+
+  it("routes previous and next commands from a directly focused same-file group", async () => {
+    const path = "/workspace/src/Shared.ts";
+    const editorGroupFocusRunner = vi.fn(() => true);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      editorGroupFocusRunner,
+      readTextFile: vi.fn(async () => "export const shared = true;\n"),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile({ kind: "file", name: "Shared.ts", path });
+    });
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+
+    const [leftGroupId, rightGroupId] = Object.keys(
+      getWorkbench().editorGroups.groups,
+    );
+    expect(
+      [leftGroupId, rightGroupId].map(
+        (groupId) => getWorkbench().editorGroups.groups[groupId].activePath,
+      ),
+    ).toEqual([path, path]);
+
+    act(() => getWorkbench().activateEditorGroup(leftGroupId));
+    act(() => getWorkbench().activateEditorGroup(rightGroupId));
+    expect(getWorkbench().editorGroups.activeGroupId).toBe(rightGroupId);
+
+    act(() => {
+      getWorkbench().commands
+        .find((command) => command.id === "editor.focusPreviousGroup")
+        ?.run();
+    });
+    expect(getWorkbench().editorGroups.activeGroupId).toBe(leftGroupId);
+    expect(editorGroupFocusRunner).toHaveBeenLastCalledWith(leftGroupId);
+
+    act(() => {
+      getWorkbench().commands
+        .find((command) => command.id === "editor.focusNextGroup")
+        ?.run();
+    });
+    expect(getWorkbench().editorGroups.activeGroupId).toBe(rightGroupId);
+    expect(editorGroupFocusRunner).toHaveBeenLastCalledWith(rightGroupId);
+    expect(editorGroupFocusRunner).toHaveBeenCalledTimes(2);
+  });
+
+  it("isolates a cold workspace from another project's split layout and restores the cached split", async () => {
+    const path = "/workspace-a/src/App.ts";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(async () => "export const app = true;\n"),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile({ kind: "file", name: "App.ts", path });
+    });
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+    expect(Object.keys(getWorkbench().editorGroups.groups)).toHaveLength(2);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().editorGroups).toEqual(
+      createInitialEditorGroupsState("editor-main"),
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(Object.keys(getWorkbench().editorGroups.groups)).toHaveLength(2);
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      path,
+    ]);
+  });
+
+  it("allocates a fresh group id after restoring an existing split session", async () => {
+    const path = "/workspace/src/App.ts";
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      session: {
+        bottomPanelView: "problems" as const,
+        editor: {
+          activeGroupId: "editor-1",
+          groups: {
+            "editor-main": { activePath: path, openPaths: [path], previewPath: null },
+            "editor-1": { activePath: path, openPaths: [path], previewPath: null },
+          },
+          layout: {
+            kind: "split" as const,
+            orientation: "horizontal" as const,
+            sizes: [0.5, 0.5] as [number, number],
+            children: [
+              { kind: "group" as const, groupId: "editor-main" },
+              { kind: "group" as const, groupId: "editor-1" },
+            ],
+          },
+        },
+        sidebarView: "files" as const,
+        version: 1 as const,
+      },
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      readTextFile: vi.fn(async () => "export const app = true;\n"),
+      workspaceSettings,
+    });
+    await flushAsyncTurns(24);
+
+    expect(Object.keys(getWorkbench().editorGroups.groups)).toEqual([
+      "editor-main",
+      "editor-1",
+    ]);
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+
+    expect(Object.keys(getWorkbench().editorGroups.groups)).toEqual([
+      "editor-main",
+      "editor-1",
+      "editor-2",
+    ]);
+  });
+
+  it("moves a tab between groups atomically without closing its document", async () => {
+    const path = "/workspace/src/Move.ts";
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 92,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async () => "export const moved = true;\n"),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile({ kind: "file", name: "Move.ts", path });
+    });
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+    const groupIds = Object.keys(getWorkbench().editorGroups.groups);
+    vi.mocked(dependencies.documentSyncGateway.didClose).mockClear();
+    await act(async () => {
+      getWorkbench().closeDocumentInEditorGroup(groupIds[1], path);
+      getWorkbench().moveEditorGroupTab(groupIds[0], groupIds[1], path);
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([path]);
+    expect(getWorkbench().editorGroups.groups[groupIds[0]].activePath).toBeNull();
+    expect(getWorkbench().editorGroups.groups[groupIds[1]].activePath).toBe(path);
+    expect(dependencies.documentSyncGateway.didClose).not.toHaveBeenCalled();
+  });
+
+  it("prompts only when closing the final dirty split membership", async () => {
+    const path = "/workspace/src/Dirty.ts";
+    const confirm = vi.fn(() => false);
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      prompter: { confirm, prompt: vi.fn(() => null) },
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile({ kind: "file", name: "Dirty.ts", path });
+    });
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+    const groupIds = Object.keys(getWorkbench().editorGroups.groups);
+    act(() => getWorkbench().updateActiveDocument("export const value = 2;\n"));
+
+    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[0], path));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+
+    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[1], path));
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(getWorkbench().openDocuments).toHaveLength(1);
+  });
+
   function renderController({
     appSettings = defaultAppSettings(),
+    editorGroupFocusRunner,
     gitGateway,
     localHistoryGateway,
     markdownPreviewRenderer,
@@ -68865,6 +69149,7 @@ class PostRepository
     workspaceTrustGateway,
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
+    editorGroupFocusRunner?: WorkbenchControllerOptions["editorGroupFocusRunner"];
     gitGateway?: GitGateway;
     localHistoryGateway?: LocalHistoryGateway;
     markdownPreviewRenderer?: WorkbenchControllerOptions["markdownPreviewRenderer"];
@@ -68911,7 +69196,9 @@ class PostRepository
     workspaceIdentityGateway?: WorkbenchWorkspaceGateways["identity"];
     workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"]>;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
-    workspaceSettings?: ReturnType<typeof defaultWorkspaceSettings>;
+    workspaceSettings?: Omit<ReturnType<typeof defaultWorkspaceSettings>, "session"> & {
+      session: unknown;
+    };
     workspaceTrustGateway?: WorkspaceTrustGateway;
   } = {}) {
     let workbench: WorkbenchController | null = null;
@@ -68948,10 +69235,14 @@ class PostRepository
       workspaceIdentityGateway,
       workspaceFiles,
       workspaceRuntimeLifecycleGateway,
-      workspaceSettings,
+      workspaceSettings: {
+        ...workspaceSettings,
+        session: normalizeWorkspaceSession(workspaceSettings.session),
+      },
       workspaceTrustGateway,
     });
     dependencies.controllerOptions.markdownPreviewRenderer = markdownPreviewRenderer;
+    dependencies.controllerOptions.editorGroupFocusRunner = editorGroupFocusRunner;
     const getWorkbench = () => {
       if (!workbench) {
         throw new Error("Workbench controller was not rendered.");

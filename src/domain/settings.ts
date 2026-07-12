@@ -16,6 +16,12 @@ import {
   type LargeSmartDocumentPolicy,
 } from "./largeDocumentPolicy";
 import { normalizeGitCommitMessageHistory } from "./gitCommitMessageHistory";
+import {
+  createInitialEditorGroupsState,
+  normalizeEditorGroupsState,
+  type EditorGroupId,
+  type EditorGroupsState,
+} from "./editorGroups";
 
 export const appThemeOptions = [
   { id: "dark", label: "Dark" },
@@ -204,14 +210,21 @@ export interface WorkspaceSettings {
   statusBar: StatusBarItemVisibility;
 }
 
-export interface WorkspaceSessionState {
-  activePath: string | null;
+export const WORKSPACE_SESSION_VERSION = 1 as const;
+export const DEFAULT_WORKSPACE_EDITOR_GROUP_ID = "editor-main";
+
+export interface WorkspaceSessionStateV1 {
   bottomPanelView: WorkspaceSessionBottomPanelView;
-  openPaths: string[];
-  previewPath?: string | null;
+  editor: EditorGroupsState;
   sidebarView: WorkspaceSessionSidebarView;
-  viewStates?: Record<string, WorkspaceSessionViewState>;
+  version: typeof WORKSPACE_SESSION_VERSION;
+  viewStates?: Record<
+    EditorGroupId,
+    Record<string, WorkspaceSessionViewState>
+  >;
 }
+
+export type WorkspaceSessionState = WorkspaceSessionStateV1;
 
 export interface WorkspaceSessionViewState {
   column: number;
@@ -219,6 +232,10 @@ export interface WorkspaceSessionViewState {
   line: number;
   scrollTop?: number;
 }
+
+type WorkspaceSessionGroupViewStates = NonNullable<
+  WorkspaceSessionState["viewStates"]
+>;
 
 export interface StatusBarItemVisibility {
   activePath: boolean;
@@ -368,10 +385,10 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
 
 export function defaultWorkspaceSessionState(): WorkspaceSessionState {
   return {
-    activePath: null,
     bottomPanelView: "problems",
-    openPaths: [],
+    editor: createInitialEditorGroupsState(DEFAULT_WORKSPACE_EDITOR_GROUP_ID),
     sidebarView: "files",
+    version: WORKSPACE_SESSION_VERSION,
   };
 }
 
@@ -628,34 +645,89 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
     return defaults;
   }
 
-  const openPaths = normalizePathList(value.openPaths);
-  const activePath = normalizeSessionActivePath(value.activePath, openPaths);
-  const previewPath = normalizeSessionPreviewPath(value.previewPath, openPaths);
-  const viewStates = normalizeWorkspaceSessionViewStates(
-    value.viewStates,
-    openPaths,
-  );
+  if (value.version !== undefined && value.version !== WORKSPACE_SESSION_VERSION) {
+    return defaults;
+  }
+
+  const editor = value.version === WORKSPACE_SESSION_VERSION
+    ? normalizeEditorGroupsState(value.editor, DEFAULT_WORKSPACE_EDITOR_GROUP_ID)
+    : migrateLegacyWorkspaceSessionEditor(value);
+  const viewStates = value.version === WORKSPACE_SESSION_VERSION
+    ? normalizeWorkspaceSessionGroupViewStates(value.viewStates, editor)
+    : normalizeLegacyWorkspaceSessionViewStates(value.viewStates, editor);
 
   const normalized: WorkspaceSessionState = {
-    activePath,
     bottomPanelView: isWorkspaceSessionBottomPanelView(value.bottomPanelView)
       ? value.bottomPanelView
       : defaults.bottomPanelView,
-    openPaths,
+    editor,
     sidebarView: isWorkspaceSessionSidebarView(value.sidebarView)
       ? value.sidebarView
       : defaults.sidebarView,
+    version: WORKSPACE_SESSION_VERSION,
   };
-
-  if (previewPath) {
-    normalized.previewPath = previewPath;
-  }
 
   if (Object.keys(viewStates).length > 0) {
     normalized.viewStates = viewStates;
   }
 
   return normalized;
+}
+
+function migrateLegacyWorkspaceSessionEditor(
+  value: Record<string, unknown>,
+): EditorGroupsState {
+  const openPaths = normalizePathList(value.openPaths);
+  const previewPath = normalizeSessionPreviewPath(value.previewPath, openPaths);
+  const pinnedPaths = previewPath
+    ? openPaths.filter((path) => path !== previewPath)
+    : openPaths;
+  const visiblePaths = previewPath ? [...pinnedPaths, previewPath] : pinnedPaths;
+  const activePath = normalizeSessionActivePath(value.activePath, visiblePaths);
+
+  return createInitialEditorGroupsState(DEFAULT_WORKSPACE_EDITOR_GROUP_ID, {
+    activePath,
+    openPaths: pinnedPaths,
+    previewPath,
+  });
+}
+
+function normalizeLegacyWorkspaceSessionViewStates(
+  value: unknown,
+  editor: EditorGroupsState,
+): WorkspaceSessionGroupViewStates {
+  const group = editor.groups[DEFAULT_WORKSPACE_EDITOR_GROUP_ID];
+  const visiblePaths = group.previewPath
+    ? [...group.openPaths, group.previewPath]
+    : group.openPaths;
+  const normalized = normalizeWorkspaceSessionViewStates(value, visiblePaths);
+
+  return Object.keys(normalized).length > 0
+    ? { [DEFAULT_WORKSPACE_EDITOR_GROUP_ID]: normalized }
+    : {};
+}
+
+function normalizeWorkspaceSessionGroupViewStates(
+  value: unknown,
+  editor: EditorGroupsState,
+): WorkspaceSessionGroupViewStates {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(editor.groups).flatMap(([groupId, group]) => {
+      const visiblePaths = group.previewPath
+        ? [...group.openPaths, group.previewPath]
+        : group.openPaths;
+      const normalized = normalizeWorkspaceSessionViewStates(
+        value[groupId],
+        visiblePaths,
+      );
+
+      return Object.keys(normalized).length > 0 ? [[groupId, normalized]] : [];
+    }),
+  );
 }
 
 export function normalizeStatusBarItemVisibility(

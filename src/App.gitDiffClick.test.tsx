@@ -43,7 +43,8 @@ vi.mock("./application/useWorkbenchController", async () => {
       });
 
       const previewGitChange = async (selected: GitChangedFile) => {
-        const diffPath = `mockor-git-diff:worktree:${selected.path}`;
+        const side = selected.isStaged ? "staged" : "worktree";
+        const diffPath = `mockor-git-diff:${side}:${selected.path}`;
         setState({
           activePath: diffPath,
           gitDiffLoading: true,
