@@ -108,14 +108,66 @@ describe("BottomPanel terminal links", () => {
     expect(onOpenProblem).not.toHaveBeenCalled();
   });
 
-  it("surfaces the active terminal cwd in the panel header", async () => {
-    await renderPanel(root, "/workspace", vi.fn(async () => true));
+  it("renders the active terminal cwd as a button inside the workspace", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      vi.fn(),
+    );
 
     act(() => terminalProps().onCwdChange?.("/workspace/src"));
 
-    expect(host.querySelector('[title="/workspace/src"]')?.textContent).toBe(
-      "/workspace/src",
+    const cwd = host.querySelector('[title="/workspace/src"]');
+
+    expect(cwd?.tagName).toBe("BUTTON");
+    expect(cwd?.textContent).toBe("/workspace/src");
+    expect(cwd?.getAttribute("aria-label")).toBe(
+      "Reveal /workspace/src in file tree",
     );
+  });
+
+  it("renders the cwd as a plain span outside the workspace or without a root", async () => {
+    const onRevealDirectoryInTree = vi.fn();
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      onRevealDirectoryInTree,
+    );
+
+    act(() => terminalProps().onCwdChange?.("/other/src"));
+
+    expect(host.querySelector('[title="/other/src"]')?.tagName).toBe("SPAN");
+
+    await renderPanel(
+      root,
+      null,
+      vi.fn(async () => true),
+      onRevealDirectoryInTree,
+    );
+    act(() => terminalProps().onCwdChange?.("/other/src"));
+
+    expect(host.querySelector('[title="/other/src"]')?.tagName).toBe("SPAN");
+  });
+
+  it("reveals the current terminal cwd when its button is clicked", async () => {
+    const onRevealDirectoryInTree = vi.fn();
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      onRevealDirectoryInTree,
+    );
+
+    act(() => terminalProps().onCwdChange?.("/workspace/src"));
+    act(() => {
+      (
+        host.querySelector('[title="/workspace/src"]') as HTMLButtonElement
+      ).click();
+    });
+
+    expect(onRevealDirectoryInTree).toHaveBeenCalledWith("/workspace/src");
   });
 });
 
@@ -127,8 +179,9 @@ function terminalProps(): CapturedTerminalPanelProps {
 
 async function renderPanel(
   root: Root,
-  workspaceRoot: string,
+  workspaceRoot: string | null,
   onOpenProblem: (notice: WorkbenchNotice) => Promise<boolean>,
+  onRevealDirectoryInTree?: (path: string) => void,
 ) {
   await act(async () => {
     root.render(
@@ -144,6 +197,7 @@ async function renderPanel(
         onOpenCommitFileDiff={vi.fn()}
         onOpenProblem={onOpenProblem}
         onPhpReindex={vi.fn()}
+        onRevealDirectoryInTree={onRevealDirectoryInTree}
         onResizeStart={vi.fn()}
         onSelectView={vi.fn()}
         onSoftReindex={vi.fn()}

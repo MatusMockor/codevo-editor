@@ -21,6 +21,7 @@ import { RuntimeObservabilityPanel } from "./RuntimeObservabilityPanel";
 import type { FileChange, GitHistoryGateway } from "../domain/git";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
 import type { LatencySnapshotEntry } from "../domain/latencyTracker";
+import { workspaceRelativePath } from "../domain/pathDerivation";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { ArtisanRoutesPanel } from "./ArtisanRoutesPanel";
 
@@ -44,6 +45,7 @@ interface BottomPanelProps {
   onRefreshArtisanRoutes?(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
+  onRevealDirectoryInTree?(path: string): void;
   onResizeStart(event: PointerEvent<HTMLDivElement>): void;
   onSelectView(view: WorkbenchBottomPanelView): void;
   onSoftReindex(): void;
@@ -99,6 +101,7 @@ export function BottomPanel({
   onRefreshArtisanRoutes = () => undefined,
   onOpenProblem,
   onPhpReindex,
+  onRevealDirectoryInTree,
   onResizeStart,
   onSelectView,
   onSoftReindex,
@@ -273,7 +276,21 @@ export function BottomPanel({
             ))}
           </select>
         ) : null}
-        {activeView === "terminal" && terminalCwd ? (
+        {activeView === "terminal" &&
+        terminalCwd &&
+        workspaceRoot &&
+        onRevealDirectoryInTree &&
+        workspaceRelativePath(workspaceRoot, terminalCwd) !== null ? (
+          <button
+            aria-label={`Reveal ${terminalCwd} in file tree`}
+            className="bottom-panel-text-action"
+            onClick={() => onRevealDirectoryInTree(terminalCwd)}
+            title={terminalCwd}
+            type="button"
+          >
+            {terminalCwd}
+          </button>
+        ) : activeView === "terminal" && terminalCwd ? (
           <span className="bottom-panel-subtitle" title={terminalCwd}>
             {terminalCwd}
           </span>

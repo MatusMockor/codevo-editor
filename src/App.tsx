@@ -1509,6 +1509,7 @@ function App() {
             onRefreshArtisanRoutes={() => void artisanRoutes.refresh()}
             onOpenProblem={workbench.openProblemNotice}
             onPhpReindex={workbench.startPhpReindex}
+            onRevealDirectoryInTree={workbench.revealDirectoryInTree}
             onResizeStart={startBottomPanelResize}
             onSelectView={(view) =>
               workbench.showBottomPanelView(view as BottomPanelView)

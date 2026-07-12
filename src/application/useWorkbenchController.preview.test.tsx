@@ -11074,6 +11074,34 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveLength(1);
   });
 
+  it("reveals a directory by expanding its workspace parents", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        session: {
+          activePath: null,
+          bottomPanelView: "problems",
+          openPaths: [],
+          sidebarView: "files",
+        },
+      },
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().revealDirectoryInTree("/workspace/src/components");
+    });
+
+    expect([...getWorkbench().expandedDirectories]).toEqual([
+      "/workspace",
+      "/workspace/src",
+    ]);
+  });
+
   it("does not reveal an active file inside a manually collapsed directory subtree", async () => {
     const readDirectory = vi.fn(async (path: string): Promise<FileEntry[]> => {
       if (path === "/workspace") {

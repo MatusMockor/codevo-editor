@@ -4210,66 +4210,95 @@ export function useWorkbenchController(
     ],
   );
 
-  useEffect(() => {
-    if (
-      !workspaceRoot ||
-      !activePath ||
-      !workspaceSettings.revealActiveFileInTree
-    ) {
-      return;
-    }
+  const revealPathInTree = useCallback(
+    (path: string, respectManualCollapses: boolean) => {
+      const requestedRoot = workspaceRoot;
 
-    const directories = parentDirectoriesInWorkspace(workspaceRoot, activePath);
+      if (!requestedRoot) {
+        return;
+      }
 
-    if (directories.length === 0) {
-      return;
-    }
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        ) ||
+        !isSessionPathInWorkspace(requestedRoot, path)
+      ) {
+        return;
+      }
 
-    setExpandedDirectories((current) => {
-      const next = new Set(current);
-      let changed = false;
+      const directories = parentDirectoriesInWorkspace(requestedRoot, path);
+
+      if (directories.length === 0) {
+        return;
+      }
+
+      setExpandedDirectories((current) => {
+        const next = new Set(current);
+        let changed = false;
+
+        for (const directory of directories) {
+          if (
+            respectManualCollapses &&
+            isBlockedByManuallyCollapsedDirectory(
+              directory,
+              manuallyCollapsedDirectories,
+            )
+          ) {
+            continue;
+          }
+
+          if (next.has(directory)) {
+            continue;
+          }
+
+          next.add(directory);
+          changed = true;
+        }
+
+        return changed ? next : current;
+      });
 
       for (const directory of directories) {
         if (
-          isBlockedByManuallyCollapsedDirectory(
-            directory,
-            manuallyCollapsedDirectories,
-          )
+          (respectManualCollapses &&
+            isBlockedByManuallyCollapsedDirectory(
+              directory,
+              manuallyCollapsedDirectories,
+            )) ||
+          entriesByDirectory[directory] ||
+          loadingDirectories.has(directory)
         ) {
           continue;
         }
 
-        if (next.has(directory)) {
-          continue;
-        }
-
-        next.add(directory);
-        changed = true;
+        void loadDirectory(directory, { clearMessage: false });
       }
+    },
+    [
+      entriesByDirectory,
+      loadDirectory,
+      loadingDirectories,
+      manuallyCollapsedDirectories,
+      workspaceRoot,
+    ],
+  );
 
-      return changed ? next : current;
-    });
+  const revealDirectoryInTree = useCallback(
+    (path: string) => revealPathInTree(path, false),
+    [revealPathInTree],
+  );
 
-    for (const directory of directories) {
-      if (
-        isBlockedByManuallyCollapsedDirectory(
-          directory,
-          manuallyCollapsedDirectories,
-        ) ||
-        entriesByDirectory[directory] ||
-        loadingDirectories.has(directory)
-      ) {
-        continue;
-      }
-
-      void loadDirectory(directory, { clearMessage: false });
+  useEffect(() => {
+    if (!activePath || !workspaceSettings.revealActiveFileInTree) {
+      return;
     }
+
+    revealPathInTree(activePath, true);
   }, [
     activePath,
-    manuallyCollapsedDirectories,
-    loadingDirectories,
-    loadDirectory,
-    workspaceRoot,
+    revealPathInTree,
     workspaceSettings.revealActiveFileInTree,
   ]);
 
@@ -9533,6 +9562,7 @@ export function useWorkbenchController(
     quitApplication,
     refreshPhpTree,
     refreshGitStatus,
+    revealDirectoryInTree,
     revertGitChanges,
     revertActiveEditorChangeHunk,
     saveActiveDocument,
