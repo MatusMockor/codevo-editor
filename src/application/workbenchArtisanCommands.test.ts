@@ -9,6 +9,42 @@ const workspaceContext: CommandContext = {
 };
 
 describe("workbenchArtisanCommands", () => {
+  it("includes an interactive tinker command when artisan is present", () => {
+    const runInActiveTerminal = vi.fn();
+    const commands = workbenchArtisanCommands({
+      hasArtisan: true,
+      runInActiveTerminal,
+    });
+    const tinkerCommand = commands.find(
+      (command) => command.id === "artisan.tinker",
+    );
+
+    expect(tinkerCommand).toMatchObject({
+      id: "artisan.tinker",
+      category: "Artisan",
+    });
+
+    tinkerCommand?.run();
+
+    expect(runInActiveTerminal).toHaveBeenCalledExactlyOnceWith(
+      "php artisan tinker",
+    );
+    expect(runInActiveTerminal).not.toHaveBeenCalledWith(
+      expect.stringContaining("--no-interaction"),
+    );
+  });
+
+  it("omits the tinker command when artisan is not present", () => {
+    const commands = workbenchArtisanCommands({
+      hasArtisan: false,
+      runInActiveTerminal: vi.fn(),
+    });
+
+    expect(commands.some((command) => command.id === "artisan.tinker")).toBe(
+      false,
+    );
+  });
+
   it("generates the curated Artisan commands only when artisan is present", () => {
     expect(
       workbenchArtisanCommands({
@@ -23,7 +59,9 @@ describe("workbenchArtisanCommands", () => {
     });
 
     expect(
-      commands.map(({ id, title, category }) => ({ id, title, category })),
+      commands
+        .filter(({ id }) => id !== "artisan.tinker")
+        .map(({ id, title, category }) => ({ id, title, category })),
     ).toEqual([
       { id: "artisan.about", title: "artisan: about", category: "Artisan" },
       {
@@ -71,7 +109,9 @@ describe("workbenchArtisanCommands", () => {
       runInActiveTerminal,
     });
 
-    commands.forEach((command) => command.run());
+    commands
+      .filter(({ id }) => id !== "artisan.tinker")
+      .forEach((command) => command.run());
 
     expect(runInActiveTerminal.mock.calls.map(([command]) => command)).toEqual([
       "php artisan about --no-interaction",

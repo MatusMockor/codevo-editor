@@ -24,12 +24,21 @@ export function workbenchArtisanCommands({
     return [];
   }
 
-  return artisanCommandNames.map((name) => ({
-    id: `artisan.${name}`,
-    title: `artisan: ${name}`,
-    category: "Artisan",
-    isEnabled: (context) => context.hasWorkspace,
-    run: () =>
-      runInActiveTerminal(`php artisan ${name} --no-interaction`),
-  }));
+  return [
+    ...artisanCommandNames.map<Command>((name) => ({
+      id: `artisan.${name}`,
+      title: `artisan: ${name}`,
+      category: "Artisan",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () =>
+        runInActiveTerminal(`php artisan ${name} --no-interaction`),
+    })),
+    {
+      id: "artisan.tinker",
+      title: "artisan: tinker",
+      category: "Artisan",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => runInActiveTerminal("php artisan tinker"),
+    },
+  ];
 }
