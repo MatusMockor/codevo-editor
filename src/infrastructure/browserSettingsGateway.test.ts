@@ -99,7 +99,6 @@ describe("BrowserSettingsGateway", () => {
         "editor.save": "Cmd+Shift+S",
       },
       minimapEnabled: false,
-      minimapEnabled: false,
       recentWorkspacePath: "/project",
       runtimePolicy: "keepAlive",
       theme: "ayuMirage",
