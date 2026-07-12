@@ -14,8 +14,11 @@ interface FakeTerminal {
   buffer: {
     active: {
       getLine: ReturnType<typeof vi.fn>;
+      type: "alternate" | "normal";
+      viewportY: number;
     };
   };
+  attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
   cols: number;
   dispose: ReturnType<typeof vi.fn>;
   loadAddon: ReturnType<typeof vi.fn>;
@@ -29,6 +32,7 @@ interface FakeTerminal {
     theme?: TerminalTheme;
   };
   rows: number;
+  scrollToLine: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
 }
 
@@ -40,8 +44,15 @@ interface FakeSession {
 interface FakeSessionOptions {
   onOpenLink(path: string, line?: number, column?: number): void;
   terminal: {
+    buffer: {
+      active: {
+        type: "alternate" | "normal";
+      };
+    };
+    attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
     registerMarker(cursorYOffset?: number): unknown;
     registerDecoration(options: unknown): unknown;
+    scrollToLine(line: number): void;
     write(data: string, callback?: () => void): void;
   };
 }
@@ -80,21 +91,29 @@ vi.mock("@xterm/xterm", () => ({
       buffer: {
         active: {
           getLine: vi.fn(),
+          type: "normal" as "alternate" | "normal",
+          viewportY: 7,
         },
       },
+      attachCustomKeyEventHandler: vi.fn(),
       dispose: vi.fn(),
       loadAddon: vi.fn(),
       onData: vi.fn(() => ({ dispose: vi.fn() })),
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
       open: vi.fn(),
       registerLinkProvider: vi.fn(() => ({ dispose: vi.fn() })),
-      registerMarker: vi.fn(() => ({ dispose: vi.fn() })),
+      registerMarker: vi.fn(() => ({
+        dispose: vi.fn(),
+        isDisposed: false,
+        line: 12,
+      })),
       registerDecoration: vi.fn(() => ({
         dispose: vi.fn(),
         onRender: vi.fn(),
       })),
       options: { ...options },
       rows: 24,
+      scrollToLine: vi.fn(),
       write: vi.fn(),
     };
     terminalPanelMocks.terminals.push(terminal);
@@ -242,7 +261,7 @@ describe("TerminalPanel", () => {
     expect(onOpenLink).not.toHaveBeenCalled();
   });
 
-  it("forwards writes, markers, and decoration registration to xterm", () => {
+  it("forwards key handling, scrolling, writes, markers, and decorations to xterm", () => {
     act(() => {
       root.render(
         <TerminalPanel
@@ -267,12 +286,20 @@ describe("TerminalPanel", () => {
       tooltip: "Exit code 0",
     };
     const writeCallback = vi.fn();
+    const keyHandler = vi.fn(() => true);
 
+    terminal.buffer.active.type = "alternate";
+    sessionTerminal.attachCustomKeyEventHandler(keyHandler);
+    sessionTerminal.scrollToLine(12);
     sessionTerminal.write("output", writeCallback);
     sessionTerminal.registerDecoration(options);
 
+    expect(terminal.attachCustomKeyEventHandler).toHaveBeenCalledWith(keyHandler);
+    expect(sessionTerminal.buffer.active.type).toBe("alternate");
+    expect(terminal.scrollToLine).toHaveBeenCalledWith(12);
     expect(terminal.write).toHaveBeenCalledWith("output", writeCallback);
     expect(terminal.registerMarker).toHaveBeenCalledWith(-1);
+    expect(marker).toMatchObject({ isDisposed: false, line: 12 });
     expect(terminal.registerDecoration).toHaveBeenCalledWith({ marker });
   });
 });

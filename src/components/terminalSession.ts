@@ -8,6 +8,15 @@ import {
 import { terminalFileLinks } from "../domain/terminalFileLinks";
 import { terminalCommandDecoration } from "../domain/terminalCommandDecoration";
 import {
+  detectKeymapPlatform,
+  matchesShortcut,
+  type KeymapPlatform,
+} from "../domain/keymap";
+import {
+  nextCommandMarkerLine,
+  type TerminalCommandNavigationDirection,
+} from "../domain/terminalCommandNavigation";
+import {
   TerminalShellIntegrationRegistry,
   type TerminalShellIntegrationEvent,
 } from "../domain/terminalShellIntegration";
@@ -43,10 +52,13 @@ export interface XtermTerminal {
   readonly buffer: {
     readonly active: {
       getLine(lineIndex: number): TerminalBufferLine | undefined;
+      readonly type: "alternate" | "normal";
+      readonly viewportY: number;
     };
   };
   readonly cols: number;
   readonly rows: number;
+  attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   dispose(): void;
   loadAddon(addon: TerminalFitAddon): void;
   onData(listener: (data: string) => void): TerminalDisposable;
@@ -57,10 +69,14 @@ export interface XtermTerminal {
   ): TerminalDecoration | undefined;
   registerLinkProvider(provider: TerminalLinkProvider): TerminalDisposable;
   registerMarker(cursorYOffset?: number): TerminalMarker | undefined;
+  scrollToLine(line: number): void;
   write(data: string, callback?: () => void): void;
 }
 
-export interface TerminalMarker extends TerminalDisposable {}
+export interface TerminalMarker extends TerminalDisposable {
+  readonly isDisposed: boolean;
+  readonly line: number;
+}
 
 export interface TerminalDecoration extends TerminalDisposable {}
 
@@ -143,6 +159,7 @@ interface TerminalSessionOptions {
   onSessionReady?(sessionId: number | null): void;
   onCwdChange?(cwd: string | null): void;
   onOpenLink?(path: string, line?: number, column?: number): void;
+  platform?: KeymapPlatform;
   profileId: string | null;
   rootPath: string | null;
   shellIntegrationEnabled: boolean;
@@ -159,6 +176,7 @@ export function createTerminalSession({
   onSessionReady,
   onCwdChange,
   onOpenLink,
+  platform = detectKeymapPlatform(),
   profileId,
   rootPath,
   shellIntegrationEnabled,
@@ -305,6 +323,32 @@ export function createTerminalSession({
     oldest.decoration.dispose();
     oldest.marker.dispose();
   };
+  const liveCommandMarkerLines = () =>
+    [...commandMarkers]
+      .filter((marker) => !marker.isDisposed)
+      .map((marker) => marker.line)
+      .sort((first, second) => first - second);
+  const navigateCommandMarkers = (
+    direction: TerminalCommandNavigationDirection,
+  ) => {
+    const markerLines = liveCommandMarkerLines();
+
+    if (markerLines.length === 0) {
+      return true;
+    }
+
+    const targetLine = nextCommandMarkerLine(
+      markerLines,
+      terminal.buffer.active.viewportY,
+      direction,
+    );
+
+    if (targetLine !== null) {
+      terminal.scrollToLine(targetLine);
+    }
+
+    return false;
+  };
   const flushShellEvent = (shellEvent: TerminalShellIntegrationEvent) => {
     if (shellEvent.kind === "cwd") {
       onCwdChange?.(shellEvent.cwd);
@@ -366,6 +410,25 @@ export function createTerminalSession({
 
   terminal.loadAddon(fitAddon);
   terminal.open(host);
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (event.type !== "keydown") {
+      return true;
+    }
+
+    if (terminal.buffer.active.type === "alternate") {
+      return true;
+    }
+
+    if (matchesShortcut(event, "Cmd+ArrowUp", platform)) {
+      return navigateCommandMarkers("up");
+    }
+
+    if (matchesShortcut(event, "Cmd+ArrowDown", platform)) {
+      return navigateCommandMarkers("down");
+    }
+
+    return true;
+  });
   disposables.push(
     terminal.registerLinkProvider({
       provideLinks: (lineNumber, callback) => {

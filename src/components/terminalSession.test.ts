@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { KeymapPlatform } from "../domain/keymap";
 import type { TerminalGateway, TerminalOutputEvent } from "../domain/terminal";
 import {
   createTerminalSession,
@@ -224,6 +225,130 @@ describe("createTerminalSession", () => {
     expect(harness.decorations[1]?.dispose).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["mac", { metaKey: true }],
+    ["windows", { ctrlKey: true }],
+  ] as const)(
+    "navigates to command markers on %s with the platform primary modifier",
+    async (platform, modifier) => {
+      const harness = terminalHarness({
+        platform,
+        shellIntegrationEnabled: true,
+      });
+
+      createTerminalSession(harness.options);
+      await harness.startSession();
+
+      for (let index = 0; index < 3; index += 1) {
+        harness.emitOutput({
+          data: "\u001b]133;A\u0007$ \u001b]133;C\u0007\u001b]133;D;0\u0007",
+          sessionId: 1,
+        });
+        harness.flushWrites();
+      }
+
+      harness.setViewportTop(2);
+
+      expect(harness.pressKey({ key: "ArrowUp", ...modifier })).toBe(false);
+      expect(harness.terminal.scrollToLine).toHaveBeenLastCalledWith(1);
+      expect(harness.pressKey({ key: "ArrowDown", ...modifier })).toBe(false);
+      expect(harness.terminal.scrollToLine).toHaveBeenLastCalledWith(3);
+    },
+  );
+
+  it("passes through command navigation shortcuts with extra modifiers", async () => {
+    const harness = terminalHarness({
+      platform: "mac",
+      shellIntegrationEnabled: true,
+    });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+    harness.emitOutput({
+      data: "\u001b]133;A\u0007$ \u001b]133;C\u0007\u001b]133;D;0\u0007",
+      sessionId: 1,
+    });
+    harness.flushWrites();
+
+    expect(
+      harness.pressKey({ key: "ArrowUp", metaKey: true, shiftKey: true }),
+    ).toBe(true);
+    expect(harness.terminal.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("passes through command navigation in the alternate buffer", async () => {
+    const harness = terminalHarness({
+      platform: "mac",
+      shellIntegrationEnabled: true,
+    });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+    harness.emitOutput({
+      data: "\u001b]133;A\u0007$ \u001b]133;C\u0007\u001b]133;D;0\u0007",
+      sessionId: 1,
+    });
+    harness.flushWrites();
+    harness.setBufferType("alternate");
+
+    expect(harness.pressKey({ key: "ArrowUp", metaKey: true })).toBe(true);
+    expect(harness.terminal.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("leaves non-command-navigation keys to xterm", () => {
+    const harness = terminalHarness();
+
+    createTerminalSession(harness.options);
+
+    expect(harness.pressKey({ key: "ArrowUp" })).toBe(true);
+    expect(harness.pressKey({ key: "ArrowDown", metaKey: true })).toBe(true);
+    expect(harness.pressKey({ key: "ArrowUp", metaKey: true, type: "keyup" })).toBe(
+      true,
+    );
+    expect(harness.terminal.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("skips disposed command markers", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+
+    for (let index = 0; index < 3; index += 1) {
+      harness.emitOutput({
+        data: "\u001b]133;A\u0007$ \u001b]133;C\u0007\u001b]133;D;0\u0007",
+        sessionId: 1,
+      });
+      harness.flushWrites();
+    }
+
+    harness.markers[1]?.dispose();
+    harness.setViewportTop(1);
+
+    expect(harness.pressKey({ key: "ArrowDown", metaKey: true })).toBe(false);
+    expect(harness.terminal.scrollToLine).toHaveBeenCalledWith(3);
+  });
+
+  it("navigates retained markers after ring trimming", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+
+    for (let index = 0; index <= terminalCommandDecorationLimit; index += 1) {
+      harness.emitOutput({
+        data: "\u001b]133;A\u0007$ \u001b]133;C\u0007\u001b]133;D;0\u0007",
+        sessionId: 1,
+      });
+      harness.flushWrites();
+    }
+
+    harness.setViewportTop(0);
+
+    expect(harness.pressKey({ key: "ArrowDown", metaKey: true })).toBe(false);
+    expect(harness.terminal.scrollToLine).toHaveBeenCalledWith(2);
+  });
+
   it("opts into backend shell injection only when enabled", async () => {
     const harness = terminalHarness({ shellIntegrationEnabled: true });
 
@@ -384,6 +509,7 @@ function terminalHarness(
   overrides: Partial<{
     onCwdChange: (cwd: string | null) => void;
     onOpenLink: (path: string, line?: number, column?: number) => void;
+    platform: KeymapPlatform;
     rootPath: string | null;
     shellIntegrationEnabled: boolean;
   }> = {},
@@ -403,13 +529,25 @@ function terminalHarness(
   const resizeDisposable = { dispose: vi.fn() };
   const linkDisposable = { dispose: vi.fn() };
   const callOrder: string[] = [];
-  const marker = { dispose: vi.fn() };
+  const createMarker = (line: number) => {
+    const marker = {
+      isDisposed: false,
+      line,
+      dispose: vi.fn(() => {
+        marker.isDisposed = true;
+      }),
+    };
+
+    return marker;
+  };
+  const marker = createMarker(1);
   const decoration = { dispose: vi.fn() };
-  const markers: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+  const markers: Array<ReturnType<typeof createMarker>> = [];
   const decorations: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
   const markerLines: number[] = [];
   const pendingWrites: Array<{ callback: () => void; data: string }> = [];
   let cursorLine = 0;
+  let keyEventHandler: ((event: KeyboardEvent) => boolean) | null = null;
   let linkProvider:
     | {
         provideLinks(
@@ -446,8 +584,15 @@ function terminalHarness(
     buffer: {
       active: {
         getLine: vi.fn(),
+        type: "normal" as "alternate" | "normal",
+        viewportY: 0,
       },
     },
+    attachCustomKeyEventHandler: vi.fn(
+      (handler: (event: KeyboardEvent) => boolean) => {
+        keyEventHandler = handler;
+      },
+    ),
     registerLinkProvider: vi.fn((provider) => {
       linkProvider = provider;
       return linkDisposable;
@@ -455,7 +600,7 @@ function terminalHarness(
     registerMarker: vi.fn(() => {
       callOrder.push("marker");
       markerLines.push(cursorLine);
-      const nextMarker = markers.length === 0 ? marker : { dispose: vi.fn() };
+      const nextMarker = markers.length === 0 ? marker : createMarker(cursorLine);
       markers.push(nextMarker);
       return nextMarker;
     }),
@@ -466,6 +611,7 @@ function terminalHarness(
       return nextDecoration;
     }),
     rows: 24,
+    scrollToLine: vi.fn(),
     write: vi.fn((data: string, callback?: () => void) => {
       callOrder.push("write");
 
@@ -560,6 +706,7 @@ function terminalHarness(
       host,
       onCwdChange: overrides.onCwdChange,
       onOpenLink: overrides.onOpenLink,
+      platform: overrides.platform,
       profileId: "default",
       rootPath: "rootPath" in overrides
         ? overrides.rootPath ?? null
@@ -574,6 +721,17 @@ function terminalHarness(
     resize: () => {
       resizeCallback?.([], resizeObserver as unknown as ResizeObserver);
     },
+    pressKey: (
+      event: Partial<KeyboardEvent> & Pick<KeyboardEvent, "key">,
+    ) =>
+      keyEventHandler?.({
+        altKey: false,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        type: "keydown",
+        ...event,
+      } as KeyboardEvent),
     resizeDisposable,
     resizeObserver,
     startSession: async () => {
@@ -582,6 +740,12 @@ function terminalHarness(
         callback(0);
       }
       await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+    setViewportTop: (line: number) => {
+      terminal.buffer.active.viewportY = line;
+    },
+    setBufferType: (type: "alternate" | "normal") => {
+      terminal.buffer.active.type = type;
     },
     terminal,
     provideLinks: (lineNumber: number, bufferCells: BufferCell[]) => {

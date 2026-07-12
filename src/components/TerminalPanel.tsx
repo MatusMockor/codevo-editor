@@ -107,6 +107,8 @@ export function TerminalPanel({
         get rows() {
           return terminal.rows;
         },
+        attachCustomKeyEventHandler: (handler) =>
+          terminal.attachCustomKeyEventHandler(handler),
         dispose: () => terminal.dispose(),
         loadAddon: (addon) => terminal.loadAddon(addon as FitAddon),
         onData: (listener) => terminal.onData(listener),
@@ -142,6 +144,7 @@ export function TerminalPanel({
 
           return decoration;
         },
+        scrollToLine: (line) => terminal.scrollToLine(line),
         write: (data, callback) => terminal.write(data, callback),
       },
     });
