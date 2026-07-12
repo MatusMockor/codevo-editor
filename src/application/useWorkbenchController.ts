@@ -5267,6 +5267,45 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
+  const revealCommitInFileHistory = useCallback(
+    async (path: string, sha: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot || activeDocumentRef.current?.path !== path || !sha) {
+        return;
+      }
+
+      showBottomPanelView("history");
+      await openFileHistory(sha);
+
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
+        activeDocumentRef.current?.path !== path
+      ) {
+        return;
+      }
+    },
+    [openFileHistory, showBottomPanelView],
+  );
+
+  useEffect(() => {
+    const reveal = (event: Event) => {
+      const detail = (event as CustomEvent<{ path?: unknown; sha?: unknown }>).detail;
+
+      if (typeof detail?.path !== "string" || typeof detail.sha !== "string") {
+        return;
+      }
+
+      void revealCommitInFileHistory(detail.path, detail.sha);
+    };
+
+    window.addEventListener("mockor-reveal-git-blame-commit", reveal);
+
+    return () => {
+      window.removeEventListener("mockor-reveal-git-blame-commit", reveal);
+    };
+  }, [revealCommitInFileHistory]);
+
   const {
     localHistoryPanelOpen,
     localHistoryRelativePath,
@@ -8527,6 +8566,7 @@ export function useWorkbenchController(
     fileHistoryDiff,
     fileHistoryDiffLoading,
     openFileHistory,
+    revealCommitInFileHistory,
     selectFileHistoryCommit,
     closeFileHistory,
     gitStashPanelOpen,

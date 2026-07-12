@@ -19,7 +19,7 @@ import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnosti
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
-import { EditorSurface } from "./EditorSurface";
+import { EditorSurface, gitBlameShaAtLine } from "./EditorSurface";
 import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import {
   type EditorQaDefinitionRequest,
@@ -164,6 +164,7 @@ interface FakeMouseDownEvent {
     detail?: {
       glyphMarginLane?: number;
     };
+    element?: HTMLElement;
     position?: EditorPosition;
     type: number;
   };
@@ -12679,6 +12680,110 @@ class Foo
         ),
     );
     expect(blameCall).toBeUndefined();
+  });
+
+  it("maps a blamed line to its committed sha", () => {
+    const lines = [
+      { author: "Alice", lineNumber: 2, sha: "abc1234", timestamp: 1 },
+      { author: "You", lineNumber: 3, sha: "0000000", timestamp: 0 },
+    ];
+
+    expect(gitBlameShaAtLine(lines, 2)).toBe("abc1234");
+    expect(gitBlameShaAtLine(lines, 3)).toBeNull();
+    expect(gitBlameShaAtLine(lines, 4)).toBeNull();
+  });
+
+  it("opens the blamed commit when its before annotation is clicked", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 2),
+      getValue: vi.fn(() => activeDocument.content),
+      isDisposed: vi.fn(() => false),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onRevealGitBlameCommit = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          gitBlameEnabled
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealGitBlameCommit={onRevealGitBlameCommit}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          provideGitBlame={vi.fn(async () => [
+            {
+              author: "Alice",
+              lineNumber: 2,
+              sha: "abc1234",
+              timestamp: 1,
+            },
+          ])}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    const annotation = document.createElement("span");
+    annotation.className = "git-blame-annotation";
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          element: annotation,
+          position: { column: 1, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.CONTENT_TEXT,
+        },
+      });
+    });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(onRevealGitBlameCommit).toHaveBeenCalledWith(
+      activeDocument.path,
+      "abc1234",
+    );
   });
 
   it("drops stale git blame results after the active document switches", async () => {

@@ -80,7 +80,11 @@ import {
   type MoveStatementDirection,
 } from "../domain/phpMoveStatement";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import { gitBlameAnnotation, type GitBlameLine } from "../domain/git";
+import {
+  gitBlameAnnotation,
+  isUncommittedBlameLine,
+  type GitBlameLine,
+} from "../domain/git";
 import { PhpImplementationGutterTargetsCache } from "../domain/phpImplementationGutterTargetsCache";
 import { PhpTestGutterTargetsCache } from "../domain/phpTestGutterTargetsCache";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
@@ -274,6 +278,7 @@ interface EditorSurfaceProps {
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
   onToggleGitBlame?(): void;
+  onRevealGitBlameCommit?(path: string, sha: string): void;
   provideGitBlame?(path: string): Promise<GitBlameLine[]>;
   /**
    * Reads a file's text from disk by absolute path. Used to load a local JSON
@@ -430,6 +435,7 @@ function EditorSurfaceComponent({
   onRunTestAt,
   onToggleBookmarkAtLine,
   onToggleGitBlame,
+  onRevealGitBlameCommit,
   provideGitBlame,
   readWorkspaceFile,
   onEditorFocused,
@@ -569,6 +575,7 @@ function EditorSurfaceComponent({
   // line-annotation column, so inline injected text is the closest non-colliding
   // equivalent and matches how GitLens annotates in VS Code.
   const gitBlameDecorationIdsRef = useRef<string[]>([]);
+  const gitBlameLinesRef = useRef<GitBlameLine[]>([]);
   // The path whose annotations currently occupy gitBlameDecorationIdsRef. null
   // means none are applied. Used to drop the previous file's annotations on a
   // switch (per-tab isolation) and to ignore a stale async blame result whose
@@ -1889,6 +1896,37 @@ function EditorSurfaceComponent({
     const disposable = editorApi.onMouseDown((event) => {
       const targetType = event.target.type;
 
+      if (
+        targetType === monacoApi.editor.MouseTargetType.CONTENT_TEXT &&
+        event.event.leftButton === true &&
+        event.target.element?.closest(".git-blame-annotation")
+      ) {
+        const lineNumber = event.target.position?.lineNumber;
+        const sha = lineNumber
+          ? gitBlameShaAtLine(gitBlameLinesRef.current, lineNumber)
+          : null;
+        const path = activeDocumentRef.current?.path;
+
+        if (!sha || !path) {
+          return;
+        }
+
+        event.event.preventDefault();
+        event.event.stopPropagation();
+
+        if (onRevealGitBlameCommit) {
+          onRevealGitBlameCommit(path, sha);
+          return;
+        }
+
+        window.dispatchEvent(
+          new CustomEvent("mockor-reveal-git-blame-commit", {
+            detail: { path, sha },
+          }),
+        );
+        return;
+      }
+
       // Cmd+click (macOS) / Ctrl+click (Windows/Linux) and middle-click on code
       // text mirror the Cmd+B go-to-definition command instead of Monaco's
       // built-in gesture, which has no cross-file opener wired and skips the
@@ -1998,6 +2036,7 @@ function EditorSurfaceComponent({
     monacoApi,
     onGoToDefinition,
     onGoToImplementationAt,
+    onRevealGitBlameCommit,
     onRunTestAt,
     onToggleBookmarkAtLine,
   ]);
@@ -2138,6 +2177,7 @@ function EditorSurfaceComponent({
     }
 
     const clearAnnotations = () => {
+      gitBlameLinesRef.current = [];
       gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
         gitBlameDecorationIdsRef.current,
         [],
@@ -2176,6 +2216,7 @@ function EditorSurfaceComponent({
         }
 
         const now = Date.now();
+        gitBlameLinesRef.current = blameLines;
         gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
           gitBlameDecorationIdsRef.current,
           blameLines.map((line) =>
@@ -4757,6 +4798,19 @@ function toGitBlameDecoration(
     },
     range: new monaco.Range(line.lineNumber, 1, line.lineNumber, 1),
   };
+}
+
+export function gitBlameShaAtLine(
+  lines: readonly GitBlameLine[],
+  lineNumber: number,
+): string | null {
+  const line = lines.find((candidate) => candidate.lineNumber === lineNumber);
+
+  if (!line || !line.sha || isUncommittedBlameLine(line)) {
+    return null;
+  }
+
+  return line.sha;
 }
 
 function findChangeHunkAtLine(

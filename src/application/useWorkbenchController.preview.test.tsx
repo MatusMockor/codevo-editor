@@ -737,6 +737,132 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().fileHistoryDiff).toBeNull();
   });
 
+  it("reveals a blamed commit in the active file history", async () => {
+    const commits = [
+      {
+        author: "Alice",
+        sha: "abc1234",
+        subject: "Add user",
+        timestamp: 1700000000,
+      },
+    ];
+    const fileHistory = vi.fn(async () => commits);
+    const fileCommitDiff = vi.fn(async (_rootPath, relativePath, sha) => ({
+      change: {
+        isStaged: false,
+        isUnversioned: false,
+        oldPath: null,
+        oldRelativePath: null,
+        path: `/workspace/${relativePath}`,
+        relativePath,
+        status: "modified" as const,
+      },
+      language: "php",
+      modifiedContent: `<?php // ${sha}\n`,
+      originalContent: "<?php\n",
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway: fileHistoryGitGateway({ fileCommitDiff, fileHistory }),
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+      await getWorkbench().revealCommitInFileHistory(file.path, "abc1234");
+    });
+
+    expect(getWorkbench().bottomPanelVisible).toBe(true);
+    expect(getWorkbench().bottomPanelView).toBe("history");
+    expect(getWorkbench().fileHistorySelectedSha).toBe("abc1234");
+    expect(getWorkbench().fileHistoryDiff?.modifiedContent).toContain("abc1234");
+  });
+
+  it("opens file history without selecting a missing blamed commit", async () => {
+    const fileCommitDiff = vi.fn();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway: fileHistoryGitGateway({
+        fileCommitDiff,
+        fileHistory: vi.fn(async () => []),
+      }),
+    });
+    const file = fileEntry("/workspace/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+      await getWorkbench().revealCommitInFileHistory(file.path, "missing");
+    });
+
+    expect(getWorkbench().bottomPanelVisible).toBe(true);
+    expect(getWorkbench().bottomPanelView).toBe("history");
+    expect(getWorkbench().fileHistorySelectedSha).toBeNull();
+    expect(getWorkbench().fileHistoryDiff).toBeNull();
+    expect(fileCommitDiff).not.toHaveBeenCalled();
+  });
+
+  it("drops a blamed commit reveal after switching workspace roots", async () => {
+    const historyDeferred = createDeferred<
+      Array<{
+        author: string;
+        sha: string;
+        subject: string;
+        timestamp: number;
+      }>
+    >();
+    const fileCommitDiff = vi.fn();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      gitGateway: fileHistoryGitGateway({
+        fileCommitDiff,
+        fileHistory: vi.fn(() => historyDeferred.promise),
+      }),
+    });
+    const file = fileEntry("/workspace-a/src/User.php", "User.php");
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+    });
+    let revealPromise: Promise<void> | null = null;
+    act(() => {
+      revealPromise = getWorkbench().revealCommitInFileHistory(
+        file.path,
+        "abc1234",
+      );
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await act(async () => {
+      historyDeferred.resolve([
+        {
+          author: "Alice",
+          sha: "abc1234",
+          subject: "stale",
+          timestamp: 1700000000,
+        },
+      ]);
+      await revealPromise;
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().fileHistorySelectedSha).toBeNull();
+    expect(fileCommitDiff).not.toHaveBeenCalled();
+  });
+
   it("drops a stale file history result after the panel is closed", async () => {
     const historyDeferred = createDeferred<
       Array<{
@@ -66145,6 +66271,7 @@ interface GreeterContract
         "artisan: optimize:clear",
         "artisan: queue:failed",
         "artisan: route:list",
+        "artisan: tinker",
       ]);
     });
 

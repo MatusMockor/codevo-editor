@@ -46,7 +46,7 @@ export interface FileHistoryPanel {
   fileHistorySelectedSha: string | null;
   fileHistoryDiff: GitFileDiff | null;
   fileHistoryDiffLoading: boolean;
-  openFileHistory: () => Promise<void>;
+  openFileHistory: (selectedSha?: string) => Promise<void>;
   selectFileHistoryCommit: (sha: string) => Promise<void>;
   closeFileHistory: () => void;
 }
@@ -96,6 +96,7 @@ export function useFileHistory(
   // for a directory-mapping file, else the workspace root). Read by
   // selectFileHistoryCommit so a commit diff runs against the file's own repo.
   const fileHistoryRepositoryRootRef = useRef<string | null>(null);
+  const fileHistoryDocumentPathRef = useRef<string | null>(null);
 
   // Closes the file history panel and invalidates any in-flight history/diff
   // requests so their results are dropped instead of repopulating a closed
@@ -105,6 +106,7 @@ export function useFileHistory(
     fileHistoryDiffRequestTokenRef.current += 1;
     fileHistoryRelativePathRef.current = null;
     fileHistoryRepositoryRootRef.current = null;
+    fileHistoryDocumentPathRef.current = null;
     setFileHistoryPanelOpen(false);
     setFileHistoryCommits([]);
     setFileHistoryLoading(false);
@@ -122,8 +124,9 @@ export function useFileHistory(
     async (sha: string) => {
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
       const relativePath = fileHistoryRelativePathRef.current;
+      const requestedDocumentPath = fileHistoryDocumentPathRef.current;
 
-      if (!requestedRoot || !relativePath) {
+      if (!requestedRoot || !relativePath || !requestedDocumentPath) {
         return;
       }
 
@@ -147,6 +150,7 @@ export function useFileHistory(
             currentWorkspaceRootRef.current,
             requestedRoot,
           ) ||
+          activeDocumentRef.current?.path !== requestedDocumentPath ||
           fileHistoryDiffRequestTokenRef.current !== requestToken
         ) {
           return;
@@ -159,6 +163,7 @@ export function useFileHistory(
             currentWorkspaceRootRef.current,
             requestedRoot,
           ) ||
+          activeDocumentRef.current?.path !== requestedDocumentPath ||
           fileHistoryDiffRequestTokenRef.current !== requestToken
         ) {
           return;
@@ -172,6 +177,7 @@ export function useFileHistory(
             currentWorkspaceRootRef.current,
             requestedRoot,
           ) &&
+          activeDocumentRef.current?.path === requestedDocumentPath &&
           fileHistoryDiffRequestTokenRef.current === requestToken
         ) {
           setFileHistoryDiffLoading(false);
@@ -185,7 +191,7 @@ export function useFileHistory(
   // the active document's relative path are captured up front; after the await
   // we re-check the active workspace root and the request token so a stale
   // history list from a switched-away tab is dropped (per-tab isolation).
-  const openFileHistory = useCallback(async () => {
+  const openFileHistory = useCallback(async (selectedSha?: string) => {
     const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
     const document = activeDocumentRef.current;
 
@@ -212,6 +218,7 @@ export function useFileHistory(
     fileHistoryDiffRequestTokenRef.current += 1;
     fileHistoryRelativePathRef.current = relativePath;
     fileHistoryRepositoryRootRef.current = repositoryRoot;
+    fileHistoryDocumentPathRef.current = requestedDocumentPath;
     setFileHistoryRelativePath(relativePath);
     setFileHistorySelectedSha(null);
     setFileHistoryDiff(null);
@@ -236,6 +243,12 @@ export function useFileHistory(
       }
 
       setFileHistoryCommits(commits);
+
+      if (!selectedSha || !commits.some((commit) => commit.sha === selectedSha)) {
+        return;
+      }
+
+      await selectFileHistoryCommit(selectedSha);
     } catch (error) {
       if (!isCurrentRequest()) {
         return;
@@ -248,7 +261,13 @@ export function useFileHistory(
         setFileHistoryLoading(false);
       }
     }
-  }, [gitGateway, reportError, resolveGitRepositoryTarget, workspaceRoot]);
+  }, [
+    gitGateway,
+    reportError,
+    resolveGitRepositoryTarget,
+    selectFileHistoryCommit,
+    workspaceRoot,
+  ]);
 
   return {
     fileHistoryPanelOpen,
