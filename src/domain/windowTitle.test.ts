@@ -33,7 +33,7 @@ describe("formatWindowTitle", () => {
         isDirty: false,
         workspaceName: null,
       },
-      expected: "Mockor Editor",
+      expected: "Codevo Editor",
     },
     {
       input: {

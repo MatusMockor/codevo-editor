@@ -26,14 +26,18 @@ This document records what the packaged desktop app can rely on today, what it d
 
 ## Product And Bundle
 
-- Product name: `Mockor Editor`
+- Product name: `Codevo Editor`
 - Version: `0.1.0`
 - Identifier: `dev.mockor.editor`
-- Debug macOS app bundle: `src-tauri/target/debug/bundle/macos/Mockor Editor.app`
-- Debug macOS DMG bundle: `src-tauri/target/debug/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg`
-- Executable: `Contents/MacOS/mockor-editor`
+- Debug macOS app bundle: `src-tauri/target/debug/bundle/macos/Codevo Editor.app`
+- Debug macOS DMG bundle: `src-tauri/target/debug/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg`
+- Executable: `Contents/MacOS/codevo-editor`
 - Icon resource: `Contents/Resources/icon.icns`
 - Bundle category: `DeveloperTool`
+
+### One-Time Bundle Rename Migration
+
+`Codevo Editor.app` has a different bundle name from the previous `Mockor Editor.app`. Before the first Codevo-branded release or any manual upgrade to it, remove the existing `Mockor Editor.app` from `/Applications` and install `Codevo Editor.app` from the new DMG. Copying the new bundle without removing the old one can leave both applications installed and launchable. This is a one-time manual replacement; no release or updater migration machinery is implemented.
 
 Verified `Info.plist` fields:
 
@@ -106,7 +110,7 @@ Windows/Linux feasibility:
 
 PHPactor is not bundled in first-release packaging. The backend detects it in this order:
 
-1. managed bootstrap location (`~/.mockor-editor/tools/phpactor/vendor/bin/phpactor` or platform equivalent, overridable via `MOCKOR_EDITOR_PHPACTOR_PATH`)
+1. managed bootstrap location (`~/.codevo-editor/tools/phpactor/vendor/bin/phpactor` or platform equivalent, overridable via `CODEVO_EDITOR_PHPACTOR_PATH`; legacy Mockor locations and overrides remain compatible)
 2. workspace `vendor/bin/phpactor`
 3. `PATH`
 
@@ -332,7 +336,7 @@ Release follow-up:
 
 1. Build `npm run tauri build -- --debug` and verify both `.app` and `.dmg` outputs.
 2. Inspect the DMG with `hdiutil imageinfo`.
-3. Launch `Mockor Editor.app` from Finder and verify title, icon, and executable.
+3. Launch `Codevo Editor.app` from Finder and verify title, icon, and executable.
 4. Open an untrusted PHP Composer fixture.
 5. Verify PHPactor is blocked until trust is granted.
 6. Trust the workspace and start PHPactor when PHPactor is available.

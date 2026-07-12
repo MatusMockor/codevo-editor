@@ -3,7 +3,7 @@
 Date: 2026-06-16
 Status: First-release update channel decision documented
 
-This plan decides how `Mockor Editor` should publish and update packaged desktop releases.
+This plan decides how `Codevo Editor` should publish and update packaged desktop releases.
 
 ## Source Baseline
 
@@ -149,7 +149,7 @@ Required capabilities:
 Generate updater keys:
 
 ```sh
-npm run tauri signer generate -- -w ~/.tauri/mockor-editor-updater.key
+npm run tauri signer generate -- -w ~/.tauri/codevo-editor-updater.key
 ```
 
 Release CI secrets:
@@ -174,14 +174,14 @@ Key rotation rules:
 
 Manual first release artifacts:
 
-- `Mockor Editor_0.1.0_aarch64.dmg`
+- `Codevo Editor_0.1.0_aarch64.dmg`
 - release notes
 - checksum file if release process adds one
 
 Future macOS updater artifacts:
 
-- `Mockor Editor.app.tar.gz`
-- `Mockor Editor.app.tar.gz.sig`
+- `Codevo Editor.app.tar.gz`
+- `Codevo Editor.app.tar.gz.sig`
 - static `latest.json`
 - signed, notarized, stapled DMG for fresh installs
 
@@ -216,6 +216,7 @@ First release:
 - no background update checks
 - no in-app update install
 - release notes and app docs tell users to download the next DMG manually
+- the first Codevo-branded release notes must tell existing users to remove `Mockor Editor.app` from `/Applications` before installing `Codevo Editor.app`; the bundle rename is a one-time manual replacement and must not be presented as an in-place automatic update
 
 Future updater:
 
@@ -243,8 +244,9 @@ Manual release smoke:
 1. Build release DMG.
 2. Sign, notarize, staple, and Gatekeeper-check the DMG.
 3. Download or copy the DMG as a fresh user would.
-4. Install and launch from Finder.
-5. Confirm release notes state manual update policy.
+4. For an upgrade smoke, install `Mockor Editor.app`, remove it, then install `Codevo Editor.app`; verify only the Codevo bundle remains in `/Applications`.
+5. Install and launch Codevo Editor from Finder.
+6. Confirm release notes state both the manual update policy and the one-time bundle replacement step.
 
 Future updater smoke:
 

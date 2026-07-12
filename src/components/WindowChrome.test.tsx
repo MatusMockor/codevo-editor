@@ -71,7 +71,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={commandContext}
           commands={[]}
           onCommandError={vi.fn()}
@@ -88,7 +88,7 @@ describe("WindowChrome", () => {
     expect(chrome?.dataset.platform).toBe("linux");
     expect(host.querySelector(".window-menu-bar")).not.toBeNull();
     expect(host.querySelectorAll(".window-control")).toHaveLength(3);
-    expect(host.textContent).toContain("Mockor Editor");
+    expect(host.textContent).toContain("Codevo Editor");
   });
 
   it("runs enabled File menu commands from the custom menu", async () => {
@@ -111,7 +111,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={commandContext}
           commands={commands}
           onCommandError={vi.fn()}
@@ -161,7 +161,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={commandContext}
           commands={commands}
           onCommandError={vi.fn()}
@@ -229,7 +229,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={{ ...commandContext, hasActiveDocument: true }}
           commands={[]}
           onCommandError={vi.fn()}
@@ -260,7 +260,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={{ ...commandContext, hasActiveDocument: false }}
           commands={[]}
           onCommandError={vi.fn()}
@@ -293,7 +293,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={commandContext}
           commands={[]}
           onCommandError={vi.fn()}
@@ -333,7 +333,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={commandContext}
           commands={[]}
           onCommandError={reportCommandError}
@@ -360,7 +360,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={{ ...commandContext, hasActiveDocument: true }}
           commands={[]}
           onCommandError={vi.fn()}
@@ -391,7 +391,7 @@ describe("WindowChrome", () => {
     await act(async () => {
       root.render(
         <WindowChrome
-          appTitle="Mockor Editor"
+          appTitle="Codevo Editor"
           commandContext={commandContext}
           commands={[]}
           onCommandError={vi.fn()}

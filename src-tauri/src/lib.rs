@@ -1711,7 +1711,7 @@ fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let close_tab = MenuItemBuilder::with_id(CLOSE_ACTIVE_TAB_MENU_ID, "Close Tab")
         .accelerator("CmdOrCtrl+W")
         .build(app)?;
-    let quit = MenuItemBuilder::with_id(QUIT_APPLICATION_MENU_ID, "Quit Mockor Editor")
+    let quit = MenuItemBuilder::with_id(QUIT_APPLICATION_MENU_ID, "Quit Codevo Editor")
         .accelerator("CmdOrCtrl+Q")
         .build(app)?;
     let file = SubmenuBuilder::new(app, "File")

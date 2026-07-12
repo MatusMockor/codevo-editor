@@ -482,6 +482,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "codevo-editor"
+version = "0.1.0"
+dependencies = [
+ "fontdb",
+ "ignore",
+ "libc",
+ "notify",
+ "portable-pty",
+ "quick-xml",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tree-sitter",
+ "tree-sitter-php",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2231,28 +2253,6 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "mockor-editor"
-version = "0.1.0"
-dependencies = [
- "fontdb",
- "ignore",
- "libc",
- "notify",
- "portable-pty",
- "quick-xml",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tree-sitter",
- "tree-sitter-php",
 ]
 
 [[package]]

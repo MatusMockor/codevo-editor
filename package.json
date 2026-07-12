@@ -1,8 +1,8 @@
 {
-  "name": "mockor-editor",
+  "name": "codevo-editor",
   "private": true,
   "version": "0.1.0",
-  "description": "A Fleet-like PHP-focused desktop code editor",
+  "description": "Codevo Editor is a Fleet-like PHP-focused desktop code editor",
   "type": "module",
   "scripts": {
     "dev": "vite",

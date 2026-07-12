@@ -62,16 +62,20 @@ pub trait JavaScriptTypeScriptToolDetector {
 pub struct LocalPhpToolDetector;
 pub struct LocalJavaScriptTypeScriptToolDetector;
 
-const MOCKOR_EDITOR_PHP_PATH: &str = "MOCKOR_EDITOR_PHP_PATH";
+const CODEVO_EDITOR_PHP_PATH: &str = "CODEVO_EDITOR_PHP_PATH";
+const LEGACY_MOCKOR_EDITOR_PHP_PATH: &str = "MOCKOR_EDITOR_PHP_PATH";
 
 /// Resolves an absolute path to a `php` interpreter for launching the managed
-/// PHPactor engine. Prefers an explicit `MOCKOR_EDITOR_PHP_PATH` override (so a
+/// PHPactor engine. Prefers an explicit `CODEVO_EDITOR_PHP_PATH` override (so a
 /// bundled/pinned PHP can be wired in later), then falls back to the first `php`
 /// on `PATH`. Returns `None` when no interpreter can be resolved so callers can
 /// report an unavailable isolated managed launch instead of invoking PHPactor
 /// directly without `codevo-php.ini`.
 pub fn php_executable_path() -> Option<String> {
-    if let Some(path) = env::var_os(MOCKOR_EDITOR_PHP_PATH).map(PathBuf::from) {
+    let configured_path =
+        env::var_os(CODEVO_EDITOR_PHP_PATH).or_else(|| env::var_os(LEGACY_MOCKOR_EDITOR_PHP_PATH));
+
+    if let Some(path) = configured_path.map(PathBuf::from) {
         if is_executable_file(&path) {
             return Some(path.to_string_lossy().to_string());
         }
@@ -108,7 +112,7 @@ impl JavaScriptTypeScriptToolDetector for LocalJavaScriptTypeScriptToolDetector 
 }
 
 fn find_tool(name: &str, workspace_root: Option<&Path>) -> Option<ToolLocation> {
-    let managed_override = env::var_os(managed_tool_env_var(name)).map(PathBuf::from);
+    let managed_override = managed_tool_override(name);
     let managed_roots = managed_tool_roots();
 
     find_tool_with_managed_locations(
@@ -124,7 +128,7 @@ fn find_javascript_typescript_tool(
     workspace_root: Option<&Path>,
     preference: JavaScriptTypeScriptToolPreference,
 ) -> Option<ToolLocation> {
-    let managed_override = env::var_os(managed_tool_env_var(name)).map(PathBuf::from);
+    let managed_override = managed_tool_override(name);
 
     if matches!(preference, JavaScriptTypeScriptToolPreference::Workspace) {
         if let Some(root) = workspace_root {
@@ -258,17 +262,43 @@ fn find_managed_tool(
     })
 }
 
-fn managed_tool_env_var(name: &str) -> String {
+fn managed_tool_env_var(prefix: &str, name: &str) -> String {
     format!(
-        "MOCKOR_EDITOR_{}_PATH",
+        "{prefix}_{}_PATH",
         name.replace('-', "_").to_ascii_uppercase()
     )
+}
+
+fn managed_tool_override(name: &str) -> Option<PathBuf> {
+    env::var_os(managed_tool_env_var("CODEVO_EDITOR", name))
+        .or_else(|| env::var_os(managed_tool_env_var("MOCKOR_EDITOR", name)))
+        .map(PathBuf::from)
 }
 
 fn managed_tool_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
     for home in managed_home_dirs() {
+        if cfg!(unix) {
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Codevo Editor")
+                    .join("tools")
+                    .join("phpactor")
+                    .join("vendor")
+                    .join("bin"),
+            );
+        }
+
+        roots.push(
+            home.join(".codevo-editor")
+                .join("tools")
+                .join("phpactor")
+                .join("vendor")
+                .join("bin"),
+        );
+
         if cfg!(unix) {
             roots.push(
                 home.join("Library")
@@ -313,6 +343,22 @@ fn javascript_typescript_managed_tool_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
     if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        roots.push(
+            home.join("Library")
+                .join("Application Support")
+                .join("Codevo Editor")
+                .join("tools")
+                .join("typescript-language-server")
+                .join("node_modules")
+                .join(".bin"),
+        );
+        roots.push(
+            home.join(".codevo-editor")
+                .join("tools")
+                .join("typescript-language-server")
+                .join("node_modules")
+                .join(".bin"),
+        );
         roots.push(
             home.join("Library")
                 .join("Application Support")
@@ -498,9 +544,105 @@ mod tests {
     use super::{
         find_javascript_typescript_tool, find_tool_with_managed_locations, find_typescript_server,
         find_vue_typescript_plugin, find_vue_typescript_plugin_in_node_modules,
-        JavaScriptTypeScriptToolPreference, ToolSource,
+        javascript_typescript_managed_tool_roots, managed_home_dirs, managed_tool_override,
+        managed_tool_roots, php_executable_path, JavaScriptTypeScriptToolPreference, ToolSource,
+        CODEVO_EDITOR_PHP_PATH, LEGACY_MOCKOR_EDITOR_PHP_PATH,
     };
-    use std::{fs, time::SystemTime};
+    use std::{env, fs, sync::Mutex, time::SystemTime};
+
+    static ENV_VAR_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn php_path_supports_legacy_override_and_prefers_codevo_override() {
+        let _lock = ENV_VAR_TEST_LOCK.lock().expect("lock environment");
+        let legacy_dir = create_temp_dir("legacy-php-override");
+        let codevo_dir = create_temp_dir("codevo-php-override");
+        let legacy_php = legacy_dir.join("php");
+        let codevo_php = codevo_dir.join("php");
+        fs::write(&legacy_php, "").expect("write legacy php");
+        fs::write(&codevo_php, "").expect("write Codevo php");
+        make_executable(&legacy_php);
+        make_executable(&codevo_php);
+
+        env::remove_var(CODEVO_EDITOR_PHP_PATH);
+        env::set_var(LEGACY_MOCKOR_EDITOR_PHP_PATH, &legacy_php);
+        assert_eq!(
+            php_executable_path(),
+            Some(legacy_php.to_string_lossy().to_string())
+        );
+
+        env::set_var(CODEVO_EDITOR_PHP_PATH, &codevo_php);
+        assert_eq!(
+            php_executable_path(),
+            Some(codevo_php.to_string_lossy().to_string())
+        );
+
+        env::remove_var(CODEVO_EDITOR_PHP_PATH);
+        env::remove_var(LEGACY_MOCKOR_EDITOR_PHP_PATH);
+        fs::remove_dir_all(legacy_dir).expect("cleanup legacy PHP override");
+        fs::remove_dir_all(codevo_dir).expect("cleanup Codevo PHP override");
+    }
+
+    #[test]
+    fn dynamic_tool_override_supports_legacy_name_and_prefers_codevo_name() {
+        let _lock = ENV_VAR_TEST_LOCK.lock().expect("lock environment");
+        let tool_name = "branding-compatibility-test";
+        let legacy_name = "MOCKOR_EDITOR_BRANDING_COMPATIBILITY_TEST_PATH";
+        let codevo_name = "CODEVO_EDITOR_BRANDING_COMPATIBILITY_TEST_PATH";
+        let legacy_path = std::path::PathBuf::from("/legacy/tool");
+        let codevo_path = std::path::PathBuf::from("/codevo/tool");
+
+        env::remove_var(codevo_name);
+        env::set_var(legacy_name, &legacy_path);
+        assert_eq!(managed_tool_override(tool_name), Some(legacy_path));
+
+        env::set_var(codevo_name, &codevo_path);
+        assert_eq!(managed_tool_override(tool_name), Some(codevo_path));
+
+        env::remove_var(codevo_name);
+        env::remove_var(legacy_name);
+    }
+
+    #[test]
+    fn managed_discovery_roots_prefer_codevo_and_include_legacy_locations() {
+        let home = managed_home_dirs()
+            .into_iter()
+            .next()
+            .expect("test environment should have a home directory");
+        let phpactor_roots = managed_tool_roots();
+        let codevo_phpactor = home
+            .join(".codevo-editor")
+            .join("tools/phpactor/vendor/bin");
+        let legacy_phpactor = home
+            .join(".mockor-editor")
+            .join("tools/phpactor/vendor/bin");
+        let codevo_index = phpactor_roots
+            .iter()
+            .position(|root| root == &codevo_phpactor)
+            .expect("Codevo PHPactor root");
+        let legacy_index = phpactor_roots
+            .iter()
+            .position(|root| root == &legacy_phpactor)
+            .expect("legacy PHPactor root");
+        assert!(codevo_index < legacy_index);
+
+        let typescript_roots = javascript_typescript_managed_tool_roots();
+        let codevo_typescript = home
+            .join(".codevo-editor")
+            .join("tools/typescript-language-server/node_modules/.bin");
+        let legacy_typescript = home
+            .join(".mockor-editor")
+            .join("tools/typescript-language-server/node_modules/.bin");
+        let codevo_index = typescript_roots
+            .iter()
+            .position(|root| root == &codevo_typescript)
+            .expect("Codevo TypeScript root");
+        let legacy_index = typescript_roots
+            .iter()
+            .position(|root| root == &legacy_typescript)
+            .expect("legacy TypeScript root");
+        assert!(codevo_index < legacy_index);
+    }
 
     #[test]
     fn detects_workspace_vendor_phpactor_when_managed_tools_are_absent() {

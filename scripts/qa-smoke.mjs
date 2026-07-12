@@ -298,8 +298,8 @@ Modes:
 
 Project smoke expects an already running app started with npm run debug:qa and
 a reachable CDP endpoint. Configure with:
-  MOCKOR_EDITOR_QA_CDP_URL     Default: ${defaultProjectQaCdpUrl}
-  MOCKOR_EDITOR_QA_TARGET_URL  Default: ${defaultProjectQaTargetUrl}
+  CODEVO_EDITOR_QA_CDP_URL     Default: ${defaultProjectQaCdpUrl}
+  CODEVO_EDITOR_QA_TARGET_URL  Default: ${defaultProjectQaTargetUrl}
 
 For macOS Tauri WebView manual QA without CDP, use:
   npm run qa:projects:manual
@@ -339,9 +339,13 @@ function projectQaScenarioArgs() {
     "./scripts/qa-project-scenarios.mjs",
     "--all",
     "--cdp-url",
-    process.env.MOCKOR_EDITOR_QA_CDP_URL || defaultProjectQaCdpUrl,
+    process.env.CODEVO_EDITOR_QA_CDP_URL ||
+      process.env.MOCKOR_EDITOR_QA_CDP_URL ||
+      defaultProjectQaCdpUrl,
     "--target-url",
-    process.env.MOCKOR_EDITOR_QA_TARGET_URL || defaultProjectQaTargetUrl,
+    process.env.CODEVO_EDITOR_QA_TARGET_URL ||
+      process.env.MOCKOR_EDITOR_QA_TARGET_URL ||
+      defaultProjectQaTargetUrl,
   ];
 }
 

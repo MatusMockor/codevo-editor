@@ -3,7 +3,7 @@
 Date: 2026-06-16
 Status: Release plan documented, credentials not configured
 
-This plan covers direct macOS distribution for `Mockor Editor` as a Developer ID signed and notarized `.dmg`. App Store distribution is out of scope for this slice.
+This plan covers direct macOS distribution for `Codevo Editor` as a Developer ID signed and notarized `.dmg`. App Store distribution is out of scope for this slice.
 
 ## Source Baseline
 
@@ -65,7 +65,7 @@ Result: Tauri 2.11.2, Xcode Command Line Tools installed, Xcode.app not installe
 The app currently builds an unsigned debug DMG at:
 
 ```text
-src-tauri/target/debug/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg
+src-tauri/target/debug/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg
 ```
 
 Current debug artifacts are not a release baseline:
@@ -193,7 +193,7 @@ npm run tauri build -- --bundles dmg
 Expected release artifact:
 
 ```text
-src-tauri/target/release/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg
+src-tauri/target/release/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg
 ```
 
 ## CI Release Flow
@@ -224,7 +224,7 @@ Minimum CI steps:
 Tauri can notarize during the build when Apple credentials are present. Keep a manual fallback for diagnosis:
 
 ```sh
-DMG_PATH="src-tauri/target/release/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg"
+DMG_PATH="src-tauri/target/release/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg"
 xcrun notarytool submit "$DMG_PATH" \
   --issuer "$APPLE_API_ISSUER" \
   --key-id "$APPLE_API_KEY" \
@@ -237,7 +237,7 @@ xcrun stapler validate "$DMG_PATH"
 Apple ID fallback:
 
 ```sh
-DMG_PATH="src-tauri/target/release/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg"
+DMG_PATH="src-tauri/target/release/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg"
 xcrun notarytool submit "$DMG_PATH" \
   --apple-id "$APPLE_ID" \
   --team-id "$APPLE_TEAM_ID" \
@@ -261,14 +261,14 @@ xcrun notarytool log "$SUBMISSION_ID" \
 Run these checks before publishing a macOS DMG:
 
 ```sh
-codesign --verify --deep --strict --verbose=2 "src-tauri/target/release/bundle/macos/Mockor Editor.app"
-codesign -dv --verbose=4 "src-tauri/target/release/bundle/macos/Mockor Editor.app"
-codesign -d --entitlements :- "src-tauri/target/release/bundle/macos/Mockor Editor.app"
-spctl -a -vvv -t exec "src-tauri/target/release/bundle/macos/Mockor Editor.app"
-xcrun stapler validate "src-tauri/target/release/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg"
-spctl -a -vvv -t open --context context:primary-signature "src-tauri/target/release/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg"
-spctl -a -vvv -t install "src-tauri/target/release/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg"
-hdiutil imageinfo "src-tauri/target/release/bundle/dmg/Mockor Editor_0.1.0_aarch64.dmg"
+codesign --verify --deep --strict --verbose=2 "src-tauri/target/release/bundle/macos/Codevo Editor.app"
+codesign -dv --verbose=4 "src-tauri/target/release/bundle/macos/Codevo Editor.app"
+codesign -d --entitlements :- "src-tauri/target/release/bundle/macos/Codevo Editor.app"
+spctl -a -vvv -t exec "src-tauri/target/release/bundle/macos/Codevo Editor.app"
+xcrun stapler validate "src-tauri/target/release/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg"
+spctl -a -vvv -t open --context context:primary-signature "src-tauri/target/release/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg"
+spctl -a -vvv -t install "src-tauri/target/release/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg"
+hdiutil imageinfo "src-tauri/target/release/bundle/dmg/Codevo Editor_0.1.0_aarch64.dmg"
 ```
 
 Then perform the packaged smoke checklist from `docs/PACKAGING_RUNTIME_READINESS.md` on a fresh macOS user profile or clean VM.

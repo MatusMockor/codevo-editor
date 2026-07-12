@@ -301,7 +301,7 @@ function fileMenuItems(
     commandMenuItem(commandsById, context, "editor.save", "Save"),
     commandMenuItem(commandsById, context, "editor.closeTab", "Close", true),
     {
-      label: "Quit Mockor Editor",
+      label: "Quit Codevo Editor",
       onSelect: onQuitApplication,
       separatorBefore: true,
       shortcut: platform === "mac" ? "Cmd+Q" : "Ctrl+Q",

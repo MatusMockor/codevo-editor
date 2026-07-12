@@ -114,13 +114,13 @@ project files or cursor-anchor drift are reported before CDP connection issues.
 Override the defaults when needed:
 
 ```sh
-MOCKOR_EDITOR_QA_CDP_URL=http://127.0.0.1:9222 \
-MOCKOR_EDITOR_QA_TARGET_URL=localhost:1420 \
+CODEVO_EDITOR_QA_CDP_URL=http://127.0.0.1:9222 \
+CODEVO_EDITOR_QA_TARGET_URL=localhost:1420 \
 npm run smoke:projects
 ```
 
 When CDP is missing or unreachable, start the app with `npm run debug:qa`, set
-`MOCKOR_EDITOR_QA_CDP_URL` if DevTools is listening somewhere other than
+`CODEVO_EDITOR_QA_CDP_URL` if DevTools is listening somewhere other than
 `http://127.0.0.1:9222`, or use `--print-snippet` and paste the generated code
 into Tauri WebView DevTools. If the page is reachable but
 `window.__codevoQa` is missing, restart with `npm run debug:qa`; for an already

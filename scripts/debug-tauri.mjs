@@ -1,61 +1,40 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
+import { debugAppExecutables } from "./debug-tauri-processes.mjs";
 
 const args = process.argv.slice(2);
 const smokeMode = args.includes("--smoke");
 const repoRoot = process.cwd();
-const debugExecutable = path.join(
-  repoRoot,
-  "src-tauri",
-  "target",
-  "debug",
-  "mockor-editor",
-);
-const bundledDebugExecutable = path.join(
-  repoRoot,
-  "src-tauri",
-  "target",
-  "debug",
-  "bundle",
-  "macos",
-  "Mockor Editor.app",
-  "Contents",
-  "MacOS",
-  "mockor-editor",
-);
-const devAppExecutables = [
-  debugExecutable,
-  bundledDebugExecutable,
+const devAppExecutables = debugAppExecutables(repoRoot);
+const managedPhpactorMarkers = [
+  path.join("Application Support", "Codevo Editor", "tools", "phpactor"),
+  path.join(".codevo-editor", "tools", "phpactor"),
+  path.join("Application Support", "Mockor Editor", "tools", "phpactor"),
+  path.join(".mockor-editor", "tools", "phpactor"),
 ];
-const managedPhpactorMarker = path.join(
-  "Application Support",
-  "Mockor Editor",
-  "tools",
-  "phpactor",
-);
-const managedPhpactorHomeMarker = path.join(
-  ".mockor-editor",
-  "tools",
-  "phpactor",
-);
 const bundledTypescriptServerMarker = path.join(
   repoRoot,
   "node_modules",
   ".bin",
   "typescript-language-server",
 );
-const managedTypescriptServerMarker = path.join(
-  "Application Support",
-  "Mockor Editor",
-  "tools",
-  "typescript-language-server",
-);
-const managedTypescriptServerHomeMarker = path.join(
-  ".mockor-editor",
-  "tools",
-  "typescript-language-server",
-);
+const managedTypescriptServerMarkers = [
+  path.join(
+    "Application Support",
+    "Codevo Editor",
+    "tools",
+    "typescript-language-server",
+  ),
+  path.join(".codevo-editor", "tools", "typescript-language-server"),
+  path.join(
+    "Application Support",
+    "Mockor Editor",
+    "tools",
+    "typescript-language-server",
+  ),
+  path.join(".mockor-editor", "tools", "typescript-language-server"),
+];
 const bundledTsserverMarker = path.join(
   repoRoot,
   "node_modules",
@@ -63,13 +42,19 @@ const bundledTsserverMarker = path.join(
   "lib",
   "tsserver.js",
 );
-const smokeRunMs = readPositiveIntegerEnv("MOCKOR_EDITOR_SMOKE_RUN_MS", 5000);
+const smokeRunMs = readPositiveIntegerEnv(
+  "CODEVO_EDITOR_SMOKE_RUN_MS",
+  5000,
+  "MOCKOR_EDITOR_SMOKE_RUN_MS",
+);
 const smokeCleanupGraceMs = readPositiveIntegerEnv(
-  "MOCKOR_EDITOR_SMOKE_CLEANUP_GRACE_MS",
+  "CODEVO_EDITOR_SMOKE_CLEANUP_GRACE_MS",
   1500,
+  "MOCKOR_EDITOR_SMOKE_CLEANUP_GRACE_MS",
 );
 const smokeAllowExisting =
-  process.env.MOCKOR_EDITOR_SMOKE_CLEAN_EXISTING === "1";
+  (process.env.CODEVO_EDITOR_SMOKE_CLEAN_EXISTING ??
+    process.env.MOCKOR_EDITOR_SMOKE_CLEAN_EXISTING) === "1";
 
 let cleanedUp = false;
 let shuttingDown = false;
@@ -77,8 +62,8 @@ let smokeBaselinePids = new Set();
 let smokeChild = null;
 let smokeShuttingDown = false;
 
-function readPositiveIntegerEnv(name, fallback) {
-  const value = Number(process.env[name]);
+function readPositiveIntegerEnv(name, fallback, legacyName) {
+  const value = Number(process.env[name] ?? process.env[legacyName]);
 
   if (Number.isInteger(value) && value > 0) {
     return value;
@@ -119,8 +104,9 @@ function isDevAppProcess(processInfo) {
 
 function isManagedPhpactorProcess(processInfo) {
   return (
-    (processInfo.command.includes(managedPhpactorMarker) ||
-      processInfo.command.includes(managedPhpactorHomeMarker)) &&
+    managedPhpactorMarkers.some((marker) =>
+      processInfo.command.includes(marker),
+    ) &&
     processInfo.command.includes("language-server")
   );
 }
@@ -128,8 +114,9 @@ function isManagedPhpactorProcess(processInfo) {
 function isTypescriptLanguageServerProcess(processInfo) {
   return (
     (processInfo.command.includes(bundledTypescriptServerMarker) ||
-      processInfo.command.includes(managedTypescriptServerMarker) ||
-      processInfo.command.includes(managedTypescriptServerHomeMarker)) &&
+      managedTypescriptServerMarkers.some((marker) =>
+        processInfo.command.includes(marker),
+      )) &&
     processInfo.command.includes("--stdio")
   );
 }
@@ -137,8 +124,9 @@ function isTypescriptLanguageServerProcess(processInfo) {
 function isTsserverProcess(processInfo) {
   return (
     (processInfo.command.includes(bundledTsserverMarker) ||
-      processInfo.command.includes(managedTypescriptServerMarker) ||
-      processInfo.command.includes(managedTypescriptServerHomeMarker)) &&
+      managedTypescriptServerMarkers.some((marker) =>
+        processInfo.command.includes(marker),
+      )) &&
     processInfo.command.includes("tsserver.js")
   );
 }
@@ -351,7 +339,7 @@ async function runSmoke() {
   if (existingMatches.length > 0 && !smokeAllowExisting) {
     throw new Error(
       "Refusing to run smoke while matching debug/runtime process(es) already exist.\n" +
-        "Close them first, or set MOCKOR_EDITOR_SMOKE_CLEAN_EXISTING=1 to let this script clean them.\n" +
+        "Close them first, or set CODEVO_EDITOR_SMOKE_CLEAN_EXISTING=1 to let this script clean them.\n" +
         describeProcesses(existingMatches),
     );
   }

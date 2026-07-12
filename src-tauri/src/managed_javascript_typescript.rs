@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn cleanup_recognizes_managed_typescript_language_server() {
         let command = LanguageServerCommand {
-            executable: "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
+            executable: "/Users/dev/Library/Application Support/Codevo Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: "/workspace-a".to_string(),
             env: Vec::new(),
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn cleanup_recognizes_bundled_typescript_language_server() {
         let command = LanguageServerCommand {
-            executable: "/Applications/Mockor Editor.app/Contents/Resources/node_modules/.bin/typescript-language-server".to_string(),
+            executable: "/Applications/Codevo Editor.app/Contents/Resources/node_modules/.bin/typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: "/workspace-a".to_string(),
             env: Vec::new(),
@@ -453,13 +453,13 @@ mod tests {
     #[test]
     fn active_sibling_workspace_blocks_shared_managed_tsserver_cleanup() {
         let command = LanguageServerCommand {
-            executable: "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
+            executable: "/Users/dev/Library/Application Support/Codevo Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: "/workspace-a".to_string(),
             env: Vec::new(),
         };
         let request = initialize_request_with_tsserver_path(
-            "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js",
+            "/Users/dev/Library/Application Support/Codevo Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js",
         );
 
         assert_eq!(
@@ -476,19 +476,19 @@ mod tests {
     #[test]
     fn shared_managed_tsserver_cleanup_is_allowed_without_active_sibling_workspaces() {
         let command = LanguageServerCommand {
-            executable: "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
+            executable: "/Users/dev/Library/Application Support/Codevo Editor/tools/typescript-language-server/node_modules/.bin/typescript-language-server".to_string(),
             args: vec!["--stdio".to_string()],
             working_directory: "/workspace-a".to_string(),
             env: Vec::new(),
         };
         let request = initialize_request_with_tsserver_path(
-            "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js",
+            "/Users/dev/Library/Application Support/Codevo Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js",
         );
 
         assert_eq!(
             tsserver_paths_for_active_cleanup(&command, &request, "/workspace-a", &[]),
             vec![
-                "/Users/dev/Library/Application Support/Mockor Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js"
+                "/Users/dev/Library/Application Support/Codevo Editor/tools/typescript-language-server/node_modules/typescript/lib/tsserver.js"
                     .to_string(),
                 "/workspace-a/node_modules/typescript/lib/tsserver.js"
                     .to_string()

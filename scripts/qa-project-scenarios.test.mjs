@@ -248,7 +248,7 @@ describe("qa-project-scenarios CLI helpers", () => {
 
     expect(message).toContain("fetch failed");
     expect(message).toContain("npm run debug:qa");
-    expect(message).toContain("MOCKOR_EDITOR_QA_CDP_URL=http://127.0.0.1:9333");
+    expect(message).toContain("CODEVO_EDITOR_QA_CDP_URL=http://127.0.0.1:9333");
     expect(message).toContain("--cdp-url http://127.0.0.1:9333");
     expect(message).toContain("--print-snippet");
   });

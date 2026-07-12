@@ -34,7 +34,7 @@ function showStartupError(error: unknown): void {
   container.style.padding = "28px";
 
   const title = document.createElement("h1");
-  title.textContent = "Mockor Editor failed to start";
+  title.textContent = "Codevo Editor failed to start";
   title.style.fontSize = "18px";
   title.style.margin = "0 0 14px";
 
@@ -100,7 +100,7 @@ async function bootstrap(): Promise<void> {
       // (not just inside the git diff view) now renders a recoverable fallback
       // instead of unmounting the whole tree to a blank screen.
       React.createElement(ErrorBoundary, {
-        title: "Mockor Editor hit an unexpected error",
+        title: "Codevo Editor hit an unexpected error",
         children: React.createElement(App),
       }),
     ),

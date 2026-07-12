@@ -12,7 +12,11 @@ const COMPOSER_COMMAND: &str = if cfg!(windows) {
     "composer"
 };
 const MANAGED_PHP_ACTOR_VERSION: &str = "2026.05.30.2";
-const MOCKOR_EDITOR_PHPACTOR_PATH: &str = "MOCKOR_EDITOR_PHPACTOR_PATH";
+const CODEVO_EDITOR_PHPACTOR_PATH: &str = "CODEVO_EDITOR_PHPACTOR_PATH";
+const LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH: &str = "MOCKOR_EDITOR_PHPACTOR_PATH";
+
+#[cfg(test)]
+static PHPACTOR_ENV_VAR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT: &str =
     "php://managed-phpactor-install-completed";
@@ -160,7 +164,7 @@ pub(crate) fn install_managed_phpactor() -> Result<(), String> {
             &[
                 "init",
                 "--name",
-                "mockor/editor-php-engine",
+                "codevo/editor-php-engine",
                 "--type",
                 "project",
                 "--no-interaction",
@@ -271,7 +275,10 @@ fn is_managed_phpactor_path(path: &str) -> bool {
     }
 
     let normalized = path.to_lowercase();
-    normalized.contains("mockor editor/tools/phpactor") || normalized.contains(".mockor-editor")
+    normalized.contains("codevo editor/tools/phpactor")
+        || normalized.contains(".codevo-editor")
+        || normalized.contains("mockor editor/tools/phpactor")
+        || normalized.contains(".mockor-editor")
 }
 
 #[cfg(unix)]
@@ -296,6 +303,18 @@ fn managed_phpactor_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
     for home in managed_home_dirs() {
+        if cfg!(unix) {
+            roots.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Codevo Editor")
+                    .join("tools")
+                    .join("phpactor"),
+            );
+        }
+
+        roots.push(home.join(".codevo-editor").join("tools").join("phpactor"));
+
         if cfg!(unix) {
             roots.push(
                 home.join("Library")
@@ -375,7 +394,9 @@ fn managed_phpactor_root() -> Result<PathBuf, String> {
 }
 
 fn managed_phpactor_root_from_override() -> Option<PathBuf> {
-    let path = env::var_os(MOCKOR_EDITOR_PHPACTOR_PATH).map(PathBuf::from)?;
+    let path = env::var_os(CODEVO_EDITOR_PHPACTOR_PATH)
+        .or_else(|| env::var_os(LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH))
+        .map(PathBuf::from)?;
     let binary_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -472,6 +493,9 @@ mod install_worker_tests {
 
     #[test]
     fn spawned_install_reports_completion_with_requesting_root() {
+        let _lock = PHPACTOR_ENV_VAR_TEST_LOCK
+            .lock()
+            .expect("lock PHPactor environment");
         let (sender, receiver) = mpsc::channel();
         let temp_dir = std::env::temp_dir().join(format!(
             "mockor-managed-phpactor-test-{}",
@@ -479,7 +503,7 @@ mod install_worker_tests {
         ));
         // Point the install at an isolated, composer-less directory so the
         // worker resolves quickly without mutating any real managed root.
-        std::env::set_var(MOCKOR_EDITOR_PHPACTOR_PATH, &temp_dir);
+        std::env::set_var(CODEVO_EDITOR_PHPACTOR_PATH, &temp_dir);
 
         spawn_managed_phpactor_install(
             "/workspace-a".to_string(),
@@ -492,7 +516,7 @@ mod install_worker_tests {
             .recv_timeout(std::time::Duration::from_secs(30))
             .expect("install worker should report completion");
 
-        std::env::remove_var(MOCKOR_EDITOR_PHPACTOR_PATH);
+        std::env::remove_var(CODEVO_EDITOR_PHPACTOR_PATH);
         let _ = fs::remove_dir_all(&temp_dir);
 
         assert_eq!(root, "/workspace-a");
@@ -667,6 +691,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn managed_root_supports_legacy_override_and_prefers_codevo_override() {
+        let _lock = PHPACTOR_ENV_VAR_TEST_LOCK
+            .lock()
+            .expect("lock PHPactor environment");
+        let legacy_binary = PathBuf::from("/legacy/phpactor/vendor/bin/phpactor");
+        let codevo_root = PathBuf::from("/codevo/managed-root");
+
+        env::remove_var(CODEVO_EDITOR_PHPACTOR_PATH);
+        env::set_var(LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH, &legacy_binary);
+        assert_eq!(
+            managed_phpactor_root_from_override(),
+            Some(PathBuf::from("/legacy/phpactor"))
+        );
+
+        env::set_var(CODEVO_EDITOR_PHPACTOR_PATH, &codevo_root);
+        assert_eq!(managed_phpactor_root_from_override(), Some(codevo_root));
+
+        env::remove_var(CODEVO_EDITOR_PHPACTOR_PATH);
+        env::remove_var(LEGACY_MOCKOR_EDITOR_PHPACTOR_PATH);
+    }
+
+    #[test]
+    fn managed_roots_prefer_codevo_and_include_legacy_locations() {
+        let home = managed_home_dirs()
+            .into_iter()
+            .next()
+            .expect("test environment should have a home directory");
+        let roots = managed_phpactor_roots();
+        let codevo_root = home.join(".codevo-editor/tools/phpactor");
+        let legacy_root = home.join(".mockor-editor/tools/phpactor");
+        let codevo_index = roots
+            .iter()
+            .position(|root| root == &codevo_root)
+            .expect("Codevo managed root");
+        let legacy_index = roots
+            .iter()
+            .position(|root| root == &legacy_root)
+            .expect("legacy managed root");
+
+        assert!(codevo_index < legacy_index);
+    }
+
+    #[test]
     fn cleanup_is_allowed_for_managed_phpactor_without_active_sibling_roots() {
         let command = managed_command("/workspace-a");
 
@@ -722,9 +789,9 @@ mod tests {
             executable: "/opt/homebrew/bin/php".to_string(),
             args: vec![
                 "-c".to_string(),
-                "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/codevo-php.ini"
+                "/Users/dev/Library/Application Support/Codevo Editor/tools/phpactor/codevo-php.ini"
                     .to_string(),
-                "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+                "/Users/dev/Library/Application Support/Codevo Editor/tools/phpactor/vendor/bin/phpactor"
                     .to_string(),
                 "language-server".to_string(),
             ],
@@ -736,7 +803,7 @@ mod tests {
         assert_eq!(
             managed_phpactor_path_in_command(&command),
             Some(
-                "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+                "/Users/dev/Library/Application Support/Codevo Editor/tools/phpactor/vendor/bin/phpactor"
             )
         );
         assert!(should_cleanup_orphaned_managed_phpactor_processes(
@@ -751,11 +818,21 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn cleanup_still_recognizes_legacy_managed_phpactor_paths() {
+        assert!(is_managed_phpactor_path(
+            "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor",
+        ));
+        assert!(is_managed_phpactor_path(
+            "/Users/dev/.mockor-editor/tools/phpactor/vendor/bin/phpactor",
+        ));
+    }
+
     fn managed_command(workspace: &str) -> LanguageServerCommand {
         LanguageServerCommand {
             args: vec!["language-server".to_string()],
             executable:
-                "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+                "/Users/dev/Library/Application Support/Codevo Editor/tools/phpactor/vendor/bin/phpactor"
                     .to_string(),
             working_directory: workspace.to_string(),
             env: Vec::new(),

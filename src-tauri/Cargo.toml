@@ -1,7 +1,7 @@
 [package]
-name = "mockor-editor"
+name = "codevo-editor"
 version = "0.1.0"
-description = "A Fleet-like PHP-focused desktop code editor"
+description = "Codevo Editor is a Fleet-like PHP-focused desktop code editor"
 authors = ["Matus Mockor"]
 edition = "2021"
 

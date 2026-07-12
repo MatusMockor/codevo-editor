@@ -3,7 +3,7 @@
 Date: 2026-06-16
 Status: First-release runtime policy documented
 
-This plan decides how `Mockor Editor` handles PHP, PHPactor, Intelephense, Watchman, ripgrep, terminal shells, and index storage in packaged desktop builds.
+This plan decides how `Codevo Editor` handles PHP, PHPactor, Intelephense, Watchman, ripgrep, terminal shells, and index storage in packaged desktop builds.
 
 ## Source Baseline
 

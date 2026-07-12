@@ -4292,7 +4292,7 @@ mod tests {
             "-n".to_string(),
             "-c".to_string(),
             "/managed/codevo-php.ini".to_string(),
-            "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+            "/Users/dev/Library/Application Support/Codevo Editor/tools/phpactor/vendor/bin/phpactor"
                 .to_string(),
             "language-server".to_string(),
         ];
@@ -7274,7 +7274,7 @@ mod tests {
                 "-n".to_string(),
                 "-c".to_string(),
                 "/managed/codevo-php.ini".to_string(),
-                "/Users/dev/Library/Application Support/Mockor Editor/tools/phpactor/vendor/bin/phpactor"
+                "/Users/dev/Library/Application Support/Codevo Editor/tools/phpactor/vendor/bin/phpactor"
                     .to_string(),
                 "language-server".to_string(),
             ],

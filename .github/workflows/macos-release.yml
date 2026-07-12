@@ -90,7 +90,7 @@ jobs:
       - name: Upload debug artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: mockor-editor-macos-debug
+          name: codevo-editor-macos-debug
           path: |
             src-tauri/target/debug/bundle/dmg/*.dmg
             src-tauri/target/debug/bundle/macos/*.app
@@ -144,8 +144,8 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          certificate_path="$RUNNER_TEMP/mockor-editor-certificate.p12"
-          keychain_path="$RUNNER_TEMP/mockor-editor-signing.keychain-db"
+          certificate_path="$RUNNER_TEMP/codevo-editor-certificate.p12"
+          keychain_path="$RUNNER_TEMP/codevo-editor-signing.keychain-db"
           export APPLE_CERTIFICATE CERTIFICATE_PATH="$certificate_path"
           python3 - <<'PY'
           import base64
@@ -213,7 +213,7 @@ jobs:
       - name: Upload signed release artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: mockor-editor-macos-signed-release
+          name: codevo-editor-macos-signed-release
           path: |
             src-tauri/target/release/bundle/dmg/*.dmg
 

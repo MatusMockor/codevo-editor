@@ -15,7 +15,7 @@ export function formatWindowTitle({
   workspaceName,
 }: WindowTitleInput): string {
   if (!workspaceName) {
-    return "Mockor Editor";
+    return "Codevo Editor";
   }
 
   const workspace = basename(workspaceName);

@@ -323,7 +323,7 @@ where
 
         let Some(phpactor) = configured_phpactor.as_ref().or(tools.phpactor.as_ref()) else {
             return unavailable_plan(
-                "Managed PHP IDE engine was not found. Install PHPactor into Mockor Editor tools or set MOCKOR_EDITOR_PHPACTOR_PATH.",
+                "Managed PHP IDE engine was not found. Install PHPactor into Codevo Editor tools or set CODEVO_EDITOR_PHPACTOR_PATH.",
             );
         };
 
@@ -996,7 +996,7 @@ impl InitializeRequestFactory for TypeScriptInitializeRequestFactory {
                     }
                 },
                 "initializationOptions": {
-                    "hostInfo": "Mockor Editor",
+                    "hostInfo": "Codevo Editor",
                     "supportsMoveToFileCodeAction": true,
                     "tsserver": {
                         "useClientFileWatcher": true,
@@ -1601,7 +1601,7 @@ mod tests {
         assert_eq!(request.params["rootUri"], file_uri(&root));
         assert_eq!(
             request.params["initializationOptions"]["hostInfo"],
-            "Mockor Editor"
+            "Codevo Editor"
         );
         assert!(request.params["initializationOptions"]["tsserver"]["path"]
             .as_str()

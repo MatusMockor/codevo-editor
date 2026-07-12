@@ -752,7 +752,7 @@ function cdpEndpointGuidance(cdpUrl, detail = "") {
   const endpointHint =
     endpoint === DEFAULT_CDP_URL
       ? `For smoke:projects, the default CDP endpoint is ${DEFAULT_CDP_URL}.`
-      : `For smoke:projects, set MOCKOR_EDITOR_QA_CDP_URL=${endpoint}.`;
+      : `For smoke:projects, set CODEVO_EDITOR_QA_CDP_URL=${endpoint}.`;
   const lines = [
     detail || "CDP endpoint is missing.",
     `Start the QA app with: npm run debug:qa`,

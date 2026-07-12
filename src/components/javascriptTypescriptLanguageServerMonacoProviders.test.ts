@@ -1675,7 +1675,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         },
         {
           range: range(40, 1, 40, 7),
-          uri: "file:///Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
+          uri: "file:///Applications/Codevo Editor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
         },
       ],
       implementation: [
@@ -1726,8 +1726,8 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         }),
         uri: {
           fsPath:
-            "/Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
-          path: "/Applications/Mockor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
+            "/Applications/Codevo Editor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
+          path: "/Applications/Codevo Editor.app/Contents/Resources/typescript/lib/lib.dom.d.ts",
         },
       },
     ]);

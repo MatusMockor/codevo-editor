@@ -62,12 +62,14 @@ These artifacts are not release artifacts.
 
 The debug `.app`/`.dmg` produced by `smoke` mode is ad-hoc signed (no Developer ID, no notarization). macOS Gatekeeper blocks it by default when downloaded from a browser or CI artifact zip (`com.apple.quarantine` extended attribute). To run it locally:
 
-1. Download and unzip the `mockor-editor-macos-debug` artifact from the workflow run.
-2. Either right-click (or Control-click) `Mockor Editor.app` in Finder, choose "Open", then confirm "Open" in the Gatekeeper dialog, or clear the quarantine flag from a terminal:
+1. Download and unzip the `codevo-editor-macos-debug` artifact from the workflow run.
+2. Either right-click (or Control-click) `Codevo Editor.app` in Finder, choose "Open", then confirm "Open" in the Gatekeeper dialog, or clear the quarantine flag from a terminal:
    ```sh
-   xattr -dr com.apple.quarantine "Mockor Editor.app"
+   xattr -dr com.apple.quarantine "Codevo Editor.app"
    ```
 3. This is a debug build for smoke-testing packaging only; it is not a distributable release artifact.
+
+For a transition test on a Mac that already has `Mockor Editor.app`, remove or replace that old bundle before copying `Codevo Editor.app` into `/Applications`. The rename changes the bundle filename, so macOS can otherwise retain both applications side by side. Apply the same one-time manual removal step before the first Codevo-branded release/manual upgrade; this workflow does not implement updater migration machinery.
 
 ## Signed Release Mode
 
@@ -163,8 +165,8 @@ The workflow only runs on manual dispatch, never automatically on push/PR/tag:
 
 After a run completes, open the workflow run page and scroll to the "Artifacts" section at the bottom:
 
-- `smoke` mode uploads `mockor-editor-macos-debug` containing the debug `.app` and `.dmg`.
-- `signed-release` mode uploads `mockor-editor-macos-signed-release` containing the signed, notarized, stapled release `.dmg`.
+- `smoke` mode uploads `codevo-editor-macos-debug` containing the debug `.app` and `.dmg`.
+- `signed-release` mode uploads `codevo-editor-macos-signed-release` containing the signed, notarized, stapled release `.dmg`.
 
 Artifacts are retained per the repository's default GitHub Actions artifact retention setting.
 

@@ -11,6 +11,12 @@ describe("createPhpactorSetupGuide", () => {
       "managed-install",
       "managed-verify",
     ]);
+    expect(guide?.commands[0]?.command).toContain(
+      "Application Support/Codevo Editor/tools/phpactor",
+    );
+    expect(guide?.commands[0]?.command).toContain(
+      "composer init --name codevo/editor-php-engine",
+    );
   });
 
   it("returns blocked guidance without install commands", () => {

@@ -47,7 +47,7 @@ describe("root ErrorBoundary around the whole app", () => {
   it("renders the app normally when nothing throws", () => {
     act(() => {
       root.render(
-        <ErrorBoundary title="Mockor Editor hit an unexpected error">
+        <ErrorBoundary title="Codevo Editor hit an unexpected error">
           <AppShell crash={false} />
         </ErrorBoundary>,
       );
@@ -61,7 +61,7 @@ describe("root ErrorBoundary around the whole app", () => {
 
     act(() => {
       root.render(
-        <ErrorBoundary title="Mockor Editor hit an unexpected error">
+        <ErrorBoundary title="Codevo Editor hit an unexpected error">
           <AppShell crash={true} />
         </ErrorBoundary>,
       );
@@ -69,7 +69,7 @@ describe("root ErrorBoundary around the whole app", () => {
 
     // The root is NOT left blank: a recoverable alert is shown.
     expect(host.querySelector('[role="alert"]')).not.toBeNull();
-    expect(host.textContent).toContain("Mockor Editor hit an unexpected error");
+    expect(host.textContent).toContain("Codevo Editor hit an unexpected error");
     expect(host.querySelector('[data-action="retry"]')).not.toBeNull();
     // Crucially, the host still has rendered content (it is not empty/blank).
     expect(host.textContent?.trim().length ?? 0).toBeGreaterThan(0);
