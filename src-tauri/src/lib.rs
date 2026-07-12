@@ -24,6 +24,7 @@ mod managed_phpactor;
 pub mod php_file_outline;
 pub mod php_parser;
 pub mod php_symbols;
+mod php_test_run;
 pub mod php_tree;
 mod phpstan;
 mod pint;
@@ -753,6 +754,39 @@ async fn run_artisan_route_list_with_trust(
     }
 
     artisan::run_artisan_route_list(root_path).await
+}
+
+#[tauri::command]
+async fn run_php_tests_junit(
+    root_path: String,
+    app: AppHandle,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<php_test_run::PhpTestRunResponse, String> {
+    let app_data_base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
+    run_php_tests_junit_with_trust(root_path, app_data_base, &trust).await
+}
+
+async fn run_php_tests_junit_with_trust(
+    root_path: String,
+    app_data_base: PathBuf,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<php_test_run::PhpTestRunResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(php_test_run::PhpTestRunResponse::Unavailable {
+            message: "Trust this workspace to run PHP tests.".to_string(),
+        });
+    }
+
+    php_test_run::run_php_tests(root_path, app_data_base).await
 }
 
 #[tauri::command]
@@ -6213,10 +6247,10 @@ mod tests {
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
         rename_git_branch, reveal_path_in_workspace, reword_git_commit,
         run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
-        run_phpstan_analysis_with_trust, run_pint_format_with_trust, save_git_stash, search_files,
-        stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
-        switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server,
+        run_php_tests_junit_with_trust, run_phpstan_analysis_with_trust,
+        run_pint_format_with_trust, save_git_stash, search_files, stage_git_files, stage_git_hunk,
+        stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
@@ -6234,6 +6268,7 @@ mod tests {
     };
     use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use crate::php_file_outline::PhpFileOutlineNodeKind;
+    use crate::php_test_run::PhpTestRunResponse;
     use crate::phpstan::PhpStanAnalysisResponse;
     use crate::pint::PintFormatResponse;
     use crate::trust::WorkspaceTrustService;
@@ -9123,6 +9158,36 @@ mod tests {
     }
 
     #[test]
+    fn php_test_untrusted_workspace_blocks_dispatch() {
+        let root = temp_workspace("php-test-untrusted");
+        let marker = root.join("php-tests-ran");
+        fs::write(
+            root.join("artisan"),
+            format!("<?php touch('{}');", marker.display()),
+        )
+        .expect("write artisan sentinel");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let response = tauri::async_runtime::block_on(run_php_tests_junit_with_trust(
+            path_string(&root),
+            root.join("app-data"),
+            &trust,
+        ))
+        .expect("php test response");
+
+        assert_eq!(
+            response,
+            PhpTestRunResponse::Unavailable {
+                message: "Trust this workspace to run PHP tests.".to_string(),
+            }
+        );
+        assert!(!marker.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn trusted_workspace_dispatches_phpstan_analysis() {
         let root = temp_workspace("phpstan-trusted");
         let mut service =
@@ -9439,6 +9504,7 @@ pub fn run() {
             run_phpstan_analysis,
             run_pint_format,
             run_artisan_route_list,
+            run_php_tests_junit,
             search_files,
             search_project_symbols,
             search_text,
