@@ -1527,6 +1527,26 @@ describe("SettingsDialog", () => {
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
+
+    await act(async () => {
+      checkboxWithLabel("Word wrap").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        editorFontFamily: "Fira Code, monospace",
+        editorFontLigatures: true,
+        editorFontSize: 16,
+        minimapEnabled: true,
+        wordWrapEnabled: true,
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
   });
 
   it("persists theme changes while preserving workspace settings and trust", async () => {

@@ -135,6 +135,7 @@ export interface AppSettings {
   runtimePolicy: BackgroundRuntimePolicy;
   terminalShellIntegrationEnabled: boolean;
   theme: AppTheme;
+  wordWrapEnabled?: boolean;
   /**
    * User-authored live templates, GLOBAL (app-level, not per-workspace) like
    * PhpStorm's snippets. Merged with the built-in registry at completion time.
@@ -256,6 +257,7 @@ export function defaultAppSettings(): AppSettings {
     runtimePolicy: "keepAlive",
     terminalShellIntegrationEnabled: false,
     theme: "dark",
+    wordWrapEnabled: false,
     userSnippets: [],
     workspaceTabs: [],
   };
@@ -427,6 +429,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     defaults.terminalShellIntegrationEnabled,
   );
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
+  const wordWrapEnabled = normalizeBoolean(value.wordWrapEnabled, false);
   const userSnippets = normalizeUserSnippets(value.userSnippets);
   const workspaceTabs = normalizeWorkspaceTabs(
     value.workspaceTabs,
@@ -444,6 +447,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     runtimePolicy,
     terminalShellIntegrationEnabled,
     theme,
+    wordWrapEnabled,
     userSnippets,
     workspaceTabs,
   };

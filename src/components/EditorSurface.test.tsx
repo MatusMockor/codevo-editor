@@ -12608,6 +12608,58 @@ class Foo
     );
   });
 
+  it("passes word wrap to Monaco and updates it without remounting", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          wordWrapEnabled: false,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const editorElement = host.querySelector('[data-testid="monaco-editor"]');
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ wordWrap: "off" }),
+    );
+    editor.updateOptions.mockClear();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          wordWrapEnabled: true,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-testid="monaco-editor"]')).toBe(
+      editorElement,
+    );
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({ wordWrap: "on" }),
+    );
+    expect(editor.updateOptions).toHaveBeenCalledWith(
+      expect.objectContaining({ wordWrap: "on" }),
+    );
+  });
+
   it("recomputes the Monaco options when the read-only state changes", async () => {
     const editableDocument: EditorDocument = {
       content: "const value = 1;\n",

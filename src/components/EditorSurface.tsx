@@ -225,6 +225,7 @@ interface EditorSurfaceProps {
   editorFontLigatures?: boolean;
   editorFontSize?: number;
   minimapEnabled?: boolean;
+  wordWrapEnabled?: boolean;
   isOpeningFile?: boolean;
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
@@ -403,6 +404,7 @@ function EditorSurfaceComponent({
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
   minimapEnabled = false,
+  wordWrapEnabled = false,
   isOpeningFile = false,
   applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = async () => ({
     kind: "accepted",
@@ -1350,6 +1352,7 @@ function EditorSurfaceComponent({
       fontLigatures: monacoFontLigatures,
       fontSize: editorFontSize,
       minimap: { enabled: minimapEnabled },
+      wordWrap: wordWrapEnabled ? "on" : "off",
     });
   }, [
     editorApi,
@@ -1357,6 +1360,7 @@ function EditorSurfaceComponent({
     monacoFontLigatures,
     editorFontSize,
     minimapEnabled,
+    wordWrapEnabled,
   ]);
 
   // Apply resolved `.editorconfig` indent + EOL to the ACTIVE model only, so a
@@ -3840,6 +3844,7 @@ function EditorSurfaceComponent({
       // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
       maxTokenizationLineLength: 2000,
       minimap: { enabled: minimapEnabled },
+      wordWrap: wordWrapEnabled ? "on" : "off",
       // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so Cmd/Ctrl+Click
       // stays bound to go-to-definition (same as Cmd+B). Add a cursor with Alt+Click;
       // toggle persistent column/box selection with the `editor.toggleColumnSelection`
@@ -3871,6 +3876,7 @@ function EditorSurfaceComponent({
       isReadOnly,
       minimapEnabled,
       monacoFontLigatures,
+      wordWrapEnabled,
     ],
   );
 

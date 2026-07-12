@@ -43,6 +43,7 @@ describe("settings defaults", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       theme: "dark",
+      wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
     });
@@ -121,6 +122,19 @@ describe("settings defaults", () => {
 });
 
 describe("normalizeAppSettings", () => {
+  it("round-trips a persisted word wrap setting", () => {
+    expect(normalizeAppSettings({ wordWrapEnabled: true }).wordWrapEnabled).toBe(
+      true,
+    );
+    expect(
+      normalizeAppSettings({ wordWrapEnabled: false }).wordWrapEnabled,
+    ).toBe(false);
+  });
+
+  it("defaults a legacy app setting without word wrap state to false", () => {
+    expect(normalizeAppSettings({}).wordWrapEnabled).toBe(false);
+  });
+
   it("round-trips a persisted minimap setting", () => {
     expect(normalizeAppSettings({ minimapEnabled: true }).minimapEnabled).toBe(
       true,
@@ -147,6 +161,7 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       theme: "dark",
+      wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: ["/project"],
     });
@@ -160,6 +175,7 @@ describe("normalizeAppSettings", () => {
         recentWorkspacePath: null,
         runtimePolicy: "suspendOnBackground",
         theme: "light",
+        wordWrapEnabled: true,
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
@@ -176,6 +192,7 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "suspendOnBackground",
       terminalShellIntegrationEnabled: false,
       theme: "light",
+      wordWrapEnabled: true,
       userSnippets: [],
       workspaceTabs: ["/project-a", "/project-b"],
     });
@@ -196,6 +213,7 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       theme: "ayuMirage",
+      wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
     });
@@ -237,6 +255,7 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       theme: "dark",
+      wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
     });
@@ -288,6 +307,7 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       theme: "dark",
+      wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: ["/project/api/", "/project/web"],
     });

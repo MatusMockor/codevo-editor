@@ -1405,6 +1405,7 @@ function App() {
             editorFontFamily={workbench.appSettings.editorFontFamily}
             editorFontLigatures={workbench.appSettings.editorFontLigatures}
             editorFontSize={workbench.appSettings.editorFontSize}
+            wordWrapEnabled={workbench.appSettings.wordWrapEnabled}
             isOpeningFile={workbench.isOpeningFile}
             applyJavaScriptTypeScriptLanguageServerWorkspaceEdit={
               workbench.applyJavaScriptTypeScriptLanguageServerWorkspaceEdit

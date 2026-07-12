@@ -650,6 +650,12 @@ export function SettingsDialog({
                       minimapEnabled,
                     })
                   }
+                  onChangeWordWrapEnabled={(wordWrapEnabled) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      wordWrapEnabled,
+                    })
+                  }
                   onChangeTheme={(theme) =>
                     updateAppSettings({
                       ...draftAppSettingsRef.current,
@@ -1846,6 +1852,7 @@ interface AppearanceSettingsProps {
   onChangeEditorFontSize(value: number): void;
   onChangeMinimapEnabled(enabled: boolean): void;
   onChangeTheme(theme: AppTheme): void;
+  onChangeWordWrapEnabled(enabled: boolean): void;
 }
 
 function AppearanceSettings({
@@ -1856,6 +1863,7 @@ function AppearanceSettings({
   onChangeEditorFontSize,
   onChangeMinimapEnabled,
   onChangeTheme,
+  onChangeWordWrapEnabled,
 }: AppearanceSettingsProps) {
   const [fontFamilyOptions, setFontFamilyOptions] = useState<string[]>([]);
   const fontFamilyLoadRequestRef = useRef(0);
@@ -1966,6 +1974,17 @@ function AppearanceSettings({
           type="checkbox"
         />
         <span>Minimap</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={appSettings.wordWrapEnabled === true}
+          onChange={(event) =>
+            onChangeWordWrapEnabled(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Word wrap</span>
       </label>
     </div>
   );

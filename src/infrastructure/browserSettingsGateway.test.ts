@@ -22,6 +22,7 @@ describe("BrowserSettingsGateway", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       theme: "dark",
+      wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
     });
@@ -110,6 +111,7 @@ describe("BrowserSettingsGateway", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: true,
       theme: "ayuMirage",
+      wordWrapEnabled: true,
       userSnippets: [
         {
           prefix: "myhelper",
@@ -200,6 +202,7 @@ describe("BrowserSettingsGateway", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: true,
       theme: "ayuMirage",
+      wordWrapEnabled: true,
       userSnippets: [
         {
           prefix: "myhelper",
@@ -295,6 +298,7 @@ describe("BrowserSettingsGateway", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       theme: "dark",
+      wordWrapEnabled: false,
       userSnippets: [],
       workspaceTabs: [],
     });
