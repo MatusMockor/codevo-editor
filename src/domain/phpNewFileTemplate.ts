@@ -8,6 +8,11 @@ export interface PhpNewFileTemplate {
   content: string;
 }
 
+interface FrameworkSkeleton {
+  importName: string;
+  parentName: string;
+}
+
 export function phpNewFileTemplate(
   relativePath: string,
   psr4Roots: readonly Psr4Root[],
@@ -59,6 +64,17 @@ export function phpNewFileTemplate(
     const namespace = [rootNamespace, ...namespaceSegments]
       .filter(Boolean)
       .join("\\");
+    const frameworkSkeleton = frameworkSkeletonForPath(normalizedPath);
+
+    if (frameworkSkeleton) {
+      return {
+        content: renderFrameworkSkeleton(
+          shortName,
+          namespace,
+          frameworkSkeleton,
+        ),
+      };
+    }
 
     return {
       content: renderPhpTypeSkeleton("class", shortName, namespace || null),
@@ -74,4 +90,61 @@ function normalizeDirectory(path: string | undefined): string {
 
 function isPhpIdentifier(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
+
+function frameworkSkeletonForPath(path: string): FrameworkSkeleton | null {
+  if (isInsideDirectory(path, "app/Models")) {
+    return {
+      importName: "Illuminate\\Database\\Eloquent\\Model",
+      parentName: "Model",
+    };
+  }
+
+  if (isInsideDirectory(path, "app/Http/Requests")) {
+    return {
+      importName: "Illuminate\\Foundation\\Http\\FormRequest",
+      parentName: "FormRequest",
+    };
+  }
+
+  if (isNettePresenterPath(path)) {
+    return {
+      importName: "Nette\\Application\\UI\\Presenter",
+      parentName: "Presenter",
+    };
+  }
+
+  return null;
+}
+
+function isNettePresenterPath(path: string): boolean {
+  if (!path.endsWith("Presenter.php")) {
+    return false;
+  }
+
+  return (
+    isInsideDirectory(path, "app/Presenters") ||
+    isInsideDirectory(path, "app/UI")
+  );
+}
+
+function isInsideDirectory(path: string, directory: string): boolean {
+  return path.startsWith(`${directory}/`);
+}
+
+function renderFrameworkSkeleton(
+  shortName: string,
+  namespace: string,
+  skeleton: FrameworkSkeleton,
+): string {
+  return `<?php
+
+namespace ${namespace};
+
+use ${skeleton.importName};
+
+class ${shortName} extends ${skeleton.parentName}
+{
+}
+`;
 }

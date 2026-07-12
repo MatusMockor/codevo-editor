@@ -7,6 +7,115 @@ const appRoot: Psr4Root[] = [
 ];
 
 describe("phpNewFileTemplate", () => {
+  it("renders a Laravel model skeleton", () => {
+    expect(phpNewFileTemplate("app/Models/Order.php", appRoot)).toEqual({
+      content: `<?php
+
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Order extends Model
+{
+}
+`,
+    });
+  });
+
+  it("renders a nested Laravel model skeleton", () => {
+    expect(phpNewFileTemplate("app/Models/Sub/Order.php", appRoot)).toEqual({
+      content: `<?php
+
+namespace App\\Models\\Sub;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Order extends Model
+{
+}
+`,
+    });
+  });
+
+  it("renders a Laravel form request skeleton", () => {
+    expect(
+      phpNewFileTemplate("app/Http/Requests/StoreOrderRequest.php", appRoot),
+    ).toEqual({
+      content: `<?php
+
+namespace App\\Http\\Requests;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+
+class StoreOrderRequest extends FormRequest
+{
+}
+`,
+    });
+  });
+
+  it("renders a classic Nette presenter skeleton", () => {
+    expect(
+      phpNewFileTemplate("app/Presenters/HomePresenter.php", appRoot),
+    ).toEqual({
+      content: `<?php
+
+namespace App\\Presenters;
+
+use Nette\\Application\\UI\\Presenter;
+
+class HomePresenter extends Presenter
+{
+}
+`,
+    });
+  });
+
+  it("renders a modern colocated Nette presenter skeleton", () => {
+    expect(
+      phpNewFileTemplate("app/UI/Home/HomePresenter.php", appRoot),
+    ).toEqual({
+      content: `<?php
+
+namespace App\\UI\\Home;
+
+use Nette\\Application\\UI\\Presenter;
+
+class HomePresenter extends Presenter
+{
+}
+`,
+    });
+  });
+
+  it("renders a plain class for a non-presenter in a presenter directory", () => {
+    expect(
+      phpNewFileTemplate("app/Presenters/HomeService.php", appRoot),
+    ).toEqual({
+      content: `<?php
+
+namespace App\\Presenters;
+
+class HomeService
+{
+}
+`,
+    });
+  });
+
+  it("keeps service classes byte-identical to the plain skeleton", () => {
+    expect(phpNewFileTemplate("app/Services/X.php", appRoot)).toEqual({
+      content: `<?php
+
+namespace App\\Services;
+
+class X
+{
+}
+`,
+    });
+  });
+
   it("renders a class skeleton for a PSR-4-covered PHP path", () => {
     expect(phpNewFileTemplate("app/Service.php", appRoot)).toEqual({
       content: `<?php
