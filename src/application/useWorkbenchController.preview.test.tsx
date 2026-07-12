@@ -66271,6 +66271,7 @@ interface GreeterContract
         "artisan: optimize:clear",
         "artisan: queue:failed",
         "artisan: route:list",
+        "artisan: route:list in Terminal",
         "artisan: tinker",
       ]);
     });

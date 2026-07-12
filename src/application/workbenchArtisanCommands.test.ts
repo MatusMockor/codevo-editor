@@ -13,6 +13,7 @@ describe("workbenchArtisanCommands", () => {
     const runInActiveTerminal = vi.fn();
     const commands = workbenchArtisanCommands({
       hasArtisan: true,
+      openRoutesPanel: vi.fn(),
       runInActiveTerminal,
     });
     const tinkerCommand = commands.find(
@@ -37,6 +38,7 @@ describe("workbenchArtisanCommands", () => {
   it("omits the tinker command when artisan is not present", () => {
     const commands = workbenchArtisanCommands({
       hasArtisan: false,
+      openRoutesPanel: vi.fn(),
       runInActiveTerminal: vi.fn(),
     });
 
@@ -49,18 +51,22 @@ describe("workbenchArtisanCommands", () => {
     expect(
       workbenchArtisanCommands({
         hasArtisan: false,
+        openRoutesPanel: vi.fn(),
         runInActiveTerminal: vi.fn(),
       }),
     ).toEqual([]);
 
     const commands = workbenchArtisanCommands({
       hasArtisan: true,
+      openRoutesPanel: vi.fn(),
       runInActiveTerminal: vi.fn(),
     });
 
     expect(
       commands
-        .filter(({ id }) => id !== "artisan.tinker")
+        .filter(({ id }) =>
+          !["artisan.tinker", "artisan.route:list.terminal"].includes(id),
+        )
         .map(({ id, title, category }) => ({ id, title, category })),
     ).toEqual([
       { id: "artisan.about", title: "artisan: about", category: "Artisan" },
@@ -106,22 +112,25 @@ describe("workbenchArtisanCommands", () => {
     const runInActiveTerminal = vi.fn();
     const commands = workbenchArtisanCommands({
       hasArtisan: true,
+      openRoutesPanel: vi.fn(),
       runInActiveTerminal,
     });
 
     commands
-      .filter(({ id }) => id !== "artisan.tinker")
+      .filter(({ id }) =>
+        !["artisan.tinker", "artisan.route:list"].includes(id),
+      )
       .forEach((command) => command.run());
 
     expect(runInActiveTerminal.mock.calls.map(([command]) => command)).toEqual([
       "php artisan about --no-interaction",
-      "php artisan route:list --no-interaction",
       "php artisan migrate:status --no-interaction",
       "php artisan config:show --no-interaction",
       "php artisan db:show --no-interaction",
       "php artisan queue:failed --no-interaction",
       "php artisan optimize:clear --no-interaction",
       "php artisan cache:clear --no-interaction",
+      "php artisan route:list --no-interaction",
     ]);
     expect(commands.every((command) => command.isEnabled(workspaceContext))).toBe(
       true,
@@ -131,5 +140,20 @@ describe("workbenchArtisanCommands", () => {
         command.isEnabled({ ...workspaceContext, hasWorkspace: false }),
       ),
     ).toBe(false);
+  });
+
+  it("opens the structured route panel from artisan.route:list", () => {
+    const openRoutesPanel = vi.fn();
+    const runInActiveTerminal = vi.fn();
+    const commands = workbenchArtisanCommands({
+      hasArtisan: true,
+      openRoutesPanel,
+      runInActiveTerminal,
+    });
+
+    commands.find(({ id }) => id === "artisan.route:list")?.run();
+
+    expect(openRoutesPanel).toHaveBeenCalledOnce();
+    expect(runInActiveTerminal).not.toHaveBeenCalled();
   });
 });

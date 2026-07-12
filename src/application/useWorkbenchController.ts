@@ -144,6 +144,7 @@ import {
   registerActiveComposerManifestWorkspace,
 } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
+import { navigateToArtisanController } from "./artisanRouteNavigation";
 
 export type {
   PhpCodeActionDescriptor,
@@ -197,6 +198,7 @@ import {
 } from "../domain/gitRepositoryMapping";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import type { BottomPanelView } from "../domain/bottomPanel";
+import type { ArtisanControllerAction } from "../domain/artisanRoutes";
 import {
   applyIndexProgress,
   applyMetadataScanCompletion,
@@ -5790,6 +5792,27 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
+  const openArtisanRoutesPanel = useCallback(() => {
+    setBottomPanelView("routes" as BottomPanelView);
+    setBottomPanelVisible(true);
+  }, []);
+
+  const openArtisanController = useCallback(
+    (action: ArtisanControllerAction) =>
+      navigateToArtisanController(
+        {
+          activePath: activeDocumentRef.current?.path ?? "",
+          currentRootPath: () => currentWorkspaceRootRef.current,
+          openNavigationTarget,
+          projectSymbolSearch,
+          rootPath: workspaceRoot,
+          setMessage,
+        },
+        action,
+      ),
+    [openNavigationTarget, projectSymbolSearch, workspaceRoot],
+  );
+
   const {
     todoPanelOpen,
     workspaceTodos,
@@ -8027,6 +8050,7 @@ export function useWorkbenchController(
 
     workbenchArtisanCommands({
       hasArtisan: activePackageScripts?.hasArtisan ?? false,
+      openRoutesPanel: openArtisanRoutesPanel,
       runInActiveTerminal,
     }).forEach((command) => registry.register(command));
 
@@ -8205,6 +8229,7 @@ export function useWorkbenchController(
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
+    openArtisanRoutesPanel,
     activateWorkspaceTab,
     appSettings.keymap,
     appSettings.recentWorkspacePaths,
@@ -9302,11 +9327,13 @@ export function useWorkbenchController(
     refreshWorkspaceTodos,
     openWorkspaceTodo,
     todoPanelOpen,
+    hasArtisan: activePackageScripts?.hasArtisan ?? false,
     workspaceTodos,
     workspaceTodosLoading,
     openPhpFileOutlineNode,
     openClassSearchResult,
     openWorkspaceSymbolResult,
+    openArtisanController,
     openWorkspaceSymbols,
     openPinnedFile,
     prefetchFile,

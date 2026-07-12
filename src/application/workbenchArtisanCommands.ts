@@ -2,6 +2,7 @@ import type { Command } from "./commandRegistry";
 
 interface WorkbenchArtisanCommandsOptions {
   hasArtisan: boolean;
+  openRoutesPanel(): void;
   runInActiveTerminal(command: string): void;
 }
 
@@ -18,6 +19,7 @@ const artisanCommandNames = [
 
 export function workbenchArtisanCommands({
   hasArtisan,
+  openRoutesPanel,
   runInActiveTerminal,
 }: WorkbenchArtisanCommandsOptions): Command[] {
   if (!hasArtisan) {
@@ -30,9 +32,19 @@ export function workbenchArtisanCommands({
       title: `artisan: ${name}`,
       category: "Artisan",
       isEnabled: (context) => context.hasWorkspace,
-      run: () =>
-        runInActiveTerminal(`php artisan ${name} --no-interaction`),
+      run:
+        name === "route:list"
+          ? openRoutesPanel
+          : () => runInActiveTerminal(`php artisan ${name} --no-interaction`),
     })),
+    {
+      id: "artisan.route:list.terminal",
+      title: "artisan: route:list in Terminal",
+      category: "Artisan",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () =>
+        runInActiveTerminal("php artisan route:list --no-interaction"),
+    },
     {
       id: "artisan.tinker",
       title: "artisan: tinker",

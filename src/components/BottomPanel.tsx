@@ -2,10 +2,12 @@ import { PanelBottomClose, ShieldCheck, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
-import {
-  bottomPanelLabel,
-  type BottomPanelView,
-} from "../domain/bottomPanel";
+import { bottomPanelLabel } from "../domain/bottomPanel";
+import type {
+  ArtisanControllerAction,
+  ArtisanRoute,
+  WorkbenchBottomPanelView,
+} from "../domain/artisanRoutes";
 import type {
   IndexHealthLogEntry,
   IndexProgressState,
@@ -20,19 +22,30 @@ import type { FileChange, GitHistoryGateway } from "../domain/git";
 import type { RuntimeObservabilityGateway } from "../domain/runtimeObservability";
 import type { LatencySnapshotEntry } from "../domain/latencyTracker";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { ArtisanRoutesPanel } from "./ArtisanRoutesPanel";
 
 interface BottomPanelProps {
-  activeView: BottomPanelView;
+  activeView: WorkbenchBottomPanelView;
+  artisanRoutes?: ArtisanRoute[];
+  artisanRoutesError?: string | null;
+  artisanRoutesLoading?: boolean;
+  artisanRoutesQuery?: string;
+  artisanRoutesTotal?: number;
+  artisanRoutesUnavailable?: string | null;
+  hasArtisan?: boolean;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
   onClearProblems(): void;
   onClose(): void;
   onHardReindex(): void;
+  onArtisanRoutesQueryChange?(query: string): void;
+  onOpenArtisanController?(action: ArtisanControllerAction): void;
+  onRefreshArtisanRoutes?(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onResizeStart(event: PointerEvent<HTMLDivElement>): void;
-  onSelectView(view: BottomPanelView): void;
+  onSelectView(view: WorkbenchBottomPanelView): void;
   onSoftReindex(): void;
   onTerminalSessionReady?(sessionId: number | null): void;
   onTrustWorkspace(): void;
@@ -52,7 +65,7 @@ interface BottomPanelProps {
   workspaceRoot: string | null;
 }
 
-const bottomPanelViews: BottomPanelView[] = [
+const bottomPanelViews: WorkbenchBottomPanelView[] = [
   "problems",
   "index",
   "runtime",
@@ -67,12 +80,22 @@ const LazyTerminalPanel = lazy(() =>
 
 export function BottomPanel({
   activeView,
+  artisanRoutes = [],
+  artisanRoutesError = null,
+  artisanRoutesLoading = false,
+  artisanRoutesQuery = "",
+  artisanRoutesTotal = 0,
+  artisanRoutesUnavailable = null,
+  hasArtisan = false,
   indexHealthLogs,
   indexProgress,
   notices,
   onClearProblems,
   onClose,
   onHardReindex,
+  onArtisanRoutesQueryChange = () => undefined,
+  onOpenArtisanController = () => undefined,
+  onRefreshArtisanRoutes = () => undefined,
   onOpenProblem,
   onPhpReindex,
   onResizeStart,
@@ -149,10 +172,19 @@ export function BottomPanel({
 
   const activePanel = renderActivePanel({
     activeView,
+    artisanRoutes,
+    artisanRoutesError,
+    artisanRoutesLoading,
+    artisanRoutesQuery,
+    artisanRoutesTotal,
+    artisanRoutesUnavailable,
     indexHealthLogs,
     indexProgress,
     notices,
     onHardReindex,
+    onArtisanRoutesQueryChange,
+    onOpenArtisanController,
+    onRefreshArtisanRoutes,
     onOpenProblem,
     onPhpReindex,
     onOpenCommitFileDiff,
@@ -179,7 +211,10 @@ export function BottomPanel({
           className="bottom-panel-tabs"
           role="tablist"
         >
-          {bottomPanelViews.map((view) => (
+          {[
+            ...bottomPanelViews,
+            ...(hasArtisan ? (["routes"] as const) : []),
+          ].map((view) => (
             <button
               aria-selected={activeView === view}
               className={
@@ -192,7 +227,7 @@ export function BottomPanel({
               role="tab"
               type="button"
             >
-              {bottomPanelLabel(view)}
+              {view === "routes" ? "Routes" : bottomPanelLabel(view)}
             </button>
           ))}
         </div>
@@ -300,11 +335,20 @@ export function BottomPanel({
 }
 
 interface RenderActivePanelOptions {
-  activeView: BottomPanelView;
+  activeView: WorkbenchBottomPanelView;
+  artisanRoutes: ArtisanRoute[];
+  artisanRoutesError: string | null;
+  artisanRoutesLoading: boolean;
+  artisanRoutesQuery: string;
+  artisanRoutesTotal: number;
+  artisanRoutesUnavailable: string | null;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
   onHardReindex(): void;
+  onArtisanRoutesQueryChange(query: string): void;
+  onOpenArtisanController(action: ArtisanControllerAction): void;
+  onRefreshArtisanRoutes(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onSoftReindex(): void;
@@ -322,10 +366,19 @@ interface RenderActivePanelOptions {
 
 function renderActivePanel({
   activeView,
+  artisanRoutes,
+  artisanRoutesError,
+  artisanRoutesLoading,
+  artisanRoutesQuery,
+  artisanRoutesTotal,
+  artisanRoutesUnavailable,
   indexHealthLogs,
   indexProgress,
   notices,
   onHardReindex,
+  onArtisanRoutesQueryChange,
+  onOpenArtisanController,
+  onRefreshArtisanRoutes,
   onOpenProblem,
   onPhpReindex,
   onOpenCommitFileDiff,
@@ -336,6 +389,22 @@ function renderActivePanel({
   getLatencySnapshot,
   workspaceRoot,
 }: RenderActivePanelOptions) {
+  if (activeView === "routes") {
+    return (
+      <ArtisanRoutesPanel
+        error={artisanRoutesError}
+        loading={artisanRoutesLoading}
+        onChangeQuery={onArtisanRoutesQueryChange}
+        onOpenController={onOpenArtisanController}
+        onRefresh={onRefreshArtisanRoutes}
+        query={artisanRoutesQuery}
+        routes={artisanRoutes}
+        total={artisanRoutesTotal}
+        unavailable={artisanRoutesUnavailable}
+      />
+    );
+  }
+
   if (activeView === "problems") {
     return (
       <ProblemsPanel

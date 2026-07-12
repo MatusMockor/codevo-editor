@@ -20,6 +20,7 @@ import {
 } from "./application/useWorkbenchController";
 import type { EditorSurfaceEslintDisableRunner } from "./application/workbenchEslintDisableCommand";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
+import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
@@ -90,6 +91,7 @@ import type { EditorSurfaceCommandRunner } from "./domain/editorSurfaceCommand";
 import { javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
 import type { EditorDocument, IntelligenceMode } from "./domain/workspace";
 import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
+import type { BottomPanelView } from "./domain/bottomPanel";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
 import {
@@ -136,12 +138,14 @@ import { TauriWorkspaceGateway } from "./infrastructure/tauriWorkspaceGateway";
 import { TauriWorkspaceIdentityGateway } from "./infrastructure/tauriWorkspaceIdentityGateway";
 import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
+import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
 import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
 import "./App.css";
 
 const workspaceIdentityGateway = new TauriWorkspaceIdentityGateway();
 const workspaceGateway = new TauriWorkspaceGateway(workspaceIdentityGateway);
 const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
+const artisanRoutesGateway = new TauriArtisanRoutesGateway();
 const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
 const workspaceGateways = {
   detection: workspaceGateway,
@@ -290,6 +294,13 @@ function App() {
       editorSurfacePhpstanIgnoreRunner,
     },
   );
+  const artisanRoutes = useArtisanRoutes({
+    gateway: artisanRoutesGateway,
+    isOpen:
+      workbench.bottomPanelVisible &&
+      String(workbench.bottomPanelView) === "routes",
+    rootPath: workbench.workspaceRoot,
+  });
   const gitHistoryWorkspaceRootRef = useRef(workbench.workspaceRoot);
   const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
     const gitChanges = workbench.gitStatus?.changes;
@@ -1472,16 +1483,33 @@ function App() {
         {workbench.bottomPanelVisible ? (
           <BottomPanel
             activeView={workbench.bottomPanelView}
+            artisanRoutes={artisanRoutes.filteredRoutes}
+            artisanRoutesError={artisanRoutes.error}
+            artisanRoutesLoading={artisanRoutes.loading}
+            artisanRoutesQuery={artisanRoutes.query}
+            artisanRoutesTotal={artisanRoutes.total}
+            artisanRoutesUnavailable={artisanRoutes.unavailable}
+            hasArtisan={workbench.hasArtisan}
             indexHealthLogs={workbench.indexHealthLogs}
             indexProgress={workbench.indexProgress}
             notices={workbench.notices}
             onClearProblems={workbench.clearNotices}
-            onClose={workbench.hideBottomPanel}
+            onClose={() => {
+              artisanRoutes.clear();
+              workbench.hideBottomPanel();
+            }}
             onHardReindex={workbench.startHardReindex}
+            onArtisanRoutesQueryChange={artisanRoutes.setQuery}
+            onOpenArtisanController={(action) => {
+              void workbench.openArtisanController(action);
+            }}
+            onRefreshArtisanRoutes={() => void artisanRoutes.refresh()}
             onOpenProblem={workbench.openProblemNotice}
             onPhpReindex={workbench.startPhpReindex}
             onResizeStart={startBottomPanelResize}
-            onSelectView={workbench.showBottomPanelView}
+            onSelectView={(view) =>
+              workbench.showBottomPanelView(view as BottomPanelView)
+            }
             onSoftReindex={workbench.startIndexScan}
             gitHistoryGateway={gitHistoryGateway}
             runtimeObservabilityGateway={runtimeObservabilityGateway}

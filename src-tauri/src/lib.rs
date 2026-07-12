@@ -1,3 +1,4 @@
+mod artisan;
 pub mod composer;
 mod eslint;
 mod file_fuzzy_matcher;
@@ -695,6 +696,33 @@ async fn run_phpstan_analysis_with_trust(
     }
 
     phpstan::run_phpstan_analysis(root_path, binary_path, config_path).await
+}
+
+#[tauri::command]
+async fn run_artisan_route_list(
+    root_path: String,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<artisan::ArtisanRoutesResponse, String> {
+    run_artisan_route_list_with_trust(root_path, &trust).await
+}
+
+async fn run_artisan_route_list_with_trust(
+    root_path: String,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<artisan::ArtisanRoutesResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(artisan::ArtisanRoutesResponse::Unavailable {
+            message: "Trust this workspace to inspect Artisan routes.".to_string(),
+        });
+    }
+
+    artisan::run_artisan_route_list(root_path).await
 }
 
 #[tauri::command]
@@ -6096,11 +6124,12 @@ mod tests {
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
-        rename_git_branch, run_eslint_analysis_with_trust, run_phpstan_analysis_with_trust,
-        save_git_stash, search_files, stage_git_files, stage_git_hunk, stash_apply_git,
-        stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        rename_git_branch, run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
+        run_phpstan_analysis_with_trust, save_git_stash, search_files, stage_git_files,
+        stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch,
+        unstage_git_hunk, workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
+    use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -8877,6 +8906,29 @@ mod tests {
     }
 
     #[test]
+    fn untrusted_workspace_blocks_artisan_route_list() {
+        let root = temp_workspace("artisan-untrusted");
+        fs::write(root.join("artisan"), "<?php").expect("write artisan");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let response = tauri::async_runtime::block_on(run_artisan_route_list_with_trust(
+            path_string(&root),
+            &trust,
+        ))
+        .expect("artisan response");
+
+        assert_eq!(
+            response,
+            ArtisanRoutesResponse::Unavailable {
+                message: "Trust this workspace to inspect Artisan routes.".to_string(),
+            }
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn trusted_workspace_dispatches_phpstan_analysis() {
         let root = temp_workspace("phpstan-trusted");
         let mut service =
@@ -9189,6 +9241,7 @@ pub fn run() {
             revert_git_files,
             run_eslint_analysis,
             run_phpstan_analysis,
+            run_artisan_route_list,
             search_files,
             search_project_symbols,
             search_text,
