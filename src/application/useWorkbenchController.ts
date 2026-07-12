@@ -359,7 +359,6 @@ import {
   phpFrameworkContainerBindingsFromSource,
   resolvePhpFrameworkProfile,
 } from "../domain/phpFrameworkProviders";
-import { resolveLaravelInertiaComponentTarget } from "../domain/phpLaravelInertia";
 import {
   resolvePhpClassName,
 } from "../domain/phpNavigation";
@@ -367,6 +366,9 @@ import {
   phpTestClassPlan,
   renderPhpTestSkeleton,
 } from "../domain/phpTestGen";
+import {
+  findInertiaComponentTarget as findLaravelInertiaComponentTarget,
+} from "./inertiaComponentTarget";
 import {
   isPhpTestRelativePath,
   phpTestNavigationTargets,
@@ -7050,36 +7052,11 @@ export function useWorkbenchController(
   });
 
   const findInertiaComponentTarget = useCallback(
-    async (componentName: string) => {
-      const requestedRoot = currentWorkspaceRootRef.current;
-      const target = resolveLaravelInertiaComponentTarget(componentName);
-
-      if (!requestedRoot || !target) {
-        return null;
-      }
-
-      for (const relativeFilePath of target.relativeFilePaths) {
-        const path = joinWorkspacePath(requestedRoot, relativeFilePath);
-
-        try {
-          await workspaceFiles.readTextFile(path);
-        } catch {
-          continue;
-        }
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return null;
-        }
-
-        return {
-          name: componentName,
-          path,
-          position: { column: 1, lineNumber: 1 },
-        };
-      }
-
-      return null;
-    },
+    (componentName: string) =>
+      findLaravelInertiaComponentTarget(componentName, {
+        currentWorkspaceRootRef,
+        readDirectory: (path) => workspaceFiles.readDirectory(path),
+      }),
     [currentWorkspaceRootRef, workspaceFiles],
   );
 

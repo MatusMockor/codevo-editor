@@ -1,5 +1,6 @@
 import {
   bladeComponentNavigationCandidateRelativePaths,
+  bladeReferenceCandidateWorkspacePaths,
   bladeViewCandidateRelativePaths,
   detectBladeReferenceAt,
   isInsideBladeComment,
@@ -418,7 +419,10 @@ async function openBladeReferenceDefinition(
       ? bladeComponentNavigationCandidateRelativePaths(reference.name)
       : reference.kind === "view"
         ? bladeViewCandidateRelativePaths(reference.name)
-        : [];
+        : bladeReferenceCandidateWorkspacePaths(
+            dependencies.requestedRoot,
+            reference,
+          ).map((target) => target.relativePath);
 
   if (candidateRelativePaths.length === 0) {
     return false;

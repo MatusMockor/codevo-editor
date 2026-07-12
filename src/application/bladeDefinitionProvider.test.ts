@@ -183,6 +183,78 @@ describe("provideBladeDefinition", () => {
     );
   });
 
+  it("navigates Livewire directives to the component class", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const source = "@livewire('admin.user-profile')";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "admin.user-profile"),
+        makeDeps({ openNavigationTarget }),
+      ),
+    ).resolves.toBe(true);
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/Livewire/Admin/UserProfile.php`,
+      { column: 1, lineNumber: 1 },
+      "admin.user-profile",
+    );
+  });
+
+  it("navigates Livewire tags to the component class", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const source = "<livewire:counter />";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "counter"),
+        makeDeps({ openNavigationTarget }),
+      ),
+    ).resolves.toBe(true);
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/Livewire/Counter.php`,
+      { column: 1, lineNumber: 1 },
+      "counter",
+    );
+  });
+
+  it("navigates nested dotted Livewire names to nested component classes", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const source = "@livewire('dashboard.stats.counter')";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "dashboard.stats.counter"),
+        makeDeps({ openNavigationTarget }),
+      ),
+    ).resolves.toBe(true);
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/Livewire/Dashboard/Stats/Counter.php`,
+      { column: 1, lineNumber: 1 },
+      "dashboard.stats.counter",
+    );
+  });
+
+  it("returns false when every Livewire component candidate is missing", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const readNavigationFileContent = vi.fn(async () => {
+      throw new Error("missing");
+    });
+    const source = "<livewire:missing-component />";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "missing-component"),
+        makeDeps({ openNavigationTarget, readNavigationFileContent }),
+      ),
+    ).resolves.toBe(false);
+    expect(readNavigationFileContent).toHaveBeenCalledTimes(2);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+  });
+
   it("drops stale view navigation after an async read resolves under another root", async () => {
     const currentWorkspaceRootRef = { current: ROOT };
     const openNavigationTarget = vi.fn(async () => true);
