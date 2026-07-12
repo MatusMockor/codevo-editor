@@ -441,15 +441,14 @@ function GitCommitFooter({
     (amendEnabled || commitMessage.trim().length > 0) &&
     !disabled;
   const firstLine = commitMessage.split(/\r?\n/, 1)[0];
-  const firstWordLength = firstLine.search(/[:\s]/);
-  const leadingWordLength =
-    firstWordLength === -1 ? firstLine.length : firstWordLength;
+  const conventionalToken = firstLine.match(
+    /^[^(:!\s]+(?:\([^)]*\)?)?!?/,
+  )?.[0] ?? "";
   const caretWithinLeadingWord =
-    firstWordLength === -1 &&
     commitCaretPosition > 0 &&
-    commitCaretPosition <= leadingWordLength;
+    commitCaretPosition <= conventionalToken.length;
   const conventionalTypeMatches = caretWithinLeadingWord
-    ? matchConventionalCommitTypes(firstLine.slice(0, leadingWordLength))
+    ? matchConventionalCommitTypes(conventionalToken)
     : [];
 
   const closeHistory = (restoreFocus: boolean) => {
@@ -514,7 +513,9 @@ function GitCommitFooter({
 
   const selectConventionalType = (type: ConventionalCommitType) => {
     const nextMessage = completeConventionalType(commitMessage, type);
-    const nextCaretPosition = `${type}: `.length;
+    const nextCaretPosition =
+      nextMessage.match(/^[^(:!\s]+(?:\([^)]*\))?!?:[ \t]*/)?.[0].length ??
+      `${type}: `.length;
     pendingCommitCaretRef.current = nextCaretPosition;
     commitMessageRef.current?.focus();
     onCommitMessageChange(nextMessage);

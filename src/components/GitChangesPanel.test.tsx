@@ -437,9 +437,11 @@ describe("GitChangesPanel", () => {
     expect(host.querySelector(".git-conventional-commit-hints")).toBeNull();
   });
 
-  it("offers no conventional commit hints for fix(scope) when the caret is inside the token", async () => {
+  it("keeps conventional commit hints visible while typing a scope and preserves it on completion", async () => {
+    const onCommitMessageChange = vi.fn();
     await renderPanel({
-      commitMessage: "fix(scope)",
+      commitMessage: "fe(api)!",
+      onCommitMessageChange,
       status: gitStatus([gitChange("modified", "src/User.php", true)]),
     });
     const textarea = host.querySelector<HTMLTextAreaElement>(
@@ -448,11 +450,18 @@ describe("GitChangesPanel", () => {
 
     act(() => {
       textarea.focus();
-      textarea.setSelectionRange(3, 3);
+      textarea.setSelectionRange("fe(api)!".length, "fe(api)!".length);
       document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
     });
 
-    expect(host.querySelector(".git-conventional-commit-hints")).toBeNull();
+    const featHint = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Complete conventional commit type feat"]',
+    );
+    expect(featHint).not.toBeNull();
+
+    act(() => featHint?.click());
+
+    expect(onCommitMessageChange).toHaveBeenCalledWith("feat(api)!: ");
   });
 
   it("offers and non-lossily completes plain fe when the caret is inside the token", async () => {

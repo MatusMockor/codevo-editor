@@ -21,6 +21,21 @@ describe("matchConventionalCommitTypes", () => {
     expect(matchConventionalCommitTypes("DoC")).toEqual(["docs"]);
   });
 
+  it.each([
+    ["fea", ["feat"]],
+    ["feat", ["feat"]],
+    ["feat(", ["feat"]],
+    ["feat(api", ["feat"]],
+    ["feat(api)", ["feat"]],
+    ["feat(api)!", ["feat"]],
+    ["feat!", ["feat"]],
+    ["feat(api.v2/foo_bar-1)", ["feat"]],
+    ["feat(api scope)", ["feat"]],
+    ["feat(api scope", ["feat"]],
+  ])("matches the type family for scoped input %j", (input, expected) => {
+    expect(matchConventionalCommitTypes(input)).toEqual(expected);
+  });
+
   it("suppresses a complete type followed by a colon", () => {
     expect(matchConventionalCommitTypes("feat: subject")).toEqual([]);
   });
@@ -30,7 +45,7 @@ describe("matchConventionalCommitTypes", () => {
     expect(matchConventionalCommitTypes("unknown")).toEqual([]);
   });
 
-  it.each(["fexxx", "fix(scope)"])(
+  it.each(["fexxx"])(
     "returns no matches for the malformed whole token %j",
     (input) => {
       expect(matchConventionalCommitTypes(input)).toEqual([]);
@@ -58,6 +73,29 @@ describe("completeConventionalType", () => {
         "fix",
       ),
     ).toBe("fix: repair startup\n\nKeep this body.\n");
+  });
+
+  it.each([
+    ["fe(api): message", "feat", "feat(api): message"],
+    ["fe(api)!: message", "feat", "feat(api)!: message"],
+    ["fe!: message", "feat", "feat!: message"],
+    ["fe(api.v2/foo_bar-1): message", "feat", "feat(api.v2/foo_bar-1): message"],
+    ["fe(api scope): message", "feat", "feat(api scope): message"],
+    ["fe(api message", "feat", "feat: message"],
+  ] as const)(
+    "preserves conventional commit decorations when completing %j",
+    (message, type, expected) => {
+      expect(completeConventionalType(message, type)).toBe(expected);
+    },
+  );
+
+  it("preserves a scoped first-line description and multiline body exactly", () => {
+    expect(
+      completeConventionalType(
+        "fe(deep.path)!: repair startup\n\nKeep this body.\n",
+        "feat",
+      ),
+    ).toBe("feat(deep.path)!: repair startup\n\nKeep this body.\n");
   });
 
   it("places preserved subject text immediately after the six-character completion", () => {
