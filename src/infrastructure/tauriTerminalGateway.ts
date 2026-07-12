@@ -49,6 +49,7 @@ export class TauriTerminalGateway implements TerminalGateway {
     rootPath: string,
     size: TerminalSize,
     profileId?: string,
+    shellIntegrationEnabled = false,
   ): Promise<TerminalRuntimeStatus> {
     if (!this.isRuntimeAvailable()) {
       return Promise.reject(new Error(DESKTOP_RUNTIME_REQUIRED));
@@ -57,6 +58,7 @@ export class TauriTerminalGateway implements TerminalGateway {
     return this.invokeCommand("start_terminal_session", {
       profileId,
       rootPath,
+      terminalShellIntegrationEnabled: shellIntegrationEnabled,
       size,
     }) as Promise<TerminalRuntimeStatus>;
   }

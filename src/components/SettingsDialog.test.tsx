@@ -40,6 +40,44 @@ describe("SettingsDialog", () => {
     vi.unstubAllGlobals();
   });
 
+  it("autosaves the terminal shell integration opt-in", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="general"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      checkboxWithLabel("Terminal shell integration").click();
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: {
+        ...defaultAppSettings(),
+        terminalShellIntegrationEnabled: true,
+      },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+  });
+
   it("edits and normalizes the PHPStan binary path", async () => {
     const onSave = vi.fn(async () => undefined);
 

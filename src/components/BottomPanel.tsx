@@ -60,6 +60,7 @@ interface BottomPanelProps {
     files?: FileChange[],
   ): Promise<void> | void;
   terminalGateway: TerminalGateway;
+  terminalShellIntegrationEnabled: boolean;
   terminalTheme: TerminalTheme;
   workspaceTrusted: boolean;
   workspaceRoot: string | null;
@@ -109,6 +110,7 @@ export function BottomPanel({
   onTerminalSessionReady,
   onTrustWorkspace,
   terminalGateway,
+  terminalShellIntegrationEnabled,
   terminalTheme,
   workspaceTrusted,
   workspaceRoot,
@@ -122,6 +124,7 @@ export function BottomPanel({
   const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<
     string | null
   >(null);
+  const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
   const workspaceRootRef = useRef(workspaceRoot);
   workspaceRootRef.current = workspaceRoot;
 
@@ -132,6 +135,10 @@ export function BottomPanel({
 
     setTerminalMounted(true);
   }, [activeView]);
+
+  useEffect(() => {
+    setTerminalCwd(null);
+  }, [selectedTerminalProfileId, workspaceRoot]);
 
   useEffect(() => {
     if (!terminalMounted) {
@@ -266,6 +273,11 @@ export function BottomPanel({
             ))}
           </select>
         ) : null}
+        {activeView === "terminal" && terminalCwd ? (
+          <span className="bottom-panel-subtitle" title={terminalCwd}>
+            {terminalCwd}
+          </span>
+        ) : null}
         <button
           className="bottom-panel-action"
           onClick={onClose}
@@ -290,6 +302,7 @@ export function BottomPanel({
           >
             <LazyTerminalPanel
               isActive={activeView === "terminal"}
+              onCwdChange={setTerminalCwd}
               onOpenLink={(path, line, column) => {
                 const requestedRoot = workspaceRoot;
 
@@ -323,6 +336,7 @@ export function BottomPanel({
               }}
               onSessionReady={onTerminalSessionReady}
               profileId={selectedTerminalProfileId}
+              shellIntegrationEnabled={terminalShellIntegrationEnabled}
               rootPath={workspaceRoot}
               terminalGateway={terminalGateway}
               terminalTheme={terminalTheme}

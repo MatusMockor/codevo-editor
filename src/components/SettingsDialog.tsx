@@ -269,6 +269,14 @@ export function SettingsDialog({
                       runtimePolicy,
                     })
                   }
+                  onChangeTerminalShellIntegrationEnabled={(
+                    terminalShellIntegrationEnabled,
+                  ) =>
+                    updateAppSettings({
+                      ...draftAppSettingsRef.current,
+                      terminalShellIntegrationEnabled,
+                    })
+                  }
                   onChangeIntelligenceMode={(intelligenceMode) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -704,6 +712,7 @@ interface GeneralSettingsProps {
   ): void;
   onChangeRevealActiveFileInTree(enabled: boolean): void;
   onChangeRuntimePolicy(policy: BackgroundRuntimePolicy): void;
+  onChangeTerminalShellIntegrationEnabled(enabled: boolean): void;
   onChangeStatusBarVisibility(
     key: keyof StatusBarItemVisibility,
     visible: boolean,
@@ -745,6 +754,7 @@ function GeneralSettings({
   onChangeJavaScriptTypeScriptVersion,
   onChangeRevealActiveFileInTree,
   onChangeRuntimePolicy,
+  onChangeTerminalShellIntegrationEnabled,
   onChangeStatusBarVisibility,
   onChangeTrusted,
   onOpenJavaScriptTypeScriptServiceLog,
@@ -1086,6 +1096,17 @@ function GeneralSettings({
           <option value="suspendOnBackground">Suspend background projects</option>
           <option value="singleActive">Only active project runs IDE</option>
         </select>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={appSettings.terminalShellIntegrationEnabled}
+          onChange={(event) =>
+            onChangeTerminalShellIntegrationEnabled(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Terminal shell integration</span>
       </label>
 
       <label className="settings-toggle">

@@ -7,7 +7,8 @@ use portable_pty::{
 };
 use std::{
     collections::HashMap,
-    env,
+    env, fs,
+    fs::{DirBuilder, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{
@@ -21,6 +22,7 @@ use std::{
 pub struct TerminalLaunchRequest {
     pub cwd: PathBuf,
     pub profile: TerminalProfile,
+    pub shell_integration_base_dir: Option<PathBuf>,
     pub size: TerminalSize,
 }
 
@@ -90,7 +92,10 @@ impl TerminalPtySpawner for PortablePtySpawner {
         let pair = pty_system
             .openpty(pty_size(size))
             .map_err(|error| format!("Failed to open terminal PTY: {error}"))?;
-        let mut command = command_builder(&request.profile);
+        let mut command = command_builder(
+            &request.profile,
+            request.shell_integration_base_dir.as_deref(),
+        );
         command.cwd(request.cwd.as_os_str());
         command.env("TERM", "xterm-256color");
 
@@ -187,6 +192,7 @@ impl TerminalSupervisor {
         cwd: PathBuf,
         size: TerminalSize,
         profile: TerminalProfile,
+        shell_integration_base_dir: Option<PathBuf>,
         spawner: &dyn TerminalPtySpawner,
         sink: Arc<dyn TerminalEventSink>,
     ) -> Result<TerminalRuntimeStatus, String> {
@@ -194,6 +200,7 @@ impl TerminalSupervisor {
         let request = TerminalLaunchRequest {
             cwd: cwd.clone(),
             profile,
+            shell_integration_base_dir,
             size: size.normalized(),
         };
         sink.emit_status(TerminalRuntimeStatus::Starting { session_id });
@@ -459,11 +466,191 @@ fn pty_size(size: TerminalSize) -> PtySize {
     }
 }
 
-fn command_builder(profile: &TerminalProfile) -> CommandBuilder {
-    match profile.command.as_deref() {
-        Some(command) => CommandBuilder::new(command),
-        None => CommandBuilder::new_default_prog(),
+fn command_builder(
+    profile: &TerminalProfile,
+    shell_integration_base_dir: Option<&Path>,
+) -> CommandBuilder {
+    let Some(shell_integration_base_dir) = shell_integration_base_dir else {
+        return base_command_builder(profile);
+    };
+
+    let command = profile.command.clone().or_else(|| env::var("SHELL").ok());
+    let Some(command) = command else {
+        return base_command_builder(profile);
+    };
+    let shell = Path::new(&command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let Some(integration_dir) = prepare_shell_integration(shell_integration_base_dir) else {
+        return base_command_builder(profile);
+    };
+
+    if shell == "bash" {
+        let mut builder = CommandBuilder::new(command);
+        builder.args([
+            "--rcfile".as_ref(),
+            integration_dir
+                .join("editor-shell-integration.bash")
+                .as_os_str(),
+            "-i".as_ref(),
+        ]);
+        return builder;
     }
+
+    if shell == "zsh" {
+        let mut builder = CommandBuilder::new(command);
+
+        if let Some(zdotdir) = builder.get_env("ZDOTDIR").map(|value| value.to_owned()) {
+            builder.env("EDITOR_ORIGINAL_ZDOTDIR", zdotdir);
+        }
+
+        builder.env("ZDOTDIR", integration_dir);
+        builder.arg("-i");
+        return builder;
+    }
+
+    base_command_builder(profile)
+}
+
+fn base_command_builder(profile: &TerminalProfile) -> CommandBuilder {
+    if let Some(command) = profile.command.as_deref() {
+        return CommandBuilder::new(command);
+    }
+
+    CommandBuilder::new_default_prog()
+}
+
+fn prepare_shell_integration(base_dir: &Path) -> Option<PathBuf> {
+    let directory = base_dir.join("terminal-shell-integration");
+    ensure_private_directory(&directory).ok()?;
+    write_owned_file(
+        directory.join("editor-shell-integration.bash"),
+        include_str!("../resources/editor-shell-integration.bash"),
+    )
+    .ok()?;
+    write_owned_file(
+        directory.join(".zshenv"),
+        include_str!("../resources/editor-shell-integration.zshenv"),
+    )
+    .ok()?;
+    write_owned_file(
+        directory.join(".zprofile"),
+        include_str!("../resources/editor-shell-integration.zprofile"),
+    )
+    .ok()?;
+    write_owned_file(
+        directory.join(".zshrc"),
+        include_str!("../resources/editor-shell-integration.zsh"),
+    )
+    .ok()?;
+    write_owned_file(
+        directory.join(".zlogin"),
+        include_str!("../resources/editor-shell-integration.zlogin"),
+    )
+    .ok()?;
+
+    Some(directory)
+}
+
+fn ensure_private_directory(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => validate_private_directory(path, &metadata)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => create_private_directory(path)?,
+        Err(error) => return Err(error),
+    }
+
+    let metadata = fs::symlink_metadata(path)?;
+    validate_private_directory(path, &metadata)
+}
+
+fn create_private_directory(path: &Path) -> io::Result<()> {
+    let mut builder = DirBuilder::new();
+    builder.recursive(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+
+    builder.create(path)
+}
+
+fn validate_private_directory(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Shell integration path is not an owned directory.",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Shell integration directory has an unexpected owner.",
+            ));
+        }
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+
+    Ok(())
+}
+
+fn write_owned_file(path: PathBuf, contents: &str) -> io::Result<()> {
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Shell integration rc path is not an owned file.",
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
+    }
+
+    let mut file = options.open(&path)?;
+
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Shell integration rc path is not a regular file.",
+        ));
+    }
+
+    file.write_all(contents.as_bytes())?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+
+    let metadata = fs::symlink_metadata(path)?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Shell integration rc path is a symlink.",
+        ));
+    }
+
+    Ok(())
 }
 
 fn default_profile() -> TerminalProfile {
@@ -517,9 +704,9 @@ fn shell_label(shell: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        LocalTerminalProfileProvider, SpawnedTerminal, TerminalChild, TerminalExitStatus,
-        TerminalKiller, TerminalLaunchRequest, TerminalProfileProvider, TerminalPtySpawner,
-        TerminalResizer, TerminalSupervisor,
+        command_builder, prepare_shell_integration, LocalTerminalProfileProvider, SpawnedTerminal,
+        TerminalChild, TerminalExitStatus, TerminalKiller, TerminalLaunchRequest,
+        TerminalProfileProvider, TerminalPtySpawner, TerminalResizer, TerminalSupervisor,
     };
     use crate::terminal::{
         TerminalEventSink, TerminalOutputEvent, TerminalProfile, TerminalRuntimeStatus,
@@ -547,6 +734,7 @@ mod tests {
                     rows: 30,
                 },
                 default_test_profile(),
+                None,
                 &spawner,
                 sink.clone(),
             )
@@ -583,6 +771,7 @@ mod tests {
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
                 default_test_profile(),
+                None,
                 &spawner,
                 sink,
             )
@@ -611,6 +800,7 @@ mod tests {
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
                 default_test_profile(),
+                None,
                 &spawner,
                 sink,
             )
@@ -651,6 +841,7 @@ mod tests {
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
                 default_test_profile(),
+                None,
                 &spawner,
                 sink.clone(),
             )
@@ -690,6 +881,7 @@ mod tests {
                 PathBuf::from("/workspace-a"),
                 TerminalSize::default(),
                 default_test_profile(),
+                None,
                 &workspace_a_spawner,
                 sink.clone(),
             )
@@ -699,6 +891,7 @@ mod tests {
                 PathBuf::from("/workspace-b"),
                 TerminalSize::default(),
                 default_test_profile(),
+                None,
                 &workspace_b_spawner,
                 sink.clone(),
             )
@@ -731,6 +924,7 @@ mod tests {
                 PathBuf::from("/workspace"),
                 TerminalSize::default(),
                 default_test_profile(),
+                None,
                 &spawner,
                 sink.clone(),
             )
@@ -753,6 +947,95 @@ mod tests {
             .profiles()
             .iter()
             .any(|profile| profile.id == "default"));
+    }
+
+    #[test]
+    fn command_builder_gates_bash_rcfile_injection() {
+        let profile = TerminalProfile {
+            command: Some("/bin/bash".to_string()),
+            id: "bash".to_string(),
+            label: "bash".to_string(),
+        };
+
+        let app_data = shell_integration_test_data_dir("bash");
+        let disabled = command_builder(&profile, None);
+        let enabled = command_builder(&profile, Some(&app_data));
+
+        assert_eq!(disabled.get_argv(), &["/bin/bash"]);
+        assert_eq!(enabled.get_argv()[0], "/bin/bash");
+        assert_eq!(enabled.get_argv()[1], "--rcfile");
+        assert!(Path::new(&enabled.get_argv()[2]).ends_with("editor-shell-integration.bash"));
+        assert!(Path::new(&enabled.get_argv()[2]).starts_with(&app_data));
+        assert_eq!(enabled.get_argv()[3], "-i");
+        let _ = std::fs::remove_dir_all(app_data);
+    }
+
+    #[test]
+    fn command_builder_gates_zsh_zdotdir_injection() {
+        let profile = TerminalProfile {
+            command: Some("/bin/zsh".to_string()),
+            id: "zsh".to_string(),
+            label: "zsh".to_string(),
+        };
+
+        let app_data = shell_integration_test_data_dir("zsh");
+        let disabled = command_builder(&profile, None);
+        let enabled = command_builder(&profile, Some(&app_data));
+
+        assert!(disabled.get_env("ZDOTDIR").is_none());
+        assert!(enabled.get_env("ZDOTDIR").is_some());
+        assert_eq!(enabled.get_argv(), &["/bin/zsh", "-i"]);
+        let _ = std::fs::remove_dir_all(app_data);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_integration_directory_is_private_and_outside_shared_temp() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let app_data = shell_integration_test_data_dir("permissions");
+        let directory = prepare_shell_integration(&app_data).expect("shell integration directory");
+        let metadata = directory.metadata().expect("shell integration metadata");
+
+        assert!(!directory.starts_with(std::env::temp_dir()));
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+        for startup_file in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+            assert!(directory.join(startup_file).is_file());
+        }
+        assert!(!directory
+            .symlink_metadata()
+            .expect("shell integration symlink metadata")
+            .file_type()
+            .is_symlink());
+        let _ = std::fs::remove_dir_all(app_data);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_integration_rejects_planted_rc_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let app_data = shell_integration_test_data_dir("symlink");
+        let directory = prepare_shell_integration(&app_data).expect("shell integration directory");
+        let bash_rc = directory.join("editor-shell-integration.bash");
+        let target = app_data.join("attacker-controlled");
+        std::fs::remove_file(&bash_rc).expect("remove generated bash rc");
+        std::fs::write(&target, "unchanged").expect("symlink target");
+        symlink(&target, &bash_rc).expect("planted bash rc symlink");
+
+        assert!(prepare_shell_integration(&app_data).is_none());
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("symlink target contents"),
+            "unchanged"
+        );
+        let _ = std::fs::remove_dir_all(app_data);
+    }
+
+    fn shell_integration_test_data_dir(name: &str) -> PathBuf {
+        std::env::current_dir()
+            .expect("current directory")
+            .join("target/terminal-shell-integration-tests")
+            .join(format!("{name}-{}", std::process::id()))
     }
 
     #[derive(Default)]

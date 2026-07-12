@@ -3366,6 +3366,7 @@ fn stop_all_javascript_typescript_language_servers(
 fn start_terminal_session(
     root_path: String,
     profile_id: Option<String>,
+    terminal_shell_integration_enabled: bool,
     size: TerminalSize,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
@@ -3383,10 +3384,21 @@ fn start_terminal_session(
         return Err("Workspace must be trusted to start a terminal.".to_string());
     }
 
+    let shell_integration_base_dir = terminal_shell_integration_enabled
+        .then(|| app.path().app_local_data_dir())
+        .transpose()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
     let sink = Arc::new(AppHandleTerminalEventSink::new(app));
     let profile_provider = LocalTerminalProfileProvider;
     let profile = profile_provider.resolve_profile(profile_id.as_deref())?;
-    supervisor.start(root, size, profile, &PortablePtySpawner, sink)
+    supervisor.start(
+        root,
+        size,
+        profile,
+        shell_integration_base_dir,
+        &PortablePtySpawner,
+        sink,
+    )
 }
 
 #[tauri::command]

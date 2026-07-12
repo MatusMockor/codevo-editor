@@ -20,6 +20,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
+      terminalShellIntegrationEnabled: false,
       theme: "dark",
       userSnippets: [],
       workspaceTabs: [],
@@ -107,6 +108,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: "/project",
       recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
+      terminalShellIntegrationEnabled: true,
       theme: "ayuMirage",
       userSnippets: [
         {
@@ -196,6 +198,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: "/project",
       recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
+      terminalShellIntegrationEnabled: true,
       theme: "ayuMirage",
       userSnippets: [
         {
@@ -290,6 +293,7 @@ describe("BrowserSettingsGateway", () => {
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
       runtimePolicy: "keepAlive",
+      terminalShellIntegrationEnabled: false,
       theme: "dark",
       userSnippets: [],
       workspaceTabs: [],

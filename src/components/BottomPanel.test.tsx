@@ -12,6 +12,7 @@ import type { TerminalGateway } from "../domain/terminal";
 import { BottomPanel } from "./BottomPanel";
 
 interface CapturedTerminalPanelProps {
+  onCwdChange?(cwd: string | null): void;
   onOpenLink?(
     path: string,
     line?: number,
@@ -106,6 +107,16 @@ describe("BottomPanel terminal links", () => {
 
     expect(onOpenProblem).not.toHaveBeenCalled();
   });
+
+  it("surfaces the active terminal cwd in the panel header", async () => {
+    await renderPanel(root, "/workspace", vi.fn(async () => true));
+
+    act(() => terminalProps().onCwdChange?.("/workspace/src"));
+
+    expect(host.querySelector('[title="/workspace/src"]')?.textContent).toBe(
+      "/workspace/src",
+    );
+  });
 });
 
 function terminalProps(): CapturedTerminalPanelProps {
@@ -139,6 +150,7 @@ async function renderPanel(
         onTrustWorkspace={vi.fn()}
         runtimeObservabilityGateway={{} as RuntimeObservabilityGateway}
         terminalGateway={terminalGateway()}
+        terminalShellIntegrationEnabled={false}
         terminalTheme={terminalThemeForAppTheme("dark")}
         workspaceRoot={workspaceRoot}
         workspaceTrusted

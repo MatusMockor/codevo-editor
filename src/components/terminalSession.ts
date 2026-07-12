@@ -6,6 +6,7 @@ import {
   type TerminalUnsubscribeFn,
 } from "../domain/terminal";
 import { terminalFileLinks } from "../domain/terminalFileLinks";
+import { TerminalShellIntegrationRegistry } from "../domain/terminalShellIntegration";
 
 export interface TerminalBufferLine {
   readonly length: number;
@@ -119,9 +120,11 @@ interface TerminalSessionOptions {
   // xterm internals. Always scoped to a single mounted terminal, so it can
   // never leak another tab's session id.
   onSessionReady?(sessionId: number | null): void;
+  onCwdChange?(cwd: string | null): void;
   onOpenLink?(path: string, line?: number, column?: number): void;
   profileId: string | null;
   rootPath: string | null;
+  shellIntegrationEnabled: boolean;
   scheduleFrame(callback: FrameRequestCallback): number;
   terminal: XtermTerminal;
 }
@@ -133,9 +136,11 @@ export function createTerminalSession({
   gateway,
   host,
   onSessionReady,
+  onCwdChange,
   onOpenLink,
   profileId,
   rootPath,
+  shellIntegrationEnabled,
   scheduleFrame,
   terminal,
 }: TerminalSessionOptions): TerminalSession {
@@ -146,6 +151,7 @@ export function createTerminalSession({
   let pendingResize: TerminalSize | null = null;
   let sessionId: number | null = null;
   let unsubscribeOutput: TerminalUnsubscribeFn = () => undefined;
+  const shellIntegration = new TerminalShellIntegrationRegistry();
 
   const reportError = (error: unknown) => {
     terminal.write(`\r\n${String(error)}\r\n`);
@@ -198,6 +204,18 @@ export function createTerminalSession({
   const handleOutput = (event: TerminalOutputEvent) => {
     if (event.sessionId !== sessionId) {
       return;
+    }
+
+    if (rootPath) {
+      const result = shellIntegration.feed(rootPath, event.sessionId, event.data);
+
+      for (const shellEvent of result.events) {
+        if (shellEvent.kind !== "cwd") {
+          continue;
+        }
+
+        onCwdChange?.(shellEvent.cwd);
+      }
     }
 
     terminal.write(event.data);
@@ -277,7 +295,12 @@ export function createTerminalSession({
 
         scheduleFit(() => {
           void gateway
-            .start(rootPath, currentSize(), profileId || undefined)
+            .start(
+              rootPath,
+              currentSize(),
+              profileId || undefined,
+              shellIntegrationEnabled,
+            )
             .then((status) => {
               const startedSessionId = terminalSessionId(status);
 
@@ -306,6 +329,7 @@ export function createTerminalSession({
     dispose: () => {
       disposed = true;
       onSessionReady?.(null);
+      onCwdChange?.(null);
 
       for (const frameId of pendingFrames) {
         cancelFrame(frameId);
@@ -320,6 +344,11 @@ export function createTerminalSession({
       }
 
       const activeSessionId = sessionId;
+
+      if (rootPath && activeSessionId) {
+        shellIntegration.reset(rootPath, activeSessionId);
+      }
+
       terminal.dispose();
 
       if (!activeSessionId) {

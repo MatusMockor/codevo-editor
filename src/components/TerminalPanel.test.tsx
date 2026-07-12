@@ -125,6 +125,7 @@ describe("TerminalPanel", () => {
           isActive
           profileId="default"
           rootPath="/workspace"
+          shellIntegrationEnabled={false}
           terminalGateway={gateway}
           terminalTheme={darkTheme}
         />,
@@ -142,6 +143,7 @@ describe("TerminalPanel", () => {
           isActive
           profileId="default"
           rootPath="/workspace"
+          shellIntegrationEnabled={false}
           terminalGateway={gateway}
           terminalTheme={lightTheme}
         />,
@@ -164,6 +166,7 @@ describe("TerminalPanel", () => {
           onOpenLink={onOpenLink}
           profileId="default"
           rootPath="/workspace/project"
+          shellIntegrationEnabled={false}
           terminalGateway={terminalGateway()}
           terminalTheme={terminalThemeForAppTheme("dark")}
         />,
@@ -196,6 +199,7 @@ describe("TerminalPanel", () => {
           onOpenLink={onOpenLink}
           profileId="default"
           rootPath="/workspace/old"
+          shellIntegrationEnabled={false}
           terminalGateway={gateway}
           terminalTheme={theme}
         />,
@@ -214,6 +218,7 @@ describe("TerminalPanel", () => {
           onOpenLink={onOpenLink}
           profileId="default"
           rootPath="/workspace/new"
+          shellIntegrationEnabled={false}
           terminalGateway={gateway}
           terminalTheme={theme}
         />,

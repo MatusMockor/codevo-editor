@@ -1521,6 +1521,9 @@ function App() {
             onTerminalSessionReady={workbench.registerActiveTerminalSession}
             onTrustWorkspace={workbench.toggleWorkspaceTrust}
             terminalGateway={terminalGateway}
+            terminalShellIntegrationEnabled={
+              workbench.appSettings.terminalShellIntegrationEnabled
+            }
             terminalTheme={terminalTheme}
             workspaceTrusted={workbench.workspaceTrust?.trusted ?? false}
             workspaceRoot={workbench.workspaceRoot}

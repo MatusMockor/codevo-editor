@@ -36,6 +36,7 @@ export interface TerminalGateway {
     rootPath: string,
     size: TerminalSize,
     profileId?: string,
+    shellIntegrationEnabled?: boolean,
   ): Promise<TerminalRuntimeStatus>;
   stop(sessionId: number): Promise<TerminalRuntimeStatus>;
   stopRoot(rootPath: string): Promise<void>;

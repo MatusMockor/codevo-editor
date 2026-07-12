@@ -11,6 +11,7 @@ import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPanelProps {
   isActive: boolean;
+  onCwdChange?: (cwd: string | null) => void;
   onOpenLink?: (path: string, line?: number, column?: number) => void;
   // Reports the backend session id of this terminal once it starts, and `null`
   // when it is torn down (workspace switch / unmount). Lets the workbench
@@ -21,16 +22,19 @@ interface TerminalPanelProps {
   profileId: string | null;
   rootPath: string | null;
   terminalGateway: TerminalGateway;
+  shellIntegrationEnabled: boolean;
   terminalTheme: TerminalTheme;
 }
 
 export function TerminalPanel({
   isActive,
+  onCwdChange,
   onOpenLink,
   onSessionReady,
   profileId,
   rootPath,
   terminalGateway,
+  shellIntegrationEnabled,
   terminalTheme,
 }: TerminalPanelProps) {
   const terminalHostRef = useRef<HTMLDivElement | null>(null);
@@ -43,6 +47,8 @@ export function TerminalPanel({
   onSessionReadyRef.current = onSessionReady;
   const onOpenLinkRef = useRef(onOpenLink);
   onOpenLinkRef.current = onOpenLink;
+  const onCwdChangeRef = useRef(onCwdChange);
+  onCwdChangeRef.current = onCwdChange;
   const rootPathRef = useRef(rootPath);
   rootPathRef.current = rootPath;
 
@@ -71,6 +77,7 @@ export function TerminalPanel({
       fitAddon,
       gateway: terminalGateway,
       host,
+      onCwdChange: (cwd) => onCwdChangeRef.current?.(cwd),
       onOpenLink: (path, line, column) => {
         if (!sessionRootPath) {
           return;
@@ -91,6 +98,7 @@ export function TerminalPanel({
       onSessionReady: (sessionId) => onSessionReadyRef.current?.(sessionId),
       profileId,
       rootPath,
+      shellIntegrationEnabled,
       scheduleFrame: (callback) => requestAnimationFrame(callback),
       terminal: {
         get cols() {
@@ -119,7 +127,7 @@ export function TerminalPanel({
       sessionRef.current = null;
       session.dispose();
     };
-  }, [profileId, rootPath, terminalGateway]);
+  }, [profileId, rootPath, shellIntegrationEnabled, terminalGateway]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

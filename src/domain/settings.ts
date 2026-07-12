@@ -133,6 +133,7 @@ export interface AppSettings {
   recentWorkspacePath: string | null;
   recentWorkspacePaths?: string[];
   runtimePolicy: BackgroundRuntimePolicy;
+  terminalShellIntegrationEnabled: boolean;
   theme: AppTheme;
   /**
    * User-authored live templates, GLOBAL (app-level, not per-workspace) like
@@ -253,6 +254,7 @@ export function defaultAppSettings(): AppSettings {
     recentWorkspacePath: null,
     recentWorkspacePaths: [],
     runtimePolicy: "keepAlive",
+    terminalShellIntegrationEnabled: false,
     theme: "dark",
     userSnippets: [],
     workspaceTabs: [],
@@ -420,6 +422,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
   const runtimePolicy = isBackgroundRuntimePolicy(value.runtimePolicy)
     ? value.runtimePolicy
     : defaults.runtimePolicy;
+  const terminalShellIntegrationEnabled = normalizeBoolean(
+    value.terminalShellIntegrationEnabled,
+    defaults.terminalShellIntegrationEnabled,
+  );
   const theme = isAppTheme(value.theme) ? value.theme : defaults.theme;
   const userSnippets = normalizeUserSnippets(value.userSnippets);
   const workspaceTabs = normalizeWorkspaceTabs(
@@ -436,6 +442,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     recentWorkspacePath,
     recentWorkspacePaths,
     runtimePolicy,
+    terminalShellIntegrationEnabled,
     theme,
     userSnippets,
     workspaceTabs,

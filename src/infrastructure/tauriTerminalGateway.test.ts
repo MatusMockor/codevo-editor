@@ -101,6 +101,7 @@ describe("TauriTerminalGateway", () => {
       profileId: "default",
       rootPath: "/workspace",
       size: { cols: 80, rows: 24 },
+      terminalShellIntegrationEnabled: false,
     });
     expect(invokeCommand).toHaveBeenCalledWith("write_terminal_input", {
       data: "pwd\r",

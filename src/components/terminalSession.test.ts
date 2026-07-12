@@ -34,11 +34,52 @@ describe("createTerminalSession", () => {
 
     expect(harness.terminal.loadAddon).toHaveBeenCalledWith(harness.fitAddon);
     expect(harness.terminal.open).toHaveBeenCalledWith(harness.host);
-    expect(harness.gateway.start).toHaveBeenCalledWith("/workspace", {
-      cols: 80,
-      rows: 24,
-    }, "default");
+    expect(harness.gateway.start).toHaveBeenCalledWith(
+      "/workspace",
+      { cols: 80, rows: 24 },
+      "default",
+      false,
+    );
     expect(harness.terminal.write).toHaveBeenCalledWith("ready\r\n");
+  });
+
+  it("tracks cwd from rendered output and clears it when the session exits", async () => {
+    const onCwdChange = vi.fn();
+    const harness = terminalHarness({ onCwdChange });
+    const session = createTerminalSession(harness.options);
+
+    await harness.flushAsync();
+    harness.flushFrames();
+    await harness.flushAsync();
+    harness.emitOutput({
+      data: "ready\u001b]7;file://host/workspace/src\u0007\r\n",
+      sessionId: 1,
+    });
+
+    expect(harness.terminal.write).toHaveBeenCalledWith(
+      "ready\u001b]7;file://host/workspace/src\u0007\r\n",
+    );
+    expect(onCwdChange).toHaveBeenCalledWith("/workspace/src");
+
+    session.dispose();
+
+    expect(onCwdChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("opts into backend shell injection only when enabled", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.flushAsync();
+    harness.flushFrames();
+    await harness.flushAsync();
+
+    expect(harness.gateway.start).toHaveBeenCalledWith(
+      "/workspace",
+      { cols: 80, rows: 24 },
+      "default",
+      true,
+    );
   });
 
   it("buffers input and resize until the backend session starts", async () => {
@@ -183,8 +224,10 @@ describe("createTerminalSession", () => {
 
 function terminalHarness(
   overrides: Partial<{
+    onCwdChange: (cwd: string | null) => void;
     onOpenLink: (path: string, line?: number, column?: number) => void;
     rootPath: string | null;
+    shellIntegrationEnabled: boolean;
   }> = {},
 ) {
   let resizeCallback: ResizeObserverCallback | null = null;
@@ -298,11 +341,13 @@ function terminalHarness(
       fitAddon,
       gateway,
       host,
+      onCwdChange: overrides.onCwdChange,
       onOpenLink: overrides.onOpenLink,
       profileId: "default",
       rootPath: "rootPath" in overrides
         ? overrides.rootPath ?? null
         : "/workspace",
+      shellIntegrationEnabled: overrides.shellIntegrationEnabled ?? false,
       scheduleFrame: (callback: FrameRequestCallback) => {
         frameCallbacks.push(callback);
         return frameCallbacks.length;
