@@ -1,3 +1,4 @@
+use crate::file_fuzzy_matcher::file_match_rank;
 use crate::job_scheduler::{
     IndexCommitGate, IndexCommitPermission, IndexCommitScope, IndexDbWriteOperation,
     IndexFileMetadata, IndexFileSymbols, IndexSymbolKind, IndexSymbolRange, IndexSymbolRecord,
@@ -18,6 +19,7 @@ use std::{
 const CURRENT_SCHEMA_VERSION: i64 = 2;
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
+const PROJECT_SYMBOL_CANDIDATE_LIMIT: i64 = 20_000;
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -371,8 +373,8 @@ impl WorkspaceSymbolSearchStore for SqliteWorkspaceIndex {
         }
 
         let capped_limit = limit.clamp(1, 200);
-        let contains_pattern = format!("%{}%", escape_like_query(&normalized_query));
-        let prefix_pattern = format!("{}%", escape_like_query(&normalized_query));
+        let first_character = normalized_query.chars().next().expect("non-empty query");
+        let candidate_pattern = format!("%{}%", escape_like_query(&first_character.to_string()));
         let mut statement = self.connection.prepare(
             "
             SELECT
@@ -393,45 +395,49 @@ impl WorkspaceSymbolSearchStore for SqliteWorkspaceIndex {
                 )
             ORDER BY
                 CASE
-                    WHEN lower(name) = ?2 THEN 0
-                    WHEN lower(fully_qualified_name) = ?2 THEN 1
-                    WHEN lower(name) LIKE ?3 ESCAPE '\\' THEN 2
-                    WHEN lower(fully_qualified_name) LIKE ?3 ESCAPE '\\' THEN 3
-                    WHEN lower(name) LIKE ?1 ESCAPE '\\' THEN 4
-                    WHEN lower(fully_qualified_name) LIKE ?1 ESCAPE '\\' THEN 5
-                END,
-                CASE kind
-                    WHEN 'class' THEN 0
-                    WHEN 'interface' THEN 1
-                    WHEN 'trait' THEN 2
-                    WHEN 'enum' THEN 3
-                    WHEN 'function' THEN 4
-                    WHEN 'method' THEN 5
+                    WHEN lower(name) LIKE ?1 ESCAPE '\\' THEN 0
+                    ELSE 1
                 END,
                 length(fully_qualified_name),
                 lower(fully_qualified_name),
                 file_relative_path,
                 start_line,
                 ordinal
-            LIMIT ?4
+            LIMIT ?2
             ",
         )?;
         let rows = statement.query_map(
-            params![
-                contains_pattern,
-                normalized_query,
-                prefix_pattern,
-                capped_limit as i64,
-            ],
+            params![candidate_pattern, PROJECT_SYMBOL_CANDIDATE_LIMIT],
             project_symbol_search_result,
         )?;
-        let mut results = Vec::new();
+        let mut ranked_results = Vec::new();
 
         for row in rows {
-            results.push(row?);
+            let result = row?;
+            let rank = [
+                file_match_rank(&result.name, &normalized_query),
+                file_match_rank(&result.fully_qualified_name, &normalized_query),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
+            let Some(rank) = rank else {
+                continue;
+            };
+            ranked_results.push((result, rank));
         }
 
-        Ok(results)
+        ranked_results.sort_by(|(left, left_rank), (right, right_rank)| {
+            left_rank
+                .cmp(right_rank)
+                .then_with(|| symbol_kind_rank(left.kind).cmp(&symbol_kind_rank(right.kind)))
+        });
+        ranked_results.truncate(capped_limit);
+
+        Ok(ranked_results
+            .into_iter()
+            .map(|(result, _)| result)
+            .collect())
     }
 }
 
@@ -853,6 +859,19 @@ fn project_symbol_search_result(
         path: row.get(4)?,
         relative_path: row.get(5)?,
     })
+}
+
+fn symbol_kind_rank(kind: WorkspaceSymbolKind) -> u8 {
+    match kind {
+        WorkspaceSymbolKind::Class => 0,
+        WorkspaceSymbolKind::Interface => 1,
+        WorkspaceSymbolKind::Trait => 2,
+        WorkspaceSymbolKind::Enum => 3,
+        WorkspaceSymbolKind::Function => 4,
+        WorkspaceSymbolKind::Method => 5,
+        WorkspaceSymbolKind::Property => 6,
+        WorkspaceSymbolKind::Constant => 7,
+    }
 }
 
 fn php_file_outline_symbol_record(
@@ -1603,6 +1622,140 @@ mod tests {
         assert_eq!(fqn_results.len(), 1);
         assert_eq!(fqn_results[0].name, "findUser");
         assert_eq!(fqn_results[0].path, "/project/src/User.php");
+    }
+
+    #[test]
+    fn project_symbol_search_matches_camel_humps_and_subsequences() {
+        let database_path = temp_database_path("symbol-search-fuzzy");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/Symbols.php", 128))
+            .expect("seed symbols file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/Symbols.php",
+                vec![
+                    symbol(
+                        "UserController",
+                        "App\\Http\\UserController",
+                        WorkspaceSymbolKind::Class,
+                        10,
+                    ),
+                    symbol(
+                        "UserRepository",
+                        "App\\Repository\\UserRepository",
+                        WorkspaceSymbolKind::Class,
+                        20,
+                    ),
+                ],
+            ))
+            .expect("seed symbols");
+
+        let camel_results = index
+            .search_project_symbols("UC", 10)
+            .expect("camel symbol search");
+        let subsequence_results = index
+            .search_project_symbols("usrepo", 10)
+            .expect("subsequence symbol search");
+        let mid_name_results = index
+            .search_project_symbols("srepo", 10)
+            .expect("mid-name subsequence symbol search");
+
+        assert_eq!(camel_results[0].name, "UserController");
+        assert_eq!(subsequence_results[0].name, "UserRepository");
+        assert_eq!(mid_name_results[0].name, "UserRepository");
+    }
+
+    #[test]
+    fn project_symbol_search_matches_fully_qualified_name_only() {
+        let database_path = temp_database_path("symbol-search-fqn-fuzzy");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/AuditLogger.php", 128))
+            .expect("seed symbol file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/AuditLogger.php",
+                vec![symbol(
+                    "AuditLogger",
+                    "Vendor\\Sales\\Repository\\AuditLogger",
+                    WorkspaceSymbolKind::Class,
+                    10,
+                )],
+            ))
+            .expect("seed symbol");
+
+        let results = index
+            .search_project_symbols("salesrepo", 10)
+            .expect("fqn-only fuzzy symbol search");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "AuditLogger");
+        assert_eq!(
+            results[0].fully_qualified_name,
+            "Vendor\\Sales\\Repository\\AuditLogger"
+        );
+    }
+
+    #[test]
+    fn project_symbol_search_ranks_exact_before_prefix_before_subsequence() {
+        let database_path = temp_database_path("symbol-search-rank-tiers");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/Symbols.php", 128))
+            .expect("seed symbols file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/Symbols.php",
+                vec![
+                    symbol("User", "App\\OtherUser", WorkspaceSymbolKind::Class, 10),
+                    symbol(
+                        "UserFactory",
+                        "App\\UserFactory",
+                        WorkspaceSymbolKind::Class,
+                        20,
+                    ),
+                    symbol(
+                        "UsefulRouter",
+                        "App\\UsefulRouter",
+                        WorkspaceSymbolKind::Class,
+                        30,
+                    ),
+                ],
+            ))
+            .expect("seed symbols");
+
+        let results = index
+            .search_project_symbols("user", 10)
+            .expect("ranked symbol search");
+        let names: Vec<&str> = results.iter().map(|result| result.name.as_str()).collect();
+
+        assert_eq!(names, vec!["User", "UserFactory", "UsefulRouter"]);
+    }
+
+    #[test]
+    fn project_symbol_search_uses_kind_as_fuzzy_rank_tiebreak() {
+        let database_path = temp_database_path("symbol-search-kind-rank");
+        let index = SqliteWorkspaceIndex::open(&database_path).expect("open index");
+        index
+            .upsert_file(&file_record("/project/src/Symbols.php", 128))
+            .expect("seed symbols file");
+        index
+            .replace_file_symbols(&file_symbols(
+                "/project/src/Symbols.php",
+                vec![
+                    symbol("Render", "App\\Render", WorkspaceSymbolKind::Method, 10),
+                    symbol("Render", "Lib\\Render", WorkspaceSymbolKind::Class, 20),
+                ],
+            ))
+            .expect("seed symbols");
+
+        let results = index
+            .search_project_symbols("render", 10)
+            .expect("kind-ranked symbol search");
+
+        assert_eq!(results[0].kind, WorkspaceSymbolKind::Class);
+        assert_eq!(results[1].kind, WorkspaceSymbolKind::Method);
     }
 
     #[test]
