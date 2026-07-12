@@ -502,6 +502,7 @@ export interface RunEslintWorkspaceAnalysisOptions {
   showStartMessage?: boolean;
   setMessage(message: string | null): void;
   setRunning(running: boolean): void;
+  workspaceTrusted?: boolean;
 }
 
 export async function runEslintWorkspaceAnalysis({
@@ -514,7 +515,12 @@ export async function runEslintWorkspaceAnalysis({
   showStartMessage = true,
   setMessage,
   setRunning,
+  workspaceTrusted = true,
 }: RunEslintWorkspaceAnalysisOptions): Promise<void> {
+  if (!showStartMessage && !workspaceTrusted) {
+    return;
+  }
+
   if (inFlightRef.current) {
     return;
   }
@@ -553,7 +559,7 @@ export async function runEslintWorkspaceAnalysis({
     }
 
     if (result.status === "unavailable") {
-      setMessage("ESLint: unavailable");
+      setMessage(`ESLint: ${result.message ?? "unavailable"}`);
       return;
     }
 
@@ -574,6 +580,7 @@ export interface RunPhpstanWorkspaceAnalysisOptions {
   showStartMessage?: boolean;
   setMessage(message: string | null): void;
   setRunning(running: boolean): void;
+  workspaceTrusted?: boolean;
 }
 
 export async function runPhpstanWorkspaceAnalysis({
@@ -586,7 +593,12 @@ export async function runPhpstanWorkspaceAnalysis({
   showStartMessage = true,
   setMessage,
   setRunning,
+  workspaceTrusted = true,
 }: RunPhpstanWorkspaceAnalysisOptions): Promise<void> {
+  if (!showStartMessage && !workspaceTrusted) {
+    return;
+  }
+
   if (inFlightRef.current) {
     return;
   }
@@ -625,11 +637,15 @@ export async function runPhpstanWorkspaceAnalysis({
       setMessage(
         `PHPStan: ${problemCount} problems in ${result.totals.fileCount} files`,
       );
-    } else if (result.status === "unavailable") {
-      setMessage("PHPStan: unavailable");
-    } else {
-      setMessage(`PHPStan: ${result.message}`);
+      return;
     }
+
+    if (result.status === "unavailable") {
+      setMessage(`PHPStan: ${result.message ?? "unavailable"}`);
+      return;
+    }
+
+    setMessage(`PHPStan: ${result.message}`);
   } finally {
     inFlightRef.current = false;
     setRunning(false);
@@ -2069,8 +2085,9 @@ export function useWorkbenchController(
       showStartMessage,
       setMessage,
       setRunning: setEslintAnalysisRunning,
+      workspaceTrusted: workspaceTrust?.trusted === true,
     });
-  }, [replaceEslintDiagnostics]);
+  }, [replaceEslintDiagnostics, workspaceTrust?.trusted]);
 
   const runEslintAnalysis = useCallback(async () => {
     const rootPath = currentWorkspaceRootRef.current;
@@ -2083,6 +2100,10 @@ export function useWorkbenchController(
   }, [runEslintAnalysisForRoot]);
 
   const runEslintAnalysisOnSave = useCallback((rootPath: string) => {
+    if (!workspaceTrust?.trusted) {
+      return;
+    }
+
     if (
       !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
       workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson !== true ||
@@ -2096,6 +2117,7 @@ export function useWorkbenchController(
     eslintAnalysisRunning,
     runEslintAnalysisForRoot,
     workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson,
+    workspaceTrust?.trusted,
   ]);
 
   useEffect(() => {
@@ -2127,8 +2149,9 @@ export function useWorkbenchController(
       showStartMessage,
       setMessage,
       setRunning: setPhpstanAnalysisRunning,
+      workspaceTrusted: workspaceTrust?.trusted === true,
     });
-  }, [replacePhpstanDiagnostics]);
+  }, [replacePhpstanDiagnostics, workspaceTrust?.trusted]);
 
   const runPhpstanAnalysis = useCallback(async () => {
     const rootPath = currentWorkspaceRootRef.current;
@@ -2141,6 +2164,10 @@ export function useWorkbenchController(
   }, [runPhpstanAnalysisForRoot]);
 
   const runPhpstanAnalysisOnSave = useCallback((rootPath: string) => {
+    if (!workspaceTrust?.trusted) {
+      return;
+    }
+
     if (
       !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
       !workspaceDescriptor?.php ||
@@ -2154,6 +2181,7 @@ export function useWorkbenchController(
     phpstanAnalysisRunning,
     runPhpstanAnalysisForRoot,
     workspaceDescriptor?.php,
+    workspaceTrust?.trusted,
   ]);
 
   useEffect(() => {

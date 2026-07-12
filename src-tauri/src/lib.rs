@@ -638,6 +638,66 @@ fn get_workspace_trust(
 }
 
 #[tauri::command]
+async fn run_eslint_analysis(
+    root_path: String,
+    binary_path: Option<String>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<eslint::EslintAnalysisResponse, String> {
+    run_eslint_analysis_with_trust(root_path, binary_path, &trust).await
+}
+
+async fn run_eslint_analysis_with_trust(
+    root_path: String,
+    binary_path: Option<String>,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<eslint::EslintAnalysisResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(eslint::EslintAnalysisResponse::Unavailable {
+            message: Some("Trust this workspace to run ESLint.".to_string()),
+        });
+    }
+
+    eslint::run_eslint_analysis(root_path, binary_path).await
+}
+
+#[tauri::command]
+async fn run_phpstan_analysis(
+    root_path: String,
+    binary_path: Option<String>,
+    config_path: Option<String>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<phpstan::PhpStanAnalysisResponse, String> {
+    run_phpstan_analysis_with_trust(root_path, binary_path, config_path, &trust).await
+}
+
+async fn run_phpstan_analysis_with_trust(
+    root_path: String,
+    binary_path: Option<String>,
+    config_path: Option<String>,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<phpstan::PhpStanAnalysisResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(phpstan::PhpStanAnalysisResponse::Unavailable {
+            message: Some("Trust this workspace to run PHPStan.".to_string()),
+        });
+    }
+
+    phpstan::run_phpstan_analysis(root_path, binary_path, config_path).await
+}
+
+#[tauri::command]
 async fn parse_php_syntax(source: String) -> Result<Vec<PhpSyntaxDiagnostic>, String> {
     // tree-sitter parsing is CPU-bound; run it on the blocking pool so the Tauri
     // WebView main thread stays responsive while a project is opening.
@@ -5847,10 +5907,12 @@ mod tests {
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
-        rename_git_branch, save_git_stash, search_files, stage_git_files, stage_git_hunk,
-        stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
+        rename_git_branch, run_eslint_analysis_with_trust, run_phpstan_analysis_with_trust,
+        save_git_stash, search_files, stage_git_files, stage_git_hunk, stash_apply_git,
+        stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
     };
+    use crate::eslint::EslintAnalysisResponse;
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
@@ -5865,13 +5927,15 @@ mod tests {
     };
     use crate::lsp_session::{LanguageServerCapabilities, LanguageServerRuntimeStatus};
     use crate::php_file_outline::PhpFileOutlineNodeKind;
+    use crate::phpstan::PhpStanAnalysisResponse;
+    use crate::trust::WorkspaceTrustService;
     use crate::workspace::FileEntryKind;
     use crate::workspace_file_commands::WorkspaceEditResult;
     use crate::workspace_registry::{WorkspaceId, WorkspaceRegistry};
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -8398,6 +8462,102 @@ mod tests {
     }
 
     #[test]
+    fn untrusted_workspace_blocks_eslint_analysis() {
+        let root = temp_workspace("eslint-untrusted");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let response = tauri::async_runtime::block_on(run_eslint_analysis_with_trust(
+            path_string(&root),
+            None,
+            &trust,
+        ))
+        .expect("eslint response");
+
+        assert_eq!(
+            response,
+            EslintAnalysisResponse::Unavailable {
+                message: Some("Trust this workspace to run ESLint.".to_string()),
+            }
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn trusted_workspace_dispatches_eslint_analysis() {
+        let root = temp_workspace("eslint-trusted");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+
+        let response = tauri::async_runtime::block_on(run_eslint_analysis_with_trust(
+            path_string(&root),
+            None,
+            &trust,
+        ))
+        .expect("eslint response");
+
+        assert_eq!(
+            response,
+            EslintAnalysisResponse::Unavailable { message: None }
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn untrusted_workspace_blocks_phpstan_analysis() {
+        let root = temp_workspace("phpstan-untrusted");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let response = tauri::async_runtime::block_on(run_phpstan_analysis_with_trust(
+            path_string(&root),
+            None,
+            None,
+            &trust,
+        ))
+        .expect("phpstan response");
+
+        assert_eq!(
+            response,
+            PhpStanAnalysisResponse::Unavailable {
+                message: Some("Trust this workspace to run PHPStan.".to_string()),
+            }
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn trusted_workspace_dispatches_phpstan_analysis() {
+        let root = temp_workspace("phpstan-trusted");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+
+        let response = tauri::async_runtime::block_on(run_phpstan_analysis_with_trust(
+            path_string(&root),
+            None,
+            None,
+            &trust,
+        ))
+        .expect("phpstan response");
+
+        assert_eq!(
+            response,
+            PhpStanAnalysisResponse::Unavailable { message: None }
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn parse_php_file_outline_surfaces_signature_metadata_off_thread() {
         let outline = tauri::async_runtime::block_on(parse_php_file_outline(
             "/workspace/src/User.php".to_string(),
@@ -8681,8 +8841,8 @@ pub fn run() {
             remove_workspace_index_file,
             resize_terminal_session,
             revert_git_files,
-            eslint::run_eslint_analysis,
-            phpstan::run_phpstan_analysis,
+            run_eslint_analysis,
+            run_phpstan_analysis,
             search_files,
             search_project_symbols,
             search_text,

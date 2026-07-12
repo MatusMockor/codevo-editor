@@ -39,13 +39,15 @@ pub enum EslintAnalysisResponse {
         diagnostics: Vec<EslintDiagnostic>,
         totals: EslintTotals,
     },
-    Unavailable,
+    Unavailable {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     Error {
         message: String,
     },
 }
 
-#[tauri::command]
 pub async fn run_eslint_analysis(
     root_path: String,
     binary_path: Option<String>,
@@ -73,7 +75,7 @@ fn run_eslint_analysis_blocking(
     };
     let binary = match resolve_binary(&root, binary_path) {
         Ok(Some(binary)) => binary,
-        Ok(None) => return EslintAnalysisResponse::Unavailable,
+        Ok(None) => return EslintAnalysisResponse::Unavailable { message: None },
         Err(message) => return EslintAnalysisResponse::Error { message },
     };
     let cache_base = std::env::temp_dir()
@@ -359,7 +361,10 @@ mod tests {
     fn returns_unavailable_without_explicit_or_workspace_binary() {
         let root = temp_workspace("eslint-unavailable");
         let response = run_eslint_analysis_blocking(root.to_str().expect("root"), None);
-        assert_eq!(response, EslintAnalysisResponse::Unavailable);
+        assert_eq!(
+            response,
+            EslintAnalysisResponse::Unavailable { message: None }
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

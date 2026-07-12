@@ -15,7 +15,7 @@ export type PhpstanAnalysisResult =
       diagnostics: PhpstanDiagnostic[];
       totals: { fileErrors: number; generalErrors: number; fileCount: number };
     }
-  | { status: "unavailable" }
+  | { status: "unavailable"; message?: string }
   | { status: "error"; message: string };
 
 export interface PhpstanDiagnosticsGateway {
@@ -41,7 +41,8 @@ export function parsePhpstanDiagnostics(
       createWorkbenchNotice(
         "info",
         "PHPStan",
-        "PHPStan is unavailable. Configure phpstanPath or install PHPStan with Composer.",
+        result.message ??
+          "PHPStan is unavailable. Configure phpstanPath or install PHPStan with Composer.",
         groupKey,
       ),
     ];

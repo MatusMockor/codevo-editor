@@ -43,6 +43,48 @@ describe("runPhpstanWorkspaceAnalysis", () => {
     expect(input.setRunning).not.toHaveBeenCalled();
   });
 
+  it("skips an auto-triggered run when the workspace is untrusted", async () => {
+    const input = options(Promise.resolve({ status: "unavailable" }));
+
+    await runPhpstanWorkspaceAnalysis({
+      ...input,
+      showStartMessage: false,
+      workspaceTrusted: false,
+    });
+
+    expect(input.gateway.analyse).not.toHaveBeenCalled();
+    expect(input.setMessage).not.toHaveBeenCalled();
+    expect(input.setRunning).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the workspace trust notice for a manual run", async () => {
+    const input = options(
+      Promise.resolve({
+        status: "unavailable",
+        message: "Trust this workspace to run PHPStan.",
+      }),
+    );
+
+    await runPhpstanWorkspaceAnalysis({
+      ...input,
+      workspaceTrusted: false,
+    });
+
+    expect(input.gateway.analyse).toHaveBeenCalledOnce();
+    expect(input.replacePhpstanDiagnostics).toHaveBeenCalledWith(
+      "/workspace",
+      [
+        expect.objectContaining({
+          message: "Trust this workspace to run PHPStan.",
+          severity: "info",
+        }),
+      ],
+    );
+    expect(input.setMessage).toHaveBeenLastCalledWith(
+      "PHPStan: Trust this workspace to run PHPStan.",
+    );
+  });
+
   it("suppresses the transient auto-run status while updating diagnostics normally", async () => {
     const result = deferred<PhpstanAnalysisResult>();
     const input = options(result.promise);

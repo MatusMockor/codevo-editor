@@ -18,7 +18,7 @@ export type EslintAnalysisResult =
       diagnostics: EslintDiagnostic[];
       totals: { errorCount: number; warningCount: number; fileCount: number };
     }
-  | { status: "unavailable" }
+  | { status: "unavailable"; message?: string }
   | { status: "error"; message: string };
 
 export interface EslintDiagnosticsGateway {
@@ -43,7 +43,8 @@ export function parseEslintDiagnostics(
       createWorkbenchNotice(
         "info",
         "ESLint",
-        "ESLint is unavailable. Configure eslintPath or install ESLint in the workspace.",
+        result.message ??
+          "ESLint is unavailable. Configure eslintPath or install ESLint in the workspace.",
         groupKey,
       ),
     ];

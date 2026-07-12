@@ -34,13 +34,15 @@ pub enum PhpStanAnalysisResponse {
         diagnostics: Vec<PhpStanDiagnostic>,
         totals: PhpStanTotals,
     },
-    Unavailable,
+    Unavailable {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     Error {
         message: String,
     },
 }
 
-#[tauri::command]
 pub async fn run_phpstan_analysis(
     root_path: String,
     binary_path: Option<String>,
@@ -71,7 +73,7 @@ fn run_phpstan_analysis_blocking(
     };
     let binary = match resolve_binary(&root, binary_path) {
         Ok(Some(binary)) => binary,
-        Ok(None) => return PhpStanAnalysisResponse::Unavailable,
+        Ok(None) => return PhpStanAnalysisResponse::Unavailable { message: None },
         Err(message) => return PhpStanAnalysisResponse::Error { message },
     };
     let mut command = Command::new(binary);
@@ -433,7 +435,10 @@ mod tests {
         let response =
             run_phpstan_analysis_blocking(root.to_str().expect("utf-8 root"), None, None);
 
-        assert_eq!(response, PhpStanAnalysisResponse::Unavailable);
+        assert_eq!(
+            response,
+            PhpStanAnalysisResponse::Unavailable { message: None }
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 
