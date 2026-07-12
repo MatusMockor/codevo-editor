@@ -1,6 +1,14 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { CommandRegistry } from "./commandRegistry";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
@@ -410,10 +418,17 @@ import {
   recentFilesForSwitcher,
   type RecentFileEntry,
 } from "../domain/recentFiles";
+import { type TabDropPosition } from "../domain/tabOrdering";
 import {
-  reorderVisibleTabs,
-  type TabDropPosition,
-} from "../domain/tabOrdering";
+  activateEditorGroupPath,
+  closeEditorGroupPath,
+  createEditorGroup,
+  openEditorGroupPath,
+  reorderEditorGroupTabs,
+  updateEditorGroupOpenPaths,
+  updateEditorGroupPreviewPath,
+  type EditorGroup,
+} from "../domain/editorGroups";
 import { type RecentLocation } from "../domain/recentLocations";
 import {
   sortBookmarks,
@@ -1059,10 +1074,40 @@ export function useWorkbenchController(
   const [markdownPreviewTabs, setMarkdownPreviewTabs] = useState<
     Record<string, MarkdownPreviewTab>
   >({});
-  const [openPaths, setOpenPaths] = useState<string[]>([]);
-  const [activePath, setActivePath] = useState<string | null>(null);
+  const activeGroupId = 0 as const;
+  const [groups, setGroups] = useState<[EditorGroup]>(() => [
+    createEditorGroup(),
+  ]);
+  const activeGroup = groups[activeGroupId];
+  const { activePath, openPaths, previewPath } = activeGroup;
+  const setActivePath = useCallback<Dispatch<SetStateAction<string | null>>>(
+    (update) => {
+      setGroups((current) => [
+        activateEditorGroupPath(
+          current[activeGroupId],
+          resolveStateUpdate(current[activeGroupId].activePath, update),
+        ),
+      ]);
+    },
+    [],
+  );
+  const setOpenPaths = useCallback<Dispatch<SetStateAction<string[]>>>(
+    (update) => {
+      setGroups((current) => [
+        updateEditorGroupOpenPaths(current[activeGroupId], update),
+      ]);
+    },
+    [],
+  );
+  const setPreviewPath = useCallback<Dispatch<SetStateAction<string | null>>>(
+    (update) => {
+      setGroups((current) => [
+        updateEditorGroupPreviewPath(current[activeGroupId], update),
+      ]);
+    },
+    [],
+  );
   const [isOpeningFile, setIsOpeningFile] = useState(false);
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [artisanMakePaletteRoot, setArtisanMakePaletteRoot] = useState<
     string | null
@@ -5174,42 +5219,42 @@ export function useWorkbenchController(
       const nextImages = { ...imageTabsRef.current };
       delete nextMarkdownPreviews[path];
       delete nextImages[path];
-      const nextOpenPaths = openPathsRef.current.filter((item) => item !== path);
-      const nextPreviewPath = previewPathRef.current === path ? null : previewPathRef.current;
-      const nextVisiblePaths = visibleEditorPaths(nextOpenPaths, nextPreviewPath);
-      const nextActivePath =
-        activePath === path
-          ? nextVisiblePaths[nextVisiblePaths.length - 1] ?? null
-          : activePath;
+      const nextGroup = closeEditorGroupPath(
+        {
+          activePath,
+          openPaths: openPathsRef.current,
+          previewPath: previewPathRef.current,
+        },
+        path,
+      );
       imageTabsRef.current = nextImages;
       markdownPreviewTabsRef.current = nextMarkdownPreviews;
-      openPathsRef.current = nextOpenPaths;
-      previewPathRef.current = nextPreviewPath;
-      activeDocumentRef.current = nextActivePath
-        ? documentsRef.current[nextActivePath] ?? null
+      openPathsRef.current = nextGroup.openPaths;
+      previewPathRef.current = nextGroup.previewPath;
+      activeDocumentRef.current = nextGroup.activePath
+        ? documentsRef.current[nextGroup.activePath] ?? null
         : null;
       setImageTabs(nextImages);
       setMarkdownPreviewTabs(nextMarkdownPreviews);
-      setOpenPaths(nextOpenPaths);
-      setPreviewPath(nextPreviewPath);
-      if (activePath === path) {
-        setActivePath(nextActivePath);
-      }
+      setGroups((current) => [
+        closeEditorGroupPath(current[activeGroupId], path),
+      ]);
     },
     [activePath, closeTextDocument],
   );
 
   const reorderOpenTabs = useCallback(
     (fromPath: string, toPath: string, position: TabDropPosition) => {
-      const reordered = reorderVisibleTabs({
-        openPaths: openPathsRef.current,
-        previewPath: previewPathRef.current,
-        fromPath,
-        toPath,
-        position,
-      });
-      setOpenPaths(reordered.openPaths);
-      setPreviewPath(reordered.previewPath);
+      setGroups((current) => [
+        reorderEditorGroupTabs(
+          {
+            ...current[activeGroupId],
+            openPaths: openPathsRef.current,
+            previewPath: previewPathRef.current,
+          },
+          { fromPath, toPath, position },
+        ),
+      ]);
     },
     [],
   );
@@ -5467,9 +5512,13 @@ export function useWorkbenchController(
     previewPathRef.current = null;
     activeDocumentRef.current = null;
     setMarkdownPreviewTabs(nextMarkdownPreviews);
-    setOpenPaths(nextOpenPaths);
-    setPreviewPath(null);
-    setActivePath(path);
+    setGroups((current) => [
+      openEditorGroupPath(current[activeGroupId], {
+        nextActivePath: path,
+        nextOpenPaths,
+        nextPreviewPath: null,
+      }),
+    ]);
 
     try {
       const html = await markdownPreviewRenderer(source.content);
@@ -10309,6 +10358,17 @@ function workspaceTabPathForPath(
   path: string | null | undefined,
 ): string | null {
   return tabs.find((tabPath) => workspaceRootKeysEqual(tabPath, path)) ?? null;
+}
+
+function resolveStateUpdate<Value>(
+  current: Value,
+  update: SetStateAction<Value>,
+): Value {
+  if (typeof update === "function") {
+    return (update as (value: Value) => Value)(current);
+  }
+
+  return update;
 }
 
 function isRunningLanguageServerForWorkspace(
