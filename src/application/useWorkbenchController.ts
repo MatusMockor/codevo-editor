@@ -6429,6 +6429,7 @@ export function useWorkbenchController(
     handleWorkspaceFileChange,
   } = useWorkbenchFileOperations({
     workspaceRoot,
+    workspaceDescriptor,
     activePath,
     sidebarView,
     languageServerDiagnosticsByPath,

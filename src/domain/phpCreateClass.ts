@@ -946,7 +946,7 @@ interface Psr4Match {
  * the first declared `paths` entry is used as the create destination (composer
  * allows several; the first is the conventional primary).
  */
-function bestPsr4Match(
+export function bestPsr4Match(
   psr4Roots: readonly Psr4Root[],
   fqn: string,
 ): Psr4Match | null {

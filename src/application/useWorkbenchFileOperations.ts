@@ -16,6 +16,7 @@ import {
   isLanguageServerDocument,
 } from "../domain/languageServerDocumentSync";
 import {
+  createWorkspaceTextFileWithContent,
   detectLanguage,
   getFileName,
   getParentPath,
@@ -25,7 +26,9 @@ import {
   type EditorDocument,
   type FileEntry,
   type WorkspaceFileGateway,
+  type WorkspaceDescriptor,
 } from "../domain/workspace";
+import { phpNewFileTemplate } from "../domain/phpNewFileTemplate";
 import {
   removeBookmarksForPath,
   renameBookmarksForPath,
@@ -47,6 +50,7 @@ interface OpenFileOptions {
 
 export interface WorkbenchFileOperationsDependencies {
   workspaceRoot: string | null;
+  workspaceDescriptor: WorkspaceDescriptor | null;
   activePath: string | null;
   sidebarView: SidebarView;
   languageServerDiagnosticsByPath: Record<string, unknown>;
@@ -145,6 +149,7 @@ export function useWorkbenchFileOperations(
 ): WorkbenchFileOperations {
   const {
     workspaceRoot,
+    workspaceDescriptor,
     activePath,
     sidebarView,
     languageServerDiagnosticsByPath,
@@ -229,7 +234,20 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      await workspaceFiles.createTextFile(path);
+      const template = phpNewFileTemplate(
+        relativePath,
+        workspaceDescriptor?.php?.psr4Roots ?? [],
+      );
+
+      if (template) {
+        await createWorkspaceTextFileWithContent(
+          workspaceFiles,
+          path,
+          template.content,
+        );
+      } else {
+        await workspaceFiles.createTextFile(path);
+      }
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
@@ -260,6 +278,7 @@ export function useWorkbenchFileOperations(
     reportErrorForActiveWorkspaceRoot,
     setExpandedDirectories,
     workspaceFiles,
+    workspaceDescriptor,
     workspaceRoot,
   ]);
 
