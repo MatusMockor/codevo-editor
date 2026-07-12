@@ -1422,6 +1422,9 @@ function App() {
             navigationHistoryPaths={navigationHistoryPaths}
             openDocumentPaths={openDocumentPaths}
             restoredViewStates={workbench.restoredEditorViewStates}
+            restoredViewStateRevision={
+              workbench.restoredEditorViewStateRevision
+            }
             transientWidgetDismissKey={transientEditorWidgetDismissKey}
             phpIdeReadinessVersion={workbench.phpIdeReadinessVersion}
             phpLanguageServerWorkspaceEditGateway={

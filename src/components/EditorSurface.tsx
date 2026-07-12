@@ -262,6 +262,7 @@ interface EditorSurfaceProps {
   navigationHistoryPaths?: readonly string[];
   openDocumentPaths?: readonly string[];
   restoredViewStates?: Record<string, WorkspaceSessionViewState>;
+  restoredViewStateRevision?: number;
   transientWidgetDismissKey?: string;
   phpInlayHintsEnabled?: boolean;
   phpIdeReadinessVersion?: number;
@@ -434,6 +435,7 @@ function EditorSurfaceComponent({
   navigationHistoryPaths = EMPTY_PATHS,
   openDocumentPaths = EMPTY_PATHS,
   restoredViewStates = {},
+  restoredViewStateRevision = 0,
   transientWidgetDismissKey,
   phpInlayHintsEnabled = true,
   phpIdeReadinessVersion = 0,
@@ -2959,7 +2961,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const applicationKey = `${workspaceRoot}\0${activeDocument.path}`;
+    const applicationKey = `${workspaceRoot}\0${activeDocument.path}\0${restoredViewStateRevision}`;
 
     if (appliedRestoredViewStateKeysRef.current.has(applicationKey)) {
       return;
@@ -3115,7 +3117,13 @@ function EditorSurfaceComponent({
       disposable.dispose();
       retryDisposable?.dispose();
     };
-  }, [activeDocument, editorApi, restoredViewStates, workspaceRoot]);
+  }, [
+    activeDocument,
+    editorApi,
+    restoredViewStateRevision,
+    restoredViewStates,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!editorApi || !activeDocument || !onEditorViewStateChange) {

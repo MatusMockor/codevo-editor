@@ -68,7 +68,10 @@ import { usePhpImplementationNavigation } from "./usePhpImplementationNavigation
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
-import { useDocumentLifecycle } from "./useDocumentLifecycle";
+import {
+  useDocumentLifecycle,
+  type DocumentCloseOptions,
+} from "./useDocumentLifecycle";
 import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
 import {
   currentWorkspaceSession,
@@ -369,6 +372,10 @@ import type {
 import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
 import { pushGitCommitMessageHistory } from "../domain/gitCommitMessageHistory";
+import {
+  clearRecentlyClosedTabs,
+  emptyRecentlyClosedTabs,
+} from "../domain/recentlyClosedTabs";
 import {
   defaultAppSettings,
   defaultEditorFontSize,
@@ -1123,6 +1130,10 @@ export function useWorkbenchController(
   const workspaceEditorViewStatesRef = useRef<
     Record<string, Record<string, WorkspaceSessionViewState>>
   >({});
+  const [restoredEditorViewStateRevision, setRestoredEditorViewStateRevision] =
+    useState(0);
+  const recentlyClosedTabsRef = useRef(emptyRecentlyClosedTabs());
+  const [, setRecentlyClosedTabsVersion] = useState(0);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const lastPhpIdeReadinessSignatureRef = useRef<string | null>(null);
   const openWorkspaceRequestTokenRef = useRef(0);
@@ -4958,7 +4969,7 @@ export function useWorkbenchController(
 
   const {
     closeApplicationWindow,
-    closeWorkspaceTab,
+    closeWorkspaceTab: closeWorkspaceTabWithLifecycle,
     quitApplication,
   } = useWorkbenchCloseLifecycle({
     workspaceRoot,
@@ -4991,11 +5002,80 @@ export function useWorkbenchController(
     reportError,
   });
 
+  const closeWorkspaceTab = useCallback(
+    async (path: string) => {
+      await closeWorkspaceTabWithLifecycle(path);
+
+      if (
+        appSettingsRef.current.workspaceTabs.some((tabPath) =>
+          workspaceRootKeysEqual(tabPath, path),
+        )
+      ) {
+        return;
+      }
+
+      recentlyClosedTabsRef.current = clearRecentlyClosedTabs(
+        recentlyClosedTabsRef.current,
+        path,
+      );
+    },
+    [closeWorkspaceTabWithLifecycle],
+  );
+
+  const recentlyClosedDocumentViewState = useCallback(
+    (rootPath: string, path: string) =>
+      workspaceEditorViewStatesRef.current[rootPath]?.[path],
+    [],
+  );
+
+  const onRecentlyClosedTabsChange = useCallback(() => {
+    setRecentlyClosedTabsVersion((current) => current + 1);
+  }, []);
+
+  const openRecentlyClosedDocument = useCallback(
+    async (rootPath: string, path: string) => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return false;
+      }
+
+      return openPinnedFile({
+        kind: "file",
+        name: getFileName(path),
+        path,
+      });
+    },
+    [openPinnedFile],
+  );
+
+  const restoreRecentlyClosedDocumentViewState = useCallback(
+    (
+      rootPath: string,
+      path: string,
+      viewState: WorkspaceSessionViewState,
+    ) => {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
+      current[path] = viewState;
+      workspaceEditorViewStatesRef.current[rootPath] = current;
+      setRestoredEditorViewStateRevision((revision) => revision + 1);
+      setEditorRevealTarget({
+        path,
+        position: { column: viewState.column, lineNumber: viewState.line },
+      });
+    },
+    [setEditorRevealTarget],
+  );
+
   const {
     captureLocalHistorySnapshot,
     saveActiveDocument,
     closeDocument: closeTextDocument,
     closeActiveSurface: closeTextSurface,
+    reopenClosedDocument,
+    canReopenClosedDocument,
   } = useDocumentLifecycle({
     workspaceRoot,
     activeDocument,
@@ -5017,6 +5097,7 @@ export function useWorkbenchController(
     externallyRemovedDocumentRootByPathRef,
     gitDiffRequestTokenRef,
     selectedGitChangeRef,
+    recentlyClosedTabsRef,
     setDocuments,
     setPreviewPath,
     setOpenPaths,
@@ -5050,10 +5131,14 @@ export function useWorkbenchController(
     detectSaveConflict: externalFileConflicts.detectSaveConflict,
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
+    recentlyClosedDocumentViewState,
+    openRecentlyClosedDocument,
+    restoreRecentlyClosedDocumentViewState,
+    onRecentlyClosedTabsChange,
   });
 
   const closeDocument = useCallback(
-    (path: string) => {
+    (path: string, options: DocumentCloseOptions = {}) => {
       const rootPath = currentWorkspaceRootRef.current;
 
       if (rootPath) {
@@ -5068,7 +5153,7 @@ export function useWorkbenchController(
       const markdownPreview = markdownPreviewTabsRef.current[path];
 
       if (!imageTabsRef.current[path] && !markdownPreview) {
-        closeTextDocument(path);
+        closeTextDocument(path, options);
         return;
       }
       const nextMarkdownPreviews = { ...markdownPreviewTabsRef.current };
@@ -8199,6 +8284,8 @@ export function useWorkbenchController(
       ),
       saveActiveDocument,
       closeActiveSurface,
+      canReopenClosedDocument,
+      reopenClosedDocument,
       editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
     }).forEach((command) => registry.register(command));
 
@@ -8336,6 +8423,8 @@ export function useWorkbenchController(
     appSettings.keymap,
     appSettings.recentWorkspacePaths,
     appSettings.workspaceTabs,
+    canReopenClosedDocument,
+    closeActiveSurface,
     closeDocument,
     createDirectory,
     createFile,
@@ -8387,6 +8476,7 @@ export function useWorkbenchController(
     refreshWorkspace,
     refreshGitStatus,
     refreshPhpTree,
+    reopenClosedDocument,
     renameActiveDocument,
     saveActiveDocument,
     showBottomPanelView,
@@ -9644,6 +9734,7 @@ export function useWorkbenchController(
     restoredEditorViewStates: workspaceRoot
       ? workspaceEditorViewStatesRef.current[workspaceRoot] ?? {}
       : {},
+    restoredEditorViewStateRevision,
     workspaceTabs: appSettings.workspaceTabs,
     workspaceSettings,
     workspaceTrust,

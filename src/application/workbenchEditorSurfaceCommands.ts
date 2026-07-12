@@ -8,16 +8,20 @@ import type { Command, CommandContext } from "./commandRegistry";
 interface WorkbenchEditorSurfaceCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;
   canCloseActiveSurface: boolean;
+  canReopenClosedDocument: boolean;
   saveActiveDocument: Command["run"];
   closeActiveSurface: Command["run"];
+  reopenClosedDocument: Command["run"];
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
 }
 
 export function workbenchEditorSurfaceCommands({
   shortcut,
   canCloseActiveSurface,
+  canReopenClosedDocument,
   saveActiveDocument,
   closeActiveSurface,
+  reopenClosedDocument,
   editorSurfaceCommandRunner = null,
 }: WorkbenchEditorSurfaceCommandsOptions): Command[] {
   return [
@@ -37,6 +41,14 @@ export function workbenchEditorSurfaceCommands({
       shortcut: shortcut("editor.closeTab"),
       isEnabled: () => canCloseActiveSurface,
       run: closeActiveSurface,
+    },
+    {
+      id: "editor.reopenClosedTab",
+      title: "Reopen Closed Tab",
+      category: "Editor",
+      shortcut: shortcut("editor.reopenClosedTab"),
+      isEnabled: () => canReopenClosedDocument,
+      run: reopenClosedDocument,
     },
     ...editorSurfaceRunnerCommands.map(({ id, title }) => ({
       id,

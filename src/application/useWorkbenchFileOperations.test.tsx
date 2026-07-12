@@ -186,3 +186,51 @@ class Greeter
     },
   );
 });
+
+describe("useWorkbenchFileOperations close intent", () => {
+  it("does not record a deleted document as recently closed", async () => {
+    const document = {
+      content: "content",
+      language: "php",
+      name: "Deleted.php",
+      path: `${ROOT}/Deleted.php`,
+      savedContent: "content",
+    };
+    const closeDocument = vi.fn();
+    const dependencies = makeDependencies("", {
+      activeDocumentRef: { current: document },
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+      closeDocument,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+    });
+    const operations = renderHook(dependencies);
+
+    await act(async () => operations().deleteActiveDocument());
+
+    expect(closeDocument).toHaveBeenCalledWith(document.path, {
+      recordRecentlyClosed: false,
+    });
+  });
+
+  it("does not record an externally removed document as recently closed", () => {
+    const path = `${ROOT}/Removed.php`;
+    const closeDocument = vi.fn();
+    const dependencies = makeDependencies("", { closeDocument });
+    const operations = renderHook(dependencies);
+
+    act(() =>
+      operations().handleWorkspaceFileChange({
+        fileKind: "file",
+        kind: "deleted",
+        path,
+        previousPath: null,
+        relativePath: "Removed.php",
+        rootPath: ROOT,
+      }),
+    );
+
+    expect(closeDocument).toHaveBeenCalledWith(path, {
+      recordRecentlyClosed: false,
+    });
+  });
+});

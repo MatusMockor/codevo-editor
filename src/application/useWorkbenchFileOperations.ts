@@ -48,6 +48,10 @@ interface OpenFileOptions {
   recordNavigation?: boolean;
 }
 
+interface CloseDocumentOptions {
+  recordRecentlyClosed?: boolean;
+}
+
 export interface WorkbenchFileOperationsDependencies {
   workspaceRoot: string | null;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -84,7 +88,7 @@ export interface WorkbenchFileOperationsDependencies {
     rootPath: string | null | undefined,
     path: string,
   ) => void;
-  closeDocument: (path: string) => void;
+  closeDocument: (path: string, options?: CloseDocumentOptions) => void;
   forgetExternallyRemovedDocumentPath: (path: string) => void;
   forgetRecentFile: (path: string) => void;
   forgetRecentLocationsForPath: (path: string) => void;
@@ -666,7 +670,7 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      closeDocument(deletedPath);
+      closeDocument(deletedPath, { recordRecentlyClosed: false });
       forgetRecentFile(deletedPath);
       forgetRecentLocationsForPath(deletedPath);
       setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
@@ -764,7 +768,7 @@ export function useWorkbenchFileOperations(
   const handleExternalRemovedPath = useCallback(
     (requestedRoot: string, removedPath: string) => {
       markExternallyRemovedDocumentPath(requestedRoot, removedPath);
-      closeDocument(removedPath);
+      closeDocument(removedPath, { recordRecentlyClosed: false });
       clearLanguageServerDiagnosticsForPath(requestedRoot, removedPath);
       filePrefetchCacheRef.current.invalidate(removedPath);
       queueWorkspaceDirectoryRefresh(getParentPath(removedPath));

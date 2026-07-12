@@ -331,6 +331,12 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("mac")["php.goToTest"]).toBe("");
   });
 
+  it("leaves Reopen Closed Tab unbound for palette-only access", () => {
+    expect(defaultShortcutForCommand("editor.reopenClosedTab", "mac")).toBe("");
+    expect(defaultShortcutForCommand("editor.reopenClosedTab", "linux")).toBe("");
+    expect(defaultKeymapSettings("mac")["editor.reopenClosedTab"]).toBe("");
+  });
+
   it("leaves Run All Tests in File unbound by default (palette only)", () => {
     expect(defaultShortcutForCommand("php.runTestFile", "mac")).toBe("");
     expect(defaultShortcutForCommand("php.runTestFile", "linux")).toBe("");

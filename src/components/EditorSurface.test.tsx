@@ -611,6 +611,73 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("reapplies folds when a reopened tab bumps the restoration revision", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/example.txt",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const model: FakeModel = {
+      getLineCount: vi.fn(() => 3),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const foldingModel = createFoldingModel([
+      { collapsed: false, start: 2 },
+    ]);
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel: vi.fn(async () => foldingModel) };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+    const restoredViewStates = {
+      [activeDocument.path]: {
+        column: 1,
+        foldedLines: [2],
+        line: 1,
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStateRevision: 0,
+          restoredViewStates,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
+    foldingModel.setRegions([{ collapsed: false, start: 2 }]);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStateRevision: 1,
+          restoredViewStates,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(2);
+  });
+
   it("does not restore folds when the folding model resolves after switching files", async () => {
     const firstDocument: EditorDocument = {
       content: "one\ntwo\nthree\n",

@@ -14,6 +14,10 @@ import type { LocalHistoryGateway } from "../domain/localHistory";
 import { defaultWorkspaceSettings } from "../domain/settings";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
+import {
+  emptyRecentlyClosedTabs,
+  hasRecentlyClosedTabs,
+} from "../domain/recentlyClosedTabs";
 
 const ROOT = "/workspace";
 
@@ -132,6 +136,11 @@ interface Harness {
   reportErrorForActiveWorkspaceRoot: ReturnType<typeof vi.fn>;
   runEslintAnalysisOnSave: ReturnType<typeof vi.fn>;
   runPhpstanAnalysisOnSave: ReturnType<typeof vi.fn>;
+  recentlyClosedTabsRef: {
+    current: ReturnType<typeof emptyRecentlyClosedTabs>;
+  };
+  openRecentlyClosedDocument: ReturnType<typeof vi.fn>;
+  restoreRecentlyClosedDocumentViewState: ReturnType<typeof vi.fn>;
   rerender: (overrides: Partial<DocumentLifecycleDependencies>) => void;
   unmount: () => void;
 }
@@ -178,6 +187,7 @@ function renderLifecycle(
   const selectedGitChangeRef: { current: GitChangedFile | null } = {
     current: null,
   };
+  const recentlyClosedTabsRef = { current: emptyRecentlyClosedTabs() };
 
   const localHistoryGateway = createFakeLocalHistoryGateway();
   const workspaceFiles = createFakeWorkspaceFiles();
@@ -245,6 +255,8 @@ function renderLifecycle(
   const reportErrorForActiveWorkspaceRoot = vi.fn();
   const runEslintAnalysisOnSave = vi.fn();
   const runPhpstanAnalysisOnSave = vi.fn();
+  const openRecentlyClosedDocument = vi.fn(async () => true);
+  const restoreRecentlyClosedDocumentViewState = vi.fn();
 
   const deps: DocumentLifecycleDependencies = {
     workspaceRoot: ROOT,
@@ -299,6 +311,11 @@ function renderLifecycle(
     reportErrorForActiveWorkspaceRoot,
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
+    recentlyClosedTabsRef,
+    recentlyClosedDocumentViewState: () => undefined,
+    openRecentlyClosedDocument,
+    restoreRecentlyClosedDocumentViewState,
+    onRecentlyClosedTabsChange: vi.fn(),
     ...overrides,
   };
 
@@ -348,6 +365,9 @@ function renderLifecycle(
     reportErrorForActiveWorkspaceRoot,
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
+    recentlyClosedTabsRef,
+    openRecentlyClosedDocument,
+    restoreRecentlyClosedDocumentViewState,
     rerender: (nextOverrides) => {
       Object.assign(deps, nextOverrides);
       act(() => {
@@ -1431,6 +1451,37 @@ describe("useDocumentLifecycle", () => {
   });
 
   describe("closeDocument", () => {
+    it("records normal closes and excludes programmatic closes", () => {
+      const normal = editorDocument(`${ROOT}/src/Normal.php`);
+      const programmatic = editorDocument(`${ROOT}/src/Programmatic.php`);
+      const harness = renderLifecycle({
+        activeDocument: normal,
+        documents: {
+          [normal.path]: normal,
+          [programmatic.path]: programmatic,
+        },
+        openPaths: [normal.path, programmatic.path],
+        activePath: normal.path,
+      });
+
+      act(() => harness.lifecycle().closeDocument(normal.path));
+      expect(hasRecentlyClosedTabs(harness.recentlyClosedTabsRef.current, ROOT)).toBe(
+        true,
+      );
+
+      harness.recentlyClosedTabsRef.current = emptyRecentlyClosedTabs();
+      act(() =>
+        harness.lifecycle().closeDocument(programmatic.path, {
+          recordRecentlyClosed: false,
+        }),
+      );
+
+      expect(hasRecentlyClosedTabs(harness.recentlyClosedTabsRef.current, ROOT)).toBe(
+        false,
+      );
+      harness.unmount();
+    });
+
     it("clears external conflict state only after close is confirmed", () => {
       const dirty = editorDocument(`${ROOT}/src/A.php`, "edited", "saved");
       const clearExternalFileConflict = vi.fn();
@@ -1774,6 +1825,86 @@ describe("useDocumentLifecycle", () => {
       expect(harness.closeGitDiffPreview).not.toHaveBeenCalled();
       expect(harness.syncClosedDocument).not.toHaveBeenCalled();
       expect(harness.closeEmptyWorkbenchSurface).toHaveBeenCalledTimes(1);
+      harness.unmount();
+    });
+  });
+
+  describe("reopenClosedDocument", () => {
+    it("round-trips a user-closed document with its captured view state", async () => {
+      const document = editorDocument(`${ROOT}/src/A.php`);
+      const viewState = {
+        column: 7,
+        foldedLines: [3, 8],
+        line: 12,
+        scrollTop: 420,
+      };
+      const harness = renderLifecycle({
+        activeDocument: document,
+        documents: { [document.path]: document },
+        openPaths: [document.path],
+        activePath: document.path,
+        recentlyClosedDocumentViewState: () => viewState,
+      });
+
+      act(() => harness.lifecycle().closeDocument(document.path));
+      await act(async () => harness.lifecycle().reopenClosedDocument());
+
+      expect(harness.openRecentlyClosedDocument).toHaveBeenCalledWith(
+        ROOT,
+        document.path,
+      );
+      expect(
+        harness.restoreRecentlyClosedDocumentViewState,
+      ).toHaveBeenCalledWith(ROOT, document.path, viewState);
+      expect(harness.lifecycle().canReopenClosedDocument).toBe(false);
+      harness.unmount();
+    });
+
+    it("drops deleted files and continues to the next entry", async () => {
+      const deleted = editorDocument(`${ROOT}/src/Deleted.php`);
+      const available = editorDocument(`${ROOT}/src/Available.php`);
+      const openRecentlyClosedDocument = vi.fn(
+        async (_root: string, path: string) => path === available.path,
+      );
+      const harness = renderLifecycle({ openRecentlyClosedDocument });
+
+      harness.documentsRef.current[available.path] = available;
+      harness.openPathsRef.current.push(available.path);
+      act(() => harness.lifecycle().closeDocument(available.path));
+      harness.documentsRef.current[deleted.path] = deleted;
+      harness.openPathsRef.current.push(deleted.path);
+      act(() => harness.lifecycle().closeDocument(deleted.path));
+      await act(async () => harness.lifecycle().reopenClosedDocument());
+
+      expect(openRecentlyClosedDocument.mock.calls).toEqual([
+        [ROOT, deleted.path],
+        [ROOT, available.path],
+      ]);
+      expect(harness.lifecycle().canReopenClosedDocument).toBe(false);
+      harness.unmount();
+    });
+
+    it("drops already-open files and continues to the next entry", async () => {
+      const alreadyOpen = editorDocument(`${ROOT}/src/Open.php`);
+      const available = editorDocument(`${ROOT}/src/Available.php`);
+      const harness = renderLifecycle();
+
+      harness.documentsRef.current[available.path] = available;
+      harness.openPathsRef.current.push(available.path);
+      act(() => harness.lifecycle().closeDocument(available.path));
+      harness.documentsRef.current[alreadyOpen.path] = alreadyOpen;
+      harness.openPathsRef.current.push(alreadyOpen.path);
+      act(() => harness.lifecycle().closeDocument(alreadyOpen.path));
+      harness.documentsRef.current[alreadyOpen.path] = alreadyOpen;
+      harness.openPathsRef.current.push(alreadyOpen.path);
+      await act(async () => harness.lifecycle().reopenClosedDocument());
+
+      expect(harness.openRecentlyClosedDocument).toHaveBeenCalledTimes(1);
+      expect(harness.openRecentlyClosedDocument).toHaveBeenCalledWith(
+        ROOT,
+        available.path,
+      );
+      expect(harness.lifecycle().canReopenClosedDocument).toBe(false);
       harness.unmount();
     });
   });

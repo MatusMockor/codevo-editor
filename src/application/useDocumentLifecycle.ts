@@ -18,7 +18,16 @@ import type {
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
-import type { WorkspaceSettings } from "../domain/settings";
+import type {
+  WorkspaceSessionViewState,
+  WorkspaceSettings,
+} from "../domain/settings";
+import {
+  hasRecentlyClosedTabs,
+  popRecentlyClosedTab,
+  pushRecentlyClosedTab,
+  type RecentlyClosedTabs,
+} from "../domain/recentlyClosedTabs";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import {
   isDirty,
@@ -70,6 +79,7 @@ export interface DocumentLifecycleDependencies {
   >;
   gitDiffRequestTokenRef: MutableRefObject<number>;
   selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
+  recentlyClosedTabsRef: MutableRefObject<RecentlyClosedTabs>;
 
   setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
@@ -151,6 +161,24 @@ export interface DocumentLifecycleDependencies {
   ) => void;
   runEslintAnalysisOnSave: (rootPath: string) => void;
   runPhpstanAnalysisOnSave: (rootPath: string) => void;
+  recentlyClosedDocumentViewState: (
+    rootPath: string,
+    path: string,
+  ) => WorkspaceSessionViewState | undefined;
+  openRecentlyClosedDocument: (
+    rootPath: string,
+    path: string,
+  ) => Promise<boolean>;
+  restoreRecentlyClosedDocumentViewState: (
+    rootPath: string,
+    path: string,
+    viewState: WorkspaceSessionViewState,
+  ) => void;
+  onRecentlyClosedTabsChange: () => void;
+}
+
+export interface DocumentCloseOptions {
+  recordRecentlyClosed?: boolean;
 }
 
 export interface DocumentLifecycle {
@@ -160,8 +188,10 @@ export interface DocumentLifecycle {
     content: string,
   ) => Promise<void>;
   saveActiveDocument: () => Promise<void>;
-  closeDocument: (path: string) => void;
-  closeActiveSurface: () => void;
+  closeDocument: (path: string, options?: DocumentCloseOptions) => void;
+  closeActiveSurface: (options?: DocumentCloseOptions) => void;
+  reopenClosedDocument: () => Promise<void>;
+  canReopenClosedDocument: boolean;
 }
 
 interface DocumentSaveIdentity {
@@ -208,6 +238,7 @@ export function useDocumentLifecycle(
     externallyRemovedDocumentRootByPathRef,
     gitDiffRequestTokenRef,
     selectedGitChangeRef,
+    recentlyClosedTabsRef,
     setDocuments,
     setPreviewPath,
     setOpenPaths,
@@ -241,6 +272,10 @@ export function useDocumentLifecycle(
     detectSaveConflict = () => {},
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
+    recentlyClosedDocumentViewState,
+    openRecentlyClosedDocument,
+    restoreRecentlyClosedDocumentViewState,
+    onRecentlyClosedTabsChange,
   } = dependencies;
   const documentEpochByPathRef = useRef<Record<string, number>>({});
   const saveQueueByPathRef = useRef<Record<string, DocumentSaveQueueEntry>>({});
@@ -713,7 +748,7 @@ export function useDocumentLifecycle(
   }, [activeDocument, saveActiveDocument, workspaceSettings.autoSave]);
 
   const closeDocument = useCallback(
-    (path: string) => {
+    (path: string, options: DocumentCloseOptions = {}) => {
       const effectiveActivePath =
         activeDocumentRef.current?.path ?? activePath;
       const plan = planDocumentClose({
@@ -739,6 +774,21 @@ export function useDocumentLifecycle(
         )
       ) {
         return;
+      }
+
+      const rootPath = currentWorkspaceRootRef.current;
+
+      if (document && rootPath && options.recordRecentlyClosed !== false) {
+        const viewState = recentlyClosedDocumentViewState(rootPath, path);
+        recentlyClosedTabsRef.current = pushRecentlyClosedTab(
+          recentlyClosedTabsRef.current,
+          rootPath,
+          {
+            path,
+            ...(viewState ? { viewState } : {}),
+          },
+        );
+        onRecentlyClosedTabsChange();
       }
 
       if (document) {
@@ -800,6 +850,9 @@ export function useDocumentLifecycle(
       openPathsRef,
       previewPathRef,
       prompter,
+      currentWorkspaceRootRef,
+      recentlyClosedDocumentViewState,
+      recentlyClosedTabsRef,
       hasExternalFileConflict,
       clearExternalFileConflict,
       workspaceRoot,
@@ -808,7 +861,7 @@ export function useDocumentLifecycle(
     ],
   );
 
-  const closeActiveSurface = useCallback(() => {
+  const closeActiveSurface = useCallback((options: DocumentCloseOptions = {}) => {
     if (selectedGitChangeRef.current || selectedGitChange || gitDiffLoading) {
       closeGitDiffPreview();
       return;
@@ -816,7 +869,7 @@ export function useDocumentLifecycle(
 
     const currentActiveDocument = activeDocumentRef.current ?? activeDocument;
     if (currentActiveDocument) {
-      closeDocument(currentActiveDocument.path);
+      closeDocument(currentActiveDocument.path, options);
       return;
     }
 
@@ -830,6 +883,61 @@ export function useDocumentLifecycle(
     gitDiffLoading,
     selectedGitChange,
     selectedGitChangeRef,
+  ]);
+
+  const reopenClosedDocument = useCallback(async () => {
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (!rootPath) {
+      return;
+    }
+
+    while (hasRecentlyClosedTabs(recentlyClosedTabsRef.current, rootPath)) {
+      const popped = popRecentlyClosedTab(
+        recentlyClosedTabsRef.current,
+        rootPath,
+      );
+      recentlyClosedTabsRef.current = popped.tabs;
+      onRecentlyClosedTabsChange();
+
+      if (!popped.entry) {
+        return;
+      }
+
+      if (documentsRef.current[popped.entry.path]) {
+        continue;
+      }
+
+      const opened = await openRecentlyClosedDocument(
+        rootPath,
+        popped.entry.path,
+      );
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        return;
+      }
+
+      if (!opened) {
+        continue;
+      }
+
+      if (popped.entry.viewState) {
+        restoreRecentlyClosedDocumentViewState(
+          rootPath,
+          popped.entry.path,
+          popped.entry.viewState,
+        );
+      }
+
+      return;
+    }
+  }, [
+    currentWorkspaceRootRef,
+    documentsRef,
+    openRecentlyClosedDocument,
+    onRecentlyClosedTabsChange,
+    recentlyClosedTabsRef,
+    restoreRecentlyClosedDocumentViewState,
   ]);
 
   useEffect(() => {
@@ -864,5 +972,10 @@ export function useDocumentLifecycle(
     saveActiveDocument,
     closeDocument,
     closeActiveSurface,
+    reopenClosedDocument,
+    canReopenClosedDocument: Boolean(
+      workspaceRoot &&
+        hasRecentlyClosedTabs(recentlyClosedTabsRef.current, workspaceRoot),
+    ),
   };
 }

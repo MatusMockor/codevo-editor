@@ -13,6 +13,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
+    defaultShortcut: "",
+    id: "editor.reopenClosedTab",
+    label: "Reopen Closed Tab",
+  },
+  {
+    category: "Editor",
     defaultShortcut: "Cmd+B",
     id: "editor.goToDefinition",
     label: "Go to Definition",
