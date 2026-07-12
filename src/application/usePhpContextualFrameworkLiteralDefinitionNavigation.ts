@@ -1,6 +1,9 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpFrameworkSupportsValidation,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -48,14 +51,13 @@ export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   frameworkLiteralNavigationDependencies: PhpFrameworkLiteralNavigationDependencies;
-  isLaravelFrameworkActive?: boolean;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
     label: string,
     options?: OpenNavigationOptions,
   ): Promise<boolean>;
-  providers?: readonly PhpFrameworkProvider[];
+  providers: readonly PhpFrameworkProvider[];
   setMessage(message: string | null): void;
   supportsStringLiterals: boolean;
   workspaceRoot: string | null;
@@ -71,8 +73,8 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
   activeDocument,
   currentWorkspaceRootRef,
   frameworkLiteralNavigationDependencies,
-  isLaravelFrameworkActive = false,
   openNavigationTarget,
+  providers,
   setMessage,
   supportsStringLiterals,
   workspaceRoot,
@@ -94,7 +96,10 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
         return false;
       }
 
-      if (request.kind === "validationTable" && !isLaravelFrameworkActive) {
+      if (
+        request.kind === "validationTable" &&
+        !phpFrameworkSupportsValidation(providers)
+      ) {
         return false;
       }
 
@@ -139,8 +144,8 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       activeDocument,
       currentWorkspaceRootRef,
       frameworkLiteralNavigationDependencies,
-      isLaravelFrameworkActive,
       openNavigationTarget,
+      providers,
       setMessage,
       supportsStringLiterals,
       workspaceRoot,

@@ -39,7 +39,6 @@ function makeDeps(
       findTranslationTarget: vi.fn(async () => null),
       findViewTarget: vi.fn(async () => null),
     },
-    isLaravelFrameworkActive: true,
     openNavigationTarget: vi.fn(async () => true),
     providers: [phpLaravelFrameworkProvider],
     setMessage: vi.fn(),
@@ -270,7 +269,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     harness.unmount();
   });
 
-  it("opens validation rule table model targets only for Laravel", async () => {
+  it("opens validation rule table model targets only with validation-capable providers", async () => {
     const modelTarget = {
       label: "App\\Models\\User",
       path: `${ROOT}/app/Models/User.php`,
@@ -314,8 +313,8 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     const genericDeps = makeDeps({
       frameworkLiteralNavigationDependencies:
         deps.frameworkLiteralNavigationDependencies,
-      isLaravelFrameworkActive: false,
       openNavigationTarget: genericOpenNavigationTarget,
+      providers: [],
     });
     const genericHarness = renderHook(genericDeps);
 

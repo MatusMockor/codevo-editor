@@ -7954,7 +7954,6 @@ export function useWorkbenchController(
         ...phpFrameworkLiteralNavigationDependencies,
         findPhpLaravelValidationRuleModelTargets,
       },
-      isLaravelFrameworkActive: phpFrameworkRuntimeContext.isLaravel,
       openNavigationTarget,
       providers: activePhpFrameworkProviders,
       setMessage,
