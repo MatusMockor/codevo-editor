@@ -363,6 +363,17 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<Commit>;
   }
 
+  async cherryPickCommit(rootPath: string, commitHash: string): Promise<Commit> {
+    if (!this.isRuntimeAvailable()) {
+      throw new Error("Git unavailable.");
+    }
+
+    return this.invokeCommand("cherry_pick_git_commit", {
+      commitHash,
+      rootPath,
+    }) as Promise<Commit>;
+  }
+
   async getCommitFiles(
     rootPath: string,
     commitHash: string,

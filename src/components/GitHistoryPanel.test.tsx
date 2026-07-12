@@ -272,6 +272,44 @@ describe("GitHistoryPanel", () => {
     window.removeEventListener("mockor-git-commit-reverted", listener);
   });
 
+  it("cherry-picks the selected commit and selects the new commit after refreshing history", async () => {
+    const selected = commitFixture(
+      "1111111111111111111111111111111111111111",
+      "Change settings",
+    );
+    const gateway = createGateway({ commitLog: [selected] });
+    const cherryPickedEvents: unknown[] = [];
+    const listener = (event: Event) => {
+      cherryPickedEvents.push((event as CustomEvent).detail);
+    };
+    window.addEventListener("mockor-git-commit-cherry-picked", listener);
+
+    await renderPanel(root, gateway);
+
+    act(() => {
+      host.querySelector<HTMLButtonElement>(
+        "button[title='Cherry-pick selected commit']",
+      )?.click();
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+
+    expect(gateway.cherryPickCommit).toHaveBeenCalledWith(
+      "/workspace",
+      selected.hash,
+    );
+    expect(selectedCommitText(host)).toContain("Change settings");
+    expect(cherryPickedEvents).toEqual([
+      {
+        rootPath: "/workspace",
+        subject: "Change settings",
+      },
+    ]);
+
+    window.removeEventListener("mockor-git-commit-cherry-picked", listener);
+  });
+
   it("supports an empty commit list fallback and allows re-fetch", async () => {
     const gateway = createGateway({
       branches: {
@@ -884,6 +922,17 @@ function createGateway(seed: {
       currentCommitLog = [reverted, ...currentCommitLog];
       commitDetailsByHash.set(reverted.hash, commitDetailsFixture(reverted));
       return reverted;
+    }),
+    cherryPickCommit: vi.fn(async (_rootPath, commitHash) => {
+      const selected = currentCommitLog.find((commit) => commit.hash === commitHash);
+      const cherryPicked = commitFixture(
+        "8888888888888888888888888888888888888888",
+        selected?.subject ?? "commit",
+        [currentCommitLog[0]?.hash].filter((hash): hash is string => Boolean(hash)),
+      );
+      currentCommitLog = [cherryPicked, ...currentCommitLog];
+      commitDetailsByHash.set(cherryPicked.hash, commitDetailsFixture(cherryPicked));
+      return cherryPicked;
     }),
     setCommitLog(next) {
       currentCommitLog = next;

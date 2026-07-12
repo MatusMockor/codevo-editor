@@ -25,6 +25,7 @@ describe("workbenchGitWorkflowCommands", () => {
       createGitBranch: vi.fn(),
       commitGitChanges: vi.fn(),
       revertSelectedGitCommit: vi.fn(),
+      cherryPickSelectedGitCommit: vi.fn(),
     });
 
     expect(
@@ -66,6 +67,12 @@ describe("workbenchGitWorkflowCommands", () => {
         shortcut: undefined,
       },
       {
+        id: "git.cherryPickCommit",
+        title: "Git: Cherry-Pick Selected Commit",
+        category: "Git",
+        shortcut: undefined,
+      },
+      {
         id: "git.commit",
         title: "Git: Commit",
         category: "Git",
@@ -78,7 +85,7 @@ describe("workbenchGitWorkflowCommands", () => {
     const commands = createCommands();
 
     expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual(
-      [false, false, false, false, false, false],
+      [false, false, false, false, false, false, false],
     );
   });
 
@@ -86,6 +93,7 @@ describe("workbenchGitWorkflowCommands", () => {
     const commands = createCommands();
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
+      true,
       true,
       true,
       true,
@@ -101,6 +109,7 @@ describe("workbenchGitWorkflowCommands", () => {
     const createGitBranch = vi.fn();
     const commitGitChanges = vi.fn();
     const revertSelectedGitCommit = vi.fn();
+    const cherryPickSelectedGitCommit = vi.fn();
     const commands = workbenchGitWorkflowCommands({
       shortcut: (commandId) => commandId,
       openGitStashPanel,
@@ -108,6 +117,7 @@ describe("workbenchGitWorkflowCommands", () => {
       createGitBranch,
       commitGitChanges,
       revertSelectedGitCommit,
+      cherryPickSelectedGitCommit,
     });
 
     for (const command of commands) {
@@ -119,6 +129,7 @@ describe("workbenchGitWorkflowCommands", () => {
     expect(createGitBranch).toHaveBeenCalledTimes(1);
     expect(commitGitChanges).toHaveBeenCalledTimes(1);
     expect(revertSelectedGitCommit).toHaveBeenCalledTimes(1);
+    expect(cherryPickSelectedGitCommit).toHaveBeenCalledTimes(1);
   });
 
   it("returns undefined while callbacks have pending promises", () => {
@@ -129,9 +140,11 @@ describe("workbenchGitWorkflowCommands", () => {
       createGitBranch: vi.fn(() => new Promise<void>(() => {})),
       commitGitChanges: vi.fn(() => new Promise<void>(() => {})),
       revertSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
+      cherryPickSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
     });
 
     expect(commands.map((command) => command.run())).toEqual([
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -150,5 +163,6 @@ function createCommands() {
     createGitBranch: vi.fn(),
     commitGitChanges: vi.fn(),
     revertSelectedGitCommit: vi.fn(),
+    cherryPickSelectedGitCommit: vi.fn(),
   });
 }

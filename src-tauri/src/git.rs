@@ -245,6 +245,7 @@ pub trait GitRepositoryGateway {
     fn pull(&self, root: &Path) -> io::Result<GitStatus>;
     fn push(&self, root: &Path) -> io::Result<GitStatus>;
     fn revert_commit(&self, root: &Path, commit_hash: &str) -> io::Result<GitCommit>;
+    fn cherry_pick_commit(&self, root: &Path, commit_hash: &str) -> io::Result<GitCommit>;
     fn revert(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn stage(&self, root: &Path, changes: &[GitChangedFile]) -> io::Result<GitStatus>;
     fn status(&self, root: &Path) -> io::Result<GitStatus>;
@@ -577,6 +578,108 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "The commit could not be reverted because it conflicts with the current branch. The revert was aborted and the working tree was restored.",
+            ));
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
+    }
+
+    fn cherry_pick_commit(&self, root: &Path, commit_hash: &str) -> io::Result<GitCommit> {
+        let commit_hash = safe_commit_sha(commit_hash)?;
+        let root = root.canonicalize()?;
+        let status = git_command(self.trusted)
+            .arg("-C")
+            .arg(&root)
+            .args(["status", "--porcelain=v1", "--untracked-files=no"])
+            .output()?;
+
+        if !status.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&status.stderr).trim().to_string(),
+            ));
+        }
+
+        if !status.stdout.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Cannot cherry-pick a commit while the working tree has uncommitted changes. Commit or stash them first.",
+            ));
+        }
+
+        let output = git_command(self.trusted)
+            .arg("-C")
+            .arg(&root)
+            .args(["cherry-pick", "--no-edit", commit_hash.as_str()])
+            .output()?;
+
+        if output.status.success() {
+            let commits = load_commit_log(
+                &root,
+                GitCommitFilters {
+                    author: None,
+                    branch: None,
+                    cursor: None,
+                    limit: Some(1),
+                    path: None,
+                    query: None,
+                },
+                self.trusted,
+            )?;
+            return commits.into_iter().next().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Git cherry-pick succeeded but the new commit could not be loaded.",
+                )
+            });
+        }
+
+        let cherry_picking = git_command(self.trusted)
+            .arg("-C")
+            .arg(&root)
+            .args(["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"])
+            .output()?
+            .status
+            .success();
+        let message = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .to_lowercase();
+        let mut has_conflicts = false;
+        if cherry_picking {
+            let conflicts = git_command(self.trusted)
+                .arg("-C")
+                .arg(&root)
+                .args(["diff", "--name-only", "--diff-filter=U"])
+                .output()?;
+            has_conflicts = conflicts.status.success() && !conflicts.stdout.is_empty();
+        }
+        let already_applied = message.contains("nothing to commit")
+            || message.contains("cherry-pick is now empty")
+            || message.contains("previous cherry-pick is now empty")
+            || (cherry_picking && !has_conflicts);
+
+        if already_applied {
+            if cherry_picking {
+                run_git(&root, ["cherry-pick", "--abort"], self.trusted)?;
+            }
+
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "The commit is already applied to the current branch. The cherry-pick was aborted and the working tree was restored.",
+            ));
+        }
+
+        if cherry_picking {
+            run_git(&root, ["cherry-pick", "--abort"], self.trusted)?;
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "The commit could not be cherry-picked because it conflicts with the current branch. The cherry-pick was aborted and the working tree was restored.",
             ));
         }
 
@@ -3910,6 +4013,167 @@ mod tests {
 
         assert!(commit.subject.contains("Revert \"change\""));
         assert_eq!(repo.read("file.txt"), "before\n");
+    }
+
+    #[test]
+    fn cherry_pick_commit_creates_a_new_commit() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("feature.txt", "feature\n");
+        repo.run(["add", "feature.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        let source_hash = repo.git_output(["rev-parse", "HEAD"]);
+        repo.run(["checkout", "main"]);
+        repo.write("main.txt", "main\n");
+        repo.run(["add", "main.txt"]);
+        repo.run(["commit", "-m", "main"]);
+
+        let commit = CommandGitRepositoryGateway::new(true)
+            .cherry_pick_commit(repo.path(), source_hash.trim())
+            .expect("cherry-pick commit");
+
+        assert_ne!(commit.hash, source_hash.trim());
+        assert_eq!(commit.subject, "feature");
+        assert_eq!(repo.read("feature.txt"), "feature\n");
+        assert_eq!(repo.git_output(["rev-list", "--count", "HEAD"]).trim(), "3");
+    }
+
+    #[test]
+    fn conflicting_cherry_pick_aborts_and_surfaces_a_clear_error() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("file.txt", "feature\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        let source_hash = repo.git_output(["rev-parse", "HEAD"]);
+        repo.run(["checkout", "main"]);
+        repo.write("file.txt", "main\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "main"]);
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .cherry_pick_commit(repo.path(), source_hash.trim())
+            .expect_err("conflicting cherry-pick must fail");
+
+        assert!(error.to_string().contains("conflicts"));
+        assert_eq!(repo.read("file.txt"), "main\n");
+        assert!(repo.git_output(["status", "--porcelain"]).is_empty());
+        let cherry_pick_head = git_command(true)
+            .arg("-C")
+            .arg(repo.path())
+            .args(["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"])
+            .output()
+            .expect("check cherry-pick head");
+        assert!(!cherry_pick_head.status.success());
+    }
+
+    #[test]
+    fn cherry_pick_commit_refuses_a_dirty_working_tree() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("feature.txt", "feature\n");
+        repo.run(["add", "feature.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        let source_hash = repo.git_output(["rev-parse", "HEAD"]);
+        repo.run(["checkout", "main"]);
+        repo.write("file.txt", "dirty\n");
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .cherry_pick_commit(repo.path(), source_hash.trim())
+            .expect_err("dirty cherry-pick must fail");
+
+        assert!(error.to_string().contains("uncommitted changes"));
+        assert_eq!(repo.git_output(["rev-list", "--count", "HEAD"]).trim(), "1");
+    }
+
+    #[test]
+    fn cherry_pick_commit_ignores_untracked_files() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("feature.txt", "feature\n");
+        repo.run(["add", "feature.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        let source_hash = repo.git_output(["rev-parse", "HEAD"]);
+        repo.run(["checkout", "main"]);
+        repo.write("untracked.txt", "untracked\n");
+
+        let commit = CommandGitRepositoryGateway::new(true)
+            .cherry_pick_commit(repo.path(), source_hash.trim())
+            .expect("cherry-pick with untracked files");
+
+        assert_eq!(commit.subject, "feature");
+        assert_eq!(repo.read("feature.txt"), "feature\n");
+        assert_eq!(repo.read("untracked.txt"), "untracked\n");
+    }
+
+    #[test]
+    fn cherry_pick_commit_rejects_an_invalid_hash() {
+        let repo = TestGitRepo::new();
+        let error = CommandGitRepositoryGateway::new(true)
+            .cherry_pick_commit(repo.path(), "--no-edit")
+            .expect_err("invalid hash must fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("SHA is invalid"));
+    }
+
+    #[test]
+    fn untrusted_root_can_cherry_pick_commit_with_hardened_flags() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.run(["checkout", "-b", "feature"]);
+        repo.write("feature.txt", "feature\n");
+        repo.run(["add", "feature.txt"]);
+        repo.run(["commit", "-m", "feature"]);
+        let source_hash = repo.git_output(["rev-parse", "HEAD"]);
+        repo.run(["checkout", "main"]);
+
+        let commit = CommandGitRepositoryGateway::new(false)
+            .cherry_pick_commit(repo.path(), source_hash.trim())
+            .expect("untrusted cherry-pick");
+
+        assert_eq!(commit.subject, "feature");
+        assert_eq!(repo.read("feature.txt"), "feature\n");
+    }
+
+    #[test]
+    fn cherry_pick_commit_reports_an_already_applied_commit_and_cleans_up() {
+        let repo = branch_repo();
+        repo.write("file.txt", "base\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "base"]);
+        repo.write("file.txt", "applied\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "applied"]);
+        let applied_hash = repo.git_output(["rev-parse", "HEAD"]);
+
+        let error = CommandGitRepositoryGateway::new(true)
+            .cherry_pick_commit(repo.path(), applied_hash.trim())
+            .expect_err("already-applied cherry-pick must fail");
+
+        assert!(error.to_string().contains("already applied"));
+        assert!(repo.git_output(["status", "--porcelain"]).is_empty());
+        let cherry_pick_head = git_command(true)
+            .arg("-C")
+            .arg(repo.path())
+            .args(["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"])
+            .output()
+            .expect("check cherry-pick head");
+        assert!(!cherry_pick_head.status.success());
     }
 
     #[test]

@@ -186,6 +186,7 @@ export interface GitGateway {
   ): Promise<GitDiffHunk[]>;
   push(rootPath: string): Promise<GitStatus>;
   revertCommit?(rootPath: string, commitHash: string): Promise<Commit>;
+  cherryPickCommit?(rootPath: string, commitHash: string): Promise<Commit>;
   revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   stageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   stageHunk(
@@ -247,6 +248,7 @@ export interface GitHistoryGateway {
   ): Promise<Commit[]>;
   getRepoStatus(rootPath: string): Promise<GitRepoStatus>;
   revertCommit(rootPath: string, commitHash: string): Promise<Commit>;
+  cherryPickCommit(rootPath: string, commitHash: string): Promise<Commit>;
 }
 
 export function gitChangeKey(change: GitChangedFile): string {

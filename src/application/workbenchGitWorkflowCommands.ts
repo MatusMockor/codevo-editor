@@ -8,6 +8,7 @@ interface WorkbenchGitWorkflowCommandsOptions {
   createGitBranch: Command["run"];
   commitGitChanges: Command["run"];
   revertSelectedGitCommit: Command["run"];
+  cherryPickSelectedGitCommit: Command["run"];
 }
 
 export function workbenchGitWorkflowCommands({
@@ -17,6 +18,7 @@ export function workbenchGitWorkflowCommands({
   createGitBranch,
   commitGitChanges,
   revertSelectedGitCommit,
+  cherryPickSelectedGitCommit,
 }: WorkbenchGitWorkflowCommandsOptions): Command[] {
   return [
     {
@@ -66,6 +68,15 @@ export function workbenchGitWorkflowCommands({
       isEnabled: (context) => context.hasWorkspace,
       run: () => {
         void revertSelectedGitCommit();
+      },
+    },
+    {
+      id: "git.cherryPickCommit",
+      title: "Git: Cherry-Pick Selected Commit",
+      category: "Git",
+      isEnabled: (context) => context.hasWorkspace,
+      run: () => {
+        void cherryPickSelectedGitCommit();
       },
     },
     {

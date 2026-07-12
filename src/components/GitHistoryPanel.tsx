@@ -456,6 +456,8 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
   const [detailsError, setDetailsError] = useState<HistoryError>(null);
   const [revertError, setRevertError] = useState<HistoryError>(null);
   const [revertingCommit, setRevertingCommit] = useState(false);
+  const [cherryPickError, setCherryPickError] = useState<HistoryError>(null);
+  const [cherryPickingCommit, setCherryPickingCommit] = useState(false);
   const [localExpanded, setLocalExpanded] = useState(true);
   const [remoteExpanded, setRemoteExpanded] = useState(true);
   const [commitGraph, setCommitGraph] = useState<RenderedCommitGraphNode[]>([]);
@@ -610,6 +612,8 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     currentRootPathRef.current = rootPath;
     setRevertError(null);
     setRevertingCommit(false);
+    setCherryPickError(null);
+    setCherryPickingCommit(false);
   }, [rootPath]);
 
   const isCurrentRootPath = useCallback(
@@ -1141,6 +1145,64 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
     };
   }, [revertSelectedCommit]);
 
+  const cherryPickSelectedCommit = useCallback(async () => {
+    const requestedRoot = rootPath;
+    const commitHash = selectedCommitHashRef.current;
+
+    if (!requestedRoot || !commitHash || cherryPickingCommit) {
+      return;
+    }
+
+    setCherryPickingCommit(true);
+    setCherryPickError(null);
+
+    try {
+      const commit = await gateway.cherryPickCommit(requestedRoot, commitHash);
+
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      selectedCommitHashRef.current = commit.hash;
+      setSelectedCommitHash(commit.hash);
+      await loadCommits();
+
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      window.dispatchEvent(
+        new CustomEvent("mockor-git-commit-cherry-picked", {
+          detail: { rootPath: requestedRoot, subject: commit.subject },
+        }),
+      );
+    } catch (nextError: unknown) {
+      if (!isCurrentRootPath(requestedRoot)) {
+        return;
+      }
+
+      setCherryPickError(
+        nextError instanceof Error ? nextError.message : String(nextError),
+      );
+    } finally {
+      if (isCurrentRootPath(requestedRoot)) {
+        setCherryPickingCommit(false);
+      }
+    }
+  }, [cherryPickingCommit, gateway, isCurrentRootPath, loadCommits, rootPath]);
+
+  useEffect(() => {
+    const listener = () => {
+      void cherryPickSelectedCommit();
+    };
+
+    window.addEventListener("mockor-cherry-pick-selected-git-commit", listener);
+
+    return () => {
+      window.removeEventListener("mockor-cherry-pick-selected-git-commit", listener);
+    };
+  }, [cherryPickSelectedCommit]);
+
   const onRefreshCommitDetails = useCallback(() => {
     void loadSelectedCommitDetails();
   }, [loadSelectedCommitDetails]);
@@ -1429,9 +1491,23 @@ export const GitHistoryPanel = memo(function GitHistoryPanel(
             >
               {revertingCommit ? "Reverting" : "Revert commit"}
             </button>
+            <button
+              className="git-history-refresh"
+              disabled={!selectedCommit || cherryPickingCommit}
+              onClick={() => {
+                void cherryPickSelectedCommit();
+              }}
+              title="Cherry-pick selected commit"
+              type="button"
+            >
+              {cherryPickingCommit ? "Cherry-picking" : "Cherry-pick commit"}
+            </button>
           </header>
           {revertError ? (
             <small className="git-history-inline-error">{revertError}</small>
+          ) : null}
+          {cherryPickError ? (
+            <small className="git-history-inline-error">{cherryPickError}</small>
           ) : null}
           {!selectedCommit ? (
             <div className="git-history-empty">

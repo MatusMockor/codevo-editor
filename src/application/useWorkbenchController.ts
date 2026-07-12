@@ -5969,6 +5969,10 @@ export function useWorkbenchController(
     window.dispatchEvent(new CustomEvent("mockor-revert-selected-git-commit"));
   }, []);
 
+  const cherryPickSelectedGitCommit = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("mockor-cherry-pick-selected-git-commit"));
+  }, []);
+
   useEffect(() => {
     const refreshAfterRevert = async (event: Event) => {
       const detail = (
@@ -6000,6 +6004,40 @@ export function useWorkbenchController(
 
     return () => {
       window.removeEventListener("mockor-git-commit-reverted", listener);
+    };
+  }, [refreshGitStatus]);
+
+  useEffect(() => {
+    const refreshAfterCherryPick = async (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ rootPath?: unknown; subject?: unknown }>
+      ).detail;
+
+      if (
+        typeof detail?.rootPath !== "string" ||
+        typeof detail.subject !== "string" ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, detail.rootPath)
+      ) {
+        return;
+      }
+
+      const requestedRoot = detail.rootPath;
+      await refreshGitStatus();
+
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        return;
+      }
+
+      setMessage(`Cherry-picked commit: ${detail.subject}`);
+    };
+    const listener = (event: Event) => {
+      void refreshAfterCherryPick(event);
+    };
+
+    window.addEventListener("mockor-git-commit-cherry-picked", listener);
+
+    return () => {
+      window.removeEventListener("mockor-git-commit-cherry-picked", listener);
     };
   }, [refreshGitStatus]);
 
@@ -8095,6 +8133,7 @@ export function useWorkbenchController(
       createGitBranch,
       commitGitChanges,
       revertSelectedGitCommit,
+      cherryPickSelectedGitCommit,
     }).forEach((command) => registry.register(command));
 
     appearanceCommands.workbenchCommands.forEach((command) =>
@@ -8244,6 +8283,7 @@ export function useWorkbenchController(
     createGitBranch,
     commitGitChanges,
     revertSelectedGitCommit,
+    cherryPickSelectedGitCommit,
     toggleBookmarkAtCursor,
     goToNextBookmark,
     goToPreviousBookmark,

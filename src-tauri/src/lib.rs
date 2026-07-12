@@ -2134,6 +2134,22 @@ async fn revert_git_commit(
 }
 
 #[tauri::command]
+async fn cherry_pick_git_commit(
+    root_path: String,
+    commit_hash: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitCommit, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway::new(trusted)
+            .cherry_pick_commit(&root, &commit_hash)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_git_commit_files(
     root_path: String,
     commit_hash: String,
@@ -9119,6 +9135,7 @@ pub fn run() {
             get_git_commit_diff,
             get_git_commit_details,
             revert_git_commit,
+            cherry_pick_git_commit,
             get_git_commit_files,
             get_git_branches,
             get_git_repo_status,
