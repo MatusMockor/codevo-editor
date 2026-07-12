@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  PhpTestCase,
   PhpTestGateway,
   PhpTestRunOk,
   PhpTestRunResponse,
   PhpTestSuite,
   PhpTestTotals,
 } from "../domain/phpTestResults";
+import { phpTestCaseCanRun } from "../domain/phpTestResults";
 
 interface RootPhpTestState {
+  filter?: string;
   isRunning: boolean;
   result: PhpTestRunResponse | null;
 }
@@ -23,9 +26,11 @@ export interface UsePhpTestResultsOptions {
 export interface PhpTestResultsState {
   clear(): void;
   error: string | null;
+  filter: string | null;
   isRunning: boolean;
   result: PhpTestRunOk | null;
   run(): Promise<void>;
+  runCase(testCase: PhpTestCase): Promise<void>;
   suites: PhpTestSuite[];
   totals: PhpTestTotals | null;
   unavailable: string | null;
@@ -46,7 +51,7 @@ export function usePhpTestResults({
   const runRequestVersionRef = useRef(runRequestVersion);
   const state = rootPath ? states[rootPath] ?? emptyState : emptyState;
 
-  const run = useCallback(async () => {
+  const execute = useCallback(async (filter?: string) => {
     const requestedRoot = rootPath;
 
     if (!requestedRoot || inFlightRootsRef.current.has(requestedRoot)) {
@@ -57,6 +62,7 @@ export function usePhpTestResults({
       setStates((current) => ({
         ...current,
         [requestedRoot]: {
+          filter,
           isRunning: false,
           result: { status: "unavailable", message: trustMessage },
         },
@@ -68,21 +74,23 @@ export function usePhpTestResults({
     setStates((current) => ({
       ...current,
       [requestedRoot]: {
+        filter,
         isRunning: true,
         result: current[requestedRoot]?.result ?? null,
       },
     }));
 
     try {
-      const result = await gateway.run(requestedRoot);
+      const result = await gateway.run(requestedRoot, filter);
       setStates((current) => ({
         ...current,
-        [requestedRoot]: { isRunning: false, result },
+        [requestedRoot]: { filter, isRunning: false, result },
       }));
     } catch (error) {
       setStates((current) => ({
         ...current,
         [requestedRoot]: {
+          filter,
           isRunning: false,
           result: {
             status: "error",
@@ -94,6 +102,19 @@ export function usePhpTestResults({
       inFlightRootsRef.current.delete(requestedRoot);
     }
   }, [gateway, rootPath, workspaceTrusted]);
+
+  const run = useCallback(() => execute(), [execute]);
+
+  const runCase = useCallback(
+    (testCase: PhpTestCase) => {
+      if (!phpTestCaseCanRun(testCase) || !testCase.name) {
+        return Promise.resolve();
+      }
+
+      return execute(testCase.name);
+    },
+    [execute],
+  );
 
   useEffect(() => {
     if (!isOpen || !rootPath || states[rootPath]) {
@@ -129,9 +150,11 @@ export function usePhpTestResults({
   return {
     clear,
     error: state.result?.status === "error" ? state.result.message : null,
+    filter: state.filter ?? null,
     isRunning: state.isRunning,
     result,
     run,
+    runCase,
     suites: result?.suites ?? [],
     totals: result?.totals ?? null,
     unavailable:

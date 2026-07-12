@@ -1,4 +1,5 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import { sanitizePhpTestFilter } from "./phpTestCommand";
 import { joinWorkspacePath, workspaceRelativePath } from "./workspace";
 
 export type PhpTestStatus = "passed" | "failed" | "error" | "skipped";
@@ -43,7 +44,7 @@ export type PhpTestRunResponse =
   | { status: "error"; message: string };
 
 export interface PhpTestGateway {
-  run(rootPath: string): Promise<PhpTestRunResponse>;
+  run(rootPath: string, filter?: string): Promise<PhpTestRunResponse>;
 }
 
 export interface PhpTestCaseNavigationTarget {
@@ -106,6 +107,18 @@ export function phpTestCaseCanNavigate(
   testCase: PhpTestCase,
 ): boolean {
   return phpTestCaseNavigationTarget(rootPath, testCase) !== null;
+}
+
+export function phpTestCaseCanRun(testCase: PhpTestCase): boolean {
+  if (testCase.status !== "failed" && testCase.status !== "error") {
+    return false;
+  }
+
+  if (!testCase.name) {
+    return false;
+  }
+
+  return sanitizePhpTestFilter(testCase.name) !== null;
 }
 
 export function phpTestTotalsSummary(totals: PhpTestTotals): string {

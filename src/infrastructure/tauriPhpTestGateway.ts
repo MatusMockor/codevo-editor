@@ -14,8 +14,9 @@ const invokeCommand: InvokeCommand = (command, args) => invoke(command, args);
 export class TauriPhpTestGateway implements PhpTestGateway {
   constructor(private readonly invokeTestCommand = invokeCommand) {}
 
-  async run(rootPath: string): Promise<PhpTestRunResponse> {
+  async run(rootPath: string, filter?: string): Promise<PhpTestRunResponse> {
     return (await this.invokeTestCommand("run_php_tests_junit", {
+      filter,
       rootPath,
     })) as PhpTestRunResponse;
   }

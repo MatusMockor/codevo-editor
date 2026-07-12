@@ -82,6 +82,63 @@ describe("PhpTestResultsPanel", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
+  it("re-runs valid failed cases from their row without opening them", async () => {
+    const onOpenCase = vi.fn();
+    const onRunCase = vi.fn();
+    await render({ onOpenCase, onRunCase });
+    const button = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Run testItWorks"]',
+    );
+
+    await act(async () => button?.click());
+
+    expect(onRunCase).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ name: "testItWorks", status: "failed" }),
+    );
+    expect(onOpenCase).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Run testPasses"]')).toBeNull();
+  });
+
+  it("shows filtered state with a run-all affordance", async () => {
+    const onRun = vi.fn();
+    await render({ filter: "testItWorks", onRun });
+
+    expect(host.textContent).toContain("Filtered: testItWorks");
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Run all PHP tests"]')
+        ?.click(),
+    );
+    expect(onRun).toHaveBeenCalledOnce();
+  });
+
+  it("does not show filtered state for a full run", async () => {
+    await render({ filter: null });
+
+    expect(host.textContent).not.toContain("Filtered:");
+    expect(
+      host.querySelector('[aria-label="Run all PHP tests"]'),
+    ).toBeNull();
+  });
+
+  it("disables case reruns for invalid names and while running", async () => {
+    const testResult = result();
+    testResult.suites[0].cases[0].name = "with data set #0";
+    await render({ result: testResult });
+
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Run with data set #0"]')
+        ?.disabled,
+    ).toBe(true);
+
+    testResult.suites[0].cases[0].name = "testItWorks";
+    await render({ isRunning: true, result: testResult });
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Run testItWorks"]')
+        ?.disabled,
+    ).toBe(true);
+  });
+
   async function render(
     overrides: Partial<Parameters<typeof PhpTestResultsPanel>[0]> = {},
   ) {
@@ -89,9 +146,11 @@ describe("PhpTestResultsPanel", () => {
       root.render(
         <PhpTestResultsPanel
           error={overrides.error ?? null}
+          filter={overrides.filter ?? null}
           isRunning={overrides.isRunning ?? false}
           onOpenCase={overrides.onOpenCase ?? vi.fn()}
           onRun={overrides.onRun ?? vi.fn()}
+          onRunCase={overrides.onRunCase ?? vi.fn()}
           result={overrides.result === undefined ? result() : overrides.result}
           rootPath={overrides.rootPath ?? "/workspace"}
           unavailable={overrides.unavailable ?? null}

@@ -1,6 +1,7 @@
 import { Play, RefreshCw } from "lucide-react";
 import type { CSSProperties } from "react";
 import {
+  phpTestCaseCanRun,
   phpTestCaseCanNavigate,
   phpTestSuiteStatus,
   phpTestTotalsSummary,
@@ -11,9 +12,11 @@ import {
 
 interface PhpTestResultsPanelProps {
   error: string | null;
+  filter: string | null;
   isRunning: boolean;
   onOpenCase(testCase: PhpTestCase): void;
   onRun(): void;
+  onRunCase(testCase: PhpTestCase): void;
   result: PhpTestRunOk | null;
   rootPath: string | null;
   unavailable: string | null;
@@ -34,7 +37,8 @@ const styles: Record<string, CSSProperties> = {
     borderTop: "1px solid var(--border-subtle)",
     display: "grid",
     gap: 8,
-    gridTemplateColumns: "80px minmax(180px, 1fr) minmax(180px, 2fr) 70px",
+    gridTemplateColumns:
+      "80px minmax(180px, 1fr) minmax(180px, 2fr) 70px 24px",
     padding: "6px 10px 6px 26px",
   },
   header: { alignItems: "center", display: "flex", gap: 8, padding: "6px 8px" },
@@ -56,9 +60,11 @@ const statusColors: Record<PhpTestStatus, string> = {
 
 export function PhpTestResultsPanel({
   error,
+  filter,
   isRunning,
   onOpenCase,
   onRun,
+  onRunCase,
   result,
   rootPath,
   unavailable,
@@ -67,6 +73,18 @@ export function PhpTestResultsPanel({
     <div aria-label="PHP test results" role="tabpanel" style={styles.panel}>
       <div style={styles.header}>
         <strong>PHP Tests</strong>
+        {filter ? <span>Filtered: {filter}</span> : null}
+        {filter ? (
+          <button
+            aria-label="Run all PHP tests"
+            disabled={isRunning}
+            onClick={onRun}
+            style={styles.action}
+            type="button"
+          >
+            Run all
+          </button>
+        ) : null}
         {result ? (
           <span aria-label="PHP test totals" style={styles.summary}>
             {phpTestTotalsSummary(result.totals)}
@@ -126,6 +144,7 @@ export function PhpTestResultsPanel({
               const navigable = rootPath
                 ? phpTestCaseCanNavigate(rootPath, testCase)
                 : false;
+              const runnable = phpTestCaseCanRun(testCase);
 
               return (
                 <div
@@ -152,6 +171,22 @@ export function PhpTestResultsPanel({
                   <span style={styles.muted}>
                     {testCase.time === null ? "—" : `${testCase.time}s`}
                   </span>
+                  {testCase.status === "failed" || testCase.status === "error" ? (
+                    <button
+                      aria-label={`Run ${testCase.name ?? "unnamed test"}`}
+                      disabled={isRunning || !runnable}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onRunCase(testCase);
+                      }}
+                      style={styles.action}
+                      type="button"
+                    >
+                      <Play aria-hidden="true" size={14} />
+                    </button>
+                  ) : (
+                    <span />
+                  )}
                 </div>
               );
             })}

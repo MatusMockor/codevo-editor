@@ -90,9 +90,79 @@ describe("usePhpTestResults", () => {
     await act(async () => harness.hook().run());
 
     expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenNthCalledWith(1, "/one", undefined);
+    expect(run).toHaveBeenNthCalledWith(2, "/one", undefined);
     expect(harness.hook().result?.status).toBe("ok");
     expect(harness.hook().suites[0].name).toBe("second");
     harness.unmount();
+  });
+
+  it("re-runs one valid failed case and replaces the root result", async () => {
+    const run = vi
+      .fn<PhpTestGateway["run"]>()
+      .mockResolvedValueOnce(ok("suite"))
+      .mockResolvedValueOnce(ok("single"))
+      .mockResolvedValueOnce(ok("all"));
+    const harness = renderHook({ run });
+
+    await act(async () => {
+      harness.set({ isOpen: true });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () =>
+      harness.hook().runCase({
+        classname: "Tests\\Unit\\FooTest",
+        file: "tests/Unit/FooTest.php",
+        line: 12,
+        message: "failed",
+        name: "testItWorks",
+        status: "failed",
+        time: 0.1,
+      }),
+    );
+
+    expect(run).toHaveBeenLastCalledWith("/one", "testItWorks");
+    expect(harness.hook().suites[0].name).toBe("single");
+    expect(harness.hook().filter).toBe("testItWorks");
+
+    await act(async () => harness.hook().run());
+
+    expect(run).toHaveBeenLastCalledWith("/one", undefined);
+    expect(harness.hook().filter).toBeNull();
+    harness.unmount();
+  });
+
+  it("rejects invalid or non-failing cases without invoking the gateway", async () => {
+    const run = vi.fn<PhpTestGateway["run"]>();
+    const harness = renderHook({ run });
+
+    await act(async () =>
+      harness.hook().runCase({
+        classname: null,
+        file: null,
+        line: null,
+        message: null,
+        name: "with data set #0",
+        status: "failed",
+        time: null,
+      }),
+    );
+
+    expect(run).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not subscribe to a global test-case event", () => {
+    const addEventListener = vi.spyOn(window, "addEventListener");
+    const harness = renderHook({ run: vi.fn() });
+
+    expect(addEventListener).not.toHaveBeenCalledWith(
+      "mockor:run-php-test-case",
+      expect.any(Function),
+    );
+    harness.unmount();
+    addEventListener.mockRestore();
   });
 
   it("re-runs cached results when the palette requests a run", async () => {

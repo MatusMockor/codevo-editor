@@ -1553,6 +1553,9 @@ function App() {
             onOpenPhpTestCase={(testCase) => {
               void workbench.openPhpTestCase(testCase);
             }}
+            onRunPhpTestCase={(testCase) => {
+              void phpTestResults.runCase(testCase);
+            }}
             onRunPhpTests={() => void phpTestResults.run()}
             onOpenProblem={workbench.openProblemNotice}
             onPhpReindex={workbench.startPhpReindex}
@@ -1576,6 +1579,7 @@ function App() {
             terminalTheme={terminalTheme}
             workspaceTrusted={workbench.workspaceTrust?.trusted ?? false}
             phpTestError={phpTestResults.error}
+            phpTestFilter={phpTestResults.filter}
             phpTestIsRunning={phpTestResults.isRunning}
             phpTestResult={phpTestResults.result}
             phpTestUnavailable={phpTestResults.unavailable}

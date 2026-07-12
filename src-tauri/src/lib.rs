@@ -759,6 +759,7 @@ async fn run_artisan_route_list_with_trust(
 #[tauri::command]
 async fn run_php_tests_junit(
     root_path: String,
+    filter: Option<String>,
     app: AppHandle,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<php_test_run::PhpTestRunResponse, String> {
@@ -766,12 +767,13 @@ async fn run_php_tests_junit(
         .path()
         .app_local_data_dir()
         .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
-    run_php_tests_junit_with_trust(root_path, app_data_base, &trust).await
+    run_php_tests_junit_with_trust(root_path, app_data_base, filter, &trust).await
 }
 
 async fn run_php_tests_junit_with_trust(
     root_path: String,
     app_data_base: PathBuf,
+    filter: Option<String>,
     trust: &Mutex<WorkspaceTrustService>,
 ) -> Result<php_test_run::PhpTestRunResponse, String> {
     let trusted = trust
@@ -786,7 +788,7 @@ async fn run_php_tests_junit_with_trust(
         });
     }
 
-    php_test_run::run_php_tests(root_path, app_data_base).await
+    php_test_run::run_php_tests(root_path, app_data_base, filter).await
 }
 
 #[tauri::command]
@@ -9173,6 +9175,7 @@ mod tests {
         let response = tauri::async_runtime::block_on(run_php_tests_junit_with_trust(
             path_string(&root),
             root.join("app-data"),
+            None,
             &trust,
         ))
         .expect("php test response");

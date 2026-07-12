@@ -100,23 +100,41 @@ struct CaseBuilder {
 pub async fn run_php_tests(
     root_path: String,
     app_data_base: PathBuf,
+    filter: Option<String>,
 ) -> Result<PhpTestRunResponse, String> {
-    crate::run_blocking_command(move || Ok(run_php_tests_blocking(&root_path, &app_data_base)))
-        .await
+    crate::run_blocking_command(move || {
+        Ok(run_php_tests_blocking(
+            &root_path,
+            &app_data_base,
+            filter.as_deref(),
+        ))
+    })
+    .await
 }
 
-fn run_php_tests_blocking(root_path: &str, app_data_base: &Path) -> PhpTestRunResponse {
-    run_php_tests_blocking_with(root_path, app_data_base, execute_runner)
+fn run_php_tests_blocking(
+    root_path: &str,
+    app_data_base: &Path,
+    filter: Option<&str>,
+) -> PhpTestRunResponse {
+    run_php_tests_blocking_with(root_path, app_data_base, filter, execute_runner)
 }
 
 fn run_php_tests_blocking_with<F>(
     root_path: &str,
     app_data_base: &Path,
+    filter: Option<&str>,
     execute: F,
 ) -> PhpTestRunResponse
 where
-    F: FnOnce(&TestRunner, &Path, &Path) -> Result<Vec<u8>, String>,
+    F: FnOnce(&TestRunner, &Path, &Path, Option<&str>) -> Result<Vec<u8>, String>,
 {
+    if filter.is_some_and(|value| !is_valid_filter(value)) {
+        return PhpTestRunResponse::Error {
+            message: "Invalid PHP test filter.".to_string(),
+        };
+    }
+
     let root = match fs::canonicalize(root_path) {
         Ok(root) => root,
         Err(error) => {
@@ -139,7 +157,7 @@ where
         Err(message) => return PhpTestRunResponse::Error { message },
     };
     let guard = ResultFileGuard(result_path.clone());
-    let stderr = match execute(&runner, &root, &result_path) {
+    let stderr = match execute(&runner, &root, &result_path, filter) {
         Ok(stderr) => stderr,
         Err(message) => return PhpTestRunResponse::Error { message },
     };
@@ -164,22 +182,21 @@ where
     response
 }
 
-fn execute_runner(runner: &TestRunner, root: &Path, result_path: &Path) -> Result<Vec<u8>, String> {
-    let result = result_path.to_string_lossy().into_owned();
+fn execute_runner(
+    runner: &TestRunner,
+    root: &Path,
+    result_path: &Path,
+    filter: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let args = runner_args(runner, result_path, filter);
     let output = match runner {
         TestRunner::Artisan => Command::new("php")
-            .args([
-                "artisan",
-                "test",
-                "--log-junit",
-                &result,
-                "--no-interaction",
-            ])
+            .args(args)
             .env("LC_ALL", "C")
             .current_dir(root)
             .output(),
         TestRunner::PhpUnit(binary) => Command::new(binary)
-            .args(["--log-junit", &result, "--no-interaction"])
+            .args(args)
             .env("LC_ALL", "C")
             .current_dir(root)
             .output(),
@@ -187,6 +204,36 @@ fn execute_runner(runner: &TestRunner, root: &Path, result_path: &Path) -> Resul
     output
         .map(|output| output.stderr)
         .map_err(|error| format!("Failed to run PHP tests: {error}"))
+}
+
+fn runner_args(runner: &TestRunner, result_path: &Path, filter: Option<&str>) -> Vec<String> {
+    let result = result_path.to_string_lossy().into_owned();
+    let mut args = match runner {
+        TestRunner::Artisan => vec![
+            "artisan".to_string(),
+            "test".to_string(),
+            "--log-junit".to_string(),
+            result,
+            "--no-interaction".to_string(),
+        ],
+        TestRunner::PhpUnit(_) => vec![
+            "--log-junit".to_string(),
+            result,
+            "--no-interaction".to_string(),
+        ],
+    };
+    if let Some(filter) = filter {
+        args.push("--filter".to_string());
+        args.push(format!("{filter}$"));
+    }
+    args
+}
+
+fn is_valid_filter(filter: &str) -> bool {
+    !filter.is_empty()
+        && filter
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 fn detect_runner(root: &Path) -> Result<Option<TestRunner>, String> {
@@ -509,8 +556,8 @@ fn with_stderr_tail(message: String, stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_runner, parse_junit, run_php_tests_blocking_with, PhpTestRunResponse, PhpTestStatus,
-        TestRunner, MAX_CASES,
+        detect_runner, parse_junit, run_php_tests_blocking_with, runner_args, PhpTestRunResponse,
+        PhpTestStatus, TestRunner, MAX_CASES,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -533,6 +580,70 @@ mod tests {
             PhpTestRunResponse::Ok { suites, totals } => (suites, totals),
             response => panic!("unexpected response: {response:?}"),
         }
+    }
+
+    #[test]
+    fn php_test_builds_artisan_args_with_and_without_filter() {
+        let result = Path::new("/results/junit.xml");
+        assert_eq!(
+            runner_args(&TestRunner::Artisan, result, None),
+            [
+                "artisan",
+                "test",
+                "--log-junit",
+                "/results/junit.xml",
+                "--no-interaction"
+            ]
+        );
+        assert_eq!(
+            runner_args(&TestRunner::Artisan, result, Some("testItWorks")),
+            [
+                "artisan",
+                "test",
+                "--log-junit",
+                "/results/junit.xml",
+                "--no-interaction",
+                "--filter",
+                "testItWorks$",
+            ]
+        );
+    }
+
+    #[test]
+    fn php_test_builds_phpunit_args_with_and_without_filter() {
+        let result = Path::new("/results/junit.xml");
+        let runner = TestRunner::PhpUnit(PathBuf::from("vendor/bin/phpunit"));
+        assert_eq!(
+            runner_args(&runner, result, None),
+            ["--log-junit", "/results/junit.xml", "--no-interaction"]
+        );
+        assert_eq!(
+            runner_args(&runner, result, Some("testItWorks")),
+            [
+                "--log-junit",
+                "/results/junit.xml",
+                "--no-interaction",
+                "--filter",
+                "testItWorks$",
+            ]
+        );
+    }
+
+    #[test]
+    fn php_test_rejects_invalid_filters_before_running() {
+        let response = run_php_tests_blocking_with(
+            "/missing/workspace",
+            Path::new("/missing/app-data"),
+            Some("testItWorks.*"),
+            |_, _, _, _| panic!("runner must not execute"),
+        );
+
+        assert_eq!(
+            response,
+            PhpTestRunResponse::Error {
+                message: "Invalid PHP test filter.".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -646,7 +757,8 @@ mod tests {
         let response = run_php_tests_blocking_with(
             root.to_str().expect("utf-8 root"),
             &app_data,
-            |_, _, _| panic!("runner must not execute"),
+            None,
+            |_, _, _, _| panic!("runner must not execute"),
         );
         assert_eq!(
             response,
@@ -661,7 +773,8 @@ mod tests {
         run_php_tests_blocking_with(
             root.to_str().expect("utf-8 root"),
             app_data,
-            |_, _, result_path| {
+            None,
+            |_, _, result_path, _| {
                 fs::write(result_path, xml).expect("write result");
                 Ok(Vec::new())
             },
@@ -692,7 +805,8 @@ mod tests {
         let response = run_php_tests_blocking_with(
             root.to_str().expect("utf-8 root"),
             &app_data,
-            |_, _, result_path| {
+            None,
+            |_, _, result_path, _| {
                 fs::write(result_path, "<testsuite>").expect("write result");
                 Ok(b"runner stderr".to_vec())
             },

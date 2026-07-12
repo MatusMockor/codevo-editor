@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  phpTestCaseCanRun,
   phpTestCaseCanNavigate,
   phpTestCaseNavigationTarget,
   phpTestSuiteStatus,
@@ -9,6 +10,17 @@ import {
 } from "./phpTestResults";
 
 describe("PHP test result helpers", () => {
+  it.each([
+    ["failed", "testItWorks", true],
+    ["error", "testErrors", true],
+    ["passed", "testPasses", false],
+    ["skipped", "testSkipped", false],
+    ["failed", "with data set #0", false],
+    ["failed", null, false],
+  ] as const)("checks whether a case can be re-run %#", (status, name, expected) => {
+    expect(phpTestCaseCanRun(testCase(status, null, null, name))).toBe(expected);
+  });
+
   it.each([
     [{ errors: 1, failures: 2, skipped: 0, tests: 3 }, "error"],
     [{ errors: 0, failures: 2, skipped: 0, tests: 3 }, "failed"],
@@ -98,13 +110,14 @@ function testCase(
   status: PhpTestCase["status"],
   file: string | null,
   line: number | null = null,
+  name: string | null = "testItWorks",
 ): PhpTestCase {
   return {
     classname: null,
     file,
     line,
     message: null,
-    name: "testItWorks",
+    name,
     status,
     time: null,
   };

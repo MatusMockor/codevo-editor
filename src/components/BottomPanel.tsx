@@ -47,6 +47,7 @@ interface BottomPanelProps {
   onOpenArtisanController?(action: ArtisanControllerAction): void;
   onRefreshArtisanRoutes?(): void;
   onOpenPhpTestCase?(testCase: PhpTestCase): void;
+  onRunPhpTestCase?(testCase: PhpTestCase): void;
   onRunPhpTests?(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
@@ -72,6 +73,7 @@ interface BottomPanelProps {
   workspaceTrusted: boolean;
   workspaceRoot: string | null;
   phpTestError?: string | null;
+  phpTestFilter?: string | null;
   phpTestIsRunning?: boolean;
   phpTestResult?: PhpTestRunOk | null;
   phpTestUnavailable?: string | null;
@@ -110,6 +112,7 @@ export function BottomPanel({
   onOpenArtisanController = () => undefined,
   onRefreshArtisanRoutes = () => undefined,
   onOpenPhpTestCase = () => undefined,
+  onRunPhpTestCase = () => undefined,
   onRunPhpTests = () => undefined,
   onOpenProblem,
   onPhpReindex,
@@ -130,6 +133,7 @@ export function BottomPanel({
   workspaceTrusted,
   workspaceRoot,
   phpTestError = null,
+  phpTestFilter = null,
   phpTestIsRunning = false,
   phpTestResult = null,
   phpTestUnavailable = null,
@@ -205,6 +209,7 @@ export function BottomPanel({
     artisanRoutesTotal,
     artisanRoutesUnavailable,
     phpTestError,
+    phpTestFilter,
     phpTestIsRunning,
     phpTestResult,
     phpTestUnavailable,
@@ -216,6 +221,7 @@ export function BottomPanel({
     onOpenArtisanController,
     onRefreshArtisanRoutes,
     onOpenPhpTestCase,
+    onRunPhpTestCase,
     onRunPhpTests,
     onOpenProblem,
     onPhpReindex,
@@ -403,6 +409,7 @@ interface RenderActivePanelOptions {
   artisanRoutesTotal: number;
   artisanRoutesUnavailable: string | null;
   phpTestError: string | null;
+  phpTestFilter: string | null;
   phpTestIsRunning: boolean;
   phpTestResult: PhpTestRunOk | null;
   phpTestUnavailable: string | null;
@@ -414,6 +421,7 @@ interface RenderActivePanelOptions {
   onOpenArtisanController(action: ArtisanControllerAction): void;
   onRefreshArtisanRoutes(): void;
   onOpenPhpTestCase(testCase: PhpTestCase): void;
+  onRunPhpTestCase(testCase: PhpTestCase): void;
   onRunPhpTests(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
@@ -439,6 +447,7 @@ function renderActivePanel({
   artisanRoutesTotal,
   artisanRoutesUnavailable,
   phpTestError,
+  phpTestFilter,
   phpTestIsRunning,
   phpTestResult,
   phpTestUnavailable,
@@ -450,6 +459,7 @@ function renderActivePanel({
   onOpenArtisanController,
   onRefreshArtisanRoutes,
   onOpenPhpTestCase,
+  onRunPhpTestCase,
   onRunPhpTests,
   onOpenProblem,
   onPhpReindex,
@@ -465,9 +475,11 @@ function renderActivePanel({
     return (
       <PhpTestResultsPanel
         error={phpTestError}
+        filter={phpTestFilter}
         isRunning={phpTestIsRunning}
         onOpenCase={onOpenPhpTestCase}
         onRun={onRunPhpTests}
+        onRunCase={onRunPhpTestCase}
         result={phpTestResult}
         rootPath={workspaceRoot}
         unavailable={phpTestUnavailable}
