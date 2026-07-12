@@ -1957,16 +1957,36 @@ async fn get_php_file_outline(
     .await
 }
 
+#[cfg(not(test))]
+type GitTrustState<'a> = State<'a, Mutex<WorkspaceTrustService>>;
+#[cfg(test)]
+type GitTrustState<'a> = bool;
+
+#[cfg(not(test))]
+fn trusted_for(trust: &GitTrustState<'_>, root_path: &str) -> Result<bool, String> {
+    Ok(trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(root_path)
+        .trusted)
+}
+
+#[cfg(test)]
+fn trusted_for(trust: &GitTrustState<'_>, _root_path: &str) -> Result<bool, String> {
+    Ok(*trust)
+}
+
 #[tauri::command]
-async fn get_git_status(root_path: String) -> Result<GitStatus, String> {
+async fn get_git_status(root_path: String, trust: GitTrustState<'_>) -> Result<GitStatus, String> {
     // `git status` shells out to a subprocess and, on large Laravel repos, can
     // take hundreds of milliseconds; it fires on every save and tab switch.
     // Resolve the requested root and run it off the main thread so the WebView
     // never stalls. The captured `root_path` keeps the request bound to its own
     // repository (no cross-root leakage).
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .status(&root)
             .map_err(|error| error.to_string())
     })
@@ -1974,7 +1994,11 @@ async fn get_git_status(root_path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
-async fn get_git_repo_status(root_path: String) -> Result<GitRepoStatus, String> {
+async fn get_git_repo_status(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitRepoStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = match canonicalize_workspace_root(&root_path) {
             Ok(root) => root,
@@ -1985,7 +2009,7 @@ async fn get_git_repo_status(root_path: String) -> Result<GitRepoStatus, String>
                 });
             }
         };
-        let is_repository = CommandGitRepositoryGateway
+        let is_repository = CommandGitRepositoryGateway::new(trusted)
             .status(&root)
             .map(|status| status.is_repository)
             .unwrap_or(false);
@@ -2017,10 +2041,14 @@ async fn detect_git_repositories(
 }
 
 #[tauri::command]
-async fn get_git_branches(root_path: String) -> Result<GitBranches, String> {
+async fn get_git_branches(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitBranches, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        load_git_branches(&root).map_err(|error| error.to_string())
+        load_git_branches(&root, trusted).map_err(|error| error.to_string())
     })
     .await
 }
@@ -2029,10 +2057,12 @@ async fn get_git_branches(root_path: String) -> Result<GitBranches, String> {
 async fn get_git_commit_log(
     root_path: String,
     filters: GitCommitFilters,
+    trust: GitTrustState<'_>,
 ) -> Result<Vec<GitCommit>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        load_commit_log(&root, filters).map_err(|error| error.to_string())
+        load_commit_log(&root, filters, trusted).map_err(|error| error.to_string())
     })
     .await
 }
@@ -2041,7 +2071,9 @@ async fn get_git_commit_log(
 async fn get_git_commit_graph_page(
     root_path: String,
     cursor: Option<String>,
+    trust: GitTrustState<'_>,
 ) -> Result<Vec<CommitGraphNode>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         let commits = load_commit_log(
@@ -2054,6 +2086,7 @@ async fn get_git_commit_graph_page(
                 path: None,
                 query: None,
             },
+            trusted,
         )
         .map_err(|error| error.to_string())?;
 
@@ -2074,10 +2107,12 @@ async fn get_git_commit_graph_page(
 async fn get_git_commit_details(
     root_path: String,
     commit_hash: String,
+    trust: GitTrustState<'_>,
 ) -> Result<GitCommitDetails, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        load_commit_details(&root, &commit_hash).map_err(|error| error.to_string())
+        load_commit_details(&root, &commit_hash, trusted).map_err(|error| error.to_string())
     })
     .await
 }
@@ -2086,10 +2121,12 @@ async fn get_git_commit_details(
 async fn get_git_commit_files(
     root_path: String,
     commit_hash: String,
+    trust: GitTrustState<'_>,
 ) -> Result<Vec<CommitFileChange>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())
+        load_commit_files(&root, &commit_hash, trusted).map_err(|error| error.to_string())
     })
     .await
 }
@@ -2101,27 +2138,42 @@ async fn get_git_commit_diff(
     path: String,
     old_path: Option<String>,
     files: Option<Vec<CommitFileChange>>,
+    trust: GitTrustState<'_>,
 ) -> Result<CommitDiffPayload, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         let files = match files {
             Some(files) => files,
-            None => load_commit_files(&root, &commit_hash).map_err(|error| error.to_string())?,
+            None => load_commit_files(&root, &commit_hash, trusted)
+                .map_err(|error| error.to_string())?,
         };
-        load_commit_diff(&root, &commit_hash, &path, old_path.as_deref(), &files)
-            .map_err(|error| error.to_string())
+        load_commit_diff(
+            &root,
+            &commit_hash,
+            &path,
+            old_path.as_deref(),
+            &files,
+            trusted,
+        )
+        .map_err(|error| error.to_string())
     })
     .await
 }
 
 #[tauri::command]
-async fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFileDiff, String> {
+async fn get_git_diff(
+    root_path: String,
+    change: GitChangedFile,
+    trust: GitTrustState<'_>,
+) -> Result<GitFileDiff, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Diffing shells out to `git` and reads file contents; it fires alongside
     // status on save/switch, so keep it off the main thread, scoped to the
     // requested repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .diff(&root, &change)
             .map_err(|error| error.to_string())
     })
@@ -2132,14 +2184,16 @@ async fn get_git_diff(root_path: String, change: GitChangedFile) -> Result<GitFi
 async fn get_git_blame(
     root_path: String,
     relative_path: String,
+    trust: GitTrustState<'_>,
 ) -> Result<Vec<GitBlameLine>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // `git blame` shells out to a subprocess that can take a while on large
     // files; keep it off the main thread so the WebView never stalls. The
     // captured `root_path` + `relative_path` bind the request to its own
     // repository and file (no cross-root or cross-file leakage).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .blame(&root, &relative_path)
             .map_err(|error| error.to_string())
     })
@@ -2150,14 +2204,16 @@ async fn get_git_blame(
 async fn get_git_file_history(
     root_path: String,
     relative_path: String,
+    trust: GitTrustState<'_>,
 ) -> Result<Vec<GitFileHistoryEntry>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // `git log --follow` shells out to a subprocess that can take a while on a
     // file with deep history; keep it off the main thread so the WebView never
     // stalls. The captured `root_path` + `relative_path` bind the request to its
     // own repository and file (no cross-root or cross-file leakage).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .file_history(&root, &relative_path)
             .map_err(|error| error.to_string())
     })
@@ -2245,7 +2301,9 @@ async fn get_git_file_commit_diff(
     root_path: String,
     relative_path: String,
     sha: String,
+    trust: GitTrustState<'_>,
 ) -> Result<GitFileDiff, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Reading both blob revisions for a historical commit shells out to `git
     // show` twice; keep the round-trip off the main thread. The captured
     // `root_path`, `relative_path`, and `sha` bind the request to its own
@@ -2253,7 +2311,7 @@ async fn get_git_file_commit_diff(
     // gateway validates `relative_path` and `sha` before they reach git.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .file_commit_diff(&root, &relative_path, &sha)
             .map_err(|error| error.to_string())
     })
@@ -2264,12 +2322,14 @@ async fn get_git_file_commit_diff(
 async fn stage_git_files(
     root_path: String,
     changes: Vec<GitChangedFile>,
+    trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Staging shells out to `git add` then re-reads status; keep the round-trip
     // off the main thread, bound to the requested repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stage(&root, &changes)
             .map_err(|error| error.to_string())
     })
@@ -2280,12 +2340,14 @@ async fn stage_git_files(
 async fn unstage_git_files(
     root_path: String,
     changes: Vec<GitChangedFile>,
+    trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Unstaging shells out to `git` and re-reads status; keep it off the main
     // thread, bound to the requested repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .unstage(&root, &changes)
             .map_err(|error| error.to_string())
     })
@@ -2297,12 +2359,14 @@ async fn get_git_file_hunks(
     root_path: String,
     relative_path: String,
     staged: bool,
+    trust: GitTrustState<'_>,
 ) -> Result<Vec<GitDiffHunk>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Reads a single file's `git diff` off the main thread, bound to the
     // requested repository root and file (no cross-root/file leakage).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .file_hunks(&root, &relative_path, staged)
             .map_err(|error| error.to_string())
     })
@@ -2314,13 +2378,15 @@ async fn stage_git_hunk(
     root_path: String,
     relative_path: String,
     hunk_index: u32,
+    trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Staging one hunk runs `git diff` + `git apply --cached` and re-reads
     // status; keep the round-trip off the main thread, bound to the requested
     // repository root. A rejected patch fails atomically (index untouched).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stage_hunk(&root, &relative_path, hunk_index)
             .map_err(|error| error.to_string())
     })
@@ -2332,13 +2398,15 @@ async fn unstage_git_hunk(
     root_path: String,
     relative_path: String,
     hunk_index: u32,
+    trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Unstaging one hunk runs `git diff --cached` + `git apply --cached
     // --reverse` and re-reads status; keep it off the main thread, bound to the
     // requested repository root. A rejected patch fails atomically.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .unstage_hunk(&root, &relative_path, hunk_index)
             .map_err(|error| error.to_string())
     })
@@ -2349,12 +2417,14 @@ async fn unstage_git_hunk(
 async fn revert_git_files(
     root_path: String,
     changes: Vec<GitChangedFile>,
+    trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Reverting shells out to `git checkout`/`restore` and re-reads status; keep
     // it off the main thread, bound to the requested repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .revert(&root, &changes)
             .map_err(|error| error.to_string())
     })
@@ -2366,13 +2436,15 @@ async fn commit_git_changes(
     root_path: String,
     message: String,
     changes: Vec<GitChangedFile>,
+    trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Committing runs several `git` subprocesses (write-tree, commit-tree, ...);
     // keep the whole sequence off the main thread, bound to the requested
     // repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .commit(&root, &message, &changes)
             .map_err(|error| error.to_string())
     })
@@ -2384,10 +2456,12 @@ async fn amend_git_commit(
     root_path: String,
     message: String,
     changes: Vec<GitChangedFile>,
+    trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .amend(&root, &message, &changes)
             .map_err(|error| error.to_string())
     })
@@ -2395,13 +2469,17 @@ async fn amend_git_commit(
 }
 
 #[tauri::command]
-async fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
+async fn push_git_changes(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // `git push` performs network I/O and can block for seconds; it MUST run off
     // the main thread so the WebView stays responsive. Bound to the requested
     // repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .push(&root)
             .map_err(|error| error.to_string())
     })
@@ -2409,10 +2487,14 @@ async fn push_git_changes(root_path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
-async fn fetch_git_changes(root_path: String) -> Result<GitStatus, String> {
+async fn fetch_git_changes(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .fetch(&root)
             .map_err(|error| error.to_string())
     })
@@ -2420,10 +2502,14 @@ async fn fetch_git_changes(root_path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
-async fn pull_git_changes(root_path: String) -> Result<GitStatus, String> {
+async fn pull_git_changes(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .pull(&root)
             .map_err(|error| error.to_string())
     })
@@ -2431,12 +2517,17 @@ async fn pull_git_changes(root_path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
-async fn save_git_stash(root_path: String, message: String) -> Result<(), String> {
+async fn save_git_stash(
+    root_path: String,
+    message: String,
+    trust: GitTrustState<'_>,
+) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // `git stash push` shells out and rewrites the working tree; keep it off the
     // main thread, bound to the requested repository root (no cross-root leak).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stash_save(&root, &message)
             .map_err(|error| error.to_string())
     })
@@ -2444,12 +2535,16 @@ async fn save_git_stash(root_path: String, message: String) -> Result<(), String
 }
 
 #[tauri::command]
-async fn get_git_stash_list(root_path: String) -> Result<Vec<GitStashEntry>, String> {
+async fn get_git_stash_list(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<Vec<GitStashEntry>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Listing stashes shells out to `git stash list`; keep it off the main
     // thread, scoped to the requested repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stash_list(&root)
             .map_err(|error| error.to_string())
     })
@@ -2457,14 +2552,19 @@ async fn get_git_stash_list(root_path: String) -> Result<Vec<GitStashEntry>, Str
 }
 
 #[tauri::command]
-async fn stash_apply_git(root_path: String, index: String) -> Result<(), String> {
+async fn stash_apply_git(
+    root_path: String,
+    index: String,
+    trust: GitTrustState<'_>,
+) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Applying a stash rewrites the working tree; keep it off the main thread,
     // bound to the requested repository root. The index is validated numerically
     // before it reaches the `stash@{N}` selector (no option/revision injection).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stash_apply(&root, index)
             .map_err(|error| error.to_string())
     })
@@ -2472,13 +2572,18 @@ async fn stash_apply_git(root_path: String, index: String) -> Result<(), String>
 }
 
 #[tauri::command]
-async fn stash_pop_git(root_path: String, index: String) -> Result<(), String> {
+async fn stash_pop_git(
+    root_path: String,
+    index: String,
+    trust: GitTrustState<'_>,
+) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Popping a stash applies then drops it; keep it off the main thread, bound
     // to the requested repository root. The index is validated numerically.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stash_pop(&root, index)
             .map_err(|error| error.to_string())
     })
@@ -2486,14 +2591,19 @@ async fn stash_pop_git(root_path: String, index: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_git_stash_diff(root_path: String, index: String) -> Result<String, String> {
+async fn get_git_stash_diff(
+    root_path: String,
+    index: String,
+    trust: GitTrustState<'_>,
+) -> Result<String, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // `git stash show -p` shells out to produce a diff; keep it off the main
     // thread, bound to the requested repository root. The index is validated
     // numerically before it reaches the `stash@{N}` selector.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stash_show(&root, index)
             .map_err(|error| error.to_string())
     })
@@ -2501,14 +2611,19 @@ async fn get_git_stash_diff(root_path: String, index: String) -> Result<String, 
 }
 
 #[tauri::command]
-async fn stash_drop_git(root_path: String, index: String) -> Result<(), String> {
+async fn stash_drop_git(
+    root_path: String,
+    index: String,
+    trust: GitTrustState<'_>,
+) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Dropping a stash is destructive; keep it off the main thread, bound to the
     // requested repository root. The index is validated numerically before it
     // reaches the `stash@{N}` selector (no option/revision injection).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         let index = safe_stash_index(&index).map_err(|error| error.to_string())?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .stash_drop(&root, index)
             .map_err(|error| error.to_string())
     })
@@ -2516,12 +2631,16 @@ async fn stash_drop_git(root_path: String, index: String) -> Result<(), String> 
 }
 
 #[tauri::command]
-async fn list_git_branches(root_path: String) -> Result<Vec<GitBranch>, String> {
+async fn list_git_branches(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<Vec<GitBranch>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Listing branches shells out to `git for-each-ref`; keep it off the main
     // thread, scoped to the requested repository root (no cross-root leak).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .branch_list(&root)
             .map_err(|error| error.to_string())
     })
@@ -2529,10 +2648,14 @@ async fn list_git_branches(root_path: String) -> Result<Vec<GitBranch>, String> 
 }
 
 #[tauri::command]
-async fn list_git_remote_branches(root_path: String) -> Result<Vec<GitBranch>, String> {
+async fn list_git_remote_branches(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<Vec<GitBranch>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .remote_branch_list(&root)
             .map_err(|error| error.to_string())
     })
@@ -2543,10 +2666,12 @@ async fn list_git_remote_branches(root_path: String) -> Result<Vec<GitBranch>, S
 async fn checkout_git_remote_branch(
     root_path: String,
     name: String,
+    trust: GitTrustState<'_>,
 ) -> Result<Vec<GitBranch>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .checkout_remote_branch(&root, &name)
             .map_err(|error| error.to_string())
     })
@@ -2554,12 +2679,16 @@ async fn checkout_git_remote_branch(
 }
 
 #[tauri::command]
-async fn get_git_current_branch(root_path: String) -> Result<Option<String>, String> {
+async fn get_git_current_branch(
+    root_path: String,
+    trust: GitTrustState<'_>,
+) -> Result<Option<String>, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // Resolving the current branch shells out to git; keep it off the main
     // thread, bound to the requested repository root.
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .current_branch(&root)
             .map_err(|error| error.to_string())
     })
@@ -2567,14 +2696,19 @@ async fn get_git_current_branch(root_path: String) -> Result<Option<String>, Str
 }
 
 #[tauri::command]
-async fn create_git_branch(root_path: String, name: String) -> Result<(), String> {
+async fn create_git_branch(
+    root_path: String,
+    name: String,
+    trust: GitTrustState<'_>,
+) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // `git branch <name>` creates a branch WITHOUT switching (the working tree is
     // never touched). Keep it off the main thread, bound to the requested root.
     // The name is validated against git's own ref grammar before it reaches the
     // subprocess (no option/shell injection).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .create_branch(&root, &name)
             .map_err(|error| error.to_string())
     })
@@ -2582,10 +2716,16 @@ async fn create_git_branch(root_path: String, name: String) -> Result<(), String
 }
 
 #[tauri::command]
-async fn delete_git_branch(root_path: String, name: String, force: bool) -> Result<(), String> {
+async fn delete_git_branch(
+    root_path: String,
+    name: String,
+    force: bool,
+    trust: GitTrustState<'_>,
+) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .delete_branch(&root, &name, force)
             .map_err(|error| error.to_string())
     })
@@ -2597,10 +2737,12 @@ async fn rename_git_branch(
     root_path: String,
     old_name: String,
     new_name: String,
+    trust: GitTrustState<'_>,
 ) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .rename_branch(&root, &old_name, &new_name)
             .map_err(|error| error.to_string())
     })
@@ -2608,14 +2750,19 @@ async fn rename_git_branch(
 }
 
 #[tauri::command]
-async fn switch_git_branch(root_path: String, name: String) -> Result<(), String> {
+async fn switch_git_branch(
+    root_path: String,
+    name: String,
+    trust: GitTrustState<'_>,
+) -> Result<(), String> {
+    let trusted = trusted_for(&trust, &root_path)?;
     // `git switch <name>` (no `-f`/`--discard`) rewrites the working tree but
     // refuses when local changes would be overwritten, so no work is ever lost.
     // Keep it off the main thread, bound to the requested repository root. The
     // name is validated against git's ref grammar (no option/shell injection).
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(trusted)
             .switch_branch(&root, &name)
             .map_err(|error| error.to_string())
     })
@@ -7299,7 +7446,7 @@ mod tests {
         run_test_git(&root, &["commit", "-m", "initial"]);
         fs::write(root.join("tracked.txt"), "two\n").expect("modify tracked");
 
-        let status = tauri::async_runtime::block_on(get_git_status(path_string(&root)))
+        let status = tauri::async_runtime::block_on(get_git_status(path_string(&root), true))
             .expect("git status result");
 
         assert!(
@@ -7332,7 +7479,7 @@ mod tests {
         };
 
         let status =
-            tauri::async_runtime::block_on(stage_git_files(path_string(&root), vec![change]))
+            tauri::async_runtime::block_on(stage_git_files(path_string(&root), vec![change], true))
                 .expect("stage result");
 
         assert!(
@@ -7358,12 +7505,18 @@ mod tests {
             path_string(&root),
             "f.txt".to_string(),
             false,
+            true,
         ))
         .expect("hunks");
         assert_eq!(hunks.len(), 2, "expected two hunks, got {hunks:?}");
 
-        tauri::async_runtime::block_on(stage_git_hunk(path_string(&root), "f.txt".to_string(), 0))
-            .expect("stage hunk");
+        tauri::async_runtime::block_on(stage_git_hunk(
+            path_string(&root),
+            "f.txt".to_string(),
+            0,
+            true,
+        ))
+        .expect("stage hunk");
 
         // Partial staging: exactly the first hunk moved to the index while the
         // last hunk remains in the worktree diff. `git status --porcelain`
@@ -7373,12 +7526,14 @@ mod tests {
             path_string(&root),
             "f.txt".to_string(),
             true,
+            true,
         ))
         .expect("staged hunks");
         let worktree = tauri::async_runtime::block_on(get_git_file_hunks(
             path_string(&root),
             "f.txt".to_string(),
             false,
+            true,
         ))
         .expect("worktree hunks");
 
@@ -7406,6 +7561,7 @@ mod tests {
             path_string(&root),
             "f.txt".to_string(),
             0,
+            true,
         ))
         .expect("unstage hunk");
 
@@ -7416,12 +7572,14 @@ mod tests {
             path_string(&root),
             "f.txt".to_string(),
             true,
+            true,
         ))
         .expect("staged hunks");
         let worktree = tauri::async_runtime::block_on(get_git_file_hunks(
             path_string(&root),
             "f.txt".to_string(),
             false,
+            true,
         ))
         .expect("worktree hunks");
 
@@ -7448,10 +7606,10 @@ mod tests {
         fs::write(root_a.join("only-in-a.txt"), "a\n").expect("file in a");
         fs::write(root_b.join("only-in-b.txt"), "b\n").expect("file in b");
 
-        let status_a =
-            tauri::async_runtime::block_on(get_git_status(path_string(&root_a))).expect("status a");
-        let status_b =
-            tauri::async_runtime::block_on(get_git_status(path_string(&root_b))).expect("status b");
+        let status_a = tauri::async_runtime::block_on(get_git_status(path_string(&root_a), true))
+            .expect("status a");
+        let status_b = tauri::async_runtime::block_on(get_git_status(path_string(&root_b), true))
+            .expect("status b");
 
         assert!(
             status_a
@@ -7513,6 +7671,7 @@ mod tests {
             path_string(&root_a),
             "amended a".to_string(),
             vec![change],
+            true,
         ))
         .expect("amend workspace A");
 
@@ -7578,9 +7737,9 @@ mod tests {
         run_test_git(&seed, &["push"]);
         let old_b_head = test_git_output(&root_b, &["rev-parse", "HEAD"]);
 
-        tauri::async_runtime::block_on(fetch_git_changes(path_string(&root_a)))
+        tauri::async_runtime::block_on(fetch_git_changes(path_string(&root_a), true))
             .expect("fetch workspace A");
-        tauri::async_runtime::block_on(pull_git_changes(path_string(&root_a)))
+        tauri::async_runtime::block_on(pull_git_changes(path_string(&root_a), true))
             .expect("pull workspace A");
 
         assert_eq!(
@@ -7597,7 +7756,7 @@ mod tests {
         run_test_git(&root_b, &["commit", "-m", "local update"]);
         let diverged_head = test_git_output(&root_b, &["rev-parse", "HEAD"]);
 
-        let error = tauri::async_runtime::block_on(pull_git_changes(path_string(&root_b)))
+        let error = tauri::async_runtime::block_on(pull_git_changes(path_string(&root_b), true))
             .expect_err("diverged pull must fail");
 
         assert!(error.to_lowercase().contains("fast-forward"));
@@ -7617,8 +7776,8 @@ mod tests {
         fs::write(root_a.join("a.txt"), "a\n").expect("file a");
         fs::write(root_b.join("b.txt"), "b\n").expect("file b");
 
-        let task_a = tauri::async_runtime::spawn(get_git_status(path_string(&root_a)));
-        let task_b = tauri::async_runtime::spawn(get_git_status(path_string(&root_b)));
+        let task_a = tauri::async_runtime::spawn(get_git_status(path_string(&root_a), true));
+        let task_b = tauri::async_runtime::spawn(get_git_status(path_string(&root_b), true));
 
         let status_a = tauri::async_runtime::block_on(task_a)
             .expect("join a")
@@ -7648,6 +7807,7 @@ mod tests {
         let lines = tauri::async_runtime::block_on(get_git_blame(
             path_string(&root),
             "file.txt".to_string(),
+            true,
         ))
         .expect("blame result");
 
@@ -7676,11 +7836,13 @@ mod tests {
         let blame_a = tauri::async_runtime::block_on(get_git_blame(
             path_string(&root_a),
             "shared.txt".to_string(),
+            true,
         ))
         .expect("blame a");
         let blame_b = tauri::async_runtime::block_on(get_git_blame(
             path_string(&root_b),
             "shared.txt".to_string(),
+            true,
         ))
         .expect("blame b");
 
@@ -7703,6 +7865,7 @@ mod tests {
         let entries = tauri::async_runtime::block_on(get_git_file_history(
             path_string(&root),
             "file.txt".to_string(),
+            true,
         ))
         .expect("file history result");
 
@@ -7730,11 +7893,13 @@ mod tests {
         let history_a = tauri::async_runtime::block_on(get_git_file_history(
             path_string(&root_a),
             "shared.txt".to_string(),
+            true,
         ))
         .expect("history a");
         let history_b = tauri::async_runtime::block_on(get_git_file_history(
             path_string(&root_b),
             "shared.txt".to_string(),
+            true,
         ))
         .expect("history b");
 
@@ -7751,6 +7916,7 @@ mod tests {
         assert!(tauri::async_runtime::block_on(get_git_file_history(
             path_string(&root),
             "../secret.txt".to_string(),
+            true
         ))
         .is_err());
     }
@@ -7764,28 +7930,32 @@ mod tests {
         run_test_git(&root, &["commit", "-m", "initial"]);
         fs::write(root.join("file.txt"), "two\n").expect("write file");
 
-        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string()))
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string(), true))
             .expect("stash save");
 
-        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root), true))
             .expect("stash list");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].index, 0);
 
-        let diff =
-            tauri::async_runtime::block_on(get_git_stash_diff(path_string(&root), "0".to_string()))
-                .expect("stash diff");
+        let diff = tauri::async_runtime::block_on(get_git_stash_diff(
+            path_string(&root),
+            "0".to_string(),
+            true,
+        ))
+        .expect("stash diff");
         assert!(diff.contains("file.txt"));
 
-        tauri::async_runtime::block_on(stash_pop_git(path_string(&root), "0".to_string()))
+        tauri::async_runtime::block_on(stash_pop_git(path_string(&root), "0".to_string(), true))
             .expect("stash pop");
 
         assert_eq!(
             fs::read_to_string(root.join("file.txt")).expect("read"),
             "two\n"
         );
-        let remaining = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
-            .expect("stash list");
+        let remaining =
+            tauri::async_runtime::block_on(get_git_stash_list(path_string(&root), true))
+                .expect("stash list");
         assert!(remaining.is_empty());
     }
 
@@ -7798,21 +7968,22 @@ mod tests {
         run_test_git(&root, &["commit", "-m", "initial"]);
         fs::write(root.join("file.txt"), "two\n").expect("write file");
 
-        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string()))
+        tauri::async_runtime::block_on(save_git_stash(path_string(&root), "wip".to_string(), true))
             .expect("stash save");
-        tauri::async_runtime::block_on(stash_apply_git(path_string(&root), "0".to_string()))
+        tauri::async_runtime::block_on(stash_apply_git(path_string(&root), "0".to_string(), true))
             .expect("stash apply");
 
         // apply keeps the entry around.
-        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
+        let entries = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root), true))
             .expect("stash list");
         assert_eq!(entries.len(), 1);
 
-        tauri::async_runtime::block_on(stash_drop_git(path_string(&root), "0".to_string()))
+        tauri::async_runtime::block_on(stash_drop_git(path_string(&root), "0".to_string(), true))
             .expect("stash drop");
 
-        let remaining = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root)))
-            .expect("stash list");
+        let remaining =
+            tauri::async_runtime::block_on(get_git_stash_list(path_string(&root), true))
+                .expect("stash list");
         assert!(remaining.is_empty());
     }
 
@@ -7831,12 +8002,16 @@ mod tests {
         fs::write(root_a.join("shared.txt"), "wip a\n").expect("file a");
 
         // Only root A has a stash; root B's list must stay empty (no leakage).
-        tauri::async_runtime::block_on(save_git_stash(path_string(&root_a), "wip a".to_string()))
-            .expect("stash save a");
+        tauri::async_runtime::block_on(save_git_stash(
+            path_string(&root_a),
+            "wip a".to_string(),
+            true,
+        ))
+        .expect("stash save a");
 
-        let list_a = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_a)))
+        let list_a = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_a), true))
             .expect("list a");
-        let list_b = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_b)))
+        let list_b = tauri::async_runtime::block_on(get_git_stash_list(path_string(&root_b), true))
             .expect("list b");
 
         assert_eq!(list_a.len(), 1);
@@ -7851,6 +8026,7 @@ mod tests {
         assert!(tauri::async_runtime::block_on(get_git_stash_diff(
             path_string(&root),
             "0} --output=/etc/passwd".to_string(),
+            true
         ))
         .is_err());
     }
@@ -7867,27 +8043,31 @@ mod tests {
         tauri::async_runtime::block_on(create_git_branch(
             path_string(&root),
             "feature/login".to_string(),
+            true,
         ))
         .expect("create branch");
 
-        let branches =
-            tauri::async_runtime::block_on(list_git_branches(path_string(&root))).expect("list");
+        let branches = tauri::async_runtime::block_on(list_git_branches(path_string(&root), true))
+            .expect("list");
         let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
         assert!(names.contains(&"feature/login"));
         assert!(names.contains(&"main"));
         // create must NOT switch: HEAD is still on main.
-        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
-            .expect("current");
+        let current =
+            tauri::async_runtime::block_on(get_git_current_branch(path_string(&root), true))
+                .expect("current");
         assert_eq!(current.as_deref(), Some("main"));
 
         tauri::async_runtime::block_on(switch_git_branch(
             path_string(&root),
             "feature/login".to_string(),
+            true,
         ))
         .expect("switch branch");
 
-        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
-            .expect("current");
+        let current =
+            tauri::async_runtime::block_on(get_git_current_branch(path_string(&root), true))
+                .expect("current");
         assert_eq!(current.as_deref(), Some("feature/login"));
     }
 
@@ -7910,6 +8090,7 @@ mod tests {
         let result = tauri::async_runtime::block_on(switch_git_branch(
             path_string(&root),
             "feature".to_string(),
+            true,
         ));
 
         // The switch must FAIL rather than discard the uncommitted change.
@@ -7918,8 +8099,9 @@ mod tests {
             fs::read_to_string(root.join("file.txt")).expect("read"),
             "dirty\n"
         );
-        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
-            .expect("current");
+        let current =
+            tauri::async_runtime::block_on(get_git_current_branch(path_string(&root), true))
+                .expect("current");
         assert_eq!(current.as_deref(), Some("main"));
     }
 
@@ -7935,11 +8117,13 @@ mod tests {
         assert!(tauri::async_runtime::block_on(create_git_branch(
             path_string(&root),
             "--force".to_string(),
+            true
         ))
         .is_err());
         assert!(tauri::async_runtime::block_on(switch_git_branch(
             path_string(&root),
             "foo; rm -rf /".to_string(),
+            true
         ))
         .is_err());
     }
@@ -7963,12 +8147,13 @@ mod tests {
         tauri::async_runtime::block_on(create_git_branch(
             path_string(&root_a),
             "only-in-a".to_string(),
+            true,
         ))
         .expect("create in a");
 
-        let list_a = tauri::async_runtime::block_on(list_git_branches(path_string(&root_a)))
+        let list_a = tauri::async_runtime::block_on(list_git_branches(path_string(&root_a), true))
             .expect("list a");
-        let list_b = tauri::async_runtime::block_on(list_git_branches(path_string(&root_b)))
+        let list_b = tauri::async_runtime::block_on(list_git_branches(path_string(&root_b), true))
             .expect("list b");
 
         assert!(list_a.iter().any(|branch| branch.name == "only-in-a"));
@@ -7996,18 +8181,20 @@ mod tests {
             path_string(&root_a),
             "shared".to_string(),
             false,
+            true,
         ))
         .expect("delete in a");
         tauri::async_runtime::block_on(rename_git_branch(
             path_string(&root_a),
             "old".to_string(),
             "new".to_string(),
+            true,
         ))
         .expect("rename in a");
 
-        let list_a = tauri::async_runtime::block_on(list_git_branches(path_string(&root_a)))
+        let list_a = tauri::async_runtime::block_on(list_git_branches(path_string(&root_a), true))
             .expect("list a");
-        let list_b = tauri::async_runtime::block_on(list_git_branches(path_string(&root_b)))
+        let list_b = tauri::async_runtime::block_on(list_git_branches(path_string(&root_b), true))
             .expect("list b");
         assert!(!list_a.iter().any(|branch| branch.name == "shared"));
         assert!(list_a.iter().any(|branch| branch.name == "new"));
@@ -8029,6 +8216,7 @@ mod tests {
             path_string(&root),
             "main".to_string(),
             true,
+            true,
         ))
         .expect_err("current branch deletion must fail");
         assert!(current_error.to_lowercase().contains("cannot delete"));
@@ -8043,12 +8231,14 @@ mod tests {
             path_string(&root),
             "unmerged".to_string(),
             false,
+            true,
         ))
         .expect_err("unmerged branch deletion must fail");
         assert!(unmerged_error.to_lowercase().contains("not fully merged"));
         tauri::async_runtime::block_on(delete_git_branch(
             path_string(&root),
             "unmerged".to_string(),
+            true,
             true,
         ))
         .expect("forced delete");
@@ -8068,6 +8258,7 @@ mod tests {
             path_string(&root),
             "main".to_string(),
             "existing".to_string(),
+            true,
         ))
         .expect_err("rename collision must fail");
         assert!(collision.to_lowercase().contains("already exists"));
@@ -8076,10 +8267,12 @@ mod tests {
             path_string(&root),
             "main".to_string(),
             "renamed".to_string(),
+            true,
         ))
         .expect("rename current");
-        let current = tauri::async_runtime::block_on(get_git_current_branch(path_string(&root)))
-            .expect("current branch");
+        let current =
+            tauri::async_runtime::block_on(get_git_current_branch(path_string(&root), true))
+                .expect("current branch");
         assert_eq!(current.as_deref(), Some("renamed"));
     }
 
@@ -8120,6 +8313,7 @@ mod tests {
             path_string(&root),
             "file.txt".to_string(),
             sha,
+            true,
         ))
         .expect("file commit diff result");
 
@@ -8137,6 +8331,7 @@ mod tests {
             path_string(&root),
             "file.txt".to_string(),
             "HEAD".to_string(),
+            true
         ))
         .is_err());
     }

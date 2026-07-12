@@ -8,9 +8,31 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-fn git_command() -> Command {
+const UNTRUSTED_GIT_CONFIG: [&str; 7] = [
+    "core.fsmonitor=false",
+    "core.hooksPath=/dev/null",
+    "diff.external=",
+    "filter.lfs.smudge=",
+    "filter.lfs.clean=",
+    "filter.lfs.process=",
+    "filter.lfs.required=false",
+];
+
+fn git_command(trusted: bool) -> Command {
     let mut command = Command::new("git");
     command.env("LC_ALL", "C").env("LANG", "C");
+
+    // Read-only and mutating Git operations remain available in untrusted
+    // workspaces. Instead of blocking them, override repository-owned config
+    // entries that can execute programs. Trusted workspaces intentionally get
+    // the exact command argv they had before this hardening so hooks and LFS
+    // integrations continue to work.
+    if !trusted {
+        for config in UNTRUSTED_GIT_CONFIG {
+            command.arg("-c").arg(config);
+        }
+    }
+
     command
 }
 
@@ -260,9 +282,15 @@ pub trait GitRepositoryGateway {
     fn switch_branch(&self, root: &Path, name: &str) -> io::Result<()>;
 }
 
-pub struct CommandGitRepositoryGateway;
+pub struct CommandGitRepositoryGateway {
+    trusted: bool,
+}
 
 impl CommandGitRepositoryGateway {
+    pub fn new(trusted: bool) -> Self {
+        Self { trusted }
+    }
+
     /// Stages (`reverse == false`) or unstages (`reverse == true`) exactly one
     /// hunk by re-running `git diff` for the file, slicing out the hunk at
     /// `hunk_index`, and feeding that minimal patch to `git apply --cached`.
@@ -285,7 +313,7 @@ impl CommandGitRepositoryGateway {
 
         // Unstaging reads the staged diff; staging reads the worktree diff. The
         // patch must come from the same view we will apply against.
-        let raw = file_diff_text(&root, &relative, reverse)?;
+        let raw = file_diff_text(&root, &relative, reverse, self.trusted)?;
         let patch = single_hunk_patch(&raw, hunk_index).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -299,7 +327,7 @@ impl CommandGitRepositoryGateway {
             args.push("--reverse");
         }
 
-        run_git_with_stdin(&root, &args, patch.as_bytes())?;
+        run_git_with_stdin(&root, &args, patch.as_bytes(), self.trusted)?;
         self.status(&root)
     }
 }
@@ -327,8 +355,8 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             }
         }
 
-        refuse_amend_of_pushed_head(&root)?;
-        amend_selected_staged_changes(&root, message.trim(), changes)?;
+        refuse_amend_of_pushed_head(&root, self.trusted)?;
+        amend_selected_staged_changes(&root, message.trim(), changes, self.trusted)?;
         self.status(&root)
     }
 
@@ -337,7 +365,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let relative = safe_relative_path(relative_path)?;
         let relative = relative.to_string_lossy().to_string();
 
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("blame")
@@ -367,8 +395,9 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let relative = relative.to_string_lossy().to_string();
         let sha = safe_commit_sha(sha)?;
 
-        let original_content = commit_blob_content(&root, &format!("{sha}^"), &relative)?;
-        let modified_content = commit_blob_content(&root, &sha, &relative)?;
+        let original_content =
+            commit_blob_content(&root, &format!("{sha}^"), &relative, self.trusted)?;
+        let modified_content = commit_blob_content(&root, &sha, &relative, self.trusted)?;
         let status = commit_file_change_status(&original_content, &modified_content);
 
         Ok(GitFileDiff {
@@ -396,7 +425,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let relative = safe_relative_path(relative_path)?;
         let relative = relative.to_string_lossy().to_string();
 
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("log")
@@ -446,13 +475,13 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             }
         }
 
-        commit_selected_staged_changes(&root, message, changes)?;
+        commit_selected_staged_changes(&root, message, changes, self.trusted)?;
         self.status(&root)
     }
 
     fn diff(&self, root: &Path, change: &GitChangedFile) -> io::Result<GitFileDiff> {
         let root = root.canonicalize()?;
-        let original_content = original_content(&root, change)?;
+        let original_content = original_content(&root, change, self.trusted)?;
         let modified_content = modified_content(&root, change)?;
 
         Ok(GitFileDiff {
@@ -466,21 +495,21 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
     fn fetch(&self, root: &Path) -> io::Result<GitStatus> {
         let root = root.canonicalize()?;
 
-        run_git_remote(&root, ["fetch", "--prune"])?;
+        run_git_remote(&root, ["fetch", "--prune"], self.trusted)?;
         self.status(&root)
     }
 
     fn pull(&self, root: &Path) -> io::Result<GitStatus> {
         let root = root.canonicalize()?;
 
-        run_git_remote(&root, ["pull", "--ff-only"])?;
+        run_git_remote(&root, ["pull", "--ff-only"], self.trusted)?;
         self.status(&root)
     }
 
     fn push(&self, root: &Path) -> io::Result<GitStatus> {
         let root = root.canonicalize()?;
 
-        run_git_remote(&root, ["push"])?;
+        run_git_remote(&root, ["push"], self.trusted)?;
         self.status(&root)
     }
 
@@ -491,22 +520,36 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             safe_relative_path(&change.relative_path)?;
 
             if change.status == GitChangeStatus::Untracked {
-                run_git(&root, ["clean", "-f", "--", change.relative_path.as_str()])?;
+                run_git(
+                    &root,
+                    ["clean", "-f", "--", change.relative_path.as_str()],
+                    self.trusted,
+                )?;
             } else if change.status == GitChangeStatus::Added && change.is_staged {
                 run_git(
                     &root,
                     ["restore", "--staged", "--", change.relative_path.as_str()],
+                    self.trusted,
                 )?;
-                run_git(&root, ["clean", "-f", "--", change.relative_path.as_str()])?;
+                run_git(
+                    &root,
+                    ["clean", "-f", "--", change.relative_path.as_str()],
+                    self.trusted,
+                )?;
             } else {
                 if change.is_staged {
                     run_git(
                         &root,
                         ["restore", "--staged", "--", change.relative_path.as_str()],
+                        self.trusted,
                     )?;
                 }
 
-                run_git(&root, ["restore", "--", change.relative_path.as_str()])?;
+                run_git(
+                    &root,
+                    ["restore", "--", change.relative_path.as_str()],
+                    self.trusted,
+                )?;
             }
         }
 
@@ -520,7 +563,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             safe_relative_path(&change.relative_path)?;
         }
 
-        let unmerged = unmerged_relative_paths(&root)?;
+        let unmerged = unmerged_relative_paths(&root, self.trusted)?;
         let mut conflicts_with_markers = Vec::new();
         for change in changes {
             if change.status != GitChangeStatus::Conflicted
@@ -550,7 +593,11 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         for change in changes {
-            run_git(&root, ["add", "--", change.relative_path.as_str()])?;
+            run_git(
+                &root,
+                ["add", "--", change.relative_path.as_str()],
+                self.trusted,
+            )?;
         }
 
         self.status(&root)
@@ -559,11 +606,11 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
     fn status(&self, root: &Path) -> io::Result<GitStatus> {
         let root = root.canonicalize()?;
 
-        if !is_git_repository(&root)? {
+        if !is_git_repository(&root, self.trusted)? {
             return Ok(empty_git_status(&root));
         }
 
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("status")
@@ -579,8 +626,10 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             ));
         }
 
-        let branch = current_branch(&root).ok().flatten();
-        let upstream = branch.as_ref().and_then(|_| upstream_tracking(&root));
+        let branch = current_branch(&root, self.trusted).ok().flatten();
+        let upstream = branch
+            .as_ref()
+            .and_then(|_| upstream_tracking(&root, self.trusted));
 
         Ok(GitStatus {
             branch,
@@ -599,6 +648,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             run_git(
                 &root,
                 ["restore", "--staged", "--", change.relative_path.as_str()],
+                self.trusted,
             )?;
         }
 
@@ -615,7 +665,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let relative = safe_relative_path(relative_path)?;
         let relative = relative.to_string_lossy().to_string();
 
-        let raw = file_diff_text(&root, &relative, staged)?;
+        let raw = file_diff_text(&root, &relative, staged, self.trusted)?;
         Ok(parse_diff_hunks(&raw, staged))
     }
 
@@ -653,7 +703,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         // `git stash push` exits 0 and prints "No local changes to save" rather
         // than failing; surface that as an error so the UI never reports a
         // phantom stash.
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("stash")
@@ -685,7 +735,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
     fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>> {
         let root = root.canonicalize()?;
 
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("stash")
@@ -707,21 +757,21 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let root = root.canonicalize()?;
         let reference = stash_reference(index);
 
-        run_git(&root, ["stash", "apply", reference.as_str()])
+        run_git(&root, ["stash", "apply", reference.as_str()], self.trusted)
     }
 
     fn stash_pop(&self, root: &Path, index: u32) -> io::Result<()> {
         let root = root.canonicalize()?;
         let reference = stash_reference(index);
 
-        run_git(&root, ["stash", "pop", reference.as_str()])
+        run_git(&root, ["stash", "pop", reference.as_str()], self.trusted)
     }
 
     fn stash_show(&self, root: &Path, index: u32) -> io::Result<String> {
         let root = root.canonicalize()?;
         let reference = stash_reference(index);
 
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("stash")
@@ -744,7 +794,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let root = root.canonicalize()?;
         let reference = stash_reference(index);
 
-        run_git(&root, ["stash", "drop", reference.as_str()])
+        run_git(&root, ["stash", "drop", reference.as_str()], self.trusted)
     }
 
     fn branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>> {
@@ -754,7 +804,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         // tracking refs leak in). `%(HEAD)` is `*` for the checked-out branch and
         // a space otherwise; fields are joined with the ASCII Unit Separator so a
         // branch name can never be confused with the current-flag column.
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("for-each-ref")
@@ -774,7 +824,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
 
     fn remote_branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>> {
         let root = root.canonicalize()?;
-        let output = git_command()
+        let output = git_command(self.trusted)
             .arg("-C")
             .arg(&root)
             .arg("for-each-ref")
@@ -798,14 +848,18 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let root = root.canonicalize()?;
         let name = safe_remote_branch_name(name)?;
 
-        run_git(&root, ["switch", "--track", "--", name.as_str()])?;
+        run_git(
+            &root,
+            ["switch", "--track", "--", name.as_str()],
+            self.trusted,
+        )?;
         self.branch_list(&root)
     }
 
     fn current_branch(&self, root: &Path) -> io::Result<Option<String>> {
         let root = root.canonicalize()?;
 
-        current_branch(&root)
+        current_branch(&root, self.trusted)
     }
 
     fn create_branch(&self, root: &Path, name: &str) -> io::Result<()> {
@@ -815,7 +869,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         // `git branch <name>` creates the branch WITHOUT switching to it, so the
         // working tree is never touched. `--` terminates option parsing so a name
         // can never be read as a flag (defence in depth atop `safe_branch_name`).
-        run_git(&root, ["branch", "--", name.as_str()])
+        run_git(&root, ["branch", "--", name.as_str()], self.trusted)
     }
 
     fn delete_branch(&self, root: &Path, name: &str, force: bool) -> io::Result<()> {
@@ -823,10 +877,10 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let name = safe_branch_name(name)?;
 
         if force {
-            return run_git(&root, ["branch", "-D", "--", name.as_str()]);
+            return run_git(&root, ["branch", "-D", "--", name.as_str()], self.trusted);
         }
 
-        run_git(&root, ["branch", "-d", "--", name.as_str()])
+        run_git(&root, ["branch", "-d", "--", name.as_str()], self.trusted)
     }
 
     fn rename_branch(&self, root: &Path, old_name: &str, new_name: &str) -> io::Result<()> {
@@ -837,6 +891,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         run_git(
             &root,
             ["branch", "-m", "--", old_name.as_str(), new_name.as_str()],
+            self.trusted,
         )
     }
 
@@ -847,7 +902,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         // `git switch <name>` (no `-f`/`--discard`) refuses when local changes
         // would be overwritten, surfacing git's "commit or stash" error verbatim.
         // Work is never discarded; the front end turns the failure into a notice.
-        run_git(&root, ["switch", "--", name.as_str()])
+        run_git(&root, ["switch", "--", name.as_str()], self.trusted)
     }
 }
 
@@ -970,8 +1025,8 @@ fn is_discovery_skipped_directory(name: &str) -> bool {
     is_default_ignored_name(name) || ADDITIONAL_DISCOVERY_SKIPPED_NAMES.contains(&name)
 }
 
-fn is_git_repository(root: &Path) -> io::Result<bool> {
-    let output = git_command()
+fn is_git_repository(root: &Path, trusted: bool) -> io::Result<bool> {
+    let output = git_command(trusted)
         .arg("-C")
         .arg(root)
         .arg("rev-parse")
@@ -986,17 +1041,18 @@ fn is_git_repository(root: &Path) -> io::Result<bool> {
 }
 
 pub fn git_available() -> bool {
-    git_command()
+    git_command(true)
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success())
 }
 
-pub fn load_git_branches(root: &Path) -> io::Result<GitBranches> {
-    let local = git_output_vec(root, vec!["branch", "--format=%(refname:short)"])?;
+pub fn load_git_branches(root: &Path, trusted: bool) -> io::Result<GitBranches> {
+    let local = git_output_vec(root, vec!["branch", "--format=%(refname:short)"], trusted)?;
     let remotes = git_output_vec(
         root,
         vec!["branch", "--remotes", "--format=%(refname:short)"],
+        trusted,
     )?;
 
     let mut remote_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1025,7 +1081,7 @@ pub fn load_git_branches(root: &Path) -> io::Result<GitBranches> {
     }
 
     Ok(GitBranches {
-        current: current_branch(root).ok().flatten(),
+        current: current_branch(root, trusted).ok().flatten(),
         local: local
             .lines()
             .map(str::trim)
@@ -1036,7 +1092,11 @@ pub fn load_git_branches(root: &Path) -> io::Result<GitBranches> {
     })
 }
 
-pub fn load_commit_log(root: &Path, filters: GitCommitFilters) -> io::Result<Vec<GitCommit>> {
+pub fn load_commit_log(
+    root: &Path,
+    filters: GitCommitFilters,
+    trusted: bool,
+) -> io::Result<Vec<GitCommit>> {
     let limit = filters.limit.unwrap_or(100);
     let mut args: Vec<String> = vec![
         "log".to_string(),
@@ -1065,7 +1125,7 @@ pub fn load_commit_log(root: &Path, filters: GitCommitFilters) -> io::Result<Vec
     }
 
     let range_ref = filters.branch.unwrap_or_else(|| "HEAD".to_string());
-    if !git_ref_has_commits(root, &range_ref) {
+    if !git_ref_has_commits(root, &range_ref, trusted) {
         return Ok(Vec::new());
     }
 
@@ -1076,12 +1136,12 @@ pub fn load_commit_log(root: &Path, filters: GitCommitFilters) -> io::Result<Vec
         args.push(path.to_string());
     }
 
-    let output = git_output_vec(root, args)?;
+    let output = git_output_vec(root, args, trusted)?;
     Ok(parse_commit_log_output(&output))
 }
 
-fn git_ref_has_commits(root: &Path, reference: &str) -> bool {
-    git_output_vec(root, vec!["rev-parse", "--verify", reference]).is_ok()
+fn git_ref_has_commits(root: &Path, reference: &str, trusted: bool) -> bool {
+    git_output_vec(root, vec!["rev-parse", "--verify", reference], trusted).is_ok()
 }
 
 fn parse_commit_log_output(output: &str) -> Vec<GitCommit> {
@@ -1150,11 +1210,15 @@ fn parse_git_labels(value: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitCommitDetails> {
+pub fn load_commit_details(
+    root: &Path,
+    commit_hash: &str,
+    trusted: bool,
+) -> io::Result<GitCommitDetails> {
     let commit_hash = safe_commit_sha(commit_hash)?;
     let command =
         "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%B%x1f%D%x00".to_string();
-    let output = git_output_vec(root, vec!["show", "-s", &command, &commit_hash])?;
+    let output = git_output_vec(root, vec!["show", "-s", &command, &commit_hash], trusted)?;
     let commit = output
         .split('\0')
         .filter(|entry| !entry.trim().is_empty())
@@ -1165,9 +1229,13 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
         })
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Commit not found."))?;
 
-    let body = git_output_vec(root, vec!["log", "-1", "--pretty=%B", &commit_hash])?
-        .trim_end()
-        .to_string();
+    let body = git_output_vec(
+        root,
+        vec!["log", "-1", "--pretty=%B", &commit_hash],
+        trusted,
+    )?
+    .trim_end()
+    .to_string();
 
     let containing_local = git_output_vec(
         root,
@@ -1177,6 +1245,7 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
             "--contains",
             &commit_hash,
         ],
+        trusted,
     )?;
     let containing_remote = git_output_vec(
         root,
@@ -1187,6 +1256,7 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
             "--contains",
             &commit_hash,
         ],
+        trusted,
     )?;
 
     let mut containing_branches = containing_local
@@ -1226,11 +1296,16 @@ pub fn load_commit_details(root: &Path, commit_hash: &str) -> io::Result<GitComm
     })
 }
 
-pub fn load_commit_files(root: &Path, commit_hash: &str) -> io::Result<Vec<CommitFileChange>> {
+pub fn load_commit_files(
+    root: &Path,
+    commit_hash: &str,
+    trusted: bool,
+) -> io::Result<Vec<CommitFileChange>> {
     let commit_hash = safe_commit_sha(commit_hash)?;
     let output = git_output_vec(
         root,
         vec!["show", "--pretty=format:", "--name-status", &commit_hash],
+        trusted,
     )?;
 
     Ok(output
@@ -1285,6 +1360,7 @@ pub fn load_commit_diff(
     path: &str,
     old_path: Option<&str>,
     files: &[CommitFileChange],
+    trusted: bool,
 ) -> io::Result<CommitDiffPayload> {
     let commit_hash = safe_commit_sha(commit_hash)?;
     let normalized_old_path = old_path.unwrap_or(path);
@@ -1316,11 +1392,13 @@ pub fn load_commit_diff(
             "--no-color",
             &format!("{}^:{}", commit_hash, normalized_old_path),
         ],
+        trusted,
     )
     .unwrap_or_default();
     let modified_content = git_output_vec(
         root,
         vec!["show", "--no-color", &format!("{}:{}", commit_hash, path)],
+        trusted,
     )
     .unwrap_or_default();
 
@@ -1336,8 +1414,8 @@ pub fn load_commit_diff(
     })
 }
 
-fn current_branch(root: &Path) -> io::Result<Option<String>> {
-    let output = git_command()
+fn current_branch(root: &Path, trusted: bool) -> io::Result<Option<String>> {
+    let output = git_command(trusted)
         .arg("-C")
         .arg(root)
         .arg("branch")
@@ -1357,8 +1435,8 @@ fn current_branch(root: &Path) -> io::Result<Option<String>> {
     Ok(Some(branch))
 }
 
-fn upstream_tracking(root: &Path) -> Option<GitUpstreamTracking> {
-    let branch = git_output_vec(root, vec!["rev-parse", "--abbrev-ref", "@{u}"])
+fn upstream_tracking(root: &Path, trusted: bool) -> Option<GitUpstreamTracking> {
+    let branch = git_output_vec(root, vec!["rev-parse", "--abbrev-ref", "@{u}"], trusted)
         .ok()?
         .trim()
         .to_string();
@@ -1370,6 +1448,7 @@ fn upstream_tracking(root: &Path) -> Option<GitUpstreamTracking> {
     let counts = git_output_vec(
         root,
         vec!["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        trusted,
     )
     .ok()?;
     let mut counts = counts.split_whitespace();
@@ -1730,7 +1809,7 @@ fn safe_branch_name(name: &str) -> io::Result<String> {
         ));
     }
 
-    let valid = git_command()
+    let valid = git_command(true)
         .arg("check-ref-format")
         .arg("--branch")
         .arg(trimmed)
@@ -1763,7 +1842,7 @@ fn safe_remote_branch_name(name: &str) -> io::Result<String> {
     }
 
     let full_ref = format!("refs/remotes/{trimmed}");
-    let valid = git_command()
+    let valid = git_command(true)
         .arg("check-ref-format")
         .arg(&full_ref)
         .output()?
@@ -1821,8 +1900,13 @@ fn safe_commit_sha(sha: &str) -> io::Result<String> {
 /// Reads a file's blob at a given revision. A missing path at that revision
 /// (the file did not exist yet, e.g. the parent of its first commit) is not an
 /// error: it yields empty content so the diff renders as a pure addition.
-fn commit_blob_content(root: &Path, revision: &str, relative_path: &str) -> io::Result<String> {
-    let output = git_command()
+fn commit_blob_content(
+    root: &Path,
+    revision: &str,
+    relative_path: &str,
+    trusted: bool,
+) -> io::Result<String> {
+    let output = git_command(trusted)
         .arg("-C")
         .arg(root)
         .arg("show")
@@ -1879,8 +1963,12 @@ fn git_change_status(status: &str) -> GitChangeStatus {
     GitChangeStatus::Modified
 }
 
-fn unmerged_relative_paths(root: &Path) -> io::Result<HashSet<String>> {
-    let output = git_output_vec(root, vec!["diff", "--name-only", "--diff-filter=U", "-z"])?;
+fn unmerged_relative_paths(root: &Path, trusted: bool) -> io::Result<HashSet<String>> {
+    let output = git_output_vec(
+        root,
+        vec!["diff", "--name-only", "--diff-filter=U", "-z"],
+        trusted,
+    )?;
 
     Ok(output
         .split('\0')
@@ -1926,12 +2014,12 @@ fn is_conflict_marker_line(line: &str, marker: &str) -> bool {
     suffix.is_empty() || suffix.starts_with(' ')
 }
 
-fn run_git<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
-    run_git_vec(root, args.to_vec())
+fn run_git<const N: usize>(root: &Path, args: [&str; N], trusted: bool) -> io::Result<()> {
+    run_git_vec(root, args.to_vec(), trusted)
 }
 
-fn run_git_remote<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()> {
-    let output = git_command()
+fn run_git_remote<const N: usize>(root: &Path, args: [&str; N], trusted: bool) -> io::Result<()> {
+    let output = git_command(trusted)
         .env("GIT_TERMINAL_PROMPT", "0")
         .arg("-C")
         .arg(root)
@@ -1948,8 +2036,12 @@ fn run_git_remote<const N: usize>(root: &Path, args: [&str; N]) -> io::Result<()
     ))
 }
 
-fn run_git_vec(root: &Path, args: Vec<&str>) -> io::Result<()> {
-    let output = git_command().arg("-C").arg(root).args(args).output()?;
+fn run_git_vec(root: &Path, args: Vec<&str>, trusted: bool) -> io::Result<()> {
+    let output = git_command(trusted)
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()?;
 
     if output.status.success() {
         return Ok(());
@@ -1961,21 +2053,22 @@ fn run_git_vec(root: &Path, args: Vec<&str>) -> io::Result<()> {
     ))
 }
 
-fn git_output_vec<S: AsRef<str>>(root: &Path, args: Vec<S>) -> io::Result<String> {
-    git_output_vec_with_env(root, args, None)
+fn git_output_vec<S: AsRef<str>>(root: &Path, args: Vec<S>, trusted: bool) -> io::Result<String> {
+    git_output_vec_with_env(root, args, None, trusted)
 }
 
 fn git_output_vec_with_env<S: AsRef<str>>(
     root: &Path,
     args: Vec<S>,
     index_file: Option<&Path>,
+    trusted: bool,
 ) -> io::Result<String> {
     let command_args: Vec<String> = args
         .into_iter()
         .map(|value| value.as_ref().to_owned())
         .collect();
 
-    let mut command = git_command();
+    let mut command = git_command(trusted);
     command.arg("-C").arg(root).args(&command_args);
 
     if let Some(index_file) = index_file {
@@ -1994,18 +2087,23 @@ fn git_output_vec_with_env<S: AsRef<str>>(
     ))
 }
 
-fn run_git_vec_with_env(root: &Path, args: Vec<&str>, index_file: Option<&Path>) -> io::Result<()> {
-    git_output_vec_with_env(root, args, index_file).map(|_| ())
+fn run_git_vec_with_env(
+    root: &Path,
+    args: Vec<&str>,
+    index_file: Option<&Path>,
+    trusted: bool,
+) -> io::Result<()> {
+    git_output_vec_with_env(root, args, index_file, trusted).map(|_| ())
 }
 
 /// Runs `git <args>` with `stdin` piped in (used for `git apply --cached`).
 /// A non-zero exit becomes an error so callers can treat a rejected patch as a
 /// safe no-op; `git apply` does not mutate the index when it fails.
-fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8]) -> io::Result<()> {
+fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8], trusted: bool) -> io::Result<()> {
     use std::io::Write;
     use std::process::Stdio;
 
-    let mut child = git_command()
+    let mut child = git_command(trusted)
         .arg("-C")
         .arg(root)
         .args(args)
@@ -2036,8 +2134,20 @@ fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8]) -> io::Result<()
 /// diff (used when staging). `-U0` keeps each logical change in its own hunk so
 /// the front-end can target a single hunk; the `--` guard scopes the diff to
 /// one path so the patch only ever touches that file.
-fn file_diff_text(root: &Path, relative_path: &str, staged: bool) -> io::Result<String> {
+fn file_diff_text(
+    root: &Path,
+    relative_path: &str,
+    staged: bool,
+    trusted: bool,
+) -> io::Result<String> {
     let mut args = vec!["diff", "-U0", "--no-color"];
+
+    if !trusted {
+        // Driver names come from repository-owned attributes, so there is no
+        // safe wildcard config key for per-driver textconv commands. Disable
+        // both external driver mechanisms at the diff command itself.
+        args.extend(["--no-ext-diff", "--no-textconv"]);
+    }
 
     if staged {
         args.push("--cached");
@@ -2046,7 +2156,7 @@ fn file_diff_text(root: &Path, relative_path: &str, staged: bool) -> io::Result<
     args.push("--");
     args.push(relative_path);
 
-    git_output_vec(root, args)
+    git_output_vec(root, args, trusted)
 }
 
 /// Splits a single-file `git diff` into its preamble (everything up to and
@@ -2130,32 +2240,38 @@ fn commit_selected_staged_changes(
     root: &Path,
     message: &str,
     changes: &[GitChangedFile],
+    trusted: bool,
 ) -> io::Result<()> {
-    let has_head = git_output_vec(root, vec!["rev-parse", "--verify", "HEAD"]).is_ok();
-    let tree = write_selected_staged_tree(root, changes, has_head.then_some("HEAD"))?;
+    let has_head = git_output_vec(root, vec!["rev-parse", "--verify", "HEAD"], trusted).is_ok();
+    let tree = write_selected_staged_tree(root, changes, has_head.then_some("HEAD"), trusted)?;
     let tree = tree.trim();
     let commit = if has_head {
-        git_output_vec(root, vec!["commit-tree", tree, "-p", "HEAD", "-m", message])?
+        git_output_vec(
+            root,
+            vec!["commit-tree", tree, "-p", "HEAD", "-m", message],
+            trusted,
+        )?
     } else {
-        git_output_vec(root, vec!["commit-tree", tree, "-m", message])?
+        git_output_vec(root, vec!["commit-tree", tree, "-m", message], trusted)?
     };
     let commit = commit.trim();
-    run_git_vec(root, vec!["update-ref", "HEAD", commit])?;
+    run_git_vec(root, vec!["update-ref", "HEAD", commit], trusted)?;
 
     Ok(())
 }
 
-fn refuse_amend_of_pushed_head(root: &Path) -> io::Result<()> {
+fn refuse_amend_of_pushed_head(root: &Path, trusted: bool) -> io::Result<()> {
     if git_output_vec(
         root,
         vec!["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        trusted,
     )
     .is_err()
     {
         return Ok(());
     }
 
-    let ahead = git_output_vec(root, vec!["rev-list", "@{u}..HEAD"])?;
+    let ahead = git_output_vec(root, vec!["rev-list", "@{u}..HEAD"], trusted)?;
     if !ahead.trim().is_empty() {
         return Ok(());
     }
@@ -2170,11 +2286,16 @@ fn amend_selected_staged_changes(
     root: &Path,
     message: &str,
     changes: &[GitChangedFile],
+    trusted: bool,
 ) -> io::Result<()> {
-    let tree = write_selected_staged_tree(root, changes, Some("HEAD"))?;
-    let parents = git_output_vec(root, vec!["rev-list", "--parents", "-n", "1", "HEAD"])?;
+    let tree = write_selected_staged_tree(root, changes, Some("HEAD"), trusted)?;
+    let parents = git_output_vec(
+        root,
+        vec!["rev-list", "--parents", "-n", "1", "HEAD"],
+        trusted,
+    )?;
     let message = if message.is_empty() {
-        git_output_vec(root, vec!["log", "-1", "--format=%B", "HEAD"])?
+        git_output_vec(root, vec!["log", "-1", "--format=%B", "HEAD"], trusted)?
     } else {
         message.to_string()
     };
@@ -2185,40 +2306,47 @@ fn amend_selected_staged_changes(
     }
     args.push("-m".to_string());
     args.push(message.trim_end().to_string());
-    let commit = git_output_vec(root, args)?;
-    run_git_vec(root, vec!["update-ref", "HEAD", commit.trim()])
+    let commit = git_output_vec(root, args, trusted)?;
+    run_git_vec(root, vec!["update-ref", "HEAD", commit.trim()], trusted)
 }
 
 fn write_selected_staged_tree(
     root: &Path,
     changes: &[GitChangedFile],
     base: Option<&str>,
+    trusted: bool,
 ) -> io::Result<String> {
     let temp_index = TempGitIndex::new(root);
     if let Some(base) = base {
-        run_git_vec_with_env(root, vec!["read-tree", base], Some(temp_index.path()))?;
+        run_git_vec_with_env(
+            root,
+            vec!["read-tree", base],
+            Some(temp_index.path()),
+            trusted,
+        )?;
     }
 
     for change in changes {
-        apply_staged_change_to_temp_index(root, temp_index.path(), change)?;
+        apply_staged_change_to_temp_index(root, temp_index.path(), change, trusted)?;
     }
 
-    git_output_vec_with_env(root, vec!["write-tree"], Some(temp_index.path()))
+    git_output_vec_with_env(root, vec!["write-tree"], Some(temp_index.path()), trusted)
 }
 
 fn apply_staged_change_to_temp_index(
     root: &Path,
     temp_index: &Path,
     change: &GitChangedFile,
+    trusted: bool,
 ) -> io::Result<()> {
-    if has_unmerged_index_entries(root, &change.relative_path)? {
+    if has_unmerged_index_entries(root, &change.relative_path, trusted)? {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Conflicted files cannot be committed from the commit panel.",
         ));
     }
 
-    if let Some(old_relative_path) = cached_rename_old_path(root, &change.relative_path)? {
+    if let Some(old_relative_path) = cached_rename_old_path(root, &change.relative_path, trusted)? {
         run_git_vec_with_env(
             root,
             vec![
@@ -2228,10 +2356,11 @@ fn apply_staged_change_to_temp_index(
                 old_relative_path.as_str(),
             ],
             Some(temp_index),
+            trusted,
         )?;
     }
 
-    if is_cached_deletion(root, &change.relative_path)? {
+    if is_cached_deletion(root, &change.relative_path, trusted)? {
         run_git_vec_with_env(
             root,
             vec![
@@ -2241,6 +2370,7 @@ fn apply_staged_change_to_temp_index(
                 change.relative_path.as_str(),
             ],
             Some(temp_index),
+            trusted,
         )?;
         return Ok(());
     }
@@ -2248,6 +2378,7 @@ fn apply_staged_change_to_temp_index(
     let entry = git_output_vec(
         root,
         vec!["ls-files", "-s", "--", change.relative_path.as_str()],
+        trusted,
     )?;
     let mut entries = entry.lines();
     let Some(first_entry) = entries.next() else {
@@ -2302,19 +2433,28 @@ fn apply_staged_change_to_temp_index(
         root,
         vec!["update-index", "--add", "--cacheinfo", cacheinfo.as_str()],
         Some(temp_index),
+        trusted,
     )
 }
 
-fn cached_name_status_records(root: &Path) -> io::Result<Vec<Vec<String>>> {
-    let output = git_output_vec(root, vec!["diff", "--cached", "--name-status", "-M"])?;
+fn cached_name_status_records(root: &Path, trusted: bool) -> io::Result<Vec<Vec<String>>> {
+    let output = git_output_vec(
+        root,
+        vec!["diff", "--cached", "--name-status", "-M"],
+        trusted,
+    )?;
     Ok(output
         .lines()
         .map(|line| line.split('\t').map(str::to_string).collect())
         .collect())
 }
 
-fn cached_rename_old_path(root: &Path, relative_path: &str) -> io::Result<Option<String>> {
-    for fields in cached_name_status_records(root)? {
+fn cached_rename_old_path(
+    root: &Path,
+    relative_path: &str,
+    trusted: bool,
+) -> io::Result<Option<String>> {
+    for fields in cached_name_status_records(root, trusted)? {
         if fields.first().is_some_and(|status| status.starts_with('R'))
             && fields.get(2).is_some_and(|path| path == relative_path)
         {
@@ -2325,15 +2465,17 @@ fn cached_rename_old_path(root: &Path, relative_path: &str) -> io::Result<Option
     Ok(None)
 }
 
-fn is_cached_deletion(root: &Path, relative_path: &str) -> io::Result<bool> {
-    Ok(cached_name_status_records(root)?.iter().any(|fields| {
-        fields.first().is_some_and(|status| status == "D")
-            && fields.get(1).is_some_and(|path| path == relative_path)
-    }))
+fn is_cached_deletion(root: &Path, relative_path: &str, trusted: bool) -> io::Result<bool> {
+    Ok(cached_name_status_records(root, trusted)?
+        .iter()
+        .any(|fields| {
+            fields.first().is_some_and(|status| status == "D")
+                && fields.get(1).is_some_and(|path| path == relative_path)
+        }))
 }
 
-fn has_unmerged_index_entries(root: &Path, relative_path: &str) -> io::Result<bool> {
-    let output = git_output_vec(root, vec!["ls-files", "-u", "--", relative_path])?;
+fn has_unmerged_index_entries(root: &Path, relative_path: &str, trusted: bool) -> io::Result<bool> {
+    let output = git_output_vec(root, vec!["ls-files", "-u", "--", relative_path], trusted)?;
 
     Ok(!output.trim().is_empty())
 }
@@ -2378,7 +2520,7 @@ fn workspace_file_path(root: &Path, relative_path: &str) -> io::Result<String> {
         .to_string())
 }
 
-fn original_content(root: &Path, change: &GitChangedFile) -> io::Result<String> {
+fn original_content(root: &Path, change: &GitChangedFile, trusted: bool) -> io::Result<String> {
     if matches!(
         change.status,
         GitChangeStatus::Added | GitChangeStatus::Untracked
@@ -2390,7 +2532,7 @@ fn original_content(root: &Path, change: &GitChangedFile) -> io::Result<String> 
         .old_relative_path
         .as_deref()
         .unwrap_or(change.relative_path.as_str());
-    let output = git_command()
+    let output = git_command(trusted)
         .arg("-C")
         .arg(root)
         .arg("show")
@@ -2483,10 +2625,223 @@ mod tests {
     static TEST_REPO_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
+    fn untrusted_git_command_injects_exec_neutralizing_config() {
+        let command = git_command(false);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            [
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "diff.external=",
+                "-c",
+                "filter.lfs.smudge=",
+                "-c",
+                "filter.lfs.clean=",
+                "-c",
+                "filter.lfs.process=",
+                "-c",
+                "filter.lfs.required=false",
+            ]
+        );
+    }
+
+    #[test]
+    fn trusted_git_command_keeps_argv_byte_identical() {
+        assert!(git_command(true).get_args().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_status_disables_core_fsmonitor_hook() {
+        let repo = TestGitRepo::new();
+        let sentinel = repo.path().join("fsmonitor-ran");
+        let fsmonitor = repo.path().join("fsmonitor.sh");
+        write_executable_script(
+            &fsmonitor,
+            &format!("#!/bin/sh\ntouch '{}'\nprintf '\\n'\n", sentinel.display()),
+        );
+        repo.run([
+            "config",
+            "core.fsmonitor",
+            fsmonitor.to_str().expect("fsmonitor path"),
+        ]);
+
+        CommandGitRepositoryGateway::new(false)
+            .status(repo.path())
+            .expect("untrusted status");
+
+        assert!(!sentinel.exists(), "untrusted status ran core.fsmonitor");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_status_preserves_core_fsmonitor_hook() {
+        let repo = TestGitRepo::new();
+        let sentinel = repo.path().join("fsmonitor-ran");
+        let fsmonitor = repo.path().join("fsmonitor.sh");
+        write_executable_script(
+            &fsmonitor,
+            &format!("#!/bin/sh\ntouch '{}'\nprintf '\\n'\n", sentinel.display()),
+        );
+        repo.run([
+            "config",
+            "core.fsmonitor",
+            fsmonitor.to_str().expect("fsmonitor path"),
+        ]);
+
+        CommandGitRepositoryGateway::new(true)
+            .status(repo.path())
+            .expect("trusted status");
+
+        assert!(
+            sentinel.exists(),
+            "trusted status did not run core.fsmonitor"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_commit_disables_pre_commit_hook_with_dev_null_hooks_path() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "hooks@example.com"]);
+        repo.run(["config", "user.name", "Hook Tester"]);
+        repo.write("tracked.txt", "content\n");
+        repo.run(["add", "tracked.txt"]);
+        let sentinel = repo.path().join("pre-commit-ran");
+        write_executable_script(
+            &repo.path().join(".git/hooks/pre-commit"),
+            &format!("#!/bin/sh\ntouch '{}'\n", sentinel.display()),
+        );
+
+        let output = git_command(false)
+            .arg("-C")
+            .arg(repo.path())
+            .args(["commit", "-m", "hook test"])
+            .output()
+            .expect("untrusted commit");
+
+        assert!(
+            output.status.success(),
+            "untrusted commit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!sentinel.exists(), "untrusted commit ran pre-commit hook");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_diff_disables_external_and_attribute_selected_textconv_commands() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Tester"]);
+        repo.write("tracked.bin", "before\n");
+        repo.write(".gitattributes", "*.bin diff=hostile\n");
+        repo.run(["add", "."]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("tracked.bin", "after\n");
+
+        let external_sentinel = repo.path().join("external-diff-ran");
+        let external = repo.path().join("external-diff.sh");
+        write_executable_script(
+            &external,
+            &format!(
+                "#!/bin/sh\ntouch '{}'\nprintf 'external diff\\n'\n",
+                external_sentinel.display()
+            ),
+        );
+        repo.run([
+            "config",
+            "diff.external",
+            external.to_str().expect("external diff path"),
+        ]);
+
+        let textconv_sentinel = repo.path().join("textconv-ran");
+        let textconv = repo.path().join("textconv.sh");
+        write_executable_script(
+            &textconv,
+            &format!(
+                "#!/bin/sh\ntouch '{}'\ncat \"$1\"\n",
+                textconv_sentinel.display()
+            ),
+        );
+        repo.run([
+            "config",
+            "diff.hostile.textconv",
+            textconv.to_str().expect("textconv path"),
+        ]);
+
+        CommandGitRepositoryGateway::new(false)
+            .file_hunks(repo.path(), "tracked.bin", false)
+            .expect("untrusted diff");
+
+        assert!(
+            !external_sentinel.exists(),
+            "untrusted diff ran diff.external"
+        );
+        assert!(
+            !textconv_sentinel.exists(),
+            "untrusted diff ran attribute-selected textconv"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_stage_disables_lfs_clean_smudge_and_process_filters() {
+        let repo = TestGitRepo::new();
+        let sentinel = repo.path().join("lfs-filter-ran");
+        let filter = repo.path().join("lfs-filter.sh");
+        write_executable_script(
+            &filter,
+            &format!("#!/bin/sh\ntouch '{}'\ncat\n", sentinel.display()),
+        );
+        repo.write(".gitattributes", "*.bin filter=lfs\n");
+        repo.write("asset.bin", "content\n");
+        for key in [
+            "filter.lfs.clean",
+            "filter.lfs.smudge",
+            "filter.lfs.process",
+        ] {
+            repo.run(["config", key, filter.to_str().expect("filter path")]);
+        }
+
+        CommandGitRepositoryGateway::new(false)
+            .stage(
+                repo.path(),
+                &[git_changed_file(
+                    "asset.bin",
+                    false,
+                    GitChangeStatus::Untracked,
+                )],
+            )
+            .expect("untrusted stage");
+
+        assert!(!sentinel.exists(), "untrusted stage ran an LFS filter");
+    }
+
+    #[cfg(unix)]
+    fn write_executable_script(path: &Path, content: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(path, content).expect("write executable script");
+        let mut permissions = fs::metadata(path).expect("script metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("make script executable");
+    }
+
+    #[test]
     fn commit_log_returns_empty_for_unborn_head() {
         let repo = TestGitRepo::new();
 
-        let commits = load_commit_log(repo.path(), empty_commit_filters()).expect("commit log");
+        let commits =
+            load_commit_log(repo.path(), empty_commit_filters(), true).expect("commit log");
 
         assert!(commits.is_empty());
     }
@@ -2495,7 +2850,7 @@ mod tests {
     fn fetch_and_pull_update_only_the_requested_workspace() {
         let fixture = RemoteGitFixture::new();
         fixture.commit_and_push("remote.txt", "remote\n", "remote update");
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let old_b_head = fixture.git_output(&fixture.workspace_b, ["rev-parse", "HEAD"]);
 
         gateway
@@ -2538,7 +2893,7 @@ mod tests {
             &fixture.workspace_a,
             ["rev-list", "--left-right", "--count", "@{u}...HEAD"],
         );
-        let status = CommandGitRepositoryGateway
+        let status = CommandGitRepositoryGateway::new(true)
             .status(&fixture.workspace_a)
             .expect("status");
 
@@ -2559,7 +2914,7 @@ mod tests {
         fixture.commit_in(&fixture.workspace_a, "local-one.txt", "one\n", "local one");
         fixture.commit_in(&fixture.workspace_a, "local-two.txt", "two\n", "local two");
 
-        let status = CommandGitRepositoryGateway
+        let status = CommandGitRepositoryGateway::new(true)
             .status(&fixture.workspace_a)
             .expect("status");
         let upstream = status.upstream.expect("upstream");
@@ -2575,7 +2930,7 @@ mod tests {
         fixture.commit_and_push("remote.txt", "remote\n", "remote");
         RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
 
-        let status = CommandGitRepositoryGateway
+        let status = CommandGitRepositoryGateway::new(true)
             .status(&fixture.workspace_a)
             .expect("status");
         let upstream = status.upstream.expect("upstream");
@@ -2589,14 +2944,14 @@ mod tests {
         let fixture = RemoteGitFixture::new();
         RemoteGitFixture::run_git(&fixture.workspace_a, ["branch", "--unset-upstream"]);
 
-        let status = CommandGitRepositoryGateway
+        let status = CommandGitRepositoryGateway::new(true)
             .status(&fixture.workspace_a)
             .expect("status");
 
         assert_eq!(status.upstream, None);
 
         RemoteGitFixture::run_git(&fixture.workspace_a, ["checkout", "--detach"]);
-        let detached = CommandGitRepositoryGateway
+        let detached = CommandGitRepositoryGateway::new(true)
             .status(&fixture.workspace_a)
             .expect("detached status");
 
@@ -2608,7 +2963,7 @@ mod tests {
     fn status_tracking_updates_after_pull() {
         let fixture = RemoteGitFixture::new();
         fixture.commit_and_push("remote.txt", "remote\n", "remote");
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         let fetched = gateway.fetch(&fixture.workspace_a).expect("fetch");
         let pulled = gateway.pull(&fixture.workspace_a).expect("pull");
@@ -2630,7 +2985,7 @@ mod tests {
         fixture.commit_in(&fixture.workspace_a, "local.txt", "local\n", "local update");
         fixture.commit_and_push("remote.txt", "remote\n", "remote update");
         let before_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         let error = gateway
             .pull(&fixture.workspace_a)
@@ -2660,7 +3015,8 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.run(["commit", "-m", "second commit"]);
 
-        let commits = load_commit_log(repo.path(), empty_commit_filters()).expect("commit log");
+        let commits =
+            load_commit_log(repo.path(), empty_commit_filters(), true).expect("commit log");
 
         assert_eq!(commits.len(), 2);
         assert_eq!(commits[0].subject, "second commit");
@@ -2693,6 +3049,7 @@ mod tests {
                 limit: Some(1),
                 ..empty_commit_filters()
             },
+            true,
         )
         .expect("commit log");
 
@@ -2710,7 +3067,7 @@ mod tests {
         repo.run(["commit", "-m", "subject line", "-m", "body line"]);
         let sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
 
-        let details = load_commit_details(repo.path(), &sha).expect("details");
+        let details = load_commit_details(repo.path(), &sha, true).expect("details");
 
         assert_eq!(details.commit.subject, "subject line");
         assert_eq!(details.commit.author_name, "Details Author");
@@ -2732,10 +3089,10 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.run(["commit", "-m", "second commit"]);
 
-        let details = load_commit_details(repo.path(), &first_sha).expect("details");
-        let files = load_commit_files(repo.path(), &first_sha).expect("files");
-        let diff =
-            load_commit_diff(repo.path(), &first_sha, "file.txt", None, &files).expect("diff");
+        let details = load_commit_details(repo.path(), &first_sha, true).expect("details");
+        let files = load_commit_files(repo.path(), &first_sha, true).expect("files");
+        let diff = load_commit_diff(repo.path(), &first_sha, "file.txt", None, &files, true)
+            .expect("diff");
 
         assert_eq!(details.commit.subject, "first commit");
         assert_eq!(files.len(), 1);
@@ -3023,7 +3380,7 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.run(["commit", "-m", "initial"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let lines = gateway.blame(repo.path(), "file.txt").expect("blame");
 
         assert_eq!(lines.len(), 2);
@@ -3036,7 +3393,7 @@ mod tests {
     #[test]
     fn blame_rejects_paths_outside_workspace() {
         let repo = TestGitRepo::new();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         assert!(gateway.blame(repo.path(), "../secret.txt").is_err());
     }
@@ -3097,7 +3454,7 @@ mod tests {
         repo.run(["add", "other.txt"]);
         repo.run(["commit", "-m", "unrelated commit"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let entries = gateway
             .file_history(repo.path(), "file.txt")
             .expect("history");
@@ -3113,7 +3470,7 @@ mod tests {
     #[test]
     fn file_history_rejects_paths_outside_workspace() {
         let repo = TestGitRepo::new();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         assert!(gateway.file_history(repo.path(), "../secret.txt").is_err());
     }
@@ -3131,7 +3488,7 @@ mod tests {
         repo.run(["commit", "-m", "second"]);
 
         let second_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let diff = gateway
             .file_commit_diff(repo.path(), "file.txt", &second_sha)
             .expect("diff");
@@ -3153,7 +3510,7 @@ mod tests {
         repo.run(["commit", "-m", "create"]);
 
         let first_sha = repo.git_output(["rev-parse", "HEAD"]).trim().to_string();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let diff = gateway
             .file_commit_diff(repo.path(), "file.txt", &first_sha)
             .expect("diff");
@@ -3166,7 +3523,7 @@ mod tests {
     #[test]
     fn file_commit_diff_rejects_invalid_sha() {
         let repo = TestGitRepo::new();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         assert!(gateway
             .file_commit_diff(repo.path(), "file.txt", "HEAD")
@@ -3185,7 +3542,7 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.write("file.txt", "three\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .commit(
                 repo.path(),
@@ -3218,7 +3575,7 @@ mod tests {
         repo.write("file.txt", "two\n");
         repo.run(["add", "file.txt"]);
 
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(true)
             .amend(
                 repo.path(),
                 "replacement",
@@ -3253,7 +3610,7 @@ mod tests {
         repo.write("file.txt", "two\n");
         repo.run(["add", "file.txt"]);
 
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(true)
             .amend(
                 repo.path(),
                 "",
@@ -3282,7 +3639,7 @@ mod tests {
         repo.write("file.txt", "two\n");
         repo.run(["add", "file.txt"]);
 
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(true)
             .amend(
                 repo.path(),
                 "amended root",
@@ -3310,7 +3667,7 @@ mod tests {
         RemoteGitFixture::run_git(&fixture.workspace_a, ["add", "base.txt"]);
         let original_head = fixture.git_output(&fixture.workspace_a, ["rev-parse", "HEAD"]);
 
-        let error = CommandGitRepositoryGateway
+        let error = CommandGitRepositoryGateway::new(true)
             .amend(
                 &fixture.workspace_a,
                 "unsafe",
@@ -3338,7 +3695,7 @@ mod tests {
         fs::write(fixture.workspace_a.join("local.txt"), "two\n").expect("change file");
         RemoteGitFixture::run_git(&fixture.workspace_a, ["add", "local.txt"]);
 
-        CommandGitRepositoryGateway
+        CommandGitRepositoryGateway::new(true)
             .amend(
                 &fixture.workspace_a,
                 "amended local",
@@ -3372,7 +3729,7 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.write("file.txt", "three\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .commit(
                 repo.path(),
@@ -3395,7 +3752,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.run(["mv", "old.txt", "new.txt"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .commit(
                 repo.path(),
@@ -3414,7 +3771,7 @@ mod tests {
     #[test]
     fn stage_refuses_conflicted_file_with_markers_without_resolving_index() {
         let repo = conflicted_repo();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change = conflicted_change(&gateway, &repo, "conflict.txt");
 
         let error = gateway
@@ -3448,7 +3805,7 @@ mod tests {
         repo.run(["commit", "-m", "main"]);
         repo.merge_expecting_conflict("feature");
         assert!(repo.read("conflict.txt").contains("<<<<<<< HEAD\r\n"));
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change = conflicted_change(&gateway, &repo, "conflict.txt");
 
         let error = gateway
@@ -3479,7 +3836,7 @@ mod tests {
         repo.run(["commit", "-m", "main"]);
         repo.merge_expecting_conflict("feature");
         assert!(repo.read("conflict.txt").contains("|||||||"));
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change = conflicted_change(&gateway, &repo, "conflict.txt");
 
         let error = gateway
@@ -3516,7 +3873,7 @@ mod tests {
         repo.run(["rm", "conflict.txt"]);
         repo.run(["commit", "-m", "delete"]);
         repo.merge_expecting_conflict("feature");
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change = conflicted_change(&gateway, &repo, "conflict.txt");
         fs::remove_file(repo.path().join("conflict.txt")).expect("choose deletion");
 
@@ -3535,7 +3892,7 @@ mod tests {
     #[test]
     fn stage_refuses_unmerged_file_even_when_payload_status_is_stale() {
         let repo = conflicted_repo();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let mut change = conflicted_change(&gateway, &repo, "conflict.txt");
         change.status = GitChangeStatus::Modified;
 
@@ -3553,7 +3910,7 @@ mod tests {
     #[test]
     fn stage_marks_resolved_conflicted_file_without_markers() {
         let repo = conflicted_repo();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change = conflicted_change(&gateway, &repo, "conflict.txt");
         repo.write("conflict.txt", "resolved\n");
 
@@ -3574,7 +3931,7 @@ mod tests {
     #[test]
     fn stage_allows_conflicted_file_with_only_a_stray_marker_line() {
         let repo = conflicted_repo();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change = conflicted_change(&gateway, &repo, "conflict.txt");
         repo.write("conflict.txt", "resolved\n<<<<<<< stray text\n");
 
@@ -3590,7 +3947,7 @@ mod tests {
     #[test]
     fn stage_refuses_mixed_batch_without_partially_mutating_index() {
         let repo = conflicted_repo();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         repo.write("clean.txt", "changed\n");
         let status = gateway.status(repo.path()).expect("status");
         let changes = [
@@ -3628,7 +3985,7 @@ mod tests {
             "markers.txt",
             "<<<<<<< ours\none\n=======\ntwo\n>>>>>>> theirs\n",
         );
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change = gateway
             .status(repo.path())
             .expect("status")
@@ -3655,7 +4012,7 @@ mod tests {
             "markers.txt",
             "<<<<<<< ours\none\n=======\ntwo\n>>>>>>> theirs\n",
         );
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let change_b = gateway
             .status(repo_b.path())
             .expect("repo B status")
@@ -3688,7 +4045,7 @@ mod tests {
         repo.write("new.txt", "new\n");
         repo.run(["add", "new.txt"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .revert(
                 repo.path(),
@@ -3814,7 +4171,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("f.txt", "A\nb\nc\nd\nE\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let hunks = gateway
             .file_hunks(repo.path(), "f.txt", false)
             .expect("hunks");
@@ -3843,7 +4200,7 @@ mod tests {
         // Stage everything, then unstage just the first hunk.
         repo.run(["add", "f.txt"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let staged = gateway
             .file_hunks(repo.path(), "f.txt", true)
             .expect("staged hunks");
@@ -3867,7 +4224,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("f.txt", "a\nb\nc\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .stage_hunk(repo.path(), "f.txt", 0)
             .expect("stage addition");
@@ -3883,7 +4240,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("f.txt", "a\nc\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .stage_hunk(repo.path(), "f.txt", 0)
             .expect("stage deletion");
@@ -3899,7 +4256,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("f.txt", "one\nTWO\nthree");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .stage_hunk(repo.path(), "f.txt", 0)
             .expect("stage no-eol hunk");
@@ -3918,7 +4275,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("f.txt", "a\r\nB\r\nc\r\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .stage_hunk(repo.path(), "f.txt", 0)
             .expect("stage crlf hunk");
@@ -3938,7 +4295,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("f.txt", "FIRST\nsecond\nthird\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .stage_hunk(repo.path(), "f.txt", 0)
             .expect("stage first line");
@@ -3957,7 +4314,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("f.txt", "A\nb\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let result = gateway.stage_hunk(repo.path(), "f.txt", 9);
 
         assert!(result.is_err(), "stale hunk index must error");
@@ -3968,7 +4325,7 @@ mod tests {
     #[test]
     fn stage_hunk_rejects_paths_outside_workspace() {
         let repo = hunk_repo();
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         assert!(gateway.stage_hunk(repo.path(), "../escape.txt", 0).is_err());
         assert!(gateway.unstage_hunk(repo.path(), "/etc/passwd", 0).is_err());
@@ -4032,7 +4389,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("file.txt", "two\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .stash_save(repo.path(), "work in progress")
             .expect("stash save");
@@ -4055,7 +4412,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("file.txt", "two\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway.stash_save(repo.path(), "wip").expect("stash save");
         gateway.stash_apply(repo.path(), 0).expect("stash apply");
 
@@ -4073,7 +4430,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("file.txt", "two\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway.stash_save(repo.path(), "wip").expect("stash save");
         gateway.stash_pop(repo.path(), 0).expect("stash pop");
 
@@ -4091,7 +4448,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("file.txt", "one\ntwo\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway.stash_save(repo.path(), "wip").expect("stash save");
         let diff = gateway.stash_show(repo.path(), 0).expect("stash show");
 
@@ -4107,7 +4464,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.write("file.txt", "two\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway.stash_save(repo.path(), "wip").expect("stash save");
         gateway.stash_drop(repo.path(), 0).expect("stash drop");
 
@@ -4124,7 +4481,7 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.run(["commit", "-m", "initial"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         assert!(gateway.stash_save(repo.path(), "wip").is_err());
     }
@@ -4206,7 +4563,7 @@ mod tests {
         RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "topic/HEAD"]);
         RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
 
-        let branches = CommandGitRepositoryGateway
+        let branches = CommandGitRepositoryGateway::new(true)
             .remote_branch_list(&fixture.workspace_a)
             .expect("remote branch list");
         let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
@@ -4225,7 +4582,7 @@ mod tests {
         RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "feature-x"]);
         RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
 
-        let branches = CommandGitRepositoryGateway
+        let branches = CommandGitRepositoryGateway::new(true)
             .checkout_remote_branch(&fixture.workspace_a, "origin/feature-x")
             .expect("checkout remote branch");
 
@@ -4251,7 +4608,7 @@ mod tests {
         RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "topic/HEAD"]);
         RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
 
-        let branches = CommandGitRepositoryGateway
+        let branches = CommandGitRepositoryGateway::new(true)
             .checkout_remote_branch(&fixture.workspace_a, "origin/topic/HEAD")
             .expect("checkout genuine remote branch ending in HEAD");
 
@@ -4283,7 +4640,7 @@ mod tests {
         RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
         RemoteGitFixture::run_git(&fixture.workspace_a, ["branch", "feature-x"]);
 
-        let error = CommandGitRepositoryGateway
+        let error = CommandGitRepositoryGateway::new(true)
             .checkout_remote_branch(&fixture.workspace_a, "origin/feature-x")
             .expect_err("name collision");
 
@@ -4300,7 +4657,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.run(["branch", "feature"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let branches = gateway.branch_list(repo.path()).expect("branch list");
         let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
 
@@ -4326,7 +4683,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.run(["checkout", "-b", "work"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let current = gateway.current_branch(repo.path()).expect("current branch");
 
         assert_eq!(current.as_deref(), Some("work"));
@@ -4340,7 +4697,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         let before = repo.git_output(["rev-parse", "--abbrev-ref", "HEAD"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .create_branch(repo.path(), "feature/new")
             .expect("create branch");
@@ -4360,7 +4717,7 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.run(["commit", "-m", "initial"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         assert!(gateway.create_branch(repo.path(), "--force").is_err());
         assert!(gateway.create_branch(repo.path(), "bad name").is_err());
@@ -4378,7 +4735,7 @@ mod tests {
         repo.run(["commit", "-m", "unmerged feature"]);
         repo.run(["checkout", "main"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let error = gateway
             .delete_branch(repo.path(), "feature", false)
             .expect_err("unmerged branch delete must fail");
@@ -4397,7 +4754,7 @@ mod tests {
         repo.run(["commit", "-m", "initial"]);
         repo.run(["branch", "feature"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         gateway
             .switch_branch(repo.path(), "feature")
             .expect("switch branch");
@@ -4420,7 +4777,7 @@ mod tests {
         // A dirty local change that conflicts with the feature branch content.
         repo.write("file.txt", "dirty local\n");
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
         let result = gateway.switch_branch(repo.path(), "feature");
 
         // Switch must FAIL (no `-f`/`--discard`); work is never lost.
@@ -4438,7 +4795,7 @@ mod tests {
         repo.run(["add", "file.txt"]);
         repo.run(["commit", "-m", "initial"]);
 
-        let gateway = CommandGitRepositoryGateway;
+        let gateway = CommandGitRepositoryGateway::new(true);
 
         assert!(gateway.switch_branch(repo.path(), "--orphan").is_err());
         assert!(gateway
@@ -4472,7 +4829,7 @@ mod tests {
         repo.run(["add", "conflict.txt"]);
         repo.run(["commit", "-m", "main"]);
 
-        let output = git_command()
+        let output = git_command(true)
             .arg("-C")
             .arg(repo.path())
             .args(["merge", "feature"])
@@ -4606,7 +4963,7 @@ mod tests {
         }
 
         fn git_output<const N: usize>(&self, root: &Path, args: [&str; N]) -> String {
-            let output = git_command()
+            let output = git_command(true)
                 .arg("-C")
                 .arg(root)
                 .args(args)
@@ -4621,7 +4978,7 @@ mod tests {
         }
 
         fn run_git<const N: usize>(root: &Path, args: [&str; N]) {
-            let output = git_command()
+            let output = git_command(true)
                 .arg("-C")
                 .arg(root)
                 .args(args)
@@ -4635,7 +4992,7 @@ mod tests {
         }
 
         fn run_command<const N: usize>(args: [&str; N]) {
-            let output = git_command().args(args).output().expect("run git");
+            let output = git_command(true).args(args).output().expect("run git");
             assert!(
                 output.status.success(),
                 "git failed: {}",
@@ -4678,7 +5035,7 @@ mod tests {
         }
 
         fn merge_expecting_conflict(&self, branch: &str) {
-            let output = git_command()
+            let output = git_command(true)
                 .arg("-C")
                 .arg(&self.path)
                 .args(["merge", branch])
@@ -4688,7 +5045,7 @@ mod tests {
         }
 
         fn git_output<const N: usize>(&self, args: [&str; N]) -> String {
-            let output = git_command()
+            let output = git_command(true)
                 .arg("-C")
                 .arg(&self.path)
                 .args(args)
