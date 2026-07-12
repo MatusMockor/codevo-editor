@@ -40,6 +40,44 @@ describe("SettingsDialog", () => {
     vi.unstubAllGlobals();
   });
 
+  it("edits and normalizes the PHPStan binary path", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="php"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      changeInputValue(inputWithLabel("PHPStan path"), " /tools/phpstan ");
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        phpstanPath: "/tools/phpstan",
+      },
+    });
+  });
+
   it("autosaves setting changes without a Save button", async () => {
     const onSave = vi.fn(async () => undefined);
 

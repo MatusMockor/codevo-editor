@@ -18,6 +18,7 @@ import type { DiagnosticsCoalescer } from "../domain/diagnosticsCoalescer";
 import type { EditorDocument } from "../domain/workspace";
 import type { AppSettings, WorkspaceSettings } from "../domain/settings";
 import type { WorkbenchNotice } from "./workbenchNotice";
+import { createWorkbenchNotice } from "./workbenchNotice";
 import type { Dispatch, SetStateAction } from "react";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -460,6 +461,101 @@ describe("useDiagnostics - per-root clear / restore isolation", () => {
     api().restoreLanguageServerDiagnosticsForRoot(ROOT);
 
     expect(harness.languageServerDiagnostics.value[USER_PATH]).toHaveLength(1);
+  });
+});
+
+describe("useDiagnostics - PHPStan notice groups", () => {
+  it("replaces a root group on every analysis run", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+    const first = createWorkbenchNotice(
+      "error",
+      "PHPStan",
+      "first",
+      `phpstan:${ROOT}`,
+    );
+    const second = createWorkbenchNotice(
+      "error",
+      "PHPStan",
+      "second",
+      `phpstan:${ROOT}`,
+    );
+
+    api().replacePhpstanDiagnostics(ROOT, [first]);
+    api().replacePhpstanDiagnostics(ROOT, [second]);
+
+    expect(
+      harness.notices.value.filter(
+        (notice) => notice.groupKey === `phpstan:${ROOT}`,
+      ),
+    ).toEqual([second]);
+  });
+
+  it("caps workspace-wide PHPStan notices with truthful overflow copy", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+    const notices = Array.from({ length: 507 }, (_, index) =>
+      createWorkbenchNotice(
+        "error",
+        "PHPStan",
+        `problem ${index + 1}`,
+        `phpstan:${ROOT}`,
+      ),
+    );
+
+    api().replacePhpstanDiagnostics(ROOT, notices);
+
+    const phpstanNotices = harness.notices.value.filter(
+      (notice) => notice.groupKey === `phpstan:${ROOT}`,
+    );
+    expect(phpstanNotices).toHaveLength(501);
+    expect(phpstanNotices[phpstanNotices.length - 1]).toMatchObject({
+      kind: "overflow",
+      message:
+        "Showing 500 of 507 PHPStan problems — narrow the analysis or fix reported issues.",
+    });
+  });
+
+  it("clears only the requested root group", () => {
+    const harness = createHarness();
+    harness.notices.value = [
+      createWorkbenchNotice("error", "PHPStan", "A", `phpstan:${ROOT}`),
+      createWorkbenchNotice(
+        "error",
+        "PHPStan",
+        "B",
+        `phpstan:${OTHER_ROOT}`,
+      ),
+    ];
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().clearPhpstanDiagnosticsForRoot(ROOT);
+
+    expect(harness.notices.value.map((notice) => notice.groupKey)).toEqual([
+      `phpstan:${OTHER_ROOT}`,
+    ]);
+  });
+
+  it("does not let root B replacement overwrite root A", () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().replacePhpstanDiagnostics(ROOT, [
+      createWorkbenchNotice("error", "PHPStan", "A", `phpstan:${ROOT}`),
+    ]);
+    api().replacePhpstanDiagnostics(OTHER_ROOT, [
+      createWorkbenchNotice(
+        "error",
+        "PHPStan",
+        "B",
+        `phpstan:${OTHER_ROOT}`,
+      ),
+    ]);
+
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
+      "B",
+      "A",
+    ]);
   });
 });
 

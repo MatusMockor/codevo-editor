@@ -47,6 +47,8 @@ import {
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
 
+const PHPSTAN_DIAGNOSTIC_NOTICE_LIMIT = 500;
+
 /**
  * Collaborators the workbench shell owns and injects into the diagnostics hook.
  * Diagnostics state (the four `set*DiagnosticsByPath` families and `setNotices`)
@@ -142,6 +144,11 @@ export interface DiagnosticsDependencies {
 }
 
 export interface Diagnostics {
+  replacePhpstanDiagnostics: (
+    rootPath: string,
+    notices: WorkbenchNotice[],
+  ) => void;
+  clearPhpstanDiagnosticsForRoot: (rootPath: string) => void;
   clearLanguageServerDiagnostics: () => void;
   restoreLanguageServerDiagnosticsForRoot: (
     rootPath: string | null | undefined,
@@ -218,6 +225,44 @@ export function useDiagnostics(
     isLanguageServerSessionCurrentForRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   } = dependencies;
+
+  const replacePhpstanDiagnostics = useCallback(
+    (rootPath: string, notices: WorkbenchNotice[]) => {
+      const groupKey = `phpstan:${rootPath}`;
+      const diagnosticNotices = capDiagnosticNotices(
+        notices,
+        PHPSTAN_DIAGNOSTIC_NOTICE_LIMIT,
+        (hiddenCount) => {
+          const totalCount = PHPSTAN_DIAGNOSTIC_NOTICE_LIMIT + hiddenCount;
+          return createWorkbenchNotice(
+            "info",
+            "PHPStan",
+            `Showing ${PHPSTAN_DIAGNOSTIC_NOTICE_LIMIT} of ${totalCount} PHPStan problems — narrow the analysis or fix reported issues.`,
+            groupKey,
+            undefined,
+            "overflow",
+          );
+        },
+      );
+
+      setNotices((current) =>
+        capWorkbenchNotices(
+          replaceWorkbenchNoticeGroup(current, groupKey, diagnosticNotices),
+          GLOBAL_NOTICE_LIMIT,
+          (notice) =>
+            notice.groupKey?.startsWith("phpstan:") === true ||
+            isCappableDiagnosticNotice(notice),
+        ),
+      );
+    },
+    [],
+  );
+
+  const clearPhpstanDiagnosticsForRoot = useCallback((rootPath: string) => {
+    setNotices((current) =>
+      replaceWorkbenchNoticeGroup(current, `phpstan:${rootPath}`, []),
+    );
+  }, []);
 
   const clearLanguageServerDiagnostics = useCallback(() => {
     setLanguageServerDiagnosticsByPath({});
@@ -985,6 +1030,8 @@ export function useDiagnostics(
   );
 
   return {
+    replacePhpstanDiagnostics,
+    clearPhpstanDiagnosticsForRoot,
     clearLanguageServerDiagnostics,
     restoreLanguageServerDiagnosticsForRoot,
     clearLanguageServerDiagnosticsForRoot,

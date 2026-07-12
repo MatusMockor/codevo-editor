@@ -23,6 +23,7 @@ pub mod php_file_outline;
 pub mod php_parser;
 pub mod php_symbols;
 pub mod php_tree;
+mod phpstan;
 mod project;
 mod runtime_observability;
 mod search;
@@ -8679,6 +8680,7 @@ pub fn run() {
             remove_workspace_index_file,
             resize_terminal_session,
             revert_git_files,
+            phpstan::run_phpstan_analysis,
             search_files,
             search_project_symbols,
             search_text,

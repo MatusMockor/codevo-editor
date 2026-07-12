@@ -32,6 +32,7 @@ import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
+import { workbenchPhpstanCommands } from "./workbenchPhpstanCommands";
 import { workbenchScriptCommands } from "./workbenchScriptCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
@@ -254,6 +255,11 @@ import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
+import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
+import {
+  parsePhpstanDiagnostics,
+  type PhpstanDiagnosticsGateway,
+} from "../domain/phpstanDiagnostics";
 import {
   isMarkdownDocument,
   markdownPreviewPath,
@@ -477,6 +483,75 @@ function languageServerDiagnosticsEqual(
 }
 
 const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
+const phpstanDiagnosticsGateway = new TauriPhpstanDiagnosticsGateway();
+
+export interface RunPhpstanWorkspaceAnalysisOptions {
+  rootPath: string;
+  binaryPath: string | null;
+  currentWorkspaceRootRef: { current: string | null };
+  inFlightRef: { current: boolean };
+  gateway: PhpstanDiagnosticsGateway;
+  replacePhpstanDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
+  setMessage(message: string | null): void;
+  setRunning(running: boolean): void;
+}
+
+export async function runPhpstanWorkspaceAnalysis({
+  rootPath,
+  binaryPath,
+  currentWorkspaceRootRef,
+  inFlightRef,
+  gateway,
+  replacePhpstanDiagnostics,
+  setMessage,
+  setRunning,
+}: RunPhpstanWorkspaceAnalysisOptions): Promise<void> {
+  if (inFlightRef.current) {
+    return;
+  }
+
+  inFlightRef.current = true;
+  setRunning(true);
+  setMessage("PHPStan: Analysing workspace…");
+
+  try {
+    let result;
+
+    try {
+      result = await gateway.analyse(rootPath, binaryPath, null);
+    } catch (error) {
+      result = {
+        status: "error" as const,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      setMessage(null);
+      return;
+    }
+
+    replacePhpstanDiagnostics(
+      rootPath,
+      parsePhpstanDiagnostics(result, rootPath),
+    );
+
+    if (result.status === "ok") {
+      const problemCount =
+        result.totals.fileErrors + result.totals.generalErrors;
+      setMessage(
+        `PHPStan: ${problemCount} problems in ${result.totals.fileCount} files`,
+      );
+    } else if (result.status === "unavailable") {
+      setMessage("PHPStan: unavailable");
+    } else {
+      setMessage(`PHPStan: ${result.message}`);
+    }
+  } finally {
+    inFlightRef.current = false;
+    setRunning(false);
+  }
+}
 
 export type SidebarView = "files" | "git" | "php";
 
@@ -707,10 +782,13 @@ export function useWorkbenchController(
     useWorkbenchImplementationChooserState();
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
+  const phpstanAnalysisInFlightRef = useRef(false);
+  const [phpstanAnalysisRunning, setPhpstanAnalysisRunning] = useState(false);
   const noticesRef = useRef<WorkbenchNotice[]>(notices);
   noticesRef.current = notices;
   const [appSettings, setAppSettings] =
     useState<AppSettings>(defaultAppSettings);
+  const phpstanWorkspaceTabsRef = useRef<string[]>([]);
   const [workspaceSettings, setWorkspaceSettings] =
     useState<WorkspaceSettings>(defaultWorkspaceSettings);
   // Resolved `.editorconfig` settings for the active document. Empty when no
@@ -1845,6 +1923,8 @@ export function useWorkbenchController(
   );
 
   const {
+    replacePhpstanDiagnostics,
+    clearPhpstanDiagnosticsForRoot,
     clearLanguageServerDiagnostics,
     restoreLanguageServerDiagnosticsForRoot,
     clearLanguageServerDiagnosticsForRoot,
@@ -1886,6 +1966,40 @@ export function useWorkbenchController(
     isLanguageServerSessionCurrentForRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   });
+
+  const runPhpstanAnalysis = useCallback(async () => {
+    const rootPath = currentWorkspaceRootRef.current;
+
+    if (!rootPath) {
+      return;
+    }
+
+    await runPhpstanWorkspaceAnalysis({
+      rootPath,
+      binaryPath: workspaceSettingsRef.current.phpstanPath,
+      currentWorkspaceRootRef,
+      inFlightRef: phpstanAnalysisInFlightRef,
+      gateway: phpstanDiagnosticsGateway,
+      replacePhpstanDiagnostics,
+      setMessage,
+      setRunning: setPhpstanAnalysisRunning,
+    });
+  }, [replacePhpstanDiagnostics]);
+
+  useEffect(() => {
+    const currentTabs = appSettings.workspaceTabs;
+
+    phpstanWorkspaceTabsRef.current.forEach((previousRoot) => {
+      if (
+        !currentTabs.some((currentRoot) =>
+          workspaceRootKeysEqual(currentRoot, previousRoot),
+        )
+      ) {
+        clearPhpstanDiagnosticsForRoot(previousRoot);
+      }
+    });
+    phpstanWorkspaceTabsRef.current = currentTabs;
+  }, [appSettings.workspaceTabs, clearPhpstanDiagnosticsForRoot]);
 
   const handleMetadataScanCompletion = useCallback(
     (event: MetadataScanCompletionEvent) => {
@@ -2499,6 +2613,7 @@ export function useWorkbenchController(
     const currentRootPath = currentWorkspaceRootRef.current;
 
     if (currentRootPath) {
+      clearPhpstanDiagnosticsForRoot(currentRootPath);
       await stopProjectRuntimes(currentRootPath);
       languageServerDiagnosticsCoalescerRef.current?.dropRoot(currentRootPath);
       javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(
@@ -2614,6 +2729,7 @@ export function useWorkbenchController(
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     clearLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
+    clearPhpstanDiagnosticsForRoot,
     resetActiveEditorPosition,
     resetFilePrefetchState,
     resetHistory,
@@ -7253,6 +7369,12 @@ export function useWorkbenchController(
       runAllTestsForActiveDocument,
     }).forEach((command) => registry.register(command));
 
+    workbenchPhpstanCommands({
+      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
+      isRunning: phpstanAnalysisRunning,
+      runPhpstanAnalysis,
+    }).forEach((command) => registry.register(command));
+
     workbenchScriptCommands({
       composerScripts: activePackageScripts?.composerScripts ?? [],
       npmScripts: activePackageScripts?.npmScripts ?? [],
@@ -7450,6 +7572,8 @@ export function useWorkbenchController(
     isActiveDocumentPhpTest,
     runTestForActiveDocument,
     runAllTestsForActiveDocument,
+    runPhpstanAnalysis,
+    phpstanAnalysisRunning,
     runInActiveTerminal,
     goToDeclaration,
     canSearchClassOpenSymbols,

@@ -191,6 +191,7 @@ export interface WorkspaceSettings {
   optimizeImportsOnSave: boolean;
   phpBackend: PhpBackendPreference;
   phpInlayHints: boolean;
+  phpstanPath: string | null;
   phpVersionOverride: string | null;
   phpactorPath: string | null;
   revealActiveFileInTree: boolean;
@@ -346,6 +347,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     optimizeImportsOnSave: false,
     phpBackend: "auto",
     phpInlayHints: true,
+    phpstanPath: null,
     phpVersionOverride: null,
     phpactorPath: null,
     revealActiveFileInTree: true,
@@ -571,6 +573,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     phpInlayHints: normalizeBoolean(
       value.phpInlayHints,
       defaults.phpInlayHints,
+    ),
+    phpstanPath: normalizeNullableString(
+      value.phpstanPath,
+      defaults.phpstanPath,
     ),
     phpVersionOverride: normalizeNullableString(
       value.phpVersionOverride,

@@ -1282,7 +1282,7 @@ interface PhpSettingsProps {
   onChangePhpInlayHints(enabled: boolean): void;
   onChangePhpVersionOverride(version: string): void;
   onChangeToolPath(
-    key: "phpactorPath" | "intelephensePath",
+    key: "phpactorPath" | "intelephensePath" | "phpstanPath",
     value: string,
   ): void;
 }
@@ -1353,6 +1353,18 @@ function PhpSettings({
           }
           placeholder={detectedToolPath(phpTools?.intelephense)}
           value={workspaceSettings.intelephensePath || ""}
+        />
+      </label>
+
+      <label className="settings-field">
+        <span>PHPStan path</span>
+        <input
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeToolPath("phpstanPath", event.currentTarget.value)
+          }
+          placeholder="vendor/bin/phpstan / Auto"
+          value={workspaceSettings.phpstanPath || ""}
         />
       </label>
 
