@@ -46,6 +46,8 @@ function createFakeGitGateway(overrides: Partial<GitGateway> = {}): GitGateway {
   const base = {
     getStatus: vi.fn(async (rootPath: string) => status(rootPath)),
     branchList: vi.fn(async () => [] as GitBranch[]),
+    remoteBranchList: vi.fn(async () => [] as GitBranch[]),
+    checkoutRemoteBranch: vi.fn(async () => [] as GitBranch[]),
     createBranch: vi.fn(async () => undefined),
     deleteBranch: vi.fn(async () => undefined),
     renameBranch: vi.fn(async () => undefined),
@@ -159,6 +161,156 @@ describe("useGitBranchPanel", () => {
     );
     expect(harness.refreshGitStatus).toHaveBeenCalled();
     expect(harness.panel().gitBranchPanelOpen).toBe(false);
+    harness.unmount();
+  });
+
+  it("lists remote branches when the panel opens", async () => {
+    const remoteBranchList = vi.fn(async () => [
+      branch("origin/feature-x"),
+      branch("upstream/release/v2"),
+    ]);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ remoteBranchList }),
+    });
+
+    await act(async () => {
+      await harness.panel().openGitBranchPanel();
+    });
+
+    expect(remoteBranchList).toHaveBeenCalledWith(ROOT);
+    expect(harness.panel().gitRemoteBranchEntries).toEqual([
+      branch("origin/feature-x"),
+      branch("upstream/release/v2"),
+    ]);
+    harness.unmount();
+  });
+
+  it("checks out a remote branch and refreshes branches and status", async () => {
+    const checkoutRemoteBranch = vi.fn(async () => [
+      branch("feature-x", true),
+      branch("main"),
+    ]);
+    const remoteBranchList = vi.fn(async () => [branch("origin/feature-x")]);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({
+        checkoutRemoteBranch,
+        remoteBranchList,
+      }),
+    });
+
+    await act(async () => {
+      await harness.panel().checkoutRemoteBranch(" origin/feature-x ");
+    });
+
+    expect(checkoutRemoteBranch).toHaveBeenCalledWith(ROOT, "origin/feature-x");
+    expect(harness.panel().gitBranchEntries).toEqual([
+      branch("feature-x", true),
+      branch("main"),
+    ]);
+    expect(remoteBranchList).toHaveBeenCalledWith(ROOT);
+    expect(harness.refreshGitStatus).toHaveBeenCalledTimes(1);
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Checked out remote branch origin/feature-x",
+    );
+    harness.unmount();
+  });
+
+  it("surfaces the remote checkout git error verbatim", async () => {
+    const error = new Error("fatal: a branch named 'feature-x' already exists");
+    const checkoutRemoteBranch = vi.fn(async () => {
+      throw error;
+    });
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({ checkoutRemoteBranch }),
+    });
+
+    await act(async () => {
+      await harness.panel().checkoutRemoteBranch("origin/feature-x");
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Git Branch", error);
+    harness.unmount();
+  });
+
+  it("drops remote checkout success after the workspace root changes", async () => {
+    const deferred = createDeferred<GitBranch[]>();
+    const remoteBranchList = vi.fn(async () => [] as GitBranch[]);
+    const checkoutRemoteBranch = vi.fn(() => deferred.promise);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({
+        checkoutRemoteBranch,
+        remoteBranchList,
+      }),
+    });
+
+    let checkout: Promise<void> | null = null;
+    act(() => {
+      checkout = harness.panel().checkoutRemoteBranch("origin/feature-x");
+    });
+    await act(async () => {
+      harness.ref.current = "/other";
+      deferred.resolve([branch("feature-x", true)]);
+      await checkout;
+    });
+
+    expect(harness.panel().gitBranchEntries).toEqual([]);
+    expect(remoteBranchList).not.toHaveBeenCalled();
+    expect(harness.refreshGitStatus).not.toHaveBeenCalled();
+    expect(harness.setMessage).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("uses the shared mutation guard for remote checkout", async () => {
+    const deferred = createDeferred<GitBranch[]>();
+    const checkoutRemoteBranch = vi.fn(() => deferred.promise);
+    const deleteBranch = vi.fn(async () => undefined);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({
+        checkoutRemoteBranch,
+        deleteBranch,
+      }),
+    });
+
+    let checkout: Promise<void> | null = null;
+    act(() => {
+      checkout = harness.panel().checkoutRemoteBranch("origin/feature-x");
+    });
+    await act(async () => {
+      await harness.panel().deleteGitBranch("feature/old", { force: false });
+      deferred.resolve([branch("feature-x", true)]);
+      await checkout;
+    });
+
+    expect(checkoutRemoteBranch).toHaveBeenCalledTimes(1);
+    expect(deleteBranch).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops remote checkout state after the remote refresh changes workspace", async () => {
+    const deferred = createDeferred<GitBranch[]>();
+    const checkoutRemoteBranch = vi.fn(async () => [branch("feature-x", true)]);
+    const remoteBranchList = vi.fn(() => deferred.promise);
+    const harness = renderBranchPanel({
+      gitGateway: createFakeGitGateway({
+        checkoutRemoteBranch,
+        remoteBranchList,
+      }),
+    });
+
+    let checkout: Promise<void> | null = null;
+    act(() => {
+      checkout = harness.panel().checkoutRemoteBranch("origin/feature-x");
+    });
+    await act(async () => {
+      await Promise.resolve();
+      harness.ref.current = "/other";
+      deferred.resolve([branch("origin/feature-x")]);
+      await checkout;
+    });
+
+    expect(harness.panel().gitBranchEntries).toEqual([]);
+    expect(harness.refreshGitStatus).not.toHaveBeenCalled();
+    expect(harness.setMessage).not.toHaveBeenCalled();
     harness.unmount();
   });
 

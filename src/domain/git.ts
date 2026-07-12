@@ -205,6 +205,11 @@ export interface GitGateway {
   stashShow(rootPath: string, index: number): Promise<string>;
   stashDrop(rootPath: string, index: number): Promise<void>;
   branchList(rootPath: string): Promise<GitBranch[]>;
+  remoteBranchList?(rootPath: string): Promise<GitBranch[]>;
+  checkoutRemoteBranch?(
+    rootPath: string,
+    name: string,
+  ): Promise<GitBranch[]>;
   currentBranch(rootPath: string): Promise<string | null>;
   createBranch(rootPath: string, name: string): Promise<void>;
   deleteBranch?(

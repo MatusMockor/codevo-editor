@@ -26,6 +26,10 @@ describe("GitBranchPanel", () => {
     { isCurrent: true, name: "main" },
     { isCurrent: false, name: "feature/login" },
   ];
+  const remoteBranches: GitBranch[] = [
+    { isCurrent: false, name: "origin/feature-x" },
+    { isCurrent: false, name: "upstream/release/v2" },
+  ];
 
   function renderPanel(
     overrides: Partial<Parameters<typeof GitBranchPanel>[0]> = {},
@@ -39,7 +43,9 @@ describe("GitBranchPanel", () => {
       onCreate: vi.fn(),
       onDelete: vi.fn(async () => undefined),
       onRename: vi.fn(async () => undefined),
+      onCheckoutRemote: vi.fn(),
       onSwitch: vi.fn(),
+      remoteBranches,
       ...overrides,
     };
 
@@ -85,6 +91,53 @@ describe("GitBranchPanel", () => {
     });
 
     expect(props.onSwitch).toHaveBeenCalledWith("feature/login");
+  });
+
+  it("renders remote branches in a collapsed accessible section", () => {
+    renderPanel();
+
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[aria-controls="git-remote-branch-list"]',
+    );
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle?.textContent).toContain("Remote branches");
+    expect(toggle?.textContent).toContain("2");
+    expect(host.querySelector("#git-remote-branch-list")).toBeNull();
+
+    act(() => toggle?.click());
+
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector("#git-remote-branch-list")?.textContent).toContain(
+      "origin/feature-x",
+    );
+    expect(
+      host.querySelector('[aria-label="Check out remote branch origin/feature-x"]'),
+    ).not.toBeNull();
+  });
+
+  it("checks out a remote branch and disables remote rows while loading", () => {
+    const props = renderPanel();
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(
+          '[aria-controls="git-remote-branch-list"]',
+        )
+        ?.click();
+    });
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="Check out remote branch origin/feature-x"]',
+        )
+        ?.click();
+    });
+    expect(props.onCheckoutRemote).toHaveBeenCalledWith("origin/feature-x");
+
+    renderPanel({ isLoading: true });
+    const remoteRow = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Check out remote branch origin/feature-x"]',
+    );
+    expect(remoteRow?.disabled).toBe(true);
   });
 
   it("does not switch when the current branch is clicked", () => {

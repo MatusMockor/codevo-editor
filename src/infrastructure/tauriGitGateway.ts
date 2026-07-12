@@ -470,6 +470,30 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<GitBranch[]>;
   }
 
+  async remoteBranchList(rootPath: string): Promise<GitBranch[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("list_git_remote_branches", {
+      rootPath,
+    }) as Promise<GitBranch[]>;
+  }
+
+  async checkoutRemoteBranch(
+    rootPath: string,
+    name: string,
+  ): Promise<GitBranch[]> {
+    if (!this.isRuntimeAvailable()) {
+      return [];
+    }
+
+    return this.invokeCommand("checkout_git_remote_branch", {
+      name,
+      rootPath,
+    }) as Promise<GitBranch[]>;
+  }
+
   async currentBranch(rootPath: string): Promise<string | null> {
     if (!this.isRuntimeAvailable()) {
       return null;

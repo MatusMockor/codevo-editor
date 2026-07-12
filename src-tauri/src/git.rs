@@ -251,6 +251,8 @@ pub trait GitRepositoryGateway {
     fn stash_show(&self, root: &Path, index: u32) -> io::Result<String>;
     fn stash_drop(&self, root: &Path, index: u32) -> io::Result<()>;
     fn branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>>;
+    fn remote_branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>>;
+    fn checkout_remote_branch(&self, root: &Path, name: &str) -> io::Result<Vec<GitBranch>>;
     fn current_branch(&self, root: &Path) -> io::Result<Option<String>>;
     fn create_branch(&self, root: &Path, name: &str) -> io::Result<()>;
     fn delete_branch(&self, root: &Path, name: &str, force: bool) -> io::Result<()>;
@@ -768,6 +770,36 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         }
 
         Ok(parse_branch_list(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    fn remote_branch_list(&self, root: &Path) -> io::Result<Vec<GitBranch>> {
+        let root = root.canonicalize()?;
+        let output = git_command()
+            .arg("-C")
+            .arg(&root)
+            .arg("for-each-ref")
+            .arg("--format=%(refname:strip=2)\t%(symref)")
+            .arg("refs/remotes/")
+            .output()?;
+
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+
+        Ok(parse_remote_branch_list(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    fn checkout_remote_branch(&self, root: &Path, name: &str) -> io::Result<Vec<GitBranch>> {
+        let root = root.canonicalize()?;
+        let name = safe_remote_branch_name(name)?;
+
+        run_git(&root, ["switch", "--track", "--", name.as_str()])?;
+        self.branch_list(&root)
     }
 
     fn current_branch(&self, root: &Path) -> io::Result<Option<String>> {
@@ -1649,6 +1681,20 @@ fn parse_branch_record(line: &str) -> Option<GitBranch> {
     })
 }
 
+fn parse_remote_branch_list(output: &str) -> Vec<GitBranch> {
+    output
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(name, symref)| (name.trim(), symref.trim()))
+        .filter(|(name, _)| !name.is_empty())
+        .filter(|(name, symref)| !name.ends_with("/HEAD") || symref.is_empty())
+        .map(|name| GitBranch {
+            is_current: false,
+            name: name.0.to_string(),
+        })
+        .collect()
+}
+
 /// Validates a branch name supplied by the front end before it reaches a `git`
 /// subprocess. Delegates to `git check-ref-format --branch`, the authoritative
 /// rule set git itself applies (rejects names with spaces, `..`, control chars,
@@ -1696,6 +1742,38 @@ fn safe_branch_name(name: &str) -> io::Result<String> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Git branch name is invalid.",
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn safe_remote_branch_name(name: &str) -> io::Result<String> {
+    let trimmed = name.trim();
+
+    if trimmed.is_empty()
+        || !trimmed.contains('/')
+        || trimmed.starts_with('-')
+        || trimmed.contains("@{")
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git remote branch name is invalid.",
+        ));
+    }
+
+    let full_ref = format!("refs/remotes/{trimmed}");
+    let valid = git_command()
+        .arg("check-ref-format")
+        .arg(&full_ref)
+        .output()?
+        .status
+        .success();
+
+    if !valid {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git remote branch name is invalid.",
         ));
     }
 
@@ -4116,6 +4194,102 @@ mod tests {
         assert!(safe_branch_name("foo*").is_err());
         assert!(safe_branch_name("foo\\bar").is_err());
         assert!(safe_branch_name("@{-1}").is_err());
+    }
+
+    #[test]
+    fn remote_branch_list_reports_fetched_branches_without_head_pointer() {
+        let fixture = RemoteGitFixture::new();
+        RemoteGitFixture::run_git(&fixture.seed, ["checkout", "-b", "feature-x"]);
+        fixture.commit_in(&fixture.seed, "feature.txt", "feature\n", "feature");
+        RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "feature-x"]);
+        RemoteGitFixture::run_git(&fixture.seed, ["checkout", "-b", "topic/HEAD"]);
+        RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "topic/HEAD"]);
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
+
+        let branches = CommandGitRepositoryGateway
+            .remote_branch_list(&fixture.workspace_a)
+            .expect("remote branch list");
+        let names: Vec<&str> = branches.iter().map(|branch| branch.name.as_str()).collect();
+
+        assert!(names.contains(&"origin/feature-x"));
+        assert!(names.contains(&"origin/main"));
+        assert!(names.contains(&"origin/topic/HEAD"), "{names:?}");
+        assert!(!names.contains(&"origin/HEAD"));
+    }
+
+    #[test]
+    fn checkout_remote_branch_creates_tracking_branch_and_isolates_workspace() {
+        let fixture = RemoteGitFixture::new();
+        RemoteGitFixture::run_git(&fixture.seed, ["checkout", "-b", "feature-x"]);
+        fixture.commit_in(&fixture.seed, "feature.txt", "feature\n", "feature");
+        RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "feature-x"]);
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
+
+        let branches = CommandGitRepositoryGateway
+            .checkout_remote_branch(&fixture.workspace_a, "origin/feature-x")
+            .expect("checkout remote branch");
+
+        assert!(branches
+            .iter()
+            .any(|branch| branch.name == "feature-x" && branch.is_current));
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_a, ["rev-parse", "--abbrev-ref", "@{u}"]),
+            "origin/feature-x"
+        );
+        assert_eq!(
+            fixture.git_output(&fixture.workspace_b, ["rev-parse", "--abbrev-ref", "HEAD"]),
+            "main"
+        );
+        assert!(!fixture.workspace_b.join("feature.txt").exists());
+    }
+
+    #[test]
+    fn checkout_remote_branch_accepts_genuine_branch_ending_in_head() {
+        let fixture = RemoteGitFixture::new();
+        RemoteGitFixture::run_git(&fixture.seed, ["checkout", "-b", "topic/HEAD"]);
+        fixture.commit_in(&fixture.seed, "topic.txt", "topic\n", "topic");
+        RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "topic/HEAD"]);
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
+
+        let branches = CommandGitRepositoryGateway
+            .checkout_remote_branch(&fixture.workspace_a, "origin/topic/HEAD")
+            .expect("checkout genuine remote branch ending in HEAD");
+
+        assert!(branches
+            .iter()
+            .any(|branch| branch.name == "topic/HEAD" && branch.is_current));
+        assert_eq!(
+            fixture.git_output(
+                &fixture.workspace_a,
+                ["config", "--get", "branch.topic/HEAD.remote"],
+            ),
+            "origin"
+        );
+        assert_eq!(
+            fixture.git_output(
+                &fixture.workspace_a,
+                ["config", "--get", "branch.topic/HEAD.merge"],
+            ),
+            "refs/heads/topic/HEAD"
+        );
+    }
+
+    #[test]
+    fn checkout_remote_branch_surfaces_git_name_collision() {
+        let fixture = RemoteGitFixture::new();
+        RemoteGitFixture::run_git(&fixture.seed, ["checkout", "-b", "feature-x"]);
+        fixture.commit_in(&fixture.seed, "feature.txt", "feature\n", "feature");
+        RemoteGitFixture::run_git(&fixture.seed, ["push", "-u", "origin", "feature-x"]);
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["fetch", "--prune"]);
+        RemoteGitFixture::run_git(&fixture.workspace_a, ["branch", "feature-x"]);
+
+        let error = CommandGitRepositoryGateway
+            .checkout_remote_branch(&fixture.workspace_a, "origin/feature-x")
+            .expect_err("name collision");
+
+        assert!(error
+            .to_string()
+            .contains("a branch named 'feature-x' already exists"));
     }
 
     #[test]

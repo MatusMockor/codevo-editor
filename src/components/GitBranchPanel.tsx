@@ -1,4 +1,13 @@
-import { Check, GitBranch, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import type { GitBranch as GitBranchEntry } from "../domain/git";
@@ -17,7 +26,9 @@ interface GitBranchPanelProps {
   onCreate(): void;
   onDelete(name: string, options: { force: boolean }): Promise<void>;
   onRename(oldName: string, newName: string): Promise<void>;
+  onCheckoutRemote(name: string): void;
   onSwitch(name: string): void;
+  remoteBranches: GitBranchEntry[];
 }
 
 export function GitBranchPanel({
@@ -29,7 +40,9 @@ export function GitBranchPanel({
   onCreate,
   onDelete,
   onRename,
+  onCheckoutRemote,
   onSwitch,
+  remoteBranches,
 }: GitBranchPanelProps) {
   const containerRef = useRef<HTMLElement | null>(null);
   const deleteErrorIdRef = useRef<string | null>(null);
@@ -41,6 +54,7 @@ export function GitBranchPanel({
   );
   const [renamingBranch, setRenamingBranch] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [remoteBranchesExpanded, setRemoteBranchesExpanded] = useState(false);
 
   useEffect(() => {
     if (!isOpen) {
@@ -48,6 +62,14 @@ export function GitBranchPanel({
     }
 
     containerRef.current?.focus();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      return;
+    }
+
+    setRemoteBranchesExpanded(false);
   }, [isOpen]);
 
   useEffect(() => {
@@ -183,6 +205,49 @@ export function GitBranchPanel({
                 renameValue={renameValue}
               />
             ))}
+            <div className="git-remote-branches-section">
+              <button
+                aria-controls="git-remote-branch-list"
+                aria-expanded={remoteBranchesExpanded}
+                className="git-remote-branches-toggle"
+                onClick={() =>
+                  setRemoteBranchesExpanded((expanded) => !expanded)
+                }
+                type="button"
+              >
+                {remoteBranchesExpanded ? (
+                  <ChevronDown aria-hidden="true" size={14} />
+                ) : (
+                  <ChevronRight aria-hidden="true" size={14} />
+                )}
+                <span>Remote branches</span>
+                <span className="git-remote-branches-count">
+                  {remoteBranches.length}
+                </span>
+              </button>
+              {remoteBranchesExpanded ? (
+                <div id="git-remote-branch-list" role="list">
+                  {remoteBranches.map((branch) => (
+                    <button
+                      aria-label={`Check out remote branch ${branch.name}`}
+                      className="git-remote-branch-row"
+                      disabled={isLoading}
+                      key={branch.name}
+                      onClick={() => onCheckoutRemote(branch.name)}
+                      role="listitem"
+                      type="button"
+                    >
+                      <GitBranch
+                        aria-hidden="true"
+                        className="git-branch-icon"
+                        size={14}
+                      />
+                      <span className="git-branch-name">{branch.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </section>

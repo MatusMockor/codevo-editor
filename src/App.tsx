@@ -1724,7 +1724,11 @@ function App() {
         onRename={(oldName, newName) =>
           workbench.renameGitBranch(oldName, newName)
         }
+        onCheckoutRemote={(name) =>
+          void workbench.checkoutRemoteBranch(name)
+        }
         onSwitch={(name) => void workbench.switchGitBranch(name)}
+        remoteBranches={workbench.gitRemoteBranchEntries}
       />
 
       <LanguageServerSetup

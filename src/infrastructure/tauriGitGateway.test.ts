@@ -524,14 +524,30 @@ describe("TauriGitGateway", () => {
         return "main";
       }
 
+      if (command === "list_git_remote_branches") {
+        return [{ isCurrent: false, name: "origin/feature-x" }];
+      }
+
+      if (command === "checkout_git_remote_branch") {
+        return [
+          { isCurrent: true, name: "feature-x" },
+          { isCurrent: false, name: "main" },
+        ];
+      }
+
       return undefined;
     });
     const gateway = new TauriGitGateway(invoke, () => true);
 
     const branches = await gateway.branchList("/workspace");
     const current = await gateway.currentBranch("/workspace");
+    const remoteBranches = await gateway.remoteBranchList("/workspace");
     await gateway.createBranch("/workspace", "feature/new");
     await gateway.switchBranch("/workspace", "feature/login");
+    const checkedOutBranches = await gateway.checkoutRemoteBranch(
+      "/workspace",
+      "origin/feature-x",
+    );
     await gateway.deleteBranch("/workspace", "feature/old", { force: true });
     await gateway.renameBranch("/workspace", "feature/login", "feature/auth");
 
@@ -541,12 +557,19 @@ describe("TauriGitGateway", () => {
     expect(invoke).toHaveBeenCalledWith("get_git_current_branch", {
       rootPath: "/workspace",
     });
+    expect(invoke).toHaveBeenCalledWith("list_git_remote_branches", {
+      rootPath: "/workspace",
+    });
     expect(invoke).toHaveBeenCalledWith("create_git_branch", {
       name: "feature/new",
       rootPath: "/workspace",
     });
     expect(invoke).toHaveBeenCalledWith("switch_git_branch", {
       name: "feature/login",
+      rootPath: "/workspace",
+    });
+    expect(invoke).toHaveBeenCalledWith("checkout_git_remote_branch", {
+      name: "origin/feature-x",
       rootPath: "/workspace",
     });
     expect(invoke).toHaveBeenCalledWith("delete_git_branch", {
@@ -562,6 +585,13 @@ describe("TauriGitGateway", () => {
     expect(branches).toHaveLength(2);
     expect(branches[0]).toEqual({ isCurrent: true, name: "main" });
     expect(current).toBe("main");
+    expect(remoteBranches).toEqual([
+      { isCurrent: false, name: "origin/feature-x" },
+    ]);
+    expect(checkedOutBranches[0]).toEqual({
+      isCurrent: true,
+      name: "feature-x",
+    });
   });
 
   it("returns no branches and null current outside Tauri", async () => {
@@ -569,6 +599,7 @@ describe("TauriGitGateway", () => {
 
     await expect(gateway.branchList("/workspace")).resolves.toEqual([]);
     await expect(gateway.currentBranch("/workspace")).resolves.toBeNull();
+    await expect(gateway.remoteBranchList("/workspace")).resolves.toEqual([]);
     // Safe no-ops that never invoke a command.
     await expect(
       gateway.createBranch("/workspace", "x"),
@@ -576,6 +607,9 @@ describe("TauriGitGateway", () => {
     await expect(
       gateway.switchBranch("/workspace", "x"),
     ).resolves.toBeUndefined();
+    await expect(
+      gateway.checkoutRemoteBranch("/workspace", "origin/x"),
+    ).resolves.toEqual([]);
     await expect(
       gateway.deleteBranch("/workspace", "x", { force: false }),
     ).resolves.toBeUndefined();

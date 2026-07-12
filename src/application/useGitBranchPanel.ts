@@ -23,10 +23,12 @@ export interface GitBranchPanelDependencies {
 export interface GitBranchPanel {
   gitBranchPanelOpen: boolean;
   gitBranchEntries: GitBranch[];
+  gitRemoteBranchEntries: GitBranch[];
   gitBranchLoading: boolean;
   openGitBranchPanel: () => Promise<void>;
   closeGitBranchPanel: () => void;
   switchGitBranch: (name: string) => Promise<void>;
+  checkoutRemoteBranch: (name: string) => Promise<void>;
   createGitBranch: () => Promise<void>;
   deleteGitBranch: (
     name: string,
@@ -55,18 +57,24 @@ export function useGitBranchPanel(
 
   const [gitBranchPanelOpen, setGitBranchPanelOpen] = useState(false);
   const [gitBranchEntries, setGitBranchEntries] = useState<GitBranch[]>([]);
+  const [gitRemoteBranchEntries, setGitRemoteBranchEntries] = useState<
+    GitBranch[]
+  >([]);
   const [gitBranchLoading, setGitBranchLoading] = useState(false);
   // Invalidates an in-flight branch list request so a late resolve from a
   // switched-away tab (or a superseded refresh) cannot repopulate the panel.
   const gitBranchRequestTokenRef = useRef(0);
+  const gitRemoteBranchRequestTokenRef = useRef(0);
   const gitBranchMutationInFlightRef = useRef(false);
 
   const closeGitBranchPanel = useCallback(() => {
     // Invalidate any in-flight list request so a late resolve cannot repopulate
     // a closed panel.
     gitBranchRequestTokenRef.current += 1;
+    gitRemoteBranchRequestTokenRef.current += 1;
     setGitBranchPanelOpen(false);
     setGitBranchEntries([]);
+    setGitRemoteBranchEntries([]);
     setGitBranchLoading(false);
   }, []);
 
@@ -106,6 +114,43 @@ export function useGitBranchPanel(
     }
   }, [gitGateway, reportError, workspaceRoot]);
 
+  const refreshGitRemoteBranches = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+    const remoteBranchList = gitGateway.remoteBranchList?.bind(gitGateway);
+
+    if (!requestedRoot || !remoteBranchList) {
+      return;
+    }
+
+    const requestToken = (gitRemoteBranchRequestTokenRef.current += 1);
+    setGitBranchLoading(true);
+
+    const isCurrentRequest = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+      gitRemoteBranchRequestTokenRef.current === requestToken;
+
+    try {
+      const branches = await remoteBranchList(requestedRoot);
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setGitRemoteBranchEntries(branches);
+    } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setGitRemoteBranchEntries([]);
+      reportError("Git Branch", error);
+    } finally {
+      if (isCurrentRequest()) {
+        setGitBranchLoading(false);
+      }
+    }
+  }, [gitGateway, reportError, workspaceRoot]);
+
   const openGitBranchPanel = useCallback(async () => {
     const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
 
@@ -117,7 +162,94 @@ export function useGitBranchPanel(
     setGitBranchPanelOpen(true);
 
     await refreshGitBranches();
-  }, [refreshGitBranches, workspaceRoot]);
+    if (
+      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+    ) {
+      return;
+    }
+
+    await refreshGitRemoteBranches();
+  }, [refreshGitBranches, refreshGitRemoteBranches, workspaceRoot]);
+
+  const checkoutRemoteBranch = useCallback(
+    async (name: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const trimmed = name.trim();
+      const checkout = gitGateway.checkoutRemoteBranch?.bind(gitGateway);
+      const remoteBranchList = gitGateway.remoteBranchList?.bind(gitGateway);
+
+      if (
+        !requestedRoot ||
+        trimmed.length === 0 ||
+        !checkout ||
+        gitBranchMutationInFlightRef.current
+      ) {
+        return;
+      }
+
+      gitBranchMutationInFlightRef.current = true;
+      setGitBranchLoading(true);
+
+      try {
+        const branches = await checkout(requestedRoot, trimmed);
+        let remoteBranches = gitRemoteBranchEntries;
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        if (remoteBranchList) {
+          remoteBranches = await remoteBranchList(requestedRoot);
+
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )
+          ) {
+            return;
+          }
+        }
+
+        await refreshGitStatus();
+
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        setGitBranchEntries(branches);
+        setGitRemoteBranchEntries(remoteBranches);
+        setMessage(`Checked out remote branch ${trimmed}`);
+      } catch (error) {
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        reportError("Git Branch", error);
+      } finally {
+        gitBranchMutationInFlightRef.current = false;
+        if (
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          setGitBranchLoading(false);
+        }
+      }
+    },
+    [
+      gitGateway,
+      gitRemoteBranchEntries,
+      refreshGitStatus,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
+  );
 
   const switchGitBranch = useCallback(
     async (name: string) => {
@@ -341,10 +473,12 @@ export function useGitBranchPanel(
   return {
     gitBranchPanelOpen,
     gitBranchEntries,
+    gitRemoteBranchEntries,
     gitBranchLoading,
     openGitBranchPanel,
     closeGitBranchPanel,
     switchGitBranch,
+    checkoutRemoteBranch,
     createGitBranch,
     deleteGitBranch,
     renameGitBranch,

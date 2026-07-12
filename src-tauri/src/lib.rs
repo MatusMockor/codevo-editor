@@ -2460,6 +2460,31 @@ async fn list_git_branches(root_path: String) -> Result<Vec<GitBranch>, String> 
 }
 
 #[tauri::command]
+async fn list_git_remote_branches(root_path: String) -> Result<Vec<GitBranch>, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .remote_branch_list(&root)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn checkout_git_remote_branch(
+    root_path: String,
+    name: String,
+) -> Result<Vec<GitBranch>, String> {
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway
+            .checkout_remote_branch(&root, &name)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_git_current_branch(root_path: String) -> Result<Option<String>, String> {
     // Resolving the current branch shells out to git; keep it off the main
     // thread, bound to the requested repository root.
@@ -8641,7 +8666,9 @@ pub fn run() {
             stash_pop_git,
             stash_drop_git,
             list_git_branches,
+            list_git_remote_branches,
             get_git_current_branch,
+            checkout_git_remote_branch,
             create_git_branch,
             delete_git_branch,
             rename_git_branch,
