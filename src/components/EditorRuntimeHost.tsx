@@ -59,6 +59,7 @@ interface EditorRuntimeSurfaceRegistration {
   groupId: string;
   monacoApi: typeof Monaco | null;
   onModelContentChange(content: string): void;
+  onMarkerUrisChanged?(uris: readonly Monaco.Uri[]): void;
   providerDependencies: EditorSurfaceLanguageProviderRegistrationDependencies;
   retainPaths: readonly string[];
   routing: EditorRuntimeSurfaceRouting;
@@ -446,6 +447,34 @@ export function EditorRuntimeHost({
       disposedModelsRef.current,
     );
   }, [revision, activeRegistration]);
+
+  useEffect(() => {
+    const monacoApi = configurationRegistration?.monacoApi;
+    if (
+      !monacoApi ||
+      typeof monacoApi.editor.onDidChangeMarkers !== "function"
+    ) {
+      return;
+    }
+
+    const disposable = monacoApi.editor.onDidChangeMarkers((uris) => {
+      for (const registration of registrationsRef.current.values()) {
+        if (
+          admittedWorkspaceRootRef.current &&
+          !registrationOwnsRuntime(
+            registration,
+            admittedWorkspaceRootRef.current,
+          )
+        ) {
+          continue;
+        }
+
+        registration.onMarkerUrisChanged?.(uris);
+      }
+    });
+
+    return () => disposable.dispose();
+  }, [configurationRegistration?.monacoApi]);
 
   useEffect(() => {
     const descriptor = activeRegistration?.workspaceIdentityDescriptor;

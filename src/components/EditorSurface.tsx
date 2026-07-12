@@ -1211,6 +1211,56 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
+  const recoverVisibleLocalPhpDiagnostics = useCallback(
+    (uris: readonly Monaco.Uri[] = []) => {
+      if (
+        !activeDocument ||
+        activeDocument.language !== "php" ||
+        !monacoApi
+      ) {
+        return;
+      }
+
+      const model = monacoApi.editor
+        .getModels()
+        .find((candidate) =>
+          modelMatchesProject(candidate, workspaceRoot, activeDocument.path),
+        );
+      if (!model) {
+        return;
+      }
+
+      if (
+        uris.length > 0 &&
+        !uris.some((uri) => model.uri.toString() === uri.toString())
+      ) {
+        return;
+      }
+
+      const diagnostics = localPhpDiagnosticsFromVisibleMarkers(
+        monacoApi,
+        model,
+      );
+
+      // Recovery bridge only: parser-driven validation owns clears. This keeps
+      // a visible local PHP marker from being absent in Problems/status during
+      // startup/open races without letting a transient empty marker set wipe the
+      // workbench diagnostics store.
+      if (diagnostics.length === 0) {
+        return;
+      }
+
+      onLocalPhpDiagnosticsChange(activeDocument.path, diagnostics);
+    },
+    [
+      activeDocument?.language,
+      activeDocument?.path,
+      monacoApi,
+      onLocalPhpDiagnosticsChange,
+      workspaceRoot,
+    ],
+  );
+
   const runtimeProviderRefs: EditorSurfaceLanguageProviderRegistrationRefs = {
     activeDocumentRef,
     resolveDocumentForModelRef,
@@ -1248,6 +1298,7 @@ function EditorSurfaceComponent({
     editor: editorApi,
     groupId,
     monacoApi,
+    onMarkerUrisChanged: recoverVisibleLocalPhpDiagnostics,
     onModelContentChange: (content) => onChangeRef.current(content),
     providerDependencies: {
       featuresGateway: languageServerFeaturesGateway,
@@ -3382,74 +3433,22 @@ function EditorSurfaceComponent({
   ]);
 
   useEffect(() => {
-    if (!activeDocument || activeDocument.language !== "php" || !monacoApi) {
+    if (!activeDocument || activeDocument.language !== "php") {
       return;
     }
 
-    const emitVisibleLocalPhpDiagnostics = () => {
-      const model = monacoApi.editor
-        .getModels()
-        .find((candidate) =>
-          modelMatchesProject(candidate, workspaceRoot, activeDocument.path),
-        );
-
-      if (!model) {
-        return;
-      }
-
-      const diagnostics = localPhpDiagnosticsFromVisibleMarkers(monacoApi, model);
-
-      // Recovery bridge only: parser-driven validation owns clears. This keeps
-      // a visible local PHP marker from being absent in Problems/status during
-      // startup/open races without letting a transient empty marker set wipe the
-      // workbench diagnostics store.
-      if (diagnostics.length === 0) {
-        return;
-      }
-
-      onLocalPhpDiagnosticsChange(activeDocument.path, diagnostics);
-    };
-
-    emitVisibleLocalPhpDiagnostics();
+    recoverVisibleLocalPhpDiagnostics();
     const retryTimers = [80, 240, 600].map((delay) =>
-      window.setTimeout(emitVisibleLocalPhpDiagnostics, delay),
+      window.setTimeout(recoverVisibleLocalPhpDiagnostics, delay),
     );
-
-    if (typeof monacoApi.editor.onDidChangeMarkers !== "function") {
-      return () => {
-        retryTimers.forEach((timer) => window.clearTimeout(timer));
-      };
-    }
-
-    const markerDisposable = monacoApi.editor.onDidChangeMarkers((uris) => {
-      if (
-        uris.length > 0 &&
-        !uris.some((uri) =>
-          monacoApi.editor
-            .getModels()
-            .some(
-              (model) =>
-                model.uri.toString() === uri.toString() &&
-                modelMatchesProject(model, workspaceRoot, activeDocument.path),
-            ),
-        )
-      ) {
-        return;
-      }
-
-      emitVisibleLocalPhpDiagnostics();
-    });
 
     return () => {
       retryTimers.forEach((timer) => window.clearTimeout(timer));
-      markerDisposable.dispose();
     };
   }, [
     activeDocument?.language,
     activeDocument?.path,
-    monacoApi,
-    onLocalPhpDiagnosticsChange,
-    workspaceRoot,
+    recoverVisibleLocalPhpDiagnostics,
   ]);
 
   useEffect(() => {

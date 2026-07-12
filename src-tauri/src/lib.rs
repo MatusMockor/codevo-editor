@@ -129,6 +129,7 @@ use std::{
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
 };
 #[cfg(target_os = "macos")]
@@ -243,6 +244,16 @@ fn quit_application(app: AppHandle) {
 enum NativeCloseKind {
     Close,
     Quit,
+}
+
+#[derive(Default)]
+struct NativeCloseListenerState {
+    ready: AtomicBool,
+}
+
+#[tauri::command]
+fn set_native_close_listener_ready(state: State<'_, NativeCloseListenerState>, ready: bool) {
+    state.ready.store(ready, Ordering::Release);
 }
 
 #[tauri::command]
@@ -9417,7 +9428,17 @@ pub fn run() {
                     let _ = app.emit(OPEN_APPEARANCE_SETTINGS_EVENT, ());
                 }
                 QUIT_APPLICATION_MENU_ID => {
-                    let _ = app.emit(NATIVE_CLOSE_REQUEST_EVENT, "quit");
+                    let listener_ready = app
+                        .try_state::<NativeCloseListenerState>()
+                        .is_some_and(|state| state.ready.load(Ordering::Acquire));
+                    if listener_ready {
+                        if app.emit(NATIVE_CLOSE_REQUEST_EVENT, "quit").is_ok() {
+                            return;
+                        }
+                    }
+
+                    shutdown_runtime_processes(app);
+                    app.exit(0);
                 }
                 TOGGLE_FONT_LIGATURES_MENU_ID => {
                     let _ = app.emit(TOGGLE_FONT_LIGATURES_EVENT, ());
@@ -9427,9 +9448,18 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
             if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.emit(NATIVE_CLOSE_REQUEST_EVENT, "close");
+                let listener_ready = window
+                    .app_handle()
+                    .try_state::<NativeCloseListenerState>()
+                    .is_some_and(|state| state.ready.load(Ordering::Acquire));
+                if listener_ready {
+                    api.prevent_close();
+                    if window.emit(NATIVE_CLOSE_REQUEST_EVENT, "close").is_err() {
+                        let _ = window.destroy();
+                    }
+                }
                 return;
             }
 
@@ -9438,6 +9468,7 @@ pub fn run() {
             }
         })
         .manage(Mutex::new(SmartModeService::new()))
+        .manage(NativeCloseListenerState::default())
         .manage(PhpLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptLanguageServerRegistry::new())
         .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
@@ -9534,6 +9565,7 @@ pub fn run() {
             rename_git_branch,
             switch_git_branch,
             quit_application,
+            set_native_close_listener_ready,
             confirm_native_shutdown,
             read_directory,
             read_text_file,

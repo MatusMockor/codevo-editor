@@ -133,6 +133,45 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
   });
 
+  it("subscribes to Monaco marker changes once and fans them out to owning surfaces", async () => {
+    const fixture = runtimeFixture();
+    const leftMarkerChange = vi.fn();
+    const rightMarkerChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface
+            {...fixture}
+            groupId="left"
+            key="left"
+            name="left.php"
+            onMarkerUrisChanged={leftMarkerChange}
+          />
+          <RuntimeSurface
+            {...fixture}
+            groupId="right"
+            key="right"
+            name="right.php"
+            onMarkerUrisChanged={rightMarkerChange}
+          />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    expect(fixture.markerChanges.subscribe).toHaveBeenCalledTimes(1);
+
+    const changedUris = [fixture.model.uri];
+    await act(async () => fixture.markerChanges.emit(changedUris));
+
+    expect(leftMarkerChange).toHaveBeenCalledWith(changedUris);
+    expect(rightMarkerChange).toHaveBeenCalledWith(changedUris);
+
+    await act(async () => root.unmount());
+
+    expect(fixture.markerChanges.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("configures global TypeScript defaults once for one, two, or four surfaces", async () => {
     const fixture = runtimeFixture();
 
@@ -796,6 +835,7 @@ function RuntimeSurface({
   model,
   monaco,
   name,
+  onMarkerUrisChanged,
   path,
   rightEditor,
   transitionWorkspaceRoot,
@@ -804,6 +844,7 @@ function RuntimeSurface({
 }: ReturnType<typeof runtimeFixture> & {
   groupId: string;
   name: string;
+  onMarkerUrisChanged?: (uris: readonly Monaco.Uri[]) => void;
   transitionWorkspaceRoot?: string;
   validationEnabled?: boolean;
 }) {
@@ -830,6 +871,7 @@ function RuntimeSurface({
       editor: (groupId === "left" ? leftEditor : rightEditor) as never,
       groupId,
       monacoApi: monaco,
+      onMarkerUrisChanged,
       providerDependencies: {
         featuresGateway,
         monacoApi: monaco,
@@ -875,6 +917,7 @@ function RuntimeSurface({
     leftEditor,
     model,
     monaco,
+    onMarkerUrisChanged,
     rightEditor,
     runtime,
     validationEnabled,
@@ -969,13 +1012,15 @@ function runtimeFixture(
     getModel: vi.fn(() => model),
     onDidChangeModel: vi.fn(() => ({ dispose: vi.fn() })),
   };
-  const monaco = monacoOverride ?? runtimeMonaco([model]);
+  const markerChanges = runtimeMarkerChanges();
+  const monaco = monacoOverride ?? runtimeMonaco([model], markerChanges);
 
   return {
     featuresGateway: {},
     leftEditor,
     model,
     monaco,
+    markerChanges,
     path,
     rightEditor,
     workspaceRoot,
@@ -1023,13 +1068,36 @@ function runtimeModel(workspaceRoot: string, path: string) {
   } as unknown as Monaco.editor.ITextModel;
 }
 
-function runtimeMonaco(models: readonly Monaco.editor.ITextModel[]) {
+function runtimeMonaco(
+  models: readonly Monaco.editor.ITextModel[],
+  markerChanges = runtimeMarkerChanges(),
+) {
   return {
     editor: {
       getModels: vi.fn(() => [...models]),
+      onDidChangeMarkers: markerChanges.subscribe,
       setModelMarkers: vi.fn(),
     },
   } as unknown as typeof Monaco;
+}
+
+function runtimeMarkerChanges() {
+  let listener: ((uris: readonly Monaco.Uri[]) => void) | null = null;
+  const dispose = vi.fn(() => {
+    listener = null;
+  });
+  const subscribe = vi.fn((next: (uris: readonly Monaco.Uri[]) => void) => {
+    listener = next;
+    return { dispose };
+  });
+
+  return {
+    dispose,
+    emit(uris: readonly Monaco.Uri[]) {
+      listener?.(uris);
+    },
+    subscribe,
+  };
 }
 
 function animationFrameFixture() {

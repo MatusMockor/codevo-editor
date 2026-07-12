@@ -13,7 +13,9 @@ import {
 import { DOCUMENT_SYNC_CLOSE_GRACE_MS } from "./closeCoordinator";
 
 const tauriMocks = vi.hoisted(() => ({
-  invoke: vi.fn(async () => undefined),
+  invoke: vi.fn<(command: string, args?: unknown) => Promise<void>>(
+    async () => undefined,
+  ),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 
@@ -42,7 +44,15 @@ afterEach(() => {
 });
 
 function requestNativeClose(kind: "close" | "quit" = "close"): void {
-  tauriMocks.listeners.get("mockor-native-close-requested")?.({ payload: kind });
+  tauriMocks.listeners.get("mockor-native-close-requested")?.({
+    payload: kind,
+  });
+}
+
+function nativeShutdownInvocationCount(): number {
+  return tauriMocks.invoke.mock.calls.filter(
+    ([command]) => command === "confirm_native_shutdown",
+  ).length;
 }
 
 interface Deferred<T> {
@@ -75,7 +85,11 @@ interface Harness {
   closeSyncedLanguageServerDocumentsForRoot: ReturnType<typeof vi.fn>;
   lifecycle: () => WorkbenchCloseLifecycle;
   persistAppSettings: ReturnType<typeof vi.fn>;
-  prompter: { confirm: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn> };
+  prompter: {
+    confirm: ReturnType<typeof vi.fn>;
+    prompt: ReturnType<typeof vi.fn>;
+  };
+  reportError: ReturnType<typeof vi.fn>;
   stopProjectRuntimes: ReturnType<typeof vi.fn>;
   unmount: () => void;
   workspaceStateCacheRef: {
@@ -115,6 +129,7 @@ function renderLifecycle(
     async () => undefined,
   );
   const stopProjectRuntimes = vi.fn(async () => undefined);
+  const reportError = vi.fn();
 
   const dependencies: WorkbenchCloseLifecycleDependencies = {
     appSettingsRef,
@@ -134,7 +149,7 @@ function renderLifecycle(
     openWorkspaceRequestTokenRef: { current: 0 },
     persistAppSettings,
     prompter,
-    reportError: vi.fn(),
+    reportError,
     stopProjectRuntimes,
     workspaceRoot: WORKSPACE_B,
     workspaceStateCacheRef,
@@ -166,6 +181,7 @@ function renderLifecycle(
     },
     persistAppSettings,
     prompter: dependencies.prompter as Harness["prompter"],
+    reportError: dependencies.reportError as Harness["reportError"],
     stopProjectRuntimes,
     unmount: () => root.unmount(),
     workspaceStateCacheRef,
@@ -173,6 +189,27 @@ function renderLifecycle(
 }
 
 describe("useWorkbenchCloseLifecycle", () => {
+  it("advertises native close listener readiness while mounted", async () => {
+    const harness = renderLifecycle();
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith(
+      "set_native_close_listener_ready",
+      { ready: true },
+    );
+
+    act(() => harness.unmount());
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith(
+      "set_native_close_listener_ready",
+      { ready: false },
+    );
+  });
+
   it("unregisters the opaque identity when its workspace tab closes", async () => {
     const unregisterWorkspace = vi.fn(async () => undefined);
     const descriptor = {
@@ -181,7 +218,10 @@ describe("useWorkbenchCloseLifecycle", () => {
       canonicalRoot: "/real/workspace-a",
       caseSensitive: null,
       unicodeNormalizationPolicy: "unknown" as const,
-      policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
+      policy: {
+        caseSensitive: true as const,
+        unicodeNormalization: "none" as const,
+      },
     };
     const harness = renderLifecycle({
       unregisterWorkspace,
@@ -210,7 +250,10 @@ describe("useWorkbenchCloseLifecycle", () => {
       canonicalRoot: "/real/workspace-a",
       caseSensitive: true,
       unicodeNormalizationPolicy: "preserved" as const,
-      policy: { caseSensitive: true as const, unicodeNormalization: "none" as const },
+      policy: {
+        caseSensitive: true as const,
+        unicodeNormalization: "none" as const,
+      },
     };
     const identities = { [WORKSPACE_A]: descriptor };
     const harness = renderLifecycle({
@@ -306,7 +349,9 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(closePhpDocuments).toHaveBeenCalledWith(WORKSPACE_A);
-    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(
+      WORKSPACE_A,
+    );
     expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
     expect(harness.persistAppSettings).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -338,7 +383,9 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(closePhpDocuments).toHaveBeenCalledWith(WORKSPACE_A);
-    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(closeJavaScriptTypeScriptDocuments).toHaveBeenCalledWith(
+      WORKSPACE_A,
+    );
     expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
     harness.unmount();
   });
@@ -392,7 +439,7 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(harness.prompter.confirm).toHaveBeenCalledTimes(1);
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
-    expect(tauriMocks.invoke).not.toHaveBeenCalled();
+    expect(nativeShutdownInvocationCount()).toBe(0);
     harness.unmount();
   });
 
@@ -409,6 +456,30 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
     expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
       kind: "close",
+    });
+    harness.unmount();
+  });
+
+  it("ignores an invalid native close payload without blocking the next request", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({ persistWorkspaceSession });
+
+    await act(async () => {
+      tauriMocks.listeners.get("mockor-native-close-requested")?.({
+        payload: "restart",
+      });
+      requestNativeClose("quit");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Application",
+      expect.any(Error),
+    );
+    expect(persistWorkspaceSession).toHaveBeenCalledOnce();
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
+      kind: "quit",
     });
     harness.unmount();
   });
@@ -432,7 +503,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       await Promise.resolve();
     });
 
-    expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+    expect(nativeShutdownInvocationCount()).toBe(1);
     expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
       kind: "quit",
     });

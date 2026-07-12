@@ -1,6 +1,15 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import {
+  listen,
+  type UnlistenFn as TauriUnlistenFn,
+} from "@tauri-apps/api/event";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type MutableRefObject,
+} from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
@@ -24,7 +33,9 @@ export interface WorkbenchCloseLifecycleDependencies {
   dirtyCount: number;
 
   appSettingsRef: MutableRefObject<AppSettings>;
-  workspaceStateCacheRef: MutableRefObject<Record<string, CachedWorkspaceDirtyState>>;
+  workspaceStateCacheRef: MutableRefObject<
+    Record<string, CachedWorkspaceDirtyState>
+  >;
   workspaceIdentityByRootRef: MutableRefObject<
     Record<string, WorkspaceIdentityDescriptor>
   >;
@@ -70,6 +81,10 @@ const NATIVE_CLOSE_REQUEST_EVENT = "mockor-native-close-requested";
 
 type NativeCloseKind = "close" | "quit";
 
+function isNativeCloseKind(payload: unknown): payload is NativeCloseKind {
+  return payload === "close" || payload === "quit";
+}
+
 export function useWorkbenchCloseLifecycle(
   dependencies: WorkbenchCloseLifecycleDependencies,
 ): WorkbenchCloseLifecycle {
@@ -102,6 +117,9 @@ export function useWorkbenchCloseLifecycle(
   } = dependencies;
   const closeCoordinator = useMemo(() => new CloseCoordinator(), []);
   const nativeCloseInFlightRef = useRef(false);
+  const nativeCloseRequestRef = useRef<(payload: unknown) => void>(
+    () => undefined,
+  );
 
   const persistCurrentWorkspaceSession = useCallback(async () => {
     if (!workspaceRoot) {
@@ -123,6 +141,33 @@ export function useWorkbenchCloseLifecycle(
     [persistCurrentWorkspaceSession],
   );
 
+  nativeCloseRequestRef.current = (payload) => {
+    if (!isNativeCloseKind(payload)) {
+      reportError("Application", new Error("Invalid native close request"));
+      return;
+    }
+
+    if (nativeCloseInFlightRef.current) {
+      return;
+    }
+
+    nativeCloseInFlightRef.current = true;
+    if (
+      dirtyCount > 0 &&
+      !prompter.confirm("Quit and discard unsaved changes?")
+    ) {
+      queueMicrotask(() => {
+        nativeCloseInFlightRef.current = false;
+      });
+      return;
+    }
+
+    void confirmNativeShutdown(payload).catch((error) => {
+      nativeCloseInFlightRef.current = false;
+      reportError("Application", error);
+    });
+  };
+
   useEffect(() => {
     if (!isTauri()) {
       return;
@@ -130,41 +175,40 @@ export function useWorkbenchCloseLifecycle(
 
     let active = true;
     let unlisten: TauriUnlistenFn | null = null;
-    listen<NativeCloseKind>(NATIVE_CLOSE_REQUEST_EVENT, (event) => {
-      if (nativeCloseInFlightRef.current) {
-        return;
-      }
-
-      nativeCloseInFlightRef.current = true;
-      if (
-        dirtyCount > 0 &&
-        !prompter.confirm("Quit and discard unsaved changes?")
-      ) {
-        queueMicrotask(() => {
-          nativeCloseInFlightRef.current = false;
-        });
-        return;
-      }
-
-      void confirmNativeShutdown(event.payload).catch((error) => {
-        nativeCloseInFlightRef.current = false;
-        reportError("Application", error);
-      });
+    listen<unknown>(NATIVE_CLOSE_REQUEST_EVENT, (event) => {
+      nativeCloseRequestRef.current(event.payload);
     })
-      .then((dispose) => {
+      .then(async (dispose) => {
         if (!active) {
           dispose();
           return;
         }
+
         unlisten = dispose;
+        try {
+          await invoke("set_native_close_listener_ready", { ready: true });
+          if (!active) {
+            await invoke("set_native_close_listener_ready", { ready: false });
+          }
+        } catch (error) {
+          dispose();
+          unlisten = null;
+          throw error;
+        }
       })
       .catch((error) => reportError("Application", error));
 
     return () => {
       active = false;
       unlisten?.();
+      if (!unlisten) {
+        return;
+      }
+      void invoke("set_native_close_listener_ready", { ready: false }).catch(
+        (error) => reportError("Application", error),
+      );
     };
-  }, [confirmNativeShutdown, dirtyCount, prompter, reportError]);
+  }, [reportError]);
 
   const disposeWorkspaceTabResources = useCallback(
     async (tabPath: string, targetRootPath: string) => {
@@ -179,8 +223,12 @@ export function useWorkbenchCloseLifecycle(
         workspaceIdentityByRootRef.current[targetRootPath] ??
         null;
       if (identityDescriptor) {
-        delete workspaceIdentityByRootRef.current[identityDescriptor.selectedPath];
-        delete workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot];
+        delete workspaceIdentityByRootRef.current[
+          identityDescriptor.selectedPath
+        ];
+        delete workspaceIdentityByRootRef.current[
+          identityDescriptor.canonicalRoot
+        ];
         try {
           await unregisterWorkspace(identityDescriptor.workspaceId);
         } catch (error) {
@@ -220,7 +268,10 @@ export function useWorkbenchCloseLifecycle(
       const currentSettings = appSettingsRef.current;
       const currentTabs = currentSettings.workspaceTabs;
       const tabPath = workspaceTabPathForPath(currentTabs, path) ?? path;
-      const closingActiveWorkspace = workspaceRootKeysEqual(tabPath, workspaceRoot);
+      const closingActiveWorkspace = workspaceRootKeysEqual(
+        tabPath,
+        workspaceRoot,
+      );
       const targetRootPath =
         closingActiveWorkspace && workspaceRoot ? workspaceRoot : tabPath;
       const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
@@ -235,7 +286,10 @@ export function useWorkbenchCloseLifecycle(
 
       if (
         workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, tabPath) ||
-        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, targetRootPath)
+        workspaceRootKeysEqual(
+          openWorkspaceRequestPathRef.current,
+          targetRootPath,
+        )
       ) {
         openWorkspaceRequestTokenRef.current += 1;
         openWorkspaceRequestPathRef.current = null;
@@ -253,10 +307,12 @@ export function useWorkbenchCloseLifecycle(
           return;
         }
 
-        const nextRecentPath =
-          workspaceRootKeysEqual(currentSettings.recentWorkspacePath, tabPath)
-            ? workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null
-            : currentSettings.recentWorkspacePath;
+        const nextRecentPath = workspaceRootKeysEqual(
+          currentSettings.recentWorkspacePath,
+          tabPath,
+        )
+          ? (workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null)
+          : currentSettings.recentWorkspacePath;
 
         try {
           await persistAppSettings({
