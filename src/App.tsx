@@ -8,6 +8,8 @@ import {
   Settings as SettingsIcon,
   TriangleAlert,
 } from "lucide-react";
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
@@ -89,9 +91,10 @@ import type {
   EditorMenuCommandRunner,
 } from "./domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "./domain/editorSurfaceCommand";
-import { javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
+import { isDirty, javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
 import type { EditorDocument, IntelligenceMode } from "./domain/workspace";
 import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
+import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
 import { BrowserWorkbenchPrompter } from "./infrastructure/browserWorkbenchPrompter";
 import { BrowserSettingsGateway } from "./infrastructure/browserSettingsGateway";
@@ -340,6 +343,29 @@ function App() {
     () => workbench.activeDocument?.language ?? null,
     [workbench.activeDocument],
   );
+  const activeDocumentIsDirty = workbench.activeDocument
+    ? isDirty(workbench.activeDocument)
+    : false;
+  const windowTitle = useMemo(
+    () =>
+      formatWindowTitle({
+        activeFilePath: workbench.activeDocument?.path ?? null,
+        isDirty: activeDocumentIsDirty,
+        workspaceName: workbench.workspaceRoot,
+      }),
+    [
+      workbench.activeDocument?.path,
+      activeDocumentIsDirty,
+      workbench.workspaceRoot,
+    ],
+  );
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    void getCurrentWindow().setTitle(windowTitle).catch(() => {});
+  }, [windowTitle]);
   const activeLargeDocumentStatus = useMemo(
     () =>
       largeSmartDocumentStatus(
@@ -1041,7 +1067,7 @@ function App() {
       style={shellStyle}
     >
       <WindowChrome
-        appTitle="Mockor Editor"
+        appTitle={windowTitle}
         commandContext={editorMenuCommandContext}
         commands={workbench.commands}
         onCommandError={workbench.reportCommandError}

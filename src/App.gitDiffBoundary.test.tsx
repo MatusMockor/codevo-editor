@@ -14,6 +14,14 @@ vi.mock("./application/useNoticeToastRenderers", () => ({
 }));
 
 const gitDiffBoundaryMockState = vi.hoisted(() => ({
+  activeDocument: null as {
+    content: string;
+    language: string;
+    name: string;
+    path: string;
+    readOnly: boolean;
+    savedContent: string;
+  } | null,
   closeGitDiffPreview: vi.fn(),
   gitDiffPreviewShouldCrash: true,
 }));
@@ -37,6 +45,7 @@ describe("App Git diff render boundary", () => {
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     gitDiffBoundaryMockState.gitDiffPreviewShouldCrash = true;
+    gitDiffBoundaryMockState.activeDocument = null;
     gitDiffBoundaryMockState.closeGitDiffPreview.mockClear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -101,6 +110,41 @@ describe("App Git diff render boundary", () => {
       host.querySelector('[data-testid="git-diff-preview-recovered"]'),
     ).not.toBeNull();
   });
+
+  it("recomputes the window title when the active document becomes dirty", async () => {
+    gitDiffBoundaryMockState.gitDiffPreviewShouldCrash = false;
+    gitDiffBoundaryMockState.activeDocument = {
+      content: "const value = 1;",
+      language: "typescript",
+      name: "index.ts",
+      path: "/workspace/src/index.ts",
+      readOnly: false,
+      savedContent: "const value = 1;",
+    };
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector(".window-title")?.textContent).toBe(
+      "index.ts - workspace",
+    );
+
+    gitDiffBoundaryMockState.activeDocument = {
+      ...gitDiffBoundaryMockState.activeDocument,
+      content: "const value = 2;",
+    };
+
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector(".window-title")?.textContent).toBe(
+      "• index.ts - workspace",
+    );
+  });
 });
 
 function createWorkbench() {
@@ -109,7 +153,7 @@ function createWorkbench() {
 
   return new Proxy(
     {
-      activeDocument: null,
+      activeDocument: gitDiffBoundaryMockState.activeDocument,
       activeDocumentGitBaseline: null,
       activePath: "mockor-git-diff:worktree:/workspace/README.md",
       appSettings: {
