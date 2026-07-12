@@ -57,6 +57,25 @@ export function isNettePhpProject(php: PhpProjectDescriptor): boolean {
 export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   id: "nette",
   appliesTo: (php) => isNettePhpProject(php),
+  newFiles: {
+    skeletonForPath: ({ path }) => {
+      if (!path.endsWith("Presenter.php")) {
+        return null;
+      }
+
+      if (
+        !path.startsWith("app/Presenters/") &&
+        !path.startsWith("app/UI/")
+      ) {
+        return null;
+      }
+
+      return {
+        importName: "Nette\\Application\\UI\\Presenter",
+        parentName: "Presenter",
+      };
+    },
+  },
   targetCollections: [
     {
       kind: "viewData",

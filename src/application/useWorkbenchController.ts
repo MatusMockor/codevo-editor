@@ -8068,6 +8068,7 @@ export function useWorkbenchController(
   } = useWorkbenchFileOperations({
     workspaceRoot,
     workspaceDescriptor,
+    activePhpFrameworkProviders,
     activePath,
     sidebarView,
     languageServerDiagnosticsByPath,

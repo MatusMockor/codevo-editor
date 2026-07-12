@@ -509,6 +509,15 @@ export interface PhpFrameworkTargetCollectionCapability {
   searchQueries: readonly string[];
 }
 
+export interface PhpFrameworkNewFileSkeleton {
+  importName: string;
+  parentName: string;
+}
+
+export interface PhpFrameworkNewFileContext {
+  path: string;
+}
+
 export interface PhpFrameworkProvider {
   id: string;
   forProject?: (php: PhpProjectDescriptor) => PhpFrameworkProvider;
@@ -519,6 +528,11 @@ export interface PhpFrameworkProvider {
    * asks each provider whether it applies.
    */
   appliesTo?: (php: PhpProjectDescriptor) => boolean;
+  newFiles?: {
+    skeletonForPath?: (
+      context: PhpFrameworkNewFileContext,
+    ) => PhpFrameworkNewFileSkeleton | null;
+  };
   completions?: {
     memberCompletionsFromSource?: (
       context: PhpFrameworkMemberCompletionContext,
@@ -824,6 +838,7 @@ export type PhpFrameworkProviderCapability =
   | "latteTemplateIntelligence"
   | "middlewareAliases"
   | "neonConfigIntelligence"
+  | "newFiles"
   | "phpPresenterLinks"
   | "routes"
   | "stringLiterals"
@@ -2009,6 +2024,10 @@ function phpFrameworkProvidersSupportCapability(
     case "neonConfigIntelligence":
       return providers.some(
         (provider) => provider.neon?.supportsConfigIntelligence === true,
+      );
+    case "newFiles":
+      return providers.some(
+        (provider) => provider.newFiles?.skeletonForPath !== undefined,
       );
     case "phpPresenterLinks":
       return providers.some(

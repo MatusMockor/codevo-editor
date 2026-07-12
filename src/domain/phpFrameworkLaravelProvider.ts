@@ -175,6 +175,25 @@ const laravelInertiaCapability: NonNullable<
 export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   id: "laravel",
   appliesTo: (php) => isLaravelPhpProject(php),
+  newFiles: {
+    skeletonForPath: ({ path }) => {
+      if (path.startsWith("app/Models/")) {
+        return {
+          importName: "Illuminate\\Database\\Eloquent\\Model",
+          parentName: "Model",
+        };
+      }
+
+      if (!path.startsWith("app/Http/Requests/")) {
+        return null;
+      }
+
+      return {
+        importName: "Illuminate\\Foundation\\Http\\FormRequest",
+        parentName: "FormRequest",
+      };
+    },
+  },
   forProject: (php) => {
     if (!laravelInertiaCapability.appliesTo?.(php)) {
       return phpLaravelFrameworkProvider;

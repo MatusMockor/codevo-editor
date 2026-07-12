@@ -29,6 +29,7 @@ import {
   type WorkspaceDescriptor,
 } from "../domain/workspace";
 import { phpNewFileTemplate } from "../domain/phpNewFileTemplate";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   removeBookmarksForPath,
   renameBookmarksForPath,
@@ -60,6 +61,7 @@ export interface WorkbenchFileOperationsDependencies {
   languageServerDiagnosticsByPath: Record<string, unknown>;
   javaScriptTypeScriptDiagnosticsByPath: Record<string, unknown>;
   phpLocalDiagnosticsByPath: Record<string, unknown>;
+  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
@@ -159,6 +161,7 @@ export function useWorkbenchFileOperations(
     languageServerDiagnosticsByPath,
     javaScriptTypeScriptDiagnosticsByPath,
     phpLocalDiagnosticsByPath,
+    activePhpFrameworkProviders,
     activeDocumentRef,
     currentWorkspaceRootRef,
     documentsRef,
@@ -241,6 +244,7 @@ export function useWorkbenchFileOperations(
       const template = phpNewFileTemplate(
         relativePath,
         workspaceDescriptor?.php?.psr4Roots ?? [],
+        activePhpFrameworkProviders,
       );
 
       if (template) {
@@ -274,6 +278,7 @@ export function useWorkbenchFileOperations(
     }
   }, [
     applyJavaScriptTypeScriptCreateEdits,
+    activePhpFrameworkProviders,
     currentWorkspaceRootRef,
     notifyJavaScriptTypeScriptFileCreated,
     openFile,

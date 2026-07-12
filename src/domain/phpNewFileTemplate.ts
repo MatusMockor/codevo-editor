@@ -2,20 +2,20 @@ import {
   bestPsr4Match,
   renderPhpTypeSkeleton,
 } from "./phpCreateClass";
+import type {
+  PhpFrameworkNewFileSkeleton,
+  PhpFrameworkProvider,
+} from "./phpFrameworkProviders";
 import type { Psr4Root } from "./workspace";
 
 export interface PhpNewFileTemplate {
   content: string;
 }
 
-interface FrameworkSkeleton {
-  importName: string;
-  parentName: string;
-}
-
 export function phpNewFileTemplate(
   relativePath: string,
   psr4Roots: readonly Psr4Root[],
+  frameworkProviders: readonly PhpFrameworkProvider[] = [],
 ): PhpNewFileTemplate | null {
   const normalizedPath = relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
 
@@ -64,7 +64,10 @@ export function phpNewFileTemplate(
     const namespace = [rootNamespace, ...namespaceSegments]
       .filter(Boolean)
       .join("\\");
-    const frameworkSkeleton = frameworkSkeletonForPath(normalizedPath);
+    const frameworkSkeleton = frameworkSkeletonForPath(
+      normalizedPath,
+      frameworkProviders,
+    );
 
     if (frameworkSkeleton) {
       return {
@@ -92,50 +95,25 @@ function isPhpIdentifier(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
-function frameworkSkeletonForPath(path: string): FrameworkSkeleton | null {
-  if (isInsideDirectory(path, "app/Models")) {
-    return {
-      importName: "Illuminate\\Database\\Eloquent\\Model",
-      parentName: "Model",
-    };
-  }
+function frameworkSkeletonForPath(
+  path: string,
+  providers: readonly PhpFrameworkProvider[],
+): PhpFrameworkNewFileSkeleton | null {
+  for (const provider of providers) {
+    const skeleton = provider.newFiles?.skeletonForPath?.({ path });
 
-  if (isInsideDirectory(path, "app/Http/Requests")) {
-    return {
-      importName: "Illuminate\\Foundation\\Http\\FormRequest",
-      parentName: "FormRequest",
-    };
-  }
-
-  if (isNettePresenterPath(path)) {
-    return {
-      importName: "Nette\\Application\\UI\\Presenter",
-      parentName: "Presenter",
-    };
+    if (skeleton) {
+      return skeleton;
+    }
   }
 
   return null;
 }
 
-function isNettePresenterPath(path: string): boolean {
-  if (!path.endsWith("Presenter.php")) {
-    return false;
-  }
-
-  return (
-    isInsideDirectory(path, "app/Presenters") ||
-    isInsideDirectory(path, "app/UI")
-  );
-}
-
-function isInsideDirectory(path: string, directory: string): boolean {
-  return path.startsWith(`${directory}/`);
-}
-
 function renderFrameworkSkeleton(
   shortName: string,
   namespace: string,
-  skeleton: FrameworkSkeleton,
+  skeleton: PhpFrameworkNewFileSkeleton,
 ): string {
   return `<?php
 

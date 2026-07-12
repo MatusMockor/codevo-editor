@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import type { WorkspaceFileGateway } from "../domain/workspace";
 import {
   useWorkbenchFileOperations,
@@ -34,6 +35,7 @@ function makeDependencies(
 ): WorkbenchFileOperationsDependencies {
   return {
     workspaceRoot: ROOT,
+    activePhpFrameworkProviders: [],
     activePath: null,
     sidebarView: "files",
     languageServerDiagnosticsByPath: {},
@@ -153,6 +155,29 @@ describe("useWorkbenchFileOperations createFile", () => {
 namespace App\\Services;
 
 class Greeter
+{
+}
+`,
+    );
+  });
+
+  it("uses new-file skeletons from the active framework provider", async () => {
+    const dependencies = makeDependencies("app/Models/Order.php", {
+      activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
+    });
+    const operations = renderHook(dependencies);
+
+    await act(async () => operations().createFile());
+
+    expect(dependencies.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+      `${ROOT}/app/Models/Order.php`,
+      `<?php
+
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Model;
+
+class Order extends Model
 {
 }
 `,
