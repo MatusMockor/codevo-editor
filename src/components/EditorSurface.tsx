@@ -37,6 +37,7 @@ import type {
   EditorSurfaceBufferFixRunner,
   EditorSurfacePhpstanIgnoreRunner,
 } from "../application/useWorkbenchController";
+import type { EditorSurfaceEslintDisableRunner } from "../application/workbenchEslintDisableCommand";
 import type {
   EditorPosition,
   EditorRevealTarget,
@@ -281,6 +282,9 @@ interface EditorSurfaceProps {
   onEditorSurfaceBufferFixRunnerChange?(
     runner: EditorSurfaceBufferFixRunner | null,
   ): void;
+  onEditorSurfaceEslintDisableRunnerChange?(
+    runner: EditorSurfaceEslintDisableRunner | null,
+  ): void;
   onEditorSurfacePhpstanIgnoreRunnerChange?(
     runner: EditorSurfacePhpstanIgnoreRunner | null,
   ): void;
@@ -443,6 +447,7 @@ function EditorSurfaceComponent({
   onEditorMenuCommandRunnerChange,
   onEditorSurfaceCommandRunnerChange,
   onEditorSurfaceBufferFixRunnerChange,
+  onEditorSurfaceEslintDisableRunnerChange,
   onEditorSurfacePhpstanIgnoreRunnerChange,
   onGoBack,
   onGoForward,
@@ -1062,6 +1067,68 @@ function EditorSurfaceComponent({
     editorApi,
     monacoApi,
     onEditorSurfaceBufferFixRunnerChange,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!onEditorSurfaceEslintDisableRunnerChange) {
+      return;
+    }
+
+    if (!editorApi || !monacoApi || !activeDocument) {
+      onEditorSurfaceEslintDisableRunnerChange(null);
+      return;
+    }
+
+    const targetPath = activeDocument.path;
+    const runner: EditorSurfaceEslintDisableRunner = (
+      expectedContent,
+      lineNumber,
+      identifiers,
+    ) => {
+      const model = editorApi.getModel();
+
+      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
+        return null;
+      }
+
+      if (model.getValue() !== expectedContent) {
+        return null;
+      }
+
+      if (
+        identifiers.length === 0 ||
+        lineNumber < 1 ||
+        lineNumber > model.getLineCount()
+      ) {
+        return 0;
+      }
+
+      const indentation =
+        /^\s*/.exec(model.getLineContent(lineNumber))?.[0] ?? "";
+      const edit = {
+        forceMoveMarkers: true,
+        range: new monacoApi.Range(lineNumber, 1, lineNumber, 1),
+        text: `${indentation}// eslint-disable-next-line ${identifiers.join(", ")}\n`,
+      };
+
+      if (!editorApi.executeEdits("eslint.disableRuleAtCursor", [edit])) {
+        return null;
+      }
+
+      return identifiers.length;
+    };
+
+    onEditorSurfaceEslintDisableRunnerChange(runner);
+
+    return () => {
+      onEditorSurfaceEslintDisableRunnerChange(null);
+    };
+  }, [
+    activeDocument?.path,
+    editorApi,
+    monacoApi,
+    onEditorSurfaceEslintDisableRunnerChange,
     workspaceRoot,
   ]);
 

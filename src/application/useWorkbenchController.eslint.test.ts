@@ -25,6 +25,7 @@ function options(
     gateway: { analyse: vi.fn(() => resultPromise) },
     replaceEslintDiagnostics: vi.fn(),
     replaceEslintFixes: vi.fn(),
+    replaceEslintRetainedDiagnostics: vi.fn(),
     setMessage: vi.fn(),
     setRunning: vi.fn(),
   };
@@ -173,6 +174,7 @@ describe("runEslintWorkspaceAnalysis", () => {
 
     expect(input.replaceEslintDiagnostics).not.toHaveBeenCalled();
     expect(input.replaceEslintFixes).not.toHaveBeenCalled();
+    expect(input.replaceEslintRetainedDiagnostics).not.toHaveBeenCalled();
     expect(input.setMessage).toHaveBeenLastCalledWith(null);
     expect(input.setRunning).toHaveBeenLastCalledWith(false);
   });
@@ -198,6 +200,10 @@ describe("runEslintWorkspaceAnalysis", () => {
     await runEslintWorkspaceAnalysis(input);
 
     expect(input.replaceEslintFixes).toHaveBeenCalledWith("/workspace", result);
+    expect(input.replaceEslintRetainedDiagnostics).toHaveBeenCalledWith(
+      "/workspace",
+      result,
+    );
   });
 });
 

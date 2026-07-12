@@ -3008,6 +3008,70 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("publishes a guarded ESLint runner that inserts one indented combined disable edit at line one", async () => {
+    const content = "    broken();\nnext();\n";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn(() => "    broken();"),
+      getLineCount: vi.fn(() => 2),
+      getValue: vi.fn(() => content),
+      setValue: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const eslintRunnerChange = vi.fn();
+    const editor = createEditor(model);
+    editor.executeEdits.mockReturnValue(true);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          {...memoGuardProps(activeDocument)}
+          onEditorSurfaceEslintDisableRunnerChange={eslintRunnerChange}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const runner = eslintRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+
+    editor.getModel.mockReturnValueOnce({
+      ...model,
+      uri: { fsPath: "/workspace/src/other.ts", path: "/workspace/src/other.ts" },
+    });
+    expect(runner(content, 1, ["rule-a"])).toBeNull();
+    model.getValue?.mockReturnValueOnce("dirty");
+    expect(runner(content, 1, ["rule-a"])).toBeNull();
+
+    expect(runner(content, 1, ["rule-a", "rule-b"])).toBe(2);
+    expect(editor.executeEdits).toHaveBeenCalledOnce();
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "eslint.disableRuleAtCursor",
+      [
+        expect.objectContaining({
+          forceMoveMarkers: true,
+          range: expect.objectContaining({
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: 1,
+            endColumn: 1,
+          }),
+          text: "    // eslint-disable-next-line rule-a, rule-b\n",
+        }),
+      ],
+    );
+  });
+
   it("clears the window chrome edit menu runner when no document is targetable", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",

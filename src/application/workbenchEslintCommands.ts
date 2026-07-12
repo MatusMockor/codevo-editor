@@ -8,6 +8,8 @@ interface WorkbenchEslintCommandsOptions {
   isActiveBufferClean: boolean;
   isWorkspaceTrusted: boolean;
   fixAllInActiveFile: Command["run"];
+  hasDiagnosticAtCursor: boolean;
+  disableRuleAtCursor: Command["run"];
 }
 
 export function workbenchEslintCommands({
@@ -18,6 +20,8 @@ export function workbenchEslintCommands({
   isActiveBufferClean,
   isWorkspaceTrusted,
   fixAllInActiveFile,
+  hasDiagnosticAtCursor,
+  disableRuleAtCursor,
 }: WorkbenchEslintCommandsOptions): Command[] {
   return [
     {
@@ -39,6 +43,18 @@ export function workbenchEslintCommands({
         isActiveBufferClean &&
         isWorkspaceTrusted,
       run: fixAllInActiveFile,
+    },
+    {
+      id: "eslint.disableRuleAtCursor",
+      title: "ESLint: Disable Rule at Cursor",
+      category: "JavaScript",
+      isEnabled: (context) =>
+        context.hasWorkspace &&
+        context.hasActiveDocument &&
+        hasDiagnosticAtCursor &&
+        isActiveBufferClean &&
+        isWorkspaceTrusted,
+      run: disableRuleAtCursor,
     },
   ];
 }

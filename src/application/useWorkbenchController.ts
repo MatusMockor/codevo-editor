@@ -21,6 +21,10 @@ import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands
 import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
 import { workbenchEslintCommands } from "./workbenchEslintCommands";
 import {
+  runEslintDisableAtCursor,
+  type EditorSurfaceEslintDisableRunner,
+} from "./workbenchEslintDisableCommand";
+import {
   workbenchFloatingSurfaceCommands,
   workbenchRecentWorkspaceCommands,
 } from "./workbenchFloatingSurfaceCommands";
@@ -262,8 +266,12 @@ import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSynt
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
 import {
+  clearEslintDiagnosticsForFile,
   parseEslintDiagnostics,
+  replaceEslintDiagnosticsForRoot,
+  supportsEslintLineComment,
   type EslintAnalysisResult,
+  type EslintDiagnosticsByRoot,
   type EslintDiagnosticsGateway,
   type EslintFix,
 } from "../domain/eslintDiagnostics";
@@ -433,6 +441,7 @@ export interface WorkbenchControllerOptions {
    */
   diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
   editorSurfaceBufferFixRunner?: EditorSurfaceBufferFixRunner | null;
+  editorSurfaceEslintDisableRunner?: EditorSurfaceEslintDisableRunner | null;
   editorSurfacePhpstanIgnoreRunner?: EditorSurfacePhpstanIgnoreRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
@@ -523,6 +532,10 @@ export interface RunEslintWorkspaceAnalysisOptions {
   gateway: EslintDiagnosticsGateway;
   replaceEslintDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
   replaceEslintFixes?(rootPath: string, result: EslintAnalysisResult): void;
+  replaceEslintRetainedDiagnostics?(
+    rootPath: string,
+    result: EslintAnalysisResult,
+  ): void;
   showStartMessage?: boolean;
   setMessage(message: string | null): void;
   setRunning(running: boolean): void;
@@ -537,6 +550,7 @@ export async function runEslintWorkspaceAnalysis({
   gateway,
   replaceEslintDiagnostics,
   replaceEslintFixes,
+  replaceEslintRetainedDiagnostics,
   showStartMessage = true,
   setMessage,
   setRunning,
@@ -574,6 +588,7 @@ export async function runEslintWorkspaceAnalysis({
     }
 
     replaceEslintFixes?.(rootPath, result);
+    replaceEslintRetainedDiagnostics?.(rootPath, result);
     replaceEslintDiagnostics(rootPath, parseEslintDiagnostics(result, rootPath));
 
     if (result.status === "ok") {
@@ -1032,6 +1047,8 @@ export function useWorkbenchController(
   const [eslintFixesByRoot, setEslintFixesByRoot] = useState<
     Record<string, Record<string, EslintFix[]>>
   >({});
+  const [eslintDiagnosticsByRoot, setEslintDiagnosticsByRoot] =
+    useState<EslintDiagnosticsByRoot>({});
   const phpstanAnalysisInFlightRef = useRef(false);
   const [phpstanAnalysisRunning, setPhpstanAnalysisRunning] = useState(false);
   const [phpstanDiagnosticsByRoot, setPhpstanDiagnosticsByRoot] =
@@ -2252,6 +2269,11 @@ export function useWorkbenchController(
           [analysedRoot]: fixesByPath,
         }));
       },
+      replaceEslintRetainedDiagnostics: (analysedRoot, result) => {
+        setEslintDiagnosticsByRoot((current) =>
+          replaceEslintDiagnosticsForRoot(current, analysedRoot, result),
+        );
+      },
       showStartMessage,
       setMessage,
       setRunning: setEslintAnalysisRunning,
@@ -2272,11 +2294,49 @@ export function useWorkbenchController(
   const activeEslintFixes = workspaceRoot && activeDocument
     ? eslintFixesByRoot[workspaceRoot]?.[activeDocument.path] ?? []
     : [];
+  const activeEslintDiagnostics = workspaceRoot && activeDocument
+    ? eslintDiagnosticsByRoot[workspaceRoot]?.[activeDocument.path] ?? []
+    : [];
   const activeEslintBufferClean = Boolean(
     activeDocument &&
       !activeDocument.readOnly &&
       activeDocument.content === activeDocument.savedContent,
   );
+  const hasEslintDiagnosticAtCursor = Boolean(
+    activeDocument &&
+      supportsEslintLineComment(activeDocument.language) &&
+      activeEslintDiagnostics.some(
+        (diagnostic) => diagnostic.line === activeEditorPosition?.lineNumber,
+      ),
+  );
+  const disableEslintRuleAtCursor = useCallback(() => {
+    const requestedRoot = workspaceRoot;
+    const requestedDocument = activeDocumentRef.current;
+    const lineNumber = activeEditorPositionRef.current?.lineNumber;
+    const diagnostics = requestedRoot && requestedDocument
+      ? eslintDiagnosticsByRoot[requestedRoot]?.[requestedDocument.path] ?? []
+      : [];
+
+    if (!lineNumber) {
+      return;
+    }
+
+    runEslintDisableAtCursor({
+      currentRoot: currentWorkspaceRootRef.current,
+      requestedRoot,
+      document: requestedDocument,
+      lineNumber,
+      diagnostics,
+      runner: options.editorSurfaceEslintDisableRunner ?? null,
+      setMessage,
+      workspaceTrusted: workspaceTrust?.trusted === true,
+    });
+  }, [
+    eslintDiagnosticsByRoot,
+    options.editorSurfaceEslintDisableRunner,
+    workspaceRoot,
+    workspaceTrust?.trusted,
+  ]);
   const fixAllEslintInActiveFile = useCallback(() => {
     const requestedRoot = workspaceRoot;
     const requestedDocument = activeDocumentRef.current;
@@ -2332,6 +2392,11 @@ export function useWorkbenchController(
       ) {
         clearEslintDiagnosticsForRoot(previousRoot);
         setEslintFixesByRoot((current) => {
+          const next = { ...current };
+          delete next[previousRoot];
+          return next;
+        });
+        setEslintDiagnosticsByRoot((current) => {
           const next = { ...current };
           delete next[previousRoot];
           return next;
@@ -4926,6 +4991,9 @@ export function useWorkbenchController(
       const rootPath = currentWorkspaceRootRef.current;
 
       if (rootPath) {
+        setEslintDiagnosticsByRoot((current) =>
+          clearEslintDiagnosticsForFile(current, rootPath, path),
+        );
         setPhpstanDiagnosticsByRoot((current) =>
           clearPhpstanDiagnosticsForFile(current, rootPath, path),
         );
@@ -4978,6 +5046,9 @@ export function useWorkbenchController(
     const rootPath = currentWorkspaceRootRef.current;
 
     if (rootPath && activePath) {
+      setEslintDiagnosticsByRoot((current) =>
+        clearEslintDiagnosticsForFile(current, rootPath, activePath),
+      );
       setPhpstanDiagnosticsByRoot((current) =>
         clearPhpstanDiagnosticsForFile(current, rootPath, activePath),
       );
@@ -7860,6 +7931,8 @@ export function useWorkbenchController(
       isActiveBufferClean: activeEslintBufferClean,
       isWorkspaceTrusted: workspaceTrust?.trusted === true,
       fixAllInActiveFile: fixAllEslintInActiveFile,
+      hasDiagnosticAtCursor: hasEslintDiagnosticAtCursor,
+      disableRuleAtCursor: disableEslintRuleAtCursor,
     }).forEach((command) => registry.register(command));
 
     workbenchScriptCommands({
@@ -8068,7 +8141,9 @@ export function useWorkbenchController(
     eslintAnalysisRunning,
     activeEslintBufferClean,
     activeEslintFixes,
+    disableEslintRuleAtCursor,
     fixAllEslintInActiveFile,
+    hasEslintDiagnosticAtCursor,
     runInActiveTerminal,
     goToDeclaration,
     canSearchClassOpenSymbols,

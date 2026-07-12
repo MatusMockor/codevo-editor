@@ -18,6 +18,7 @@ import {
   type EditorSurfaceBufferFixRunner,
   type EditorSurfacePhpstanIgnoreRunner,
 } from "./application/useWorkbenchController";
+import type { EditorSurfaceEslintDisableRunner } from "./application/workbenchEslintDisableCommand";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
@@ -247,6 +248,8 @@ function App() {
     useState<EditorSurfaceCommandRunner | null>(null);
   const [editorSurfaceBufferFixRunner, setEditorSurfaceBufferFixRunner] =
     useState<EditorSurfaceBufferFixRunner | null>(null);
+  const [editorSurfaceEslintDisableRunner, setEditorSurfaceEslintDisableRunner] =
+    useState<EditorSurfaceEslintDisableRunner | null>(null);
   const [editorSurfacePhpstanIgnoreRunner, setEditorSurfacePhpstanIgnoreRunner] =
     useState<EditorSurfacePhpstanIgnoreRunner | null>(null);
   const [gitHistoryDiff, setGitHistoryDiff] = useState<GitFileDiff | null>(null);
@@ -283,6 +286,7 @@ function App() {
     {
       editorSurfaceBufferFixRunner,
       editorSurfaceCommandRunner,
+      editorSurfaceEslintDisableRunner,
       editorSurfacePhpstanIgnoreRunner,
     },
   );
@@ -685,6 +689,12 @@ function App() {
   const updateEditorSurfaceBufferFixRunner = useCallback(
     (runner: EditorSurfaceBufferFixRunner | null) => {
       setEditorSurfaceBufferFixRunner(() => runner);
+    },
+    [],
+  );
+  const updateEditorSurfaceEslintDisableRunner = useCallback(
+    (runner: EditorSurfaceEslintDisableRunner | null) => {
+      setEditorSurfaceEslintDisableRunner(() => runner);
     },
     [],
   );
@@ -1412,6 +1422,9 @@ function App() {
             }
             onEditorSurfaceBufferFixRunnerChange={
               updateEditorSurfaceBufferFixRunner
+            }
+            onEditorSurfaceEslintDisableRunnerChange={
+              updateEditorSurfaceEslintDisableRunner
             }
             onEditorSurfacePhpstanIgnoreRunnerChange={
               updateEditorSurfacePhpstanIgnoreRunner

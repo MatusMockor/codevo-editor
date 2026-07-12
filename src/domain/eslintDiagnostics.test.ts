@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { applyEslintFixes, parseEslintDiagnostics } from "./eslintDiagnostics";
+import {
+  applyEslintFixes,
+  clearEslintDiagnosticsForFile,
+  parseEslintDiagnostics,
+  replaceEslintDiagnosticsForRoot,
+  supportsEslintLineComment,
+} from "./eslintDiagnostics";
+import type { EslintAnalysisResult } from "./eslintDiagnostics";
 
 const ROOT = "/workspace";
 
@@ -107,5 +114,125 @@ describe("applyEslintFixes", () => {
 
   it("leaves content unchanged for an empty fix list", () => {
     expect(applyEslintFixes("abc", [])).toEqual({ content: "abc", appliedCount: 0 });
+  });
+});
+
+describe("retained ESLint diagnostics", () => {
+  const result = (value: EslintAnalysisResult) => value;
+
+  it("retains only diagnostics with a path, line, and rule identifier", () => {
+    const stored = replaceEslintDiagnosticsForRoot(
+      {},
+      ROOT,
+      result({
+        status: "ok",
+        diagnostics: [
+          {
+            filePath: "src/index.ts",
+            line: 3,
+            column: 1,
+            endLine: null,
+            endColumn: null,
+            message: "A",
+            identifier: "rule-a",
+            severity: 2,
+          },
+          {
+            filePath: "src/index.ts",
+            line: null,
+            column: 1,
+            endLine: null,
+            endColumn: null,
+            message: "B",
+            identifier: "rule-b",
+            severity: 2,
+          },
+          {
+            filePath: "src/index.ts",
+            line: 4,
+            column: 1,
+            endLine: null,
+            endColumn: null,
+            message: "C",
+            identifier: null,
+            severity: 2,
+          },
+          {
+            filePath: "",
+            line: 5,
+            column: 1,
+            endLine: null,
+            endColumn: null,
+            message: "D",
+            identifier: "rule-d",
+            severity: 2,
+          },
+        ],
+        totals: { errorCount: 4, warningCount: 0, fileCount: 1 },
+      }),
+    );
+
+    expect(stored).toEqual({
+      [ROOT]: {
+        "/workspace/src/index.ts": [{ line: 3, identifier: "rule-a" }],
+      },
+    });
+  });
+
+  it("isolates roots and replaces one root on every run", () => {
+    const first = replaceEslintDiagnosticsForRoot({}, ROOT, result({
+      status: "ok",
+      diagnostics: [{ filePath: "old.ts", line: 1, column: 1, endLine: null, endColumn: null, message: "Old", identifier: "old", severity: 2 }],
+      totals: { errorCount: 1, warningCount: 0, fileCount: 1 },
+    }));
+    const withOtherRoot = replaceEslintDiagnosticsForRoot(first, "/other", result({
+      status: "ok",
+      diagnostics: [{ filePath: "keep.ts", line: 2, column: 1, endLine: null, endColumn: null, message: "Keep", identifier: "keep", severity: 2 }],
+      totals: { errorCount: 1, warningCount: 0, fileCount: 1 },
+    }));
+    const replaced = replaceEslintDiagnosticsForRoot(withOtherRoot, ROOT, result({
+      status: "ok",
+      diagnostics: [{ filePath: "new.ts", line: 3, column: 1, endLine: null, endColumn: null, message: "New", identifier: "new", severity: 2 }],
+      totals: { errorCount: 1, warningCount: 0, fileCount: 1 },
+    }));
+
+    expect(replaced[ROOT]).toEqual({
+      "/workspace/new.ts": [{ line: 3, identifier: "new" }],
+    });
+    expect(replaced["/other"]).toEqual(withOtherRoot["/other"]);
+    expect(
+      replaceEslintDiagnosticsForRoot(replaced, ROOT, {
+        status: "error",
+        message: "failed",
+      }),
+    ).toEqual({ [ROOT]: {}, "/other": replaced["/other"] });
+  });
+
+  it("clears a retained file without changing another root", () => {
+    const current = {
+      [ROOT]: {
+        "/workspace/a.ts": [{ line: 1, identifier: "a" }],
+        "/workspace/b.ts": [{ line: 2, identifier: "b" }],
+      },
+      "/other": { "/other/c.ts": [{ line: 3, identifier: "c" }] },
+    };
+
+    expect(clearEslintDiagnosticsForFile(current, ROOT, "/workspace/a.ts")).toEqual({
+      [ROOT]: { "/workspace/b.ts": [{ line: 2, identifier: "b" }] },
+      "/other": current["/other"],
+    });
+  });
+});
+
+describe("supportsEslintLineComment", () => {
+  it.each([
+    ["javascript", true],
+    ["typescript", true],
+    ["vue", false],
+    ["json", false],
+    ["markdown", false],
+    ["plaintext", false],
+  ])("reports %s as %s", (language, expected) => {
+    expect(supportsEslintLineComment(language)).toBe(expected);
   });
 });

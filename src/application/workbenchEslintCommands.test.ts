@@ -16,6 +16,8 @@ function options(overrides: Record<string, unknown> = {}) {
     isActiveBufferClean: true,
     isWorkspaceTrusted: true,
     fixAllInActiveFile: vi.fn(),
+    hasDiagnosticAtCursor: true,
+    disableRuleAtCursor: vi.fn(),
     ...overrides,
   };
 }
@@ -67,5 +69,28 @@ describe("workbenchEslintCommands", () => {
     expect(fix.isEnabled(context)).toBe(true);
     fix.run();
     expect(fixAllInActiveFile).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["a dirty buffer", { isActiveBufferClean: false }],
+    ["no diagnostic at the cursor", { hasDiagnosticAtCursor: false }],
+    ["an untrusted workspace", { isWorkspaceTrusted: false }],
+  ])("disables disable-rule for %s", (_label, overrides) => {
+    const command = workbenchEslintCommands(options(overrides))[2];
+
+    expect(command.isEnabled(context)).toBe(false);
+  });
+
+  it("enables and delegates disable-rule when every gate passes", () => {
+    const disableRuleAtCursor = vi.fn();
+    const command = workbenchEslintCommands(options({ disableRuleAtCursor }))[2];
+
+    expect(command).toMatchObject({
+      id: "eslint.disableRuleAtCursor",
+      title: "ESLint: Disable Rule at Cursor",
+    });
+    expect(command.isEnabled(context)).toBe(true);
+    command.run();
+    expect(disableRuleAtCursor).toHaveBeenCalledOnce();
   });
 });

@@ -18,6 +18,16 @@ export interface EslintFix {
   text: string;
 }
 
+export interface RetainedEslintDiagnostic {
+  identifier: string;
+  line: number;
+}
+
+export type EslintDiagnosticsByRoot = Record<
+  string,
+  Record<string, RetainedEslintDiagnostic[]>
+>;
+
 export interface AppliedEslintFixes {
   content: string;
   appliedCount: number;
@@ -83,6 +93,50 @@ export function applicableEslintFixes(
 
 export function eslintNoticeGroup(rootPath: string): string {
   return `eslint:${rootPath}`;
+}
+
+export function supportsEslintLineComment(language: string): boolean {
+  return language === "javascript" || language === "typescript";
+}
+
+export function replaceEslintDiagnosticsForRoot(
+  current: EslintDiagnosticsByRoot,
+  rootPath: string,
+  result: EslintAnalysisResult,
+): EslintDiagnosticsByRoot {
+  const diagnosticsByPath: Record<string, RetainedEslintDiagnostic[]> = {};
+
+  if (result.status === "ok") {
+    result.diagnostics.forEach((diagnostic) => {
+      if (!diagnostic.filePath || !diagnostic.identifier || diagnostic.line === null) {
+        return;
+      }
+
+      const path = joinWorkspacePath(rootPath, diagnostic.filePath);
+      diagnosticsByPath[path] = [
+        ...(diagnosticsByPath[path] ?? []),
+        { identifier: diagnostic.identifier, line: Math.max(1, diagnostic.line) },
+      ];
+    });
+  }
+
+  return { ...current, [rootPath]: diagnosticsByPath };
+}
+
+export function clearEslintDiagnosticsForFile(
+  current: EslintDiagnosticsByRoot,
+  rootPath: string,
+  filePath: string,
+): EslintDiagnosticsByRoot {
+  const rootDiagnostics = current[rootPath];
+
+  if (!rootDiagnostics?.[filePath]) {
+    return current;
+  }
+
+  const nextRootDiagnostics = { ...rootDiagnostics };
+  delete nextRootDiagnostics[filePath];
+  return { ...current, [rootPath]: nextRootDiagnostics };
 }
 
 export function parseEslintDiagnostics(
