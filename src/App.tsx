@@ -13,7 +13,10 @@ import type {
   CSSProperties,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { useWorkbenchController } from "./application/useWorkbenchController";
+import {
+  useWorkbenchController,
+  type EditorSurfaceBufferFixRunner,
+} from "./application/useWorkbenchController";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
@@ -241,6 +244,8 @@ function App() {
     useState<EditorMenuCommandRunner | null>(null);
   const [editorSurfaceCommandRunner, setEditorSurfaceCommandRunner] =
     useState<EditorSurfaceCommandRunner | null>(null);
+  const [editorSurfaceBufferFixRunner, setEditorSurfaceBufferFixRunner] =
+    useState<EditorSurfaceBufferFixRunner | null>(null);
   const [gitHistoryDiff, setGitHistoryDiff] = useState<GitFileDiff | null>(null);
   const [gitHistoryDiffLoading, setGitHistoryDiffLoading] = useState(false);
   const [gitHistoryDiffDocumentPath, setGitHistoryDiffDocumentPath] =
@@ -272,7 +277,7 @@ function App() {
     terminalGateway,
     settingsGateway,
     workbenchPrompter,
-    { editorSurfaceCommandRunner },
+    { editorSurfaceBufferFixRunner, editorSurfaceCommandRunner },
   );
   const gitHistoryWorkspaceRootRef = useRef(workbench.workspaceRoot);
   const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
@@ -667,6 +672,12 @@ function App() {
   const updateEditorSurfaceCommandRunner = useCallback(
     (runner: EditorSurfaceCommandRunner | null) => {
       setEditorSurfaceCommandRunner(() => runner);
+    },
+    [],
+  );
+  const updateEditorSurfaceBufferFixRunner = useCallback(
+    (runner: EditorSurfaceBufferFixRunner | null) => {
+      setEditorSurfaceBufferFixRunner(() => runner);
     },
     [],
   );
@@ -1385,6 +1396,9 @@ function App() {
             onEditorMenuCommandRunnerChange={updateEditorMenuCommandRunner}
             onEditorSurfaceCommandRunnerChange={
               updateEditorSurfaceCommandRunner
+            }
+            onEditorSurfaceBufferFixRunnerChange={
+              updateEditorSurfaceBufferFixRunner
             }
             onCloseFloatingSurface={workbench.closeFloatingSurface}
             onGoBack={goBack}

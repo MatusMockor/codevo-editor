@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EslintAnalysisResult } from "../domain/eslintDiagnostics";
 import {
+  runEslintFixAllInActiveFile,
   runEslintWorkspaceAnalysis,
   type RunEslintWorkspaceAnalysisOptions,
 } from "./useWorkbenchController";
@@ -23,6 +24,7 @@ function options(
     inFlightRef: { current: false },
     gateway: { analyse: vi.fn(() => resultPromise) },
     replaceEslintDiagnostics: vi.fn(),
+    replaceEslintFixes: vi.fn(),
     setMessage: vi.fn(),
     setRunning: vi.fn(),
   };
@@ -170,7 +172,88 @@ describe("runEslintWorkspaceAnalysis", () => {
     await run;
 
     expect(input.replaceEslintDiagnostics).not.toHaveBeenCalled();
+    expect(input.replaceEslintFixes).not.toHaveBeenCalled();
     expect(input.setMessage).toHaveBeenLastCalledWith(null);
     expect(input.setRunning).toHaveBeenLastCalledWith(false);
+  });
+
+  it("publishes fixes only after the requested root is still active", async () => {
+    const result: EslintAnalysisResult = {
+      status: "ok",
+      diagnostics: [{
+        filePath: "src/index.ts",
+        line: 1,
+        column: 1,
+        endLine: null,
+        endColumn: null,
+        message: "Use const.",
+        identifier: "prefer-const",
+        severity: 2,
+        fix: { range: [0, 3], text: "const" },
+      }],
+      totals: { errorCount: 1, warningCount: 0, fileCount: 1 },
+    };
+    const input = options(Promise.resolve(result));
+
+    await runEslintWorkspaceAnalysis(input);
+
+    expect(input.replaceEslintFixes).toHaveBeenCalledWith("/workspace", result);
+  });
+});
+
+describe("runEslintFixAllInActiveFile", () => {
+  const content = "let value = 'x'";
+  const document = {
+    content,
+    language: "typescript",
+    name: "index.ts",
+    path: "/workspace/src/index.ts",
+    savedContent: content,
+  };
+  const fixes = [
+    { range: [12, 15] as [number, number], text: '"x"' },
+    { range: [15, 15] as [number, number], text: ";" },
+  ];
+
+  it("delegates the expected content and fixes and reports the applied count", () => {
+    const runner = vi.fn(() => 2);
+    const setMessage = vi.fn();
+
+    const result = runEslintFixAllInActiveFile({
+      currentRoot: "/workspace",
+      document,
+      fixes,
+      requestedRoot: "/workspace",
+      runner,
+      setMessage,
+      workspaceTrusted: true,
+    });
+
+    expect(result).toBe(2);
+    expect(runner).toHaveBeenCalledWith(content, fixes);
+    expect(setMessage).toHaveBeenCalledWith("ESLint: Applied 2 fixes");
+  });
+
+  it.each([
+    ["an untrusted workspace", { workspaceTrusted: false }],
+    ["a dirty buffer", { document: { ...document, content: `${content};` } }],
+    ["no fixes", { fixes: [] }],
+    ["a stale root", { currentRoot: "/other" }],
+    ["no editor bridge", { runner: null }],
+  ])("does not call the editor bridge for %s", (_label, overrides) => {
+    const runner = vi.fn(() => 2);
+
+    runEslintFixAllInActiveFile({
+      currentRoot: "/workspace",
+      document,
+      fixes,
+      requestedRoot: "/workspace",
+      runner,
+      setMessage: vi.fn(),
+      workspaceTrusted: true,
+      ...overrides,
+    });
+
+    expect(runner).not.toHaveBeenCalled();
   });
 });

@@ -29,6 +29,11 @@ import type {
   EditorSurfaceCommandId,
   EditorSurfaceCommandRunner,
 } from "../domain/editorSurfaceCommand";
+import {
+  applicableEslintFixes,
+  type EslintFix,
+} from "../domain/eslintDiagnostics";
+import type { EditorSurfaceBufferFixRunner } from "../application/useWorkbenchController";
 import type {
   EditorPosition,
   EditorRevealTarget,
@@ -270,6 +275,9 @@ interface EditorSurfaceProps {
   onEditorSurfaceCommandRunnerChange?(
     runner: EditorSurfaceCommandRunner | null,
   ): void;
+  onEditorSurfaceBufferFixRunnerChange?(
+    runner: EditorSurfaceBufferFixRunner | null,
+  ): void;
   onGoBack(): void;
   onGoForward(): void;
   onGoToDefinition(): void;
@@ -428,6 +436,7 @@ function EditorSurfaceComponent({
   onEditorViewStateChange,
   onEditorMenuCommandRunnerChange,
   onEditorSurfaceCommandRunnerChange,
+  onEditorSurfaceBufferFixRunnerChange,
   onGoBack,
   onGoForward,
   onGoToDefinition,
@@ -984,6 +993,70 @@ function EditorSurfaceComponent({
       onEditorSurfaceCommandRunnerChange(null);
     };
   }, [activeDocument?.path, editorApi, onEditorSurfaceCommandRunnerChange, workspaceRoot]);
+
+  useEffect(() => {
+    if (!onEditorSurfaceBufferFixRunnerChange) {
+      return;
+    }
+
+    if (!editorApi || !monacoApi || !activeDocument) {
+      onEditorSurfaceBufferFixRunnerChange(null);
+      return;
+    }
+
+    const targetPath = activeDocument.path;
+    const runner: EditorSurfaceBufferFixRunner = (expectedContent, fixes) => {
+      const model = editorApi.getModel();
+
+      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
+        return null;
+      }
+
+      if (model.getValue() !== expectedContent) {
+        return null;
+      }
+
+      const applicable = applicableEslintFixes(expectedContent, fixes);
+
+      if (applicable.length === 0) {
+        return 0;
+      }
+
+      const edits = applicable.map((fix: EslintFix) => {
+        const start = model.getPositionAt(fix.range[0]);
+        const end = model.getPositionAt(fix.range[1]);
+
+        return {
+          forceMoveMarkers: true,
+          range: new monacoApi.Range(
+            start.lineNumber,
+            start.column,
+            end.lineNumber,
+            end.column,
+          ),
+          text: fix.text,
+        };
+      });
+
+      if (!editorApi.executeEdits("eslint.fixAllInActiveFile", edits)) {
+        return null;
+      }
+
+      return applicable.length;
+    };
+
+    onEditorSurfaceBufferFixRunnerChange(runner);
+
+    return () => {
+      onEditorSurfaceBufferFixRunnerChange(null);
+    };
+  }, [
+    activeDocument?.path,
+    editorApi,
+    monacoApi,
+    onEditorSurfaceBufferFixRunnerChange,
+    workspaceRoot,
+  ]);
 
   useEditorSurfaceLanguageProviderRegistration({
     dependencies: {

@@ -22,6 +22,15 @@ pub struct EslintDiagnostic {
     pub message: String,
     pub identifier: Option<String>,
     pub severity: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<EslintFix>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EslintFix {
+    pub range: [usize; 2],
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -128,6 +137,16 @@ struct EslintOutputMessage {
     column: Option<u64>,
     end_line: Option<u64>,
     end_column: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_fix")]
+    fix: Option<EslintFix>,
+}
+
+fn deserialize_optional_fix<'de, D>(deserializer: D) -> Result<Option<EslintFix>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 fn parse_eslint_output(root: &Path, stdout: &[u8]) -> Result<EslintAnalysisResponse, String> {
@@ -169,6 +188,7 @@ fn parse_eslint_output(root: &Path, stdout: &[u8]) -> Result<EslintAnalysisRespo
                 message: message.message,
                 identifier: message.rule_id,
                 severity: message.severity,
+                fix: message.fix,
             });
         }
     }
@@ -312,6 +332,40 @@ mod tests {
         assert_eq!(totals.error_count, 1);
         assert_eq!(totals.warning_count, 1);
         assert_eq!(totals.file_count, 1);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn parses_present_absent_and_malformed_fixes() {
+        let root = temp_workspace("eslint-fixes");
+        let file = root.join("src").join("index.ts");
+        let response = parse_fixture(
+            &root,
+            json!([{
+                "filePath": file,
+                "messages": [
+                    { "ruleId": "semi", "severity": 2, "message": "Fixable", "line": 1, "column": 1, "fix": { "range": [4, 5], "text": ";" } },
+                    { "ruleId": "quotes", "severity": 1, "message": "Absent", "line": 2, "column": 1 },
+                    { "ruleId": "indent", "severity": 1, "message": "Malformed", "line": 3, "column": 1, "fix": { "range": [2], "text": "  " } },
+                    { "ruleId": "comma", "severity": 1, "message": "Partial", "line": 4, "column": 1, "fix": { "range": [8, 9] } }
+                ],
+                "errorCount": 1,
+                "warningCount": 3
+            }]),
+        );
+        let (diagnostics, _) = ok_parts(response);
+
+        assert_eq!(
+            diagnostics[0].fix.as_ref().map(|fix| fix.range),
+            Some([4, 5])
+        );
+        assert_eq!(
+            diagnostics[0].fix.as_ref().map(|fix| fix.text.as_str()),
+            Some(";")
+        );
+        assert_eq!(diagnostics[1].fix, None);
+        assert_eq!(diagnostics[2].fix, None);
+        assert_eq!(diagnostics[3].fix, None);
         fs::remove_dir_all(root).expect("cleanup");
     }
 

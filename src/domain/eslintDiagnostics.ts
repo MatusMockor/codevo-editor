@@ -10,6 +10,17 @@ export interface EslintDiagnostic {
   message: string;
   identifier: string | null;
   severity: 1 | 2;
+  fix?: EslintFix | null;
+}
+
+export interface EslintFix {
+  range: [number, number];
+  text: string;
+}
+
+export interface AppliedEslintFixes {
+  content: string;
+  appliedCount: number;
 }
 
 export type EslintAnalysisResult =
@@ -26,6 +37,48 @@ export interface EslintDiagnosticsGateway {
     rootPath: string,
     binaryPath: string | null,
   ): Promise<EslintAnalysisResult>;
+}
+
+export function applyEslintFixes(
+  content: string,
+  fixes: readonly EslintFix[],
+): AppliedEslintFixes {
+  const applicable = applicableEslintFixes(content, fixes);
+  const fixedContent = applicable.reduceRight((current, fix) => {
+    const [start, end] = fix.range;
+    return `${current.slice(0, start)}${fix.text}${current.slice(end)}`;
+  }, content);
+
+  return { content: fixedContent, appliedCount: applicable.length };
+}
+
+export function applicableEslintFixes(
+  content: string,
+  fixes: readonly EslintFix[],
+): EslintFix[] {
+  return fixes
+    .map((fix, index) => ({ fix, index }))
+    .sort((left, right) => left.fix.range[0] - right.fix.range[0] || left.index - right.index)
+    .reduce<EslintFix[]>((accepted, { fix }) => {
+      const [start, end] = fix.range;
+
+      if (!Number.isInteger(start) || !Number.isInteger(end)) {
+        return accepted;
+      }
+
+      if (start < 0 || end < start || end > content.length) {
+        return accepted;
+      }
+
+      const previous = accepted[accepted.length - 1];
+
+      if (previous && start < previous.range[1]) {
+        return accepted;
+      }
+
+      accepted.push(fix);
+      return accepted;
+    }, []);
 }
 
 export function eslintNoticeGroup(rootPath: string): string {

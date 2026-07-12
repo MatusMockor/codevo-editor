@@ -39,6 +39,7 @@ interface FakeModel {
   getValue?: ReturnType<typeof vi.fn>;
   getValueInRange?: ReturnType<typeof vi.fn>;
   getOffsetAt?: ReturnType<typeof vi.fn>;
+  getPositionAt?: ReturnType<typeof vi.fn>;
   getVersionId?: ReturnType<typeof vi.fn>;
   setValue?: ReturnType<typeof vi.fn>;
   isDisposed?: ReturnType<typeof vi.fn>;
@@ -2835,6 +2836,109 @@ describe("EditorSurface", () => {
 
     expect(editor?.focus).not.toHaveBeenCalled();
     expect(editor?.trigger).not.toHaveBeenCalled();
+  });
+
+  it("publishes a guarded buffer fix runner that applies fixes in one edit call", async () => {
+    const content = "let value = 'x'";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: content,
+    };
+    const model: FakeModel = {
+      getPositionAt: vi.fn((offset: number) => ({
+        column: offset + 1,
+        lineNumber: 1,
+      })),
+      getValue: vi.fn(() => content),
+      setValue: vi.fn(),
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const bufferFixRunnerChange = vi.fn();
+    const editor = createEditor(model);
+    editor.executeEdits.mockReturnValue(true);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          javaScriptTypeScriptValidationEnabled={true}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorSurfaceBufferFixRunnerChange={bufferFixRunnerChange}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const runner = bufferFixRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+    const fixes = [
+      { range: [12, 15] as [number, number], text: '"x"' },
+      { range: [15, 15] as [number, number], text: ";" },
+    ];
+
+    editor.getModel.mockReturnValueOnce({
+      ...model,
+      uri: {
+        fsPath: "/workspace/src/other.ts",
+        path: "/workspace/src/other.ts",
+      },
+    });
+    expect(runner(content, fixes)).toBeNull();
+
+    model.getValue?.mockReturnValueOnce("dirty content");
+    expect(runner(content, fixes)).toBeNull();
+
+    expect(runner(content, fixes)).toBe(2);
+    expect(editor.executeEdits).toHaveBeenCalledOnce();
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "eslint.fixAllInActiveFile",
+      [
+        expect.objectContaining({
+          forceMoveMarkers: true,
+          range: expect.objectContaining({ startColumn: 13, endColumn: 16 }),
+          text: '"x"',
+        }),
+        expect.objectContaining({
+          forceMoveMarkers: true,
+          range: expect.objectContaining({ startColumn: 16, endColumn: 16 }),
+          text: ";",
+        }),
+      ],
+    );
   });
 
   it("clears the window chrome edit menu runner when no document is targetable", async () => {

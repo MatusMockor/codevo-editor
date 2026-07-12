@@ -260,7 +260,9 @@ import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiag
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
 import {
   parseEslintDiagnostics,
+  type EslintAnalysisResult,
   type EslintDiagnosticsGateway,
+  type EslintFix,
 } from "../domain/eslintDiagnostics";
 import {
   parsePhpstanDiagnostics,
@@ -422,9 +424,15 @@ export interface WorkbenchControllerOptions {
    * tests inject a deterministic scheduler so flushes can be driven explicitly.
    */
   diagnosticsFlushScheduler?: DiagnosticsFlushScheduler;
+  editorSurfaceBufferFixRunner?: EditorSurfaceBufferFixRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
 }
+
+export type EditorSurfaceBufferFixRunner = (
+  expectedContent: string,
+  fixes: EslintFix[],
+) => number | null;
 
 interface OpenWorkspacePathOptions {
   adoptIdentity?: () => void;
@@ -499,6 +507,7 @@ export interface RunEslintWorkspaceAnalysisOptions {
   inFlightRef: { current: boolean };
   gateway: EslintDiagnosticsGateway;
   replaceEslintDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
+  replaceEslintFixes?(rootPath: string, result: EslintAnalysisResult): void;
   showStartMessage?: boolean;
   setMessage(message: string | null): void;
   setRunning(running: boolean): void;
@@ -512,6 +521,7 @@ export async function runEslintWorkspaceAnalysis({
   inFlightRef,
   gateway,
   replaceEslintDiagnostics,
+  replaceEslintFixes,
   showStartMessage = true,
   setMessage,
   setRunning,
@@ -548,6 +558,7 @@ export async function runEslintWorkspaceAnalysis({
       return;
     }
 
+    replaceEslintFixes?.(rootPath, result);
     replaceEslintDiagnostics(rootPath, parseEslintDiagnostics(result, rootPath));
 
     if (result.status === "ok") {
@@ -568,6 +579,50 @@ export async function runEslintWorkspaceAnalysis({
     inFlightRef.current = false;
     setRunning(false);
   }
+}
+
+export function runEslintFixAllInActiveFile({
+  currentRoot,
+  document,
+  fixes,
+  requestedRoot,
+  runner,
+  setMessage,
+  workspaceTrusted,
+}: {
+  currentRoot: string | null;
+  document: EditorDocument | null;
+  fixes: readonly EslintFix[];
+  requestedRoot: string | null;
+  runner: EditorSurfaceBufferFixRunner | null;
+  setMessage(message: string): void;
+  workspaceTrusted: boolean;
+}): number | null {
+  if (!requestedRoot || !document || document.readOnly) {
+    return null;
+  }
+
+  if (!workspaceTrusted) {
+    return null;
+  }
+
+  if (!workspaceRootKeysEqual(currentRoot, requestedRoot)) {
+    return null;
+  }
+
+  if (document.content !== document.savedContent || fixes.length === 0 || !runner) {
+    return null;
+  }
+
+  const appliedCount = runner(document.content, [...fixes]);
+
+  if (!appliedCount) {
+    return appliedCount;
+  }
+
+  const noun = appliedCount === 1 ? "fix" : "fixes";
+  setMessage(`ESLint: Applied ${appliedCount} ${noun}`);
+  return appliedCount;
 }
 
 export interface RunPhpstanWorkspaceAnalysisOptions {
@@ -883,6 +938,9 @@ export function useWorkbenchController(
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
   const eslintAnalysisInFlightRef = useRef(false);
   const [eslintAnalysisRunning, setEslintAnalysisRunning] = useState(false);
+  const [eslintFixesByRoot, setEslintFixesByRoot] = useState<
+    Record<string, Record<string, EslintFix[]>>
+  >({});
   const phpstanAnalysisInFlightRef = useRef(false);
   const [phpstanAnalysisRunning, setPhpstanAnalysisRunning] = useState(false);
   const noticesRef = useRef<WorkbenchNotice[]>(notices);
@@ -2082,6 +2140,25 @@ export function useWorkbenchController(
       inFlightRef: eslintAnalysisInFlightRef,
       gateway: eslintDiagnosticsGateway,
       replaceEslintDiagnostics,
+      replaceEslintFixes: (analysedRoot, result) => {
+        const fixesByPath: Record<string, EslintFix[]> = {};
+
+        if (result.status === "ok") {
+          result.diagnostics.forEach((diagnostic) => {
+            if (!diagnostic.fix) {
+              return;
+            }
+
+            const path = joinWorkspacePath(analysedRoot, diagnostic.filePath);
+            fixesByPath[path] = [...(fixesByPath[path] ?? []), diagnostic.fix];
+          });
+        }
+
+        setEslintFixesByRoot((current) => ({
+          ...current,
+          [analysedRoot]: fixesByPath,
+        }));
+      },
       showStartMessage,
       setMessage,
       setRunning: setEslintAnalysisRunning,
@@ -2098,6 +2175,37 @@ export function useWorkbenchController(
 
     await runEslintAnalysisForRoot(rootPath, true);
   }, [runEslintAnalysisForRoot]);
+
+  const activeEslintFixes = workspaceRoot && activeDocument
+    ? eslintFixesByRoot[workspaceRoot]?.[activeDocument.path] ?? []
+    : [];
+  const activeEslintBufferClean = Boolean(
+    activeDocument &&
+      !activeDocument.readOnly &&
+      activeDocument.content === activeDocument.savedContent,
+  );
+  const fixAllEslintInActiveFile = useCallback(() => {
+    const requestedRoot = workspaceRoot;
+    const requestedDocument = activeDocumentRef.current;
+    const fixes = requestedRoot && requestedDocument
+      ? eslintFixesByRoot[requestedRoot]?.[requestedDocument.path] ?? []
+      : [];
+
+    runEslintFixAllInActiveFile({
+      currentRoot: currentWorkspaceRootRef.current,
+      document: requestedDocument,
+      fixes,
+      requestedRoot,
+      runner: options.editorSurfaceBufferFixRunner ?? null,
+      setMessage,
+      workspaceTrusted: workspaceTrust?.trusted === true,
+    });
+  }, [
+    eslintFixesByRoot,
+    options.editorSurfaceBufferFixRunner,
+    workspaceRoot,
+    workspaceTrust?.trusted,
+  ]);
 
   const runEslintAnalysisOnSave = useCallback((rootPath: string) => {
     if (!workspaceTrust?.trusted) {
@@ -2130,6 +2238,11 @@ export function useWorkbenchController(
         )
       ) {
         clearEslintDiagnosticsForRoot(previousRoot);
+        setEslintFixesByRoot((current) => {
+          const next = { ...current };
+          delete next[previousRoot];
+          return next;
+        });
       }
     });
     eslintWorkspaceTabsRef.current = currentTabs;
@@ -7580,6 +7693,10 @@ export function useWorkbenchController(
         workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson === true,
       isRunning: eslintAnalysisRunning,
       runEslintAnalysis,
+      hasFixesForActiveFile: activeEslintFixes.length > 0,
+      isActiveBufferClean: activeEslintBufferClean,
+      isWorkspaceTrusted: workspaceTrust?.trusted === true,
+      fixAllInActiveFile: fixAllEslintInActiveFile,
     }).forEach((command) => registry.register(command));
 
     workbenchScriptCommands({
@@ -7783,6 +7900,9 @@ export function useWorkbenchController(
     phpstanAnalysisRunning,
     runEslintAnalysis,
     eslintAnalysisRunning,
+    activeEslintBufferClean,
+    activeEslintFixes,
+    fixAllEslintInActiveFile,
     runInActiveTerminal,
     goToDeclaration,
     canSearchClassOpenSymbols,

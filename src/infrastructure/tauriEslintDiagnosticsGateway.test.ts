@@ -17,4 +17,25 @@ describe("TauriEslintDiagnosticsGateway", () => {
       binaryPath: "/tools/eslint",
     });
   });
+
+  it("carries fix data from the Rust response", async () => {
+    const result = {
+      status: "ok" as const,
+      diagnostics: [{
+        filePath: "src/index.ts",
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 4,
+        message: "Use const.",
+        identifier: "prefer-const",
+        severity: 2 as const,
+        fix: { range: [0, 3] as [number, number], text: "const" },
+      }],
+      totals: { errorCount: 1, warningCount: 0, fileCount: 1 },
+    };
+    const gateway = new TauriEslintDiagnosticsGateway(vi.fn(async () => result));
+
+    await expect(gateway.analyse("/workspace", null)).resolves.toEqual(result);
+  });
 });

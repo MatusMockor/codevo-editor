@@ -18,9 +18,11 @@ export class TauriEslintDiagnosticsGateway implements EslintDiagnosticsGateway {
     rootPath: string,
     binaryPath: string | null,
   ): Promise<EslintAnalysisResult> {
-    return (await this.invokeAnalysisCommand("run_eslint_analysis", {
+    const result = await this.invokeAnalysisCommand("run_eslint_analysis", {
       rootPath,
       binaryPath,
-    })) as EslintAnalysisResult;
+    });
+
+    return result as EslintAnalysisResult;
   }
 }

@@ -3,17 +3,26 @@ import { workbenchEslintCommands } from "./workbenchEslintCommands";
 
 const context = {
   hasWorkspace: true,
-  hasActiveDocument: false,
+  hasActiveDocument: true,
   activeDocumentDirty: false,
 };
 
+function options(overrides: Record<string, unknown> = {}) {
+  return {
+    hasPackageJson: true,
+    isRunning: false,
+    runEslintAnalysis: vi.fn(),
+    hasFixesForActiveFile: true,
+    isActiveBufferClean: true,
+    isWorkspaceTrusted: true,
+    fixAllInActiveFile: vi.fn(),
+    ...overrides,
+  };
+}
+
 describe("workbenchEslintCommands", () => {
   it("registers only for a workspace with package.json", () => {
-    const [command] = workbenchEslintCommands({
-      hasPackageJson: true,
-      isRunning: false,
-      runEslintAnalysis: vi.fn(),
-    });
+    const [command] = workbenchEslintCommands(options());
 
     expect(command).toMatchObject({
       id: "eslint.analyseWorkspace",
@@ -23,22 +32,40 @@ describe("workbenchEslintCommands", () => {
     expect(command.isEnabled(context)).toBe(true);
     expect(
       workbenchEslintCommands({
+        ...options(),
         hasPackageJson: false,
-        isRunning: false,
-        runEslintAnalysis: vi.fn(),
       })[0].isEnabled(context),
     ).toBe(false);
   });
 
   it("disables while running and delegates", () => {
     const runEslintAnalysis = vi.fn();
-    const [command] = workbenchEslintCommands({
-      hasPackageJson: true,
-      isRunning: true,
-      runEslintAnalysis,
-    });
+    const [command] = workbenchEslintCommands(options({ isRunning: true, runEslintAnalysis }));
     expect(command.isEnabled(context)).toBe(false);
     command.run();
     expect(runEslintAnalysis).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["a dirty buffer", { isActiveBufferClean: false }],
+    ["no available fixes", { hasFixesForActiveFile: false }],
+    ["an untrusted workspace", { isWorkspaceTrusted: false }],
+  ])("disables fix all for %s", (_label, overrides) => {
+    const fix = workbenchEslintCommands(options(overrides))[1];
+
+    expect(fix.isEnabled(context)).toBe(false);
+  });
+
+  it("enables and delegates fix all when every gate passes", () => {
+    const fixAllInActiveFile = vi.fn();
+    const fix = workbenchEslintCommands(options({ fixAllInActiveFile }))[1];
+
+    expect(fix).toMatchObject({
+      id: "eslint.fixAllInActiveFile",
+      title: "ESLint: Fix All in Active File",
+    });
+    expect(fix.isEnabled(context)).toBe(true);
+    fix.run();
+    expect(fixAllInActiveFile).toHaveBeenCalledOnce();
   });
 });

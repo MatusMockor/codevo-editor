@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEslintDiagnostics } from "./eslintDiagnostics";
+import { applyEslintFixes, parseEslintDiagnostics } from "./eslintDiagnostics";
 
 const ROOT = "/workspace";
 
@@ -73,5 +73,39 @@ describe("parseEslintDiagnostics", () => {
       message: "Could not find config file.",
       navigationTarget: undefined,
     });
+  });
+});
+
+describe("applyEslintFixes", () => {
+  it("applies a single fix", () => {
+    expect(applyEslintFixes("const value = 1", [{ range: [15, 15], text: ";" }])).toEqual({
+      content: "const value = 1;",
+      appliedCount: 1,
+    });
+  });
+
+  it("applies multiple non-overlapping fixes in offset order", () => {
+    expect(applyEslintFixes("let a = 'x'", [
+      { range: [8, 11], text: '"x"' },
+      { range: [11, 11], text: ";" },
+    ])).toEqual({ content: 'let a = "x";', appliedCount: 2 });
+  });
+
+  it("keeps the first sorted fix when ranges overlap", () => {
+    expect(applyEslintFixes("abcdef", [
+      { range: [1, 4], text: "X" },
+      { range: [3, 5], text: "Y" },
+    ])).toEqual({ content: "aXef", appliedCount: 1 });
+  });
+
+  it("skips out-of-bounds fixes", () => {
+    expect(applyEslintFixes("abc", [{ range: [2, 4], text: "X" }])).toEqual({
+      content: "abc",
+      appliedCount: 0,
+    });
+  });
+
+  it("leaves content unchanged for an empty fix list", () => {
+    expect(applyEslintFixes("abc", [])).toEqual({ content: "abc", appliedCount: 0 });
   });
 });
