@@ -1,5 +1,17 @@
 import type { PhpFrameworkSourceRegistryProvider } from "./usePhpFrameworkSourceRegistries";
 import type { LaravelSourceRegistries } from "./useLaravelSourceRegistries";
+import type { PhpFrameworkSourceRegistryAdapter } from "./phpFrameworkSourceRegistryAdapters";
+
+export const phpLaravelFrameworkSourceRegistryProviderId = "laravel";
+
+export function phpLaravelFrameworkSourceRegistryAdapter(
+  laravelSources: LaravelSourceRegistries,
+): PhpFrameworkSourceRegistryAdapter {
+  return {
+    providerId: phpLaravelFrameworkSourceRegistryProviderId,
+    provider: phpLaravelFrameworkSourceRegistryProvider(laravelSources),
+  };
+}
 
 export function phpLaravelFrameworkSourceRegistryProvider(
   laravelSources: LaravelSourceRegistries,

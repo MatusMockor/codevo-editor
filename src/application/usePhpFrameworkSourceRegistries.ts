@@ -1,4 +1,11 @@
-import { phpLaravelFrameworkSourceRegistryProvider } from "./phpLaravelFrameworkSourceRegistryAdapter";
+import {
+  phpLaravelFrameworkSourceRegistryAdapter,
+  phpLaravelFrameworkSourceRegistryProviderId,
+} from "./phpLaravelFrameworkSourceRegistryAdapter";
+import {
+  activePhpFrameworkSourceRegistryProviders,
+  type PhpFrameworkSourceRegistryAdapter,
+} from "./phpFrameworkSourceRegistryAdapters";
 import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import {
   useLaravelSourceRegistries,
@@ -36,15 +43,17 @@ export interface PhpFrameworkSourceRegistries {
 
 function usePhpLaravelFrameworkSourceRegistryAdapter(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
-): PhpFrameworkSourceRegistryProvider {
+): PhpFrameworkSourceRegistryAdapter {
   const frameworkRuntime =
     phpFrameworkRuntimeContextFromDependencies(dependencies);
   const laravelSources = useLaravelSourceRegistries({
     ...dependencies,
-    isLaravelFrameworkActive: frameworkRuntime.hasProvider("laravel"),
+    isLaravelFrameworkActive: frameworkRuntime.hasProvider(
+      phpLaravelFrameworkSourceRegistryProviderId,
+    ),
   });
 
-  return phpLaravelFrameworkSourceRegistryProvider(laravelSources);
+  return phpLaravelFrameworkSourceRegistryAdapter(laravelSources);
 }
 
 export function usePhpFrameworkSourceRegistries(
@@ -53,12 +62,17 @@ export function usePhpFrameworkSourceRegistries(
   const { currentWorkspaceRootRef } = dependencies;
   const frameworkRuntime =
     phpFrameworkRuntimeContextFromDependencies(dependencies);
-  const laravelSourceRegistryProvider =
+  const laravelSourceRegistryAdapter =
     usePhpLaravelFrameworkSourceRegistryAdapter(dependencies);
-  const sourceRegistryProviders = [laravelSourceRegistryProvider];
-  const activeSourceRegistryProviders = frameworkRuntime.hasProvider("laravel")
-    ? [laravelSourceRegistryProvider]
-    : [];
+  const sourceRegistryAdapters = [laravelSourceRegistryAdapter];
+  const sourceRegistryProviders = sourceRegistryAdapters.map((adapter) =>
+    adapter.provider,
+  );
+  const activeSourceRegistryProviders =
+    activePhpFrameworkSourceRegistryProviders(
+      frameworkRuntime,
+      sourceRegistryAdapters,
+    );
 
   return {
     currentPhpFrameworkSourceContext: () =>
