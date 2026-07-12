@@ -7,8 +7,8 @@ import {
 } from "react";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
 import {
-  phpTestGutterTargets,
   runAllTestsTarget,
   type PhpTestGutterTarget,
 } from "../domain/phpTestGutterTargets";
@@ -353,7 +353,11 @@ export function useTerminalTestRunner(
       return;
     }
 
-    const targets = phpTestGutterTargets(requestedDocument.content);
+    const targets = phpGutterTargetsCoordinator.resolveTest(
+      requestedRoot,
+      requestedDocument.path,
+      requestedDocument.content,
+    );
     const cursorLine = activeEditorPositionRef.current?.lineNumber ?? 1;
     const target = testTargetForCursorLine(targets, cursorLine);
 
@@ -410,7 +414,11 @@ export function useTerminalTestRunner(
       return;
     }
 
-    const targets = phpTestGutterTargets(requestedDocument.content);
+    const targets = phpGutterTargetsCoordinator.resolveTest(
+      requestedRoot,
+      requestedDocument.path,
+      requestedDocument.content,
+    );
     const target = runAllTestsTarget(targets);
 
     if (target) {

@@ -9,6 +9,7 @@ import {
   type TerminalTestRunnerDependencies,
 } from "./useTerminalTestRunner";
 import type { BottomPanelView } from "../domain/bottomPanel";
+import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import type { TerminalGateway } from "../domain/terminal";
 import type {
@@ -501,6 +502,38 @@ class InvoiceServiceTest extends TestCase
       expect(writeInput).toHaveBeenCalledWith(
         21,
         "vendor/bin/phpunit --filter testCalculate\r",
+      );
+      harness.unmount();
+    });
+
+    it("uses captured edited content after old test targets were warmed", async () => {
+      const path = `${ROOT}/tests/Unit/EditedInvoiceServiceTest.php`;
+      const oldSource = testSource.replace("testCalculate", "testOldName");
+      const editedSource = testSource.replace(
+        "testCalculate",
+        "testEditedName",
+      );
+      phpGutterTargetsCoordinator.resolveTest(ROOT, path, oldSource);
+
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vi.fn(async () => null),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+      });
+      harness.activeDocumentRef.current = document(path, editedSource);
+      harness.activeEditorPositionRef.current = { column: 21, lineNumber: 9 };
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(22);
+      });
+
+      await act(async () => {
+        await harness.runner().runTestForActiveDocument();
+      });
+
+      expect(writeInput).toHaveBeenCalledWith(
+        22,
+        "vendor/bin/phpunit --filter testEditedName\r",
       );
       harness.unmount();
     });

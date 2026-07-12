@@ -27,6 +27,23 @@ describe("PhpGutterTargetsCoordinator", () => {
     expect(rightPane).toBe(leftPane);
   });
 
+  it("shares unchanged test targets between consumers", () => {
+    const coordinator = new PhpGutterTargetsCoordinator();
+
+    const firstConsumer = coordinator.resolveTest(
+      "/workspace",
+      "/workspace/SampleTest.php",
+      SOURCE,
+    );
+    const secondConsumer = coordinator.resolveTest(
+      "/workspace",
+      "/workspace/SampleTest.php",
+      SOURCE,
+    );
+
+    expect(secondConsumer).toBe(firstConsumer);
+  });
+
   it("isolates identical paths and content between workspaces", () => {
     const coordinator = new PhpGutterTargetsCoordinator();
 
