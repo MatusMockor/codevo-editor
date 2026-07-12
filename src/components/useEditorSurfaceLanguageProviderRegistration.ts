@@ -11,6 +11,10 @@ import {
   type EditorSurfaceLanguageProviderRegistrationRefs,
 } from "./editorSurfaceLanguageProviderOptions";
 import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
+import {
+  activeComposerManifestWorkspace,
+  registerComposerManifestMonacoProviders,
+} from "./composerManifestMonacoProviders";
 
 export interface EditorSurfaceLanguageProviderRegistrationDependencies {
   featuresGateway: LanguageServerFeaturesGateway;
@@ -73,7 +77,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
       return;
     }
 
-    const disposable = registerLanguageServerMonacoProviders(
+    const languageServerProviders = registerLanguageServerMonacoProviders(
       monacoApi,
       createEditorSurfaceLanguageProviderOptions({
         dependencies: {
@@ -86,8 +90,15 @@ export function useEditorSurfaceLanguageProviderRegistration({
         refs,
       }),
     );
+    const composerManifestProviders = registerComposerManifestMonacoProviders(
+      monacoApi,
+      { getWorkspace: activeComposerManifestWorkspace },
+    );
 
-    return () => disposable.dispose();
+    return () => {
+      composerManifestProviders.dispose();
+      languageServerProviders.dispose();
+    };
   }, [
     activeDocumentRef,
     applyPhpCodeActionNewFileRef,

@@ -136,6 +136,9 @@ import type {
   WorkspaceIdentityDescriptor,
   WorkspaceIdentityGateway,
 } from "../infrastructure/tauriWorkspaceIdentityGateway";
+import {
+  registerActiveComposerManifestWorkspace,
+} from "../components/composerManifestMonacoProviders";
 
 export type {
   PhpCodeActionDescriptor,
@@ -759,6 +762,20 @@ export function useWorkbenchController(
     useState<WorkspaceIdentityDescriptor | null>(null);
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
+  useEffect(() => {
+    if (
+      !workspaceRoot ||
+      !workspaceDescriptor ||
+      !workspaceRootKeysEqual(workspaceRoot, workspaceDescriptor.rootPath)
+    ) {
+      return;
+    }
+
+    return registerActiveComposerManifestWorkspace({
+      packages: workspaceDescriptor.php?.packages ?? [],
+      rootPath: workspaceRoot,
+    });
+  }, [workspaceDescriptor, workspaceRoot]);
   const [packageScriptsByRoot, setPackageScriptsByRoot] = useState<
     Record<
       string,
