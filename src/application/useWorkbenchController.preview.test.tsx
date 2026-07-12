@@ -445,6 +445,73 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("reorders regular tabs without persisting the open preview", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    const first = fileEntry("/workspace/src/First.php", "First.php");
+    const second = fileEntry("/workspace/src/Second.php", "Second.php");
+    const preview = fileEntry("/workspace/src/Preview.php", "Preview.php");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(first);
+      await getWorkbench().openPinnedFile(second);
+      await getWorkbench().previewFile(preview);
+    });
+    await flushAsyncTurns(12);
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
+
+    act(() => {
+      getWorkbench().reorderOpenTabs(second.path, first.path, "before");
+    });
+    await flushAsyncTurns(12);
+
+    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
+      second.path,
+      first.path,
+      preview.path,
+    ]);
+    expect(getWorkbench().previewPath).toBe(preview.path);
+    expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenLastCalledWith(
+      "/workspace",
+      expect.objectContaining({
+        session: expect.objectContaining({
+          activePath: preview.path,
+          openPaths: [second.path, first.path, preview.path],
+          previewPath: preview.path,
+        }),
+      }),
+    );
+  });
+
+  it("promotes a dragged preview into open paths and clears preview state", async () => {
+    const { getWorkbench } = renderController();
+    const first = fileEntry("/workspace/src/First.php", "First.php");
+    const second = fileEntry("/workspace/src/Second.php", "Second.php");
+    const preview = fileEntry("/workspace/src/Preview.php", "Preview.php");
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(first);
+      await getWorkbench().openPinnedFile(second);
+      await getWorkbench().previewFile(preview);
+    });
+
+    act(() => {
+      getWorkbench().reorderOpenTabs(preview.path, first.path, "before");
+    });
+
+    expect(getWorkbench().openTabs.map((tab) => tab.path)).toEqual([
+      preview.path,
+      first.path,
+      second.path,
+    ]);
+    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().activePath).toBe(preview.path);
+  });
+
   it("isolates cached Markdown previews by workspace and drops stale render completion", async () => {
     const staleRender = createDeferred<string>();
     const renderMarkdown = vi

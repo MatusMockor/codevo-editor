@@ -1339,6 +1339,7 @@ function App() {
           onActivate={activateEditorTab}
           onClose={closeEditorTab}
           onPin={workbench.pinDocument}
+          onReorder={workbench.reorderOpenTabs}
           previewPath={workbench.previewPath}
         />
         {workbench.externalFileConflictState.conflict ? (

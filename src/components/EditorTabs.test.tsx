@@ -32,6 +32,7 @@ describe("EditorTabs", () => {
           onActivate={vi.fn()}
           onClose={vi.fn()}
           onPin={vi.fn()}
+          onReorder={vi.fn()}
           previewPath={null}
         />,
       );
@@ -56,6 +57,7 @@ describe("EditorTabs", () => {
           onActivate={vi.fn()}
           onClose={vi.fn()}
           onPin={vi.fn()}
+          onReorder={vi.fn()}
           previewPath={null}
         />,
       );
@@ -83,6 +85,7 @@ describe("EditorTabs", () => {
           onActivate={vi.fn()}
           onClose={vi.fn()}
           onPin={vi.fn()}
+          onReorder={vi.fn()}
           previewPath={null}
         />,
       );
@@ -109,6 +112,7 @@ describe("EditorTabs", () => {
           onActivate={vi.fn()}
           onClose={vi.fn()}
           onPin={vi.fn()}
+          onReorder={vi.fn()}
           previewPath={null}
         />,
       );
@@ -133,6 +137,7 @@ describe("EditorTabs", () => {
           onActivate={activate}
           onClose={vi.fn()}
           onPin={vi.fn()}
+          onReorder={vi.fn()}
           previewPath={null}
         />,
       );
@@ -158,6 +163,7 @@ describe("EditorTabs", () => {
           onActivate={vi.fn()}
           onClose={vi.fn()}
           onPin={pin}
+          onReorder={vi.fn()}
           previewPath="/workspace/src/App.tsx"
         />,
       );
@@ -183,6 +189,7 @@ describe("EditorTabs", () => {
           onActivate={vi.fn()}
           onClose={close}
           onPin={vi.fn()}
+          onReorder={vi.fn()}
           previewPath={null}
         />,
       );
@@ -211,6 +218,7 @@ describe("EditorTabs", () => {
       onActivate: vi.fn(),
       onClose: vi.fn(),
       onPin: vi.fn(),
+      onReorder: vi.fn(),
       previewPath: null,
     };
 
@@ -241,7 +249,183 @@ describe("EditorTabs", () => {
 
     mapSpy.mockRestore();
   });
+
+  it("reorders before a tab when dropped over its left half", async () => {
+    const reorder = vi.fn();
+    const dataTransfer = createDataTransfer();
+
+    await act(async () => {
+      root.render(
+        <EditorTabs
+          activePath="/workspace/src/App.tsx"
+          documents={[
+            doc("/workspace/src/App.tsx", "App.tsx"),
+            doc("/workspace/src/main.tsx", "main.tsx"),
+          ]}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          onPin={vi.fn()}
+          onReorder={reorder}
+          previewPath={null}
+        />,
+      );
+    });
+
+    const tabs = host.querySelectorAll<HTMLElement>(".editor-tab");
+    vi.spyOn(tabs[1], "getBoundingClientRect").mockReturnValue(
+      rectangle(100, 200),
+    );
+
+    act(() => {
+      dispatchDragEvent(tabs[0], "dragstart", dataTransfer, 10);
+      dispatchDragEvent(tabs[1], "dragover", dataTransfer, 125);
+    });
+
+    expect(tabs[1].classList.contains("drop-before")).toBe(true);
+
+    act(() => {
+      dispatchDragEvent(tabs[1], "drop", dataTransfer, 125);
+    });
+
+    expect(reorder).toHaveBeenCalledWith(
+      "/workspace/src/App.tsx",
+      "/workspace/src/main.tsx",
+      "before",
+    );
+  });
+
+  it("reorders after a tab when dropped over its right half", async () => {
+    const reorder = vi.fn();
+    const dataTransfer = createDataTransfer();
+
+    await act(async () => {
+      root.render(
+        <EditorTabs
+          activePath="/workspace/src/App.tsx"
+          documents={[
+            doc("/workspace/src/App.tsx", "App.tsx"),
+            doc("/workspace/src/main.tsx", "main.tsx"),
+          ]}
+          onActivate={vi.fn()}
+          onClose={vi.fn()}
+          onPin={vi.fn()}
+          onReorder={reorder}
+          previewPath={null}
+        />,
+      );
+    });
+
+    const tabs = host.querySelectorAll<HTMLElement>(".editor-tab");
+    vi.spyOn(tabs[1], "getBoundingClientRect").mockReturnValue(
+      rectangle(100, 200),
+    );
+
+    act(() => {
+      dispatchDragEvent(tabs[0], "dragstart", dataTransfer, 10);
+      dispatchDragEvent(tabs[1], "dragover", dataTransfer, 175);
+      dispatchDragEvent(tabs[1], "drop", dataTransfer, 175);
+    });
+
+    expect(reorder).toHaveBeenCalledWith(
+      "/workspace/src/App.tsx",
+      "/workspace/src/main.tsx",
+      "after",
+    );
+  });
+
+  it("keeps a reordered preview tab unpinned and inactive state unchanged", async () => {
+    const activate = vi.fn();
+    const pin = vi.fn();
+    const reorder = vi.fn();
+    const dataTransfer = createDataTransfer();
+    const previewPath = "/workspace/src/Preview.tsx";
+
+    await act(async () => {
+      root.render(
+        <EditorTabs
+          activePath="/workspace/src/App.tsx"
+          documents={[
+            doc("/workspace/src/App.tsx", "App.tsx"),
+            doc(previewPath, "Preview.tsx"),
+          ]}
+          onActivate={activate}
+          onClose={vi.fn()}
+          onPin={pin}
+          onReorder={reorder}
+          previewPath={previewPath}
+        />,
+      );
+    });
+
+    const tabs = host.querySelectorAll<HTMLElement>(".editor-tab");
+    vi.spyOn(tabs[0], "getBoundingClientRect").mockReturnValue(
+      rectangle(0, 100),
+    );
+
+    act(() => {
+      dispatchDragEvent(tabs[1], "dragstart", dataTransfer, 150);
+      dispatchDragEvent(tabs[0], "dragover", dataTransfer, 25);
+      dispatchDragEvent(tabs[0], "drop", dataTransfer, 25);
+    });
+
+    expect(reorder).toHaveBeenCalledWith(
+      previewPath,
+      "/workspace/src/App.tsx",
+      "before",
+    );
+    expect(host.querySelector(".editor-tab.preview")?.textContent).toContain(
+      "Preview.tsx",
+    );
+    expect(host.querySelector(".editor-tab.active")?.textContent).toContain(
+      "App.tsx",
+    );
+    expect(activate).not.toHaveBeenCalled();
+    expect(pin).not.toHaveBeenCalled();
+  });
 });
+
+function createDataTransfer() {
+  const values = new Map<string, string>();
+
+  return {
+    dropEffect: "move",
+    effectAllowed: "move",
+    getData(type: string) {
+      return values.get(type) ?? "";
+    },
+    setData(type: string, value: string) {
+      values.set(type, value);
+    },
+  };
+}
+
+function dispatchDragEvent(
+  target: Element,
+  type: string,
+  dataTransfer: ReturnType<typeof createDataTransfer>,
+  clientX: number,
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    clientX: { value: clientX },
+    dataTransfer: { value: dataTransfer },
+  });
+  target.dispatchEvent(event);
+}
+
+function rectangle(left: number, right: number): DOMRect {
+  return {
+    bottom: 34,
+    height: 34,
+    left,
+    right,
+    top: 0,
+    width: right - left,
+    x: left,
+    y: 0,
+    toJSON: () => ({}),
+  };
+}
 
 function doc(
   path: string,

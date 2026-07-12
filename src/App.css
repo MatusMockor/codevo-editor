@@ -4003,6 +4003,7 @@ button.problem-row:focus-visible {
 }
 
 .editor-tab {
+  position: relative;
   display: grid;
   min-width: 120px;
   max-width: 220px;
@@ -4015,6 +4016,26 @@ button.problem-row:focus-visible {
   transition: background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
     box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.editor-tab.drop-before::before,
+.editor-tab.drop-after::before {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+  content: "";
+  pointer-events: none;
+}
+
+.editor-tab.drop-before::before {
+  left: -3px;
+}
+
+.editor-tab.drop-after::before {
+  right: -3px;
 }
 
 .editor-tab:hover {

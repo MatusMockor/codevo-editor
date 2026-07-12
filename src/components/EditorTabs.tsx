@@ -1,6 +1,6 @@
 import { Circle, X } from "lucide-react";
-import { memo } from "react";
-import type { KeyboardEvent } from "react";
+import { memo, useState } from "react";
+import type { DragEvent, KeyboardEvent } from "react";
 import type { MouseEvent } from "react";
 import type { EditorDocument, ImageTab } from "../domain/workspace";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
@@ -10,6 +10,7 @@ import {
   type GitChangeStatus,
 } from "../domain/git";
 import { isDirty } from "../domain/workspace";
+import type { TabDropPosition } from "../domain/tabOrdering";
 import { getTabId, getTabPanelId } from "./tabIds";
 
 interface EditorTabsProps {
@@ -20,6 +21,11 @@ interface EditorTabsProps {
   onActivate(path: string): void;
   onClose(path: string): void;
   onPin(path: string): void;
+  onReorder?(
+    fromPath: string,
+    toPath: string,
+    position: TabDropPosition,
+  ): void;
 }
 
 function EditorTabsComponent({
@@ -30,7 +36,13 @@ function EditorTabsComponent({
   onActivate,
   onClose,
   onPin,
+  onReorder,
 }: EditorTabsProps) {
+  const [dropTarget, setDropTarget] = useState<{
+    path: string;
+    position: TabDropPosition;
+  } | null>(null);
+
   if (documents.length === 0) {
     return <div className="editor-tabs empty" />;
   }
@@ -63,6 +75,30 @@ function EditorTabsComponent({
     onClose(path);
   }
 
+  function handleDragStart(path: string, event: DragEvent<HTMLDivElement>) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", path);
+  }
+
+  function handleDragOver(path: string, event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const position = dropPosition(event);
+    setDropTarget({ path, position });
+  }
+
+  function handleDrop(path: string, event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const fromPath = event.dataTransfer.getData("text/plain");
+    setDropTarget(null);
+
+    if (!fromPath || fromPath === path) {
+      return;
+    }
+
+    onReorder?.(fromPath, path, dropPosition(event));
+  }
+
   return (
     <div aria-label="Open files" className="editor-tabs" role="tablist">
       {documents.map((document, index) => {
@@ -73,9 +109,22 @@ function EditorTabsComponent({
 
         return (
           <div
-            className={getEditorTabClassName(active, preview, dirty)}
+            className={getEditorTabClassName(
+              active,
+              preview,
+              dirty,
+              dropTarget?.path === document.path
+                ? dropTarget.position
+                : null,
+            )}
+            draggable
             key={document.path}
             onAuxClick={(event) => handleAuxClick(document.path, event)}
+            onDragEnd={() => setDropTarget(null)}
+            onDragLeave={() => setDropTarget(null)}
+            onDragOver={(event) => handleDragOver(document.path, event)}
+            onDragStart={(event) => handleDragStart(document.path, event)}
+            onDrop={(event) => handleDrop(document.path, event)}
           >
             <button
               aria-controls={getTabPanelId(document.path)}
@@ -157,6 +206,7 @@ function getEditorTabClassName(
   active: boolean,
   preview: boolean,
   dirty: boolean,
+  dropPosition: TabDropPosition | null,
 ): string {
   const classNames = ["editor-tab"];
 
@@ -172,7 +222,21 @@ function getEditorTabClassName(
     classNames.push("changed");
   }
 
+  if (dropPosition) {
+    classNames.push(`drop-${dropPosition}`);
+  }
+
   return classNames.join(" ");
+}
+
+function dropPosition(event: DragEvent<HTMLDivElement>): TabDropPosition {
+  const bounds = event.currentTarget.getBoundingClientRect();
+
+  if (event.clientX < bounds.left + bounds.width / 2) {
+    return "before";
+  }
+
+  return "after";
 }
 
 function getEditorTabStatusClassName(status: GitChangeStatus): string {

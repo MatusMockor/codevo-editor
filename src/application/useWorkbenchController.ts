@@ -408,6 +408,10 @@ import {
   recentFilesForSwitcher,
   type RecentFileEntry,
 } from "../domain/recentFiles";
+import {
+  reorderVisibleTabs,
+  type TabDropPosition,
+} from "../domain/tabOrdering";
 import { type RecentLocation } from "../domain/recentLocations";
 import {
   sortBookmarks,
@@ -5193,6 +5197,21 @@ export function useWorkbenchController(
     [activePath, closeTextDocument],
   );
 
+  const reorderOpenTabs = useCallback(
+    (fromPath: string, toPath: string, position: TabDropPosition) => {
+      const reordered = reorderVisibleTabs({
+        openPaths: openPathsRef.current,
+        previewPath: previewPathRef.current,
+        fromPath,
+        toPath,
+        position,
+      });
+      setOpenPaths(reordered.openPaths);
+      setPreviewPath(reordered.previewPath);
+    },
+    [],
+  );
+
   const closeActiveSurface = useCallback(() => {
     if (
       activePath &&
@@ -9723,6 +9742,7 @@ export function useWorkbenchController(
     openRecentFilesSwitcher,
     setRecentFilesSwitcherOpen,
     recentLocations,
+    reorderOpenTabs,
     recentLocationsPanelOpen,
     openRecentLocation,
     openRecentLocationsPanel,
