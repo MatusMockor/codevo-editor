@@ -1,5 +1,13 @@
 import { ChevronRight } from "lucide-react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
 import {
   gitStatusLabel,
@@ -7,6 +15,8 @@ import {
   type GitChangeStatus,
 } from "../domain/git";
 import type { FileEntry } from "../domain/workspace";
+import { workspaceRelativePath } from "../domain/pathDerivation";
+import { FileTreeContextMenu } from "./FileTreeContextMenu";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
 import { TreeEntryIcon } from "./TreeEntryIcon";
 
@@ -38,6 +48,8 @@ interface FileTreeProps {
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
   onRenameEntry?(entry: FileEntry): void;
+  onRevealEntry?(entry: FileEntry): void;
+  onOpenEntryInTerminal?(entry: FileEntry): void;
   onToggleDirectory(path: string): void;
   onPrefetchFile?(entry: FileEntry): void;
   onCancelPrefetchFile?(entry: FileEntry): void;
@@ -55,6 +67,8 @@ function FileTreeComponent({
   onOpenFile,
   onPreviewFile,
   onRenameEntry,
+  onRevealEntry,
+  onOpenEntryInTerminal,
   onToggleDirectory,
   onPrefetchFile,
   onCancelPrefetchFile,
@@ -68,6 +82,27 @@ function FileTreeComponent({
   const previousRevealSignalRef = useRef<number>(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [contextMenu, setContextMenu] = useState<{
+    entry: FileEntry;
+    rootPath: string;
+    position: { x: number; y: number };
+  } | null>(null);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const openContextMenu = useCallback(
+    (entry: FileEntry, position: { x: number; y: number }) => {
+      if (!rootPath) {
+        return;
+      }
+
+      setContextMenu({ entry, position, rootPath });
+    },
+    [rootPath],
+  );
+
+  useEffect(() => {
+    closeContextMenu();
+  }, [closeContextMenu, rootPath]);
 
   const visibleTreeState = useMemo(
     () =>
@@ -243,6 +278,47 @@ function FileTreeComponent({
     );
   }
 
+  const contextMenuItems =
+    contextMenu && contextMenu.rootPath === rootPath
+      ? [
+          ...(onRevealEntry
+            ? [
+                {
+                  label: "Reveal in Finder",
+                  run: () => onRevealEntry(contextMenu.entry),
+                },
+              ]
+            : []),
+          { label: "Copy Path", run: () => copyText(contextMenu.entry.path) },
+          {
+            label: "Copy Relative Path",
+            run: () => {
+              const relativePath = workspaceRelativePath(
+                rootPath,
+                contextMenu.entry.path,
+              );
+
+              if (relativePath === null) {
+                return;
+              }
+
+              copyText(relativePath);
+            },
+          },
+          ...(onOpenEntryInTerminal
+            ? [
+                {
+                  label: "Open in Terminal",
+                  run: () => onOpenEntryInTerminal(contextMenu.entry),
+                },
+              ]
+            : []),
+          ...(onRenameEntry
+            ? [{ label: "Rename", run: () => onRenameEntry(contextMenu.entry) }]
+            : []),
+        ]
+      : [];
+
   return (
     <nav
       aria-label="Workspace files"
@@ -279,7 +355,7 @@ function FileTreeComponent({
                 level={level}
                 onOpenFile={onOpenFile}
                 onPreviewFile={onPreviewFile}
-                onRenameEntry={onRenameEntry}
+                onOpenContextMenu={openContextMenu}
                 onToggleDirectory={onToggleDirectory}
                 onPrefetchFile={onPrefetchFile}
                 onCancelPrefetchFile={onCancelPrefetchFile}
@@ -289,6 +365,13 @@ function FileTreeComponent({
           })}
         </div>
       </div>
+      {contextMenu && contextMenuItems.length > 0 ? (
+        <FileTreeContextMenu
+          items={contextMenuItems}
+          onClose={closeContextMenu}
+          position={contextMenu.position}
+        />
+      ) : null}
     </nav>
   );
 }
@@ -318,7 +401,7 @@ interface TreeRowProps {
   activeRowRef: RefObject<HTMLButtonElement | null>;
   onOpenFile(entry: FileEntry): void;
   onPreviewFile(entry: FileEntry): void;
-  onRenameEntry?(entry: FileEntry): void;
+  onOpenContextMenu(entry: FileEntry, position: { x: number; y: number }): void;
   onToggleDirectory(path: string): void;
   onPrefetchFile?(entry: FileEntry): void;
   onCancelPrefetchFile?(entry: FileEntry): void;
@@ -334,7 +417,7 @@ const TreeRow = memo(function TreeRow({
   activeRowRef,
   onOpenFile,
   onPreviewFile,
-  onRenameEntry,
+  onOpenContextMenu,
   onToggleDirectory,
   onPrefetchFile,
   onCancelPrefetchFile,
@@ -384,12 +467,8 @@ const TreeRow = memo(function TreeRow({
       }}
       onDoubleClick={(event) => handleDoubleClick(event, entry, onOpenFile)}
       onContextMenu={(event) => {
-        if (!isDirectory || !onRenameEntry) {
-          return;
-        }
-
         event.preventDefault();
-        onRenameEntry(entry);
+        onOpenContextMenu(entry, { x: event.clientX, y: event.clientY });
       }}
       ref={isActive ? activeRowRef : undefined}
       style={
@@ -421,6 +500,11 @@ const TreeRow = memo(function TreeRow({
     </button>
   );
 });
+
+function copyText(value: string) {
+  const write = navigator.clipboard?.writeText(value);
+  void write?.catch(() => undefined);
+}
 
 function getVisibleTreeRows({
   rootPath,

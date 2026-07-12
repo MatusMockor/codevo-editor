@@ -987,6 +987,25 @@ fn ensure_path_in_workspace(root_path: &Path, path: &str) -> Result<(), String> 
     Err("Path is outside the workspace root.".to_string())
 }
 
+fn reveal_path_in_workspace(root_path: &str, path: &str) -> Result<PathBuf, String> {
+    let root = canonicalize_workspace_root(root_path)?;
+    let requested_path = PathBuf::from(path);
+
+    if !requested_path.is_absolute() {
+        return Err("Reveal path must be absolute.".to_string());
+    }
+
+    let target = requested_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve reveal path: {error}"))?;
+
+    if target.starts_with(&root) {
+        return Ok(target);
+    }
+
+    Err("Path is outside the workspace root.".to_string())
+}
+
 fn ensure_lsp_path_in_workspace(root_path: &str, path: &str) -> Result<(), String> {
     let root = canonicalize_workspace_root(root_path)?;
 
@@ -3123,6 +3142,15 @@ fn open_language_runtime_log(
         .map_err(|error| format!("Failed to open {runtime_label} log: {error}"))?;
 
     Ok(log_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn reveal_item_in_dir(root_path: String, path: String, app: AppHandle) -> Result<(), String> {
+    let target = reveal_path_in_workspace(&root_path, &path)?;
+
+    app.opener()
+        .reveal_item_in_dir(target)
+        .map_err(|error| format!("Failed to reveal item: {error}"))
 }
 
 fn sanitized_log_file_stem(value: &str) -> String {
@@ -6124,10 +6152,11 @@ mod tests {
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
-        rename_git_branch, run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
-        run_phpstan_analysis_with_trust, save_git_stash, search_files, stage_git_files,
-        stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch,
-        unstage_git_hunk, workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        rename_git_branch, reveal_path_in_workspace, run_artisan_route_list_with_trust,
+        run_eslint_analysis_with_trust, run_phpstan_analysis_with_trust, save_git_stash,
+        search_files, stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git,
+        stash_pop_git, switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
+        workspace_text_edits_from_language_server,
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
@@ -8436,6 +8465,36 @@ mod tests {
         assert!(ensure_path_in_workspace(&root, "linked-outside/Missing.php").is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn reveal_path_guard_rejects_paths_outside_workspace_and_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_workspace("reveal-root");
+        let outside = temp_workspace("reveal-outside");
+        let inside_file = root.join("Inside.php");
+        let outside_file = outside.join("Secret.php");
+        fs::write(&inside_file, "<?php").expect("inside file");
+        fs::write(&outside_file, "<?php").expect("outside file");
+        symlink(&outside, root.join("linked-outside")).expect("outside symlink");
+
+        assert_eq!(
+            reveal_path_in_workspace(&path_string(&root), &path_string(&inside_file))
+                .expect("in-root reveal path"),
+            inside_file
+                .canonicalize()
+                .expect("canonical in-root reveal path")
+        );
+        assert!(
+            reveal_path_in_workspace(&path_string(&root), &path_string(&outside_file)).is_err()
+        );
+        assert!(reveal_path_in_workspace(
+            &path_string(&root),
+            &path_string(&root.join("linked-outside/Secret.php")),
+        )
+        .is_err());
+    }
+
     #[test]
     fn normalize_path_removes_parent_and_current_components() {
         assert_eq!(
@@ -9213,6 +9272,7 @@ pub fn run() {
             start_workspace_file_watch,
             list_terminal_profiles,
             open_language_runtime_log,
+            reveal_item_in_dir,
             parse_php_file_outline,
             parse_php_syntax,
             plan_javascript_typescript_language_server,

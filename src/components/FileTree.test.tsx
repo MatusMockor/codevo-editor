@@ -79,30 +79,95 @@ describe("FileTree", () => {
     expect(onPrefetchFile).not.toHaveBeenCalled();
   });
 
-  it("invokes directory rename from the context menu while click still toggles", () => {
+  it("renders the file context menu and dispatches every entry action", () => {
     const onRenameEntry = vi.fn();
-    const onToggleDirectory = vi.fn();
-    renderTree({ onRenameEntry, onToggleDirectory });
-
-    const directoryRow = rowByLabel("src");
-    act(() => {
-      directoryRow.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const onRevealEntry = vi.fn();
+    const onOpenEntryInTerminal = vi.fn();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
     });
+    renderTree({ onOpenEntryInTerminal, onRenameEntry, onRevealEntry });
+
+    const fileRow = rowByLabel("User.php");
     act(() => {
-      directoryRow.dispatchEvent(
+      fileRow.dispatchEvent(
         new MouseEvent("contextmenu", {
           bubbles: true,
           cancelable: true,
+          clientX: 40,
+          clientY: 60,
         }),
       );
     });
 
-    expect(onToggleDirectory).toHaveBeenCalledWith("/workspace/src");
+    expect(menuItems().map((item) => item.textContent)).toEqual([
+      "Reveal in Finder",
+      "Copy Path",
+      "Copy Relative Path",
+      "Open in Terminal",
+      "Rename",
+    ]);
+
+    clickMenuItem("Reveal in Finder");
+    expect(onRevealEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/workspace/User.php" }),
+    );
+
+    openFileMenu();
+    clickMenuItem("Copy Path");
+    expect(writeText).toHaveBeenCalledWith("/workspace/User.php");
+
+    openFileMenu();
+    clickMenuItem("Copy Relative Path");
+    expect(writeText).toHaveBeenCalledWith("User.php");
+
+    openFileMenu();
+    clickMenuItem("Open in Terminal");
+    expect(onOpenEntryInTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/workspace/User.php" }),
+    );
+
+    openFileMenu();
+    clickMenuItem("Rename");
     expect(onRenameEntry).toHaveBeenCalledTimes(1);
     expect(onRenameEntry.mock.calls[0][0]).toMatchObject({
-      kind: "directory",
-      path: "/workspace/src",
+      kind: "file",
+      path: "/workspace/User.php",
     });
+  });
+
+  it("closes on Escape and navigates menu items with arrow keys", () => {
+    renderTree({ onRenameEntry: vi.fn() });
+    openFileMenu();
+
+    const firstItem = menuItems()[0];
+    act(() => firstItem.focus());
+    act(() =>
+      firstItem.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }),
+      ),
+    );
+    expect(document.activeElement).toBe(menuItems()[1]);
+
+    act(() =>
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      ),
+    );
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("does not throw when the clipboard API is absent", () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    renderTree();
+    openFileMenu();
+
+    expect(() => clickMenuItem("Copy Path")).not.toThrow();
   });
 
   it("cancels a pending prefetch when the pointer leaves a file row", () => {
@@ -256,6 +321,28 @@ describe("FileTree", () => {
     }
 
     return match;
+  }
+
+  function openFileMenu() {
+    act(() => {
+      rowByLabel("User.php").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+  }
+
+  function menuItems(): HTMLButtonElement[] {
+    return [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+  }
+
+  function clickMenuItem(label: string) {
+    const item = menuItems().find((candidate) => candidate.textContent === label);
+
+    if (!item) {
+      throw new Error(`Menu item "${label}" was not found.`);
+    }
+
+    act(() => item.click());
   }
 });
 

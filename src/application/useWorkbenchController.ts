@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandRegistry } from "./commandRegistry";
@@ -145,6 +145,11 @@ import {
 } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
 import { navigateToArtisanController } from "./artisanRouteNavigation";
+import {
+  quoteShellArgument,
+  terminalDirectoryForEntry,
+  workspaceRelativePath as contextMenuRelativePath,
+} from "../domain/pathDerivation";
 
 export type {
   PhpCodeActionDescriptor,
@@ -5792,6 +5797,50 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
+  const revealEntry = useCallback(
+    (entry: FileEntry) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (
+        !requestedRoot ||
+        contextMenuRelativePath(requestedRoot, entry.path) === null
+      ) {
+        return;
+      }
+
+      if (!isTauri()) {
+        return;
+      }
+
+      void invoke("reveal_item_in_dir", {
+        path: entry.path,
+        rootPath: requestedRoot,
+      }).catch((error) =>
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Reveal", error),
+      );
+    },
+    [reportErrorForActiveWorkspaceRoot],
+  );
+
+  const openEntryInTerminal = useCallback(
+    (entry: FileEntry) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return;
+      }
+
+      const directory = terminalDirectoryForEntry(requestedRoot, entry);
+
+      if (!directory) {
+        return;
+      }
+
+      runInActiveTerminal(`cd -- ${quoteShellArgument(directory)}`);
+    },
+    [runInActiveTerminal],
+  );
+
   const openArtisanRoutesPanel = useCallback(() => {
     setBottomPanelView("routes" as BottomPanelView);
     setBottomPanelVisible(true);
@@ -9338,6 +9387,8 @@ export function useWorkbenchController(
     openPinnedFile,
     prefetchFile,
     cancelFilePrefetch,
+    openEntryInTerminal,
+    revealEntry,
     renameEntry,
     clearLanguageServerDiagnosticsForPath: (path: string) =>
       clearLanguageServerDiagnosticsForPath(workspaceRoot, path),
