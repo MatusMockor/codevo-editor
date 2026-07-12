@@ -29,6 +29,8 @@ import type {
 } from "./languageServerMonacoProviders";
 import type { WorkspaceEditApplicationDecision } from "../application/workspaceEditApplication";
 import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
+import type { PhpDocumentSymbolRequest } from "../application/phpDocumentSymbolCoordinator";
+import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 
 type CallbackRef<T extends (...args: never[]) => unknown> = MutableRefObject<T>;
 type PositionProvider<T> = (
@@ -42,6 +44,10 @@ type OffsetProvider<T> = (
 ) => Promise<T>;
 
 export interface EditorSurfaceLanguageProviderOptionsDependencies {
+  coordinatePhpDocumentSymbols?(
+    request: PhpDocumentSymbolRequest,
+    load: () => Promise<LanguageServerDocumentSymbol[]>,
+  ): Promise<LanguageServerDocumentSymbol[]>;
   featuresGateway: LanguageServerFeaturesGateway;
   refreshGateway?: LanguageServerRefreshGateway;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
@@ -124,6 +130,7 @@ export function createEditorSurfaceLanguageProviderOptions({
 }): LanguageServerMonacoProviderContext {
   const {
     featuresGateway,
+    coordinatePhpDocumentSymbols,
     refreshGateway,
     workspaceEditGateway,
     workspaceRoot,
@@ -168,6 +175,7 @@ export function createEditorSurfaceLanguageProviderOptions({
       applyPhpWorkspaceEditRef.current(edit, editContext),
     clearLanguageServerDiagnosticsForPath: (path) =>
       clearLanguageServerDiagnosticsForPathRef.current(path),
+    coordinatePhpDocumentSymbols,
     featuresGateway,
     flushPendingDocumentChange: (path) => flushPendingRef.current(path),
     getActiveDocument: () => activeDocumentRef.current,

@@ -1287,6 +1287,7 @@ function EditorSurfaceComponent({
     onMarkerUrisChanged: recoverVisibleLocalPhpDiagnostics,
     onModelContentChange: (content) => onChangeRef.current(content),
     providerDependencies: {
+      coordinatePhpDocumentSymbols: runtime?.coordinatePhpDocumentSymbols,
       featuresGateway: languageServerFeaturesGateway,
       monacoApi,
       refreshGateway: languageServerRefreshGateway,
@@ -1640,10 +1641,43 @@ function EditorSurfaceComponent({
     let active = true;
     let timeout: number | null = null;
 
-    const fetchBreadcrumbSymbols = () => {
-      breadcrumbGateway
-        .documentSymbols(requestedRoot, requestedPath)
-        .then((symbols) => {
+    const fetchBreadcrumbSymbols = async () => {
+      try {
+        let load = () =>
+          breadcrumbGateway.documentSymbols(requestedRoot, requestedPath);
+        if (requiresSync) {
+          await flushPendingLanguageServerDocument(requestedPath);
+          if (!active) {
+            return;
+          }
+
+          const document = activeDocumentRef.current;
+          const status = runtimeStatusRef.current;
+          if (!document || document.path !== requestedPath) {
+            return;
+          }
+
+          if (
+            status?.kind === "running" &&
+            status.rootPath &&
+            workspaceRootKeysEqual(status.rootPath, requestedRoot)
+          ) {
+            const directLoad = load;
+            load = () =>
+              runtime?.coordinatePhpDocumentSymbols(
+                {
+                  content: document.content,
+                  path: requestedPath,
+                  rootPath: requestedRoot,
+                  runtimeIdentity: languageServerFeaturesGateway,
+                  sessionId: status.sessionId,
+                },
+                directLoad,
+              ) ?? directLoad();
+          }
+        }
+
+        const symbols = await load();
           if (!active) {
             return;
           }
@@ -1652,8 +1686,11 @@ function EditorSurfaceComponent({
             ...current,
             [requestedPath]: symbols,
           }));
-        })
-        .catch((error) => errorReporterRef.current(error));
+      } catch (error) {
+        if (active) {
+          errorReporterRef.current(error);
+        }
+      }
     };
 
     const loadBreadcrumbSymbols = () => {
@@ -1694,6 +1731,8 @@ function EditorSurfaceComponent({
     activeDocumentIsLargeSmart,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     languageServerFeaturesGateway,
+    flushPendingLanguageServerDocument,
+    runtime,
     workspaceRoot,
   ]);
 

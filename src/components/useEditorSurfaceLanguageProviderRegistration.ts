@@ -11,6 +11,8 @@ import {
   type EditorSurfaceLanguageProviderRegistrationRefs,
 } from "./editorSurfaceLanguageProviderOptions";
 import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
+import type { PhpDocumentSymbolRequest } from "../application/phpDocumentSymbolCoordinator";
+import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 import {
   activeComposerManifestWorkspace,
   registerComposerManifestMonacoProviders,
@@ -21,6 +23,10 @@ import {
 } from "./npmManifestMonacoProviders";
 
 export interface EditorSurfaceLanguageProviderRegistrationDependencies {
+  coordinatePhpDocumentSymbols?(
+    request: PhpDocumentSymbolRequest,
+    load: () => Promise<LanguageServerDocumentSymbol[]>,
+  ): Promise<LanguageServerDocumentSymbol[]>;
   featuresGateway: LanguageServerFeaturesGateway;
   monacoApi: typeof Monaco | null;
   refreshGateway?: LanguageServerRefreshGateway;
@@ -40,6 +46,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
 }) {
   const {
     featuresGateway,
+    coordinatePhpDocumentSymbols,
     monacoApi,
     refreshGateway,
     workspaceEditGateway,
@@ -86,6 +93,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
       monacoApi,
       createEditorSurfaceLanguageProviderOptions({
         dependencies: {
+          coordinatePhpDocumentSymbols,
           featuresGateway,
           refreshGateway,
           workspaceEditGateway,
@@ -117,6 +125,7 @@ export function useEditorSurfaceLanguageProviderRegistration({
     bladeCompletionsRef,
     bladeDefinitionRef,
     clearLanguageServerDiagnosticsForPathRef,
+    coordinatePhpDocumentSymbols,
     errorReporterRef,
     featuresGateway,
     flushPendingRef,

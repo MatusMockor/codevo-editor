@@ -296,6 +296,16 @@ export interface LanguageServerMonacoProviderContext
   applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<boolean>;
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
   clearLanguageServerDiagnosticsForPath?(path: string): void;
+  coordinatePhpDocumentSymbols?(
+    request: {
+      content: string;
+      path: string;
+      rootPath: string;
+      runtimeIdentity: object;
+      sessionId: number;
+    },
+    load: () => ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>,
+  ): ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
   /**
@@ -1343,10 +1353,18 @@ async function provideDocumentSymbols(
       return null;
     }
 
-    const symbols = await context.featuresGateway.documentSymbols(
+    const load = () => context.featuresGateway.documentSymbols(
       request.rootPath,
       request.path,
     );
+    const symbols = await (context.coordinatePhpDocumentSymbols?.(
+      {
+        ...request,
+        content: model.getValue(),
+        runtimeIdentity: context.featuresGateway,
+      },
+      load,
+    ) ?? load());
 
     if (!isFeatureRequestActive(context, request)) {
       return null;

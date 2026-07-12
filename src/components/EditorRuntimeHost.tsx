@@ -49,6 +49,11 @@ import {
   type LocalPhpValidationRequest,
 } from "./localPhpValidationCoordinator";
 import { LocalPhpMarkerWriter } from "./localPhpMarkerWriter";
+import {
+  PhpDocumentSymbolCoordinator,
+  type PhpDocumentSymbolRequest,
+} from "../application/phpDocumentSymbolCoordinator";
+import type { LanguageServerDocumentSymbol } from "../domain/languageServerFeatures";
 
 export interface LocalPhpValidationSnapshot<TSyntax, TInspection> {
   inspectionDiagnostics: TInspection[];
@@ -82,6 +87,10 @@ interface EditorRuntimeSurfaceRegistration {
 }
 
 interface EditorRuntimeContextValue {
+  coordinatePhpDocumentSymbols(
+    request: PhpDocumentSymbolRequest,
+    load: () => Promise<LanguageServerDocumentSymbol[]>,
+  ): Promise<LanguageServerDocumentSymbol[]>;
   coordinateLocalPhpValidation<TSyntax, TInspection>(
     request: LocalPhpValidationRequest,
     compute: () => LocalPhpValidationComputation<
@@ -158,6 +167,17 @@ export function EditorRuntimeHost({
     new LocalPhpValidationCoordinator<unknown, unknown>(),
   );
   const localPhpMarkerWriterRef = useRef(new LocalPhpMarkerWriter());
+  const phpDocumentSymbolCoordinatorRef = useRef(
+    new PhpDocumentSymbolCoordinator(),
+  );
+
+  const coordinatePhpDocumentSymbols = useCallback(
+    (
+      request: PhpDocumentSymbolRequest,
+      load: () => Promise<LanguageServerDocumentSymbol[]>,
+    ) => phpDocumentSymbolCoordinatorRef.current.coordinate(request, load),
+    [],
+  );
 
   const coordinateLocalPhpValidation = useCallback(
     <TSyntax, TInspection>(
@@ -583,6 +603,7 @@ export function EditorRuntimeHost({
     () => () => {
       contentSyncCoordinatorRef.current?.dispose();
       localPhpValidationCoordinatorRef.current.dispose();
+      phpDocumentSymbolCoordinatorRef.current.clear();
     },
     [],
   );
@@ -590,6 +611,7 @@ export function EditorRuntimeHost({
   const value = useMemo<EditorRuntimeContextValue>(
     () => ({
       coordinateLocalPhpValidation,
+      coordinatePhpDocumentSymbols,
       focusGroup,
       registerSurface,
       updateSurface,
@@ -597,6 +619,7 @@ export function EditorRuntimeHost({
     }),
     [
       coordinateLocalPhpValidation,
+      coordinatePhpDocumentSymbols,
       focusGroup,
       registerSurface,
       updateSurface,
