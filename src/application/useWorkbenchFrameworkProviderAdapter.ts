@@ -25,10 +25,6 @@ export function useWorkbenchFrameworkProviderAdapter(
         intelligence.isPhpPresenterLinkCompletionContext,
       providePhpPresenterLinkDefinition:
         intelligence.providePhpPresenterLinkDefinition,
-      provideNettePhpLinkCompletions:
-        intelligence.providePhpPresenterLinkCompletions,
-      provideNettePhpLinkDefinition:
-        intelligence.providePhpPresenterLinkDefinition,
       isPhpFrameworkStringCompletionContext:
         intelligence.isPhpFrameworkStringCompletionContext,
     }),

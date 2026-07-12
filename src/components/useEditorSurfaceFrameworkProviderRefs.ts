@@ -124,8 +124,6 @@ export function useEditorSurfaceFrameworkProviderRefs({
     phpPresenterLinkCompletionsRef,
     phpPresenterLinkCompletionContextRef,
     phpPresenterLinkDefinitionRef,
-    nettePhpLinkCompletionsRef: phpPresenterLinkCompletionsRef,
-    nettePhpLinkDefinitionRef: phpPresenterLinkDefinitionRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
   };

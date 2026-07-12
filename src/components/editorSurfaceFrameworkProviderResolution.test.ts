@@ -52,17 +52,13 @@ describe("editor surface framework provider resolution", () => {
     expect(providePhpFrameworkDefinition).toHaveBeenCalledWith("source", 12);
   });
 
-  it("prefers current presenter-link callbacks over Nette aliases", async () => {
+  it("uses canonical presenter-link callbacks when registered", async () => {
     const providePhpPresenterLinkDefinition = vi.fn(async () => true);
-    const provideNettePhpLinkDefinition = vi.fn(async () => false);
     const providePhpPresenterLinkCompletions = vi.fn(async () => [
       { insertText: "Product:show", kind: "link" as const, label: "Product:show" },
     ]);
-    const provideNettePhpLinkCompletions = vi.fn(async () => null);
     const resolved = resolveEditorSurfaceFrameworkProviders({
       frameworkIntelligenceProviders: {
-        provideNettePhpLinkCompletions,
-        provideNettePhpLinkDefinition,
         providePhpPresenterLinkCompletions,
         providePhpPresenterLinkDefinition,
       },
@@ -78,28 +74,12 @@ describe("editor surface framework provider resolution", () => {
     ]);
     expect(providePhpPresenterLinkDefinition).toHaveBeenCalledWith("source", 3);
     expect(providePhpPresenterLinkCompletions).toHaveBeenCalledWith("source", 3);
-    expect(provideNettePhpLinkDefinition).not.toHaveBeenCalled();
-    expect(provideNettePhpLinkCompletions).not.toHaveBeenCalled();
-  });
-
-  it("keeps Nette presenter-link aliases available during migration", async () => {
-    const provideNettePhpLinkDefinition = vi.fn(async () => true);
-    const provideNettePhpLinkCompletions = vi.fn(async () => null);
-    const resolved = resolveEditorSurfaceFrameworkProviders({
-      frameworkIntelligenceProviders: {
-        provideNettePhpLinkCompletions,
-        provideNettePhpLinkDefinition,
-      },
-    });
-
-    await expect(
-      resolved.providePhpPresenterLinkDefinition("source", 7),
-    ).resolves.toBe(true);
-    await expect(
-      resolved.providePhpPresenterLinkCompletions("source", 7),
-    ).resolves.toBeNull();
-    expect(provideNettePhpLinkDefinition).toHaveBeenCalledWith("source", 7);
-    expect(provideNettePhpLinkCompletions).toHaveBeenCalledWith("source", 7);
+    expect(resolved.providePhpPresenterLinkDefinition).toBe(
+      providePhpPresenterLinkDefinition,
+    );
+    expect(resolved.providePhpPresenterLinkCompletions).toBe(
+      providePhpPresenterLinkCompletions,
+    );
   });
 
   it("preserves distinct callback identities for separate provider sets", () => {

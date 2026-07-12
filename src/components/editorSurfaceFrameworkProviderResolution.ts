@@ -50,23 +50,6 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
     offset: number,
   ): Promise<LatteCompletion[] | null>;
   isPhpPresenterLinkCompletionContext?(source: string, offset: number): boolean;
-  /**
-   * @deprecated Use {@link providePhpPresenterLinkDefinition}. Kept as a
-   * temporary compatibility alias while Nette-specific callers migrate.
-   */
-  provideNettePhpLinkDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  /**
-   * @deprecated Use {@link providePhpPresenterLinkCompletions}. Kept as a
-   * temporary compatibility alias while Nette-specific callers migrate.
-   */
-  provideNettePhpLinkCompletions?(
-    source: string,
-    offset: number,
-  ): Promise<LatteCompletion[] | null>;
   isPhpFrameworkStringCompletionContext?(
     source: string,
     position: EditorPosition,
@@ -166,11 +149,9 @@ export function resolveEditorSurfaceFrameworkProviders({
       noopPhpFrameworkDefinition,
     providePhpPresenterLinkDefinition:
       frameworkIntelligenceProviders?.providePhpPresenterLinkDefinition ??
-      frameworkIntelligenceProviders?.provideNettePhpLinkDefinition ??
       noopPhpFrameworkDefinition,
     providePhpPresenterLinkCompletions:
       frameworkIntelligenceProviders?.providePhpPresenterLinkCompletions ??
-      frameworkIntelligenceProviders?.provideNettePhpLinkCompletions ??
       noopPhpPresenterLinkCompletions,
     isPhpPresenterLinkCompletionContext:
       frameworkIntelligenceProviders?.isPhpPresenterLinkCompletionContext ??

@@ -32,23 +32,6 @@ export interface PhpPresenterLinkMonacoProviderContext {
     source: string,
     offset: number,
   ): Promise<LatteCompletion[] | null>;
-  /**
-   * @deprecated Use {@link providePhpPresenterLinkDefinition}. Kept as a
-   * temporary compatibility alias while Nette-specific callers migrate.
-   */
-  provideNettePhpLinkDefinition?(
-    source: string,
-    offset: number,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  /**
-   * @deprecated Use {@link providePhpPresenterLinkCompletions}. Kept as a
-   * temporary compatibility alias while Nette-specific callers migrate.
-   */
-  provideNettePhpLinkCompletions?(
-    source: string,
-    offset: number,
-  ): Promise<LatteCompletion[] | null>;
   reportError(error: unknown): void;
 }
 
@@ -73,9 +56,7 @@ export async function providePhpPresenterLinkDefinition(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<boolean> {
-  const provideDefinition =
-    context.providePhpPresenterLinkDefinition ??
-    context.provideNettePhpLinkDefinition;
+  const provideDefinition = context.providePhpPresenterLinkDefinition;
 
   if (!provideDefinition) {
     return false;
@@ -157,9 +138,7 @@ export async function phpPresenterLinkCompletionSuggestions(
   const offset = offsetAtMonacoPosition(source, position);
   const ownsCompletionContext =
     context.isPhpPresenterLinkCompletionContext?.(source, offset);
-  const provideCompletions =
-    context.providePhpPresenterLinkCompletions ??
-    context.provideNettePhpLinkCompletions;
+  const provideCompletions = context.providePhpPresenterLinkCompletions;
 
   if (ownsCompletionContext === false || !provideCompletions) {
     return null;

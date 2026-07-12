@@ -128,24 +128,46 @@ describe("nette PHP link Monaco providers", () => {
     );
   });
 
-  it("keeps the temporary Nette callback aliases working", async () => {
-    const source = "<?php\n$this->link('Product:show');";
+  it("keeps an empty completion list authoritative", async () => {
+    const source = "<?php\n$this->link('Pro');";
     const context = providerContext({
-      provideNettePhpLinkDefinition: vi.fn(async () => true),
+      providePhpPresenterLinkCompletions: vi.fn(async () => []),
     });
 
     await expect(
-      providePhpPresenterLinkDefinition(
+      phpPresenterLinkCompletionSuggestions(
+        monaco(),
         context,
         model(source),
-        positionAt(source, source.indexOf("Product")),
+        source,
+        positionAt(source, source.indexOf("Pro") + "Pro".length),
+        fallbackRange(),
+        { rootPath: "/workspace", sessionId: 7 },
       ),
-    ).resolves.toBe(true);
-    expect(context.provideNettePhpLinkDefinition).toHaveBeenCalledWith(
-      source,
-      source.indexOf("Product"),
-      expect.objectContaining({ canNavigate: expect.any(Function) }),
-    );
+    ).resolves.toEqual([]);
+  });
+
+  it("reports provider errors and keeps the completion context authoritative", async () => {
+    const source = "<?php\n$this->link('Pro');";
+    const failure = new Error("presenter-link completion failed");
+    const context = providerContext({
+      providePhpPresenterLinkCompletions: vi.fn(async () => {
+        throw failure;
+      }),
+    });
+
+    await expect(
+      phpPresenterLinkCompletionSuggestions(
+        monaco(),
+        context,
+        model(source),
+        source,
+        positionAt(source, source.indexOf("Pro") + "Pro".length),
+        fallbackRange(),
+        { rootPath: "/workspace", sessionId: 7 },
+      ),
+    ).resolves.toEqual([]);
+    expect(context.reportError).toHaveBeenCalledWith(failure);
   });
 
   it("drops stale async completions without reporting an error", async () => {

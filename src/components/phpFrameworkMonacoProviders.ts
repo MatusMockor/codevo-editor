@@ -152,8 +152,5 @@ function frameworkStringLiteralDefinitionProvider(
 function presenterLinkDefinitionProvider(
   context: PhpFrameworkMonacoProviderContext,
 ) {
-  return (
-    context.providePhpPresenterLinkDefinition ??
-    context.provideNettePhpLinkDefinition
-  );
+  return context.providePhpPresenterLinkDefinition;
 }
