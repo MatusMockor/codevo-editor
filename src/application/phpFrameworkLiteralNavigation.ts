@@ -2,6 +2,8 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpFrameworkConfigLiteralTarget,
   phpFrameworkEnvLiteralTarget,
+  phpFrameworkInertiaLiteralTarget,
+  phpFrameworkInertiaReferenceAt,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkTranslationLiteralTarget,
   phpFrameworkViewLiteralTarget,
@@ -18,6 +20,7 @@ export interface PhpFrameworkLiteralNavigationTarget {
   kind:
     | "config"
     | "env"
+    | "inertia"
     | "route"
     | "translation"
     | "validationTable"
@@ -43,6 +46,9 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   ) => Promise<{ key: string; path: string; position: EditorPosition } | null>;
   findEnvTarget: (
     envName: string,
+  ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
+  findInertiaComponentTarget?: (
+    componentName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
   findPhpLaravelValidationRuleModelTargets?: (
     tableName: string,
@@ -81,6 +87,37 @@ export async function resolvePhpFrameworkLiteralNavigationTarget(
 
   if (!supportsStringLiterals) {
     return null;
+  }
+
+  const inertiaReference = phpFrameworkInertiaReferenceAt(
+    source,
+    position,
+    providers,
+  );
+
+  if (inertiaReference) {
+    if (!phpFrameworkInertiaLiteralTarget(inertiaReference.name, providers)) {
+      return null;
+    }
+
+    if (!dependencies.findInertiaComponentTarget) {
+      return null;
+    }
+
+    const target = await dependencies.findInertiaComponentTarget(
+      inertiaReference.name,
+    );
+
+    if (!target) {
+      return null;
+    }
+
+    return {
+      kind: "inertia",
+      label: target.name,
+      path: target.path,
+      position: target.position,
+    };
   }
 
   const viewReference = phpFrameworkViewReferenceAt(source, position, providers);

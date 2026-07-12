@@ -55,6 +55,10 @@ import {
 } from "./phpLaravelRoutes";
 import { resolveLaravelLivewireTarget } from "./phpLaravelLivewire";
 import {
+  phpLaravelInertiaReferenceContextAt,
+  resolveLaravelInertiaComponentTarget,
+} from "./phpLaravelInertia";
+import {
   phpLaravelScopedStringCompletionAt,
   phpLaravelScopedStringCompletionContextAt,
   phpLaravelScopedStringCompletionInsertText,
@@ -150,9 +154,37 @@ export function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {
   );
 }
 
+export function isLaravelInertiaPhpProject(
+  php: PhpProjectDescriptor,
+): boolean {
+  return php.packages.some(
+    (composerPackage) => composerPackage.name === "inertiajs/inertia-laravel",
+  );
+}
+
+const laravelInertiaCapability: NonNullable<
+  PhpFrameworkProvider["inertia"]
+> = {
+  appliesTo: (php) => isLaravelInertiaPhpProject(php),
+  referenceAt: ({ position, source }) =>
+    phpLaravelInertiaReferenceContextAt(source, position),
+  resolveLiteralTarget: ({ literal }) =>
+    resolveLaravelInertiaComponentTarget(literal),
+};
+
 export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   id: "laravel",
   appliesTo: (php) => isLaravelPhpProject(php),
+  forProject: (php) => {
+    if (!laravelInertiaCapability.appliesTo?.(php)) {
+      return phpLaravelFrameworkProvider;
+    }
+
+    return {
+      ...phpLaravelFrameworkProvider,
+      inertia: laravelInertiaCapability,
+    };
+  },
   completions: {
     memberCompletionsFromSource: ({
       declaringClassName,

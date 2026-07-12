@@ -329,6 +329,18 @@ export interface PhpFrameworkViewCompletionInsertTextContext {
   prefix: string;
 }
 
+export interface PhpFrameworkInertiaReference {
+  call: string;
+  name: string;
+  position: EditorPosition;
+  prefix: string;
+}
+
+export interface PhpFrameworkInertiaReferenceContext {
+  position: EditorPosition;
+  source: string;
+}
+
 /**
  * A single variable bound into a view/template render (e.g. `compact('user')`
  * or `['user' => $user]`), with a cheap display-type hint and, where
@@ -499,6 +511,7 @@ export interface PhpFrameworkTargetCollectionCapability {
 
 export interface PhpFrameworkProvider {
   id: string;
+  forProject?: (php: PhpProjectDescriptor) => PhpFrameworkProvider;
   /**
    * Plugin detection: returns true when this framework is present in the
    * project. Detection lives on the provider so registering a new framework
@@ -629,6 +642,15 @@ export interface PhpFrameworkProvider {
     targetFromSource?: (
       context: PhpFrameworkEnvTargetContext,
     ) => PhpFrameworkEnvEntry | null;
+  };
+  inertia?: {
+    appliesTo?: (php: PhpProjectDescriptor) => boolean;
+    referenceAt?: (
+      context: PhpFrameworkInertiaReferenceContext,
+    ) => PhpFrameworkInertiaReference | null;
+    resolveLiteralTarget?: (
+      context: PhpFrameworkLiteralTargetContext,
+    ) => PhpFrameworkResolvedLiteralTarget | null;
   };
   translations?: {
     referenceAt?: (
@@ -797,6 +819,7 @@ export type PhpFrameworkProviderCapability =
   | "containerBindingsFromSource"
   | "dispatch"
   | "env"
+  | "inertia"
   | "lattePresenterLinkIntelligence"
   | "latteTemplateIntelligence"
   | "middlewareAliases"
@@ -839,6 +862,11 @@ export interface PhpFrameworkTranslationCompletionContext {
 export interface PhpFrameworkViewCompletionContext {
   provider: PhpFrameworkProvider;
   reference: PhpFrameworkViewReference;
+}
+
+export interface PhpFrameworkInertiaCompletionContext {
+  provider: PhpFrameworkProvider;
+  reference: PhpFrameworkInertiaReference;
 }
 
 export function createPhpFrameworkProviderCapabilityRegistry(
@@ -1629,6 +1657,52 @@ export function phpFrameworkViewLiteralTarget(
   return null;
 }
 
+export function phpFrameworkInertiaReferenceAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkInertiaReference | null {
+  return phpFrameworkInertiaCompletionContextAt(source, position, providers)
+    ?.reference ?? null;
+}
+
+export function phpFrameworkInertiaCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkInertiaCompletionContext | null {
+  for (const provider of providers) {
+    const reference = provider.inertia?.referenceAt?.({ position, source });
+
+    if (reference) {
+      return { provider, reference };
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkInertiaLiteralTarget(
+  literal: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkResolvedLiteralTarget | null {
+  for (const provider of providers) {
+    const target = provider.inertia?.resolveLiteralTarget?.({ literal });
+
+    if (target) {
+      return target;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkSupportsInertia(
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): boolean {
+  return phpFrameworkProvidersSupportCapability(providers, "inertia");
+}
+
 /**
  * Whether any active provider ships a templating capability - the
  * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
@@ -1914,6 +1988,8 @@ function phpFrameworkProvidersSupportCapability(
       return providers.some((provider) => provider.dispatch !== undefined);
     case "env":
       return providers.some((provider) => provider.env !== undefined);
+    case "inertia":
+      return providers.some((provider) => provider.inertia !== undefined);
     case "lattePresenterLinkIntelligence":
       return providers.some(
         (provider) =>
@@ -2187,6 +2263,10 @@ export function resolvePhpFrameworkProfile(
   php: PhpProjectDescriptor | null,
   registry: readonly PhpFrameworkProvider[] = phpFrameworkProviderRegistry,
 ): PhpFrameworkResolution {
+  if (!php) {
+    return { matchedProviderIds: [], profile: "generic", providers: [] };
+  }
+
   const matches = matchingPhpFrameworkProviders(php, registry);
   const [winner] = matches;
 
@@ -2197,7 +2277,7 @@ export function resolvePhpFrameworkProfile(
   return {
     matchedProviderIds: matches.map((provider) => provider.id),
     profile: frameworkProfileFromProviderId(winner.id),
-    providers: [winner],
+    providers: [winner.forProject?.(php) ?? winner],
   };
 }
 

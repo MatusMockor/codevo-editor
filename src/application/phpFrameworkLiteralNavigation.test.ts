@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   phpLaravelFrameworkProvider,
+  phpFrameworkProvidersForProject,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLiteralNavigation";
+import type { PhpProjectDescriptor } from "../domain/workspace";
 
 const position = { column: 24, lineNumber: 3 };
 const targetPosition = { column: 6, lineNumber: 4 };
@@ -16,6 +18,7 @@ function dependencies(
     collectNamedRouteTargets: vi.fn(async () => []),
     findConfigTarget: vi.fn(async () => null),
     findEnvTarget: vi.fn(async () => null),
+    findInertiaComponentTarget: vi.fn(async () => null),
     findTranslationTarget: vi.fn(async () => null),
     findViewTarget: vi.fn(async () => null),
     ...overrides,
@@ -23,6 +26,43 @@ function dependencies(
 }
 
 describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
+  it("resolves an Inertia component literal through the provider branch", async () => {
+    const providers = phpFrameworkProvidersForProject(phpProjectDescriptor({
+      packageName: "laravel/laravel",
+      packages: [{ name: "inertiajs/inertia-laravel" }],
+    }));
+    const deps = dependencies({
+      findInertiaComponentTarget: vi.fn(async () => ({
+        name: "Users/Index",
+        path: "/workspace/resources/js/Pages/Users/Index.vue",
+        position: { column: 1, lineNumber: 1 },
+      })),
+    });
+    const source = "<?php\nreturn Inertia::render('Users/Index');";
+
+    await expect(
+      resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: null,
+          offset: source.indexOf("Users/Index") + 2,
+          position: { column: 27, lineNumber: 2 },
+          providers,
+          source,
+          supportsStringLiterals: true,
+        },
+        deps,
+      ),
+    ).resolves.toEqual({
+      kind: "inertia",
+      label: "Users/Index",
+      path: "/workspace/resources/js/Pages/Users/Index.vue",
+      position: { column: 1, lineNumber: 1 },
+    });
+
+    expect(deps.findInertiaComponentTarget).toHaveBeenCalledWith("Users/Index");
+    expect(deps.findViewTarget).not.toHaveBeenCalled();
+  });
+
   it("returns null when runtime capabilities do not support framework literals", async () => {
     const deps = dependencies({
       findConfigTarget: vi.fn(async () => ({
@@ -198,3 +238,30 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
     );
   });
 });
+
+function phpProjectDescriptor(
+  overrides: Omit<Partial<PhpProjectDescriptor>, "packages"> & {
+    packages?: Array<{ name: string }>;
+  },
+): PhpProjectDescriptor {
+  const { packages = [], ...descriptorOverrides } = overrides;
+
+  return {
+    classmapRoots: [],
+    hasComposer: true,
+    packageName: null,
+    packages: packages.map((composerPackage) => ({
+      classmapRoots: [],
+      dev: false,
+      installPath: null,
+      name: composerPackage.name,
+      packageType: null,
+      psr4Roots: [],
+      version: null,
+    })),
+    phpPlatformVersion: null,
+    phpVersionConstraint: null,
+    psr4Roots: [],
+    ...descriptorOverrides,
+  };
+}
