@@ -3,13 +3,40 @@ import {
   phpTestCaseCanRun,
   phpTestCaseCanNavigate,
   phpTestCaseNavigationTarget,
+  phpTestStatusRank,
   phpTestSuiteStatus,
   phpTestTotalsSummary,
+  sortPhpTestCasesFailedFirst,
   type PhpTestCase,
   type PhpTestSuite,
 } from "./phpTestResults";
 
 describe("PHP test result helpers", () => {
+  it.each([
+    ["error", 0],
+    ["failed", 0],
+    ["skipped", 1],
+    ["passed", 2],
+  ] as const)("ranks statuses failed first %#", (status, rank) => {
+    expect(phpTestStatusRank(status)).toBe(rank);
+  });
+
+  it("sorts cases failed first without mutating or disturbing group order", () => {
+    const passed = testCase("passed", null, null, "passed");
+    const failedFirst = testCase("failed", null, null, "failed first");
+    const skipped = testCase("skipped", null, null, "skipped");
+    const failedSecond = testCase("error", null, null, "failed second");
+    const cases = [passed, failedFirst, skipped, failedSecond];
+
+    expect(sortPhpTestCasesFailedFirst(cases)).toEqual([
+      failedFirst,
+      failedSecond,
+      skipped,
+      passed,
+    ]);
+    expect(cases).toEqual([passed, failedFirst, skipped, failedSecond]);
+  });
+
   it.each([
     ["failed", "testItWorks", true],
     ["error", "testErrors", true],

@@ -52,6 +52,31 @@ export interface PhpTestCaseNavigationTarget {
   position: EditorPosition;
 }
 
+export function phpTestStatusRank(status: PhpTestStatus): number {
+  if (status === "error" || status === "failed") {
+    return 0;
+  }
+
+  if (status === "skipped") {
+    return 1;
+  }
+
+  return 2;
+}
+
+export function sortPhpTestCasesFailedFirst(
+  cases: readonly PhpTestCase[],
+): PhpTestCase[] {
+  return cases
+    .map((testCase, index) => ({ index, testCase }))
+    .sort(
+      (left, right) =>
+        phpTestStatusRank(left.testCase.status) -
+          phpTestStatusRank(right.testCase.status) || left.index - right.index,
+    )
+    .map(({ testCase }) => testCase);
+}
+
 export function phpTestSuiteStatus(suite: PhpTestSuite): PhpTestStatus {
   if ((suite.errors ?? 0) > 0) {
     return "error";

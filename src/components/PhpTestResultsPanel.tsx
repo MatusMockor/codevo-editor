@@ -1,10 +1,12 @@
 import { Play, RefreshCw } from "lucide-react";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import {
   phpTestCaseCanRun,
   phpTestCaseCanNavigate,
+  phpTestStatusRank,
   phpTestSuiteStatus,
   phpTestTotalsSummary,
+  sortPhpTestCasesFailedFirst,
   type PhpTestCase,
   type PhpTestRunOk,
   type PhpTestStatus,
@@ -41,6 +43,14 @@ const styles: Record<string, CSSProperties> = {
       "80px minmax(180px, 1fr) minmax(180px, 2fr) 70px 24px",
     padding: "6px 10px 6px 26px",
   },
+  chip: {
+    background: "transparent",
+    border: "1px solid var(--border-subtle)",
+    borderRadius: 999,
+    color: "inherit",
+    padding: "2px 8px",
+  },
+  chipActive: { background: "var(--background-active, rgba(127, 127, 127, 0.2))" },
   header: { alignItems: "center", display: "flex", gap: 8, padding: "6px 8px" },
   message: { padding: 16 },
   muted: { color: "var(--text-muted)" },
@@ -58,6 +68,15 @@ const statusColors: Record<PhpTestStatus, string> = {
   skipped: "var(--text-muted)",
 };
 
+type StatusFilter = "all" | "failed" | "skipped" | "passed";
+
+const statusFilters: { label: string; value: StatusFilter }[] = [
+  { label: "All", value: "all" },
+  { label: "Failed", value: "failed" },
+  { label: "Skipped", value: "skipped" },
+  { label: "Passed", value: "passed" },
+];
+
 export function PhpTestResultsPanel({
   error,
   filter,
@@ -69,6 +88,29 @@ export function PhpTestResultsPanel({
   rootPath,
   unavailable,
 }: PhpTestResultsPanelProps) {
+  const [filterState, setFilterState] = useState<{
+    result: PhpTestRunOk | null;
+    status: StatusFilter;
+  }>({ result, status: "all" });
+  const statusFilter = filterState.result === result ? filterState.status : "all";
+  const visibleSuites = result
+    ? result.suites
+        .map((suite, index) => ({ index, suite }))
+        .sort(
+          (left, right) =>
+            phpTestStatusRank(phpTestSuiteStatus(left.suite)) -
+              phpTestStatusRank(phpTestSuiteStatus(right.suite)) ||
+            left.index - right.index,
+        )
+        .map(({ suite }) => ({
+          cases: sortPhpTestCasesFailedFirst(suite.cases).filter((testCase) =>
+            statusMatchesFilter(testCase.status, statusFilter),
+          ),
+          suite,
+        }))
+        .filter(({ cases }) => statusFilter === "all" || cases.length > 0)
+    : [];
+
   return (
     <div aria-label="PHP test results" role="tabpanel" style={styles.panel}>
       <div style={styles.header}>
@@ -85,6 +127,23 @@ export function PhpTestResultsPanel({
             Run all
           </button>
         ) : null}
+        {result
+          ? statusFilters.map(({ label, value }) => (
+              <button
+                aria-label={`Show ${value} tests`}
+                aria-pressed={statusFilter === value}
+                key={value}
+                onClick={() => setFilterState({ result, status: value })}
+                style={{
+                  ...styles.chip,
+                  ...(statusFilter === value ? styles.chipActive : {}),
+                }}
+                type="button"
+              >
+                {label}
+              </button>
+            ))
+          : null}
         {result ? (
           <span aria-label="PHP test totals" style={styles.summary}>
             {phpTestTotalsSummary(result.totals)}
@@ -125,7 +184,10 @@ export function PhpTestResultsPanel({
       {!isRunning && result && result.suites.length === 0 ? (
         <div style={styles.message}>No PHP test suites were reported.</div>
       ) : null}
-      {result?.suites.map((suite, suiteIndex) => {
+      {!isRunning && result && statusFilter !== "all" && visibleSuites.length === 0 ? (
+        <div style={styles.message}>No {statusFilter} tests</div>
+      ) : null}
+      {visibleSuites.map(({ cases, suite }, suiteIndex) => {
         const suiteStatus = phpTestSuiteStatus(suite);
 
         return (
@@ -135,12 +197,14 @@ export function PhpTestResultsPanel({
           >
             <div style={styles.suiteHeader}>
               <StatusBadge status={suiteStatus} />
-              <strong>{suite.name ?? "Unnamed suite"}</strong>
+              <strong data-testid="php-test-suite-name">
+                {suite.name ?? "Unnamed suite"}
+              </strong>
               <span style={styles.muted}>
                 {(suite.tests ?? 0).toLocaleString("en-US")} tests
               </span>
             </div>
-            {suite.cases.map((testCase, caseIndex) => {
+            {cases.map((testCase, caseIndex) => {
               const navigable = rootPath
                 ? phpTestCaseCanNavigate(rootPath, testCase)
                 : false;
@@ -158,7 +222,11 @@ export function PhpTestResultsPanel({
                   }}
                 >
                   <StatusBadge status={testCase.status} />
-                  <span style={styles.text} title={testCase.name ?? undefined}>
+                  <span
+                    data-testid="php-test-case-name"
+                    style={styles.text}
+                    title={testCase.name ?? undefined}
+                  >
                     {testCase.name ?? "Unnamed test"}
                   </span>
                   <span
@@ -195,6 +263,21 @@ export function PhpTestResultsPanel({
       })}
     </div>
   );
+}
+
+function statusMatchesFilter(
+  status: PhpTestStatus,
+  filter: StatusFilter,
+): boolean {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "failed") {
+    return status === "failed" || status === "error";
+  }
+
+  return status === filter;
 }
 
 function StatusBadge({ status }: { status: PhpTestStatus }) {

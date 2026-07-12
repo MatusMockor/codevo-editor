@@ -121,6 +121,79 @@ describe("PhpTestResultsPanel", () => {
     ).toBeNull();
   });
 
+  it("sorts suites and cases failed first without mutating the result", async () => {
+    const testResult = resultWithStatuses();
+    const suiteOrder = testResult.suites.map((suite) => suite.name);
+    const caseOrders = testResult.suites.map((suite) =>
+      suite.cases.map((testCase) => testCase.name),
+    );
+
+    await render({ result: testResult });
+
+    expect(renderedCaseNames()).toEqual([
+      "error case",
+      "failed case",
+      "skipped in failed suite",
+      "passed in failed suite",
+      "skipped case",
+      "passed case",
+    ]);
+    expect(renderedSuiteNames()).toEqual([
+      "Failed suite",
+      "Skipped suite",
+      "Passed suite",
+    ]);
+    expect(testResult.suites.map((suite) => suite.name)).toEqual(suiteOrder);
+    expect(
+      testResult.suites.map((suite) =>
+        suite.cases.map((testCase) => testCase.name),
+      ),
+    ).toEqual(caseOrders);
+  });
+
+  it("filters cases and empty suites while leaving the totals unchanged", async () => {
+    await render({ result: resultWithStatuses() });
+
+    await clickStatusChip("Failed");
+
+    expect(renderedCaseNames()).toEqual(["error case", "failed case"]);
+    expect(renderedSuiteNames()).toEqual(["Failed suite"]);
+    expect(host.textContent).toContain("6 tests · 2 failed · 2 skipped");
+  });
+
+  it("resets the status filter when the result identity changes", async () => {
+    const firstResult = resultWithStatuses();
+    await render({ result: firstResult });
+    await clickStatusChip("Skipped");
+    expect(renderedCaseNames()).toEqual([
+      "skipped in failed suite",
+      "skipped case",
+    ]);
+
+    await render({ result: { ...firstResult } });
+
+    expect(renderedCaseNames()).toHaveLength(6);
+    expect(
+      host.querySelector<HTMLButtonElement>('[aria-label="Show all tests"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it.each([
+    ["Failed", "No failed tests"],
+    ["Skipped", "No skipped tests"],
+    ["Passed", "No passed tests"],
+  ])("shows an empty filtered state for %s", async (chip, message) => {
+    const testResult = result();
+    testResult.suites[0].cases = [];
+    await render({ result: testResult });
+
+    await clickStatusChip(chip);
+
+    expect(host.textContent).toContain(message);
+    expect(renderedSuiteNames()).toEqual([]);
+  });
+
   it("disables case reruns for invalid names and while running", async () => {
     const testResult = result();
     testResult.suites[0].cases[0].name = "with data set #0";
@@ -159,6 +232,30 @@ describe("PhpTestResultsPanel", () => {
       await Promise.resolve();
     });
   }
+
+  async function clickStatusChip(label: string) {
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>(
+          `[aria-label="Show ${label.toLowerCase()} tests"]`,
+        )
+        ?.click(),
+    );
+  }
+
+  function renderedCaseNames() {
+    return Array.from(
+      host.querySelectorAll<HTMLElement>("[data-testid='php-test-case-name']"),
+      (element) => element.textContent,
+    );
+  }
+
+  function renderedSuiteNames() {
+    return Array.from(
+      host.querySelectorAll<HTMLElement>("[data-testid='php-test-suite-name']"),
+      (element) => element.textContent,
+    );
+  }
 });
 
 function result(): PhpTestRunOk {
@@ -195,5 +292,52 @@ function result(): PhpTestRunOk {
       },
     ],
     totals: { errors: 0, failures: 2, skipped: 1, tests: 6000, time: 2.5 },
+  };
+}
+
+function resultWithStatuses(): PhpTestRunOk {
+  return {
+    status: "ok",
+    suites: [
+      suite("Passed suite", [testCase("passed", "passed case")]),
+      suite("Skipped suite", [testCase("skipped", "skipped case")]),
+      suite("Failed suite", [
+        testCase("passed", "passed in failed suite"),
+        testCase("error", "error case"),
+        testCase("skipped", "skipped in failed suite"),
+        testCase("failed", "failed case"),
+      ]),
+    ],
+    totals: { errors: 1, failures: 1, skipped: 2, tests: 6, time: 1 },
+  };
+}
+
+function suite(
+  name: string,
+  cases: PhpTestRunOk["suites"][number]["cases"],
+): PhpTestRunOk["suites"][number] {
+  return {
+    cases,
+    errors: cases.filter((testCase) => testCase.status === "error").length,
+    failures: cases.filter((testCase) => testCase.status === "failed").length,
+    name,
+    skipped: cases.filter((testCase) => testCase.status === "skipped").length,
+    tests: cases.length,
+    time: 1,
+  };
+}
+
+function testCase(
+  status: PhpTestRunOk["suites"][number]["cases"][number]["status"],
+  name: string,
+): PhpTestRunOk["suites"][number]["cases"][number] {
+  return {
+    classname: "Tests\\Unit\\StatusTest",
+    file: "tests/Unit/StatusTest.php",
+    line: 1,
+    message: null,
+    name,
+    status,
+    time: 0.01,
   };
 }
