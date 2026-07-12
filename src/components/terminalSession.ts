@@ -6,7 +6,11 @@ import {
   type TerminalUnsubscribeFn,
 } from "../domain/terminal";
 import { terminalFileLinks } from "../domain/terminalFileLinks";
-import { TerminalShellIntegrationRegistry } from "../domain/terminalShellIntegration";
+import { terminalCommandDecoration } from "../domain/terminalCommandDecoration";
+import {
+  TerminalShellIntegrationRegistry,
+  type TerminalShellIntegrationEvent,
+} from "../domain/terminalShellIntegration";
 
 export interface TerminalBufferLine {
   readonly length: number;
@@ -48,8 +52,23 @@ export interface XtermTerminal {
   onData(listener: (data: string) => void): TerminalDisposable;
   onResize(listener: (size: TerminalSize) => void): TerminalDisposable;
   open(host: HTMLElement): void;
+  registerDecoration(
+    options: TerminalDecorationOptions,
+  ): TerminalDecoration | undefined;
   registerLinkProvider(provider: TerminalLinkProvider): TerminalDisposable;
-  write(data: string): void;
+  registerMarker(cursorYOffset?: number): TerminalMarker | undefined;
+  write(data: string, callback?: () => void): void;
+}
+
+export interface TerminalMarker extends TerminalDisposable {}
+
+export interface TerminalDecoration extends TerminalDisposable {}
+
+export interface TerminalDecorationOptions {
+  backgroundColor: string;
+  foregroundColor?: string;
+  marker: TerminalMarker;
+  tooltip: string;
 }
 
 export interface TerminalFitAddon {
@@ -69,6 +88,8 @@ export interface TerminalSession {
   dispose(): void;
   fit(): void;
 }
+
+export const terminalCommandDecorationLimit = 200;
 
 export function terminalLinkRange(
   bufferLine: TerminalBufferLine,
@@ -147,7 +168,19 @@ export function createTerminalSession({
   const pendingFrames = new Set<number>();
   const disposables: TerminalDisposable[] = [];
   const pendingInput: string[] = [];
+  const commandDecorations = new Set<TerminalDecoration>();
+  const commandMarkers = new Set<TerminalMarker>();
+  const completedCommandArtifacts: Array<{
+    decoration: TerminalDecoration;
+    marker: TerminalMarker;
+  }> = [];
+  const pendingShellEventWrites: Array<{
+    completed: boolean;
+    events: TerminalShellIntegrationEvent[];
+  }> = [];
   let disposed = false;
+  let activeCommandMarker: TerminalMarker | null = null;
+  let activeCommandPreExecObserved = false;
   let pendingResize: TerminalSize | null = null;
   let sessionId: number | null = null;
   let unsubscribeOutput: TerminalUnsubscribeFn = () => undefined;
@@ -201,24 +234,134 @@ export function createTerminalSession({
     });
     pendingFrames.add(frameId);
   };
+  const registerCommandMarker = () => {
+    if (activeCommandMarker) {
+      return;
+    }
+
+    const marker = terminal.registerMarker();
+
+    if (!marker) {
+      return;
+    }
+
+    activeCommandMarker = marker;
+    commandMarkers.add(marker);
+  };
+  const disposeCommandMarker = (marker: TerminalMarker) => {
+    commandMarkers.delete(marker);
+    marker.dispose();
+  };
+  const discardActiveCommandMarker = () => {
+    const marker = activeCommandMarker;
+    activeCommandMarker = null;
+
+    if (!marker) {
+      return;
+    }
+
+    disposeCommandMarker(marker);
+  };
+  const completeCommand = (exitCode: number | null) => {
+    const marker = activeCommandMarker;
+    const preExecObserved = activeCommandPreExecObserved;
+    activeCommandMarker = null;
+    activeCommandPreExecObserved = false;
+
+    if (!marker) {
+      return;
+    }
+
+    if (!preExecObserved || exitCode === null) {
+      disposeCommandMarker(marker);
+      return;
+    }
+
+    const decoration = terminal.registerDecoration({
+      ...terminalCommandDecoration(exitCode),
+      marker,
+    });
+
+    if (!decoration) {
+      disposeCommandMarker(marker);
+      return;
+    }
+
+    commandDecorations.add(decoration);
+    completedCommandArtifacts.push({ decoration, marker });
+
+    if (completedCommandArtifacts.length <= terminalCommandDecorationLimit) {
+      return;
+    }
+
+    const oldest = completedCommandArtifacts.shift();
+
+    if (!oldest) {
+      return;
+    }
+
+    commandDecorations.delete(oldest.decoration);
+    commandMarkers.delete(oldest.marker);
+    oldest.decoration.dispose();
+    oldest.marker.dispose();
+  };
+  const flushShellEvent = (shellEvent: TerminalShellIntegrationEvent) => {
+    if (shellEvent.kind === "cwd") {
+      onCwdChange?.(shellEvent.cwd);
+      return;
+    }
+
+    if (shellEvent.kind === "promptStart") {
+      discardActiveCommandMarker();
+      activeCommandPreExecObserved = false;
+      registerCommandMarker();
+      return;
+    }
+
+    if (shellEvent.kind === "preExec") {
+      activeCommandPreExecObserved = true;
+      registerCommandMarker();
+      return;
+    }
+
+    if (shellEvent.kind === "commandEnd") {
+      completeCommand(shellEvent.exitCode);
+    }
+  };
+  const flushCompletedShellEventWrites = () => {
+    if (disposed) {
+      pendingShellEventWrites.splice(0);
+      return;
+    }
+
+    while (pendingShellEventWrites[0]?.completed) {
+      const pendingWrite = pendingShellEventWrites.shift();
+
+      if (!pendingWrite) {
+        return;
+      }
+
+      for (const shellEvent of pendingWrite.events) {
+        flushShellEvent(shellEvent);
+      }
+    }
+  };
   const handleOutput = (event: TerminalOutputEvent) => {
     if (event.sessionId !== sessionId) {
       return;
     }
 
-    if (rootPath) {
-      const result = shellIntegration.feed(rootPath, event.sessionId, event.data);
+    const shellEvents = rootPath
+      ? shellIntegration.feed(rootPath, event.sessionId, event.data).events
+      : [];
 
-      for (const shellEvent of result.events) {
-        if (shellEvent.kind !== "cwd") {
-          continue;
-        }
+    const pendingWrite = { completed: false, events: shellEvents };
+    pendingShellEventWrites.push(pendingWrite);
 
-        onCwdChange?.(shellEvent.cwd);
-      }
-    }
-
-    terminal.write(event.data);
+    terminal.write(event.data, () => {
+      pendingWrite.completed = true;
+      flushCompletedShellEventWrites();
+    });
   };
 
   terminal.loadAddon(fitAddon);
@@ -342,6 +485,22 @@ export function createTerminalSession({
       for (const disposable of disposables) {
         disposable.dispose();
       }
+
+      for (const decoration of commandDecorations) {
+        decoration.dispose();
+      }
+
+      commandDecorations.clear();
+
+      for (const marker of commandMarkers) {
+        marker.dispose();
+      }
+
+      commandMarkers.clear();
+      activeCommandMarker = null;
+      activeCommandPreExecObserved = false;
+      completedCommandArtifacts.splice(0);
+      pendingShellEventWrites.splice(0);
 
       const activeSessionId = sessionId;
 

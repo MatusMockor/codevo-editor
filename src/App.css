@@ -3114,6 +3114,16 @@ button {
   height: 100%;
 }
 
+.terminal-viewport .xterm-decoration {
+  pointer-events: none;
+}
+
+.terminal-viewport .terminal-command-decoration {
+  width: 3px !important;
+  border-radius: 2px;
+  pointer-events: auto;
+}
+
 .problems-list p {
   margin: 18px 0 0;
   color: var(--color-text-subtle);

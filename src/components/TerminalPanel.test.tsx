@@ -23,6 +23,8 @@ interface FakeTerminal {
   onResize: ReturnType<typeof vi.fn>;
   open: ReturnType<typeof vi.fn>;
   registerLinkProvider: ReturnType<typeof vi.fn>;
+  registerMarker: ReturnType<typeof vi.fn>;
+  registerDecoration: ReturnType<typeof vi.fn>;
   options: {
     theme?: TerminalTheme;
   };
@@ -37,6 +39,11 @@ interface FakeSession {
 
 interface FakeSessionOptions {
   onOpenLink(path: string, line?: number, column?: number): void;
+  terminal: {
+    registerMarker(cursorYOffset?: number): unknown;
+    registerDecoration(options: unknown): unknown;
+    write(data: string, callback?: () => void): void;
+  };
 }
 
 const terminalPanelMocks = vi.hoisted(() => {
@@ -81,6 +88,11 @@ vi.mock("@xterm/xterm", () => ({
       onResize: vi.fn(() => ({ dispose: vi.fn() })),
       open: vi.fn(),
       registerLinkProvider: vi.fn(() => ({ dispose: vi.fn() })),
+      registerMarker: vi.fn(() => ({ dispose: vi.fn() })),
+      registerDecoration: vi.fn(() => ({
+        dispose: vi.fn(),
+        onRender: vi.fn(),
+      })),
       options: { ...options },
       rows: 24,
       write: vi.fn(),
@@ -228,6 +240,40 @@ describe("TerminalPanel", () => {
     staleOpenLink("src/Foo.php", 2, 3);
 
     expect(onOpenLink).not.toHaveBeenCalled();
+  });
+
+  it("forwards writes, markers, and decoration registration to xterm", () => {
+    act(() => {
+      root.render(
+        <TerminalPanel
+          isActive
+          profileId="default"
+          rootPath="/workspace"
+          shellIntegrationEnabled
+          terminalGateway={terminalGateway()}
+          terminalTheme={terminalThemeForAppTheme("dark")}
+        />,
+      );
+    });
+
+    const terminal = terminalPanelMocks.terminals[0];
+    const sessionTerminal = (
+      terminalPanelMocks.createTerminalSession.mock.calls[0]?.[0] as FakeSessionOptions
+    ).terminal;
+    const marker = sessionTerminal.registerMarker(-1);
+    const options = {
+      backgroundColor: "var(--color-success)",
+      marker,
+      tooltip: "Exit code 0",
+    };
+    const writeCallback = vi.fn();
+
+    sessionTerminal.write("output", writeCallback);
+    sessionTerminal.registerDecoration(options);
+
+    expect(terminal.write).toHaveBeenCalledWith("output", writeCallback);
+    expect(terminal.registerMarker).toHaveBeenCalledWith(-1);
+    expect(terminal.registerDecoration).toHaveBeenCalledWith({ marker });
   });
 });
 

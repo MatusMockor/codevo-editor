@@ -117,7 +117,32 @@ export function TerminalPanel({
         },
         registerLinkProvider: (provider) =>
           terminal.registerLinkProvider(provider),
-        write: (data) => terminal.write(data),
+        registerMarker: (cursorYOffset) =>
+          terminal.registerMarker(cursorYOffset),
+        registerDecoration: (options) => {
+          const decoration = terminal.registerDecoration({
+            marker: options.marker as ReturnType<Terminal["registerMarker"]>,
+          });
+
+          if (!decoration) {
+            return undefined;
+          }
+
+          decoration.onRender((element) => {
+            element.classList.add("terminal-command-decoration");
+            element.style.backgroundColor = options.backgroundColor;
+            element.title = options.tooltip;
+
+            if (!options.foregroundColor) {
+              return;
+            }
+
+            element.style.color = options.foregroundColor;
+          });
+
+          return decoration;
+        },
+        write: (data, callback) => terminal.write(data, callback),
       },
     });
     sessionRef.current = session;

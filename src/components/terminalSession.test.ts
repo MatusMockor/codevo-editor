@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TerminalGateway, TerminalOutputEvent } from "../domain/terminal";
 import {
   createTerminalSession,
+  terminalCommandDecorationLimit,
   terminalLinkRange,
   type TerminalBufferLine,
 } from "./terminalSession";
@@ -40,7 +41,10 @@ describe("createTerminalSession", () => {
       "default",
       false,
     );
-    expect(harness.terminal.write).toHaveBeenCalledWith("ready\r\n");
+    expect(harness.terminal.write).toHaveBeenCalledWith(
+      "ready\r\n",
+      expect.any(Function),
+    );
   });
 
   it("tracks cwd from rendered output and clears it when the session exits", async () => {
@@ -55,15 +59,169 @@ describe("createTerminalSession", () => {
       data: "ready\u001b]7;file://host/workspace/src\u0007\r\n",
       sessionId: 1,
     });
+    harness.flushWrites();
 
     expect(harness.terminal.write).toHaveBeenCalledWith(
       "ready\u001b]7;file://host/workspace/src\u0007\r\n",
+      expect.any(Function),
     );
     expect(onCwdChange).toHaveBeenCalledWith("/workspace/src");
 
     session.dispose();
 
     expect(onCwdChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("registers a command marker after writing its shell integration chunk", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+    harness.emitOutput({
+      data: "\u001b]133;A\u0007$ \u001b]133;C\u0007",
+      sessionId: 1,
+    });
+
+    expect(harness.terminal.write).toHaveBeenCalledTimes(1);
+    expect(harness.terminal.registerMarker).not.toHaveBeenCalled();
+
+    harness.flushWrite(0);
+
+    expect(harness.terminal.registerMarker).toHaveBeenCalledTimes(1);
+    expect(harness.markerLines).toEqual([1]);
+    expect(harness.callOrder()).toEqual(["write", "write-callback", "marker"]);
+  });
+
+  it("flushes shell events in chunk order when write callbacks complete out of order", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+    harness.emitOutput({ data: "\u001b]133;A\u0007$ ", sessionId: 1 });
+    harness.emitOutput({ data: "\u001b]133;C\u0007", sessionId: 1 });
+
+    harness.flushWrite(1);
+
+    expect(harness.terminal.registerMarker).not.toHaveBeenCalled();
+
+    harness.flushWrite(0);
+
+    expect(harness.terminal.registerMarker).toHaveBeenCalledTimes(1);
+    expect(harness.markerLines).toEqual([2]);
+  });
+
+  it.each([
+    [1, "var(--color-error)", "Exit code 1"],
+    [0, "var(--color-success)", "Exit code 0"],
+  ])("decorates a completed command with exit code %s", async (exitCode, color, tooltip) => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+    harness.emitOutput({
+      data: "\u001b]133;A\u0007$ \u001b]133;C\u0007",
+      sessionId: 1,
+    });
+    harness.emitOutput({
+      data: `\u001b]133;D;${exitCode}\u0007`,
+      sessionId: 1,
+    });
+    harness.flushWrites();
+
+    expect(harness.terminal.registerDecoration).toHaveBeenCalledWith({
+      backgroundColor: color,
+      marker: harness.marker,
+      tooltip,
+    });
+  });
+
+  it("disposes command markers and decorations with the session", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+    const session = createTerminalSession(harness.options);
+
+    await harness.startSession();
+    harness.emitOutput({
+      data: "\u001b]133;A\u0007$ \u001b]133;C\u0007",
+      sessionId: 1,
+    });
+    harness.emitOutput({ data: "\u001b]133;D;0\u0007", sessionId: 1 });
+    harness.flushWrites();
+    session.dispose();
+
+    expect(harness.marker.dispose).toHaveBeenCalledTimes(1);
+    expect(harness.decoration.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps command decorations isolated between terminal sessions", async () => {
+    const first = terminalHarness({ shellIntegrationEnabled: true });
+    const second = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(first.options);
+    createTerminalSession(second.options);
+    await Promise.all([first.startSession(), second.startSession()]);
+    first.emitOutput({
+      data: "\u001b]133;A\u0007$ \u001b]133;C\u0007",
+      sessionId: 1,
+    });
+    first.emitOutput({ data: "\u001b]133;D;0\u0007", sessionId: 1 });
+    first.flushWrites();
+
+    expect(first.terminal.registerMarker).toHaveBeenCalledTimes(1);
+    expect(first.terminal.registerDecoration).toHaveBeenCalledTimes(1);
+    expect(second.terminal.registerMarker).not.toHaveBeenCalled();
+    expect(second.terminal.registerDecoration).not.toHaveBeenCalled();
+  });
+
+  it("creates one marker and decoration when shell events span chunks", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+    harness.emitOutput({ data: "\u001b]133;", sessionId: 1 });
+    harness.emitOutput({ data: "A\u0007$ command\r\n\u001b]133;", sessionId: 1 });
+    harness.emitOutput({ data: "C\u0007output\r\n\u001b]133;D;", sessionId: 1 });
+    harness.emitOutput({ data: "1\u0007", sessionId: 1 });
+    harness.flushWrites();
+
+    expect(harness.terminal.registerMarker).toHaveBeenCalledTimes(1);
+    expect(harness.terminal.registerDecoration).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not decorate a bare prompt cycle without pre-exec", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+    harness.emitOutput({ data: "\u001b]133;A\u0007$ ", sessionId: 1 });
+    harness.emitOutput({ data: "\u001b]133;D;0\u0007", sessionId: 1 });
+    harness.flushWrites();
+
+    expect(harness.terminal.registerDecoration).not.toHaveBeenCalled();
+    expect(harness.markers[0]?.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("evicts the oldest retained command decoration at the cap", async () => {
+    const harness = terminalHarness({ shellIntegrationEnabled: true });
+
+    createTerminalSession(harness.options);
+    await harness.startSession();
+
+    for (let index = 0; index <= terminalCommandDecorationLimit; index += 1) {
+      harness.emitOutput({
+        data: "\u001b]133;A\u0007$ \u001b]133;C\u0007\u001b]133;D;0\u0007",
+        sessionId: 1,
+      });
+      harness.flushWrites();
+    }
+
+    expect(harness.markers).toHaveLength(terminalCommandDecorationLimit + 1);
+    expect(harness.decorations).toHaveLength(
+      terminalCommandDecorationLimit + 1,
+    );
+    expect(harness.markers[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(harness.decorations[0]?.dispose).toHaveBeenCalledTimes(1);
+    expect(harness.markers[1]?.dispose).not.toHaveBeenCalled();
+    expect(harness.decorations[1]?.dispose).not.toHaveBeenCalled();
   });
 
   it("opts into backend shell injection only when enabled", async () => {
@@ -244,6 +402,14 @@ function terminalHarness(
   const dataDisposable = { dispose: vi.fn() };
   const resizeDisposable = { dispose: vi.fn() };
   const linkDisposable = { dispose: vi.fn() };
+  const callOrder: string[] = [];
+  const marker = { dispose: vi.fn() };
+  const decoration = { dispose: vi.fn() };
+  const markers: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+  const decorations: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+  const markerLines: number[] = [];
+  const pendingWrites: Array<{ callback: () => void; data: string }> = [];
+  let cursorLine = 0;
   let linkProvider:
     | {
         provideLinks(
@@ -286,8 +452,29 @@ function terminalHarness(
       linkProvider = provider;
       return linkDisposable;
     }),
+    registerMarker: vi.fn(() => {
+      callOrder.push("marker");
+      markerLines.push(cursorLine);
+      const nextMarker = markers.length === 0 ? marker : { dispose: vi.fn() };
+      markers.push(nextMarker);
+      return nextMarker;
+    }),
+    registerDecoration: vi.fn(() => {
+      const nextDecoration =
+        decorations.length === 0 ? decoration : { dispose: vi.fn() };
+      decorations.push(nextDecoration);
+      return nextDecoration;
+    }),
     rows: 24,
-    write: vi.fn(),
+    write: vi.fn((data: string, callback?: () => void) => {
+      callOrder.push("write");
+
+      if (!callback) {
+        return;
+      }
+
+      pendingWrites.push({ callback, data });
+    }),
   };
   const gateway: TerminalGateway = {
     listProfiles: vi.fn(async () => []),
@@ -314,6 +501,7 @@ function terminalHarness(
 
   return {
     cancelFrame,
+    callOrder: () => callOrder,
     dataDisposable,
     emitInput: (data: string) => dataListener?.(data),
     emitOutput: (event: TerminalOutputEvent) => outputListener?.(event),
@@ -329,9 +517,38 @@ function terminalHarness(
         callback(0);
       }
     },
+    flushWrite: (index: number) => {
+      const pendingWrite = pendingWrites.splice(index, 1)[0];
+
+      if (!pendingWrite) {
+        return;
+      }
+
+      cursorLine += 1;
+      callOrder.push("write-callback");
+      pendingWrite.callback();
+    },
+    flushWrites: () => {
+      while (pendingWrites.length > 0) {
+        const pendingWrite = pendingWrites.shift();
+
+        if (!pendingWrite) {
+          return;
+        }
+
+        cursorLine += 1;
+        callOrder.push("write-callback");
+        pendingWrite.callback();
+      }
+    },
     gateway,
     host,
     linkDisposable,
+    marker,
+    markerLines,
+    markers,
+    decoration,
+    decorations,
     options: {
       cancelFrame,
       createResizeObserver: (callback: ResizeObserverCallback) => {
@@ -359,6 +576,13 @@ function terminalHarness(
     },
     resizeDisposable,
     resizeObserver,
+    startSession: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (const callback of frameCallbacks.splice(0)) {
+        callback(0);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
     terminal,
     provideLinks: (lineNumber: number, bufferCells: BufferCell[]) => {
       terminal.buffer.active.getLine.mockReturnValue(line(bufferCells));
