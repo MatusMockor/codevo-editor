@@ -7419,7 +7419,6 @@ export function useWorkbenchController(
     resolvePhpExpressionType,
     resolvePhpLaravelRelationPathOwnerType,
   } = usePhpFrameworkModelSemantics({
-    activePhpFrameworkProviders,
     collectPhpMethodsForClass,
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,

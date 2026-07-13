@@ -56,7 +56,6 @@ function resolveClassReference(_source: string, className: string | null) {
 
 function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
   return {
-    activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
     collectPhpMethodsForClass: vi.fn(async () => []),
     frameworkRuntime: LARAVEL_RUNTIME,
     phpClassHasDynamicBuilderFinder: vi.fn(async () => false),

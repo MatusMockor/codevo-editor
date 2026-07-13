@@ -13,7 +13,6 @@ import {
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
 } from "../domain/phpFrameworkLaravel";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { usePhpExpressionTypeResolver } from "./usePhpExpressionTypeResolver";
@@ -52,7 +51,6 @@ export interface PhpClassMemberReadResult {
 }
 
 export interface UsePhpFrameworkModelSemanticsOptions {
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   collectPhpMethodsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
@@ -110,7 +108,6 @@ export interface UsePhpFrameworkModelSemanticsOptions {
 }
 
 export function usePhpFrameworkModelSemantics({
-  activePhpFrameworkProviders,
   collectPhpMethodsForClass,
   currentWorkspaceRootRef,
   frameworkRuntime,
@@ -225,7 +222,6 @@ export function usePhpFrameworkModelSemantics({
   }, [resolvePhpEloquentBuilderModelType]);
 
   const { resolvePhpExpressionType } = usePhpExpressionTypeResolver({
-    activePhpFrameworkProviders,
     collectPhpMethodsForClass,
     frameworkRuntime,
     phpClassHasDynamicBuilderFinder,

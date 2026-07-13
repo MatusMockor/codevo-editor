@@ -4,7 +4,6 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
   phpAssignmentExpressionForVariableBefore,
@@ -44,7 +43,6 @@ export type PhpFrameworkModelCarrierTypeResolver = (
 ) => Promise<string | null>;
 
 export interface UsePhpExpressionTypeResolverOptions {
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   collectPhpMethodsForClass: (
     className: string,
   ) => Promise<PhpMethodCompletion[]>;
