@@ -420,6 +420,31 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
       ),
       "formatContentGroups",
     );
+
+    const apiTokensTemplatePath =
+      "app/modules/apiModule/templates/ApiTokensAdmin/default.latte";
+    const apiTokensSource = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, apiTokensTemplatePath),
+    );
+    const apiTokensDeps = makeLatteDeps(apiTokensTemplatePath);
+    const apiTokensLatte = createLatteIntelligence(() => apiTokensDeps);
+    const applicationConfigPath =
+      "app/modules/applicationModule/config/config.neon";
+    const applicationConfig = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, applicationConfigPath),
+    );
+
+    await expect(
+      apiTokensLatte.provideLatteDefinition(
+        apiTokensSource,
+        offsetInside(apiTokensSource, "userDate"),
+      ),
+    ).resolves.toBe(true);
+    expect(apiTokensDeps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, applicationConfigPath),
+      positionAtOffset(applicationConfig, applicationConfig.indexOf("userDate")),
+      "userDate",
+    );
   });
 
   it("covers NEON class refs, service reference definition, service completions, and setup methods over real config", async () => {
