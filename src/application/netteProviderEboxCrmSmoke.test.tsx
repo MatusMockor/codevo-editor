@@ -17,9 +17,9 @@ import type {
   NeonIntelligenceDependencies,
 } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { findNetteRedrawControlSnippetDefinitionTarget } from "./netteAjaxSnippetDefinitions";
 import {
   createPhpNetteTranslationTargetResolver,
-  findPhpNetteAjaxSnippetTarget,
 } from "./phpNetteFrameworkTargetAdapter";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 
@@ -328,14 +328,22 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
           collectNamedRouteTargets: vi.fn(async () => []),
           findConfigTarget: vi.fn(async () => null),
           findEnvTarget: vi.fn(async () => null),
-          findNetteAjaxSnippetTarget: (_currentSource, currentPath, snippetName) =>
-            findPhpNetteAjaxSnippetTarget(currentPath, snippetName, {
-              currentWorkspaceRootRef: { current: EBOX_CRM_ROOT },
-              workspaceRoot: EBOX_CRM_ROOT,
-              readNavigationFileContent: readFileContent,
-              relativeWorkspacePath: toRelativePath,
-              joinWorkspacePath: joinPath,
-            }),
+          findNetteRedrawControlSnippetTarget: (currentPath, snippetName) =>
+            findNetteRedrawControlSnippetDefinitionTarget(
+              {
+                currentPhpRelativePath: toRelativePath(
+                  EBOX_CRM_ROOT,
+                  currentPath,
+                ),
+                deps: {
+                  joinPath,
+                  readFileContent,
+                },
+                isRequestedRootActive: () => true,
+                requestedRoot: EBOX_CRM_ROOT,
+              },
+              snippetName,
+            ),
           findTranslationTarget: vi.fn(async () => null),
           findViewTarget: vi.fn(async () => null),
         },

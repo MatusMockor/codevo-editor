@@ -56,7 +56,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
   it("resolves a Nette redrawControl literal to a colocated Latte snippet", async () => {
     const source = "<?php\n$this->redrawControl('mailLogslisting');";
     const deps = dependencies({
-      findNetteAjaxSnippetTarget: vi.fn(async () => ({
+      findNetteRedrawControlSnippetTarget: vi.fn(async () => ({
         name: "mailLogslisting",
         path: "/workspace/app/Components/MailLogs/mail_logs.latte",
         position: targetPosition,
@@ -84,8 +84,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
       path: "/workspace/app/Components/MailLogs/mail_logs.latte",
       position: targetPosition,
     });
-    expect(deps.findNetteAjaxSnippetTarget).toHaveBeenCalledWith(
-      source,
+    expect(deps.findNetteRedrawControlSnippetTarget).toHaveBeenCalledWith(
       "/workspace/app/Components/MailLogs/MailLogs.php",
       "mailLogslisting",
     );

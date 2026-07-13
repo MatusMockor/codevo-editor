@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "../domain/workspace";
 import {
   createPhpNetteTranslationTargetResolver,
-  findPhpNetteAjaxSnippetTarget,
   type PhpNetteTranslationTargetResolverDeps,
 } from "./phpNetteFrameworkTargetAdapter";
 
@@ -321,63 +320,5 @@ describe("createPhpNetteTranslationTargetResolver", () => {
 
     await expect(pending).resolves.toEqual([]);
     expect(harness.writeCachedTranslationTargets).not.toHaveBeenCalled();
-  });
-});
-
-describe("findPhpNetteAjaxSnippetTarget", () => {
-  it("finds a static snippet in a colocated component template", async () => {
-    const readNavigationFileContent = vi.fn(async (path: string) => {
-      if (
-        path ===
-        `${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`
-      ) {
-        return `<div>
-    {snippet mailLogslisting}
-    {/snippet}
-</div>
-`;
-      }
-
-      throw new Error(`unexpected read ${path}`);
-    });
-
-    await expect(
-      findPhpNetteAjaxSnippetTarget(
-        `${ROOT}/app/modules/mailerModule/Components/MailLogs/MailLogs.php`,
-        "mailLogslisting",
-        {
-          currentWorkspaceRootRef: { current: ROOT },
-          workspaceRoot: ROOT,
-          readNavigationFileContent,
-          relativeWorkspacePath,
-          joinWorkspacePath,
-        },
-      ),
-    ).resolves.toEqual({
-      name: "mailLogslisting",
-      path: `${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`,
-      position: { column: 14, lineNumber: 2 },
-      relativePath:
-        "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-    });
-  });
-
-  it("does not scan non-component presenter paths", async () => {
-    const readNavigationFileContent = vi.fn(async () => "");
-
-    await expect(
-      findPhpNetteAjaxSnippetTarget(
-        `${ROOT}/app/modules/mailerModule/presenters/MailPresenter.php`,
-        "mailLogslisting",
-        {
-          currentWorkspaceRootRef: { current: ROOT },
-          workspaceRoot: ROOT,
-          readNavigationFileContent,
-          relativeWorkspacePath,
-          joinWorkspacePath,
-        },
-      ),
-    ).resolves.toBeNull();
-    expect(readNavigationFileContent).not.toHaveBeenCalled();
   });
 });

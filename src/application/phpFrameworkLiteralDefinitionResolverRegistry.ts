@@ -55,8 +55,7 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   findInertiaComponentTarget?: (
     componentName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
-  findNetteAjaxSnippetTarget?: (
-    currentSource: string,
+  findNetteRedrawControlSnippetTarget?: (
     currentPath: string,
     snippetName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
@@ -449,8 +448,7 @@ const NETTE_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefinition
           return null;
         }
 
-        const target = await dependencies.findNetteAjaxSnippetTarget?.(
-          activeDocument.content,
+        const target = await dependencies.findNetteRedrawControlSnippetTarget?.(
           activeDocument.path,
           redrawControl.name,
         );

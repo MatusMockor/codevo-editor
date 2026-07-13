@@ -3,6 +3,7 @@ import type {
   NetteLatteSnippetReference,
 } from "../domain/netteAjaxSnippets";
 import {
+  findNetteRedrawControlSnippetDefinitionTarget,
   resolveNetteRedrawControlSnippetDefinition,
   resolveNetteAjaxSnippetDefinition,
   type NetteAjaxSnippetDefinitionDependencies,
@@ -178,5 +179,58 @@ describe("resolveNetteRedrawControlSnippetDefinition", () => {
       ),
     ).resolves.toBe(false);
     expect(openTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("findNetteRedrawControlSnippetDefinitionTarget", () => {
+  it("finds a static snippet in a colocated component template", async () => {
+    const template = `<div>
+    {snippet mailLogslisting}
+    {/snippet}
+</div>
+`;
+
+    await expect(
+      findNetteRedrawControlSnippetDefinitionTarget(
+        {
+          currentPhpRelativePath:
+            "app/modules/mailerModule/Components/MailLogs/MailLogs.php",
+          deps: deps({
+            [`${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`]:
+              template,
+          }),
+          isRequestedRootActive: () => true,
+          requestedRoot: ROOT,
+        },
+        "mailLogslisting",
+      ),
+    ).resolves.toEqual({
+      name: "mailLogslisting",
+      path: `${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`,
+      position: { column: 14, lineNumber: 2 },
+      relativePath:
+        "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+    });
+  });
+
+  it("does not scan non-component presenter paths", async () => {
+    const readFileContent = vi.fn(async () => "");
+
+    await expect(
+      findNetteRedrawControlSnippetDefinitionTarget(
+        {
+          currentPhpRelativePath:
+            "app/modules/mailerModule/presenters/MailPresenter.php",
+          deps: {
+            joinPath: (root, relativePath) => `${root}/${relativePath}`,
+            readFileContent,
+          },
+          isRequestedRootActive: () => true,
+          requestedRoot: ROOT,
+        },
+        "mailLogslisting",
+      ),
+    ).resolves.toBeNull();
+    expect(readFileContent).not.toHaveBeenCalled();
   });
 });

@@ -10,14 +10,25 @@ import {
   componentOwnerCandidatePathsForTemplate,
 } from "./netteTemplateOwnerCandidates";
 
-export interface NetteAjaxSnippetDefinitionDependencies {
+export interface NetteRedrawControlSnippetDefinitionTargetFinderDependencies {
   joinPath(rootPath: string, relativePath: string): string;
+  readFileContent(path: string): Promise<string>;
+}
+
+export interface NetteAjaxSnippetDefinitionDependencies
+  extends NetteRedrawControlSnippetDefinitionTargetFinderDependencies {
   openTarget(
     path: string,
     position: EditorPosition,
     label: string,
   ): Promise<boolean>;
-  readFileContent(path: string): Promise<string>;
+}
+
+export interface NetteRedrawControlSnippetDefinitionTarget {
+  name: string;
+  path: string;
+  position: EditorPosition;
+  relativePath: string;
 }
 
 export interface NetteAjaxSnippetDefinitionContext {
@@ -30,6 +41,13 @@ export interface NetteAjaxSnippetDefinitionContext {
 export interface NetteRedrawControlSnippetDefinitionContext {
   currentPhpRelativePath: string;
   deps: NetteAjaxSnippetDefinitionDependencies;
+  isRequestedRootActive(): boolean;
+  requestedRoot: string;
+}
+
+export interface NetteRedrawControlSnippetDefinitionTargetFinderContext {
+  currentPhpRelativePath: string;
+  deps: NetteRedrawControlSnippetDefinitionTargetFinderDependencies;
   isRequestedRootActive(): boolean;
   requestedRoot: string;
 }
@@ -98,6 +116,22 @@ export async function resolveNetteRedrawControlSnippetDefinition(
     return false;
   }
 
+  const target = await findNetteRedrawControlSnippetDefinitionTarget(
+    context,
+    reference.name,
+  );
+
+  if (!target) {
+    return false;
+  }
+
+  return context.deps.openTarget(target.path, target.position, reference.name);
+}
+
+export async function findNetteRedrawControlSnippetDefinitionTarget(
+  context: NetteRedrawControlSnippetDefinitionTargetFinderContext,
+  snippetName: string,
+): Promise<NetteRedrawControlSnippetDefinitionTarget | null> {
   const {
     currentPhpRelativePath,
     deps,
@@ -109,7 +143,7 @@ export async function resolveNetteRedrawControlSnippetDefinition(
 
   for (const relativePath of candidatePaths) {
     if (!isRequestedRootActive()) {
-      return false;
+      return null;
     }
 
     const path = deps.joinPath(requestedRoot, relativePath);
@@ -119,30 +153,31 @@ export async function resolveNetteRedrawControlSnippetDefinition(
       content = await deps.readFileContent(path);
     } catch {
       if (!isRequestedRootActive()) {
-        return false;
+        return null;
       }
 
       continue;
     }
 
     if (!isRequestedRootActive()) {
-      return false;
+      return null;
     }
 
-    const snippet = findNetteLatteSnippetReference(content, reference.name);
+    const snippet = findNetteLatteSnippetReference(content, snippetName);
 
     if (!snippet) {
       continue;
     }
 
-    return deps.openTarget(
+    return {
+      name: snippet.name,
       path,
-      editorPositionAtOffset(content, snippet.nameStart),
-      reference.name,
-    );
+      position: editorPositionAtOffset(content, snippet.nameStart),
+      relativePath,
+    };
   }
 
-  return false;
+  return null;
 }
 
 function editorPositionAtOffset(source: string, offset: number): EditorPosition {

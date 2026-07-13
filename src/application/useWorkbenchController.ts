@@ -68,6 +68,7 @@ import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMe
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
 import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
 import { usePhpContextualFrameworkLiteralDefinitionNavigation } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
+import { findNetteRedrawControlSnippetDefinitionTarget } from "./netteAjaxSnippetDefinitions";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
@@ -7332,7 +7333,6 @@ export function useWorkbenchController(
     findViewTarget,
     findConfigTarget,
     findTranslationTarget,
-    findNetteAjaxSnippetTarget,
     findAuthGuardTarget,
     findCacheStoreTarget,
     findDatabaseConnectionTarget,
@@ -7579,13 +7579,53 @@ export function useWorkbenchController(
     [currentWorkspaceRootRef, workspaceFiles],
   );
 
+  const findNetteRedrawControlSnippetTarget = useCallback(
+    async (currentPath: string, snippetName: string) => {
+      const requestedRoot = workspaceRoot;
+
+      if (
+        !requestedRoot ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return null;
+      }
+
+      return findNetteRedrawControlSnippetDefinitionTarget(
+        {
+          currentPhpRelativePath: relativeWorkspacePath(
+            requestedRoot,
+            currentPath,
+          ),
+          deps: {
+            joinPath: joinWorkspacePath,
+            readFileContent: readNavigationFileContent,
+          },
+          isRequestedRootActive: () =>
+            workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            ),
+          requestedRoot,
+        },
+        snippetName,
+      );
+    },
+    [
+      currentWorkspaceRootRef,
+      joinWorkspacePath,
+      readNavigationFileContent,
+      relativeWorkspacePath,
+      workspaceRoot,
+    ],
+  );
+
   const phpFrameworkLiteralNavigationDependencies = useMemo(
     () => ({
       collectNamedRouteTargets,
       findConfigTarget,
       findEnvTarget: findPhpLaravelEnvTarget,
       findInertiaComponentTarget,
-      findNetteAjaxSnippetTarget,
+      findNetteRedrawControlSnippetTarget,
       findTranslationTarget,
       findViewTarget,
     }),
@@ -7594,7 +7634,7 @@ export function useWorkbenchController(
       findConfigTarget,
       findPhpLaravelEnvTarget,
       findInertiaComponentTarget,
-      findNetteAjaxSnippetTarget,
+      findNetteRedrawControlSnippetTarget,
       findTranslationTarget,
       findViewTarget,
     ],

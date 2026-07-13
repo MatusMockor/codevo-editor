@@ -1,7 +1,4 @@
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
-import type { EditorPosition } from "../domain/languageServerFeatures";
-import { findNetteLatteSnippetReference } from "../domain/netteAjaxSnippets";
-import { componentTemplateCandidatePathsForClass } from "../domain/nettePathResolution";
 import {
   netteTranslationDomainFromPath,
   netteTranslationKeysFromSource,
@@ -14,7 +11,6 @@ import type {
   PhpFrameworkTargetCollectorAdapter,
   PhpFrameworkTargets,
   PhpFrameworkTargetsDependencies,
-  PhpFrameworkNetteAjaxSnippetTarget,
   PhpFrameworkTranslationTarget,
 } from "./usePhpFrameworkTargets";
 
@@ -68,14 +64,6 @@ export interface PhpNetteTranslationTargetResolver {
   find: (translationKey: string) => Promise<PhpFrameworkTranslationTarget | null>;
 }
 
-export interface PhpNetteAjaxSnippetTargetFinderDeps {
-  currentWorkspaceRootRef: { readonly current: string | null };
-  workspaceRoot: string | null;
-  readNavigationFileContent: (path: string) => Promise<string>;
-  relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
-  joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
-}
-
 const inertPhpNetteFrameworkTargets: PhpFrameworkTargets = {
   collectNamedRouteTargets: async () => [],
   collectAuthorizationAbilityTargets: async () => [],
@@ -97,7 +85,6 @@ const inertPhpNetteFrameworkTargets: PhpFrameworkTargets = {
   findViewTarget: async () => null,
   findConfigTarget: async () => null,
   findTranslationTarget: async () => null,
-  findNetteAjaxSnippetTarget: async () => null,
   findAuthGuardTarget: async () => null,
   findCacheStoreTarget: async () => null,
   findDatabaseConnectionTarget: async () => null,
@@ -110,91 +97,6 @@ const inertPhpNetteFrameworkTargets: PhpFrameworkTargets = {
   findStorageDiskTarget: async () => null,
   invalidateTargetCache: () => {},
 };
-
-export async function findPhpNetteAjaxSnippetTarget(
-  currentPath: string,
-  snippetName: string,
-  deps: PhpNetteAjaxSnippetTargetFinderDeps,
-): Promise<PhpFrameworkNetteAjaxSnippetTarget | null> {
-  const requestedRoot = deps.workspaceRoot;
-
-  if (
-    !requestedRoot ||
-    !workspaceRootKeysEqual(deps.currentWorkspaceRootRef.current, requestedRoot)
-  ) {
-    return null;
-  }
-
-  const currentRelativePath = deps.relativeWorkspacePath(
-    requestedRoot,
-    currentPath,
-  );
-  const candidatePaths =
-    componentTemplateCandidatePathsForClass(currentRelativePath);
-
-  for (const relativePath of candidatePaths) {
-    if (
-      !workspaceRootKeysEqual(
-        deps.currentWorkspaceRootRef.current,
-        requestedRoot,
-      )
-    ) {
-      return null;
-    }
-
-    const path = deps.joinWorkspacePath(requestedRoot, relativePath);
-    let content: string;
-
-    try {
-      content = await deps.readNavigationFileContent(path);
-    } catch {
-      if (
-        !workspaceRootKeysEqual(
-          deps.currentWorkspaceRootRef.current,
-          requestedRoot,
-        )
-      ) {
-        return null;
-      }
-
-      continue;
-    }
-
-    if (
-      !workspaceRootKeysEqual(
-        deps.currentWorkspaceRootRef.current,
-        requestedRoot,
-      )
-    ) {
-      return null;
-    }
-
-    const reference = findNetteLatteSnippetReference(content, snippetName);
-
-    if (!reference) {
-      continue;
-    }
-
-    return {
-      name: reference.name,
-      path,
-      position: editorPositionAtOffset(content, reference.nameStart),
-      relativePath,
-    };
-  }
-
-  return null;
-}
-
-function editorPositionAtOffset(source: string, offset: number): EditorPosition {
-  const before = source.slice(0, Math.max(0, offset));
-  const lines = before.split("\n");
-
-  return {
-    column: (lines[lines.length - 1]?.length ?? 0) + 1,
-    lineNumber: lines.length,
-  };
-}
 
 function usePhpNetteTargetCache(
   currentWorkspaceRootRef: MutableRefObject<string | null>,
@@ -699,18 +601,6 @@ function usePhpNetteFrameworkTargetAdapter(
   return {
     ...inertPhpNetteFrameworkTargets,
     collectTranslationTargets: translationTargetResolver.collect,
-    findNetteAjaxSnippetTarget: async (
-      _currentSource,
-      currentPath,
-      snippetName,
-    ) =>
-      findPhpNetteAjaxSnippetTarget(currentPath, snippetName, {
-        currentWorkspaceRootRef,
-        workspaceRoot,
-        readNavigationFileContent,
-        relativeWorkspacePath,
-        joinWorkspacePath,
-      }),
     findTranslationTarget: translationTargetResolver.find,
     invalidateTargetCache: targetCache.invalidate,
   };

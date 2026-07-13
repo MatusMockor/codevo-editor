@@ -142,6 +142,7 @@ describe("usePhpFrameworkTargets", () => {
 
     expect(expected.length).toBeGreaterThan(0);
     expect(targets).toEqual(expected);
+    expect("findNetteAjaxSnippetTarget" in harness.hook()).toBe(false);
     expect(harness.searchText).toHaveBeenCalledWith(ROOT, "->name(", 200);
 
     harness.unmount();
@@ -175,6 +176,7 @@ describe("usePhpFrameworkTargets", () => {
     expect(await harness.hook().findViewTarget("comments.show")).toBeNull();
     expect(await harness.hook().findConfigTarget("app.name")).toBeNull();
     expect(await harness.hook().findTranslationTarget("messages.welcome")).toBeNull();
+    expect("findNetteAjaxSnippetTarget" in harness.hook()).toBe(false);
     expect(harness.searchText).not.toHaveBeenCalled();
     expect(harness.readFileContent).not.toHaveBeenCalled();
     expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
