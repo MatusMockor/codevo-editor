@@ -7,23 +7,22 @@ import {
   type PhpFrameworkSourceRegistryAdapter,
 } from "./phpFrameworkSourceRegistryAdapters";
 import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
-import {
-  useLaravelSourceRegistries,
-  type UseLaravelSourceRegistriesDependencies,
-} from "./useLaravelSourceRegistries";
+import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
+import type { WorkspaceFileGateway } from "../domain/workspace";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import type { MutableRefObject } from "react";
 
 export interface PhpFrameworkSourceRegistryContext {
   signature: string;
   workspaceSources: readonly string[];
 }
 
-export type UsePhpFrameworkSourceRegistriesDependencies = Omit<
-  UseLaravelSourceRegistriesDependencies,
-  "isLaravelFrameworkActive"
-> & {
+export interface UsePhpFrameworkSourceRegistriesDependencies {
+  currentWorkspaceRootRef: MutableRefObject<string | null>;
   frameworkRuntime?: PhpFrameworkRuntimeContext;
-};
+  onSourcesLoaded(rootPath: string): void;
+  workspaceFiles: Pick<WorkspaceFileGateway, "readDirectory" | "readTextFile">;
+}
 
 export interface PhpFrameworkSourceRegistryProvider {
   currentPhpFrameworkSourceContextForRoot(
@@ -41,9 +40,9 @@ export interface PhpFrameworkSourceRegistries {
   resetPhpFrameworkSourceRegistries(): void;
 }
 
-function usePhpLaravelFrameworkSourceRegistryAdapter(
+function usePhpFrameworkSourceRegistryAdapters(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
-): PhpFrameworkSourceRegistryAdapter {
+): readonly PhpFrameworkSourceRegistryAdapter[] {
   const frameworkRuntime =
     phpFrameworkRuntimeContextFromDependencies(dependencies);
   const laravelSources = useLaravelSourceRegistries({
@@ -53,7 +52,7 @@ function usePhpLaravelFrameworkSourceRegistryAdapter(
     ),
   });
 
-  return phpLaravelFrameworkSourceRegistryAdapter(laravelSources);
+  return [phpLaravelFrameworkSourceRegistryAdapter(laravelSources)];
 }
 
 export function usePhpFrameworkSourceRegistries(
@@ -62,9 +61,8 @@ export function usePhpFrameworkSourceRegistries(
   const { currentWorkspaceRootRef } = dependencies;
   const frameworkRuntime =
     phpFrameworkRuntimeContextFromDependencies(dependencies);
-  const laravelSourceRegistryAdapter =
-    usePhpLaravelFrameworkSourceRegistryAdapter(dependencies);
-  const sourceRegistryAdapters = [laravelSourceRegistryAdapter];
+  const sourceRegistryAdapters =
+    usePhpFrameworkSourceRegistryAdapters(dependencies);
   const sourceRegistryProviders = sourceRegistryAdapters.map((adapter) =>
     adapter.provider,
   );
