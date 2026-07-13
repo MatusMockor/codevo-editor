@@ -7,6 +7,10 @@ import {
 import {
   createPhpLaravelDiagnosticContextStrategyAdapter,
 } from "./phpLaravelDiagnosticContextStrategyAdapter";
+import {
+  activePhpFrameworkSemanticAdapter,
+  type PhpFrameworkSemanticAdapterContribution,
+} from "./phpFrameworkSemanticAdapterRegistry";
 
 export interface PhpFrameworkDiagnosticContextStrategyAdapterDependencies {
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
@@ -26,26 +30,6 @@ export interface PhpFrameworkDiagnosticContextStrategyAdapterDependencies {
   ): Promise<string | null>;
 }
 
-export interface PhpFrameworkDiagnosticContextStrategyContribution {
-  readonly providerId: string;
-  create(): PhpDiagnosticContextStrategy;
-}
-
-export function activePhpFrameworkDiagnosticContextStrategy(
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">,
-  contributions: readonly PhpFrameworkDiagnosticContextStrategyContribution[],
-): PhpDiagnosticContextStrategy {
-  const contribution = contributions.find(({ providerId }) =>
-    frameworkRuntime.hasProvider(providerId),
-  );
-
-  if (!contribution) {
-    return genericPhpDiagnosticContextStrategy;
-  }
-
-  return contribution.create();
-}
-
 export function createPhpFrameworkDiagnosticContextStrategyAdapters({
   ensurePhpFrameworkSourceCollectionsLoaded,
   frameworkRuntime,
@@ -53,11 +37,11 @@ export function createPhpFrameworkDiagnosticContextStrategyAdapters({
   phpClassHasNamedBuilderScope,
   resolvePhpFrameworkBuilderModelType,
 }: PhpFrameworkDiagnosticContextStrategyAdapterDependencies): PhpDiagnosticContextStrategy {
-  const contributions: readonly PhpFrameworkDiagnosticContextStrategyContribution[] =
+  const contributions: readonly PhpFrameworkSemanticAdapterContribution<PhpDiagnosticContextStrategy>[] =
     [
       {
         providerId: "laravel",
-        create: () =>
+        createAdapter: () =>
           createPhpLaravelDiagnosticContextStrategyAdapter({
             ensurePhpFrameworkSourceCollectionsLoaded,
             phpClassHasLaravelDynamicWhere: phpClassHasDynamicBuilderFinder,
@@ -68,8 +52,9 @@ export function createPhpFrameworkDiagnosticContextStrategyAdapters({
       },
     ];
 
-  return activePhpFrameworkDiagnosticContextStrategy(
+  return activePhpFrameworkSemanticAdapter(
     frameworkRuntime,
     contributions,
+    genericPhpDiagnosticContextStrategy,
   );
 }
