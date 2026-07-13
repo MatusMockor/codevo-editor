@@ -1,4 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { detectNetteRedrawControlAt } from "../domain/netteAjaxSnippets";
 import {
   isPhpFrameworkProviderActive,
   phpFrameworkConfigLiteralTarget,
@@ -24,6 +25,7 @@ export interface PhpFrameworkLiteralNavigationTarget {
     | "config"
     | "env"
     | "inertia"
+    | "nette.ajax-snippet"
     | "route"
     | "translation"
     | "validationTable"
@@ -52,6 +54,11 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
   findInertiaComponentTarget?: (
     componentName: string,
+  ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
+  findNetteAjaxSnippetTarget?: (
+    currentSource: string,
+    currentPath: string,
+    snippetName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
   findValidationRuleModelTargets?: (
     tableName: string,
@@ -423,6 +430,43 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
     },
   ];
 
+const NETTE_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefinitionResolverEntry[] =
+  [
+    TRANSLATION_LITERAL_DEFINITION_RESOLVER,
+    {
+      id: "nette.ajax-snippet",
+      resolveDirect: async (
+        { activeDocument, offset, source },
+        dependencies,
+      ) => {
+        const redrawControl = detectNetteRedrawControlAt(source, offset);
+
+        if (!redrawControl) {
+          return undefined;
+        }
+
+        if (!activeDocument) {
+          return null;
+        }
+
+        const target = await dependencies.findNetteAjaxSnippetTarget?.(
+          activeDocument.content,
+          activeDocument.path,
+          redrawControl.name,
+        );
+
+        return target
+          ? {
+              kind: "nette.ajax-snippet",
+              label: target.name,
+              path: target.path,
+              position: target.position,
+            }
+          : null;
+      },
+    },
+  ];
+
 const PHP_FRAMEWORK_LITERAL_DEFINITION_RESOLVER_CONTRIBUTIONS: readonly PhpFrameworkLiteralDefinitionResolverContribution[] =
   [
     {
@@ -430,7 +474,7 @@ const PHP_FRAMEWORK_LITERAL_DEFINITION_RESOLVER_CONTRIBUTIONS: readonly PhpFrame
       providerId: "laravel",
     },
     {
-      entries: [TRANSLATION_LITERAL_DEFINITION_RESOLVER],
+      entries: NETTE_LITERAL_DEFINITION_RESOLVERS,
       providerId: "nette",
     },
   ];

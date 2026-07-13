@@ -39,6 +39,7 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.providerSignature).toBe("nette");
     expect(intelligence.capabilities.providerSignature).toBe("nette");
     expect(intelligence.capabilities.supports("routes")).toBe(false);
+    expect(intelligence.capabilities.supports("stringLiterals")).toBe(true);
     expect(intelligence.capabilities.supports("latteTemplateIntelligence")).toBe(
       true,
     );

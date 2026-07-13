@@ -47,10 +47,49 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
       activePhpFrameworkLiteralDefinitionResolverEntries([
         phpNetteFrameworkProvider,
       ]).map((resolver) => resolver.id),
-    ).toEqual(["framework.translation"]);
+    ).toEqual(["framework.translation", "nette.ajax-snippet"]);
     expect(
       activePhpFrameworkLiteralDefinitionResolverEntries([{ id: "custom" }]),
     ).toEqual([]);
+  });
+
+  it("resolves a Nette redrawControl literal to a colocated Latte snippet", async () => {
+    const source = "<?php\n$this->redrawControl('mailLogslisting');";
+    const deps = dependencies({
+      findNetteAjaxSnippetTarget: vi.fn(async () => ({
+        name: "mailLogslisting",
+        path: "/workspace/app/Components/MailLogs/mail_logs.latte",
+        position: targetPosition,
+      })),
+    });
+
+    await expect(
+      resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: {
+            content: source,
+            path: "/workspace/app/Components/MailLogs/MailLogs.php",
+          },
+          offset: source.indexOf("Logs"),
+          position: positionAfter(source, "Logs"),
+          providers: [phpNetteFrameworkProvider],
+          source,
+          supportsStringLiterals: true,
+        },
+        deps,
+      ),
+    ).resolves.toEqual({
+      kind: "nette.ajax-snippet",
+      label: "mailLogslisting",
+      path: "/workspace/app/Components/MailLogs/mail_logs.latte",
+      position: targetPosition,
+    });
+    expect(deps.findNetteAjaxSnippetTarget).toHaveBeenCalledWith(
+      source,
+      "/workspace/app/Components/MailLogs/MailLogs.php",
+      "mailLogslisting",
+    );
+    expect(deps.findTranslationTarget).not.toHaveBeenCalled();
   });
 
   it("stops at a matched view reference before generic helper resolution", async () => {

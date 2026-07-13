@@ -17,7 +17,11 @@ import type {
   NeonIntelligenceDependencies,
 } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import { createPhpNetteTranslationTargetResolver } from "./phpNetteFrameworkTargetAdapter";
+import {
+  createPhpNetteTranslationTargetResolver,
+  findPhpNetteAjaxSnippetTarget,
+} from "./phpNetteFrameworkTargetAdapter";
+import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 
 const EBOX_CRM_ROOT =
   "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm";
@@ -294,6 +298,54 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
       positionAtOffset(component, component.indexOf("mailLogslisting")),
       "mailLogslisting",
     );
+  });
+
+  it("covers Nette AJAX snippet navigation from redrawControl to colocated Latte over real component files", async () => {
+    const templatePath =
+      "app/modules/mailerModule/Components/MailLogs/mail_logs.latte";
+    const componentPath =
+      "app/modules/mailerModule/Components/MailLogs/MailLogs.php";
+    const template = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
+    const component = await readFileContent(joinPath(EBOX_CRM_ROOT, componentPath));
+
+    await expect(
+      resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: {
+            content: component,
+            path: joinPath(EBOX_CRM_ROOT, componentPath),
+          },
+          offset: offsetInside(component, "mailLogslisting"),
+          position: positionAtOffset(
+            component,
+            component.indexOf("mailLogslisting"),
+          ),
+          providers: [phpNetteFrameworkProvider],
+          source: component,
+          supportsStringLiterals: true,
+        },
+        {
+          collectNamedRouteTargets: vi.fn(async () => []),
+          findConfigTarget: vi.fn(async () => null),
+          findEnvTarget: vi.fn(async () => null),
+          findNetteAjaxSnippetTarget: (_currentSource, currentPath, snippetName) =>
+            findPhpNetteAjaxSnippetTarget(currentPath, snippetName, {
+              currentWorkspaceRootRef: { current: EBOX_CRM_ROOT },
+              workspaceRoot: EBOX_CRM_ROOT,
+              readNavigationFileContent: readFileContent,
+              relativeWorkspacePath: toRelativePath,
+              joinWorkspacePath: joinPath,
+            }),
+          findTranslationTarget: vi.fn(async () => null),
+          findViewTarget: vi.fn(async () => null),
+        },
+      ),
+    ).resolves.toEqual({
+      kind: "nette.ajax-snippet",
+      label: "mailLogslisting",
+      path: joinPath(EBOX_CRM_ROOT, templatePath),
+      position: positionAtOffset(template, template.indexOf("mailLogslisting")),
+    });
   });
 
   it("covers ebox Template::add() view-data feeding Latte variable and member completion", async () => {

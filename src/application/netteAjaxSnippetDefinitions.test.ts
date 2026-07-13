@@ -3,6 +3,7 @@ import type {
   NetteLatteSnippetReference,
 } from "../domain/netteAjaxSnippets";
 import {
+  resolveNetteRedrawControlSnippetDefinition,
   resolveNetteAjaxSnippetDefinition,
   type NetteAjaxSnippetDefinitionDependencies,
 } from "./netteAjaxSnippetDefinitions";
@@ -113,6 +114,67 @@ class MailLogs
           requestedRoot: ROOT,
         },
         reference("mailLogslisting"),
+      ),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveNetteRedrawControlSnippetDefinition", () => {
+  it("opens a matching colocated Latte snippet from a redrawControl call", async () => {
+    const template = `<div>
+    {snippet mailLogslisting}
+    {/snippet}
+</div>
+`;
+    const openTarget = vi.fn(async () => true);
+
+    await expect(
+      resolveNetteRedrawControlSnippetDefinition(
+        {
+          currentPhpRelativePath:
+            "app/modules/mailerModule/Components/MailLogs/MailLogs.php",
+          deps: deps(
+            {
+              [`${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`]:
+                template,
+            },
+            openTarget,
+          ),
+          isRequestedRootActive: () => true,
+          requestedRoot: ROOT,
+        },
+        {
+          name: "mailLogslisting",
+          nameEnd: "mailLogslisting".length,
+          nameStart: 0,
+        },
+      ),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`,
+      { column: 14, lineNumber: 2 },
+      "mailLogslisting",
+    );
+  });
+
+  it("returns false when the PHP path is not a colocated component class", async () => {
+    const openTarget = vi.fn(async () => true);
+
+    await expect(
+      resolveNetteRedrawControlSnippetDefinition(
+        {
+          currentPhpRelativePath:
+            "app/modules/mailerModule/presenters/MailPresenter.php",
+          deps: deps({}, openTarget),
+          isRequestedRootActive: () => true,
+          requestedRoot: ROOT,
+        },
+        {
+          name: "mailLogslisting",
+          nameEnd: "mailLogslisting".length,
+          nameStart: 0,
+        },
       ),
     ).resolves.toBe(false);
     expect(openTarget).not.toHaveBeenCalled();

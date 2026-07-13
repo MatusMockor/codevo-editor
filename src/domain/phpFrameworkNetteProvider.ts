@@ -169,6 +169,7 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
     targetFromSource: ({ fileName, key, source }) =>
       netteTranslationTargetFromSource(source, fileName, key),
   },
+  stringLiterals: {},
   latte: {
     supportsPresenterLinkIntelligence: true,
     supportsTemplateIntelligence: true,

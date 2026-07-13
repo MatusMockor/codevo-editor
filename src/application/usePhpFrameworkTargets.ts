@@ -59,6 +59,13 @@ export interface PhpFrameworkTranslationTarget {
   relativePath: string;
 }
 
+export interface PhpFrameworkNetteAjaxSnippetTarget {
+  name: string;
+  path: string;
+  position: EditorPosition;
+  relativePath: string;
+}
+
 export type PhpFrameworkConfigDerivedTarget<Property extends string> =
   PhpFrameworkConfigTarget & Record<Property, string>;
 
@@ -150,6 +157,11 @@ export interface PhpFrameworkTargets {
   findViewTarget: PhpFrameworkTargetFinder<PhpFrameworkViewNavigationTarget>;
   findConfigTarget: PhpFrameworkTargetFinder<PhpFrameworkConfigTarget>;
   findTranslationTarget: PhpFrameworkTargetFinder<PhpFrameworkTranslationTarget>;
+  findNetteAjaxSnippetTarget: (
+    currentSource: string,
+    currentPath: string,
+    snippetName: string,
+  ) => Promise<PhpFrameworkNetteAjaxSnippetTarget | null>;
   findAuthGuardTarget: PhpFrameworkTargetFinder<PhpFrameworkAuthGuardTarget>;
   findCacheStoreTarget: PhpFrameworkTargetFinder<PhpFrameworkCacheStoreTarget>;
   findDatabaseConnectionTarget: PhpFrameworkTargetFinder<
@@ -193,6 +205,7 @@ const inertPhpFrameworkTargets: PhpFrameworkTargets = {
   findViewTarget: async () => null,
   findConfigTarget: async () => null,
   findTranslationTarget: async () => null,
+  findNetteAjaxSnippetTarget: async () => null,
   findAuthGuardTarget: async () => null,
   findCacheStoreTarget: async () => null,
   findDatabaseConnectionTarget: async () => null,

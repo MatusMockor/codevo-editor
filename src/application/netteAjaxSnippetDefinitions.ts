@@ -1,8 +1,11 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
+  findNetteLatteSnippetReference,
   findNetteRedrawControlCall,
   type NetteLatteSnippetReference,
+  type NetteRedrawControlCall,
 } from "../domain/netteAjaxSnippets";
+import { componentTemplateCandidatePathsForClass } from "../domain/nettePathResolution";
 import {
   componentOwnerCandidatePathsForTemplate,
 } from "./netteTemplateOwnerCandidates";
@@ -19,6 +22,13 @@ export interface NetteAjaxSnippetDefinitionDependencies {
 
 export interface NetteAjaxSnippetDefinitionContext {
   currentTemplateRelativePath: string;
+  deps: NetteAjaxSnippetDefinitionDependencies;
+  isRequestedRootActive(): boolean;
+  requestedRoot: string;
+}
+
+export interface NetteRedrawControlSnippetDefinitionContext {
+  currentPhpRelativePath: string;
   deps: NetteAjaxSnippetDefinitionDependencies;
   isRequestedRootActive(): boolean;
   requestedRoot: string;
@@ -73,6 +83,61 @@ export async function resolveNetteAjaxSnippetDefinition(
     return deps.openTarget(
       path,
       editorPositionAtOffset(content, call.nameStart),
+      reference.name,
+    );
+  }
+
+  return false;
+}
+
+export async function resolveNetteRedrawControlSnippetDefinition(
+  context: NetteRedrawControlSnippetDefinitionContext,
+  reference: NetteRedrawControlCall | null,
+): Promise<boolean> {
+  if (!reference) {
+    return false;
+  }
+
+  const {
+    currentPhpRelativePath,
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+  } = context;
+  const candidatePaths =
+    componentTemplateCandidatePathsForClass(currentPhpRelativePath);
+
+  for (const relativePath of candidatePaths) {
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const path = deps.joinPath(requestedRoot, relativePath);
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+
+    const snippet = findNetteLatteSnippetReference(content, reference.name);
+
+    if (!snippet) {
+      continue;
+    }
+
+    return deps.openTarget(
+      path,
+      editorPositionAtOffset(content, snippet.nameStart),
       reference.name,
     );
   }

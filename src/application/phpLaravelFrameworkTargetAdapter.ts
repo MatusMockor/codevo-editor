@@ -42,6 +42,7 @@ function phpFrameworkTargetsFromLaravelTargets(
     findViewTarget: laravelTargets.findPhpLaravelViewTarget,
     findConfigTarget: laravelTargets.findPhpLaravelConfigTarget,
     findTranslationTarget: laravelTargets.findPhpLaravelTranslationTarget,
+    findNetteAjaxSnippetTarget: async () => null,
     findAuthGuardTarget: laravelTargets.findPhpLaravelAuthGuardTarget,
     findCacheStoreTarget: laravelTargets.findPhpLaravelCacheStoreTarget,
     findDatabaseConnectionTarget:

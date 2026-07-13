@@ -2837,11 +2837,11 @@ class EventServiceProvider
       ).toBe(true);
       expect(
         phpFrameworkSupportsStringLiterals([phpNetteFrameworkProvider]),
-      ).toBe(false);
+      ).toBe(true);
       expect(phpFrameworkSupportsStringLiterals([])).toBe(false);
     });
 
-    it("stays a safe no-op for providers without the stringLiterals capability", () => {
+    it("stays a safe no-op for providers without Laravel helper hooks", () => {
       expect(
         phpFrameworkStringLiteralHelperAt(helperSource, helperOffset, [
           phpNetteFrameworkProvider,

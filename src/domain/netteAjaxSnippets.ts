@@ -53,6 +53,21 @@ export function findNetteRedrawControlCalls(
   return calls;
 }
 
+export function detectNetteRedrawControlAt(
+  source: string,
+  offset: number,
+): NetteRedrawControlCall | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  return (
+    findNetteRedrawControlCalls(source).find(
+      (call) => offset >= call.nameStart && offset <= call.nameEnd,
+    ) ?? null
+  );
+}
+
 export function findNetteRedrawControlCall(
   source: string,
   snippetName: string,
@@ -61,6 +76,69 @@ export function findNetteRedrawControlCall(
     findNetteRedrawControlCalls(source).find((call) => call.name === snippetName) ??
     null
   );
+}
+
+export function findNetteLatteSnippetReference(
+  source: string,
+  snippetName: string,
+): NetteLatteSnippetReference | null {
+  if (!SNIPPET_NAME_PATTERN.test(snippetName)) {
+    return null;
+  }
+
+  const tagPattern =
+    /\{\s*snippet\s+([A-Za-z_][A-Za-z0-9_-]*)\s*\}/g;
+  let tagMatch: RegExpExecArray | null;
+
+  while ((tagMatch = tagPattern.exec(source)) !== null) {
+    const name = tagMatch[1] ?? "";
+
+    if (name !== snippetName) {
+      continue;
+    }
+
+    const nameStart = tagMatch.index + tagMatch[0].indexOf(name);
+
+    if (isInsideLatteMask(source, nameStart)) {
+      continue;
+    }
+
+    return {
+      kind: "tag",
+      name,
+      nameEnd: nameStart + name.length,
+      nameStart,
+    };
+  }
+
+  const attributePattern =
+    /\bn:snippet\s*=\s*(["'])([A-Za-z_][A-Za-z0-9_-]*)\1/g;
+  let attributeMatch: RegExpExecArray | null;
+
+  while ((attributeMatch = attributePattern.exec(source)) !== null) {
+    const quote = attributeMatch[1] ?? "";
+    const name = attributeMatch[2] ?? "";
+
+    if (name !== snippetName) {
+      continue;
+    }
+
+    const nameStart =
+      attributeMatch.index + attributeMatch[0].lastIndexOf(`${quote}${name}`) + 1;
+
+    if (isInsideLatteMask(source, nameStart)) {
+      continue;
+    }
+
+    return {
+      kind: "attribute",
+      name,
+      nameEnd: nameStart + name.length,
+      nameStart,
+    };
+  }
+
+  return null;
 }
 
 function detectLatteSnippetTagAt(

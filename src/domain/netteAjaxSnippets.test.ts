@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectNetteRedrawControlAt,
   detectNetteLatteSnippetAt,
+  findNetteLatteSnippetReference,
   findNetteRedrawControlCall,
   findNetteRedrawControlCalls,
 } from "./netteAjaxSnippets";
@@ -62,5 +64,48 @@ $this->redrawControl("sidebar");
     expect(
       findNetteRedrawControlCalls("<?php $this->redrawControl($name);"),
     ).toEqual([]);
+  });
+});
+
+describe("detectNetteRedrawControlAt", () => {
+  it("detects a static redrawControl string at the cursor", () => {
+    const source = "<?php $this->redrawControl('mailLogslisting');";
+
+    expect(detectNetteRedrawControlAt(source, source.indexOf("Logs"))).toEqual({
+      name: "mailLogslisting",
+      nameEnd: source.indexOf("mailLogslisting") + "mailLogslisting".length,
+      nameStart: source.indexOf("mailLogslisting"),
+    });
+  });
+
+  it("ignores dynamic redrawControl arguments", () => {
+    const source = "<?php $this->redrawControl($name);";
+
+    expect(detectNetteRedrawControlAt(source, source.indexOf("name"))).toBeNull();
+  });
+});
+
+describe("findNetteLatteSnippetReference", () => {
+  it("finds a matching colocated static Latte snippet", () => {
+    const source = `<div n:snippet="sidebar"></div>
+{snippet mailLogslisting}
+{/snippet}
+`;
+
+    expect(findNetteLatteSnippetReference(source, "mailLogslisting")).toEqual({
+      kind: "tag",
+      name: "mailLogslisting",
+      nameEnd: source.indexOf("mailLogslisting") + "mailLogslisting".length,
+      nameStart: source.indexOf("mailLogslisting"),
+    });
+  });
+
+  it("ignores dynamic and commented snippets", () => {
+    expect(
+      findNetteLatteSnippetReference(
+        "{* {snippet mailLogslisting} *}\n{snippet $name}",
+        "mailLogslisting",
+      ),
+    ).toBeNull();
   });
 });
