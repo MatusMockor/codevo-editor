@@ -111,7 +111,7 @@ export function usePhpClassMemberCollectors({
       createPhpFrameworkClassMemberCollectionProviderAdapters({
         frameworkRuntime,
         isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
-        resolvePhpDeclaredType,
+        resolvePhpFrameworkDeclaredType: resolvePhpDeclaredType,
       }),
     [frameworkRuntime, legacyIsLaravelFrameworkActive, resolvePhpDeclaredType],
   );

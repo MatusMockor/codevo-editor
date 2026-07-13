@@ -5,19 +5,21 @@ import {
 } from "./phpFrameworkClassMemberCollectionProviderAdapter";
 import {
   createPhpLaravelClassMemberCollectionProviderAdapter,
-  type PhpLaravelClassMemberCollectionProviderAdapterDependencies,
 } from "./phpLaravelClassMemberCollectionProviderAdapter";
 
-export interface PhpFrameworkClassMemberCollectionProviderAdapterDependencies
-  extends PhpLaravelClassMemberCollectionProviderAdapterDependencies {
+export interface PhpFrameworkClassMemberCollectionProviderAdapterDependencies {
   frameworkRuntime?: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
   isLaravelFrameworkActive?: boolean;
+  resolvePhpFrameworkDeclaredType(
+    source: string,
+    typeName: string | null,
+  ): string | null;
 }
 
 export function createPhpFrameworkClassMemberCollectionProviderAdapters({
   frameworkRuntime,
   isLaravelFrameworkActive = false,
-  ...laravelDependencies
+  resolvePhpFrameworkDeclaredType,
 }: PhpFrameworkClassMemberCollectionProviderAdapterDependencies): PhpFrameworkClassMemberCollectionProviderAdapter {
   if (frameworkRuntime && !frameworkRuntime.hasProvider("laravel")) {
     return genericPhpFrameworkClassMemberCollectionProviderAdapter;
@@ -27,7 +29,7 @@ export function createPhpFrameworkClassMemberCollectionProviderAdapters({
     return genericPhpFrameworkClassMemberCollectionProviderAdapter;
   }
 
-  return createPhpLaravelClassMemberCollectionProviderAdapter(
-    laravelDependencies,
-  );
+  return createPhpLaravelClassMemberCollectionProviderAdapter({
+    resolvePhpDeclaredType: resolvePhpFrameworkDeclaredType,
+  });
 }

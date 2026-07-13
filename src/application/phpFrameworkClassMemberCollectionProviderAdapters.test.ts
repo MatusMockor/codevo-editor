@@ -8,11 +8,11 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
     const frameworkRuntime = {
       hasProvider: vi.fn(() => false),
     };
-    const resolvePhpDeclaredType = vi.fn(() => "App\\Models\\Post");
+    const resolvePhpFrameworkDeclaredType = vi.fn(() => "App\\Models\\Post");
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
       frameworkRuntime,
       isLaravelFrameworkActive: true,
-      resolvePhpDeclaredType,
+      resolvePhpFrameworkDeclaredType,
     });
 
     expect(adapter.canCollectSyntheticMembers).toBe(false);
@@ -30,7 +30,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
       }),
     ).toEqual([]);
     expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
-    expect(resolvePhpDeclaredType).not.toHaveBeenCalled();
+    expect(resolvePhpFrameworkDeclaredType).not.toHaveBeenCalled();
   });
 
   it("selects Laravel by provider id even when the legacy flag is false", () => {
@@ -40,7 +40,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
       frameworkRuntime,
       isLaravelFrameworkActive: false,
-      resolvePhpDeclaredType: vi.fn(() => null),
+      resolvePhpFrameworkDeclaredType: vi.fn(() => null),
     });
 
     expect(adapter.canCollectSyntheticMembers).toBe(true);
@@ -50,7 +50,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
   it("preserves the legacy Laravel fallback without an explicit runtime", () => {
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
       isLaravelFrameworkActive: true,
-      resolvePhpDeclaredType: vi.fn(() => null),
+      resolvePhpFrameworkDeclaredType: vi.fn(() => null),
     });
 
     expect(adapter.canCollectSyntheticMembers).toBe(true);
@@ -58,7 +58,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
 
   it("uses the generic adapter without runtime or legacy Laravel state", () => {
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
-      resolvePhpDeclaredType: vi.fn(() => null),
+      resolvePhpFrameworkDeclaredType: vi.fn(() => null),
     });
 
     expect(adapter.canCollectSyntheticMembers).toBe(false);
