@@ -46,10 +46,10 @@ function makeDeps(
 ): BladeDefinitionProviderDependencies {
   return {
     activeDocument: { content: "", path: BLADE_PATH },
-    collectPhpLaravelNamedRouteTargets: vi.fn(async () => []),
+    collectNamedRouteTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
-    findPhpLaravelConfigTarget: vi.fn(async () => null),
-    findPhpLaravelTranslationTarget: vi.fn(async () => null),
+    findConfigTarget: vi.fn(async () => null),
+    findTranslationTarget: vi.fn(async () => null),
     findViewTarget: vi.fn(async () => null),
     frameworkRuntime: LARAVEL_RUNTIME,
     openDirectPhpMethodTarget: vi.fn(async () => false),
@@ -302,7 +302,7 @@ describe("provideBladeDefinition", () => {
   });
 
   it("gates Laravel helper navigation behind the active framework", async () => {
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => []);
+    const collectNamedRouteTargets = vi.fn(async () => []);
     const source = "{{ route('dashboard') }}";
 
     await expect(
@@ -310,12 +310,12 @@ describe("provideBladeDefinition", () => {
         source,
         offsetOf(source, "dashboard"),
         makeDeps({
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
           frameworkRuntime: GENERIC_RUNTIME,
         }),
       ),
     ).resolves.toBe(false);
-    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+    expect(collectNamedRouteTargets).not.toHaveBeenCalled();
   });
 
   it("does not ask provider helper scanners when string literals are unsupported", async () => {
@@ -329,7 +329,7 @@ describe("provideBladeDefinition", () => {
       id: "custom",
       stringLiterals: { helperAt },
     };
-    const findPhpLaravelConfigTarget = vi.fn(async () => ({
+    const findConfigTarget = vi.fn(async () => ({
       key: "app.name",
       path: `${ROOT}/config/app.php`,
       position: position(7, 10),
@@ -342,7 +342,7 @@ describe("provideBladeDefinition", () => {
         source,
         offsetOf(source, "app.name"),
         makeDeps({
-          findPhpLaravelConfigTarget,
+          findConfigTarget,
           frameworkRuntime: {
             ...GENERIC_RUNTIME,
             providers: [provider],
@@ -355,7 +355,7 @@ describe("provideBladeDefinition", () => {
       ),
     ).resolves.toBe(false);
     expect(helperAt).not.toHaveBeenCalled();
-    expect(findPhpLaravelConfigTarget).not.toHaveBeenCalled();
+    expect(findConfigTarget).not.toHaveBeenCalled();
   });
 
   it("requires provider literal target admission before calling target finders", async () => {
@@ -370,7 +370,7 @@ describe("provideBladeDefinition", () => {
         }) as const),
       },
     };
-    const findPhpLaravelConfigTarget = vi.fn(async () => ({
+    const findConfigTarget = vi.fn(async () => ({
       key: "app.name",
       path: `${ROOT}/config/app.php`,
       position: position(7, 10),
@@ -383,7 +383,7 @@ describe("provideBladeDefinition", () => {
         source,
         offsetOf(source, "app.name"),
         makeDeps({
-          findPhpLaravelConfigTarget,
+          findConfigTarget,
           frameworkRuntime: createPhpFrameworkRuntimeContext(
             createPhpFrameworkIntelligence({
               matchedProviderIds: ["custom"],
@@ -395,7 +395,7 @@ describe("provideBladeDefinition", () => {
       ),
     ).resolves.toBe(false);
     expect(provider.stringLiterals?.helperAt).toHaveBeenCalled();
-    expect(findPhpLaravelConfigTarget).not.toHaveBeenCalled();
+    expect(findConfigTarget).not.toHaveBeenCalled();
   });
 
   it("does not collect Laravel route definitions for a custom string-literal provider", async () => {
@@ -409,7 +409,7 @@ describe("provideBladeDefinition", () => {
       id: "custom",
       stringLiterals: { helperAt },
     };
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+    const collectNamedRouteTargets = vi.fn(async () => [
       {
         name: "dashboard",
         path: `${ROOT}/routes/web.php`,
@@ -424,7 +424,7 @@ describe("provideBladeDefinition", () => {
         source,
         offsetOf(source, "dashboard"),
         makeDeps({
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
           frameworkRuntime: createPhpFrameworkRuntimeContext(
             createPhpFrameworkIntelligence({
               matchedProviderIds: ["custom"],
@@ -436,7 +436,7 @@ describe("provideBladeDefinition", () => {
       ),
     ).resolves.toBe(false);
     expect(helperAt).toHaveBeenCalled();
-    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+    expect(collectNamedRouteTargets).not.toHaveBeenCalled();
   });
 
   it("navigates framework view helper literals through view targets", async () => {
@@ -494,7 +494,7 @@ describe("provideBladeDefinition", () => {
 
   it("navigates route helper literals using the active document", async () => {
     const openNavigationTarget = vi.fn(async () => true);
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+    const collectNamedRouteTargets = vi.fn(async () => [
       {
         name: "Comments.Show",
         path: `${ROOT}/routes/web.php`,
@@ -510,12 +510,12 @@ describe("provideBladeDefinition", () => {
         offsetOf(activeDocument.content, "comments.show"),
         makeDeps({
           activeDocument,
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
           openNavigationTarget,
         }),
       ),
     ).resolves.toBe(true);
-    expect(collectPhpLaravelNamedRouteTargets).toHaveBeenCalledWith(
+    expect(collectNamedRouteTargets).toHaveBeenCalledWith(
       activeDocument.content,
       activeDocument.path,
     );
@@ -527,7 +527,7 @@ describe("provideBladeDefinition", () => {
   });
 
   it("returns false for route helper literals when no active document exists", async () => {
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => []);
+    const collectNamedRouteTargets = vi.fn(async () => []);
     const source = "{{ route('comments.show') }}";
 
     await expect(
@@ -536,30 +536,30 @@ describe("provideBladeDefinition", () => {
         offsetOf(source, "comments.show"),
         makeDeps({
           activeDocument: null,
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
         }),
       ),
     ).resolves.toBe(false);
-    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+    expect(collectNamedRouteTargets).not.toHaveBeenCalled();
   });
 
   it("navigates config and translation helper literals through Laravel targets", async () => {
     const openNavigationTarget = vi.fn(async () => true);
-    const findPhpLaravelConfigTarget = vi.fn(async () => ({
+    const findConfigTarget = vi.fn(async () => ({
       key: "app.name",
       path: `${ROOT}/config/app.php`,
       position: position(7, 10),
       relativePath: "config/app.php",
     }));
-    const findPhpLaravelTranslationTarget = vi.fn(async () => ({
+    const findTranslationTarget = vi.fn(async () => ({
       key: "messages.welcome",
       path: `${ROOT}/lang/en/messages.php`,
       position: position(2, 5),
       relativePath: "lang/en/messages.php",
     }));
     const deps = makeDeps({
-      findPhpLaravelConfigTarget,
-      findPhpLaravelTranslationTarget,
+      findConfigTarget,
+      findTranslationTarget,
       openNavigationTarget,
     });
 

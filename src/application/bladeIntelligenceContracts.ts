@@ -4,7 +4,6 @@ import type {
   TextSearchGateway,
 } from "../domain/workspace";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
-import type { LaravelTargets } from "./useLaravelTargets";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import type {
   PhpCodeActionDescriptor,
@@ -66,12 +65,12 @@ export interface BladeIntelligenceDependencies {
     requestedRoot: string,
   ) => Promise<void>;
   collectViewTargets: PhpFrameworkTargets["collectViewTargets"];
-  collectPhpLaravelConfigTargets: LaravelTargets["collectPhpLaravelConfigTargets"];
-  collectPhpLaravelNamedRouteTargets: LaravelTargets["collectPhpLaravelNamedRouteTargets"];
-  collectPhpLaravelTranslationTargets: LaravelTargets["collectPhpLaravelTranslationTargets"];
+  collectConfigTargets: PhpFrameworkTargets["collectConfigTargets"];
+  collectNamedRouteTargets: PhpFrameworkTargets["collectNamedRouteTargets"];
+  collectTranslationTargets: PhpFrameworkTargets["collectTranslationTargets"];
   findViewTarget: PhpFrameworkTargets["findViewTarget"];
-  findPhpLaravelConfigTarget: LaravelTargets["findPhpLaravelConfigTarget"];
-  findPhpLaravelTranslationTarget: LaravelTargets["findPhpLaravelTranslationTarget"];
+  findConfigTarget: PhpFrameworkTargets["findConfigTarget"];
+  findTranslationTarget: PhpFrameworkTargets["findTranslationTarget"];
   createMissingBladeViewCodeAction: (
     source: string,
     range: PhpCodeActionRange,

@@ -47,9 +47,9 @@ export interface BladeCompletionProviderDependencies {
   collectBladeViewVariablesWithDisplayTypes: (
     viewName: string,
   ) => Promise<PhpLaravelViewVariable[]>;
-  collectPhpLaravelConfigTargets: BladeIntelligenceDependencies["collectPhpLaravelConfigTargets"];
-  collectPhpLaravelNamedRouteTargets: BladeIntelligenceDependencies["collectPhpLaravelNamedRouteTargets"];
-  collectPhpLaravelTranslationTargets: BladeIntelligenceDependencies["collectPhpLaravelTranslationTargets"];
+  collectConfigTargets: BladeIntelligenceDependencies["collectConfigTargets"];
+  collectNamedRouteTargets: BladeIntelligenceDependencies["collectNamedRouteTargets"];
+  collectTranslationTargets: BladeIntelligenceDependencies["collectTranslationTargets"];
   collectViewTargets: BladeIntelligenceDependencies["collectViewTargets"];
   currentWorkspaceRootRef: { readonly current: string | null };
   ensurePhpFrameworkSourceCollectionsLoaded: BladeIntelligenceDependencies["ensurePhpFrameworkSourceCollectionsLoaded"];
@@ -79,9 +79,9 @@ export async function provideBladeCompletions(
     collectBladeComponentNames,
     collectBladeForeachLoopVariables,
     collectBladeViewVariablesWithDisplayTypes,
-    collectPhpLaravelConfigTargets,
-    collectPhpLaravelNamedRouteTargets,
-    collectPhpLaravelTranslationTargets,
+    collectConfigTargets,
+    collectNamedRouteTargets,
+    collectTranslationTargets,
     collectViewTargets,
     currentWorkspaceRootRef,
     ensurePhpFrameworkSourceCollectionsLoaded,
@@ -255,10 +255,10 @@ export async function provideBladeCompletions(
           source: helperCompletion.source,
         },
         {
-          collectConfigTargets: collectPhpLaravelConfigTargets,
+          collectConfigTargets,
           collectEnvTargets: async () => [],
-          collectNamedRouteTargets: collectPhpLaravelNamedRouteTargets,
-          collectTranslationTargets: collectPhpLaravelTranslationTargets,
+          collectNamedRouteTargets,
+          collectTranslationTargets,
           collectViewTargets,
           isRequestStillCurrent: isRequestedRootActive,
         },

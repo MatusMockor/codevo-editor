@@ -99,12 +99,12 @@ function makeDeps(
     resolvePhpReceiverMethodCompletions: vi.fn(async () => []),
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => {}),
     collectViewTargets: vi.fn(async () => []),
-    collectPhpLaravelConfigTargets: vi.fn(async () => []),
-    collectPhpLaravelNamedRouteTargets: vi.fn(async () => []),
-    collectPhpLaravelTranslationTargets: vi.fn(async () => []),
+    collectConfigTargets: vi.fn(async () => []),
+    collectNamedRouteTargets: vi.fn(async () => []),
+    collectTranslationTargets: vi.fn(async () => []),
     findViewTarget: vi.fn(async () => null),
-    findPhpLaravelConfigTarget: vi.fn(async () => null),
-    findPhpLaravelTranslationTarget: vi.fn(async () => null),
+    findConfigTarget: vi.fn(async () => null),
+    findTranslationTarget: vi.fn(async () => null),
     createMissingBladeViewCodeAction: vi.fn(async () => null),
     openDirectPhpMethodTarget: vi.fn(async () => false),
     openPhpLaravelModelAttributeTarget: vi.fn(async () => false),
@@ -485,11 +485,11 @@ describe("useBladeIntelligence definition", () => {
   });
 
   it("gates Laravel helper-literal navigation behind the active framework", async () => {
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => []);
+    const collectNamedRouteTargets = vi.fn(async () => []);
     const harness = renderHook(
       makeDeps({
         frameworkRuntime: GENERIC_RUNTIME,
-        collectPhpLaravelNamedRouteTargets,
+        collectNamedRouteTargets,
       }),
     );
     const source = "{{ route('home') }}";
@@ -498,6 +498,6 @@ describe("useBladeIntelligence definition", () => {
     const opened = await harness.api().provideBladeDefinition(source, offset);
 
     expect(opened).toBe(false);
-    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+    expect(collectNamedRouteTargets).not.toHaveBeenCalled();
   });
 });

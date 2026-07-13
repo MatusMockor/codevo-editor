@@ -48,9 +48,9 @@ function makeDeps(
     collectBladeComponentNames: vi.fn(async () => ["alert", "forms.input"]),
     collectBladeForeachLoopVariables: vi.fn(async () => []),
     collectBladeViewVariablesWithDisplayTypes: vi.fn(async () => []),
-    collectPhpLaravelConfigTargets: vi.fn(async () => []),
-    collectPhpLaravelNamedRouteTargets: vi.fn(async () => []),
-    collectPhpLaravelTranslationTargets: vi.fn(async () => []),
+    collectConfigTargets: vi.fn(async () => []),
+    collectNamedRouteTargets: vi.fn(async () => []),
+    collectTranslationTargets: vi.fn(async () => []),
     collectViewTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
@@ -293,7 +293,7 @@ describe("provideBladeCompletions", () => {
   });
 
   it("does not collect Laravel helper literals without framework string-literal support", async () => {
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+    const collectNamedRouteTargets = vi.fn(async () => [
       {
         name: "dashboard",
         path: `${ROOT}/routes/web.php`,
@@ -308,12 +308,12 @@ describe("provideBladeCompletions", () => {
         source,
         { column: source.indexOf("dash") + "dash".length + 1, lineNumber: 1 },
         makeDeps({
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
           frameworkRuntime: GENERIC_RUNTIME,
         }),
       ),
     ).resolves.toEqual([]);
-    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+    expect(collectNamedRouteTargets).not.toHaveBeenCalled();
   });
 
   it("does not ask provider helper reference scanners when string literals are unsupported", async () => {
@@ -327,7 +327,7 @@ describe("provideBladeCompletions", () => {
       id: "custom",
       routes: { referenceAt },
     };
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+    const collectNamedRouteTargets = vi.fn(async () => [
       {
         name: "dashboard",
         path: `${ROOT}/routes/web.php`,
@@ -342,7 +342,7 @@ describe("provideBladeCompletions", () => {
         source,
         { column: source.indexOf("dash") + "dash".length + 1, lineNumber: 1 },
         makeDeps({
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
           frameworkRuntime: {
             ...GENERIC_RUNTIME,
             providers: [provider],
@@ -355,7 +355,7 @@ describe("provideBladeCompletions", () => {
       ),
     ).resolves.toEqual([]);
     expect(referenceAt).not.toHaveBeenCalled();
-    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+    expect(collectNamedRouteTargets).not.toHaveBeenCalled();
   });
 
   it("does not offer Laravel helper-name completions for a custom string-literal provider", async () => {
@@ -432,7 +432,7 @@ describe("provideBladeCompletions", () => {
       routes: { referenceAt: routeReferenceAt },
       stringLiterals: { helperAt: vi.fn(() => null) },
     };
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+    const collectNamedRouteTargets = vi.fn(async () => [
       {
         name: "dashboard",
         path: `${ROOT}/routes/web.php`,
@@ -447,7 +447,7 @@ describe("provideBladeCompletions", () => {
         source,
         { column: source.indexOf("dash") + "dash".length + 1, lineNumber: 1 },
         makeDeps({
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
           frameworkRuntime: createPhpFrameworkRuntimeContext(
             createPhpFrameworkIntelligence({
               matchedProviderIds: ["custom"],
@@ -459,7 +459,7 @@ describe("provideBladeCompletions", () => {
       ),
     ).resolves.toEqual([]);
     expect(routeReferenceAt).toHaveBeenCalled();
-    expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+    expect(collectNamedRouteTargets).not.toHaveBeenCalled();
   });
 
   it("uses provider-owned formatting for custom Blade helper literal completions", async () => {
@@ -477,7 +477,7 @@ describe("provideBladeCompletions", () => {
       },
       stringLiterals: { helperAt: vi.fn(() => null) },
     };
-    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+    const collectNamedRouteTargets = vi.fn(async () => [
       {
         name: "dashboard",
         path: `${ROOT}/routes/web.php`,
@@ -492,7 +492,7 @@ describe("provideBladeCompletions", () => {
         source,
         { column: source.indexOf("dash") + "dash".length + 1, lineNumber: 1 },
         makeDeps({
-          collectPhpLaravelNamedRouteTargets,
+          collectNamedRouteTargets,
           frameworkRuntime: createPhpFrameworkRuntimeContext(
             createPhpFrameworkIntelligence({
               matchedProviderIds: ["custom"],
@@ -511,7 +511,7 @@ describe("provideBladeCompletions", () => {
       }),
     ]);
     expect(routeReferenceAt).toHaveBeenCalled();
-    expect(collectPhpLaravelNamedRouteTargets).toHaveBeenCalledWith(
+    expect(collectNamedRouteTargets).toHaveBeenCalledWith(
       source,
       BLADE_PATH,
     );

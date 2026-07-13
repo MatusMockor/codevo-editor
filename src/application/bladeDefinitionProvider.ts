@@ -20,10 +20,10 @@ import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface BladeDefinitionProviderDependencies {
   activeDocument: BladeIntelligenceDependencies["activeDocument"];
-  collectPhpLaravelNamedRouteTargets: BladeIntelligenceDependencies["collectPhpLaravelNamedRouteTargets"];
+  collectNamedRouteTargets: BladeIntelligenceDependencies["collectNamedRouteTargets"];
   currentWorkspaceRootRef: BladeIntelligenceDependencies["currentWorkspaceRootRef"];
-  findPhpLaravelConfigTarget: BladeIntelligenceDependencies["findPhpLaravelConfigTarget"];
-  findPhpLaravelTranslationTarget: BladeIntelligenceDependencies["findPhpLaravelTranslationTarget"];
+  findConfigTarget: BladeIntelligenceDependencies["findConfigTarget"];
+  findTranslationTarget: BladeIntelligenceDependencies["findTranslationTarget"];
   findViewTarget: BladeIntelligenceDependencies["findViewTarget"];
   frameworkRuntime: PhpFrameworkRuntimeContext;
   openDirectPhpMethodTarget: BladeIntelligenceDependencies["openDirectPhpMethodTarget"];
@@ -47,10 +47,10 @@ export async function provideBladeDefinition(
 ): Promise<boolean> {
   const {
     activeDocument,
-    collectPhpLaravelNamedRouteTargets,
+    collectNamedRouteTargets,
     currentWorkspaceRootRef,
-    findPhpLaravelConfigTarget,
-    findPhpLaravelTranslationTarget,
+    findConfigTarget,
+    findTranslationTarget,
     findViewTarget,
     frameworkRuntime,
     openDirectPhpMethodTarget,
@@ -81,9 +81,9 @@ export async function provideBladeDefinition(
       offset,
       {
         activeDocument,
-        collectPhpLaravelNamedRouteTargets,
-        findPhpLaravelConfigTarget,
-        findPhpLaravelTranslationTarget,
+        collectNamedRouteTargets,
+        findConfigTarget,
+        findTranslationTarget,
         findViewTarget,
         frameworkProviders: frameworkRuntime.providers,
         isRequestedRootActive,
@@ -182,9 +182,9 @@ interface RequestedRootState {
 
 interface FrameworkHelperDefinitionDependencies extends RequestedRootState {
   activeDocument: BladeIntelligenceDependencies["activeDocument"];
-  collectPhpLaravelNamedRouteTargets: BladeIntelligenceDependencies["collectPhpLaravelNamedRouteTargets"];
-  findPhpLaravelConfigTarget: BladeIntelligenceDependencies["findPhpLaravelConfigTarget"];
-  findPhpLaravelTranslationTarget: BladeIntelligenceDependencies["findPhpLaravelTranslationTarget"];
+  collectNamedRouteTargets: BladeIntelligenceDependencies["collectNamedRouteTargets"];
+  findConfigTarget: BladeIntelligenceDependencies["findConfigTarget"];
+  findTranslationTarget: BladeIntelligenceDependencies["findTranslationTarget"];
   findViewTarget: BladeIntelligenceDependencies["findViewTarget"];
   frameworkProviders: readonly PhpFrameworkProvider[];
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"];
@@ -216,10 +216,10 @@ async function openFrameworkHelperDefinition(
       supportsStringLiterals: true,
     },
     {
-      collectNamedRouteTargets: dependencies.collectPhpLaravelNamedRouteTargets,
-      findConfigTarget: dependencies.findPhpLaravelConfigTarget,
+      collectNamedRouteTargets: dependencies.collectNamedRouteTargets,
+      findConfigTarget: dependencies.findConfigTarget,
       findEnvTarget: async () => null,
-      findTranslationTarget: dependencies.findPhpLaravelTranslationTarget,
+      findTranslationTarget: dependencies.findTranslationTarget,
       findViewTarget: dependencies.findViewTarget,
     },
   );
