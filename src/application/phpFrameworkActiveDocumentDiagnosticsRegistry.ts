@@ -1,10 +1,12 @@
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { bladeLaravelReferenceDiagnostics } from "../domain/laravelDiagnostics";
+import { netteLatteReferenceDiagnostics } from "../domain/netteTemplateDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
 export interface PhpFrameworkActiveDocumentDiagnosticsDependencies {
+  collectCompleteLatteTemplateRelativePaths: () => Promise<readonly string[]>;
   collectViewTargets: PhpFrameworkTargets["collectViewTargets"];
 }
 
@@ -30,6 +32,23 @@ const PHP_FRAMEWORK_ACTIVE_DOCUMENT_DIAGNOSTICS_CONTRIBUTIONS: readonly PhpFrame
         });
       },
     },
+    {
+      providerId: "nette",
+      supportsDocument: (document) => document.language === "latte",
+      provideDiagnostics: async (
+        document,
+        { collectCompleteLatteTemplateRelativePaths },
+      ) => {
+        const templateRelativePaths =
+          await collectCompleteLatteTemplateRelativePaths();
+
+        return netteLatteReferenceDiagnostics(
+          document.content,
+          document.path,
+          templateRelativePaths,
+        );
+      },
+    },
   ];
 
 export interface PhpFrameworkActiveDocumentDiagnosticsProvider {
@@ -39,10 +58,12 @@ export interface PhpFrameworkActiveDocumentDiagnosticsProvider {
 export function activePhpFrameworkDocumentDiagnosticsProvider({
   frameworkRuntime,
   document,
+  workspaceRoot,
   ...dependencies
 }: PhpFrameworkActiveDocumentDiagnosticsDependencies & {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
   document: EditorDocument;
+  workspaceRoot: string;
 }): PhpFrameworkActiveDocumentDiagnosticsProvider | null {
   const contributions =
     PHP_FRAMEWORK_ACTIVE_DOCUMENT_DIAGNOSTICS_CONTRIBUTIONS.filter(
@@ -57,13 +78,39 @@ export function activePhpFrameworkDocumentDiagnosticsProvider({
 
   return {
     provideDiagnostics: async () => {
+      const diagnosticDocument = documentWithWorkspaceRelativePath(
+        document,
+        workspaceRoot,
+      );
       const diagnostics = await Promise.all(
         contributions.map((contribution) =>
-          contribution.provideDiagnostics(document, dependencies),
+          contribution.provideDiagnostics(diagnosticDocument, dependencies),
         ),
       );
 
       return diagnostics.flat();
     },
   };
+}
+
+function documentWithWorkspaceRelativePath(
+  document: EditorDocument,
+  workspaceRoot: string,
+): EditorDocument {
+  const normalizedRoot = normalizePathSeparators(workspaceRoot).replace(/\/+$/, "");
+  const normalizedPath = normalizePathSeparators(document.path);
+  const prefix = `${normalizedRoot}/`;
+
+  if (!normalizedPath.startsWith(prefix)) {
+    return document;
+  }
+
+  return {
+    ...document,
+    path: normalizedPath.slice(prefix.length),
+  };
+}
+
+function normalizePathSeparators(path: string): string {
+  return path.replace(/\\/g, "/");
 }

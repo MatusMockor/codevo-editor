@@ -54,8 +54,8 @@ function providerCaches(): LatteProviderFlowCaches {
       "/stale": { expiresAt: 1, targets: [] },
     },
     templateCache: {
-      "/active": { expiresAt: 1, relativePaths: [] },
-      "/stale": { expiresAt: 1, relativePaths: [] },
+      "/active": { complete: true, expiresAt: 1, relativePaths: [] },
+      "/stale": { complete: true, expiresAt: 1, relativePaths: [] },
     },
     templateTypeCache: {
       "/active": { expiresAt: 1, sightingsByTypeName: {} },

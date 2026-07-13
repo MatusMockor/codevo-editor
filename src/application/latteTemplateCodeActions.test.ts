@@ -69,6 +69,7 @@ function makeOptions(
       presenterCache: {},
       templateCache: {
         [ROOT]: {
+          complete: true,
           expiresAt: Date.now() + 60_000,
           relativePaths: overrides.relativePaths ?? [
             "app/UI/Home/default.latte",

@@ -146,8 +146,8 @@ function providerCaches(): LatteProviderFlowCaches {
       [staleRoot]: { expiresAt: 1, targets: [] },
     },
     templateCache: {
-      [root]: { expiresAt: 1, relativePaths: [] },
-      [staleRoot]: { expiresAt: 1, relativePaths: [] },
+      [root]: { complete: true, expiresAt: 1, relativePaths: [] },
+      [staleRoot]: { complete: true, expiresAt: 1, relativePaths: [] },
     },
     templateTypeCache: {
       [root]: { expiresAt: 1, sightingsByTypeName: {} },

@@ -1,7 +1,10 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { type NetteControlCache } from "./netteControlContracts";
 import { type NettePresenterCache } from "./nettePresenterLinkDiscovery";
-import { type LatteTemplateCache } from "./netteTemplateDiscovery";
+import {
+  type LatteTemplateCache,
+  type NetteTemplateCacheEntry,
+} from "./netteTemplateDiscovery";
 import {
   type LatteCompletionItem,
 } from "./latteCompletionItems";
@@ -26,14 +29,26 @@ import {
   provideLatteCodeActions as provideLatteCodeActionsFlow,
 } from "./latteTemplateCodeActions";
 import {
+  listLatteTemplateRelativePaths,
+} from "./netteTemplateDiscovery";
+import {
   createLattePhpPresenterLinkFlow,
 } from "./lattePhpPresenterLinkFlow";
+import {
+  LATTE_TEMPLATE_CACHE_TTL_MS,
+  LATTE_TEMPLATE_SCAN_DIRECTORIES,
+  MAX_LATTE_SCAN_DEPTH,
+  MAX_LATTE_TEMPLATE_FILES,
+} from "./latteProviderFlowContext";
+import { latteProviderRequestContext } from "./latteProviderRequestContext";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 
 export interface LatteProviderFlows {
+  collectCompleteLatteTemplateRelativePaths(): Promise<readonly string[]>;
+  collectLatteTemplateRelativePaths(): Promise<readonly string[]>;
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,
@@ -112,6 +127,13 @@ export function createLatteProviderFlows(
   const phpPresenterLinks = createLattePhpPresenterLinkFlow(options);
 
   return {
+    collectCompleteLatteTemplateRelativePaths: async () => {
+      const entry = await collectLatteTemplateEntry(options);
+
+      return entry?.complete ? entry.relativePaths : [];
+    },
+    collectLatteTemplateRelativePaths: () =>
+      collectLatteTemplateRelativePaths(options),
     provideLatteCodeActions: (source, range) =>
       provideLatteCodeActionsFlow(options, source, range),
     provideLatteCompletions: (source, position) =>
@@ -120,4 +142,35 @@ export function createLatteProviderFlows(
       provideLatteDefinitionFlow(options, source, offset, request),
     ...phpPresenterLinks,
   };
+}
+
+async function collectLatteTemplateRelativePaths(
+  options: LatteProviderFlowFactoryOptions,
+): Promise<readonly string[]> {
+  const entry = await collectLatteTemplateEntry(options);
+
+  return entry?.relativePaths ?? [];
+}
+
+async function collectLatteTemplateEntry(
+  options: LatteProviderFlowFactoryOptions,
+): Promise<NetteTemplateCacheEntry | null> {
+  const request = latteProviderRequestContext(options);
+
+  if (!request) {
+    return null;
+  }
+
+  await listLatteTemplateRelativePaths({
+    cache: options.caches.templateCache,
+    deps: request.deps,
+    isRequestedRootActive: request.isRequestedRootActive,
+    maxDepth: MAX_LATTE_SCAN_DEPTH,
+    maxTemplates: MAX_LATTE_TEMPLATE_FILES,
+    requestedRoot: request.requestedRoot,
+    scanDirectories: LATTE_TEMPLATE_SCAN_DIRECTORIES,
+    ttlMs: LATTE_TEMPLATE_CACHE_TTL_MS,
+  });
+
+  return options.caches.templateCache[request.requestedRoot] ?? null;
 }

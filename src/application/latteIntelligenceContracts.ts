@@ -72,6 +72,8 @@ export interface LatteIntelligenceDependencies {
 }
 
 export interface LatteIntelligence {
+  collectCompleteLatteTemplateRelativePaths(): Promise<readonly string[]>;
+  collectLatteTemplateRelativePaths(): Promise<readonly string[]>;
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,

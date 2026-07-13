@@ -38,6 +38,7 @@ export function useBladeLaravelDiagnosticsProvider({
     usePhpFrameworkActiveDocumentDiagnostics({
       activeDocument,
       activeDocumentRef,
+      collectCompleteLatteTemplateRelativePaths: async () => [],
       collectViewTargets,
       currentWorkspaceRootRef,
       frameworkRuntime,

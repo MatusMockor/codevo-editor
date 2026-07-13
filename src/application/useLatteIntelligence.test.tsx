@@ -850,6 +850,10 @@ describe("useLatteIntelligence hook mount", () => {
     const harness = renderHook(deps);
     const firstApi = harness.captured.api;
 
+    expect(
+      typeof firstApi?.collectCompleteLatteTemplateRelativePaths,
+    ).toBe("function");
+    expect(typeof firstApi?.collectLatteTemplateRelativePaths).toBe("function");
     expect(typeof firstApi?.provideLatteDefinition).toBe("function");
     expect(typeof firstApi?.provideLatteCompletions).toBe("function");
     await expect(
@@ -946,6 +950,47 @@ describe("createLatteIntelligence template cache lifecycle (F1)", () => {
 
     expect(Object.keys(cache)).toEqual([]);
   });
+
+  it("collects template relative paths through the shared per-root cache", async () => {
+    const cache: LatteTemplateCache = {};
+    const { listDirectory } = buildWorkspace([
+      "app/UI/Home/default.latte",
+      "app/UI/Home/partials/card.latte",
+    ]);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      listDirectory,
+    });
+    const latte = createLatteIntelligence(() => deps, cache);
+
+    await expect(latte.collectLatteTemplateRelativePaths()).resolves.toEqual([
+      "app/UI/Home/default.latte",
+      "app/UI/Home/partials/card.latte",
+    ]);
+    expect(cache[ROOT]?.relativePaths).toEqual([
+      "app/UI/Home/default.latte",
+      "app/UI/Home/partials/card.latte",
+    ]);
+  });
+
+  it("returns no complete template paths when the scan hits a safety limit", async () => {
+    const manyRelativePaths = Array.from(
+      { length: 2500 },
+      (_, index) => `app/file${index}.latte`,
+    );
+    const { listDirectory } = buildWorkspace(manyRelativePaths);
+    const cache: LatteTemplateCache = {};
+    const deps = makeDeps({ listDirectory });
+    const latte = createLatteIntelligence(() => deps, cache);
+
+    await expect(latte.collectLatteTemplateRelativePaths()).resolves.not.toEqual(
+      [],
+    );
+    await expect(
+      latte.collectCompleteLatteTemplateRelativePaths(),
+    ).resolves.toEqual([]);
+    expect(cache[ROOT]?.complete).toBe(false);
+  });
 });
 
 describe("createLatteIntelligence workspace template scan bounds (F2)", () => {
@@ -981,6 +1026,7 @@ describe("createLatteIntelligence workspace template scan bounds (F2)", () => {
     expect(scanned).toContain(levelPathAt(12));
     expect(scanned).not.toContain(levelPathAt(13));
     expect(scanned).not.toContain(levelPathAt(14));
+    expect(cache[ROOT]?.complete).toBe(false);
   });
 
   it("skips vendor/node_modules directories nested inside the scan roots", async () => {
@@ -1024,6 +1070,7 @@ describe("createLatteIntelligence workspace template scan bounds (F2)", () => {
 
     expect(scanned.length).toBeLessThanOrEqual(2000);
     expect(scanned.length).toBeGreaterThan(0);
+    expect(cache[ROOT]?.complete).toBe(false);
   });
 
   it("does not revisit the same directory twice within one scan", async () => {

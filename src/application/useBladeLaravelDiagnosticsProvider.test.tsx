@@ -21,6 +21,7 @@ import {
 
 const ROOT = "/workspace";
 const BLADE_PATH = `${ROOT}/resources/views/comments/show.blade.php`;
+const LATTE_PATH = `${ROOT}/app/UI/Home/default.latte`;
 const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: ["laravel"],
@@ -132,6 +133,7 @@ function renderProvider(
   let deps: PhpFrameworkActiveDocumentDiagnosticsHookDependencies = {
     activeDocument,
     activeDocumentRef,
+    collectCompleteLatteTemplateRelativePaths: vi.fn(async () => []),
     collectViewTargets: vi.fn(async () => [viewTarget("dashboard")]),
     currentWorkspaceRootRef,
     frameworkRuntime: LARAVEL_RUNTIME,
@@ -194,6 +196,46 @@ describe("usePhpFrameworkActiveDocumentDiagnostics", () => {
         source: "Laravel",
       },
     ]);
+
+    harness.unmount();
+  });
+
+  it("activates Nette Latte missing-template diagnostics by provider identity", async () => {
+    const latteDocument = editorDocument({
+      content: "{include 'partials/missing'}\n",
+      language: "latte",
+      name: "default.latte",
+      path: LATTE_PATH,
+    });
+    const collectCompleteLatteTemplateRelativePaths = vi.fn(async () => [
+      "app/UI/Home/default.latte",
+    ]);
+    const collectViewTargets = vi.fn(async () => [viewTarget("dashboard")]);
+    const harness = renderProvider({
+      activeDocument: latteDocument,
+      activeDocumentRef: ref<EditorDocument | null>(latteDocument),
+      collectCompleteLatteTemplateRelativePaths,
+      collectViewTargets,
+      frameworkRuntime: runtimeWithProvider("nette"),
+    });
+
+    await harness.rerender();
+
+    expect(harness.diagnostics.value[LATTE_PATH]).toMatchObject([
+      {
+        code: "nette.missingTemplate",
+        data: {
+          kind: "missing-template",
+          name: "partials/missing",
+          relativePath: "app/UI/Home/partials/missing.latte",
+        },
+        message: "No Nette Latte template partials/missing was found.",
+        severity: "warning",
+        source: "Nette",
+      },
+    ]);
+    expect(collectCompleteLatteTemplateRelativePaths).toHaveBeenCalledTimes(1);
+    expect(collectViewTargets).not.toHaveBeenCalled();
 
     harness.unmount();
   });

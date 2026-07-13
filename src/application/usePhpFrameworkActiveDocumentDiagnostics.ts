@@ -34,6 +34,7 @@ export interface PhpFrameworkActiveDocumentDiagnosticsHook {
 export function usePhpFrameworkActiveDocumentDiagnostics({
   activeDocument,
   activeDocumentRef,
+  collectCompleteLatteTemplateRelativePaths,
   collectViewTargets,
   currentWorkspaceRootRef,
   frameworkRuntime,
@@ -56,9 +57,11 @@ export function usePhpFrameworkActiveDocumentDiagnostics({
     const provider =
       requestedRoot && document
         ? activePhpFrameworkDocumentDiagnosticsProvider({
+            collectCompleteLatteTemplateRelativePaths,
             collectViewTargets,
             document,
             frameworkRuntime,
+            workspaceRoot: requestedRoot,
           })
         : null;
 
@@ -102,6 +105,7 @@ export function usePhpFrameworkActiveDocumentDiagnostics({
     });
   }, [
     activeDocumentRef,
+    collectCompleteLatteTemplateRelativePaths,
     collectViewTargets,
     currentWorkspaceRootRef,
     frameworkRuntime,

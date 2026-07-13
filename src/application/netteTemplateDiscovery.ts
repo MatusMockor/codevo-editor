@@ -10,6 +10,7 @@ export interface NetteTemplateDiscoveryDependencies {
 }
 
 export interface NetteTemplateCacheEntry {
+  complete: boolean;
   expiresAt: number;
   relativePaths: string[];
 }
@@ -28,6 +29,7 @@ export interface NetteTemplateScanContext {
 }
 
 interface TemplateScanState {
+  depthLimitHit: boolean;
   templatesFound: number;
   visitedDirectories: Set<string>;
 }
@@ -71,6 +73,7 @@ export async function listLatteTemplateRelativePaths(
 
   const relativePaths = new Set<string>();
   const scanState: TemplateScanState = {
+    depthLimitHit: false,
     templatesFound: 0,
     visitedDirectories: new Set<string>(),
   };
@@ -97,6 +100,7 @@ export async function listLatteTemplateRelativePaths(
     left.localeCompare(right),
   );
   cache[requestedRoot] = {
+    complete: !scanState.depthLimitHit && scanState.templatesFound < maxTemplates,
     expiresAt: Date.now() + ttlMs,
     relativePaths: sorted,
   };
@@ -120,6 +124,7 @@ async function collectLatteTemplates(
   } = context;
 
   if (depth > maxDepth) {
+    scanState.depthLimitHit = true;
     return;
   }
 

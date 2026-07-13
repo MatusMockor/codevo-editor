@@ -7723,16 +7723,6 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  usePhpFrameworkActiveDocumentDiagnostics({
-    activeDocument,
-    activeDocumentRef,
-    collectViewTargets,
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    setFrameworkDiagnosticsByPath: setLaravelDiagnosticsByPath,
-    workspaceRoot,
-  });
-
   const { openDirectPhpMethodTarget, openPhpMethodHintTarget } =
     usePhpMethodTargetNavigation({
       currentWorkspaceRootRef,
@@ -7917,9 +7907,22 @@ export function useWorkbenchController(
     invalidateNeonConfigForPath,
     providePhpNetteInjectionDefinition,
     resetBladeIntelligenceCaches,
+    collectCompleteLatteTemplateRelativePaths,
     provideLatteDefinition,
     shouldBlockLatteDefinitionFallback,
   } = workbenchFrameworkIntelligence;
+
+  usePhpFrameworkActiveDocumentDiagnostics({
+    activeDocument,
+    activeDocumentRef,
+    collectCompleteLatteTemplateRelativePaths,
+    collectViewTargets,
+    currentWorkspaceRootRef,
+    frameworkRuntime: phpFrameworkRuntimeContext,
+    setFrameworkDiagnosticsByPath: setLaravelDiagnosticsByPath,
+    workspaceRoot,
+  });
+
   const invalidateFrameworkCachesForPath = useMemo(
     () =>
       createPhpFrameworkFileChangeInvalidator({
