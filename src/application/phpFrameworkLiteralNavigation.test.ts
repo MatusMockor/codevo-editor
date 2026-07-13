@@ -204,6 +204,54 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
     expect(deps.findConfigTarget).toHaveBeenCalledWith("app.name");
   });
 
+  it("uses a supplied helper match without rescanning the source", async () => {
+    const helperAt = vi.fn(() => null);
+    const provider: PhpFrameworkProvider = {
+      ...phpLaravelFrameworkProvider,
+      stringLiterals: {
+        ...phpLaravelFrameworkProvider.stringLiterals,
+        helperAt,
+      },
+    };
+    const deps = dependencies({
+      findConfigTarget: vi.fn(async () => ({
+        key: "app.name",
+        path: "/workspace/config/app.php",
+        position: targetPosition,
+      })),
+    });
+    const source = "{{ config('app.name') }}";
+
+    await expect(
+      resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: null,
+          directHelperMatch: {
+            helper: "config",
+            literal: "app.name",
+            literalEnd: source.indexOf("app.name") + "app.name".length,
+            literalStart: source.indexOf("app.name"),
+            providerId: "laravel",
+          },
+          offset: source.indexOf("app.name") + 1,
+          position,
+          providers: [provider],
+          source,
+          supportsStringLiterals: true,
+        },
+        deps,
+      ),
+    ).resolves.toEqual({
+      kind: "config",
+      label: "app.name",
+      path: "/workspace/config/app.php",
+      position: targetPosition,
+    });
+
+    expect(helperAt).not.toHaveBeenCalled();
+    expect(deps.findConfigTarget).toHaveBeenCalledWith("app.name");
+  });
+
   it("rejects unresolvable Laravel config literals before scanning targets", async () => {
     const deps = dependencies({
       findConfigTarget: vi.fn(async () => ({

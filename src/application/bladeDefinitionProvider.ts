@@ -7,10 +7,7 @@ import {
 } from "../domain/bladeNavigation";
 import { bladeFrameworkStringLiteralHelperAt } from "../domain/bladeFrameworkHelperCompletions";
 import {
-  phpFrameworkConfigLiteralTarget,
   phpFrameworkTemplateNameFromRelativePath,
-  phpFrameworkTranslationLiteralTarget,
-  phpFrameworkViewLiteralTarget,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
@@ -19,6 +16,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { BladeIntelligenceDependencies } from "./bladeIntelligenceContracts";
 import { editorPositionAtOffset } from "./bladePhpCompletionContext";
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface BladeDefinitionProviderDependencies {
@@ -207,105 +205,32 @@ async function openFrameworkHelperDefinition(
     return false;
   }
 
-  if (helper.providerId !== "laravel") {
-    return false;
-  }
-
-  const laravelProvider = dependencies.frameworkProviders.find(
-    (provider) => provider.id === "laravel",
+  const target = await resolvePhpFrameworkLiteralNavigationTarget(
+    {
+      activeDocument: dependencies.activeDocument,
+      directHelperMatch: helper,
+      offset,
+      position: editorPositionAtOffset(source, offset),
+      providers: dependencies.frameworkProviders,
+      source,
+      supportsStringLiterals: true,
+    },
+    {
+      collectNamedRouteTargets: dependencies.collectPhpLaravelNamedRouteTargets,
+      findConfigTarget: dependencies.findPhpLaravelConfigTarget,
+      findEnvTarget: async () => null,
+      findTranslationTarget: dependencies.findPhpLaravelTranslationTarget,
+      findViewTarget: dependencies.findPhpLaravelViewTarget,
+    },
   );
 
-  if (!laravelProvider) {
+  if (!dependencies.isRequestedRootActive()) {
     return false;
   }
 
-  if (helper.helper === "view") {
-    if (
-      !phpFrameworkViewLiteralTarget(
-        helper.literal,
-        [laravelProvider],
-      )
-    ) {
-      return false;
-    }
-
-    const target = await dependencies.findPhpLaravelViewTarget(helper.literal);
-
-    if (!dependencies.isRequestedRootActive()) {
-      return false;
-    }
-
-    return target
-      ? dependencies.openNavigationTarget(target.path, target.position, target.name)
-      : false;
-  }
-
-  if (helper.helper === "route") {
-    if (!dependencies.activeDocument) {
-      return false;
-    }
-
-    const routes = await dependencies.collectPhpLaravelNamedRouteTargets(
-      dependencies.activeDocument.content,
-      dependencies.activeDocument.path,
-    );
-
-    if (!dependencies.isRequestedRootActive()) {
-      return false;
-    }
-
-    const target = routes.find(
-      (route) => route.name.toLowerCase() === helper.literal.toLowerCase(),
-    );
-
-    return target
-      ? dependencies.openNavigationTarget(target.path, target.position, target.name)
-      : false;
-  }
-
-  if (helper.helper === "config") {
-    if (
-      !phpFrameworkConfigLiteralTarget(
-        helper.literal,
-        [laravelProvider],
-      )
-    ) {
-      return false;
-    }
-
-    const target = await dependencies.findPhpLaravelConfigTarget(helper.literal);
-
-    if (!dependencies.isRequestedRootActive()) {
-      return false;
-    }
-
-    return target
-      ? dependencies.openNavigationTarget(target.path, target.position, target.key)
-      : false;
-  }
-
-  if (helper.helper === "trans") {
-    if (
-      !phpFrameworkTranslationLiteralTarget(
-        helper.literal,
-        [laravelProvider],
-      )
-    ) {
-      return false;
-    }
-
-    const target = await dependencies.findPhpLaravelTranslationTarget(helper.literal);
-
-    if (!dependencies.isRequestedRootActive()) {
-      return false;
-    }
-
-    return target
-      ? dependencies.openNavigationTarget(target.path, target.position, target.key)
-      : false;
-  }
-
-  return false;
+  return target
+    ? dependencies.openNavigationTarget(target.path, target.position, target.label)
+    : false;
 }
 
 interface BladeViewDataMemberDefinitionDependencies extends RequestedRootState {

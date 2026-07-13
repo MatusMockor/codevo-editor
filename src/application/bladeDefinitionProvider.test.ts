@@ -451,6 +451,35 @@ describe("provideBladeDefinition", () => {
     );
   });
 
+  it("drops stale Laravel helper navigation before opening a resolved target", async () => {
+    const currentWorkspaceRootRef = { current: ROOT };
+    const openNavigationTarget = vi.fn(async () => true);
+    const findPhpLaravelViewTarget = vi.fn(async () => {
+      currentWorkspaceRootRef.current = "/other";
+
+      return {
+        name: "comments.show",
+        path: `${ROOT}/resources/views/comments/show.blade.php`,
+        position: position(3, 1),
+        relativePath: "resources/views/comments/show.blade.php",
+      };
+    });
+    const source = "{{ view('comments.show') }}";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "comments.show"),
+        makeDeps({
+          currentWorkspaceRootRef,
+          findPhpLaravelViewTarget,
+          openNavigationTarget,
+        }),
+      ),
+    ).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+  });
+
   it("navigates route helper literals using the active document", async () => {
     const openNavigationTarget = vi.fn(async () => true);
     const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [

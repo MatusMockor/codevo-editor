@@ -1,5 +1,8 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import type {
+  PhpFrameworkProvider,
+  PhpFrameworkStringLiteralHelperMatch,
+} from "../domain/phpFrameworkProviders";
 import {
   resolvePhpFrameworkDirectLiteralDefinitionTarget,
   type PhpFrameworkLiteralNavigationDependencies,
@@ -16,6 +19,7 @@ export type {
 
 export interface PhpFrameworkLiteralNavigationRequest {
   activeDocument: PhpFrameworkLiteralNavigationDocument | null;
+  directHelperMatch?: PhpFrameworkStringLiteralHelperMatch | null;
   offset: number;
   position: EditorPosition;
   providers: readonly PhpFrameworkProvider[];

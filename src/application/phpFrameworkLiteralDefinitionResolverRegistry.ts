@@ -67,6 +67,7 @@ export interface PhpFrameworkLiteralNavigationDependencies {
 
 export interface PhpFrameworkDirectLiteralDefinitionRequest {
   activeDocument: PhpFrameworkLiteralNavigationDocument | null;
+  directHelperMatch?: PhpFrameworkStringLiteralHelperMatch | null;
   offset: number;
   position: EditorPosition;
   providers: readonly PhpFrameworkProvider[];
@@ -435,7 +436,8 @@ export async function resolvePhpFrameworkDirectLiteralDefinitionTarget(
   request: PhpFrameworkDirectLiteralDefinitionRequest,
   dependencies: PhpFrameworkLiteralNavigationDependencies,
 ): Promise<PhpFrameworkLiteralNavigationTarget | null> {
-  let helperMatch: PhpFrameworkStringLiteralHelperMatch | null | undefined;
+  let helperMatch: PhpFrameworkStringLiteralHelperMatch | null | undefined =
+    request.directHelperMatch;
   const context: PhpFrameworkDirectLiteralDefinitionResolverContext = {
     ...request,
     helperMatch: () => {
