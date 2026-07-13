@@ -1,5 +1,6 @@
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
+import { missingLaravelViewReferenceAt } from "./laravelDiagnostics";
 import { phpLaravelGateAbilityDefinitions } from "./phpLaravelAuthorization";
 import {
   resolveLaravelConfigTarget,
@@ -228,6 +229,11 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
         importName: "Illuminate\\Foundation\\Http\\FormRequest",
         parentName: "FormRequest",
       };
+    },
+  },
+  codeActions: {
+    missingTemplateFile: {
+      detectMissingReference: missingLaravelViewReferenceAt,
     },
   },
   forProject: (php) => {

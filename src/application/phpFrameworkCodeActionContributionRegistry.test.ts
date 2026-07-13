@@ -34,7 +34,9 @@ const NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
 );
 const CUSTOM_RUNTIME: PhpFrameworkRuntimeContext = {
   ...GENERIC_RUNTIME,
+  providers: [{ id: "custom" }],
   hasProvider: (providerId) => providerId === "custom",
+  supports: (capability) => capability === "codeActions",
 };
 
 function selectActions(
@@ -101,19 +103,19 @@ class ProductPresenter extends Presenter
     expect(selectActions(GENERIC_RUNTIME).contributions).toEqual([]);
   });
 
-  it("requires the Nette PHP presenter links capability", () => {
+  it("requires the code-actions capability", () => {
     const runtime: PhpFrameworkRuntimeContext = {
       ...NETTE_RUNTIME,
-      supports: (capability) => capability !== "phpPresenterLinks",
+      supports: (capability) => capability !== "codeActions",
     };
 
     expect(selectActions(runtime).contributions).toEqual([]);
   });
 
-  it("requires the Laravel views capability", () => {
+  it("requires the Laravel code-actions capability", () => {
     const runtime: PhpFrameworkRuntimeContext = {
       ...LARAVEL_RUNTIME,
-      supports: (capability) => capability !== "views",
+      supports: (capability) => capability !== "codeActions",
     };
 
     expect(selectActions(runtime, true).contributions).toEqual([]);

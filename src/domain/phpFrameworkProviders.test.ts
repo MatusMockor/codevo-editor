@@ -1652,6 +1652,23 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(registry.hasProvider("laravel")).toBe(false);
     });
 
+    it("reports code-action support only for providers shipping the capability", () => {
+      expect(
+        createPhpFrameworkProviderCapabilityRegistry([
+          phpLaravelFrameworkProvider,
+        ]).supports("codeActions"),
+      ).toBe(true);
+      expect(
+        createPhpFrameworkProviderCapabilityRegistry([
+          phpNetteFrameworkProvider,
+        ]).supports("codeActions"),
+      ).toBe(true);
+      expect(
+        createPhpFrameworkProviderCapabilityRegistry([{ id: "custom" }])
+          .supports("codeActions"),
+      ).toBe(false);
+    });
+
     it("activates only the highest-priority provider when several frameworks match", () => {
       // PhpProjectDescriptor.packages carries require + require-dev + the whole
       // composer.lock / installed.json (transitive) tree, so a Laravel app that

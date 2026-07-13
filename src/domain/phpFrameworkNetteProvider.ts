@@ -77,6 +77,9 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       };
     },
   },
+  codeActions: {
+    phpPresenterLinkMethod: true,
+  },
   targetCollections: [
     {
       kind: "viewData",

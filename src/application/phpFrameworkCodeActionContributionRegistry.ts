@@ -2,7 +2,10 @@ import {
   buildCreateMissingBladeViewCodeAction,
   type CreateMissingBladeViewCodeAction,
 } from "./phpBladeViewCodeActions";
-import { missingLaravelViewReferenceAt } from "../domain/laravelDiagnostics";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
 import { phpNettePresenterLinkCodeActions } from "./phpNettePresenterLinkCodeActions";
@@ -13,61 +16,10 @@ export interface PhpFrameworkCodeActionContributionDependencies {
   workspaceRoot: string | null;
 }
 
-interface PhpFrameworkCodeActionRegistryContribution {
-  readonly providerId: string;
-  supports(
-    frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "supports">,
-  ): boolean;
-  create(
-    dependencies: PhpFrameworkCodeActionContributionDependencies,
-  ): ActivePhpFrameworkCodeActionContribution;
-}
-
 interface ActivePhpFrameworkCodeActionContribution {
   readonly createMissingBladeViewCodeAction?: CreateMissingBladeViewCodeAction;
   readonly providePhpCodeAction: PhpFrameworkCodeActionContribution;
 }
-
-const PHP_FRAMEWORK_CODE_ACTION_CONTRIBUTIONS: readonly PhpFrameworkCodeActionRegistryContribution[] =
-  [
-    {
-      providerId: "laravel",
-      supports: (frameworkRuntime) => frameworkRuntime.supports("views"),
-      create: (dependencies) => {
-        const createMissingBladeViewCodeAction =
-          buildCreateMissingBladeViewCodeAction({
-            ...dependencies,
-            canCreateMissingViewFiles: true,
-            detectMissingViewReference: missingLaravelViewReferenceAt,
-          });
-
-        return {
-          createMissingBladeViewCodeAction,
-          providePhpCodeAction: async (source, range, isRequestedRootActive) => {
-            const action = await createMissingBladeViewCodeAction(
-              source,
-              range,
-              "php",
-              isRequestedRootActive,
-            );
-
-            return action ? [action] : null;
-          },
-        };
-      },
-    },
-    {
-      providerId: "nette",
-      supports: (frameworkRuntime) =>
-        frameworkRuntime.supports("phpPresenterLinks"),
-      create: () => ({
-        providePhpCodeAction: async (source, range, isRequestedRootActive) =>
-          isRequestedRootActive()
-            ? phpNettePresenterLinkCodeActions(source, range)
-            : null,
-      }),
-    },
-  ];
 
 const NO_FRAMEWORK_CODE_ACTION: CreateMissingBladeViewCodeAction = async () =>
   null;
@@ -84,25 +36,20 @@ export function activePhpFrameworkCodeActions({
 }: PhpFrameworkCodeActionContributionDependencies & {
   frameworkRuntime?: Pick<
     PhpFrameworkRuntimeContext,
-    "hasProvider" | "supports"
+    "providers" | "supports"
   >;
   legacyIsLaravelFrameworkActive: boolean;
 }): ActivePhpFrameworkCodeActions {
-  const activeContributions = PHP_FRAMEWORK_CODE_ACTION_CONTRIBUTIONS.filter(
-    (contribution) => {
-      if (!frameworkRuntime) {
-        return (
-          contribution.providerId === "laravel" &&
-          legacyIsLaravelFrameworkActive
-        );
-      }
-
-      return (
-        frameworkRuntime.hasProvider(contribution.providerId) &&
-        contribution.supports(frameworkRuntime)
-      );
-    },
-  ).map((contribution) => contribution.create(dependencies));
+  const providers = frameworkRuntime
+    ? frameworkRuntime.supports("codeActions")
+      ? frameworkRuntime.providers
+      : []
+    : legacyIsLaravelFrameworkActive
+      ? [phpLaravelFrameworkProvider]
+      : [];
+  const activeContributions = providers.flatMap((provider) =>
+    phpFrameworkCodeActionContributionsForProvider(provider, dependencies),
+  );
 
   return {
     contributions: activeContributions.map(
@@ -113,4 +60,52 @@ export function activePhpFrameworkCodeActions({
         (contribution) => contribution.createMissingBladeViewCodeAction,
       )?.createMissingBladeViewCodeAction ?? NO_FRAMEWORK_CODE_ACTION,
   };
+}
+
+function phpFrameworkCodeActionContributionsForProvider(
+  provider: PhpFrameworkProvider,
+  dependencies: PhpFrameworkCodeActionContributionDependencies,
+): ActivePhpFrameworkCodeActionContribution[] {
+  const codeActions = provider.codeActions;
+
+  if (!codeActions) {
+    return [];
+  }
+
+  const contributions: ActivePhpFrameworkCodeActionContribution[] = [];
+  const missingTemplateFile = codeActions.missingTemplateFile;
+
+  if (missingTemplateFile) {
+    const createMissingBladeViewCodeAction =
+      buildCreateMissingBladeViewCodeAction({
+        ...dependencies,
+        canCreateMissingViewFiles: true,
+        detectMissingViewReference: missingTemplateFile.detectMissingReference,
+      });
+
+    contributions.push({
+      createMissingBladeViewCodeAction,
+      providePhpCodeAction: async (source, range, isRequestedRootActive) => {
+        const action = await createMissingBladeViewCodeAction(
+          source,
+          range,
+          "php",
+          isRequestedRootActive,
+        );
+
+        return action ? [action] : null;
+      },
+    });
+  }
+
+  if (codeActions.phpPresenterLinkMethod === true) {
+    contributions.push({
+      providePhpCodeAction: async (source, range, isRequestedRootActive) =>
+        isRequestedRootActive()
+          ? phpNettePresenterLinkCodeActions(source, range)
+          : null,
+    });
+  }
+
+  return contributions;
 }

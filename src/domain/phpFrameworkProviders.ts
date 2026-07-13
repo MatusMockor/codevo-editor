@@ -536,6 +536,13 @@ export interface PhpFrameworkPhpPresenterLinkCompletion {
   replaceStart: number;
 }
 
+export type PhpFrameworkMissingTemplateReferenceDetector = (
+  source: string,
+  offset: number,
+  language: "blade" | "php",
+  templateNames: readonly string[],
+) => { name: string; relativePath: string } | null;
+
 export type PhpFrameworkTargetCollectionKind = "routes" | "viewData";
 
 export interface PhpFrameworkTargetCollectionCapability {
@@ -570,6 +577,12 @@ export interface PhpFrameworkProvider {
     skeletonForPath?: (
       context: PhpFrameworkNewFileContext,
     ) => PhpFrameworkNewFileSkeleton | null;
+  };
+  codeActions?: {
+    missingTemplateFile?: {
+      detectMissingReference: PhpFrameworkMissingTemplateReferenceDetector;
+    };
+    phpPresenterLinkMethod?: true;
   };
   completions?: {
     memberCompletionsFromSource?: (
@@ -879,6 +892,7 @@ export type PhpFrameworkProviderCapability =
   | "authorizationAbilities"
   | "config"
   | "containerBindingsFromSource"
+  | "codeActions"
   | "dispatch"
   | "env"
   | "inertia"
@@ -2059,6 +2073,8 @@ function phpFrameworkProvidersSupportCapability(
       return providers.some(
         (provider) => provider.authorizationAbilities !== undefined,
       );
+    case "codeActions":
+      return providers.some((provider) => provider.codeActions !== undefined);
     case "config":
       return providers.some((provider) => provider.config !== undefined);
     case "containerBindingsFromSource":
