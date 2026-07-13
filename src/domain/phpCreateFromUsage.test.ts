@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectMissingThisMember,
+  planPhpCreateFromUsage,
   renderCreateConstantStub,
   renderCreateMethodStub,
   renderCreatePropertyStub,
@@ -666,6 +667,392 @@ describe("detectMissingThisMember — adversarial edges", () => {
     const offset = source.indexOf("self::make();") + "self::".length;
 
     expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+});
+
+describe("planPhpCreateFromUsage — same-file external ClassName:: members", () => {
+  it("plans a public static method for a static call on a same-file class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::missing('x');",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: ["string"],
+      isStatic: true,
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "OtherClass",
+    });
+    expect(plan?.owner.name).toBe("Service");
+    expect(plan?.sameFileExternal).toMatchObject({
+      kind: "class",
+      name: "OtherClass",
+      namespace: null,
+    });
+    expect(plan?.sameFileExternal?.bodyStartOffset).toBe(source.indexOf("{"));
+  });
+
+  it("plans a constant for a non-call constant access on a same-file class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return OtherClass::MISSING;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::MISSING") + "OtherClass::".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      kind: "constant",
+      name: "MISSING",
+      target: "external",
+      targetClass: "OtherClass",
+    });
+    expect(plan?.sameFileExternal?.name).toBe("OtherClass");
+  });
+
+  it("returns null when the receiver class is not declared in the file", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        Unknown::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("Unknown::missing") + "Unknown::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when the receiver resolves to an imported class outside the file", () => {
+    const source = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "use Vendor\\OtherClass;",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when an unqualified receiver only matches a class in another namespace", () => {
+    const source = [
+      "<?php",
+      "",
+      "namespace A {",
+      "    class OtherClass",
+      "    {",
+      "    }",
+      "}",
+      "",
+      "namespace B {",
+      "    class Service",
+      "    {",
+      "        public function run(): void",
+      "        {",
+      "            OtherClass::missing();",
+      "        }",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when the static method already exists on the sibling class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "    public static function missing(): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing()") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when the constant already exists on the sibling class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "    public const MISSING = 'x';",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return OtherClass::MISSING;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.lastIndexOf("OtherClass::MISSING") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it.each([
+    ["interface", "interface Sibling\n{\n}"],
+    ["enum", "enum Sibling\n{\n}"],
+    ["trait", "trait Sibling\n{\n}"],
+  ])("returns null when the same-file receiver is an %s", (_kind, sibling) => {
+    const source = [
+      "<?php",
+      "",
+      sibling,
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        Sibling::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("Sibling::missing") + "Sibling::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for the ::class constant", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return OtherClass::class;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::class") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for a static property access", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::$items = [];",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$items") + "$".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for a qualified receiver", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        \\OtherClass::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("\\OtherClass::missing") + "\\OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("ignores a ClassName:: usage inside a heredoc", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return <<<EOT",
+      "        value OtherClass::missing()",
+      "        EOT;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("ignores a ClassName:: usage inside a string literal", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      '    public $note = "OtherClass::missing()";',
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("folds a class calling itself by name into the self target", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        Service::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("Service::missing") + "Service::".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      isStatic: true,
+      kind: "method",
+      name: "missing",
+      target: "self",
+    });
+    expect(plan?.owner.name).toBe("Service");
+    expect(plan?.sameFileExternal).toBeUndefined();
+  });
+
+  it("keeps self:: resolution on the enclosing class untouched", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        self::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("self::missing") + "self::".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      isStatic: true,
+      kind: "method",
+      name: "missing",
+      target: "self",
+    });
+    expect(plan?.sameFileExternal).toBeUndefined();
   });
 });
 

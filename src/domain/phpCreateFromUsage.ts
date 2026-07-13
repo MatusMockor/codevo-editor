@@ -36,8 +36,10 @@ export type PhpMemberKind = "method" | "property" | "constant";
  *  - `parent`: the parent class named by the enclosing class's `extends` clause
  *    (the `parent::` case — a cross-file edit the controller resolves and
  *    applies, conservatively, only when the parent file is unambiguous).
+ *  - `external`: another class named by an explicit `ClassName::` receiver
+ *    (offered only when the class is declared in the same file).
  */
-export type PhpCreateTarget = "self" | "parent";
+export type PhpCreateTarget = "self" | "parent" | "external";
 
 export type PhpCreateRenderRelationship = "self" | "parent" | "external";
 
@@ -72,6 +74,7 @@ export interface PhpCreateDeclarationIdentity {
 export interface PhpCreateFromUsagePlan {
   member: MissingThisMember;
   owner: PhpCreateDeclarationIdentity;
+  sameFileExternal?: PhpCreateDeclarationIdentity;
   sameFileParent?: PhpCreateDeclarationIdentity;
 }
 
@@ -104,6 +107,7 @@ export interface MissingThisMember {
    * for backward compatibility with the original `$this->` behaviour.
    */
   target?: PhpCreateTarget;
+  targetClass?: string;
 }
 
 export interface RenderCreateMethodOptions {
@@ -190,13 +194,23 @@ export function planPhpCreateFromUsage(
     }
 
     const owner = declarationIdentity(enclosingType);
-    const sameFileParent = sameFileParentDeclaration(
+    const sameFileParent = sameFileClassDeclaration(
       masked,
       member.parentClass ?? "",
       enclosingType,
     );
 
     return { member, owner, ...(sameFileParent ? { sameFileParent } : {}) };
+  }
+
+  if (access.receiver === "external") {
+    return planSameFileExternalMember(
+      source,
+      masked,
+      usage,
+      enclosingType,
+      access.receiverClass ?? "",
+    );
   }
 
   if (memberExists(source, usage.name, usage.kind, enclosingType.bodyStart)) {
@@ -277,11 +291,12 @@ export function renderCreatePropertyStub(
  * original instance access; `self` / `static` are static accesses on the
  * current class; `parent` targets the parent class's body (cross-file).
  */
-type Receiver = "this" | "self" | "static" | "parent";
+type Receiver = "this" | "self" | "static" | "parent" | "external";
 
 interface MemberAccess {
   nameStart: number;
   receiver: Receiver;
+  receiverClass?: string;
 }
 
 interface MemberUsage {
@@ -467,13 +482,43 @@ function locateMemberAccess(
     // character abuts it (e.g. `myself::`, `$notthis->`) so we never mistake a
     // longer token's tail for a real receiver.
     if (isIdentifierChar(masked[accessStart - 1] || "")) {
-      return null;
+      break;
     }
 
     return { nameStart, receiver: token.receiver };
   }
 
-  return null;
+  return locateExternalReceiverAccess(masked, nameStart);
+}
+
+function locateExternalReceiverAccess(
+  masked: string,
+  nameStart: number,
+): MemberAccess | null {
+  const operatorStart = nameStart - 2;
+
+  if (operatorStart <= 0 || masked.slice(operatorStart, nameStart) !== "::") {
+    return null;
+  }
+
+  const receiverStart = identifierStartAt(masked, operatorStart - 1);
+
+  if (receiverStart === null) {
+    return null;
+  }
+
+  const receiverClass = masked.slice(receiverStart, operatorStart);
+  const previous = masked[receiverStart - 1] || "";
+
+  if (previous === "$" || previous === "\\") {
+    return null;
+  }
+
+  if (!/^[A-Za-z_]/.test(receiverClass)) {
+    return null;
+  }
+
+  return { nameStart, receiver: "external", receiverClass };
 }
 
 /**
@@ -552,7 +597,7 @@ function readMemberUsage(
  * Covers `self::`, `static::` and `parent::`.
  */
 function usesScopeResolution(receiver: Receiver): boolean {
-  return receiver === "self" || receiver === "static" || receiver === "parent";
+  return receiver !== "this";
 }
 
 /**
@@ -639,6 +684,71 @@ function toMissingParentMember(
     name: usage.name,
     parentClass,
     target: "parent",
+  };
+}
+
+function planSameFileExternalMember(
+  source: string,
+  masked: string,
+  usage: MemberUsage,
+  enclosingType: EnclosingTypeDeclaration,
+  targetClass: string,
+): PhpCreateFromUsagePlan | null {
+  if (usage.kind === "property" || usage.name.toLowerCase() === "class") {
+    return null;
+  }
+
+  const sameFileExternal = sameFileClassDeclaration(
+    masked,
+    targetClass,
+    enclosingType,
+  );
+
+  if (!sameFileExternal) {
+    return null;
+  }
+
+  if (
+    memberExists(source, usage.name, usage.kind, sameFileExternal.bodyStartOffset)
+  ) {
+    return null;
+  }
+
+  const owner = declarationIdentity(enclosingType);
+
+  if (sameFileExternal.bodyStartOffset === owner.bodyStartOffset) {
+    return { member: toMissingMember(source, masked, usage, "self"), owner };
+  }
+
+  return {
+    member: toMissingExternalMember(source, masked, usage, targetClass),
+    owner,
+    sameFileExternal,
+  };
+}
+
+function toMissingExternalMember(
+  source: string,
+  masked: string,
+  usage: MemberUsage,
+  targetClass: string,
+): MissingThisMember {
+  if (usage.kind === "constant") {
+    return {
+      kind: "constant",
+      name: usage.name,
+      target: "external",
+      targetClass,
+    };
+  }
+
+  return {
+    argTypes: inferArgumentTypes(source, masked, usage),
+    isStatic: true,
+    kind: "method",
+    name: usage.name,
+    target: "external",
+    targetClass,
   };
 }
 
@@ -873,14 +983,14 @@ function declarationIdentity(
   };
 }
 
-function sameFileParentDeclaration(
+function sameFileClassDeclaration(
   masked: string,
-  parentReference: string,
+  reference: string,
   owner: EnclosingTypeDeclaration,
 ): PhpCreateDeclarationIdentity | null {
   const expectedFqn = resolveDeclarationReference(
     masked,
-    parentReference,
+    reference,
     owner,
   ).toLowerCase();
   const declarations = namedTypeDeclarations(masked).filter(
