@@ -967,9 +967,7 @@ export function useWorkbenchController(
     [phpFrameworkIntelligence],
   );
   const activePhpFrameworkProviders = phpFrameworkIntelligence.providers;
-  const isNetteFrameworkActive = phpFrameworkIntelligence.isNette;
-  // Provider-owned presentation for the exclusive winner. Framework identity
-  // remains available on the intelligence boundary for non-presentation gates.
+  // Provider-owned presentation for the exclusive winner.
   const activeFrameworkActivityLabel = phpFrameworkIntelligence.activityLabel;
   // Edge (spec 4.1): a project that declares several framework signals at once
   // (e.g. a Laravel app carrying latte/latte transitively in composer.lock)
@@ -10123,7 +10121,6 @@ export function useWorkbenchController(
     indexProgress,
     intelligenceMode,
     activeFrameworkActivityLabel,
-    isNetteFrameworkActive,
     implementationChooser,
     languageServerDiagnosticsByPath: mergedLanguageServerDiagnosticsByPath,
     loadingDirectories,

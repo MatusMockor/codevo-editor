@@ -179,6 +179,23 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     expect(invoke).toHaveBeenCalledWith("workspace_replace_in_path", { workspaceId: "ws-1", relativePath: "src", query: "before", replacement: "after", options: { caseSensitive: false, wholeWord: false, isRegex: false, preserveCase: true, fileMask: "" } });
   });
 
+  it("rejects a replace scope from another trusted workspace", async () => {
+    const second = {
+      ...descriptor,
+      workspaceId: "ws-2",
+      selectedPath: "/selected/other",
+      canonicalRoot: "/real/other",
+    };
+    const gateway = new TauriWorkspaceGateway({
+      descriptorForPath: (path) => (path.includes("other") ? second : descriptor),
+    });
+
+    await expect(
+      gateway.replaceInPath("/selected/project", "before", "after", undefined, "/selected/other/src"),
+    ).rejects.toThrow("Replace scope must belong to the selected workspace.");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("does not let background reads alter an explicit save revision", async () => {
     const first = revision();
     const background = { ...revision(), contentHash: 99 };
