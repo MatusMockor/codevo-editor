@@ -96,6 +96,11 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       language: "latte",
     },
   ],
+  fileChangeInvalidations: [
+    {
+      kind: "neonConfig",
+    },
+  ],
   diagnostics: {
     // Nette magic suppression (spec §4.6): calls/properties on the Latte
     // template object (`$this->template->foo`, `$this->template->foo()`) and

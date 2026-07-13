@@ -1,16 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
+import {
   createPhpFrameworkFileChangeInvalidator,
 } from "./phpFrameworkFileChangeInvalidationRegistry";
 
 const ROOT = "/workspace";
 const PATH = `${ROOT}/app/Changed.php`;
 
-function dependencies(providerId: string | null) {
+function dependencies(providers: readonly PhpFrameworkProvider[] = []) {
   return {
     frameworkRuntime: {
-      hasProvider: (candidateProviderId: string) =>
-        candidateProviderId === providerId,
+      providers,
     },
     invalidateBladeComponentNamesForPath: vi.fn(),
     invalidateBladeViewDataEntriesForPath: vi.fn(),
@@ -20,7 +24,7 @@ function dependencies(providerId: string | null) {
 
 describe("createPhpFrameworkFileChangeInvalidator", () => {
   it("is inert when no framework provider is active", () => {
-    const invalidators = dependencies(null);
+    const invalidators = dependencies();
     const invalidateForPath =
       createPhpFrameworkFileChangeInvalidator(invalidators);
 
@@ -38,7 +42,7 @@ describe("createPhpFrameworkFileChangeInvalidator", () => {
   it("runs both Laravel Blade invalidators in their existing order", () => {
     const calls: string[] = [];
     const invalidators = {
-      ...dependencies("laravel"),
+      ...dependencies([phpLaravelFrameworkProvider]),
       invalidateBladeComponentNamesForPath: vi.fn(() =>
         calls.push("components"),
       ),
@@ -62,7 +66,7 @@ describe("createPhpFrameworkFileChangeInvalidator", () => {
   });
 
   it("runs only the Nette Neon invalidator for Nette", () => {
-    const invalidators = dependencies("nette");
+    const invalidators = dependencies([phpNetteFrameworkProvider]);
     const invalidateForPath =
       createPhpFrameworkFileChangeInvalidator(invalidators);
 
@@ -78,5 +82,31 @@ describe("createPhpFrameworkFileChangeInvalidator", () => {
     expect(
       invalidators.invalidateBladeViewDataEntriesForPath,
     ).not.toHaveBeenCalled();
+  });
+
+  it("runs provider-owned descriptors in active provider order", () => {
+    const calls: string[] = [];
+    const invalidators = {
+      ...dependencies([
+        {
+          id: "first",
+          fileChangeInvalidations: [{ kind: "neonConfig" }],
+        },
+        {
+          id: "second",
+          fileChangeInvalidations: [{ kind: "bladeComponentNames" }],
+        },
+      ]),
+      invalidateBladeComponentNamesForPath: vi.fn(() =>
+        calls.push("components"),
+      ),
+      invalidateNeonConfigForPath: vi.fn(() => calls.push("neon")),
+    };
+    const invalidateForPath =
+      createPhpFrameworkFileChangeInvalidator(invalidators);
+
+    invalidateForPath(ROOT, PATH);
+
+    expect(calls).toEqual(["neon", "components"]);
   });
 });

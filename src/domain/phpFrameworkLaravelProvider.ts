@@ -365,6 +365,14 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       language: "blade",
     },
   ],
+  fileChangeInvalidations: [
+    {
+      kind: "bladeComponentNames",
+    },
+    {
+      kind: "bladeViewDataEntries",
+    },
+  ],
   config: {
     completionInsertText: ({ key, prefix }) =>
       phpLaravelConfigCompletionInsertText(key, prefix),

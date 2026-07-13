@@ -560,6 +560,17 @@ export type PhpFrameworkActiveDocumentDiagnosticsDescriptor =
       language: "latte";
     };
 
+export type PhpFrameworkFileChangeInvalidationDescriptor =
+  | {
+      kind: "bladeComponentNames";
+    }
+  | {
+      kind: "bladeViewDataEntries";
+    }
+  | {
+      kind: "neonConfig";
+    };
+
 export interface PhpFrameworkNewFileSkeleton {
   importName: string;
   parentName: string;
@@ -619,6 +630,7 @@ export interface PhpFrameworkProvider {
   };
   targetCollections?: readonly PhpFrameworkTargetCollectionCapability[];
   activeDocumentDiagnostics?: readonly PhpFrameworkActiveDocumentDiagnosticsDescriptor[];
+  fileChangeInvalidations?: readonly PhpFrameworkFileChangeInvalidationDescriptor[];
   routes?: {
     referenceAt?: (
       context: PhpFrameworkRouteReferenceContext,
