@@ -316,6 +316,72 @@ describe("resolveLatteVariableType", () => {
       resolveLatteVariableType(context, source, source.indexOf("{$item}"), "item"),
     ).resolves.toBe("App\\Model\\Item");
   });
+
+  it("falls back to current() for iterable object foreach element types", async () => {
+    const resolveExpressionType = vi.fn(async (_source, _position, expression) =>
+      expression === "$apiTokens->current()"
+        ? "false|App\\Model\\ApiTokensActiveRow|null"
+        : null,
+    );
+    const context = makeContext({
+      deps: { resolveExpressionType },
+    });
+    const source = `{varType App\\Model\\ApiTokensSelection $apiTokens}
+{foreach $apiTokens as $apiToken}
+  {$apiToken}
+{/foreach}`;
+
+    await expect(
+      resolveLatteVariableType(
+        context,
+        source,
+        source.indexOf("{$apiToken}"),
+        "apiToken",
+      ),
+    ).resolves.toBe("App\\Model\\ApiTokensActiveRow");
+    expect(resolveExpressionType).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "/** @var \\App\\Model\\ApiTokensSelection $apiTokens */",
+      ),
+      expect.any(Object),
+      "$apiTokens->current()",
+    );
+  });
+
+  it("falls back to fetch() when current() has no useful element type", async () => {
+    const resolveExpressionType = vi.fn(async (_source, _position, expression) => {
+      if (expression === "$subscriptionTypeGroups->current()") {
+        return "false|null";
+      }
+
+      if (expression === "$subscriptionTypeGroups->fetch()") {
+        return "null|false|App\\Model\\SubscriptionTypeGroupsActiveRow";
+      }
+
+      return null;
+    });
+    const context = makeContext({
+      deps: { resolveExpressionType },
+    });
+    const source = `{varType App\\Model\\SubscriptionTypeGroupsSelection $subscriptionTypeGroups}
+{foreach $subscriptionTypeGroups as $subscriptionTypeGroup}
+  {$subscriptionTypeGroup}
+{/foreach}`;
+
+    await expect(
+      resolveLatteVariableType(
+        context,
+        source,
+        source.indexOf("{$subscriptionTypeGroup}"),
+        "subscriptionTypeGroup",
+      ),
+    ).resolves.toBe("App\\Model\\SubscriptionTypeGroupsActiveRow");
+    expect(resolveExpressionType).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      "$subscriptionTypeGroups->fetch()",
+    );
+  });
 });
 
 describe("extractLatteElementType", () => {

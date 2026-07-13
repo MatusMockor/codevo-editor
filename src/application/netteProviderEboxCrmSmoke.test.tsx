@@ -356,6 +356,119 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     expect(filterCompletions.map((item) => item.label)).toContain("userDate");
   });
 
+  it("covers iterable object foreach member completion via current() fallback over real Latte files", async () => {
+    const apiTokensSelection =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\ApiTokensSelection";
+    const apiTokensActiveRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\ApiTokensActiveRow";
+    const subscriptionTypeGroupsSelection =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\SubscriptionTypeGroupsSelection";
+    const subscriptionTypeGroupsActiveRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\SubscriptionTypeGroupsActiveRow";
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Nette\\Database\\Table\\ActiveRow",
+        kind: "property" as const,
+        name: "id",
+        parameters: "",
+        returnType: "mixed",
+      },
+      {
+        declaringClassName: "Nette\\Database\\Table\\ActiveRow",
+        kind: "property" as const,
+        name: "name",
+        parameters: "",
+        returnType: "mixed",
+      },
+    ]);
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+
+    const apiTokensTemplatePath =
+      "app/modules/apiModule/templates/ApiTokensAdmin/default.latte";
+    const apiTokensPresenterPath =
+      "app/modules/apiModule/Presenters/ApiTokensAdminPresenter.php";
+    const apiTokensSource = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, apiTokensTemplatePath),
+    );
+    const apiTokensDeps = makeLatteDeps(apiTokensTemplatePath, {
+      resolveExpressionType: vi.fn(async (_source, _position, expression) => {
+        if (expression.includes("apiTokensRepository->all")) {
+          return apiTokensSelection;
+        }
+
+        if (expression === "$apiTokens->current()") {
+          return `${apiTokensActiveRow}|false`;
+        }
+
+        return null;
+      }),
+      resolvePhpReceiverCompletions,
+      searchText: vi.fn(async () => [
+        { path: joinPath(EBOX_CRM_ROOT, apiTokensPresenterPath) },
+      ]),
+      synthesizeTypedReceiverSource,
+    });
+    const apiTokensLatte = createLatteIntelligence(() => apiTokensDeps);
+    const apiTokenCompletions = await apiTokensLatte.provideLatteCompletions(
+      apiTokensSource,
+      positionAtOffset(apiTokensSource, offsetAfter(apiTokensSource, "$apiToken->")),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenLastCalledWith(
+      "apiToken",
+      apiTokensActiveRow,
+    );
+    expect(apiTokenCompletions.map((item) => item.label)).toContain("name");
+
+    const relationsTemplatePath =
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/relations.latte";
+    const relationsPresenterPath =
+      "app/modules/efabricaSubscriptionsModule/Presenters/SubscriptionTypeGroupAdminPresenter.php";
+    const relationsSource = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, relationsTemplatePath),
+    );
+    const relationsDeps = makeLatteDeps(relationsTemplatePath, {
+      resolveExpressionType: vi.fn(async (_source, _position, expression) => {
+        if (
+          expression.includes("subscriptionTypeGroupsRepository->getTable") ||
+          expression === "clone $subscriptionTypeGroups"
+        ) {
+          return subscriptionTypeGroupsSelection;
+        }
+
+        if (expression === "$sourceSubscriptionTypeGroups->current()") {
+          return `${subscriptionTypeGroupsActiveRow}|false|null`;
+        }
+
+        return null;
+      }),
+      resolvePhpReceiverCompletions,
+      searchText: vi.fn(async () => [
+        { path: joinPath(EBOX_CRM_ROOT, relationsPresenterPath) },
+      ]),
+      synthesizeTypedReceiverSource,
+    });
+    const relationsLatte = createLatteIntelligence(() => relationsDeps);
+    const relationCompletions = await relationsLatte.provideLatteCompletions(
+      relationsSource,
+      positionAtOffset(
+        relationsSource,
+        offsetAfter(relationsSource, "{$subscriptionTypeGroup->"),
+      ),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenLastCalledWith(
+      "subscriptionTypeGroup",
+      subscriptionTypeGroupsActiveRow,
+    );
+    expect(relationCompletions.map((item) => item.label)).toContain("id");
+  });
+
   it("covers real ebox Latte filter definition targets from NEON registrations", async () => {
     const usersTemplatePath =
       "app/modules/usersModule/templates/UsersAdmin/show.latte";

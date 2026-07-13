@@ -276,7 +276,14 @@ async function latteForeachVariableType(
   }
 
   if (collection.relationNames.length === 0) {
-    return extractLatteElementType(rootType);
+    return (
+      extractLatteElementType(rootType) ??
+      resolveLatteIterableObjectElementType(
+        context,
+        rootType,
+        collection.rootVariableName,
+      )
+    );
   }
 
   const chainExpression = `$${collection.rootVariableName}${collection.relationNames
@@ -296,6 +303,40 @@ async function latteForeachVariableType(
   }
 
   return extractLatteElementType(chainType);
+}
+
+async function resolveLatteIterableObjectElementType(
+  context: LatteVariableResolutionContext,
+  rootType: string,
+  rootVariableName: string,
+): Promise<string | null> {
+  const { deps, isRequestedRootActive } = context;
+
+  if (!rootType.trim()) {
+    return null;
+  }
+
+  for (const methodName of ["current", "fetch"]) {
+    const expression = `$${rootVariableName}->${methodName}()`;
+    const document = `<?php\n/** @var \\${rootType.replace(/^\\+/, "")} $${rootVariableName} */\n${expression};\n`;
+    const methodType = await deps.resolveExpressionType(
+      document,
+      editorPositionAtOffset(document, document.length),
+      expression,
+    );
+
+    if (!isRequestedRootActive()) {
+      return null;
+    }
+
+    const elementType = firstUsefulLatteUnionType(methodType);
+
+    if (elementType) {
+      return elementType;
+    }
+  }
+
+  return null;
 }
 
 async function resolveNetteSightingType(
@@ -348,6 +389,63 @@ export function extractLatteElementType(collectionType: string): string | null {
   const last = args[args.length - 1]?.trim() ?? "";
 
   return last.length > 0 ? last : null;
+}
+
+function firstUsefulLatteUnionType(typeName: string | null): string | null {
+  if (!typeName) {
+    return null;
+  }
+
+  for (const part of splitTopLevelUnionTypes(typeName)) {
+    const normalized = part.trim().replace(/^\?/, "");
+
+    if (!isLatteNullOrBooleanType(normalized)) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function splitTopLevelUnionTypes(typeName: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+
+  for (let index = 0; index < typeName.length; index += 1) {
+    const character = typeName[index];
+
+    if (character === "<") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ">") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "|" && depth === 0) {
+      parts.push(typeName.slice(start, index));
+      start = index + 1;
+    }
+  }
+
+  parts.push(typeName.slice(start));
+
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+}
+
+function isLatteNullOrBooleanType(typeName: string): boolean {
+  const normalized = typeName.replace(/^\\+/, "").toLowerCase();
+
+  return (
+    normalized === "null" ||
+    normalized === "false" ||
+    normalized === "true" ||
+    normalized === "bool" ||
+    normalized === "boolean"
+  );
 }
 
 function splitTopLevelTypeArguments(inner: string): string[] {
