@@ -196,7 +196,9 @@ function makeDeps(
   overrides: Partial<LatteIntelligenceDependencies> = {},
 ): LatteIntelligenceDependencies {
   return {
+    collectTranslationTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
+    findTranslationTarget: vi.fn(async () => null),
     frameworkIntelligence: NETTE_FRAMEWORK,
     getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
     isSemanticIntelligenceActive: true,
@@ -3765,6 +3767,45 @@ class ApiConsoleControl extends Control
     );
   });
 
+  it("navigates a component-template signal link to the colocated control handler", async () => {
+    const controlSource = `<?php
+namespace Crm\\ApiModule\\Components\\AccessTokenControl;
+
+use Nette\\Application\\UI\\Control;
+
+class AccessTokenControl extends Control
+{
+    public function handleRemoveAccessToken(): void
+    {
+    }
+}
+`;
+    const { readFileContent } = buildContentWorkspace({
+      "app/modules/apiModule/Components/AccessTokenControl/AccessTokenControl.php":
+        controlSource,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/apiModule/Components/AccessTokenControl/access_token.latte`,
+      }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = `<a n:href="removeAccessToken!">Remove</a>`;
+    const offset = source.indexOf("removeAccessToken") + 3;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/modules/apiModule/Components/AccessTokenControl/AccessTokenControl.php",
+      expect.objectContaining({ lineNumber: 8 }),
+      "removeAccessToken!",
+    );
+  });
+
   it("navigates a <form n:name=\"contactForm\"> the same way", async () => {
     const { readFileContent } = buildContentWorkspace({
       "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
@@ -4073,6 +4114,53 @@ describe("createLatteIntelligence {control} completion (Fáza 2)", () => {
     expect(completions.map((completion) => completion.label)).toEqual([
       "contactForm",
     ]);
+  });
+
+  it("offers colocated control signal handlers inside component-template links", async () => {
+    const controlSource = `<?php
+namespace Crm\\ApiModule\\Components\\AccessTokenControl;
+
+use Nette\\Application\\UI\\Control;
+
+class AccessTokenControl extends Control
+{
+    public function handleRemoveAccessToken(): void
+    {
+    }
+
+    public function handleRefresh(): void
+    {
+    }
+}
+`;
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/modules/apiModule/Components/AccessTokenControl/AccessTokenControl.php":
+        controlSource,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/modules/apiModule/Components/AccessTokenControl/access_token.latte`,
+      }),
+      listDirectory,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = `{link remove}`;
+    const offset = source.indexOf("}");
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "removeAccessToken!",
+    ]);
+    expect(completions[0]).toMatchObject({
+      insertText: "removeAccessToken!",
+      kind: "link",
+      replaceStart: source.indexOf("remove"),
+      replaceEnd: source.indexOf("}"),
+    });
   });
 
   it("offers component names in a form n:name attribute", async () => {

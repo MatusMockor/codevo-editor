@@ -17,6 +17,10 @@ import type {
 const PHP_NETTE_TARGET_CACHE_TTL_MS = 30_000;
 const NETTE_TRANSLATION_BASE_ROOTS: readonly string[] = ["lang", "app/lang"];
 const NETTE_MODULES_ROOT = "app/modules";
+const NETTE_TRANSLATION_MODULE_ROOT_MAX_DEPTH = 8;
+const NETTE_TRANSLATION_FILE_MAX_DEPTH = 8;
+const NETTE_TRANSLATION_MAX_DIRECTORIES = 500;
+const NETTE_TRANSLATION_MAX_FILES = 1_000;
 
 interface PhpNetteTargetCacheEntry<Target> {
   expiresAt: number;
@@ -30,6 +34,12 @@ interface PhpNetteTargetCache {
 interface PhpNetteTranslationFile {
   path: string;
   relativePath: string;
+}
+
+interface PhpNetteTranslationScanState {
+  filesFound: number;
+  rootsFound: number;
+  visitedDirectories: Set<string>;
 }
 
 export interface PhpNetteTranslationTargetResolverDeps {
@@ -161,39 +171,199 @@ function isNetteTranslationRelativePath(relativePath: string): boolean {
   );
 }
 
+function normalizedNetteDirectoryKey(path: string): string {
+  return path.split("\\").join("/").replace(/\/+$/, "").toLowerCase();
+}
+
+async function collectPhpNetteNestedTranslationRoots(
+  deps: PhpNetteTranslationTargetResolverDeps,
+  requestedRoot: string,
+  directory: string,
+  depth: number,
+  roots: Set<string>,
+  scanState: PhpNetteTranslationScanState,
+): Promise<boolean> {
+  if (depth > NETTE_TRANSLATION_MODULE_ROOT_MAX_DEPTH) {
+    return true;
+  }
+
+  if (
+    scanState.visitedDirectories.size >= NETTE_TRANSLATION_MAX_DIRECTORIES ||
+    scanState.rootsFound >= NETTE_TRANSLATION_MAX_DIRECTORIES
+  ) {
+    return true;
+  }
+
+  const directoryKey = normalizedNetteDirectoryKey(directory);
+
+  if (scanState.visitedDirectories.has(directoryKey)) {
+    return true;
+  }
+
+  scanState.visitedDirectories.add(directoryKey);
+
+  let entries: FileEntry[];
+
+  try {
+    entries = await deps.readWorkspaceDirectory(directory);
+  } catch {
+    return isWorkspaceRootActive(deps, requestedRoot);
+  }
+
+  if (!isWorkspaceRootActive(deps, requestedRoot)) {
+    return false;
+  }
+
+  for (const entry of entries) {
+    if (!isWorkspaceRootActive(deps, requestedRoot)) {
+      return false;
+    }
+
+    if (entry.kind !== "directory") {
+      continue;
+    }
+
+    const relativePath = deps.relativeWorkspacePath(requestedRoot, entry.path);
+
+    if (entry.name === "lang") {
+      roots.add(relativePath);
+      scanState.rootsFound += 1;
+      continue;
+    }
+
+    const active = await collectPhpNetteNestedTranslationRoots(
+      deps,
+      requestedRoot,
+      entry.path,
+      depth + 1,
+      roots,
+      scanState,
+    );
+
+    if (!active) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 async function collectPhpNetteTranslationRoots(
   deps: PhpNetteTranslationTargetResolverDeps,
   requestedRoot: string,
 ): Promise<string[]> {
   const roots = new Set<string>(NETTE_TRANSLATION_BASE_ROOTS);
   const modulesRoot = deps.joinWorkspacePath(requestedRoot, NETTE_MODULES_ROOT);
+  const scanState: PhpNetteTranslationScanState = {
+    filesFound: 0,
+    rootsFound: roots.size,
+    visitedDirectories: new Set(),
+  };
+  const active = await collectPhpNetteNestedTranslationRoots(
+    deps,
+    requestedRoot,
+    modulesRoot,
+    0,
+    roots,
+    scanState,
+  );
 
-  try {
-    const entries = await deps.readWorkspaceDirectory(modulesRoot);
-
-    if (!isWorkspaceRootActive(deps, requestedRoot)) {
-      return [];
-    }
-
-    for (const entry of entries) {
-      if (entry.kind !== "directory") {
-        continue;
-      }
-
-      const moduleRelativePath = deps.relativeWorkspacePath(
-        requestedRoot,
-        entry.path,
-      );
-
-      roots.add(`${moduleRelativePath}/lang`);
-    }
-  } catch {
-    if (!isWorkspaceRootActive(deps, requestedRoot)) {
-      return [];
-    }
+  if (!active || !isWorkspaceRootActive(deps, requestedRoot)) {
+    return [];
   }
 
   return Array.from(roots).sort((left, right) => left.localeCompare(right));
+}
+
+async function collectPhpNetteTranslationFilesFromDirectory(
+  deps: PhpNetteTranslationTargetResolverDeps,
+  requestedRoot: string,
+  directory: string,
+  depth: number,
+  wantedDomain: string | null | undefined,
+  files: Map<string, PhpNetteTranslationFile>,
+  scanState: PhpNetteTranslationScanState,
+): Promise<boolean> {
+  if (depth > NETTE_TRANSLATION_FILE_MAX_DEPTH) {
+    return true;
+  }
+
+  if (
+    scanState.visitedDirectories.size >= NETTE_TRANSLATION_MAX_DIRECTORIES ||
+    scanState.filesFound >= NETTE_TRANSLATION_MAX_FILES
+  ) {
+    return true;
+  }
+
+  const directoryKey = normalizedNetteDirectoryKey(directory);
+
+  if (scanState.visitedDirectories.has(directoryKey)) {
+    return true;
+  }
+
+  scanState.visitedDirectories.add(directoryKey);
+
+  let entries: FileEntry[];
+
+  try {
+    entries = await deps.readWorkspaceDirectory(directory);
+  } catch {
+    return isWorkspaceRootActive(deps, requestedRoot);
+  }
+
+  if (!isWorkspaceRootActive(deps, requestedRoot)) {
+    return false;
+  }
+
+  for (const entry of entries) {
+    if (!isWorkspaceRootActive(deps, requestedRoot)) {
+      return false;
+    }
+
+    if (scanState.filesFound >= NETTE_TRANSLATION_MAX_FILES) {
+      return true;
+    }
+
+    if (entry.kind === "directory") {
+      const active = await collectPhpNetteTranslationFilesFromDirectory(
+        deps,
+        requestedRoot,
+        entry.path,
+        depth + 1,
+        wantedDomain,
+        files,
+        scanState,
+      );
+
+      if (!active) {
+        return false;
+      }
+
+      continue;
+    }
+
+    const relativePath = deps.relativeWorkspacePath(requestedRoot, entry.path);
+
+    if (!isNetteTranslationRelativePath(relativePath)) {
+      continue;
+    }
+
+    if (
+      wantedDomain &&
+      netteTranslationDomainFromPath(relativePath) !== wantedDomain
+    ) {
+      continue;
+    }
+
+    const key = relativePath.toLowerCase();
+
+    if (!files.has(key)) {
+      files.set(key, { path: entry.path, relativePath });
+      scanState.filesFound += 1;
+    }
+  }
+
+  return true;
 }
 
 async function collectPhpNetteTranslationFiles(
@@ -208,53 +378,29 @@ async function collectPhpNetteTranslationFiles(
   }
 
   const files = new Map<string, PhpNetteTranslationFile>();
+  const scanState: PhpNetteTranslationScanState = {
+    filesFound: 0,
+    rootsFound: 0,
+    visitedDirectories: new Set(),
+  };
 
   for (const root of roots) {
     if (!isWorkspaceRootActive(deps, requestedRoot)) {
       return [];
     }
 
-    let entries: FileEntry[];
+    const active = await collectPhpNetteTranslationFilesFromDirectory(
+      deps,
+      requestedRoot,
+      deps.joinWorkspacePath(requestedRoot, root),
+      0,
+      wantedDomain,
+      files,
+      scanState,
+    );
 
-    try {
-      entries = await deps.readWorkspaceDirectory(
-        deps.joinWorkspacePath(requestedRoot, root),
-      );
-    } catch {
-      if (!isWorkspaceRootActive(deps, requestedRoot)) {
-        return [];
-      }
-
-      continue;
-    }
-
-    if (!isWorkspaceRootActive(deps, requestedRoot)) {
+    if (!active) {
       return [];
-    }
-
-    for (const entry of entries) {
-      if (entry.kind === "directory") {
-        continue;
-      }
-
-      const relativePath = deps.relativeWorkspacePath(requestedRoot, entry.path);
-
-      if (!isNetteTranslationRelativePath(relativePath)) {
-        continue;
-      }
-
-      if (
-        wantedDomain &&
-        netteTranslationDomainFromPath(relativePath) !== wantedDomain
-      ) {
-        continue;
-      }
-
-      const key = relativePath.toLowerCase();
-
-      if (!files.has(key)) {
-        files.set(key, { path: entry.path, relativePath });
-      }
     }
   }
 
@@ -344,6 +490,14 @@ async function findPhpNetteTranslationTarget(
 
   if (!deps.supportsTranslations() || !requestedRoot || !domain) {
     return null;
+  }
+
+  const cachedTranslations = deps.readCachedTranslationTargets(requestedRoot);
+
+  if (cachedTranslations) {
+    return (
+      cachedTranslations.find((target) => target.key === translationKey) ?? null
+    );
   }
 
   const files = await collectPhpNetteTranslationFiles(

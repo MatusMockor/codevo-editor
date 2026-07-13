@@ -28,7 +28,9 @@ function makeOptions(
     overrides.currentWorkspaceRootRef ??
     ({ current: overrides.currentRoot === undefined ? ROOT : overrides.currentRoot });
   const deps: LatteIntelligenceDependencies = {
+    collectTranslationTargets: vi.fn(async () => []),
     currentWorkspaceRootRef,
+    findTranslationTarget: vi.fn(async () => null),
     frameworkIntelligence: {
       activityLabel: null,
       capabilities: {

@@ -2521,7 +2521,24 @@ class EventServiceProvider
       ).toEqual(direct);
     });
 
-    it("keeps unsupported translation dispatchers as safe no-ops for Nette", () => {
+    it("dispatches Nette PHP translator references through the real provider", () => {
+      const source =
+        "<?php\nreturn $this->translator->translate('users.component.user_tokens.header');";
+      const position = positionAfter(source, "user_tokens");
+
+      expect(
+        phpFrameworkTranslationReferenceAt(source, position, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual({
+        call: "translate",
+        key: "users.component.user_tokens.header",
+        position: positionAfter(source, "translate('"),
+        prefix: "users.component.user_tokens",
+      });
+    });
+
+    it("keeps unsupported JSON translation dispatchers as safe no-ops for Nette", () => {
       expect(
         phpFrameworkTranslationReferenceAt(referenceSource, referencePosition, [
           phpNetteFrameworkProvider,
@@ -2899,6 +2916,29 @@ class EventServiceProvider
           provider,
         ]),
       ).toBe(true);
+    });
+
+    it("does not treat unrelated strings as scoped PHP completion contexts", () => {
+      const source = "<?php\nreturn 'users.component.user_tokens.header';";
+      const position = positionAfter(source, "user_tokens");
+
+      expect(
+        phpFrameworkScopedStringCompletionContextAt(source, position, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBe(false);
+    });
+
+    it("does not treat arbitrary translate methods as scoped PHP completion contexts", () => {
+      const source =
+        "<?php\nreturn $mailer->translate('users.component.user_tokens.header');";
+      const position = positionAfter(source, "user_tokens");
+
+      expect(
+        phpFrameworkScopedStringCompletionContextAt(source, position, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBe(false);
     });
 
     it("resolves scoped PHP string completion formatting only from the owning provider", () => {

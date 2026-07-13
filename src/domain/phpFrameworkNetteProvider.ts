@@ -12,6 +12,9 @@ import {
   netteViewDataEntryFromSource,
 } from "./netteViewData";
 import {
+  phpNetteTranslationReferenceContextAt,
+} from "./phpNetteTranslations";
+import {
   netteTranslationKeysFromSource,
   netteTranslationTargetFromSource,
 } from "./netteTranslations";
@@ -155,6 +158,8 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   },
   translations: {
     completionInsertText: ({ key }) => key,
+    referenceAt: ({ position, source }) =>
+      phpNetteTranslationReferenceContextAt(source, position),
     keysFromSource: ({ fileName, source }) =>
       netteTranslationKeysFromSource(source, fileName),
     resolveLiteralTarget: ({ literal }) =>

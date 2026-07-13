@@ -88,7 +88,9 @@ function deps(
   overrides: Partial<LatteIntelligenceDependencies> = {},
 ): LatteIntelligenceDependencies {
   return {
+    collectTranslationTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: root },
+    findTranslationTarget: vi.fn(async () => null),
     frameworkIntelligence,
     getActiveDocument: () => ({ path: `${root}/app/UI/Home/default.latte` }),
     isSemanticIntelligenceActive: true,

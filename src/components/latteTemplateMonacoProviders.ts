@@ -260,5 +260,9 @@ function monacoLatteCompletionKind(
     return monaco.languages.CompletionItemKind.Module;
   }
 
+  if (kind === "translation") {
+    return monaco.languages.CompletionItemKind.Value;
+  }
+
   return monaco.languages.CompletionItemKind.Keyword;
 }

@@ -5,6 +5,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+import type { FileEntry } from "../domain/workspace";
 import { createLatteIntelligence } from "./useLatteIntelligence";
 import type {
   LatteDirectoryEntry,
@@ -16,6 +17,7 @@ import type {
   NeonIntelligenceDependencies,
 } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpNetteTranslationTargetResolver } from "./phpNetteFrameworkTargetAdapter";
 
 const EBOX_CRM_ROOT =
   "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm";
@@ -38,12 +40,13 @@ function toRelativePath(root: string, absolutePath: string): string {
 
 async function listDirectory(
   directory: string,
-): Promise<Array<LatteDirectoryEntry | NeonDirectoryEntry>> {
+): Promise<Array<(LatteDirectoryEntry | NeonDirectoryEntry) & FileEntry>> {
   const entries = await readdir(directory, { withFileTypes: true });
 
   return entries
     .map((entry) => ({
       kind: entry.isDirectory() ? ("directory" as const) : ("file" as const),
+      name: entry.name,
       path: path.join(directory, entry.name),
     }))
     .sort((left, right) => left.path.localeCompare(right.path));
@@ -85,8 +88,23 @@ function makeLatteDeps(
   activeRelativePath: string,
   overrides: Partial<LatteIntelligenceDependencies> = {},
 ): LatteIntelligenceDependencies {
+  const currentWorkspaceRootRef = { current: EBOX_CRM_ROOT };
+  const translationResolver = createPhpNetteTranslationTargetResolver({
+    currentWorkspaceRootRef,
+    joinWorkspacePath: joinPath,
+    readCachedTranslationTargets: () => null,
+    readNavigationFileContent: readFileContent,
+    readWorkspaceDirectory: listDirectory,
+    relativeWorkspacePath: toRelativePath,
+    supportsTranslations: () => true,
+    workspaceRoot: EBOX_CRM_ROOT,
+    writeCachedTranslationTargets: () => {},
+  });
+
   return {
-    currentWorkspaceRootRef: { current: EBOX_CRM_ROOT },
+    collectTranslationTargets: translationResolver.collect,
+    currentWorkspaceRootRef,
+    findTranslationTarget: translationResolver.find,
     frameworkIntelligence: NETTE_FRAMEWORK,
     getActiveDocument: () => ({
       path: joinPath(EBOX_CRM_ROOT, activeRelativePath),
@@ -195,6 +213,32 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
       positionAtOffset(linkSource, linkSource.indexOf(":s") + 2),
     );
     expect(linkCompletions.map((item) => item.label)).toContain("UsersAdmin:show");
+
+    const translationSource = "{_'adyen.admin.menu.'}";
+    const translationCompletions = await latte.provideLatteCompletions(
+      translationSource,
+      positionAtOffset(
+        translationSource,
+        translationSource.indexOf("menu.") + "menu.".length,
+      ),
+    );
+    expect(translationCompletions.map((item) => item.label)).toContain(
+      "adyen.admin.menu.notification_modifiers",
+    );
+
+    const translationDefinitionSource =
+      "{_'adyen.admin.menu.notification_modifiers'}";
+    await expect(
+      latte.provideLatteDefinition(
+        translationDefinitionSource,
+        translationDefinitionSource.indexOf("notification_modifiers"),
+      ),
+    ).resolves.toBe(true);
+    expect(usersDeps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, "app/modules/adyenModule/lang/adyen.en_US.neon"),
+      expect.any(Object),
+      "adyen.admin.menu.notification_modifiers",
+    );
 
     const relationsPath =
       "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/showRelations.latte";

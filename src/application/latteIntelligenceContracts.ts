@@ -14,6 +14,7 @@ import type {
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
 /** The minimal shape of the active editor document the hook reads (its path). */
 export interface LatteIntelligenceActiveDocument {
@@ -27,7 +28,9 @@ export interface LatteIntelligenceActiveDocument {
  */
 export interface LatteIntelligenceDependencies {
   /** Live workspace root, read AFTER each await to drop stale results. */
+  collectTranslationTargets: PhpFrameworkTargets["collectTranslationTargets"];
   currentWorkspaceRootRef: { readonly current: string | null };
+  findTranslationTarget: PhpFrameworkTargets["findTranslationTarget"];
   frameworkIntelligence: PhpFrameworkIntelligence;
   getActiveDocument(): LatteIntelligenceActiveDocument | null;
   isSemanticIntelligenceActive: boolean;

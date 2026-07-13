@@ -17,7 +17,8 @@ export type LatteCompletionItemKind =
   | "member"
   | "filter"
   | "link"
-  | "component";
+  | "component"
+  | "translation";
 
 /**
  * A Latte completion the hook hands to the Monaco "latte" provider. Structurally

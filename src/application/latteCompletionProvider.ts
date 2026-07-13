@@ -27,6 +27,10 @@ import {
   latteTemplateCompletions,
 } from "./netteTemplateCompletions";
 import {
+  latteTranslationCompletionAt,
+  latteTranslationCompletions,
+} from "./latteTranslationTargets";
+import {
   latteExpressionResolutionContext,
   latteTemplateCompletionContext,
   netteControlCompletionContext,
@@ -106,6 +110,12 @@ export async function provideLatteCompletions(
       offset,
       formNameCompletion,
     );
+  }
+
+  const translationCompletion = latteTranslationCompletionAt(source, offset);
+
+  if (translationCompletion) {
+    return latteTranslationCompletions(request, translationCompletion);
   }
 
   return latteExpressionCompletions(

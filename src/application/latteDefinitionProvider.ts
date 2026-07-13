@@ -28,6 +28,9 @@ import {
   resolveLatteTemplateDefinition,
 } from "./netteTemplateDefinitions";
 import {
+  resolveLatteTranslationDefinition,
+} from "./latteTranslationTargets";
+import {
   latteFilterDefinitionContext,
   latteExpressionResolutionContext,
   nettePresenterLinkDefinitionContext,
@@ -100,6 +103,16 @@ export async function provideLatteDefinitionOutcome(
   );
 
   if (controlHandled) {
+    return latteDefinitionOutcome(true, false);
+  }
+
+  const translationHandled = await resolveLatteTranslationDefinition(
+    request,
+    source,
+    offset,
+  );
+
+  if (translationHandled) {
     return latteDefinitionOutcome(true, false);
   }
 

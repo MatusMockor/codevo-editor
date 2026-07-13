@@ -1,4 +1,8 @@
-import { presenterCandidatePathsForTemplate } from "../domain/nettePathResolution";
+import { nettePresenterLifecycleInfo } from "../domain/netteComponents";
+import {
+  componentClassCandidatePathsForTemplate,
+  presenterCandidatePathsForTemplate,
+} from "../domain/nettePathResolution";
 import {
   loadNettePresenterLinkTargets,
   nettePresenterShortNameFromPath,
@@ -23,7 +27,10 @@ export async function lattePresenterLinkCompletions(
   context: NettePresenterDiscoveryContext,
   completion: { prefix: string; replaceEnd: number; replaceStart: number },
 ): Promise<NettePresenterLinkCompletionItem[]> {
-  const targets = await loadNettePresenterLinkTargets(context);
+  const [targets, currentComponentSignalTargets] = await Promise.all([
+    loadNettePresenterLinkTargets(context),
+    loadCurrentComponentSignalTargets(context),
+  ]);
 
   if (!context.isRequestedRootActive()) {
     return [];
@@ -31,7 +38,7 @@ export async function lattePresenterLinkCompletions(
 
   const normalizedPrefix = completion.prefix.toLowerCase();
   const completionTargets = nettePresenterCompletionTargets(
-    targets,
+    [...targets, ...currentComponentSignalTargets],
     currentPresenterShortNames(
       context.deps,
       context.requestedRoot,
@@ -50,6 +57,46 @@ export async function lattePresenterLinkCompletions(
       replaceEnd: completion.replaceEnd,
       replaceStart: completion.replaceStart,
     }));
+}
+
+async function loadCurrentComponentSignalTargets(
+  context: NettePresenterDiscoveryContext,
+): Promise<string[]> {
+  const targets = new Set<string>();
+
+  for (const relativePath of componentClassCandidatePathsForTemplate(
+    context.currentRelativePath,
+  )) {
+    if (!context.isRequestedRootActive()) {
+      return [];
+    }
+
+    let source: string;
+
+    try {
+      source = await context.deps.readFileContent(
+        context.deps.joinPath(context.requestedRoot, relativePath),
+      );
+    } catch {
+      if (!context.isRequestedRootActive()) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (!context.isRequestedRootActive()) {
+      return [];
+    }
+
+    for (const entry of nettePresenterLifecycleInfo(source).lifecycle) {
+      if (entry.kind === "handle" && entry.name) {
+        targets.add(`${entry.name}!`);
+      }
+    }
+  }
+
+  return Array.from(targets);
 }
 
 function nettePresenterCompletionTargets(

@@ -117,6 +117,10 @@ describe("createPhpNetteTranslationTargetResolver", () => {
           return [directoryEntry(usersModule)];
         }
 
+        if (path === usersModule) {
+          return [directoryEntry(usersLang)];
+        }
+
         if (path === usersLang) {
           return [
             fileEntry(`${usersLang}/users.cs_CZ.neon`),
@@ -188,6 +192,10 @@ describe("createPhpNetteTranslationTargetResolver", () => {
           return [directoryEntry(usersModule)];
         }
 
+        if (path === usersModule) {
+          return [directoryEntry(usersLang)];
+        }
+
         if (path === usersLang) {
           return [
             fileEntry(`${usersLang}/orders.en.neon`),
@@ -215,6 +223,74 @@ describe("createPhpNetteTranslationTargetResolver", () => {
     expect(harness.readFileContent).not.toHaveBeenCalledWith(
       `${usersLang}/orders.en.neon`,
     );
+  });
+
+  it("collects nested module lang files recursively", async () => {
+    const modulesRoot = `${ROOT}/app/modules`;
+    const adminModule = `${modulesRoot}/admin`;
+    const usersModule = `${adminModule}/usersModule`;
+    const usersLang = `${usersModule}/lang`;
+    const nestedLang = `${usersLang}/mail`;
+    const harness = createHarness({
+      readWorkspaceDirectory: vi.fn(async (path: string) => {
+        if (path === modulesRoot) {
+          return [directoryEntry(adminModule)];
+        }
+
+        if (path === adminModule) {
+          return [directoryEntry(usersModule)];
+        }
+
+        if (path === usersModule) {
+          return [directoryEntry(usersLang)];
+        }
+
+        if (path === usersLang) {
+          return [directoryEntry(nestedLang)];
+        }
+
+        if (path === nestedLang) {
+          return [fileEntry(`${nestedLang}/users.en.neon`)];
+        }
+
+        return [];
+      }) as never,
+      readNavigationFileContent: vi.fn(async (path: string) => {
+        if (path === `${nestedLang}/users.en.neon`) {
+          return `welcome: Welcome\n`;
+        }
+
+        throw new Error(`unexpected read ${path}`);
+      }) as never,
+    });
+
+    await expect(harness.resolver.collect()).resolves.toEqual([
+      {
+        key: "users.welcome",
+        path: `${nestedLang}/users.en.neon`,
+        position: { column: 1, lineNumber: 1 },
+        relativePath: "app/modules/admin/usersModule/lang/mail/users.en.neon",
+      },
+    ]);
+  });
+
+  it("finds a translation target from the collection cache before scanning files", async () => {
+    const cachedTarget = {
+      key: "users.cached",
+      path: `${ROOT}/app/modules/usersModule/lang/users.en.neon`,
+      position: { column: 1, lineNumber: 2 },
+      relativePath: "app/modules/usersModule/lang/users.en.neon",
+    };
+    const harness = createHarness({
+      readCachedTranslationTargets: vi.fn(() => [cachedTarget]) as never,
+    });
+
+    await expect(harness.resolver.find("users.cached")).resolves.toEqual(
+      cachedTarget,
+    );
+    expect(harness.readCachedTranslationTargets).toHaveBeenCalledWith(ROOT);
+    expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
+    expect(harness.readFileContent).not.toHaveBeenCalled();
   });
 
   it("returns empty results without reading or caching when translations are unsupported", async () => {

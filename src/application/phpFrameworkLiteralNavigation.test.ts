@@ -205,27 +205,6 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
   });
 
   it("resolves provider-owned translation method literals without Laravel helper matching", async () => {
-    const translationReferenceAt = vi.fn(() => ({
-      call: "translate",
-      key: "users.component.user_tokens.header",
-      position: targetPosition,
-      prefix: "users.component.user_tokens.header",
-    }));
-    const helperAt = vi.fn(() => null);
-    const provider: PhpFrameworkProvider = {
-      id: "nette",
-      stringLiterals: {
-        helperAt,
-      },
-      translations: {
-        completionInsertText: ({ key }) => key,
-        keysFromSource: () => [],
-        referenceAt: translationReferenceAt,
-        resolveLiteralTarget: ({ literal }) =>
-          literal.startsWith("users.") ? { key: literal } : null,
-        targetFromSource: () => null,
-      },
-    };
     const deps = dependencies({
       findTranslationTarget: vi.fn(async () => ({
         key: "users.component.user_tokens.header",
@@ -235,14 +214,15 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
     });
     const source =
       "<?php\nreturn $this->translator->translate('users.component.user_tokens.header');";
+    const cursorPosition = positionAfter(source, "user_tokens");
 
     await expect(
       resolvePhpFrameworkLiteralNavigationTarget(
         {
           activeDocument: null,
           offset: source.indexOf("user_tokens") + 1,
-          position,
-          providers: [provider],
+          position: cursorPosition,
+          providers: [phpNetteFrameworkProvider],
           source,
           supportsStringLiterals: true,
         },
@@ -255,8 +235,6 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
       position: targetPosition,
     });
 
-    expect(translationReferenceAt).toHaveBeenCalled();
-    expect(helperAt).not.toHaveBeenCalled();
     expect(deps.findTranslationTarget).toHaveBeenCalledWith(
       "users.component.user_tokens.header",
     );
@@ -440,5 +418,22 @@ function phpProjectDescriptor(
     phpVersionConstraint: null,
     psr4Roots: [],
     ...descriptorOverrides,
+  };
+}
+
+function positionAfter(source: string, needle: string) {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test needle: ${needle}`);
+  }
+
+  const before = source.slice(0, offset + needle.length);
+  const lines = before.split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+
+  return {
+    column: lastLine.length + 1,
+    lineNumber: lines.length,
   };
 }

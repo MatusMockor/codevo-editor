@@ -1,4 +1,7 @@
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
+import {
+  componentClassCandidatePathsForTemplate,
+} from "../domain/nettePathResolution";
 import type {
   NettePresenterDiscoveryContext,
 } from "./nettePresenterLinkDiscovery";
@@ -55,7 +58,8 @@ export async function resolveNettePresenterLink(
     return false;
   }
 
-  const candidatePaths = frameworkCapabilities.presenterClassCandidatePathsForLink(
+  const candidatePaths = linkOwnerCandidatePaths(
+    context,
     parsed,
     currentRelativePath,
   );
@@ -91,4 +95,29 @@ export async function resolveNettePresenterLink(
   }
 
   return false;
+}
+
+function linkOwnerCandidatePaths(
+  context: Omit<NettePresenterDiscoveryContext, "cache" | "inFlight" | "ttlMs">,
+  parsed: NetteLinkTarget,
+  currentRelativePath: string,
+): string[] {
+  const presenterPaths =
+    context.frameworkCapabilities.presenterClassCandidatePathsForLink(
+      parsed,
+      currentRelativePath,
+    );
+
+  if (!parsed.isSignal || parsed.presenter !== null) {
+    return presenterPaths;
+  }
+
+  return dedupe([
+    ...componentClassCandidatePathsForTemplate(currentRelativePath),
+    ...presenterPaths,
+  ]);
+}
+
+function dedupe(paths: readonly string[]): string[] {
+  return Array.from(new Set(paths));
 }

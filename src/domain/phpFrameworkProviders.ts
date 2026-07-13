@@ -1960,7 +1960,7 @@ export function phpFrameworkScopedStringCompletionContextAt(
 ): boolean {
   return providers.some(
     (provider) =>
-      provider.translations?.referenceAt?.({ position, source }) !== undefined ||
+      Boolean(provider.translations?.referenceAt?.({ position, source })) ||
       (provider.php?.isScopedStringCompletionContext?.({ position, source }) ??
         false),
   );

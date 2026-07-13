@@ -82,7 +82,9 @@ function factoryOptions(): LatteProviderFlowFactoryOptions {
     },
     frameworkCapabilities: frameworkCapabilities(),
     getDependencies: () => ({
+      collectTranslationTargets: vi.fn(async () => []),
       currentWorkspaceRootRef: { current: ROOT },
+      findTranslationTarget: vi.fn(async () => null),
       frameworkIntelligence: createPhpFrameworkIntelligence({
         matchedProviderIds: [FRAMEWORK_PROVIDER.id],
         profile: "generic",

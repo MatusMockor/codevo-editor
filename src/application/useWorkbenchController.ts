@@ -7739,7 +7739,9 @@ export function useWorkbenchController(
     },
 
     latte: {
+      collectTranslationTargets,
       currentWorkspaceRootRef,
+      findTranslationTarget,
       frameworkIntelligence: phpFrameworkIntelligence,
       getActiveDocument: () => activeDocumentRef.current,
       isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
