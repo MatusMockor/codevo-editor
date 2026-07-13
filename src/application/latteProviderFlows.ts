@@ -1,4 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { type NetteControlCache } from "./netteControlContracts";
 import { type NettePresenterCache } from "./nettePresenterLinkDiscovery";
 import {
@@ -35,6 +36,9 @@ import {
   createLattePhpPresenterLinkFlow,
 } from "./lattePhpPresenterLinkFlow";
 import {
+  nettePresenterLinkDiagnostics,
+} from "./nettePresenterLinkDiagnostics";
+import {
   LATTE_TEMPLATE_CACHE_TTL_MS,
   LATTE_TEMPLATE_SCAN_DIRECTORIES,
   MAX_LATTE_SCAN_DEPTH,
@@ -62,6 +66,10 @@ export interface LatteProviderFlows {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
+  provideLattePresenterLinkDiagnostics(
+    source: string,
+    currentTemplateRelativePath: string,
+  ): Promise<LanguageServerDiagnostic[]>;
   providePhpPresenterLinkCompletions(
     source: string,
     offset: number,
@@ -140,8 +148,40 @@ export function createLatteProviderFlows(
       provideLatteCompletionsFlow(options, source, position),
     provideLatteDefinition: (source, offset, request) =>
       provideLatteDefinitionFlow(options, source, offset, request),
+    provideLattePresenterLinkDiagnostics: (source, currentTemplateRelativePath) =>
+      provideLattePresenterLinkDiagnostics(
+        options,
+        source,
+        currentTemplateRelativePath,
+      ),
     ...phpPresenterLinks,
   };
+}
+
+async function provideLattePresenterLinkDiagnostics(
+  options: LatteProviderFlowFactoryOptions,
+  source: string,
+  currentTemplateRelativePath: string,
+): Promise<LanguageServerDiagnostic[]> {
+  const request = latteProviderRequestContext(options);
+
+  if (!request) {
+    return [];
+  }
+
+  return nettePresenterLinkDiagnostics(
+    {
+      currentRelativePath: currentTemplateRelativePath,
+      deps: {
+        joinPath: request.deps.joinPath,
+        readFileContent: request.deps.readFileContent,
+      },
+      frameworkCapabilities: options.frameworkCapabilities,
+      isRequestedRootActive: request.isRequestedRootActive,
+      requestedRoot: request.requestedRoot,
+    },
+    source,
+  );
 }
 
 async function collectLatteTemplateRelativePaths(

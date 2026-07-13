@@ -1,4 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type {
   PhpFrameworkProvider,
   PhpFrameworkViewDataEntry,
@@ -87,6 +88,10 @@ export interface LatteIntelligence {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
+  provideLattePresenterLinkDiagnostics(
+    source: string,
+    currentTemplateRelativePath: string,
+  ): Promise<LanguageServerDiagnostic[]>;
   shouldBlockLatteDefinitionFallback(source: string, offset: number): boolean;
   providePhpPresenterLinkDefinition(
     source: string,

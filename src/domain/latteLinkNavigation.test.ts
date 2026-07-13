@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectLatteLinkAt,
+  detectLatteLinks,
   detectPhpPresenterLinkAt,
   netteRoutePresenterTargetsFromSource,
   nettePresenterActionMethodCandidates,
@@ -672,6 +673,114 @@ describe("detectLatteLinkAt", () => {
     const offset = offsetOf(source, "Product:show", 2);
 
     expect(detectLatteLinkAt(source, offset)).toBeNull();
+  });
+});
+
+describe("detectLatteLinks", () => {
+  it("detects {link} targets", () => {
+    const source = "{link Product:show}";
+
+    expect(detectLatteLinks(source)).toEqual([
+      {
+        tag: "link",
+        target: "Product:show",
+        targetStart: source.indexOf("Product:show"),
+        targetEnd: source.indexOf("Product:show") + "Product:show".length,
+      },
+    ]);
+  });
+
+  it("detects {plink} targets", () => {
+    const source = "{plink Product:show}";
+
+    expect(detectLatteLinks(source)).toEqual([
+      {
+        tag: "plink",
+        target: "Product:show",
+        targetStart: source.indexOf("Product:show"),
+        targetEnd: source.indexOf("Product:show") + "Product:show".length,
+      },
+    ]);
+  });
+
+  it("detects n:href targets", () => {
+    const source = '<a n:href="Product:show">Go</a>';
+
+    expect(detectLatteLinks(source)).toEqual([
+      {
+        tag: "n:href",
+        target: "Product:show",
+        targetStart: source.indexOf("Product:show"),
+        targetEnd: source.indexOf("Product:show") + "Product:show".length,
+      },
+    ]);
+  });
+
+  it("keeps duplicate target text at different ranges and advances safely", () => {
+    const source = [
+      "{link Product:show}",
+      "{plink Product:show}",
+      '<a n:href="Product:show">Go</a>',
+    ].join("\n");
+    const first = source.indexOf("Product:show");
+    const second = source.indexOf("Product:show", first + 1);
+    const third = source.lastIndexOf("Product:show");
+
+    expect(detectLatteLinks(source)).toEqual([
+      {
+        tag: "link",
+        target: "Product:show",
+        targetStart: first,
+        targetEnd: first + "Product:show".length,
+      },
+      {
+        tag: "plink",
+        target: "Product:show",
+        targetStart: second,
+        targetEnd: second + "Product:show".length,
+      },
+      {
+        tag: "n:href",
+        target: "Product:show",
+        targetStart: third,
+        targetEnd: third + "Product:show".length,
+      },
+    ]);
+  });
+
+  it("ignores Latte comments", () => {
+    const source = [
+      "{* {link Product:show} *}",
+      "{* <a n:href=\"Product:edit\">Edit</a> *}",
+      "{link Product:list}",
+    ].join("\n");
+
+    expect(detectLatteLinks(source)).toEqual([
+      {
+        tag: "link",
+        target: "Product:list",
+        targetStart: source.indexOf("Product:list"),
+        targetEnd: source.indexOf("Product:list") + "Product:list".length,
+      },
+    ]);
+  });
+
+  it("ignores dynamic targets", () => {
+    const source = [
+      "{link $destination}",
+      "{plink Product:$action}",
+      '<a n:href="$destination">Go</a>',
+      "{link Product:show}",
+    ].join("\n");
+
+    expect(detectLatteLinks(source)).toEqual([
+      {
+        tag: "link",
+        target: "Product:show",
+        targetStart: source.indexOf("Product:show"),
+        targetEnd: source.indexOf("Product:show") + "Product:show".length,
+      },
+    ]);
   });
 });
 

@@ -7908,6 +7908,7 @@ export function useWorkbenchController(
     providePhpNetteInjectionDefinition,
     resetBladeIntelligenceCaches,
     collectCompleteLatteTemplateRelativePaths,
+    provideLattePresenterLinkDiagnostics,
     provideLatteDefinition,
     shouldBlockLatteDefinitionFallback,
   } = workbenchFrameworkIntelligence;
@@ -7919,6 +7920,7 @@ export function useWorkbenchController(
     collectViewTargets,
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
+    provideLattePresenterLinkDiagnostics,
     setFrameworkDiagnosticsByPath,
     workspaceRoot,
   });

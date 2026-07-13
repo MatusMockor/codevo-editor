@@ -8,6 +8,10 @@ import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 export interface PhpFrameworkActiveDocumentDiagnosticsDependencies {
   collectCompleteLatteTemplateRelativePaths: () => Promise<readonly string[]>;
   collectViewTargets: PhpFrameworkTargets["collectViewTargets"];
+  provideLattePresenterLinkDiagnostics: (
+    source: string,
+    currentTemplateRelativePath: string,
+  ) => Promise<LanguageServerDiagnostic[]>;
 }
 
 interface PhpFrameworkActiveDocumentDiagnosticsContribution {
@@ -37,16 +41,26 @@ const PHP_FRAMEWORK_ACTIVE_DOCUMENT_DIAGNOSTICS_CONTRIBUTIONS: readonly PhpFrame
       supportsDocument: (document) => document.language === "latte",
       provideDiagnostics: async (
         document,
-        { collectCompleteLatteTemplateRelativePaths },
+        {
+          collectCompleteLatteTemplateRelativePaths,
+          provideLattePresenterLinkDiagnostics,
+        },
       ) => {
         const templateRelativePaths =
           await collectCompleteLatteTemplateRelativePaths();
+        const [templateDiagnostics, presenterLinkDiagnostics] =
+          await Promise.all([
+            Promise.resolve(
+              netteLatteReferenceDiagnostics(
+                document.content,
+                document.path,
+                templateRelativePaths,
+              ),
+            ),
+            provideLattePresenterLinkDiagnostics(document.content, document.path),
+          ]);
 
-        return netteLatteReferenceDiagnostics(
-          document.content,
-          document.path,
-          templateRelativePaths,
-        );
+        return [...templateDiagnostics, ...presenterLinkDiagnostics];
       },
     },
   ];

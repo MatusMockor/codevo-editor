@@ -137,6 +137,7 @@ function renderProvider(
     collectViewTargets: vi.fn(async () => [viewTarget("dashboard")]),
     currentWorkspaceRootRef,
     frameworkRuntime: LARAVEL_RUNTIME,
+    provideLattePresenterLinkDiagnostics: vi.fn(async () => []),
     setFrameworkDiagnosticsByPath: laravelDiagnostics.set,
     workspaceRoot: ROOT,
     ...overrides,

@@ -42,6 +42,7 @@ export function useBladeLaravelDiagnosticsProvider({
       collectViewTargets,
       currentWorkspaceRootRef,
       frameworkRuntime,
+      provideLattePresenterLinkDiagnostics: async () => [],
       setFrameworkDiagnosticsByPath: setLaravelDiagnosticsByPath,
       workspaceRoot,
     });

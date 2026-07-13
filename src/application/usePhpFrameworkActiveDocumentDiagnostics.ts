@@ -38,6 +38,7 @@ export function usePhpFrameworkActiveDocumentDiagnostics({
   collectViewTargets,
   currentWorkspaceRootRef,
   frameworkRuntime,
+  provideLattePresenterLinkDiagnostics,
   setFrameworkDiagnosticsByPath,
   workspaceRoot,
 }: PhpFrameworkActiveDocumentDiagnosticsHookDependencies): PhpFrameworkActiveDocumentDiagnosticsHook {
@@ -61,6 +62,7 @@ export function usePhpFrameworkActiveDocumentDiagnostics({
             collectViewTargets,
             document,
             frameworkRuntime,
+            provideLattePresenterLinkDiagnostics,
             workspaceRoot: requestedRoot,
           })
         : null;
@@ -109,6 +111,7 @@ export function usePhpFrameworkActiveDocumentDiagnostics({
     collectViewTargets,
     currentWorkspaceRootRef,
     frameworkRuntime,
+    provideLattePresenterLinkDiagnostics,
     setFrameworkDiagnosticsByPath,
     workspaceRoot,
   ]);

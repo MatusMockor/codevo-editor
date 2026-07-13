@@ -336,6 +336,24 @@ export function detectLatteLinkAt(
 }
 
 /**
+ * Returns every static Latte presenter link target in document order.
+ *
+ * The same token reader as `detectLatteLinkAt` decides what is static, so
+ * dynamic destinations (`$dest`, expressions, etc.) are skipped consistently.
+ */
+export function detectLatteLinks(source: string): LatteLinkDetection[] {
+  const maskedRegions = collectLatteMaskedRegions(source);
+  const detections = [
+    ...latteLinkMacroDetections(source, maskedRegions),
+    ...latteNHrefLinkDetections(source, maskedRegions),
+  ];
+
+  detections.sort((left, right) => left.targetStart - right.targetStart);
+
+  return dedupeLatteLinkDetections(detections);
+}
+
+/**
  * Returns the PHP presenter link target at `offset` — the first string-literal
  * argument of a `$this->link(...)` / `->redirect(...)` / `->forward(...)` /
  * `->lazyLink(...)` / `->isLinkCurrent(...)` / `->redirectPermanent(...)` /
@@ -863,6 +881,72 @@ function latteLinkMacroAt(
   };
 }
 
+function latteLinkMacroDetections(
+  source: string,
+  maskedRegions: readonly LatteMaskedRegion[],
+): LatteLinkDetection[] {
+  const detections: LatteLinkDetection[] = [];
+  let index = 0;
+  let maskIndex = 0;
+
+  while (index < source.length) {
+    const openBrace = source.indexOf("{", index);
+
+    if (openBrace < 0) {
+      break;
+    }
+
+    maskIndex = nextMaskIndexForOffset(maskedRegions, openBrace, maskIndex);
+    const mask = maskedRegions[maskIndex];
+
+    if (mask && maskCoversOffset(mask, openBrace)) {
+      index = Math.max(openBrace + 1, mask.end);
+      continue;
+    }
+
+    const parsed = parseLatteLinkMacroOpening(source, openBrace);
+
+    if (!parsed) {
+      index = nextIndexAfterNonLinkBrace(source, openBrace);
+      continue;
+    }
+
+    const contentEnd = findMultilineLatteMacroClose(
+      source,
+      parsed.expressionStart,
+      openBrace + MAX_LATTE_LINK_MACRO_SCAN,
+    );
+    const token = readTargetToken(source, parsed.expressionStart, contentEnd);
+
+    if (token) {
+      detections.push({
+        tag: parsed.tagName,
+        target: token.text,
+        targetEnd: token.end,
+        targetStart: token.start,
+      });
+    }
+
+    index = Math.max(openBrace + 1, contentEnd + 1);
+  }
+
+  return detections;
+}
+
+function nextIndexAfterNonLinkBrace(source: string, openBrace: number): number {
+  if (!isPotentialLatteExpressionOpening(source, openBrace)) {
+    return openBrace + 1;
+  }
+
+  const contentEnd = findMultilineLatteMacroClose(
+    source,
+    openBrace + 1,
+    openBrace + MAX_LATTE_LINK_MACRO_SCAN,
+  );
+
+  return Math.max(openBrace + 1, contentEnd + 1);
+}
+
 interface LatteLinkMacroSpan {
   contentEnd: number;
   expressionStart: number;
@@ -1060,6 +1144,71 @@ function latteNHrefLinkAt(
     targetEnd: token.end,
     targetStart: token.start,
   };
+}
+
+function latteNHrefLinkDetections(
+  source: string,
+  maskedRegions: readonly LatteMaskedRegion[],
+): LatteLinkDetection[] {
+  const detections: LatteLinkDetection[] = [];
+  const attribute = /\bn:href\s*=\s*(['"])/g;
+  let maskIndex = 0;
+
+  for (
+    let match = attribute.exec(source);
+    match !== null;
+    match = attribute.exec(source)
+  ) {
+    const quoteIndex = match.index + match[0].length - 1;
+    maskIndex = nextMaskIndexForOffset(maskedRegions, match.index, maskIndex);
+    const mask = maskedRegions[maskIndex];
+
+    if (mask && maskCoversOffset(mask, match.index)) {
+      attribute.lastIndex = Math.max(attribute.lastIndex, mask.end);
+      continue;
+    }
+
+    if (!isPrecededByNHref(source, quoteIndex)) {
+      continue;
+    }
+
+    const valueStart = quoteIndex + 1;
+    const valueEnd = attributeValueEnd(source, valueStart, match[1] ?? "");
+    const token = readTargetToken(source, valueStart, valueEnd);
+
+    if (!token) {
+      continue;
+    }
+
+    detections.push({
+      tag: "n:href",
+      target: token.text,
+      targetEnd: token.end,
+      targetStart: token.start,
+    });
+  }
+
+  return detections;
+}
+
+function dedupeLatteLinkDetections(
+  detections: readonly LatteLinkDetection[],
+): LatteLinkDetection[] {
+  const seen = new Set<string>();
+  const deduped: LatteLinkDetection[] = [];
+
+  for (const detection of detections) {
+    const key = `${detection.targetStart}:${detection.targetEnd}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(detection);
+  }
+
+  return deduped;
 }
 
 interface NHrefValue {
@@ -1699,6 +1848,24 @@ function isOffsetInsideMask(offset: number, region: LatteMaskedRegion): boolean 
   return offset > region.start && (offset < region.end || !region.closed);
 }
 
+function nextMaskIndexForOffset(
+  regions: readonly LatteMaskedRegion[],
+  offset: number,
+  fromIndex: number,
+): number {
+  let index = fromIndex;
+
+  while (index < regions.length && regions[index].end <= offset) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function maskCoversOffset(region: LatteMaskedRegion, offset: number): boolean {
+  return offset >= region.start && (offset < region.end || !region.closed);
+}
+
 // --- small string / path utilities -----------------------------------------
 
 function isWhitespace(character: string | undefined): boolean {
@@ -1718,6 +1885,21 @@ function isAsciiLetter(character: string | undefined): boolean {
   return (
     (character >= "A" && character <= "Z") ||
     (character >= "a" && character <= "z")
+  );
+}
+
+function isPotentialLatteExpressionOpening(
+  source: string,
+  openBrace: number,
+): boolean {
+  const next = source[openBrace + 1];
+
+  return (
+    isAsciiLetter(next) ||
+    next === "$" ||
+    next === "=" ||
+    next === "/" ||
+    next === "_"
   );
 }
 
