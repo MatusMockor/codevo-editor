@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { defaultPhpFrameworkProviders } from "../domain/phpFrameworkProviders";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
@@ -14,6 +14,13 @@ import { usePhpLaravelModelTypeResolvers } from "./usePhpLaravelModelTypeResolve
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: [],
@@ -58,9 +65,8 @@ function makeOptions(
   );
 
   return {
-    activePhpFrameworkProviders: defaultPhpFrameworkProviders,
     currentWorkspaceRootRef,
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     phpClassHasLaravelDynamicWhere: vi.fn(async () => false),
     phpClassHasLaravelLocalScope: vi.fn(async () => false),
     readNavigationFileContent: vi.fn(async (path: string) => {
@@ -147,7 +153,7 @@ function createDeferred<T>() {
 }
 
 describe("usePhpLaravelModelTypeResolvers", () => {
-  it("uses runtime Laravel state over the legacy boolean", async () => {
+  it("uses runtime Laravel state for the Laravel gate", async () => {
     const source = `<?php
 $query->whereEmail('a@example.com');
 `;
@@ -156,7 +162,6 @@ $query->whereEmail('a@example.com');
       {},
       {
         frameworkRuntime: GENERIC_RUNTIME,
-        isLaravelFrameworkActive: true,
         phpClassHasLaravelDynamicWhere,
       },
     );

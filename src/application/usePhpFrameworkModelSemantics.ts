@@ -205,7 +205,6 @@ export function usePhpFrameworkModelSemantics({
     resolvePhpEloquentBuilderModelType,
     resolvePhpLaravelCollectionModelType,
   } = usePhpLaravelModelTypeResolvers({
-    activePhpFrameworkProviders,
     currentWorkspaceRootRef,
     frameworkRuntime,
     phpClassHasLaravelDynamicWhere: phpClassHasDynamicBuilderFinder,

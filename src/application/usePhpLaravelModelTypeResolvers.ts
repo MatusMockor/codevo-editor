@@ -11,7 +11,6 @@ import {
   phpLaravelCollectionModelTypeCandidate,
   phpLaravelEloquentBuilderModelTypeCandidate,
 } from "../domain/phpFrameworkLaravel";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   phpFrameworkContainerExpressionClassName,
   phpFrameworkQueryCallbackContextForVariable,
@@ -39,10 +38,8 @@ export type PhpLaravelModelTypeResolver = (
 ) => Promise<string | null>;
 
 export interface UsePhpLaravelModelTypeResolversOptions {
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   phpClassHasLaravelDynamicWhere: (
     className: string,
     methodName: string,
@@ -77,10 +74,8 @@ export interface UsePhpLaravelModelTypeResolversOptions {
 }
 
 export function usePhpLaravelModelTypeResolvers({
-  activePhpFrameworkProviders,
   currentWorkspaceRootRef,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   phpClassHasLaravelDynamicWhere,
   phpClassHasLaravelLocalScope,
   resolvePhpClassPropertyOrRelationType,
@@ -93,10 +88,8 @@ export function usePhpLaravelModelTypeResolvers({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelModelTypeResolversOptions) {
-  const frameworkProviders =
-    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const frameworkProviders = frameworkRuntime.providers;
+  const isLaravelFrameworkActive = frameworkRuntime.isLaravel;
 
   const resolvePhpEloquentBuilderModelType = useCallback(
     async (
