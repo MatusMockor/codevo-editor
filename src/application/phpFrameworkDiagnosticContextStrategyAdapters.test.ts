@@ -10,9 +10,9 @@ function makeDeps(
   return {
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     frameworkRuntime: { hasProvider: vi.fn(() => true) },
-    phpClassHasLaravelDynamicWhere: vi.fn(async () => false),
-    phpClassHasLaravelLocalScope: vi.fn(async () => false),
-    resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+    phpClassHasDynamicBuilderFinder: vi.fn(async () => false),
+    phpClassHasNamedBuilderScope: vi.fn(async () => false),
+    resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     ...overrides,
   };
 }
@@ -33,9 +33,9 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
       };
       const deps = makeDeps({
         frameworkRuntime,
-        phpClassHasLaravelDynamicWhere: vi.fn(async () => true),
-        phpClassHasLaravelLocalScope: vi.fn(async () => true),
-        resolvePhpEloquentBuilderModelType: vi.fn(
+        phpClassHasDynamicBuilderFinder: vi.fn(async () => true),
+        phpClassHasNamedBuilderScope: vi.fn(async () => true),
+        resolvePhpFrameworkBuilderModelType: vi.fn(
           async () => "App\\Models\\Post",
         ),
       });
@@ -59,9 +59,9 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
         adapter.ensureFrameworkSourceCollectionsLoaded("/workspace"),
       ).toBeUndefined();
       expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
-      expect(deps.resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
-      expect(deps.phpClassHasLaravelLocalScope).not.toHaveBeenCalled();
-      expect(deps.phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+      expect(deps.resolvePhpFrameworkBuilderModelType).not.toHaveBeenCalled();
+      expect(deps.phpClassHasNamedBuilderScope).not.toHaveBeenCalled();
+      expect(deps.phpClassHasDynamicBuilderFinder).not.toHaveBeenCalled();
       expect(
         deps.ensurePhpFrameworkSourceCollectionsLoaded,
       ).not.toHaveBeenCalled();
@@ -74,16 +74,16 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
       isLaravel: false,
       profile: "nette",
     };
-    const phpClassHasLaravelDynamicWhere = vi.fn(async () => false);
-    const phpClassHasLaravelLocalScope = vi.fn(async () => true);
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const phpClassHasDynamicBuilderFinder = vi.fn(async () => false);
+    const phpClassHasNamedBuilderScope = vi.fn(async () => true);
+    const resolvePhpFrameworkBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const deps = makeDeps({
       frameworkRuntime,
-      phpClassHasLaravelDynamicWhere,
-      phpClassHasLaravelLocalScope,
-      resolvePhpEloquentBuilderModelType,
+      phpClassHasDynamicBuilderFinder,
+      phpClassHasNamedBuilderScope,
+      resolvePhpFrameworkBuilderModelType,
     });
     const adapter = createPhpFrameworkDiagnosticContextStrategyAdapters(deps);
 
@@ -98,21 +98,21 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
     expect(
       adapter.ensureFrameworkSourceCollectionsLoaded("/workspace"),
     ).toBeUndefined();
-    expect(deps.resolvePhpEloquentBuilderModelType).toHaveBeenCalled();
-    expect(deps.phpClassHasLaravelLocalScope).toHaveBeenCalledWith(
+    expect(deps.resolvePhpFrameworkBuilderModelType).toHaveBeenCalled();
+    expect(deps.phpClassHasNamedBuilderScope).toHaveBeenCalledWith(
       "App\\Models\\Post",
       "published",
     );
-    expect(deps.phpClassHasLaravelDynamicWhere).toHaveBeenCalledWith(
+    expect(deps.phpClassHasDynamicBuilderFinder).toHaveBeenCalledWith(
       "App\\Models\\Post",
       "published",
     );
     expect(
-      resolvePhpEloquentBuilderModelType.mock.invocationCallOrder[0],
-    ).toBeLessThan(phpClassHasLaravelLocalScope.mock.invocationCallOrder[0]);
+      resolvePhpFrameworkBuilderModelType.mock.invocationCallOrder[0],
+    ).toBeLessThan(phpClassHasNamedBuilderScope.mock.invocationCallOrder[0]);
     expect(
-      phpClassHasLaravelLocalScope.mock.invocationCallOrder[0],
-    ).toBeLessThan(phpClassHasLaravelDynamicWhere.mock.invocationCallOrder[0]);
+      phpClassHasNamedBuilderScope.mock.invocationCallOrder[0],
+    ).toBeLessThan(phpClassHasDynamicBuilderFinder.mock.invocationCallOrder[0]);
     expect(
       deps.ensurePhpFrameworkSourceCollectionsLoaded,
     ).toHaveBeenCalledWith("/workspace");

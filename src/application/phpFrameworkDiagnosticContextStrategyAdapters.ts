@@ -2,15 +2,28 @@ import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   genericPhpDiagnosticContextStrategy,
   type PhpDiagnosticContextStrategy,
+  type PhpDiagnosticEditorPosition,
 } from "./phpDiagnosticContextStrategy";
 import {
   createPhpLaravelDiagnosticContextStrategyAdapter,
-  type PhpLaravelDiagnosticContextStrategyAdapterDependencies,
 } from "./phpLaravelDiagnosticContextStrategyAdapter";
 
-export interface PhpFrameworkDiagnosticContextStrategyAdapterDependencies
-  extends PhpLaravelDiagnosticContextStrategyAdapterDependencies {
+export interface PhpFrameworkDiagnosticContextStrategyAdapterDependencies {
+  ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  phpClassHasDynamicBuilderFinder(
+    className: string,
+    methodName: string,
+  ): Promise<boolean>;
+  phpClassHasNamedBuilderScope(
+    className: string,
+    methodName: string,
+  ): Promise<boolean>;
+  resolvePhpFrameworkBuilderModelType(
+    source: string,
+    position: PhpDiagnosticEditorPosition,
+    receiverExpression: string,
+  ): Promise<string | null>;
 }
 
 export interface PhpFrameworkDiagnosticContextStrategyContribution {
@@ -34,17 +47,24 @@ export function activePhpFrameworkDiagnosticContextStrategy(
 }
 
 export function createPhpFrameworkDiagnosticContextStrategyAdapters({
+  ensurePhpFrameworkSourceCollectionsLoaded,
   frameworkRuntime,
-  ...laravelDependencies
+  phpClassHasDynamicBuilderFinder,
+  phpClassHasNamedBuilderScope,
+  resolvePhpFrameworkBuilderModelType,
 }: PhpFrameworkDiagnosticContextStrategyAdapterDependencies): PhpDiagnosticContextStrategy {
   const contributions: readonly PhpFrameworkDiagnosticContextStrategyContribution[] =
     [
       {
         providerId: "laravel",
         create: () =>
-          createPhpLaravelDiagnosticContextStrategyAdapter(
-            laravelDependencies,
-          ),
+          createPhpLaravelDiagnosticContextStrategyAdapter({
+            ensurePhpFrameworkSourceCollectionsLoaded,
+            phpClassHasLaravelDynamicWhere: phpClassHasDynamicBuilderFinder,
+            phpClassHasLaravelLocalScope: phpClassHasNamedBuilderScope,
+            resolvePhpEloquentBuilderModelType:
+              resolvePhpFrameworkBuilderModelType,
+          }),
       },
     ];
 

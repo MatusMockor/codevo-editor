@@ -132,9 +132,9 @@ export function usePhpDiagnosticContextFilter(
       createPhpFrameworkDiagnosticContextStrategyAdapters({
         ensurePhpFrameworkSourceCollectionsLoaded,
         frameworkRuntime: activeFrameworkRuntime,
-        phpClassHasLaravelDynamicWhere,
-        phpClassHasLaravelLocalScope,
-        resolvePhpEloquentBuilderModelType,
+        phpClassHasDynamicBuilderFinder: phpClassHasLaravelDynamicWhere,
+        phpClassHasNamedBuilderScope: phpClassHasLaravelLocalScope,
+        resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
       }),
     [
       activeFrameworkRuntime,
