@@ -1,4 +1,8 @@
 import { missingLatteTemplateReferenceAt } from "../domain/netteTemplateReferences";
+import {
+  nettePresenterMethodCodeActionsFromDiagnosticData,
+} from "./nettePresenterMethodCodeActions";
+import type { NettePresenterLinkDiagnosticData } from "./nettePresenterLinkDiagnostics";
 import type {
   PhpCodeActionContext,
   PhpCodeActionDescriptor,
@@ -18,7 +22,7 @@ export async function provideLatteCodeActions(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   range: PhpCodeActionRange,
-  _context?: PhpCodeActionContext,
+  context?: PhpCodeActionContext,
 ): Promise<PhpCodeActionDescriptor[]> {
   const request = latteProviderRequestContext(options);
 
@@ -32,6 +36,18 @@ export async function provideLatteCodeActions(
     isRequestedRootActive,
     requestedRoot,
   } = request;
+  const diagnosticActions = await latteDiagnosticCodeActions({
+    context,
+    isRequestedRootActive,
+    range,
+    source,
+    readFileContent: deps.readFileContent,
+  });
+
+  if (!isRequestedRootActive()) {
+    return [];
+  }
+
   const templateRelativePaths = await listLatteTemplateRelativePaths({
     cache: options.caches.templateCache,
     deps,
@@ -44,7 +60,7 @@ export async function provideLatteCodeActions(
   });
 
   if (!isRequestedRootActive() || templateRelativePaths.length === 0) {
-    return [];
+    return diagnosticActions;
   }
 
   const missing = missingLatteTemplateReferenceAt(
@@ -55,17 +71,18 @@ export async function provideLatteCodeActions(
   );
 
   if (!missing) {
-    return [];
+    return diagnosticActions;
   }
 
   const path = deps.joinPath(requestedRoot, missing.relativePath);
   const existing = await fileContentOrNull(deps.readFileContent, path);
 
   if (!isRequestedRootActive() || existing !== null) {
-    return [];
+    return diagnosticActions;
   }
 
   return [
+    ...diagnosticActions,
     {
       edits: [],
       isPreferred: true,
@@ -78,6 +95,166 @@ export async function provideLatteCodeActions(
       title: `Create Latte template ${missing.name}`,
     },
   ];
+}
+
+async function latteDiagnosticCodeActions({
+  context,
+  isRequestedRootActive,
+  range,
+  source,
+  readFileContent,
+}: {
+  context: PhpCodeActionContext | undefined;
+  isRequestedRootActive(): boolean;
+  range: PhpCodeActionRange;
+  source: string;
+  readFileContent(path: string): Promise<string>;
+}): Promise<PhpCodeActionDescriptor[]> {
+  const diagnostics = context?.diagnostics ?? [];
+  const actions: PhpCodeActionDescriptor[] = [];
+
+  for (const diagnostic of diagnostics) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (
+      !latteCodeActionRangeIntersectsDiagnostic(
+        source,
+        range,
+        diagnostic.range,
+      )
+    ) {
+      continue;
+    }
+
+    const data = netteMissingPresenterMethodDiagnosticData(diagnostic.data);
+
+    if (!data) {
+      continue;
+    }
+
+    if (!diagnosticTargetStillMatches(source, diagnostic.range, data.target)) {
+      continue;
+    }
+
+    const presenterSource = await fileContentOrNull(
+      readFileContent,
+      data.presenterPath,
+    );
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (presenterSource === null) {
+      continue;
+    }
+
+    actions.push(
+      ...nettePresenterMethodCodeActionsFromDiagnosticData({
+        candidateMethodNames: data.candidateMethodNames,
+        presenterPath: data.presenterPath,
+        presenterSource,
+      }),
+    );
+  }
+
+  return actions;
+}
+
+function diagnosticTargetStillMatches(
+  source: string,
+  range: PhpCodeActionContext["diagnostics"][number]["range"],
+  target: string,
+): boolean {
+  const start = offsetAtLineColumn(source, {
+    column: range.startColumn,
+    lineNumber: range.startLineNumber,
+  });
+  const end = offsetAtLineColumn(source, {
+    column: range.endColumn,
+    lineNumber: range.endLineNumber,
+  });
+
+  return source.slice(start, end) === target;
+}
+
+function netteMissingPresenterMethodDiagnosticData(
+  data: unknown,
+): NettePresenterLinkDiagnosticData | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const candidate = data as Partial<NettePresenterLinkDiagnosticData>;
+
+  if (candidate.kind !== "missing-presenter-method") {
+    return null;
+  }
+
+  if (
+    !Array.isArray(candidate.candidateMethodNames) ||
+    typeof candidate.presenterPath !== "string" ||
+    typeof candidate.target !== "string"
+  ) {
+    return null;
+  }
+
+  if (
+    !candidate.candidateMethodNames.every(
+      (methodName): methodName is string => typeof methodName === "string",
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    candidateMethodNames: candidate.candidateMethodNames,
+    kind: "missing-presenter-method",
+    presenterPath: candidate.presenterPath,
+    target: candidate.target,
+  };
+}
+
+function latteCodeActionRangeIntersectsDiagnostic(
+  source: string,
+  range: PhpCodeActionRange,
+  diagnosticRange: PhpCodeActionContext["diagnostics"][number]["range"],
+): boolean {
+  const start = offsetAtLineColumn(source, {
+    column: diagnosticRange.startColumn,
+    lineNumber: diagnosticRange.startLineNumber,
+  });
+  const end = offsetAtLineColumn(source, {
+    column: diagnosticRange.endColumn,
+    lineNumber: diagnosticRange.endLineNumber,
+  });
+
+  return range.start <= end && range.end >= start;
+}
+
+function offsetAtLineColumn(
+  source: string,
+  position: { column: number; lineNumber: number },
+): number {
+  let lineNumber = 1;
+  let lineStart = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    if (lineNumber >= position.lineNumber) {
+      break;
+    }
+
+    if (source[index] !== "\n") {
+      continue;
+    }
+
+    lineNumber += 1;
+    lineStart = index + 1;
+  }
+
+  return Math.max(0, Math.min(source.length, lineStart + position.column - 1));
 }
 
 async function fileContentOrNull(

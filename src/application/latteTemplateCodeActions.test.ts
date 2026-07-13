@@ -159,6 +159,155 @@ describe("provideLatteCodeActions", () => {
     ]);
   });
 
+  it("creates presenter-method actions from Nette missing-method diagnostics", async () => {
+    const source = "{link Home:detail}";
+    const presenterPath = "/ws/app/UI/Home/HomePresenter.php";
+    const actions = await provideLatteCodeActions(
+      makeOptions({
+        readFileContent: async (path) => {
+          if (path === presenterPath) {
+            return `<?php
+
+use Nette\\Application\\UI\\Presenter;
+
+class HomePresenter extends Presenter
+{
+}
+`;
+          }
+
+          throw new Error("missing file");
+        },
+      }),
+      source,
+      {
+        end: source.indexOf("detail") + "detail".length,
+        start: source.indexOf("detail"),
+      },
+      {
+        diagnostics: [
+          {
+            code: "nette.missingPresenterMethod",
+            data: {
+              candidateMethodNames: ["actionDetail", "renderDetail"],
+              kind: "missing-presenter-method",
+              presenterPath,
+              target: "Home:detail",
+            },
+            message: "Missing presenter method.",
+            range: {
+              endColumn: 18,
+              endLineNumber: 1,
+              startColumn: 7,
+              startLineNumber: 1,
+            },
+            source: "Nette",
+          },
+        ],
+      },
+    );
+
+    expect(actions.map((action) => action.title)).toEqual([
+      "Create actionDetail",
+      "Create renderDetail",
+    ]);
+    expect(actions[0]).toMatchObject({
+      isPreferred: true,
+      kind: "quickfix",
+    });
+    expect(actions[0]?.edits[0]).toEqual(
+      expect.objectContaining({
+        path: presenterPath,
+        text: expect.stringContaining("public function actionDetail()"),
+      }),
+    );
+  });
+
+  it("does not create presenter-method actions outside the diagnostic range", async () => {
+    const source = "{link Home:detail}";
+    const presenterPath = "/ws/app/UI/Home/HomePresenter.php";
+    const actions = await provideLatteCodeActions(
+      makeOptions({
+        readFileContent: async () => {
+          throw new Error("should not read presenter");
+        },
+      }),
+      source,
+      {
+        end: source.indexOf("Home") + "Home".length,
+        start: source.indexOf("Home"),
+      },
+      {
+        diagnostics: [
+          {
+            code: "nette.missingPresenterMethod",
+            data: {
+              candidateMethodNames: ["renderDetail"],
+              kind: "missing-presenter-method",
+              presenterPath,
+              target: "Home:detail",
+            },
+            message: "Missing presenter method.",
+            range: {
+              endColumn: 18,
+              endLineNumber: 1,
+              startColumn: 12,
+              startLineNumber: 1,
+            },
+            source: "Nette",
+          },
+        ],
+      },
+    );
+
+    expect(actions).toEqual([]);
+  });
+
+  it("does not create presenter-method actions for stale diagnostic targets", async () => {
+    const source = "{link Home:other}";
+    const presenterPath = "/ws/app/UI/Home/HomePresenter.php";
+    const readFileContent = vi.fn(async () => `<?php
+
+use Nette\\Application\\UI\\Presenter;
+
+class HomePresenter extends Presenter
+{
+}
+`);
+    const actions = await provideLatteCodeActions(
+      makeOptions({ readFileContent }),
+      source,
+      {
+        end: source.indexOf("other") + "other".length,
+        start: source.indexOf("other"),
+      },
+      {
+        diagnostics: [
+          {
+            code: "nette.missingPresenterMethod",
+            data: {
+              candidateMethodNames: ["renderDetail"],
+              kind: "missing-presenter-method",
+              presenterPath,
+              target: "Home:detail",
+            },
+            message: "Missing presenter method.",
+            range: {
+              endColumn: 18,
+              endLineNumber: 1,
+              startColumn: 7,
+              startLineNumber: 1,
+            },
+            source: "Nette",
+          },
+        ],
+      },
+    );
+
+    expect(actions).toEqual([]);
+    expect(readFileContent).not.toHaveBeenCalledWith(presenterPath);
+  });
+
   it("does not create an action when an indexed candidate already exists", async () => {
     const source = "{include 'partials/menu'}";
     const actions = await provideLatteCodeActions(
