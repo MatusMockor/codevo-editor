@@ -148,6 +148,9 @@ import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import {
+  createPhpFrameworkFileChangeInvalidator,
+} from "./phpFrameworkFileChangeInvalidationRegistry";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { useBladeLaravelDiagnosticsProvider } from "./useBladeLaravelDiagnosticsProvider";
 import { usePhpOutline } from "./usePhpOutline";
@@ -7899,6 +7902,21 @@ export function useWorkbenchController(
     provideLatteDefinition,
     shouldBlockLatteDefinitionFallback,
   } = workbenchFrameworkIntelligence;
+  const invalidateFrameworkCachesForPath = useMemo(
+    () =>
+      createPhpFrameworkFileChangeInvalidator({
+        frameworkRuntime: phpFrameworkRuntimeContext,
+        invalidateBladeComponentNamesForPath,
+        invalidateBladeViewDataEntriesForPath,
+        invalidateNeonConfigForPath,
+      }),
+    [
+      invalidateBladeComponentNamesForPath,
+      invalidateBladeViewDataEntriesForPath,
+      invalidateNeonConfigForPath,
+      phpFrameworkRuntimeContext,
+    ],
+  );
   resetPhpFrameworkCachesRef.current = () => {
     phpClassSourcePathCacheRef.current = {};
     resetPhpClassMemberCacheRef.current();
@@ -8183,9 +8201,7 @@ export function useWorkbenchController(
     forgetExternallyRemovedDocumentPath,
     forgetRecentFile,
     forgetRecentLocationsForPath,
-    invalidateBladeComponentNamesForPath,
-    invalidateBladeViewDataEntriesForPath,
-    invalidateNeonConfigForPath,
+    invalidateFrameworkCachesForPath,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,

@@ -80,9 +80,7 @@ function makeDependencies(
     forgetExternallyRemovedDocumentPath: vi.fn(),
     forgetRecentFile: vi.fn(),
     forgetRecentLocationsForPath: vi.fn(),
-    invalidateBladeComponentNamesForPath: vi.fn(),
-    invalidateBladeViewDataEntriesForPath: vi.fn(),
-    invalidateNeonConfigForPath: vi.fn(),
+    invalidateFrameworkCachesForPath: vi.fn(),
     invalidatePhpFrameworkSourcePath: vi.fn(),
     invalidatePhpFrameworkBindingsForFileChange: vi.fn(),
     markExternallyRemovedDocumentPath: vi.fn(),
@@ -257,5 +255,63 @@ describe("useWorkbenchFileOperations close intent", () => {
     expect(closeDocument).toHaveBeenCalledWith(path, {
       recordRecentlyClosed: false,
     });
+  });
+});
+
+describe("useWorkbenchFileOperations framework cache invalidation", () => {
+  it("invalidates the current and previous paths on rename", () => {
+    const previousPath = `${ROOT}/Old.php`;
+    const path = `${ROOT}/New.php`;
+    const invalidateFrameworkCachesForPath = vi.fn();
+    const dependencies = makeDependencies("", {
+      invalidateFrameworkCachesForPath,
+    });
+    const operations = renderHook(dependencies);
+
+    act(() =>
+      operations().handleWorkspaceFileChange({
+        fileKind: "file",
+        kind: "renamed",
+        path,
+        previousPath,
+        relativePath: "New.php",
+        rootPath: ROOT,
+      }),
+    );
+
+    expect(invalidateFrameworkCachesForPath.mock.calls).toEqual([
+      [ROOT, path],
+      [ROOT, previousPath],
+    ]);
+    expect(
+      dependencies.invalidatePhpFrameworkSourcePath,
+    ).toHaveBeenNthCalledWith(1, ROOT, path);
+    expect(
+      dependencies.invalidatePhpFrameworkSourcePath,
+    ).toHaveBeenNthCalledWith(2, ROOT, previousPath);
+  });
+
+  it("does not invalidate paths from a non-active root", () => {
+    const invalidateFrameworkCachesForPath = vi.fn();
+    const dependencies = makeDependencies("", {
+      invalidateFrameworkCachesForPath,
+    });
+    const operations = renderHook(dependencies);
+
+    act(() =>
+      operations().handleWorkspaceFileChange({
+        fileKind: "file",
+        kind: "modified",
+        path: "/other/Changed.php",
+        previousPath: null,
+        relativePath: "Changed.php",
+        rootPath: "/other",
+      }),
+    );
+
+    expect(invalidateFrameworkCachesForPath).not.toHaveBeenCalled();
+    expect(
+      dependencies.invalidatePhpFrameworkSourcePath,
+    ).not.toHaveBeenCalled();
   });
 });

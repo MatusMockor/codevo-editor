@@ -94,12 +94,7 @@ export interface WorkbenchFileOperationsDependencies {
   forgetExternallyRemovedDocumentPath: (path: string) => void;
   forgetRecentFile: (path: string) => void;
   forgetRecentLocationsForPath: (path: string) => void;
-  invalidateBladeComponentNamesForPath: (rootPath: string, path: string) => void;
-  invalidateBladeViewDataEntriesForPath: (
-    rootPath: string,
-    path: string,
-  ) => void;
-  invalidateNeonConfigForPath: (rootPath: string, path: string) => void;
+  invalidateFrameworkCachesForPath: (rootPath: string, path: string) => void;
   invalidatePhpFrameworkSourcePath: (
     rootPath: string,
     path: string,
@@ -188,9 +183,7 @@ export function useWorkbenchFileOperations(
     forgetExternallyRemovedDocumentPath,
     forgetRecentFile,
     forgetRecentLocationsForPath,
-    invalidateBladeComponentNamesForPath,
-    invalidateBladeViewDataEntriesForPath,
-    invalidateNeonConfigForPath,
+    invalidateFrameworkCachesForPath,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
@@ -877,21 +870,11 @@ export function useWorkbenchFileOperations(
       invalidatePhpFrameworkBindingsForFileChange(event);
 
       invalidatePhpFrameworkSourcePath(requestedRoot, event.path);
-      invalidateBladeComponentNamesForPath(requestedRoot, event.path);
-      invalidateBladeViewDataEntriesForPath(requestedRoot, event.path);
-      invalidateNeonConfigForPath(requestedRoot, event.path);
+      invalidateFrameworkCachesForPath(requestedRoot, event.path);
 
       if (event.previousPath) {
         invalidatePhpFrameworkSourcePath(requestedRoot, event.previousPath);
-        invalidateBladeComponentNamesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
-        invalidateBladeViewDataEntriesForPath(
-          requestedRoot,
-          event.previousPath,
-        );
-        invalidateNeonConfigForPath(requestedRoot, event.previousPath);
+        invalidateFrameworkCachesForPath(requestedRoot, event.previousPath);
       }
 
       if (event.kind === "deleted") {
@@ -921,9 +904,7 @@ export function useWorkbenchFileOperations(
       currentWorkspaceRootRef,
       forgetExternallyRemovedDocumentPath,
       handleExternalRemovedPath,
-      invalidateBladeComponentNamesForPath,
-      invalidateBladeViewDataEntriesForPath,
-      invalidateNeonConfigForPath,
+      invalidateFrameworkCachesForPath,
       invalidatePhpFrameworkBindingsForFileChange,
       invalidatePhpFrameworkSourcePath,
       queueWorkspaceDirectoryRefresh,
