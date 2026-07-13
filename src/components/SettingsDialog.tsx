@@ -842,7 +842,7 @@ function GeneralSettings({
           }
           value={workspaceSettings.javaScriptTypeScriptVersion}
         >
-          <option value="bundled">Bundled</option>
+          <option value="bundled">Managed</option>
           <option value="workspace">Workspace</option>
         </select>
       </label>

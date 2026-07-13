@@ -6,6 +6,7 @@ import type {
   FileSearchResult,
   ManagedPhpactorInstallCompletionEvent,
   ManagedPhpactorInstallUnsubscribeFn,
+  ManagedTypeScriptInstallCompletionEvent,
   PhpToolGateway,
   PhpToolAvailability,
   ReplaceInPathResult,
@@ -29,6 +30,8 @@ import { workspaceRelativePathForDescriptor } from "./tauriWorkspaceIdentityGate
 
 const MANAGED_PHPACTOR_INSTALL_COMPLETED_EVENT =
   "php://managed-phpactor-install-completed";
+const MANAGED_TYPESCRIPT_INSTALL_COMPLETED_EVENT =
+  "typescript://managed-language-server-install-completed";
 import {
   pathFromLanguageServerUri,
   type LanguageServerWorkspaceEdit,
@@ -110,6 +113,20 @@ export class TauriWorkspaceGateway
       (event) => {
         listener(event.payload);
       },
+    );
+  }
+
+  installManagedTypeScriptLanguageServer(root: string): Promise<void> {
+    return invoke<void>("install_managed_typescript_language_server", { root });
+  }
+
+  subscribeManagedTypeScriptLanguageServerInstall(
+    listener: (event: ManagedTypeScriptInstallCompletionEvent) => void,
+  ): Promise<ManagedPhpactorInstallUnsubscribeFn> {
+    if (!isTauri()) return Promise.resolve(() => undefined);
+    return listen<ManagedTypeScriptInstallCompletionEvent>(
+      MANAGED_TYPESCRIPT_INSTALL_COMPLETED_EVENT,
+      (event) => listener(event.payload),
     );
   }
 

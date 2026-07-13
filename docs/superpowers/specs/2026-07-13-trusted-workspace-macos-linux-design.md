@@ -13,16 +13,30 @@ support commitment.
 
 ## Architecture
 
-The existing `WorkspaceRegistry` and `workspace_file_commands` implementation
-is platform-neutral. The application will compile and register that same
-implementation when the target is macOS or Linux, rather than maintaining
-separate Linux commands or less-secure path-based fallbacks.
+The existing registry and file-command architecture is shared, but its current
+low-level filesystem calls are macOS-specific. The application will retain one
+descriptor-scoped command API while providing small platform-specific syscall
+adapters for macOS and Linux; it will not use path-based Linux fallbacks.
 
 The Tauri dialog plugin will supply the native folder picker on both supported
 platforms. A selected directory is registered as a trusted workspace and the
 frontend continues to invoke descriptor-scoped commands with a workspace ID
 and a relative path. The Rust registry verifies the workspace ID and resolves
 the relative path beneath its registered root before file operations occur.
+
+On Linux, the registry will retain a directory file descriptor and resolve
+untrusted descendant paths with `openat2` using `RESOLVE_BENEATH` and
+`RESOLVE_NO_SYMLINKS`. This provides the equivalent protection against path
+escape and symlink races supplied by the current macOS flags. Linux will derive
+the retained root's display path through `/proc/self/fd/<fd>`, report unknown
+case and Unicode-normalization properties where they cannot be safely probed,
+and use Linux `renameat2` and xattr syscalls for atomic mutations and metadata
+preservation.
+
+This requires Linux kernel 5.6 or newer, where `openat2` is available. Older
+kernels return `ENOSYS` and are unsupported because a path-based fallback would
+weaken the descriptor boundary. Calls that return transient `EAGAIN` are retried
+up to three times before the existing command error is returned.
 
 ## Platform Behaviour
 

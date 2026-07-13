@@ -555,19 +555,39 @@ where
         configure_typescript_import_preferences(&mut initialize_request, settings);
         configure_typescript_validation(&mut initialize_request, settings.validation);
 
+        let Some(node) =
+            crate::managed_javascript_typescript::node_executable_path_with_min_version(20)
+        else {
+            return unavailable_javascript_typescript_plan(
+                "Node.js 20 or newer is required for the TypeScript language server.",
+            );
+        };
+        let server_entrypoint = typescript_language_server_entrypoint(&server.path)
+            .unwrap_or_else(|| server.path.clone());
+
         LanguageServerPlan {
             provider: LanguageServerProvider::TypeScriptLanguageServer,
             status: LanguageServerPlanStatus::Ready,
             message: "TypeScript language server is ready to start.".to_string(),
             command: Some(LanguageServerCommand {
-                executable: server.path.clone(),
-                args: vec!["--stdio".to_string()],
+                executable: node,
+                args: vec![server_entrypoint, "--stdio".to_string()],
                 working_directory: root.to_string_lossy().to_string(),
                 env: Vec::new(),
             }),
             initialize_request: Some(initialize_request),
         }
     }
+}
+
+fn typescript_language_server_entrypoint(path: &str) -> Option<String> {
+    let path = std::path::Path::new(path);
+    let bin = path.parent()?;
+    if bin.file_name()?.to_str()? != ".bin" {
+        return None;
+    }
+    let entrypoint = bin.parent()?.join("typescript-language-server/lib/cli.mjs");
+    Some(entrypoint.to_string_lossy().to_string())
 }
 
 impl<TFactory> JavaScriptTypeScriptLanguageServerPlanner
@@ -1591,10 +1611,9 @@ mod tests {
         ));
         assert!(matches!(plan.status, LanguageServerPlanStatus::Ready));
         let command = plan.command.expect("language server command");
-        assert_eq!(command.args, vec!["--stdio"]);
-        assert!(command
-            .executable
-            .ends_with("node_modules/.bin/typescript-language-server"));
+        assert!(command.executable.ends_with("node"));
+        assert_eq!(command.args[1], "--stdio");
+        assert!(command.args[0].ends_with("node_modules/typescript-language-server/lib/cli.mjs"));
 
         let request = plan.initialize_request.expect("initialize request");
         assert_eq!(request.method, "initialize");

@@ -462,6 +462,7 @@ import {
   type FileSearchGateway,
   type IntelligenceMode,
   type ManagedPhpactorInstallCompletionEvent,
+  type ManagedTypeScriptInstallCompletionEvent,
   type ManagedPhpactorInstallUnsubscribeFn,
   type PhpToolGateway,
   type PhpToolAvailability,
@@ -962,6 +963,8 @@ export function useWorkbenchController(
     useState<LanguageServerPlan | null>(null);
   const [installingManagedPhpactor, setInstallingManagedPhpactor] =
     useState(false);
+  const [installingManagedTypeScriptLanguageServer, setInstallingManagedTypeScriptLanguageServer] =
+    useState(false);
   const [
     javaScriptTypeScriptLanguageServerPlan,
     setJavaScriptTypeScriptLanguageServerPlan,
@@ -1256,6 +1259,7 @@ export function useWorkbenchController(
     new Set(),
   );
   const installingManagedPhpactorRootRef = useRef<string | null>(null);
+  const installingManagedTypeScriptLanguageServerRootRef = useRef<string | null>(null);
   const autoStartedJavaScriptTypeScriptLanguageServerRootRef = useRef<
     string | null
   >(null);
@@ -3417,6 +3421,7 @@ export function useWorkbenchController(
     lastLanguageServerCrashRef.current = null;
     lastPhpIdeReadinessSignatureRef.current = null;
     installingManagedPhpactorRootRef.current = null;
+    installingManagedTypeScriptLanguageServerRootRef.current = null;
     openWorkspaceRequestTokenRef.current += 1;
     openWorkspaceRequestPathRef.current = null;
     openFileRequestTokenRef.current += 1;
@@ -3433,6 +3438,7 @@ export function useWorkbenchController(
     setLanguageServerRuntimeStatusRoot(null);
     setJavaScriptTypeScriptLanguageServerRuntimeStatus(null);
     setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(null);
+    setInstallingManagedTypeScriptLanguageServer(false);
     setEntriesByDirectory({});
     setLoadingDirectories(new Set());
     setExpandedDirectories(new Set());
@@ -4086,6 +4092,8 @@ export function useWorkbenchController(
       phpLanguageServerAutostartAttemptsByRootRef.current = {};
       installingManagedPhpactorRootRef.current = null;
       setInstallingManagedPhpactor(false);
+      installingManagedTypeScriptLanguageServerRootRef.current = null;
+      setInstallingManagedTypeScriptLanguageServer(false);
       autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
 
       try {
@@ -8592,6 +8600,69 @@ export function useWorkbenchController(
     ],
   );
 
+  const installManagedTypeScriptLanguageServer = useCallback(async () => {
+    if (!workspaceRoot || !phpToolGateway.installManagedTypeScriptLanguageServer) return;
+    if (
+      installingManagedTypeScriptLanguageServer &&
+      workspaceRootKeysEqual(
+        installingManagedTypeScriptLanguageServerRootRef.current,
+        workspaceRoot,
+      )
+    ) {
+      return;
+    }
+
+    const targetWorkspaceRoot = workspaceRoot;
+    installingManagedTypeScriptLanguageServerRootRef.current = targetWorkspaceRoot;
+    setInstallingManagedTypeScriptLanguageServer(true);
+    try {
+      await phpToolGateway.installManagedTypeScriptLanguageServer(targetWorkspaceRoot);
+    } catch (error) {
+      if (
+        workspaceRootKeysEqual(
+          installingManagedTypeScriptLanguageServerRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        installingManagedTypeScriptLanguageServerRootRef.current = null;
+        setInstallingManagedTypeScriptLanguageServer(false);
+
+        if (
+          workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            targetWorkspaceRoot,
+          )
+        ) {
+          reportJavaScriptTypeScriptLanguageServerError(error);
+        }
+      }
+    }
+  }, [
+    installingManagedTypeScriptLanguageServer,
+    phpToolGateway,
+    reportJavaScriptTypeScriptLanguageServerError,
+    workspaceRoot,
+  ]);
+
+  const handleManagedTypeScriptInstallCompletion = useCallback(async (event: ManagedTypeScriptInstallCompletionEvent) => {
+    if (!workspaceRootKeysEqual(installingManagedTypeScriptLanguageServerRootRef.current, event.root)) return;
+    installingManagedTypeScriptLanguageServerRootRef.current = null;
+    setInstallingManagedTypeScriptLanguageServer(false);
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) return;
+    if (event.error) { reportJavaScriptTypeScriptLanguageServerError(event.error); return; }
+    try {
+      await refreshJavaScriptTypeScriptLanguageServerPlan(event.root);
+    } catch (error) {
+      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) {
+        reportJavaScriptTypeScriptLanguageServerError(error);
+      }
+      return;
+    }
+    if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) {
+      setMessage("Installed managed TypeScript IDE engine.");
+    }
+  }, [refreshJavaScriptTypeScriptLanguageServerPlan, reportJavaScriptTypeScriptLanguageServerError]);
+
   const {
     startHardReindex,
     startIndexScan,
@@ -9527,6 +9598,29 @@ export function useWorkbenchController(
     };
   }, [handleManagedPhpactorInstallCompletion, phpToolGateway, reportError]);
 
+  useEffect(() => {
+    if (!phpToolGateway.subscribeManagedTypeScriptLanguageServerInstall) return;
+    let active = true;
+    let unsubscribe: (() => void) | null = null;
+    void phpToolGateway.subscribeManagedTypeScriptLanguageServerInstall((event) => {
+      if (active) {
+        void handleManagedTypeScriptInstallCompletion(event);
+      }
+    }).then((dispose) => {
+      if (!active) {
+        dispose();
+        return;
+      }
+      unsubscribe = dispose;
+    }).catch((error) => {
+      if (active) reportError("JavaScript/TypeScript", error);
+    });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [handleManagedTypeScriptInstallCompletion, phpToolGateway, reportError]);
+
   useLanguageServerDiagnosticsSubscriptions({
     workspaceRoot,
     currentWorkspaceRootRef,
@@ -10312,6 +10406,8 @@ export function useWorkbenchController(
     startLanguageServer,
     startPhpReindex,
     installManagedPhpactor,
+    installManagedTypeScriptLanguageServer,
+    installingManagedTypeScriptLanguageServer,
     stopLanguageServer,
     settingsOpen,
     selectedGitChange,

@@ -358,6 +358,11 @@ export interface ManagedPhpactorInstallCompletionEvent {
   error: string | null;
 }
 
+export interface ManagedTypeScriptInstallCompletionEvent {
+  root: string;
+  error: string | null;
+}
+
 export interface PhpToolGateway {
   detectPhpTools(workspaceRoot: string | null): Promise<PhpToolAvailability>;
   /**
@@ -369,6 +374,10 @@ export interface PhpToolGateway {
   installManagedPhpactor(root: string): Promise<void>;
   subscribeManagedPhpactorInstall(
     listener: (event: ManagedPhpactorInstallCompletionEvent) => void,
+  ): Promise<ManagedPhpactorInstallUnsubscribeFn>;
+  installManagedTypeScriptLanguageServer?(root: string): Promise<void>;
+  subscribeManagedTypeScriptLanguageServerInstall?(
+    listener: (event: ManagedTypeScriptInstallCompletionEvent) => void,
   ): Promise<ManagedPhpactorInstallUnsubscribeFn>;
 }
 
