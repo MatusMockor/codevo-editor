@@ -1,5 +1,4 @@
 import { useMemo, type MutableRefObject } from "react";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
 import type { PhpLaravelConfigTarget } from "../domain/phpLaravelConfig";
 import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslations";
@@ -32,7 +31,6 @@ import {
   createPhpLaravelViewTargetResolver,
   type PhpLaravelViewNavigationTarget,
 } from "./phpLaravelViewTargets";
-import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { type WorkspaceTargetCollectorDeps } from "./phpWorkspaceTargetCollector";
 
@@ -72,14 +70,7 @@ export interface LaravelTargetsDependencies {
   relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
   joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
   isPhpPath: (path: string) => boolean;
-  activePhpFrameworkProviders?: readonly PhpFrameworkProvider[];
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  /**
-   * Legacy fallback for callers that have not migrated to frameworkRuntime yet.
-   * New framework-boundary callers should pass PhpFrameworkRuntimeContext so
-   * capability gates are sourced from the runtime contract.
-   */
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
 }
 
 export interface LaravelTargets {
@@ -185,23 +176,8 @@ function useLaravelFrameworkTargetAdapter(
     relativeWorkspacePath,
     joinWorkspacePath,
     isPhpPath,
-    activePhpFrameworkProviders,
-    frameworkRuntime: providedFrameworkRuntime,
-    isLaravelFrameworkActive,
+    frameworkRuntime,
   } = dependencies;
-  const frameworkRuntime = useMemo(
-    () =>
-      phpFrameworkRuntimeContextFromDependencies({
-        activePhpFrameworkProviders,
-        frameworkRuntime: providedFrameworkRuntime,
-        isLaravelFrameworkActive,
-      }),
-    [
-      activePhpFrameworkProviders,
-      providedFrameworkRuntime,
-      isLaravelFrameworkActive,
-    ],
-  );
 
   const engineDeps = useMemo<WorkspaceTargetCollectorDeps>(
     () => ({

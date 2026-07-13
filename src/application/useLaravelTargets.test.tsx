@@ -114,8 +114,7 @@ function renderLaravelTargets(
     relativeWorkspacePath,
     joinWorkspacePath,
     isPhpPath,
-    activePhpFrameworkProviders: PROVIDERS,
-    ...(overrides.frameworkRuntime ? {} : { isLaravelFrameworkActive: true }),
+    frameworkRuntime: LARAVEL_RUNTIME,
     ...overrides,
   };
 
@@ -269,8 +268,8 @@ describe("useLaravelTargets", () => {
     harness.unmount();
   });
 
-  it("returns empty collectors when Laravel is inactive", async () => {
-    const harness = renderLaravelTargets({ isLaravelFrameworkActive: false });
+  it("returns empty collectors when the runtime is not Laravel", async () => {
+    const harness = renderLaravelTargets({ frameworkRuntime: GENERIC_RUNTIME });
 
     expect(
       await harness
@@ -291,39 +290,10 @@ describe("useLaravelTargets", () => {
     harness.unmount();
   });
 
-  it("lets the runtime context supersede legacy active providers", async () => {
-    const harness = renderLaravelTargets({
-      frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
-    });
-
-    expect(
-      await harness
-        .hook()
-        .collectPhpLaravelNamedRouteTargets(
-          "<?php Route::get('/x')->name('x');",
-          `${ROOT}/routes/web.php`,
-        ),
-    ).toEqual([]);
-    expect(
-      await harness
-        .hook()
-        .collectPhpLaravelGateAbilityTargets(
-          "<?php Gate::define('x', fn () => true);",
-          `${ROOT}/a.php`,
-        ),
-    ).toEqual([]);
-    expect(await harness.hook().collectPhpLaravelEnvTargets()).toEqual([]);
-    expect(harness.searchText).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("collects targets from a Laravel runtime context without legacy activation", async () => {
+  it("collects targets under an explicit Laravel runtime context", async () => {
     const source = "<?php\nRoute::get('/x')->name('runtime.route');\n";
     const currentPath = `${ROOT}/routes/web.php`;
     const harness = renderLaravelTargets({
-      activePhpFrameworkProviders: [],
       frameworkRuntime: LARAVEL_RUNTIME,
     });
 
@@ -564,11 +534,10 @@ describe("useLaravelTargets", () => {
     harness.unmount();
   });
 
-  it("returns empty directory-scan collectors when Laravel is inactive", async () => {
+  it("returns empty directory-scan collectors when the runtime is not Laravel", async () => {
     const readWorkspaceDirectory = vi.fn(async () => [] as FileEntry[]);
     const harness = renderLaravelTargets({
-      isLaravelFrameworkActive: false,
-      activePhpFrameworkProviders: [],
+      frameworkRuntime: GENERIC_RUNTIME,
       readWorkspaceDirectory: readWorkspaceDirectory as never,
     });
 
