@@ -5,6 +5,7 @@ import {
 import { missingLaravelViewReferenceAt } from "../domain/laravelDiagnostics";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
+import { phpNettePresenterLinkCodeAction } from "./phpNettePresenterLinkCodeActions";
 
 export interface PhpFrameworkCodeActionContributionDependencies {
   collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
@@ -51,6 +52,17 @@ const PHP_FRAMEWORK_CODE_ACTION_CONTRIBUTIONS: readonly PhpFrameworkCodeActionRe
             ),
         };
       },
+    },
+    {
+      providerId: "nette",
+      supports: (frameworkRuntime) =>
+        frameworkRuntime.supports("phpPresenterLinks"),
+      create: () => ({
+        providePhpCodeAction: async (source, range, isRequestedRootActive) =>
+          isRequestedRootActive()
+            ? phpNettePresenterLinkCodeAction(source, range)
+            : null,
+      }),
     },
   ];
 

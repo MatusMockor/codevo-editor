@@ -57,9 +57,53 @@ describe("phpFrameworkCodeActionContributionRegistry", () => {
 
   it.each([
     ["generic", GENERIC_RUNTIME],
-    ["Nette", NETTE_RUNTIME],
     ["custom", CUSTOM_RUNTIME],
   ])("does not expose Laravel actions for the %s provider", (_, runtime) => {
+    expect(selectActions(runtime).contributions).toEqual([]);
+  });
+
+  it("activates the Nette contribution when PHP presenter links are supported", () => {
+    expect(selectActions(NETTE_RUNTIME).contributions).toHaveLength(1);
+  });
+
+  it("routes presenter-link actions only through the Nette contribution", async () => {
+    const source = `<?php
+
+use Nette\\Application\\UI\\Presenter;
+
+class ProductPresenter extends Presenter
+{
+    public function renderDefault(): void
+    {
+        $this->link('show');
+    }
+}
+`;
+    const start = source.indexOf("show");
+    const range = { end: start + "show".length, start };
+    const isRequestedRootActive = () => true;
+    const netteContribution = selectActions(NETTE_RUNTIME).contributions[0];
+
+    await expect(
+      netteContribution?.(source, range, isRequestedRootActive),
+    ).resolves.toMatchObject({ title: "Create actionShow" });
+
+    await expect(
+      Promise.all(
+        selectActions(LARAVEL_RUNTIME).contributions.map((contribution) =>
+          contribution(source, range, isRequestedRootActive),
+        ),
+      ),
+    ).resolves.toEqual([null]);
+    expect(selectActions(GENERIC_RUNTIME).contributions).toEqual([]);
+  });
+
+  it("requires the Nette PHP presenter links capability", () => {
+    const runtime: PhpFrameworkRuntimeContext = {
+      ...NETTE_RUNTIME,
+      supports: (capability) => capability !== "phpPresenterLinks",
+    };
+
     expect(selectActions(runtime).contributions).toEqual([]);
   });
 
