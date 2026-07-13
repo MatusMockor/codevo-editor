@@ -1,27 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createPhpFrameworkContextualMemberDefinitionNavigationAdapters,
-  type PhpFrameworkContextualMemberDefinitionNavigationAdaptersOptions,
+  type PhpFrameworkContextualMemberDefinitionNavigationContribution,
 } from "./phpFrameworkContextualMemberDefinitionNavigationAdapters";
+import type { PhpFrameworkContextualMemberDefinitionNavigationAdapter } from "./phpFrameworkContextualMemberDefinitionNavigationAdapter";
 
-function makeLaravelDependencies() {
+function makeActiveAdapter(): PhpFrameworkContextualMemberDefinitionNavigationAdapter {
   return {
-    openDirectPhpMethodTarget: vi.fn(async () => false),
-    openPhpLaravelDynamicWhereTarget: vi.fn(async () => false),
-    resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
-    resolvePhpExpressionType: vi.fn(async () => null),
-    resolvePhpLaravelRelationPathOwnerType: vi.fn(async () => null),
-  } satisfies NonNullable<
-    PhpFrameworkContextualMemberDefinitionNavigationAdaptersOptions["laravelDependencies"]
-  >;
+    dynamicWhereDefinition: vi.fn(async () => ({ opened: false })),
+    localScopeMethodName: vi.fn(() => "scopePublished"),
+    relationStringDefinition: vi.fn(async () => ({ opened: false })),
+    requestMethodDefinitionHint: vi.fn(() => null),
+    staticBuilderTargetClassName: vi.fn(() => "App\\Models\\Post"),
+    supportsBuilderModelNavigation: vi.fn(() => true),
+  };
+}
+
+function makeProviderContribution(
+  providerId = "laravel",
+): PhpFrameworkContextualMemberDefinitionNavigationContribution {
+  return {
+    createAdapter: vi.fn(() => makeActiveAdapter()),
+    providerId,
+  };
 }
 
 describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
-  it("returns an inert generic adapter without resolving Laravel targets", async () => {
-    const laravelDependencies = makeLaravelDependencies();
+  it("returns an inert generic adapter without resolving provider targets", async () => {
+    const providerContribution = makeProviderContribution();
     const adapter =
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
-        laravelDependencies,
+        providerContributions: [providerContribution],
       });
 
     expect(adapter.supportsBuilderModelNavigation()).toBe(false);
@@ -51,12 +60,7 @@ describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
         source: "<?php",
       }),
     ).resolves.toEqual({ opened: false });
-    expect(
-      laravelDependencies.openPhpLaravelDynamicWhereTarget,
-    ).not.toHaveBeenCalled();
-    expect(
-      laravelDependencies.resolvePhpLaravelRelationPathOwnerType,
-    ).not.toHaveBeenCalled();
+    expect(providerContribution.createAdapter).not.toHaveBeenCalled();
   });
 
   it("uses an explicit runtime provider as the authoritative activation", () => {
@@ -65,6 +69,7 @@ describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
         frameworkRuntime: { hasProvider },
         isLaravelFrameworkActive: true,
+        providerContributions: [makeProviderContribution()],
       });
 
     expect(hasProvider).toHaveBeenCalledWith("laravel");
@@ -78,7 +83,7 @@ describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
           hasProvider: (providerId) => providerId === "laravel",
         },
         isLaravelFrameworkActive: false,
-        laravelDependencies: makeLaravelDependencies(),
+        providerContributions: [makeProviderContribution()],
       });
 
     expect(adapter.supportsBuilderModelNavigation()).toBe(true);
@@ -88,9 +93,23 @@ describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
     const adapter =
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
         isLaravelFrameworkActive: true,
-        laravelDependencies: makeLaravelDependencies(),
+        providerContributions: [makeProviderContribution()],
       });
 
     expect(adapter.supportsBuilderModelNavigation()).toBe(true);
+  });
+
+  it("ignores inactive provider contributions", () => {
+    const providerContribution = makeProviderContribution("nette");
+    const adapter =
+      createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
+        frameworkRuntime: {
+          hasProvider: (providerId) => providerId === "laravel",
+        },
+        providerContributions: [providerContribution],
+      });
+
+    expect(adapter.supportsBuilderModelNavigation()).toBe(false);
+    expect(providerContribution.createAdapter).not.toHaveBeenCalled();
   });
 });

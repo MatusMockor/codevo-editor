@@ -3,31 +3,34 @@ import {
   genericPhpFrameworkContextualMemberDefinitionNavigationAdapter,
   type PhpFrameworkContextualMemberDefinitionNavigationAdapter,
 } from "./phpFrameworkContextualMemberDefinitionNavigationAdapter";
-import {
-  createPhpLaravelContextualMemberDefinitionNavigationAdapter,
-  type PhpLaravelContextualMemberDefinitionNavigationAdapterDependencies,
-} from "./phpLaravelContextualMemberDefinitionNavigationAdapter";
+
+export interface PhpFrameworkContextualMemberDefinitionNavigationContribution {
+  readonly providerId: string;
+  createAdapter(): PhpFrameworkContextualMemberDefinitionNavigationAdapter;
+}
 
 export interface PhpFrameworkContextualMemberDefinitionNavigationAdaptersOptions {
   frameworkRuntime?: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
   isLaravelFrameworkActive?: boolean;
-  laravelDependencies?: PhpLaravelContextualMemberDefinitionNavigationAdapterDependencies;
+  providerContributions?: readonly PhpFrameworkContextualMemberDefinitionNavigationContribution[];
 }
 
 export function createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
   frameworkRuntime,
   isLaravelFrameworkActive = false,
-  laravelDependencies,
+  providerContributions = [],
 }: PhpFrameworkContextualMemberDefinitionNavigationAdaptersOptions): PhpFrameworkContextualMemberDefinitionNavigationAdapter {
-  const isLaravelActive = frameworkRuntime
-    ? frameworkRuntime.hasProvider("laravel")
-    : isLaravelFrameworkActive;
+  const activeContribution = providerContributions.find(({ providerId }) => {
+    if (frameworkRuntime) {
+      return frameworkRuntime.hasProvider(providerId);
+    }
 
-  if (!isLaravelActive || !laravelDependencies) {
+    return providerId === "laravel" && isLaravelFrameworkActive;
+  });
+
+  if (!activeContribution) {
     return genericPhpFrameworkContextualMemberDefinitionNavigationAdapter;
   }
 
-  return createPhpLaravelContextualMemberDefinitionNavigationAdapter(
-    laravelDependencies,
-  );
+  return activeContribution.createAdapter();
 }

@@ -15,6 +15,7 @@ import { phpSuperTypeReferences } from "../domain/phpNavigation";
 import type { EditorDocument, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpFrameworkContextualMemberDefinitionNavigationAdapters } from "./phpFrameworkContextualMemberDefinitionNavigationAdapters";
+import { createPhpLaravelContextualMemberDefinitionNavigationAdapter } from "./phpLaravelContextualMemberDefinitionNavigationAdapter";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface OpenNavigationOptions {
@@ -121,13 +122,19 @@ export function usePhpContextualMemberDefinitionNavigation({
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
         frameworkRuntime,
         isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
-        laravelDependencies: {
-          openDirectPhpMethodTarget,
-          openPhpLaravelDynamicWhereTarget,
-          resolvePhpEloquentBuilderModelType,
-          resolvePhpExpressionType,
-          resolvePhpLaravelRelationPathOwnerType,
-        },
+        providerContributions: [
+          {
+            providerId: "laravel",
+            createAdapter: () =>
+              createPhpLaravelContextualMemberDefinitionNavigationAdapter({
+                openDirectPhpMethodTarget,
+                openPhpLaravelDynamicWhereTarget,
+                resolvePhpEloquentBuilderModelType,
+                resolvePhpExpressionType,
+                resolvePhpLaravelRelationPathOwnerType,
+              }),
+          },
+        ],
       }),
     [
       frameworkRuntime,
