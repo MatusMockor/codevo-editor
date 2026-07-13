@@ -89,7 +89,7 @@ class OrderController
 `;
     const start = source.indexOf("orders.show");
     const { contributions } = activePhpFrameworkCodeActions({
-      collectPhpLaravelViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
+      collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
       frameworkRuntime: LARAVEL_RUNTIME,
       legacyIsLaravelFrameworkActive: false,
       readTestFileIfExists: vi.fn(async () => null),

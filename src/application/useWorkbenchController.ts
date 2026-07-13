@@ -7642,7 +7642,7 @@ export function useWorkbenchController(
   } = useMemo(
     () =>
       activePhpFrameworkCodeActions({
-        collectPhpLaravelViewTargets: collectViewTargets,
+        collectViewTargets: collectViewTargets,
         frameworkRuntime: phpFrameworkRuntimeContext,
         legacyIsLaravelFrameworkActive: false,
         readTestFileIfExists,

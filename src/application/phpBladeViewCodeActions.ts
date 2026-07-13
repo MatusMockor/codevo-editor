@@ -7,7 +7,7 @@ import type {
 
 export interface CreateMissingBladeViewCodeActionOptions {
   canCreateMissingBladeViews: boolean;
-  collectPhpLaravelViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
+  collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   workspaceRoot: string | null;
 }
@@ -21,7 +21,7 @@ export type CreateMissingBladeViewCodeAction = (
 
 export function buildCreateMissingBladeViewCodeAction({
   canCreateMissingBladeViews,
-  collectPhpLaravelViewTargets,
+  collectViewTargets,
   readTestFileIfExists,
   workspaceRoot,
 }: CreateMissingBladeViewCodeActionOptions): CreateMissingBladeViewCodeAction {
@@ -37,7 +37,7 @@ export function buildCreateMissingBladeViewCodeAction({
       return null;
     }
 
-    const viewTargets = await collectPhpLaravelViewTargets();
+    const viewTargets = await collectViewTargets();
 
     if (!isRequestedRootActive()) {
       return null;

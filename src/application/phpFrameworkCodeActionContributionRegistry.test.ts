@@ -42,7 +42,7 @@ function selectActions(
   legacyIsLaravelFrameworkActive = false,
 ) {
   return activePhpFrameworkCodeActions({
-    collectPhpLaravelViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
+    collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
     frameworkRuntime,
     legacyIsLaravelFrameworkActive,
     readTestFileIfExists: vi.fn(async () => null),

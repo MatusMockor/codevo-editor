@@ -6,7 +6,7 @@ import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
 
 export interface PhpFrameworkCodeActionContributionDependencies {
-  collectPhpLaravelViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
+  collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   workspaceRoot: string | null;
 }
