@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  nettePresenterActionMethodCandidates,
+  nettePresenterClassCandidatePathsForLink,
+  parseNetteLinkTarget,
+} from "../domain/latteLinkNavigation";
+import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
 import type { LatteProviderFlowFactoryOptions } from "./latteProviderFlowContext";
 import { provideLatteCodeActions } from "./latteTemplateCodeActions";
+import { nettePresenterLinkDiagnostics } from "./nettePresenterLinkDiagnostics";
+import type { PhpCodeActionContext } from "./phpCodeActionTypes";
 
 const ROOT = "/ws";
 const TEMPLATE_PATH = `${ROOT}/app/UI/Home/default.latte`;
@@ -223,6 +231,79 @@ class HomePresenter extends Presenter
     );
   });
 
+  it("turns Nette missing-method diagnostics into presenter-method code actions", async () => {
+    const source = "{link Home:detail}";
+    const presenterPath = "/ws/app/UI/Home/HomePresenter.php";
+    const presenterSource = `<?php
+
+use Nette\\Application\\UI\\Presenter;
+
+class HomePresenter extends Presenter
+{
+}
+`;
+    const diagnostics = await nettePresenterLinkDiagnostics(
+      {
+        currentRelativePath: "app/UI/Home/default.latte",
+        deps: {
+          joinPath: (root, relativePath) => `${root}/${relativePath}`,
+          readFileContent: async (path) => {
+            if (path === presenterPath) {
+              return presenterSource;
+            }
+
+            throw new Error(`missing ${path}`);
+          },
+        },
+        frameworkCapabilities: {
+          parsePresenterLinkTarget: parseNetteLinkTarget,
+          presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
+          presenterClassCandidatePathsForLink:
+            nettePresenterClassCandidatePathsForLink,
+        },
+        isRequestedRootActive: () => true,
+        requestedRoot: ROOT,
+      },
+      source,
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.code).toBe("nette.missingPresenterMethod");
+
+    const actions = await provideLatteCodeActions(
+      makeOptions({
+        readFileContent: async (path) => {
+          if (path === presenterPath) {
+            return presenterSource;
+          }
+
+          throw new Error(`missing ${path}`);
+        },
+      }),
+      source,
+      {
+        end: source.indexOf("detail") + "detail".length,
+        start: source.indexOf("detail"),
+      },
+      codeActionContextFromDiagnostics(diagnostics),
+    );
+
+    expect(actions.map((action) => action.title)).toEqual([
+      "Create actionDetail",
+      "Create renderDetail",
+    ]);
+    expect(actions[0]).toMatchObject({
+      isPreferred: true,
+      kind: "quickfix",
+    });
+    expect(actions[0]?.edits[0]).toEqual(
+      expect.objectContaining({
+        path: presenterPath,
+        text: expect.stringContaining("public function actionDetail()"),
+      }),
+    );
+  });
+
   it("does not create presenter-method actions outside the diagnostic range", async () => {
     const source = "{link Home:detail}";
     const presenterPath = "/ws/app/UI/Home/HomePresenter.php";
@@ -359,3 +440,22 @@ class HomePresenter extends Presenter
     expect(actions).toEqual([]);
   });
 });
+
+function codeActionContextFromDiagnostics(
+  diagnostics: readonly LanguageServerDiagnostic[],
+): PhpCodeActionContext {
+  return {
+    diagnostics: diagnostics.map((diagnostic) => ({
+      ...(diagnostic.code ? { code: diagnostic.code } : {}),
+      ...(diagnostic.data ? { data: diagnostic.data } : {}),
+      ...(diagnostic.source ? { source: diagnostic.source } : {}),
+      message: diagnostic.message,
+      range: {
+        endColumn: (diagnostic.endCharacter ?? diagnostic.character) + 1,
+        endLineNumber: (diagnostic.endLine ?? diagnostic.line) + 1,
+        startColumn: diagnostic.character + 1,
+        startLineNumber: diagnostic.line + 1,
+      },
+    })),
+  };
+}
