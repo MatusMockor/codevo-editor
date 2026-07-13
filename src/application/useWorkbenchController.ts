@@ -7773,7 +7773,7 @@ export function useWorkbenchController(
     });
 
   const {
-    findPhpLaravelValidationRuleModelTargets,
+    findPhpLaravelValidationRuleModelTargets: findValidationRuleModelTargets,
     openPhpLaravelDynamicWhereTarget,
     openPhpLaravelModelAttributeTarget,
   } = usePhpLaravelModelNavigationTargets({
@@ -7988,7 +7988,7 @@ export function useWorkbenchController(
       currentWorkspaceRootRef,
       frameworkLiteralNavigationDependencies: {
         ...phpFrameworkLiteralNavigationDependencies,
-        findPhpLaravelValidationRuleModelTargets,
+        findValidationRuleModelTargets,
       },
       openNavigationTarget,
       providers: activePhpFrameworkProviders,

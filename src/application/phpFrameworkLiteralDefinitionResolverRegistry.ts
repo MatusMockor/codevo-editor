@@ -52,7 +52,7 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   findInertiaComponentTarget?: (
     componentName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
-  findPhpLaravelValidationRuleModelTargets?: (
+  findValidationRuleModelTargets?: (
     tableName: string,
   ) => Promise<
     readonly { label: string; path: string; position: EditorPosition }[]
@@ -398,7 +398,7 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
         }
 
         const targets =
-          await dependencies.findPhpLaravelValidationRuleModelTargets?.(
+          await dependencies.findValidationRuleModelTargets?.(
             request.tableName,
           );
         const target = targets?.[0];

@@ -35,7 +35,7 @@ function makeDeps(
       collectNamedRouteTargets: vi.fn(async () => []),
       findConfigTarget: vi.fn(async () => null),
       findEnvTarget: vi.fn(async () => null),
-      findPhpLaravelValidationRuleModelTargets: vi.fn(async () => []),
+      findValidationRuleModelTargets: vi.fn(async () => []),
       findTranslationTarget: vi.fn(async () => null),
       findViewTarget: vi.fn(async () => null),
     },
@@ -275,7 +275,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       path: `${ROOT}/app/Models/User.php`,
       position: POSITION,
     };
-    const findPhpLaravelValidationRuleModelTargets = vi.fn(async () => [
+    const findValidationRuleModelTargets = vi.fn(async () => [
       modelTarget,
     ]);
     const openNavigationTarget = vi.fn(async () => true);
@@ -284,7 +284,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         collectNamedRouteTargets: vi.fn(async () => []),
         findConfigTarget: vi.fn(async () => null),
         findEnvTarget: vi.fn(async () => null),
-        findPhpLaravelValidationRuleModelTargets,
+        findValidationRuleModelTargets,
         findTranslationTarget: vi.fn(async () => null),
         findViewTarget: vi.fn(async () => null),
       },
@@ -298,7 +298,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         tableName: "users",
       }),
     ).resolves.toBe(true);
-    expect(findPhpLaravelValidationRuleModelTargets).toHaveBeenCalledWith(
+    expect(findValidationRuleModelTargets).toHaveBeenCalledWith(
       "users",
     );
     expect(openNavigationTarget).toHaveBeenCalledWith(
@@ -324,7 +324,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         tableName: "users",
       }),
     ).resolves.toBe(false);
-    expect(findPhpLaravelValidationRuleModelTargets).toHaveBeenCalledTimes(1);
+    expect(findValidationRuleModelTargets).toHaveBeenCalledTimes(1);
     expect(genericOpenNavigationTarget).not.toHaveBeenCalled();
 
     genericHarness.unmount();
@@ -338,7 +338,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         collectNamedRouteTargets: vi.fn(async () => []),
         findConfigTarget: vi.fn(async () => null),
         findEnvTarget: vi.fn(async () => null),
-        findPhpLaravelValidationRuleModelTargets: vi.fn(async () => [
+        findValidationRuleModelTargets: vi.fn(async () => [
           {
             label: "App\\Models\\User",
             path: `${OTHER_ROOT}/app/Models/User.php`,
