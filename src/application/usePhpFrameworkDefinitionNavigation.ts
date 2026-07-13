@@ -25,7 +25,6 @@ import {
   resolvePhpFrameworkLiteralNavigationTarget,
   type PhpFrameworkLiteralNavigationDependencies,
 } from "./phpFrameworkLiteralNavigation";
-import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
@@ -36,9 +35,8 @@ interface OpenNavigationOptions {
 export interface PhpFrameworkDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   frameworkLiteralNavigationDependencies: PhpFrameworkLiteralNavigationDependencies;
-  isLaravelFrameworkActive?: boolean;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
@@ -50,7 +48,6 @@ export interface PhpFrameworkDefinitionNavigationDependencies {
     label: string,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  providers: Parameters<typeof resolvePhpFrameworkLiteralNavigationTarget>[0]["providers"];
   readNavigationFileContent(path: string): Promise<string>;
   resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
   textSearch: TextSearchGateway;
@@ -71,28 +68,21 @@ export function usePhpFrameworkDefinitionNavigation({
   currentWorkspaceRootRef,
   frameworkRuntime,
   frameworkLiteralNavigationDependencies,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   openNavigationTarget,
   openPhpClassTarget,
-  providers,
   readNavigationFileContent,
   resolvePhpClassSourcePaths,
   textSearch,
   workspaceDescriptor,
   workspaceRoot,
 }: PhpFrameworkDefinitionNavigationDependencies): PhpFrameworkDefinitionNavigation {
-  const phpFrameworkRuntime = phpFrameworkRuntimeContextFromDependencies({
-    activePhpFrameworkProviders: providers,
-    frameworkRuntime,
-    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
-  });
-  const activePhpFrameworkProviders = phpFrameworkRuntime.providers;
+  const activePhpFrameworkProviders = frameworkRuntime.providers;
   const supportsFrameworkRouteDefinitionNavigation =
-    phpFrameworkRuntime.supports("routes");
+    frameworkRuntime.supports("routes");
   const supportsFrameworkDispatchDefinitionNavigation =
-    phpFrameworkRuntime.supports("dispatch");
+    frameworkRuntime.supports("dispatch");
   const supportsFrameworkStringLiteralDefinitionNavigation =
-    phpFrameworkRuntime.supports("stringLiterals");
+    frameworkRuntime.supports("stringLiterals");
 
   const openPhpFrameworkHandlerTarget = useCallback(
     async (

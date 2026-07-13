@@ -146,10 +146,8 @@ function makeDeps(
       findViewTarget: vi.fn(async () => null),
     },
     frameworkRuntime: LARAVEL_RUNTIME,
-    isLaravelFrameworkActive: true,
     openNavigationTarget: vi.fn(async () => true),
     openPhpClassTarget: vi.fn(async () => true),
-    providers: [phpLaravelFrameworkProvider],
     readNavigationFileContent: vi.fn(async () => ""),
     resolvePhpClassSourcePaths: vi.fn(async () => []),
     textSearch: makeTextSearch(),
@@ -354,9 +352,7 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
     const openPhpClassTarget = vi.fn(async () => true);
     const deps = makeDeps({
       frameworkRuntime: ROUTE_CAPABLE_RUNTIME,
-      isLaravelFrameworkActive: false,
       openPhpClassTarget,
-      providers: [ROUTE_CAPABLE_PROVIDER],
     });
     const harness = renderHook(deps);
     const source = `<?php\nframeworkRoute('/accounts/{account}');`;
@@ -389,9 +385,7 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
     ]);
     const deps = makeDeps({
       frameworkRuntime: ROUTE_CAPABLE_RUNTIME,
-      isLaravelFrameworkActive: false,
       openPhpClassTarget,
-      providers: [ROUTE_CAPABLE_PROVIDER],
       readNavigationFileContent: vi.fn(
         async () =>
           "<?php\nuse App\\Models\\ExternalAccount;\nbindModel('account', ExternalAccount::class);",
@@ -418,7 +412,7 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
     harness.unmount();
   });
 
-  it("uses runtime providers for literal navigation when runtime overrides legacy Laravel providers", async () => {
+  it("skips literal navigation when the generic runtime exposes no framework providers", async () => {
     const findViewTarget = vi.fn(async () => ({
       name: "orders.show",
       path: `${ROOT}/resources/views/orders/show.blade.php`,

@@ -7622,7 +7622,6 @@ export function useWorkbenchController(
       phpFrameworkLiteralNavigationDependencies,
     openNavigationTarget,
     openPhpClassTarget,
-    providers: activePhpFrameworkProviders,
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
     textSearch,
