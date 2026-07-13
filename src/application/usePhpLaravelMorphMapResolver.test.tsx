@@ -3,6 +3,10 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { TextSearchResult, WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -19,6 +23,20 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     matchedProviderIds: [],
     profile: "generic",
     providers: [],
+  }),
+);
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
+const LARAVEL_WITH_NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel", "nette"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider, phpNetteFrameworkProvider],
   }),
 );
 
@@ -63,9 +81,8 @@ Relation::morphMap([
 
 function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
   return {
-    activePhpFrameworkProviderSignature: "laravel",
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     readNavigationFileContent: vi.fn(async () =>
       morphMapSource("\\App\\Models\\User"),
     ),
@@ -148,7 +165,7 @@ describe("usePhpLaravelMorphMapResolver", () => {
 
     harness.rerender({
       ...options,
-      activePhpFrameworkProviderSignature: "laravel-custom",
+      frameworkRuntime: LARAVEL_WITH_NETTE_RUNTIME,
     });
 
     await expect(
@@ -201,13 +218,12 @@ describe("usePhpLaravelMorphMapResolver", () => {
     harness.unmount();
   });
 
-  it("uses runtime Laravel state over the legacy boolean", async () => {
+  it("uses runtime Laravel state for the Laravel gate", async () => {
     const textSearch = {
       searchText: vi.fn(async () => [] as TextSearchResult[]),
     };
     const options = makeOptions({
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       textSearch,
     });
     const harness = renderHook(options);

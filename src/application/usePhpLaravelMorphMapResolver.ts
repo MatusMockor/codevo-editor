@@ -5,10 +5,8 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface UsePhpLaravelMorphMapResolverOptions {
-  activePhpFrameworkProviderSignature: string;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   readNavigationFileContent: (path: string) => Promise<string>;
   textSearch: Pick<TextSearchGateway, "searchText">;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -21,10 +19,8 @@ export interface PhpLaravelMorphMapResolver {
 }
 
 export function usePhpLaravelMorphMapResolver({
-  activePhpFrameworkProviderSignature,
   currentWorkspaceRootRef,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readNavigationFileContent,
   textSearch,
   workspaceDescriptor,
@@ -33,11 +29,9 @@ export function usePhpLaravelMorphMapResolver({
   const phpLaravelMorphMapModelTypeCacheRef = useRef<
     Record<string, string | null>
   >({});
-  const frameworkProviderSignature = frameworkRuntime
-    ? phpFrameworkRuntimeProviderSignature(frameworkRuntime)
-    : activePhpFrameworkProviderSignature;
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const frameworkProviderSignature =
+    phpFrameworkRuntimeProviderSignature(frameworkRuntime);
+  const isLaravelFrameworkActive = frameworkRuntime.isLaravel;
 
   const resetPhpLaravelMorphMapModelTypeCache = useCallback((): void => {
     phpLaravelMorphMapModelTypeCacheRef.current = {};

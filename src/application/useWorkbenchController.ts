@@ -7177,7 +7177,6 @@ export function useWorkbenchController(
     resetPhpLaravelMorphMapModelTypeCache,
     resolvePhpLaravelProjectMorphMapModelType,
   } = usePhpLaravelMorphMapResolver({
-    activePhpFrameworkProviderSignature,
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
     readNavigationFileContent,
