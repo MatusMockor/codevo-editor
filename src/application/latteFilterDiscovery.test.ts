@@ -80,6 +80,23 @@ function filterLoaderConfig(...names: string[]): string {
   ].join("\n");
 }
 
+function latteExtensionSource(...names: string[]): string {
+  return [
+    "<?php",
+    "",
+    "final class AppLatteExtension extends Latte\\Extension",
+    "{",
+    "    public function getFilters(): array",
+    "    {",
+    "        return [",
+    ...names.map((name) => `            '${name}' => [$this, '${name}'],`),
+    "        ];",
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
 function makeContext(
   files: Record<string, string>,
   overrides: Partial<LatteFilterDiscoveryContext> = {},
@@ -224,11 +241,56 @@ describe("loadLatteFilterRegistrations", () => {
     ).resolves.toEqual([]);
   });
 
+  it("discovers literal keys returned from PHP Latte Extension getFilters()", async () => {
+    const extensionSource = latteExtensionSource("money", "userLabel");
+    const { context } = makeContext({
+      "app/Latte/AppLatteExtension.php": extensionSource,
+    });
+
+    await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
+      {
+        name: "money",
+        offset: extensionSource.indexOf("money"),
+        path: `${ROOT}/app/Latte/AppLatteExtension.php`,
+      },
+      {
+        name: "userLabel",
+        offset: extensionSource.indexOf("userLabel"),
+        path: `${ROOT}/app/Latte/AppLatteExtension.php`,
+      },
+    ]);
+  });
+
+  it("keeps NEON registrations ahead of PHP getFilters() duplicates", async () => {
+    const configSource = filterLoaderConfig("money");
+    const extensionSource = latteExtensionSource("money", "userLabel");
+    const { context } = makeContext({
+      "app/Latte/AppLatteExtension.php": extensionSource,
+      "app/config/config.neon": configSource,
+    });
+
+    await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
+      {
+        name: "money",
+        offset: configSource.indexOf("money"),
+        path: `${ROOT}/app/config/config.neon`,
+      },
+      {
+        name: "userLabel",
+        offset: extensionSource.indexOf("userLabel"),
+        path: `${ROOT}/app/Latte/AppLatteExtension.php`,
+      },
+    ]);
+  });
+
   it("skips vendor-style directories and non-neon files", async () => {
     const { context, workspace } = makeContext({
       "app/config/config.neon": filterLoaderConfig("userDate"),
       "app/config/readme.md": "not neon",
+      "app/node_modules/package/Extension.php": latteExtensionSource("nodeFilter"),
+      "app/src/readme.md": "not php",
       "app/vendor/package/config.neon": filterLoaderConfig("vendorFilter"),
+      "app/vendor/package/Extension.php": latteExtensionSource("vendorFilter"),
     });
 
     await expect(loadLatteFilterNames(context)).resolves.toEqual(["userDate"]);

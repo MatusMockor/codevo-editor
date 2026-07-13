@@ -1,6 +1,9 @@
 import {
   latteFilterRegistrationsFromSource,
 } from "../domain/latteFilterRegistrations";
+import {
+  lattePhpExtensionFiltersFromSource,
+} from "../domain/lattePhpExtensionFilters";
 import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
 
 export interface LatteFilterDiscoveryDependencies {
@@ -40,11 +43,12 @@ export interface LatteFilterDiscoveryContext {
 }
 
 interface FilterConfigScanState {
-  configFilesFound: number;
+  sourceFilesFound: number;
   visitedDirectories: Set<string>;
 }
 
 const NEON_EXTENSION = ".neon";
+const PHP_EXTENSION = ".php";
 
 export async function loadLatteFilterNames(
   context: LatteFilterDiscoveryContext,
@@ -93,17 +97,19 @@ async function scanLatteFilterRegistrations(
     scanDirectories,
     ttlMs,
   } = context;
-  const configPaths = new Set<string>();
+  const neonPaths = new Set<string>();
+  const phpPaths = new Set<string>();
   const scanState: FilterConfigScanState = {
-    configFilesFound: 0,
+    sourceFilesFound: 0,
     visitedDirectories: new Set<string>(),
   };
 
   for (const directory of scanDirectories) {
-    await collectLatteFilterConfigPaths(
+    await collectLatteFilterSourcePaths(
       context,
       deps.joinPath(requestedRoot, directory),
-      configPaths,
+      neonPaths,
+      phpPaths,
       0,
       scanState,
     );
@@ -112,14 +118,14 @@ async function scanLatteFilterRegistrations(
       return [];
     }
 
-    if (scanState.configFilesFound >= maxConfigFiles) {
+    if (scanState.sourceFilesFound >= maxConfigFiles) {
       break;
     }
   }
 
   const registrationsByName = new Map<string, LatteFilterRegistrationTarget>();
 
-  for (const path of configPaths) {
+  for (const path of neonPaths) {
     if (!isRequestedRootActive()) {
       return [];
     }
@@ -149,6 +155,36 @@ async function scanLatteFilterRegistrations(
     }
   }
 
+  for (const path of phpPaths) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    for (const registration of lattePhpExtensionFiltersFromSource(content)) {
+      if (registrationsByName.has(registration.name)) {
+        continue;
+      }
+
+      registrationsByName.set(registration.name, { ...registration, path });
+    }
+  }
+
   if (!isRequestedRootActive()) {
     return [];
   }
@@ -164,10 +200,11 @@ async function scanLatteFilterRegistrations(
   return registrations;
 }
 
-async function collectLatteFilterConfigPaths(
+async function collectLatteFilterSourcePaths(
   context: LatteFilterDiscoveryContext,
   directory: string,
-  into: Set<string>,
+  neonPaths: Set<string>,
+  phpPaths: Set<string>,
   depth: number,
   scanState: FilterConfigScanState,
 ): Promise<void> {
@@ -183,7 +220,7 @@ async function collectLatteFilterConfigPaths(
     return;
   }
 
-  if (scanState.configFilesFound >= maxConfigFiles) {
+  if (scanState.sourceFilesFound >= maxConfigFiles) {
     return;
   }
 
@@ -210,7 +247,7 @@ async function collectLatteFilterConfigPaths(
       return;
     }
 
-    if (scanState.configFilesFound >= maxConfigFiles) {
+    if (scanState.sourceFilesFound >= maxConfigFiles) {
       return;
     }
 
@@ -219,21 +256,30 @@ async function collectLatteFilterConfigPaths(
         continue;
       }
 
-      await collectLatteFilterConfigPaths(
+      await collectLatteFilterSourcePaths(
         context,
         entry.path,
-        into,
+        neonPaths,
+        phpPaths,
         depth + 1,
         scanState,
       );
       continue;
     }
 
-    if (!entry.path.endsWith(NEON_EXTENSION)) {
+    if (
+      !entry.path.endsWith(NEON_EXTENSION) &&
+      !entry.path.endsWith(PHP_EXTENSION)
+    ) {
       continue;
     }
 
-    into.add(entry.path);
-    scanState.configFilesFound += 1;
+    if (entry.path.endsWith(NEON_EXTENSION)) {
+      neonPaths.add(entry.path);
+    } else {
+      phpPaths.add(entry.path);
+    }
+
+    scanState.sourceFilesFound += 1;
   }
 }
