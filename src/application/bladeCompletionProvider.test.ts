@@ -51,7 +51,7 @@ function makeDeps(
     collectPhpLaravelConfigTargets: vi.fn(async () => []),
     collectPhpLaravelNamedRouteTargets: vi.fn(async () => []),
     collectPhpLaravelTranslationTargets: vi.fn(async () => []),
-    collectPhpLaravelViewTargets: vi.fn(async () => []),
+    collectViewTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     frameworkRuntime: LARAVEL_RUNTIME,
@@ -517,8 +517,8 @@ describe("provideBladeCompletions", () => {
     );
   });
 
-  it("does not collect Laravel views without framework view support", async () => {
-    const collectPhpLaravelViewTargets = vi.fn(async () => [
+  it("does not collect framework views without framework view support", async () => {
+    const collectViewTargets = vi.fn(async () => [
       {
         name: "partials.alert",
         path: `${ROOT}/resources/views/partials/alert.blade.php`,
@@ -535,12 +535,12 @@ describe("provideBladeCompletions", () => {
           lineNumber: 1,
         },
         makeDeps({
-          collectPhpLaravelViewTargets,
+          collectViewTargets,
           frameworkRuntime: GENERIC_RUNTIME,
         }),
       ),
     ).resolves.toEqual([]);
-    expect(collectPhpLaravelViewTargets).not.toHaveBeenCalled();
+    expect(collectViewTargets).not.toHaveBeenCalled();
   });
 
   it("drops async component completions after a root switch", async () => {

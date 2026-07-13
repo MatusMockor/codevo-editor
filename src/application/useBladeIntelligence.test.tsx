@@ -98,11 +98,11 @@ function makeDeps(
     resolvePhpClassPropertyOrRelationType: vi.fn(async () => null),
     resolvePhpReceiverMethodCompletions: vi.fn(async () => []),
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => {}),
-    collectPhpLaravelViewTargets: vi.fn(async () => []),
+    collectViewTargets: vi.fn(async () => []),
     collectPhpLaravelConfigTargets: vi.fn(async () => []),
     collectPhpLaravelNamedRouteTargets: vi.fn(async () => []),
     collectPhpLaravelTranslationTargets: vi.fn(async () => []),
-    findPhpLaravelViewTarget: vi.fn(async () => null),
+    findViewTarget: vi.fn(async () => null),
     findPhpLaravelConfigTarget: vi.fn(async () => null),
     findPhpLaravelTranslationTarget: vi.fn(async () => null),
     createMissingBladeViewCodeAction: vi.fn(async () => null),
@@ -222,14 +222,14 @@ describe("useBladeIntelligence completion item contract", () => {
   });
 
   it("marks Blade view-name completions as view items", async () => {
-    const collectPhpLaravelViewTargets = vi.fn(async () => [
+    const collectViewTargets = vi.fn(async () => [
       {
         name: "partials.alert",
         path: `${ROOT}/resources/views/partials/alert.blade.php`,
         relativePath: "resources/views/partials/alert.blade.php",
       },
     ]);
-    const harness = renderHook(makeDeps({ collectPhpLaravelViewTargets }));
+    const harness = renderHook(makeDeps({ collectViewTargets }));
     const source = "@include('partials.a')";
     const offset = source.indexOf("partials.a") + "partials.a".length;
 

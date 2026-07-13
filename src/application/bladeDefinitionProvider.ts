@@ -1,7 +1,6 @@
 import {
   bladeComponentNavigationCandidateRelativePaths,
   bladeReferenceCandidateWorkspacePaths,
-  bladeViewCandidateRelativePaths,
   detectBladeReferenceAt,
   isInsideBladeComment,
 } from "../domain/bladeNavigation";
@@ -25,7 +24,7 @@ export interface BladeDefinitionProviderDependencies {
   currentWorkspaceRootRef: BladeIntelligenceDependencies["currentWorkspaceRootRef"];
   findPhpLaravelConfigTarget: BladeIntelligenceDependencies["findPhpLaravelConfigTarget"];
   findPhpLaravelTranslationTarget: BladeIntelligenceDependencies["findPhpLaravelTranslationTarget"];
-  findPhpLaravelViewTarget: BladeIntelligenceDependencies["findPhpLaravelViewTarget"];
+  findViewTarget: BladeIntelligenceDependencies["findViewTarget"];
   frameworkRuntime: PhpFrameworkRuntimeContext;
   openDirectPhpMethodTarget: BladeIntelligenceDependencies["openDirectPhpMethodTarget"];
   openDirectPhpPropertyTarget: BladeIntelligenceDependencies["openDirectPhpPropertyTarget"];
@@ -52,7 +51,7 @@ export async function provideBladeDefinition(
     currentWorkspaceRootRef,
     findPhpLaravelConfigTarget,
     findPhpLaravelTranslationTarget,
-    findPhpLaravelViewTarget,
+    findViewTarget,
     frameworkRuntime,
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
@@ -85,7 +84,7 @@ export async function provideBladeDefinition(
         collectPhpLaravelNamedRouteTargets,
         findPhpLaravelConfigTarget,
         findPhpLaravelTranslationTarget,
-        findPhpLaravelViewTarget,
+        findViewTarget,
         frameworkProviders: frameworkRuntime.providers,
         isRequestedRootActive,
         openNavigationTarget: guardedOpenNavigationTarget(
@@ -129,6 +128,7 @@ export async function provideBladeDefinition(
   }
 
   return openBladeReferenceDefinition(source, offset, {
+    findViewTarget,
     isRequestedRootActive,
     openNavigationTarget: guardedOpenNavigationTarget(
       openNavigationTarget,
@@ -185,7 +185,7 @@ interface FrameworkHelperDefinitionDependencies extends RequestedRootState {
   collectPhpLaravelNamedRouteTargets: BladeIntelligenceDependencies["collectPhpLaravelNamedRouteTargets"];
   findPhpLaravelConfigTarget: BladeIntelligenceDependencies["findPhpLaravelConfigTarget"];
   findPhpLaravelTranslationTarget: BladeIntelligenceDependencies["findPhpLaravelTranslationTarget"];
-  findPhpLaravelViewTarget: BladeIntelligenceDependencies["findPhpLaravelViewTarget"];
+  findViewTarget: BladeIntelligenceDependencies["findViewTarget"];
   frameworkProviders: readonly PhpFrameworkProvider[];
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"];
 }
@@ -220,7 +220,7 @@ async function openFrameworkHelperDefinition(
       findConfigTarget: dependencies.findPhpLaravelConfigTarget,
       findEnvTarget: async () => null,
       findTranslationTarget: dependencies.findPhpLaravelTranslationTarget,
-      findViewTarget: dependencies.findPhpLaravelViewTarget,
+      findViewTarget: dependencies.findViewTarget,
     },
   );
 
@@ -328,6 +328,7 @@ async function openBladeViewDataMemberDefinition(
 }
 
 interface BladeReferenceDefinitionDependencies extends RequestedRootState {
+  findViewTarget: BladeIntelligenceDependencies["findViewTarget"];
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"];
   readNavigationFileContent: BladeIntelligenceDependencies["readNavigationFileContent"];
   requestedRoot: string;
@@ -344,15 +345,29 @@ async function openBladeReferenceDefinition(
     return false;
   }
 
+  if (reference.kind === "view") {
+    const target = await dependencies.findViewTarget(reference.name);
+
+    if (!dependencies.isRequestedRootActive()) {
+      return false;
+    }
+
+    return target
+      ? dependencies.openNavigationTarget(
+          target.path,
+          target.position,
+          reference.name,
+        )
+      : false;
+  }
+
   const candidateRelativePaths =
     reference.kind === "component"
       ? bladeComponentNavigationCandidateRelativePaths(reference.name)
-      : reference.kind === "view"
-        ? bladeViewCandidateRelativePaths(reference.name)
-        : bladeReferenceCandidateWorkspacePaths(
-            dependencies.requestedRoot,
-            reference,
-          ).map((target) => target.relativePath);
+      : bladeReferenceCandidateWorkspacePaths(
+          dependencies.requestedRoot,
+          reference,
+        ).map((target) => target.relativePath);
 
   if (candidateRelativePaths.length === 0) {
     return false;

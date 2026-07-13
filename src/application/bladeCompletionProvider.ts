@@ -50,7 +50,7 @@ export interface BladeCompletionProviderDependencies {
   collectPhpLaravelConfigTargets: BladeIntelligenceDependencies["collectPhpLaravelConfigTargets"];
   collectPhpLaravelNamedRouteTargets: BladeIntelligenceDependencies["collectPhpLaravelNamedRouteTargets"];
   collectPhpLaravelTranslationTargets: BladeIntelligenceDependencies["collectPhpLaravelTranslationTargets"];
-  collectPhpLaravelViewTargets: BladeIntelligenceDependencies["collectPhpLaravelViewTargets"];
+  collectViewTargets: BladeIntelligenceDependencies["collectViewTargets"];
   currentWorkspaceRootRef: { readonly current: string | null };
   ensurePhpFrameworkSourceCollectionsLoaded: BladeIntelligenceDependencies["ensurePhpFrameworkSourceCollectionsLoaded"];
   frameworkRuntime: PhpFrameworkRuntimeContext;
@@ -82,7 +82,7 @@ export async function provideBladeCompletions(
     collectPhpLaravelConfigTargets,
     collectPhpLaravelNamedRouteTargets,
     collectPhpLaravelTranslationTargets,
-    collectPhpLaravelViewTargets,
+    collectViewTargets,
     currentWorkspaceRootRef,
     ensurePhpFrameworkSourceCollectionsLoaded,
     frameworkRuntime,
@@ -259,7 +259,7 @@ export async function provideBladeCompletions(
           collectEnvTargets: async () => [],
           collectNamedRouteTargets: collectPhpLaravelNamedRouteTargets,
           collectTranslationTargets: collectPhpLaravelTranslationTargets,
-          collectViewTargets: async () => [],
+          collectViewTargets,
           isRequestStillCurrent: isRequestedRootActive,
         },
       );
@@ -279,7 +279,7 @@ export async function provideBladeCompletions(
       return [];
     }
 
-    const targets = await collectPhpLaravelViewTargets();
+    const targets = await collectViewTargets();
 
     if (!isRequestedRootActive()) {
       return [];

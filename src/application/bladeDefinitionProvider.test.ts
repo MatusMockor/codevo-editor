@@ -50,7 +50,7 @@ function makeDeps(
     currentWorkspaceRootRef: { current: ROOT },
     findPhpLaravelConfigTarget: vi.fn(async () => null),
     findPhpLaravelTranslationTarget: vi.fn(async () => null),
-    findPhpLaravelViewTarget: vi.fn(async () => null),
+    findViewTarget: vi.fn(async () => null),
     frameworkRuntime: LARAVEL_RUNTIME,
     openDirectPhpMethodTarget: vi.fn(async () => false),
     openDirectPhpPropertyTarget: vi.fn(async () => false),
@@ -110,6 +110,12 @@ describe("provideBladeDefinition", () => {
   });
 
   it("navigates view directives to the referenced blade file", async () => {
+    const findViewTarget = vi.fn(async () => ({
+      name: "partials.alert",
+      path: `${ROOT}/resources/views/partials/alert.blade.php`,
+      position: { column: 1, lineNumber: 1 },
+      relativePath: "resources/views/partials/alert.blade.php",
+    }));
     const openNavigationTarget = vi.fn(async () => true);
     const source = "@include('partials.alert')";
 
@@ -117,9 +123,10 @@ describe("provideBladeDefinition", () => {
       provideBladeDefinition(
         source,
         offsetOf(source, "partials.alert"),
-        makeDeps({ openNavigationTarget }),
+        makeDeps({ findViewTarget, openNavigationTarget }),
       ),
     ).resolves.toBe(true);
+    expect(findViewTarget).toHaveBeenCalledWith("partials.alert");
     expect(openNavigationTarget).toHaveBeenCalledWith(
       `${ROOT}/resources/views/partials/alert.blade.php`,
       { column: 1, lineNumber: 1 },
@@ -129,23 +136,28 @@ describe("provideBladeDefinition", () => {
 
   it("does not open a Blade reference after the navigation request goes stale", async () => {
     let navigationAllowed = true;
-    const openNavigationTarget = vi.fn(async () => true);
-    const readNavigationFileContent = vi.fn(async () => {
+    const findViewTarget = vi.fn(async () => {
       navigationAllowed = false;
 
-      return "";
+      return {
+        name: "partials.alert",
+        path: `${ROOT}/resources/views/partials/alert.blade.php`,
+        position: { column: 1, lineNumber: 1 },
+        relativePath: "resources/views/partials/alert.blade.php",
+      };
     });
+    const openNavigationTarget = vi.fn(async () => true);
     const source = "@include('partials.alert')";
 
     await expect(
       provideBladeDefinition(
         source,
         offsetOf(source, "partials.alert"),
-        makeDeps({ openNavigationTarget, readNavigationFileContent }),
+        makeDeps({ findViewTarget, openNavigationTarget }),
         { canNavigate: () => navigationAllowed },
       ),
     ).resolves.toBe(false);
-    expect(readNavigationFileContent).toHaveBeenCalled();
+    expect(findViewTarget).toHaveBeenCalledWith("partials.alert");
     expect(openNavigationTarget).not.toHaveBeenCalled();
   });
 
@@ -427,9 +439,9 @@ describe("provideBladeDefinition", () => {
     expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
   });
 
-  it("navigates Laravel view helper literals through view targets", async () => {
+  it("navigates framework view helper literals through view targets", async () => {
     const openNavigationTarget = vi.fn(async () => true);
-    const findPhpLaravelViewTarget = vi.fn(async () => ({
+    const findViewTarget = vi.fn(async () => ({
       name: "comments.show",
       path: `${ROOT}/resources/views/comments/show.blade.php`,
       position: position(3, 1),
@@ -441,7 +453,7 @@ describe("provideBladeDefinition", () => {
       provideBladeDefinition(
         source,
         offsetOf(source, "comments.show"),
-        makeDeps({ findPhpLaravelViewTarget, openNavigationTarget }),
+        makeDeps({ findViewTarget, openNavigationTarget }),
       ),
     ).resolves.toBe(true);
     expect(openNavigationTarget).toHaveBeenCalledWith(
@@ -451,10 +463,10 @@ describe("provideBladeDefinition", () => {
     );
   });
 
-  it("drops stale Laravel helper navigation before opening a resolved target", async () => {
+  it("drops stale framework helper navigation before opening a resolved target", async () => {
     const currentWorkspaceRootRef = { current: ROOT };
     const openNavigationTarget = vi.fn(async () => true);
-    const findPhpLaravelViewTarget = vi.fn(async () => {
+    const findViewTarget = vi.fn(async () => {
       currentWorkspaceRootRef.current = "/other";
 
       return {
@@ -472,7 +484,7 @@ describe("provideBladeDefinition", () => {
         offsetOf(source, "comments.show"),
         makeDeps({
           currentWorkspaceRootRef,
-          findPhpLaravelViewTarget,
+          findViewTarget,
           openNavigationTarget,
         }),
       ),
