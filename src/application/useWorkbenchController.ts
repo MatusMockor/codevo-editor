@@ -7317,8 +7317,6 @@ export function useWorkbenchController(
     resolvePhpGenericTemplateTypesForMixinClass,
     resetPhpClassMemberCache,
   } = usePhpClassMemberCollectors({
-    activePhpFrameworkProviderSignature,
-    activePhpFrameworkProviders,
     currentPhpFrameworkSourceContext,
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,

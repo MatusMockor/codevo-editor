@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   phpMixinClassNames,
   phpMethodCompletionsFromSource,
@@ -38,12 +37,9 @@ interface PhpClassMemberCacheEntry {
 }
 
 export interface UsePhpClassMemberCollectorsOptions {
-  activePhpFrameworkProviderSignature: string;
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   currentPhpFrameworkSourceContext: () => PhpFrameworkSourceRegistryContext;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   readNavigationFileContent: (path: string) => Promise<string>;
   resolvePhpClassReference: (source: string, className: string) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
@@ -84,12 +80,9 @@ export interface PhpClassMemberCollectors {
 }
 
 export function usePhpClassMemberCollectors({
-  activePhpFrameworkProviderSignature,
-  activePhpFrameworkProviders,
   currentPhpFrameworkSourceContext,
   currentWorkspaceRootRef,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readNavigationFileContent,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
@@ -101,19 +94,16 @@ export function usePhpClassMemberCollectors({
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
   );
-  const frameworkProviders =
-    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
-  const frameworkProviderSignature = frameworkRuntime
-    ? phpFrameworkRuntimeProviderSignature(frameworkRuntime)
-    : activePhpFrameworkProviderSignature;
+  const frameworkProviders = frameworkRuntime.providers;
+  const frameworkProviderSignature =
+    phpFrameworkRuntimeProviderSignature(frameworkRuntime);
   const memberCollectionStrategy = useMemo(
     () =>
       createPhpFrameworkClassMemberCollectionProviderAdapters({
         frameworkRuntime,
-        isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
         resolvePhpFrameworkDeclaredType: resolvePhpDeclaredType,
       }),
-    [frameworkRuntime, legacyIsLaravelFrameworkActive, resolvePhpDeclaredType],
+    [frameworkRuntime, resolvePhpDeclaredType],
   );
 
   const resetPhpClassMemberCache = useCallback((): void => {

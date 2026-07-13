@@ -4,14 +4,13 @@ import {
 } from "./phpFrameworkClassMemberCollectionProviderAdapters";
 
 describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
-  it("treats an explicit generic runtime as authoritative over the legacy flag", () => {
+  it("uses the generic adapter when the runtime lacks the Laravel provider", () => {
     const frameworkRuntime = {
       hasProvider: vi.fn(() => false),
     };
     const resolvePhpFrameworkDeclaredType = vi.fn(() => "App\\Models\\Post");
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
       frameworkRuntime,
-      isLaravelFrameworkActive: true,
       resolvePhpFrameworkDeclaredType,
     });
 
@@ -33,13 +32,12 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
     expect(resolvePhpFrameworkDeclaredType).not.toHaveBeenCalled();
   });
 
-  it("selects Laravel by provider id even when the legacy flag is false", () => {
+  it("selects Laravel by provider id", () => {
     const frameworkRuntime = {
       hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
     };
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
       frameworkRuntime,
-      isLaravelFrameworkActive: false,
       resolvePhpFrameworkDeclaredType: vi.fn(() => null),
     });
 
@@ -47,17 +45,11 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
     expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
   });
 
-  it("preserves the legacy Laravel fallback without an explicit runtime", () => {
+  it("uses the generic adapter for a non-Laravel framework runtime", () => {
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
-      isLaravelFrameworkActive: true,
-      resolvePhpFrameworkDeclaredType: vi.fn(() => null),
-    });
-
-    expect(adapter.canCollectSyntheticMembers).toBe(true);
-  });
-
-  it("uses the generic adapter without runtime or legacy Laravel state", () => {
-    const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
+      frameworkRuntime: {
+        hasProvider: (providerId: string) => providerId === "symfony",
+      },
       resolvePhpFrameworkDeclaredType: vi.fn(() => null),
     });
 

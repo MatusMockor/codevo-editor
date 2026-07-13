@@ -8,8 +8,7 @@ import {
 } from "./phpLaravelClassMemberCollectionProviderAdapter";
 
 export interface PhpFrameworkClassMemberCollectionProviderAdapterDependencies {
-  frameworkRuntime?: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
   resolvePhpFrameworkDeclaredType(
     source: string,
     typeName: string | null,
@@ -18,14 +17,9 @@ export interface PhpFrameworkClassMemberCollectionProviderAdapterDependencies {
 
 export function createPhpFrameworkClassMemberCollectionProviderAdapters({
   frameworkRuntime,
-  isLaravelFrameworkActive = false,
   resolvePhpFrameworkDeclaredType,
 }: PhpFrameworkClassMemberCollectionProviderAdapterDependencies): PhpFrameworkClassMemberCollectionProviderAdapter {
-  if (frameworkRuntime && !frameworkRuntime.hasProvider("laravel")) {
-    return genericPhpFrameworkClassMemberCollectionProviderAdapter;
-  }
-
-  if (!frameworkRuntime && !isLaravelFrameworkActive) {
+  if (!frameworkRuntime.hasProvider("laravel")) {
     return genericPhpFrameworkClassMemberCollectionProviderAdapter;
   }
 

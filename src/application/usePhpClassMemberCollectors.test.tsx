@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { defaultPhpFrameworkProviders } from "../domain/phpFrameworkProviders";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
@@ -21,6 +21,13 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     matchedProviderIds: [],
     profile: "generic",
     providers: [],
+  }),
+);
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
   }),
 );
 
@@ -59,14 +66,12 @@ function makeOptions(
   );
 
   return {
-    activePhpFrameworkProviderSignature: "",
-    activePhpFrameworkProviders: defaultPhpFrameworkProviders,
     currentPhpFrameworkSourceContext: () => ({
       signature: "",
       workspaceSources: [],
     }),
     currentWorkspaceRootRef,
-    isLaravelFrameworkActive: false,
+    frameworkRuntime: GENERIC_RUNTIME,
     readNavigationFileContent: vi.fn(async (path: string) => {
       const source = sourcesByPath.get(path);
 
@@ -216,7 +221,7 @@ class User
 }
 `,
         },
-        { isLaravelFrameworkActive: true },
+        { frameworkRuntime: LARAVEL_RUNTIME },
       ),
     );
 
@@ -237,7 +242,7 @@ class User
     harness.unmount();
   });
 
-  it("uses runtime Laravel state over the legacy boolean for dynamic where completions", async () => {
+  it("uses runtime Laravel state for the Laravel gate", async () => {
     const readNavigationFileContent = vi.fn(async () => "");
     const resolvePhpClassSourcePaths = vi.fn(async () => []);
     const harness = renderHook(
@@ -254,7 +259,6 @@ class User
         },
         {
           frameworkRuntime: GENERIC_RUNTIME,
-          isLaravelFrameworkActive: true,
           readNavigationFileContent,
           resolvePhpClassSourcePaths,
         },
@@ -296,7 +300,7 @@ class User
 }
 `,
         },
-        { isLaravelFrameworkActive: true },
+        { frameworkRuntime: LARAVEL_RUNTIME },
       ),
     );
 
