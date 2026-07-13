@@ -2,6 +2,7 @@ import {
   buildCreateMissingBladeViewCodeAction,
   type CreateMissingBladeViewCodeAction,
 } from "./phpBladeViewCodeActions";
+import { missingLaravelViewReferenceAt } from "../domain/laravelDiagnostics";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
 
@@ -35,7 +36,8 @@ const PHP_FRAMEWORK_CODE_ACTION_CONTRIBUTIONS: readonly PhpFrameworkCodeActionRe
         const createMissingBladeViewCodeAction =
           buildCreateMissingBladeViewCodeAction({
             ...dependencies,
-            canCreateMissingBladeViews: true,
+            canCreateMissingViewFiles: true,
+            detectMissingViewReference: missingLaravelViewReferenceAt,
           });
 
         return {

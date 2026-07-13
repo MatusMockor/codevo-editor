@@ -1,13 +1,20 @@
-import { missingLaravelViewReferenceAt } from "../domain/laravelDiagnostics";
 import { joinWorkspacePath } from "../domain/workspace";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 
+export type MissingViewReferenceDetector = (
+  source: string,
+  offset: number,
+  language: "blade" | "php",
+  viewNames: readonly string[],
+) => { name: string; relativePath: string } | null;
+
 export interface CreateMissingBladeViewCodeActionOptions {
-  canCreateMissingBladeViews: boolean;
+  canCreateMissingViewFiles: boolean;
   collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
+  detectMissingViewReference: MissingViewReferenceDetector;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   workspaceRoot: string | null;
 }
@@ -20,8 +27,9 @@ export type CreateMissingBladeViewCodeAction = (
 ) => Promise<PhpCodeActionDescriptor | null>;
 
 export function buildCreateMissingBladeViewCodeAction({
-  canCreateMissingBladeViews,
+  canCreateMissingViewFiles,
   collectViewTargets,
+  detectMissingViewReference,
   readTestFileIfExists,
   workspaceRoot,
 }: CreateMissingBladeViewCodeActionOptions): CreateMissingBladeViewCodeAction {
@@ -33,7 +41,7 @@ export function buildCreateMissingBladeViewCodeAction({
   ): Promise<PhpCodeActionDescriptor | null> => {
     const requestedRoot = workspaceRoot;
 
-    if (!requestedRoot || !canCreateMissingBladeViews) {
+    if (!requestedRoot || !canCreateMissingViewFiles) {
       return null;
     }
 
@@ -43,7 +51,7 @@ export function buildCreateMissingBladeViewCodeAction({
       return null;
     }
 
-    const missing = missingLaravelViewReferenceAt(
+    const missing = detectMissingViewReference(
       source,
       range.start,
       language,
