@@ -18,6 +18,7 @@ import {
   latteControlCompletionAt,
   latteControlCompletions,
   latteFormNameCompletionAt,
+  latteFormNameCompletions,
 } from "./netteControlComponents";
 import {
   lattePresenterLinkCompletions,
@@ -99,8 +100,10 @@ export async function provideLatteCompletions(
   const formNameCompletion = latteFormNameCompletionAt(source, offset);
 
   if (formNameCompletion) {
-    return latteControlCompletions(
+    return latteFormNameCompletions(
       netteControlCompletionContext(options, request),
+      source,
+      offset,
       formNameCompletion,
     );
   }

@@ -4,6 +4,7 @@ import {
   isLatteMemberReferenceAt,
   latteExpressionCompletionTargetAt,
   latteExpressionNavigationAt,
+  latteFilterReferenceAt,
   latteMemberReferenceAt,
   latteVariableNameAt,
 } from "./latteExpressionDetection";
@@ -182,6 +183,31 @@ describe("latte variable and member reference detection", () => {
       receiverExpression: "$invoice",
       variableName: "invoice",
     });
+  });
+});
+
+describe("latte filter reference detection", () => {
+  it("finds a filter name under the cursor for definition navigation", () => {
+    const source = "{$createdAt|UserDate|noescape}";
+
+    expect(latteFilterReferenceAt(source, offsetAfter(source, "User"))).toEqual({
+      name: "UserDate",
+    });
+    expect(
+      latteFilterReferenceAt(source, offsetAfter(source, "noesc")),
+    ).toEqual({
+      name: "noescape",
+    });
+  });
+
+  it("rejects logical-or and strings when resolving filter references", () => {
+    expect(latteFilterReferenceAt("{if $left || $right}", 11)).toBeNull();
+    expect(
+      latteFilterReferenceAt(
+        `{var $label = 'created|UserDate'}`,
+        offsetAfter(`{var $label = 'created|UserDate'}`, "User"),
+      ),
+    ).toBeNull();
   });
 });
 

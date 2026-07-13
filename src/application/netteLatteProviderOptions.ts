@@ -1,5 +1,6 @@
 import type { LatteExpressionResolutionContext } from "./latteExpressionIntelligence";
 import {
+  loadLatteFilterRegistrations,
   loadLatteFilterNames,
   type LatteFilterDiscoveryContext,
 } from "./latteFilterDiscovery";
@@ -43,6 +44,18 @@ export function latteExpressionResolutionContext(
     templateTypeInFlight: options.inFlight.templateTypeInFlight,
     viewDataCache: options.caches.viewDataCache,
     viewDataInFlight: options.inFlight.viewDataInFlight,
+  };
+}
+
+export function latteFilterDefinitionContext(
+  options: LatteProviderFlowFactoryOptions,
+  request: LatteProviderRequestContext,
+) {
+  return {
+    deps: request.deps,
+    isRequestedRootActive: request.isRequestedRootActive,
+    loadFilterRegistrations: () =>
+      loadLatteFilterRegistrations(latteFilterDiscoveryContext(options, request)),
   };
 }
 

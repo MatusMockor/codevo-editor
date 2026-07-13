@@ -20,6 +20,10 @@ export interface LatteFilterCompletionContext {
   start: number;
 }
 
+export interface LatteFilterReference {
+  name: string;
+}
+
 export interface LatteVariableCompletionContext {
   end: number;
   prefix: string;
@@ -40,6 +44,7 @@ const LATTE_MEMBER_ACCESS =
   /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
 const LATTE_MEMBER_REFERENCE =
   /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)/g;
+const LATTE_FILTER_REFERENCE = /\|\s*([A-Za-z_][A-Za-z0-9_]*)/g;
 const LATTE_FILTER_TAIL = /\|\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
 const LATTE_VARIABLE_REFERENCE = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
 const LATTE_VARIABLE_TAIL = /(?<![A-Za-z0-9_>])\$([A-Za-z_][A-Za-z0-9_]*)?$/;
@@ -191,6 +196,49 @@ export function latteMemberReferenceAt(
   }
 
   return latteMemberReferenceInSpan(source, offset, span);
+}
+
+export function latteFilterReferenceAt(
+  source: string,
+  offset: number,
+): LatteFilterReference | null {
+  const span = latteDetectedExpressionSpanAt(source, offset);
+
+  if (!span) {
+    return null;
+  }
+
+  const expression = source.slice(span.expressionStart, span.contentEnd);
+  const relativeOffset = offset - span.expressionStart;
+
+  for (const match of expression.matchAll(LATTE_FILTER_REFERENCE)) {
+    const name = match[1];
+
+    if (!name || match.index === undefined) {
+      continue;
+    }
+
+    if (expression[match.index - 1] === "|") {
+      continue;
+    }
+
+    const nameStart = match.index + match[0].lastIndexOf(name);
+    const nameEnd = nameStart + name.length;
+
+    if (relativeOffset < nameStart || relativeOffset > nameEnd) {
+      continue;
+    }
+
+    const beforeName = expression.slice(0, nameStart);
+
+    if (hasUnclosedStringLiteral(beforeName)) {
+      continue;
+    }
+
+    return { name };
+  }
+
+  return null;
 }
 
 function latteMemberReferenceInSpan(

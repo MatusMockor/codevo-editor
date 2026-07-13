@@ -8,6 +8,9 @@ import {
   latteExpressionNavigationAt,
 } from "./latteExpressionDetection";
 import {
+  resolveLatteFilterDefinition,
+} from "./latteFilterDefinitions";
+import {
   resolveLatteMemberDefinition,
   resolveNettePresenterVariableDefinition,
 } from "./latteExpressionIntelligence";
@@ -25,6 +28,7 @@ import {
   resolveLatteTemplateDefinition,
 } from "./netteTemplateDefinitions";
 import {
+  latteFilterDefinitionContext,
   latteExpressionResolutionContext,
   nettePresenterLinkDefinitionContext,
 } from "./netteLatteProviderOptions";
@@ -103,6 +107,16 @@ export async function provideLatteDefinition(
   );
 
   if (memberHandled) {
+    return true;
+  }
+
+  const filterHandled = await resolveLatteFilterDefinition(
+    latteFilterDefinitionContext(options, request),
+    source,
+    offset,
+  );
+
+  if (filterHandled) {
     return true;
   }
 
