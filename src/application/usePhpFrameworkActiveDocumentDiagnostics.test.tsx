@@ -141,7 +141,7 @@ function renderProvider(
     overrides.activeDocumentRef ?? ref<EditorDocument | null>(activeDocument);
   const currentWorkspaceRootRef =
     overrides.currentWorkspaceRootRef ?? ref<string | null>(ROOT);
-  const laravelDiagnostics = stateHolder<
+  const frameworkDiagnostics = stateHolder<
     Record<string, LanguageServerDiagnostic[]>
   >({});
 
@@ -153,7 +153,7 @@ function renderProvider(
     currentWorkspaceRootRef,
     frameworkRuntime: LARAVEL_RUNTIME,
     provideLattePresenterLinkDiagnostics: vi.fn(async () => []),
-    setFrameworkDiagnosticsByPath: laravelDiagnostics.set,
+    setFrameworkDiagnosticsByPath: frameworkDiagnostics.set,
     workspaceRoot: ROOT,
     ...overrides,
   };
@@ -184,7 +184,7 @@ function renderProvider(
   return {
     activeDocumentRef,
     currentWorkspaceRootRef,
-    diagnostics: laravelDiagnostics,
+    diagnostics: frameworkDiagnostics,
     rerender,
     unmount: () => {
       act(() => {

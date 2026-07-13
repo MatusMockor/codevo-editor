@@ -58,8 +58,8 @@ const ESLINT_DIAGNOSTIC_NOTICE_LIMIT = 500;
  * / effectiveNotices) and the workbench return keep reading it directly; every
  * shared ref (per-root diagnostics caches, coalescers, applied-version maps,
  * runtime-status maps, the contextual PHP filter ref) also stays shell-owned
- * because other flows (document sync, LSP runtime handlers, Laravel
- * reclassification, workspace switch/close) touch the same refs. The session
+ * because other flows (document sync, LSP runtime handlers, framework
+ * diagnostics, workspace switch/close) touch the same refs. The session
  * guard, the externally-removed-path guard and the error reporter are shared
  * shell callbacks. All of it is injected here so the timing- and
  * isolation-sensitive diagnostics behavior stays byte-for-byte identical.
@@ -91,7 +91,7 @@ export interface DiagnosticsDependencies {
   setNotices: Dispatch<SetStateAction<WorkbenchNotice[]>>;
 
   // Per-root diagnostics caches + coalescers (shell-owned refs, shared with the
-  // workspace switch/close and Laravel reclassification flows).
+  // workspace switch/close and framework diagnostics flows).
   languageServerDiagnosticsByRootRef: MutableRefObject<
     Record<string, Record<string, LanguageServerDiagnostic[]>>
   >;

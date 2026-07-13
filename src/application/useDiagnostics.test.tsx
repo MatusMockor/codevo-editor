@@ -838,7 +838,7 @@ describe("useDiagnostics - ESLint notice groups", () => {
 });
 
 describe("useDiagnostics - delete / rename path cleanup", () => {
-  it("removes a path from php, jsts, laravel, and local caches plus notices", () => {
+  it("removes a path from php, jsts, framework, and local caches plus notices", () => {
     const harness = createHarness();
     harness.lsByRootRef.current = { [ROOT]: { [USER_PATH]: [errorDiagnostic()] } };
     harness.jstsByRootRef.current = {
