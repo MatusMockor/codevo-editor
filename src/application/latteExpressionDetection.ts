@@ -31,6 +31,11 @@ export type LatteExpressionCompletionTarget =
   | { kind: "filter"; filter: LatteFilterCompletionContext }
   | { kind: "variable"; variable: LatteVariableCompletionContext };
 
+export interface LatteExpressionNavigation {
+  memberReference: LatteMemberReference | null;
+  variableName: string | null;
+}
+
 const LATTE_MEMBER_ACCESS =
   /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
 const LATTE_MEMBER_REFERENCE =
@@ -107,6 +112,27 @@ export function isLatteMemberReferenceAt(source: string, offset: number): boolea
   return latteMemberReferenceAt(source, offset) !== null;
 }
 
+/**
+ * Computes both navigation views (variable name and member reference) at
+ * `offset` from a single expression-context detection, so a definition request
+ * scans the template source once instead of once per view.
+ */
+export function latteExpressionNavigationAt(
+  source: string,
+  offset: number,
+): LatteExpressionNavigation {
+  const span = latteDetectedExpressionSpanAt(source, offset);
+
+  if (!span) {
+    return { memberReference: null, variableName: null };
+  }
+
+  return {
+    memberReference: latteMemberReferenceInSpan(source, offset, span),
+    variableName: latteVariableNameInSpan(source, offset, span),
+  };
+}
+
 export function latteVariableNameAt(
   source: string,
   offset: number,
@@ -117,6 +143,14 @@ export function latteVariableNameAt(
     return null;
   }
 
+  return latteVariableNameInSpan(source, offset, span);
+}
+
+function latteVariableNameInSpan(
+  source: string,
+  offset: number,
+  span: LatteDetectedExpressionSpan,
+): string | null {
   const expression = source.slice(span.expressionStart, span.contentEnd);
   const relativeOffset = offset - span.expressionStart;
   const before = expression.slice(0, Math.max(0, relativeOffset));
@@ -156,6 +190,14 @@ export function latteMemberReferenceAt(
     return null;
   }
 
+  return latteMemberReferenceInSpan(source, offset, span);
+}
+
+function latteMemberReferenceInSpan(
+  source: string,
+  offset: number,
+  span: LatteDetectedExpressionSpan,
+): LatteMemberReference | null {
   const expression = source.slice(span.expressionStart, span.contentEnd);
   const relativeOffset = offset - span.expressionStart;
   const before = expression.slice(0, Math.max(0, relativeOffset));

@@ -5,6 +5,9 @@ import {
   resolveLatteBlockDefinition,
 } from "./latteBlockDefinitions";
 import {
+  latteExpressionNavigationAt,
+} from "./latteExpressionDetection";
+import {
   resolveLatteMemberDefinition,
   resolveNettePresenterVariableDefinition,
 } from "./latteExpressionIntelligence";
@@ -79,10 +82,13 @@ export async function provideLatteDefinition(
     return true;
   }
 
+  const expressionNavigation = latteExpressionNavigationAt(source, offset);
+
   const variableHandled = await resolveNettePresenterVariableDefinition(
     latteExpressionResolutionContext(options, request),
     source,
     offset,
+    expressionNavigation,
   );
 
   if (variableHandled) {
@@ -93,6 +99,7 @@ export async function provideLatteDefinition(
     latteExpressionResolutionContext(options, request),
     source,
     offset,
+    expressionNavigation,
   );
 
   if (memberHandled) {

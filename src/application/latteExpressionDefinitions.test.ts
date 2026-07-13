@@ -117,6 +117,31 @@ describe("resolveNettePresenterVariableDefinition", () => {
     expect(context.resolveControlVariableDefinition).toHaveBeenCalledOnce();
   });
 
+  it("uses a precomputed navigation view instead of re-detecting", async () => {
+    const context = makeContext();
+    const source = "{if $invoice}\n{/if}";
+
+    await expect(
+      resolveNettePresenterVariableDefinition(context, source, 0, {
+        memberReference: null,
+        variableName: "invoice",
+      }),
+    ).resolves.toBe(true);
+    expect(context.deps.openTarget).toHaveBeenCalledOnce();
+
+    const skippedContext = makeContext();
+
+    await expect(
+      resolveNettePresenterVariableDefinition(
+        skippedContext,
+        source,
+        source.indexOf("$invoice") + 2,
+        { memberReference: null, variableName: null },
+      ),
+    ).resolves.toBe(false);
+    expect(skippedContext.deps.openTarget).not.toHaveBeenCalled();
+  });
+
   it("drops stale-root presenter data after async load", async () => {
     let active = true;
     const context = makeContext({
@@ -157,6 +182,42 @@ describe("resolveLatteMemberDefinition", () => {
       "App\\Model\\Invoice",
       "total",
     );
+  });
+
+  it("uses a precomputed member view instead of re-detecting", async () => {
+    const context = makeContext({
+      members: [method({ name: "total" })],
+    });
+    const source = "{$invoice->total()}";
+
+    await expect(
+      resolveLatteMemberDefinition(context, source, 0, {
+        memberReference: {
+          memberName: "total",
+          receiverExpression: "$invoice",
+          variableName: "invoice",
+        },
+        variableName: null,
+      }),
+    ).resolves.toBe(true);
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Model\\Invoice",
+      "total",
+    );
+
+    const skippedContext = makeContext({
+      members: [method({ name: "total" })],
+    });
+
+    await expect(
+      resolveLatteMemberDefinition(
+        skippedContext,
+        source,
+        source.indexOf("total") + 2,
+        { memberReference: null, variableName: null },
+      ),
+    ).resolves.toBe(false);
+    expect(skippedContext.deps.openPhpMethodTarget).not.toHaveBeenCalled();
   });
 
   it("opens property targets for properties and relation fallback when method target is missing", async () => {

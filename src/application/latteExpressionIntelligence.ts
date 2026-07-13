@@ -7,6 +7,7 @@ import {
   resolveLatteMemberDefinition as resolveLatteExpressionMemberDefinition,
   resolveNettePresenterVariableDefinition as resolveLattePresenterVariableDefinition,
 } from "./latteExpressionDefinitions";
+import type { LatteExpressionNavigation } from "./latteExpressionDetection";
 import {
   latteExpressionCompletions as resolveLatteExpressionCompletions,
 } from "./latteExpressionCompletions";
@@ -68,11 +69,13 @@ export async function resolveNettePresenterVariableDefinition(
   context: LatteExpressionResolutionContext,
   source: string,
   offset: number,
+  navigation?: LatteExpressionNavigation,
 ): Promise<boolean> {
   return resolveLattePresenterVariableDefinition(
     latteExpressionDefinitionContext(context),
     source,
     offset,
+    navigation,
   );
 }
 
@@ -80,11 +83,13 @@ export async function resolveLatteMemberDefinition(
   context: LatteExpressionResolutionContext,
   source: string,
   offset: number,
+  navigation?: LatteExpressionNavigation,
 ): Promise<boolean> {
   return resolveLatteExpressionMemberDefinition(
     latteExpressionDefinitionContext(context),
     source,
     offset,
+    navigation,
   );
 }
 

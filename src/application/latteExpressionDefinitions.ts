@@ -2,6 +2,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   latteMemberReferenceAt,
   latteVariableNameAt,
+  type LatteExpressionNavigation,
 } from "./latteExpressionDetection";
 import type { NetteViewDataEntry } from "./netteViewDataEntries";
 import { matchesLatteViewName } from "./netteViewDataEntries";
@@ -50,8 +51,11 @@ export async function resolveNettePresenterVariableDefinition(
   context: LatteExpressionDefinitionContext,
   source: string,
   offset: number,
+  navigation?: LatteExpressionNavigation,
 ): Promise<boolean> {
-  const variableName = latteVariableNameAt(source, offset);
+  const variableName = navigation
+    ? navigation.variableName
+    : latteVariableNameAt(source, offset);
 
   if (!variableName) {
     return false;
@@ -107,8 +111,11 @@ export async function resolveLatteMemberDefinition(
   context: LatteExpressionDefinitionContext,
   source: string,
   offset: number,
+  navigation?: LatteExpressionNavigation,
 ): Promise<boolean> {
-  const member = latteMemberReferenceAt(source, offset);
+  const member = navigation
+    ? navigation.memberReference
+    : latteMemberReferenceAt(source, offset);
 
   if (!member) {
     return false;

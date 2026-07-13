@@ -3,6 +3,7 @@ import {
   hasUnclosedStringLiteral,
   isLatteMemberReferenceAt,
   latteExpressionCompletionTargetAt,
+  latteExpressionNavigationAt,
   latteMemberReferenceAt,
   latteVariableNameAt,
 } from "./latteExpressionDetection";
@@ -180,6 +181,54 @@ describe("latte variable and member reference detection", () => {
       memberName: "items",
       receiverExpression: "$invoice",
       variableName: "invoice",
+    });
+  });
+});
+
+describe("latteExpressionNavigationAt", () => {
+  it("returns the variable view for a variable reference", () => {
+    const source = "{if $invoice}";
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "$inv")),
+    ).toEqual({ memberReference: null, variableName: "invoice" });
+  });
+
+  it("returns the member view for a member reference", () => {
+    const source = "{$invoice->customer->name}";
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "na")),
+    ).toEqual({
+      memberReference: {
+        memberName: "name",
+        receiverExpression: "$invoice->customer",
+        variableName: "invoice",
+      },
+      variableName: null,
+    });
+  });
+
+  it("returns empty views outside latte expression context", () => {
+    const source = "<div>$invoice</div>";
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "$inv")),
+    ).toEqual({ memberReference: null, variableName: null });
+  });
+
+  it("returns the member view inside an n:foreach attribute value", () => {
+    const source = '<tr n:foreach="$invoice->items as $item">x</tr>';
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "->ite")),
+    ).toEqual({
+      memberReference: {
+        memberName: "items",
+        receiverExpression: "$invoice",
+        variableName: "invoice",
+      },
+      variableName: null,
     });
   });
 });
