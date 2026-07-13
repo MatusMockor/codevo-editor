@@ -135,6 +135,7 @@ import {
 import { createWorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
 import { useLanguageServerDiagnosticsSubscriptions } from "./useLanguageServerDiagnosticsSubscriptions";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
+import { useJavaScriptTypeScriptLanguageServerSettings } from "./useJavaScriptTypeScriptLanguageServerSettings";
 import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
 import {
   useNavigationHistory,
@@ -277,13 +278,10 @@ import {
   canUseLanguageServerFeature,
   pathFromLanguageServerUri,
   type EditorPosition,
-  type LanguageServerConfigurationSettings,
   type LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
-import { formattingOptionsFromContent } from "../domain/formattingOptionsFromContent";
 import {
   editorConfigDirectoriesForFile,
-  editorConfigFormattingOptions,
   editorConfigPathForDirectory,
   parseEditorConfig,
   resolveEditorConfigSettings,
@@ -3184,6 +3182,26 @@ export function useWorkbenchController(
     reportLanguageServerError,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
+  });
+
+  const {
+    applyJavaScriptTypeScriptSettingsChange,
+    openJavaScriptTypeScriptServiceLog,
+  } = useJavaScriptTypeScriptLanguageServerSettings({
+    workspaceRoot,
+    activeDocumentRef,
+    activeEditorConfigRef,
+    autoStartedJavaScriptTypeScriptLanguageServerRootRef,
+    currentWorkspaceRootRef,
+    javaScriptTypeScriptLanguageServerFeaturesGateway,
+    javaScriptTypeScriptLanguageServerRuntimeGateway,
+    javaScriptTypeScriptLanguageServerRuntimeStatus,
+    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+    refreshJavaScriptTypeScriptLanguageServerPlan,
+    reportErrorForActiveWorkspaceRoot,
+    setMessage,
+    stopJavaScriptTypeScriptLanguageServerRuntime,
   });
 
   const {
@@ -8277,32 +8295,6 @@ export function useWorkbenchController(
           ...nextWorkspaceSettings,
           intelligenceMode: nextMode,
         };
-        const shouldRestartJavaScriptTypeScriptRuntime =
-          previousWorkspaceSettings.javaScriptTypeScriptVersion !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptVersion ||
-          previousWorkspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptAutomaticTypeAcquisition;
-        const shouldNotifyJavaScriptTypeScriptConfiguration =
-          previousWorkspaceSettings.javaScriptTypeScriptAutoImports !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptAutoImports ||
-          previousWorkspaceSettings.javaScriptTypeScriptCodeLens !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptCodeLens ||
-          previousWorkspaceSettings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions ||
-          previousWorkspaceSettings.javaScriptTypeScriptCompleteFunctionCalls !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptCompleteFunctionCalls ||
-          previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierEnding ||
-          previousWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptImportModuleSpecifierPreference ||
-          previousWorkspaceSettings.javaScriptTypeScriptInlayHints !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptInlayHints ||
-          previousWorkspaceSettings.javaScriptTypeScriptPreferTypeOnlyAutoImports !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptPreferTypeOnlyAutoImports ||
-          previousWorkspaceSettings.javaScriptTypeScriptQuotePreference !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptQuotePreference ||
-          previousWorkspaceSettings.javaScriptTypeScriptValidation !==
-            resolvedWorkspaceSettings.javaScriptTypeScriptValidation;
         const shouldRefreshPhpLanguageServerPlan =
           previousWorkspaceSettings.phpBackend !==
             resolvedWorkspaceSettings.phpBackend ||
@@ -8353,73 +8345,15 @@ export function useWorkbenchController(
 
         setIntelligenceMode(nextMode);
 
-        if (
-          shouldNotifyJavaScriptTypeScriptConfiguration &&
-          !shouldRestartJavaScriptTypeScriptRuntime &&
-          resolvedWorkspaceSettings.javaScriptTypeScriptService === "auto" &&
-          isRunningLanguageServerForWorkspace(
-            javaScriptTypeScriptLanguageServerRuntimeStatus,
-            javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-            requestedRoot,
-          )
-        ) {
-          const requestedSessionId =
-            javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
-
-          try {
-            await javaScriptTypeScriptLanguageServerFeaturesGateway.didChangeConfiguration(
-              requestedRoot,
-              javaScriptTypeScriptLanguageServerConfiguration(
-                resolvedWorkspaceSettings,
-                activeEditorConfigRef.current,
-                activeDocumentRef.current,
-              ),
-            );
-          } catch (error) {
-            if (
-              isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-                requestedRoot,
-                requestedSessionId,
-              )
-            ) {
-              throw error;
-            }
-          }
-        }
+        await applyJavaScriptTypeScriptSettingsChange({
+          previousSettings: previousWorkspaceSettings,
+          nextSettings: resolvedWorkspaceSettings,
+          rootPath: requestedRoot,
+          requestIsCurrent,
+        });
 
         if (!requestIsCurrent()) {
           return;
-        }
-
-        if (shouldRestartJavaScriptTypeScriptRuntime) {
-          autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
-          await refreshJavaScriptTypeScriptLanguageServerPlan(
-            requestedRoot,
-            resolvedWorkspaceSettings.javaScriptTypeScriptVersion,
-          );
-
-          if (!requestIsCurrent()) {
-            return;
-          }
-
-          if (
-            isLanguageServerActiveForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              requestedRoot,
-            ) ||
-            isCrashedLanguageServerForWorkspace(
-              javaScriptTypeScriptLanguageServerRuntimeStatus,
-              javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-              requestedRoot,
-            )
-          ) {
-            await stopJavaScriptTypeScriptLanguageServerRuntime(requestedRoot);
-
-            if (!requestIsCurrent()) {
-              return;
-            }
-          }
         }
 
         let refreshedPhpLanguageServerPlan = false;
@@ -8522,22 +8456,17 @@ export function useWorkbenchController(
       }
     },
     [
+      applyJavaScriptTypeScriptSettingsChange,
       clearWorkspaceIndex,
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       persistAppSettings,
       persistWorkspaceSettings,
-      javaScriptTypeScriptLanguageServerFeaturesGateway,
-      javaScriptTypeScriptLanguageServerRuntimeStatus,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
       refreshLanguageServerPlan,
-      refreshJavaScriptTypeScriptLanguageServerPlan,
       reportErrorForActiveWorkspaceRoot,
       runGitRepositoryDiscovery,
       runPhpWorkspaceProbe,
       smartModeGateway,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
-      stopJavaScriptTypeScriptLanguageServerRuntime,
       stopLanguageServerRuntime,
       workspaceDescriptor,
       workspaceIdentityDescriptor,
@@ -8546,42 +8475,6 @@ export function useWorkbenchController(
       workspaceTrustGateway,
     ],
   );
-
-  const openJavaScriptTypeScriptServiceLog = useCallback(async () => {
-    if (!workspaceRoot) {
-      setMessage("Open a workspace before opening the JavaScript/TypeScript service log.");
-      return;
-    }
-
-    const requestedRoot = workspaceRoot;
-
-    try {
-      const logPath =
-        await javaScriptTypeScriptLanguageServerRuntimeGateway.openLog(
-          requestedRoot,
-        );
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(
-        logPath
-          ? `Opened JavaScript/TypeScript service log: ${logPath}`
-          : "JavaScript/TypeScript service log is unavailable in this runtime.",
-      );
-    } catch (error) {
-      reportErrorForActiveWorkspaceRoot(
-        requestedRoot,
-        "JavaScript/TypeScript",
-        error,
-      );
-    }
-  }, [
-    javaScriptTypeScriptLanguageServerRuntimeGateway,
-    reportErrorForActiveWorkspaceRoot,
-    workspaceRoot,
-  ]);
 
   const installManagedPhpactor = useCallback(async () => {
     if (!workspaceRoot || !workspaceDescriptor?.php) {
@@ -10778,110 +10671,6 @@ function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }
 
-function javaScriptTypeScriptLanguageServerConfiguration(
-  settings: WorkspaceSettings,
-  activeEditorConfig: ResolvedEditorConfig = {},
-  activeDocument: EditorDocument | null = null,
-): LanguageServerConfigurationSettings {
-  const autoImportsEnabled = settings.javaScriptTypeScriptAutoImports;
-  const codeLensEnabled = settings.javaScriptTypeScriptCodeLens;
-  const showReferencesCodeLensOnAllFunctions =
-    settings.javaScriptTypeScriptReferencesCodeLensOnAllFunctions;
-  const completeFunctionCalls = settings.javaScriptTypeScriptCompleteFunctionCalls;
-  const inlayHintsEnabled = settings.javaScriptTypeScriptInlayHints;
-  const validationEnabled = settings.javaScriptTypeScriptValidation;
-  const formattingOptions = formattingOptionsForActiveJavaScriptTypeScriptDocument(
-    settings,
-    activeEditorConfig,
-    activeDocument,
-  );
-  const parameterNameHints = inlayHintsEnabled ? "literals" : "none";
-  const preferences = {
-    includeAutomaticOptionalChainCompletions: true,
-    includeCompletionsWithSnippetText: true,
-    includeCompletionsForImportStatements: autoImportsEnabled,
-    includeCompletionsForModuleExports: autoImportsEnabled,
-    includePackageJsonAutoImports: autoImportsEnabled ? "auto" : "off",
-    importModuleSpecifierEnding:
-      settings.javaScriptTypeScriptImportModuleSpecifierEnding,
-    importModuleSpecifierPreference:
-      settings.javaScriptTypeScriptImportModuleSpecifierPreference,
-    includeInlayEnumMemberValueHints: inlayHintsEnabled,
-    includeInlayFunctionLikeReturnTypeHints: inlayHintsEnabled,
-    includeInlayFunctionParameterTypeHints: inlayHintsEnabled,
-    includeInlayParameterNameHints: parameterNameHints,
-    includeInlayParameterNameHintsWhenArgumentMatchesName: false,
-    includeInlayPropertyDeclarationTypeHints: inlayHintsEnabled,
-    includeInlayVariableTypeHints: inlayHintsEnabled,
-    includeInlayVariableTypeHintsWhenTypeMatchesName: false,
-    mockorCodeLensEnabled: codeLensEnabled,
-    mockorValidationEnabled: validationEnabled,
-    preferTypeOnlyAutoImports:
-      settings.javaScriptTypeScriptPreferTypeOnlyAutoImports,
-    quotePreference: settings.javaScriptTypeScriptQuotePreference,
-  };
-
-  return {
-    formattingOptions,
-    implicitProjectConfiguration: {
-      checkJs: false,
-      experimentalDecorators: false,
-      module: 99,
-      strict: true,
-      strictFunctionTypes: true,
-      strictNullChecks: true,
-      target: 11,
-    },
-    implementationsCodeLens: { enabled: codeLensEnabled },
-    inlayHints: {
-      enumMemberValues: { enabled: inlayHintsEnabled },
-      functionLikeReturnTypes: { enabled: inlayHintsEnabled },
-      parameterNames: {
-        enabled: parameterNameHints,
-        suppressWhenArgumentMatchesName: false,
-      },
-      parameterTypes: { enabled: inlayHintsEnabled },
-      propertyDeclarationTypes: { enabled: inlayHintsEnabled },
-      variableTypes: {
-        enabled: inlayHintsEnabled,
-        suppressWhenTypeMatchesName: false,
-      },
-    },
-    preferences,
-    updateImportsOnFileMove: {
-      enabled: autoImportsEnabled ? "always" : "never",
-    },
-    validate: {
-      enable: validationEnabled,
-    },
-    referencesCodeLens: {
-      enabled: codeLensEnabled,
-      showOnAllFunctions: showReferencesCodeLensOnAllFunctions,
-    },
-    suggest: {
-      autoImports: autoImportsEnabled,
-      completeFunctionCalls,
-      includeAutomaticOptionalChainCompletions: true,
-      includeCompletionsForImportStatements: autoImportsEnabled,
-      includeCompletionsForModuleExports: autoImportsEnabled,
-    },
-  };
-}
-
-function formattingOptionsForActiveJavaScriptTypeScriptDocument(
-  settings: WorkspaceSettings,
-  activeEditorConfig: ResolvedEditorConfig,
-  activeDocument: EditorDocument | null,
-) {
-  return (
-    editorConfigFormattingOptions(activeEditorConfig) ??
-    formattingOptionsFromContent(activeDocument?.content ?? "", {
-      insertSpaces: settings.defaultInsertSpaces,
-      tabSize: settings.defaultTabSize,
-    })
-  );
-}
-
 function workspaceTabsWithPath(tabs: string[], path: string): string[] {
   if (workspaceTabPathForPath(tabs, path)) {
     return tabs;
@@ -10969,17 +10758,6 @@ function isLanguageServerActiveForWorkspace(
   return (
     isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
     isLanguageServerActive(status)
-  );
-}
-
-function isCrashedLanguageServerForWorkspace(
-  status: LanguageServerRuntimeStatus | null,
-  statusRoot: string | null,
-  workspaceRoot: string | null | undefined,
-): boolean {
-  return (
-    isLanguageServerStatusForWorkspace(status, statusRoot, workspaceRoot) &&
-    status.kind === "crashed"
   );
 }
 

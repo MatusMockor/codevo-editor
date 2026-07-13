@@ -46,6 +46,9 @@ import {
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
+import {
+  javaScriptTypeScriptLanguageServerOptions,
+} from "./javaScriptTypeScriptLanguageServerSettings";
 
 const PHP_LANGUAGE_SERVER_AUTOSTART_MAX_ATTEMPTS = 2;
 
@@ -317,24 +320,10 @@ export function useLanguageServerRuntimeLifecycle(
           await languageServerGateway.planJavaScriptTypeScriptLanguageServer(
             rootPath,
             {
-              autoImportsEnabled:
-                workspaceSettingsRef.current.javaScriptTypeScriptAutoImports,
-              automaticTypeAcquisitionEnabled:
-                workspaceSettingsRef.current
-                  .javaScriptTypeScriptAutomaticTypeAcquisition,
-              codeLensEnabled:
-                workspaceSettingsRef.current.javaScriptTypeScriptCodeLens,
-              completeFunctionCalls:
-                workspaceSettingsRef.current
-                  .javaScriptTypeScriptCompleteFunctionCalls,
-              inlayHintsEnabled:
-                workspaceSettingsRef.current.javaScriptTypeScriptInlayHints,
-              typeScriptVersionPreference,
-              validationEnabled:
-                workspaceSettingsRef.current.javaScriptTypeScriptValidation,
-              ...javaScriptTypeScriptImportPreferenceOptions(
+              ...javaScriptTypeScriptLanguageServerOptions(
                 workspaceSettingsRef.current,
               ),
+              typeScriptVersionPreference,
             },
           );
 
@@ -912,17 +901,7 @@ export function useLanguageServerRuntimeLifecycle(
     try {
       const status =
         await javaScriptTypeScriptLanguageServerRuntimeGateway.start(requestedRoot, {
-          autoImportsEnabled: currentSettings.javaScriptTypeScriptAutoImports,
-          automaticTypeAcquisitionEnabled:
-            currentSettings.javaScriptTypeScriptAutomaticTypeAcquisition,
-          codeLensEnabled: currentSettings.javaScriptTypeScriptCodeLens,
-          completeFunctionCalls:
-            currentSettings.javaScriptTypeScriptCompleteFunctionCalls,
-          inlayHintsEnabled: currentSettings.javaScriptTypeScriptInlayHints,
-          typeScriptVersionPreference:
-            currentSettings.javaScriptTypeScriptVersion,
-          validationEnabled: currentSettings.javaScriptTypeScriptValidation,
-          ...javaScriptTypeScriptImportPreferenceOptions(currentSettings),
+          ...javaScriptTypeScriptLanguageServerOptions(currentSettings),
         });
 
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -1256,21 +1235,7 @@ export function useLanguageServerRuntimeLifecycle(
         requestedRoot;
       javaScriptTypeScriptLanguageServerRuntimeGateway
         .start(requestedRoot, {
-          autoImportsEnabled: workspaceSettingsRef.current
-            .javaScriptTypeScriptAutoImports,
-          automaticTypeAcquisitionEnabled: workspaceSettingsRef.current
-            .javaScriptTypeScriptAutomaticTypeAcquisition,
-          codeLensEnabled: workspaceSettingsRef.current
-            .javaScriptTypeScriptCodeLens,
-          completeFunctionCalls: workspaceSettingsRef.current
-            .javaScriptTypeScriptCompleteFunctionCalls,
-          inlayHintsEnabled: workspaceSettingsRef.current
-            .javaScriptTypeScriptInlayHints,
-          typeScriptVersionPreference:
-            workspaceSettingsRef.current.javaScriptTypeScriptVersion,
-          validationEnabled: workspaceSettingsRef.current
-            .javaScriptTypeScriptValidation,
-          ...javaScriptTypeScriptImportPreferenceOptions(
+          ...javaScriptTypeScriptLanguageServerOptions(
             workspaceSettingsRef.current,
           ),
         })
@@ -1610,33 +1575,6 @@ function phpLanguageServerOptions(settings: WorkspaceSettings) {
     intelephensePath: settings.intelephensePath,
     phpBackend: settings.phpBackend,
     phpactorPath: settings.phpactorPath,
-  };
-}
-
-function javaScriptTypeScriptImportPreferenceOptions(settings: WorkspaceSettings) {
-  return {
-    ...(settings.javaScriptTypeScriptImportModuleSpecifierPreference !==
-    "shortest"
-      ? {
-          importModuleSpecifierPreference:
-            settings.javaScriptTypeScriptImportModuleSpecifierPreference,
-        }
-      : {}),
-    ...(settings.javaScriptTypeScriptImportModuleSpecifierEnding !== "auto"
-      ? {
-          importModuleSpecifierEnding:
-            settings.javaScriptTypeScriptImportModuleSpecifierEnding,
-        }
-      : {}),
-    ...(settings.javaScriptTypeScriptPreferTypeOnlyAutoImports
-      ? {
-          preferTypeOnlyAutoImports:
-            settings.javaScriptTypeScriptPreferTypeOnlyAutoImports,
-        }
-      : {}),
-    ...(settings.javaScriptTypeScriptQuotePreference !== "auto"
-      ? { quotePreference: settings.javaScriptTypeScriptQuotePreference }
-      : {}),
   };
 }
 
