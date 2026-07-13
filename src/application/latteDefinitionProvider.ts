@@ -2,6 +2,12 @@ import {
   detectLatteReferenceAt,
 } from "../domain/latteNavigation";
 import {
+  detectNetteLatteSnippetAt,
+} from "../domain/netteAjaxSnippets";
+import {
+  resolveNetteAjaxSnippetDefinition,
+} from "./netteAjaxSnippetDefinitions";
+import {
   resolveLatteBlockDefinition,
 } from "./latteBlockDefinitions";
 import {
@@ -103,6 +109,20 @@ export async function provideLatteDefinitionOutcome(
   );
 
   if (controlHandled) {
+    return latteDefinitionOutcome(true, false);
+  }
+
+  const ajaxSnippetHandled = await resolveNetteAjaxSnippetDefinition(
+    {
+      currentTemplateRelativePath,
+      deps,
+      isRequestedRootActive,
+      requestedRoot,
+    },
+    detectNetteLatteSnippetAt(source, offset),
+  );
+
+  if (ajaxSnippetHandled) {
     return latteDefinitionOutcome(true, false);
   }
 

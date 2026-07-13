@@ -273,6 +273,29 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
   });
 
+  it("covers Nette AJAX snippet navigation from Latte to redrawControl over real component files", async () => {
+    const templatePath =
+      "app/modules/mailerModule/Components/MailLogs/mail_logs.latte";
+    const componentPath =
+      "app/modules/mailerModule/Components/MailLogs/MailLogs.php";
+    const source = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
+    const component = await readFileContent(joinPath(EBOX_CRM_ROOT, componentPath));
+    const deps = makeLatteDeps(templatePath);
+    const latte = createLatteIntelligence(() => deps);
+
+    await expect(
+      latte.provideLatteDefinition(
+        source,
+        offsetInside(source, "{snippet mailLogslisting}"),
+      ),
+    ).resolves.toBe(true);
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, componentPath),
+      positionAtOffset(component, component.indexOf("mailLogslisting")),
+      "mailLogslisting",
+    );
+  });
+
   it("covers ebox Template::add() view-data feeding Latte variable and member completion", async () => {
     const templatePath =
       "app/modules/parentalControlsModule/templates/ParentalControlsAdmin/show.latte";
