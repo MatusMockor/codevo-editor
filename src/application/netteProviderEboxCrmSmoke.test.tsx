@@ -285,6 +285,26 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     expect(memberCompletions.map((item) => item.label)).toContain("id");
   });
 
+  it("covers variable completion inside a real n:foreach attribute value", async () => {
+    const templatePath =
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/showAddons.latte";
+    const source = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
+    const deps = makeLatteDeps(templatePath);
+    const latte = createLatteIntelligence(() => deps);
+
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(
+        source,
+        offsetAfter(source, 'n:foreach="$groupAddonTypeGr'),
+      ),
+    );
+
+    expect(completions.map((item) => item.label)).toContain(
+      "$groupAddonTypeGroups",
+    );
+  });
+
   it("covers NEON class refs, service reference definition, service completions, and setup methods over real config", async () => {
     const configPath = "app/modules/usersModule/config/config.neon";
     const source = await readFileContent(joinPath(EBOX_CRM_ROOT, configPath));

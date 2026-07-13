@@ -1,4 +1,7 @@
-import { innermostLatteExpressionSpanAt } from "../domain/latteSyntax";
+import {
+  innermostLatteExpressionSpanAt,
+  innermostLatteNAttributeExpressionSpanAt,
+} from "../domain/latteSyntax";
 
 export interface LatteMemberAccess {
   end: number;
@@ -39,11 +42,40 @@ const LATTE_FILTER_TAIL = /\|\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
 const LATTE_VARIABLE_REFERENCE = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
 const LATTE_VARIABLE_TAIL = /(?<![A-Za-z0-9_>])\$([A-Za-z_][A-Za-z0-9_]*)?$/;
 
+interface LatteDetectedExpressionSpan {
+  contentEnd: number;
+  contentStart: number;
+  expressionStart: number;
+}
+
+function latteDetectedExpressionSpanAt(
+  source: string,
+  offset: number,
+): LatteDetectedExpressionSpan | null {
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (span) {
+    return span;
+  }
+
+  const attribute = innermostLatteNAttributeExpressionSpanAt(source, offset);
+
+  if (!attribute) {
+    return null;
+  }
+
+  return {
+    contentEnd: attribute.contentEnd,
+    contentStart: attribute.expressionStart,
+    expressionStart: attribute.expressionStart,
+  };
+}
+
 export function latteExpressionCompletionTargetAt(
   source: string,
   offset: number,
 ): LatteExpressionCompletionTarget | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteDetectedExpressionSpanAt(source, offset);
 
   if (!span) {
     return null;
@@ -84,7 +116,7 @@ export function latteVariableNameAt(
   source: string,
   offset: number,
 ): string | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteDetectedExpressionSpanAt(source, offset);
 
   if (!span) {
     return null;
@@ -123,7 +155,7 @@ export function latteMemberReferenceAt(
   source: string,
   offset: number,
 ): LatteMemberReference | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteDetectedExpressionSpanAt(source, offset);
 
   if (!span) {
     return null;

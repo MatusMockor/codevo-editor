@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   innermostLatteExpressionSpanAt,
+  innermostLatteNAttributeExpressionSpanAt,
   LATTE_BUILTIN_FILTERS,
   latteExpressionPhpSource,
   latteForeachLoopBindingsAt,
@@ -115,6 +116,195 @@ describe("innermostLatteExpressionSpanAt", () => {
     const span = innermostLatteExpressionSpanAt(source, 1);
 
     expect(span).toBeNull();
+  });
+});
+
+describe("innermostLatteNAttributeExpressionSpanAt", () => {
+  it.each([
+    ["n:if", "$user->isActive()"],
+    ["n:elseif", "$user->isBanned()"],
+    ["n:ifset", "$user->avatar"],
+    ["n:foreach", "$items as $item"],
+    ["n:inner-foreach", "$rows as $row"],
+    ["n:class", "$active ? active"],
+    ["n:show", "$visible"],
+    ["n:tag-if", "$linkable"],
+  ])("returns the value span of an expression-bearing %s attribute", (name, value) => {
+    const source = `<div ${name}="${value}">x</div>`;
+    const span = innermostLatteNAttributeExpressionSpanAt(
+      source,
+      offsetAfter(source, "$"),
+    );
+
+    expect(span).not.toBeNull();
+    expect(span?.attributeName).toBe(name);
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe(value);
+  });
+
+  it("handles a single-quoted attribute value", () => {
+    const source = "<div n:show='$flag->enabled'>x</div>";
+    const span = innermostLatteNAttributeExpressionSpanAt(
+      source,
+      offsetAfter(source, "->"),
+    );
+
+    expect(span?.attributeName).toBe("n:show");
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe(
+      "$flag->enabled",
+    );
+  });
+
+  it("keeps quotes of the other kind inside the value", () => {
+    const source = `<span n:if="$user->getName('admin') === 'a'">x</span>`;
+    const span = innermostLatteNAttributeExpressionSpanAt(
+      source,
+      offsetAfter(source, "->get"),
+    );
+
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe(
+      "$user->getName('admin') === 'a'",
+    );
+  });
+
+  it("covers the `as $x` tail of an n:foreach header", () => {
+    const source = '<tr n:foreach="$repo->findAll() as $x">x</tr>';
+    const span = innermostLatteNAttributeExpressionSpanAt(
+      source,
+      offsetAfter(source, "as $x"),
+    );
+
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe(
+      "$repo->findAll() as $x",
+    );
+  });
+
+  it("returns the span at both value edges", () => {
+    const source = '<div n:if="$ok">x</div>';
+    const valueStart = source.indexOf("$ok");
+    const valueEnd = valueStart + "$ok".length;
+
+    expect(innermostLatteNAttributeExpressionSpanAt(source, valueStart)).not.toBeNull();
+    expect(innermostLatteNAttributeExpressionSpanAt(source, valueEnd)).not.toBeNull();
+  });
+
+  it("returns the innermost attribute when several sit on one line", () => {
+    const source = '<div n:if="$a" n:class="$b->cls">x</div>';
+    const span = innermostLatteNAttributeExpressionSpanAt(
+      source,
+      offsetAfter(source, "$b->"),
+    );
+
+    expect(span?.attributeName).toBe("n:class");
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe("$b->cls");
+  });
+
+  it("returns null outside the attribute value", () => {
+    const source = '<div n:if="$ok">text</div>';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, source.indexOf("text")),
+    ).toBeNull();
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, source.indexOf("n:if")),
+    ).toBeNull();
+  });
+
+  it("returns null for excluded n:href and n:name attributes", () => {
+    const hrefSource = '<a n:href="Product:show">x</a>';
+    const nameSource = '<form n:name="signInForm">x</form>';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(
+        hrefSource,
+        offsetAfter(hrefSource, "Product"),
+      ),
+    ).toBeNull();
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(
+        nameSource,
+        offsetAfter(nameSource, "signIn"),
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for a regular HTML attribute", () => {
+    const source = '<div class="box wide">x</div>';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, offsetAfter(source, "box")),
+    ).toBeNull();
+  });
+
+  it("returns null for a lookalike prefixed attribute", () => {
+    const source = '<div data-n:if="$a">x</div>';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, offsetAfter(source, "$a")),
+    ).toBeNull();
+  });
+
+  it("returns null for an unterminated attribute value", () => {
+    const source = '<div n:if="$user->';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, source.length),
+    ).toBeNull();
+  });
+
+  it("returns null when the value runs past the end of the line", () => {
+    const source = '<div n:if="$user->\n">x</div>';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, offsetAfter(source, "->")),
+    ).toBeNull();
+  });
+
+  it("returns null inside a `{* comment *}`", () => {
+    const source = '{* <div n:if="$user->name"> *}';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, offsetAfter(source, "->")),
+    ).toBeNull();
+  });
+
+  it("rejects an opener masked by a comment even when the cursor sits after it", () => {
+    const source = '{* <div n:if="$cond> *} hello $world <div class="box">';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, offsetAfter(source, "$wor")),
+    ).toBeNull();
+  });
+
+  it("rejects an opener inside a `{syntax off}` block with the cursor after it", () => {
+    const source = '{syntax off} n:if="x {/syntax} $world "';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, offsetAfter(source, "$wor")),
+    ).toBeNull();
+  });
+
+  it("keeps an n:if span after a closed comment on the same line", () => {
+    const source = '{* note *} <div n:if="$user->name">x</div>';
+    const span = innermostLatteNAttributeExpressionSpanAt(
+      source,
+      offsetAfter(source, "->"),
+    );
+
+    expect(span?.attributeName).toBe("n:if");
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe(
+      "$user->name",
+    );
+  });
+
+  it("leaves `{...}` expression spans to the curly detector (regression)", () => {
+    const source = '<div n:if="$a">{$user->name}</div>';
+    const curlyOffset = offsetAfter(source, "{$user->");
+
+    expect(innermostLatteNAttributeExpressionSpanAt(source, curlyOffset)).toBeNull();
+    expect(innermostLatteExpressionSpanAt(source, curlyOffset)).not.toBeNull();
+    expect(
+      innermostLatteExpressionSpanAt(source, offsetAfter(source, "$a")),
+    ).toBeNull();
   });
 });
 
