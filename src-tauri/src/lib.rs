@@ -37,7 +37,6 @@ mod terminal_session;
 mod tools;
 mod trust;
 mod workspace;
-#[cfg(target_os = "macos")]
 mod workspace_file_commands;
 pub mod workspace_file_watcher;
 mod workspace_registry;
@@ -135,7 +134,6 @@ use std::{
 #[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
-#[cfg(target_os = "macos")]
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize};
@@ -153,7 +151,6 @@ use workspace::{
     LocalWorkspaceFileRepository, WorkspaceFileRepository, WorkspaceTextEdit,
     WorkspaceTextPosition, WorkspaceTextRange,
 };
-#[cfg(target_os = "macos")]
 use workspace_file_commands::{
     read_image_from_root, DescriptorFileEntry, DescriptorFileSearchResult,
     DescriptorTextSearchResult, FileCommandResult, FileRevision, MutationResult,
@@ -326,7 +323,6 @@ fn enumerate_monospace_font_families() -> Vec<String> {
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
-    #[cfg(target_os = "macos")]
     if let Some(registry) = app.try_state::<WorkspaceRegistry>() {
         registry.clear();
     }
@@ -364,7 +360,6 @@ enum NativeWorkspaceOpenResult {
     Cancelled,
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn open_workspace_from_picker(
     app: AppHandle,
@@ -382,16 +377,6 @@ async fn open_workspace_from_picker(
     Ok(NativeWorkspaceOpenResult::Opened { descriptor })
 }
 
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-async fn open_workspace_from_picker(
-    _app: AppHandle,
-    _registry: State<'_, WorkspaceRegistry>,
-) -> Result<NativeWorkspaceOpenResult, String> {
-    Err("Native workspace selection is supported only on macOS".to_string())
-}
-
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn unregister_workspace(
     registry: State<'_, WorkspaceRegistry>,
@@ -402,18 +387,6 @@ fn unregister_workspace(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-fn unregister_workspace(
-    _registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-) -> Result<(), String> {
-    WorkspaceRegistry::new()
-        .unregister(&workspace_id)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn get_workspace_descriptor(
     registry: State<'_, WorkspaceRegistry>,
@@ -424,7 +397,6 @@ fn get_workspace_descriptor(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_read_text_file(
     registry: State<'_, WorkspaceRegistry>,
@@ -436,7 +408,6 @@ fn workspace_read_text_file(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn workspace_read_image_file(
     registry: State<'_, WorkspaceRegistry>,
@@ -455,7 +426,6 @@ async fn workspace_read_image_file(
     })?
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_read_directory(
     registry: State<'_, WorkspaceRegistry>,
@@ -467,7 +437,6 @@ fn workspace_read_directory(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_search_files(
     registry: State<'_, WorkspaceRegistry>,
@@ -481,7 +450,6 @@ fn workspace_search_files(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_search_text(
     registry: State<'_, WorkspaceRegistry>,
@@ -502,7 +470,6 @@ fn workspace_search_text(
         .map_err(|error| error.to_string())
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_replace_in_path(
     app: AppHandle,
@@ -538,7 +505,6 @@ fn workspace_replace_in_path(
     )
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_save_text_file(
     registry: State<'_, WorkspaceRegistry>,
@@ -555,7 +521,6 @@ fn workspace_save_text_file(
     )
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_create_text_file(
     registry: State<'_, WorkspaceRegistry>,
@@ -565,7 +530,6 @@ fn workspace_create_text_file(
     DescriptorFileRepository::new(&registry).create_file(&workspace_id, Path::new(&relative_path))
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_create_directory(
     registry: State<'_, WorkspaceRegistry>,
@@ -576,7 +540,6 @@ fn workspace_create_directory(
         .create_directory(&workspace_id, Path::new(&relative_path))
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_delete_path(
     registry: State<'_, WorkspaceRegistry>,
@@ -586,7 +549,6 @@ fn workspace_delete_path(
     DescriptorFileRepository::new(&registry).delete(&workspace_id, Path::new(&relative_path))
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 fn workspace_rename_path(
     registry: State<'_, WorkspaceRegistry>,
@@ -601,17 +563,6 @@ fn workspace_rename_path(
         Path::new(&to_relative_path),
         overwrite,
     )
-}
-
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-fn get_workspace_descriptor(
-    _registry: State<'_, WorkspaceRegistry>,
-    workspace_id: WorkspaceId,
-) -> Result<ManagedWorkspaceDescriptor, String> {
-    WorkspaceRegistry::new()
-        .descriptor(&workspace_id)
-        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -5743,7 +5694,6 @@ async fn apply_workspace_edit(
     .await
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 async fn workspace_apply_workspace_edit(
     app: AppHandle,
@@ -5764,7 +5714,6 @@ async fn workspace_apply_workspace_edit(
     .await
 }
 
-#[cfg(target_os = "macos")]
 fn apply_descriptor_workspace_edit(
     registry: &WorkspaceRegistry,
     workspace_id: &WorkspaceId,
@@ -5903,7 +5852,6 @@ fn apply_descriptor_workspace_edit(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn workspace_edit_failure(
     applied_file_operations: usize,
     applied_text_files: usize,
@@ -5931,7 +5879,6 @@ fn workspace_edit_failure(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn apply_descriptor_file_operation(
     repository: &DescriptorFileRepository<'_>,
     workspace_id: &WorkspaceId,
@@ -6012,7 +5959,6 @@ fn apply_descriptor_file_operation(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn descriptor_path_exists(
     repository: &DescriptorFileRepository<'_>,
     workspace_id: &WorkspaceId,
@@ -6022,7 +5968,6 @@ fn descriptor_path_exists(
         || repository.read_directory(workspace_id, path).is_ok()
 }
 
-#[cfg(target_os = "macos")]
 fn mutation_from_result(
     path: &str,
     result: MutationResult,
@@ -6034,7 +5979,6 @@ fn mutation_from_result(
     }
 }
 
-#[cfg(target_os = "macos")]
 fn mutation_from_save(
     path: &str,
     result: FileCommandResult,

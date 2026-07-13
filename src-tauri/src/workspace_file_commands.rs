@@ -17,11 +17,28 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(target_os = "macos")]
 const O_RESOLVE_BENEATH: libc::c_int = 0x0000_1000;
+#[cfg(target_os = "macos")]
 const RENAME_EXCL: libc::c_uint = 0x0000_0004;
+#[cfg(target_os = "macos")]
 const RENAME_SWAP: libc::c_uint = 0x0000_0002;
 const WORKSPACE_FILE_SEARCH_VISITED_LIMIT: usize = 200_000;
 pub const WORKSPACE_IMAGE_FILE_SIZE_LIMIT: usize = 20 * 1024 * 1024;
+
+#[cfg(target_os = "macos")]
+fn clear_errno() {
+    unsafe {
+        *libc::__error() = 0;
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn clear_errno() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+}
 
 struct DirectoryEntry {
     name: String,
@@ -68,9 +85,7 @@ fn directory_entries(directory: &File) -> io::Result<Vec<DirectoryEntry>> {
     let stream = DirectoryStream(stream);
     let mut entries = Vec::new();
     loop {
-        unsafe {
-            *libc::__error() = 0;
-        }
+        clear_errno();
         let raw = unsafe { libc::readdir(stream.0) };
         if raw.is_null() {
             let error = io::Error::last_os_error();
@@ -1518,34 +1533,42 @@ fn open_parent(root: RawFd, path: &Path) -> io::Result<File> {
         let fd = unsafe { libc::fcntl(root, libc::F_DUPFD_CLOEXEC, 0) };
         return fd_result(fd);
     }
-    validate_relative_path(path)?;
-    let path = cstring(path.as_os_str())?;
-    let fd = unsafe {
-        libc::openat(
-            root,
-            path.as_ptr(),
-            libc::O_RDONLY
-                | libc::O_DIRECTORY
-                | libc::O_CLOEXEC
-                | libc::O_NOFOLLOW_ANY
-                | O_RESOLVE_BENEATH,
-        )
-    };
-    fd_result(fd)
+    open_directory_path(root, path)
 }
 fn open_regular(root: RawFd, path: &Path, flags: libc::c_int) -> io::Result<File> {
     validate_relative_path(path)?;
     let path = cstring(path.as_os_str())?;
-    let fd = unsafe {
+    let fd = open_regular_beneath(root, &path, flags)?;
+    let file = fd_result(fd)?;
+    regular_unlinked_stat(file.as_raw_fd())?;
+    Ok(file)
+}
+
+#[cfg(target_os = "macos")]
+fn open_regular_beneath(root: RawFd, path: &CStr, flags: libc::c_int) -> io::Result<libc::c_int> {
+    Ok(unsafe {
         libc::openat(
             root,
             path.as_ptr(),
             flags | libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW_ANY | O_RESOLVE_BENEATH,
         )
-    };
-    let file = fd_result(fd)?;
-    regular_unlinked_stat(file.as_raw_fd())?;
-    Ok(file)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn open_regular_beneath(root: RawFd, path: &CStr, flags: libc::c_int) -> io::Result<libc::c_int> {
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags = (flags | libc::O_NONBLOCK | libc::O_CLOEXEC) as u64;
+    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
+    Ok(unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            root,
+            path.as_ptr(),
+            &how,
+            std::mem::size_of::<libc::open_how>(),
+        ) as libc::c_int
+    })
 }
 fn open_regular_at(parent: RawFd, name: &CStr, flags: libc::c_int) -> io::Result<File> {
     let fd = unsafe {
@@ -1846,9 +1869,7 @@ fn delete_directory_tree(
     }
     let stream = DirectoryStream(stream);
     loop {
-        unsafe {
-            *libc::__error() = 0;
-        }
+        clear_errno();
         let entry = unsafe { libc::readdir(stream.0) };
         if entry.is_null() {
             let error = io::Error::last_os_error();
@@ -1978,6 +1999,7 @@ fn cleanup_owned_entry_with_validation(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn copy_metadata(source: RawFd, destination: RawFd) -> io::Result<()> {
     let state = unsafe { libc::copyfile_state_alloc() };
     if state.is_null() {
@@ -1995,9 +2017,63 @@ fn copy_metadata(source: RawFd, destination: RawFd) -> io::Result<()> {
     error.map_or(Ok(()), Err)
 }
 
+#[cfg(target_os = "linux")]
+fn copy_metadata(source: RawFd, destination: RawFd) -> io::Result<()> {
+    let stat = fstat(source)?;
+    if unsafe { libc::fchmod(destination, stat.st_mode & 0o7777) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let names_length = unsafe { libc::flistxattr(source, std::ptr::null_mut(), 0) };
+    if names_length < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut names = vec![0_u8; names_length as usize];
+    if names_length > 0
+        && unsafe { libc::flistxattr(source, names.as_mut_ptr().cast(), names.len()) } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    for name in names
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+    {
+        let name = CString::new(name).map_err(io::Error::other)?;
+        let value_length =
+            unsafe { libc::fgetxattr(source, name.as_ptr(), std::ptr::null_mut(), 0) };
+        if value_length < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut value = vec![0_u8; value_length as usize];
+        if unsafe {
+            libc::fgetxattr(
+                source,
+                name.as_ptr(),
+                value.as_mut_ptr().cast(),
+                value.len(),
+            )
+        } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe {
+            libc::fsetxattr(
+                destination,
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 fn rename_swap(parent: RawFd, from: &CStr, to: &CStr) -> io::Result<()> {
-    let result =
-        unsafe { libc::renameatx_np(parent, from.as_ptr(), parent, to.as_ptr(), RENAME_SWAP) };
+    let result = rename_with_flags(parent, from, parent, to, rename_exchange_flag());
     if result == 0 {
         Ok(())
     } else {
@@ -2006,15 +2082,7 @@ fn rename_swap(parent: RawFd, from: &CStr, to: &CStr) -> io::Result<()> {
 }
 
 fn rename_swap_at(from_parent: RawFd, from: &CStr, to_parent: RawFd, to: &CStr) -> io::Result<()> {
-    let result = unsafe {
-        libc::renameatx_np(
-            from_parent,
-            from.as_ptr(),
-            to_parent,
-            to.as_ptr(),
-            RENAME_SWAP,
-        )
-    };
+    let result = rename_with_flags(from_parent, from, to_parent, to, rename_exchange_flag());
     if result == 0 {
         Ok(())
     } else {
@@ -2123,15 +2191,7 @@ fn rename_at(
     exclusive: bool,
 ) -> io::Result<()> {
     let result = if exclusive {
-        unsafe {
-            libc::renameatx_np(
-                from_parent,
-                from.as_ptr(),
-                to_parent,
-                to.as_ptr(),
-                RENAME_EXCL,
-            )
-        }
+        rename_with_flags(from_parent, from, to_parent, to, rename_no_replace_flag())
     } else {
         unsafe { libc::renameat(from_parent, from.as_ptr(), to_parent, to.as_ptr()) }
     };
@@ -2140,6 +2200,57 @@ fn rename_at(
     } else {
         Ok(())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_with_flags(
+    from_parent: RawFd,
+    from: &CStr,
+    to_parent: RawFd,
+    to: &CStr,
+    flags: libc::c_uint,
+) -> libc::c_int {
+    unsafe { libc::renameatx_np(from_parent, from.as_ptr(), to_parent, to.as_ptr(), flags) }
+}
+
+#[cfg(target_os = "linux")]
+fn rename_with_flags(
+    from_parent: RawFd,
+    from: &CStr,
+    to_parent: RawFd,
+    to: &CStr,
+    flags: libc::c_uint,
+) -> libc::c_int {
+    unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            from_parent,
+            from.as_ptr(),
+            to_parent,
+            to.as_ptr(),
+            flags,
+        ) as libc::c_int
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn rename_exchange_flag() -> libc::c_uint {
+    RENAME_SWAP
+}
+
+#[cfg(target_os = "linux")]
+fn rename_exchange_flag() -> libc::c_uint {
+    libc::RENAME_EXCHANGE
+}
+
+#[cfg(target_os = "macos")]
+fn rename_no_replace_flag() -> libc::c_uint {
+    RENAME_EXCL
+}
+
+#[cfg(target_os = "linux")]
+fn rename_no_replace_flag() -> libc::c_uint {
+    libc::RENAME_NOREPLACE
 }
 
 struct TempCleanup {
@@ -3151,19 +3262,28 @@ mod tests {
         let file = File::options().read(true).write(true).open(&path).unwrap();
         let key = CString::new("user.mockor-test").unwrap();
         let value = b"preserved";
-        assert_eq!(
-            unsafe {
-                libc::fsetxattr(
-                    file.as_raw_fd(),
-                    key.as_ptr(),
-                    value.as_ptr().cast(),
-                    value.len(),
-                    0,
-                    0,
-                )
-            },
-            0
-        );
+        #[cfg(target_os = "macos")]
+        let set_xattr = unsafe {
+            libc::fsetxattr(
+                file.as_raw_fd(),
+                key.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        #[cfg(target_os = "linux")]
+        let set_xattr = unsafe {
+            libc::fsetxattr(
+                file.as_raw_fd(),
+                key.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
+        assert_eq!(set_xattr, 0);
         let repository = WorkspaceFileRepository::new(&registry);
         let read = repository.read_text(&id, Path::new("value")).unwrap();
         assert!(matches!(
@@ -3176,6 +3296,7 @@ mod tests {
         );
         let saved = File::open(path).unwrap();
         let mut buffer = [0_u8; 32];
+        #[cfg(target_os = "macos")]
         let length = unsafe {
             libc::fgetxattr(
                 saved.as_raw_fd(),
@@ -3184,6 +3305,15 @@ mod tests {
                 buffer.len(),
                 0,
                 0,
+            )
+        };
+        #[cfg(target_os = "linux")]
+        let length = unsafe {
+            libc::fgetxattr(
+                saved.as_raw_fd(),
+                key.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
             )
         };
         assert_eq!(&buffer[..length as usize], value);
@@ -3249,7 +3379,10 @@ mod tests {
         fs::write(root_a.join("unchanged.txt"), "no match\n").unwrap();
         let store = history_store("changed-only");
         let canonical_root_a = root_a.canonicalize().unwrap();
+        #[cfg(target_os = "macos")]
         assert_ne!(root_a, canonical_root_a);
+        #[cfg(target_os = "linux")]
+        assert_eq!(root_a, canonical_root_a);
         let workspace_a = root_a.to_string_lossy();
         let canonical_workspace_a = canonical_root_a.to_string_lossy();
         let workspace_b = root_b.to_string_lossy();
@@ -3280,10 +3413,12 @@ mod tests {
                 expected
             );
             assert!(store.list_versions(&workspace_b, path).unwrap().is_empty());
-            assert!(store
-                .list_versions(&canonical_workspace_a, path)
-                .unwrap()
-                .is_empty());
+            if workspace_a != canonical_workspace_a {
+                assert!(store
+                    .list_versions(&canonical_workspace_a, path)
+                    .unwrap()
+                    .is_empty());
+            }
         }
         assert!(store
             .list_versions(&workspace_a, "unchanged.txt")

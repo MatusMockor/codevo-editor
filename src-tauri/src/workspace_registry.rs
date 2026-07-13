@@ -7,11 +7,13 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
+use std::os::unix::ffi::OsStringExt;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::os::{
     fd::{AsRawFd, FromRawFd},
-    unix::ffi::{OsStrExt, OsStringExt},
+    unix::ffi::OsStrExt,
 };
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::{collections::HashMap, fs::File, path::Component, sync::Mutex};
 
 #[cfg(target_os = "macos")]
@@ -29,6 +31,46 @@ pub enum UnicodeNormalizationPolicy {
     Unknown,
 }
 
+#[cfg(target_os = "linux")]
+#[cfg(test)]
+mod linux_tests {
+    use super::*;
+    use std::{fs, io::Read, os::unix::fs::symlink};
+
+    #[test]
+    fn keeps_operations_within_the_registered_root_and_rejects_symlinks() {
+        let root =
+            std::env::temp_dir().join(format!("mockor-linux-registry-{}", std::process::id()));
+        let outside = root.with_extension("outside");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(root.join("nested")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(root.join("nested/allowed.txt"), "allowed").unwrap();
+        fs::write(outside.join("secret.txt"), "secret").unwrap();
+        symlink(&outside, root.join("escape")).unwrap();
+
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry.register(&root).unwrap();
+        let mut allowed = registry
+            .open_descendant(&descriptor.workspace_id, Path::new("nested/allowed.txt"))
+            .unwrap();
+        let mut content = String::new();
+        allowed.read_to_string(&mut content).unwrap();
+
+        assert_eq!(content, "allowed");
+        assert!(registry
+            .open_descendant(&descriptor.workspace_id, Path::new("escape/secret.txt"))
+            .is_err());
+        assert!(registry
+            .open_descendant(&descriptor.workspace_id, Path::new("../outside/secret.txt"))
+            .is_err());
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedWorkspaceDescriptor {
@@ -39,7 +81,7 @@ pub struct ManagedWorkspaceDescriptor {
     pub unicode_normalization_policy: UnicodeNormalizationPolicy,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 struct ManagedWorkspace {
     descriptor: ManagedWorkspaceDescriptor,
     root: File,
@@ -47,7 +89,7 @@ struct ManagedWorkspace {
     drop_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 impl Drop for ManagedWorkspace {
     fn drop(&mut self) {
         if let Some(hook) = self.drop_hook.take() {
@@ -58,9 +100,9 @@ impl Drop for ManagedWorkspace {
 
 #[derive(Default)]
 pub struct WorkspaceRegistry {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     workspaces: Mutex<HashMap<WorkspaceId, ManagedWorkspace>>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     operations: Mutex<()>,
 }
 
@@ -73,19 +115,19 @@ impl WorkspaceRegistry {
         &self,
         selected_root: impl AsRef<Path>,
     ) -> io::Result<ManagedWorkspaceDescriptor> {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = selected_root;
             return Err(unsupported_platform());
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
-            self.register_macos(selected_root.as_ref(), || Ok(()))
+            self.register_with_hook(selected_root.as_ref(), || Ok(()))
         }
     }
 
-    #[cfg(target_os = "macos")]
-    fn register_macos<F>(
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn register_with_hook<F>(
         &self,
         selected_root: &Path,
         post_open: F,
@@ -117,12 +159,12 @@ impl WorkspaceRegistry {
     }
 
     pub fn unregister(&self, workspace_id: &WorkspaceId) -> io::Result<()> {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = workspace_id;
             return Err(unsupported_platform());
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         // Revokes future registry operations. Files already returned or root FDs already cloned
         // by an in-flight open intentionally retain their normal OS-handle lifetime.
         {
@@ -138,12 +180,12 @@ impl WorkspaceRegistry {
     }
 
     pub fn descriptor(&self, workspace_id: &WorkspaceId) -> io::Result<ManagedWorkspaceDescriptor> {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = workspace_id;
             return Err(unsupported_platform());
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         self.workspaces
             .lock()
             .map_err(lock_error)?
@@ -153,7 +195,7 @@ impl WorkspaceRegistry {
     }
 
     pub fn clear(&self) {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let drained = if let Ok(mut workspaces) = self.workspaces.lock() {
                 workspaces.drain().map(|(_, workspace)| workspace).collect()
@@ -165,13 +207,13 @@ impl WorkspaceRegistry {
     }
 
     /// Opens an existing descendant without following any intermediate or leaf symlink.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn open_descendant(
         &self,
         workspace_id: &WorkspaceId,
         relative_path: &Path,
     ) -> io::Result<File> {
-        self.open_descendant_macos(workspace_id, relative_path, || Ok(()))
+        self.open_descendant_with_hook(workspace_id, relative_path, || Ok(()))
     }
 
     pub(crate) fn clone_root(&self, workspace_id: &WorkspaceId) -> io::Result<File> {
@@ -187,8 +229,8 @@ impl WorkspaceRegistry {
         self.operations.lock().map_err(lock_error)
     }
 
-    #[cfg(target_os = "macos")]
-    fn open_descendant_macos<F>(
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn open_descendant_with_hook<F>(
         &self,
         workspace_id: &WorkspaceId,
         relative_path: &Path,
@@ -208,7 +250,7 @@ impl WorkspaceRegistry {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn random_workspace_id() -> io::Result<WorkspaceId> {
     let mut random = [0_u8; 16];
     if unsafe { libc::getentropy(random.as_mut_ptr().cast(), random.len()) } != 0 {
@@ -221,17 +263,17 @@ fn random_workspace_id() -> io::Result<WorkspaceId> {
     Ok(WorkspaceId(format!("ws-{token}")))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn lock_error<T>(_: std::sync::PoisonError<T>) -> io::Error {
     io::Error::other("workspace registry lock poisoned")
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn unknown_workspace() -> io::Error {
     io::Error::new(io::ErrorKind::NotFound, "unknown or closed workspace id")
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn unsupported_platform() -> io::Error {
     io::Error::new(
         io::ErrorKind::Unsupported,
@@ -239,7 +281,7 @@ fn unsupported_platform() -> io::Error {
     )
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn validate_relative_path(path: &Path) -> io::Result<()> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         return Err(io::Error::new(
@@ -261,7 +303,7 @@ pub(crate) fn validate_relative_path(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn open_selected_root(path: &Path) -> io::Result<File> {
     let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
     let fd = unsafe {
@@ -309,7 +351,25 @@ fn opened_root_path(root: &File) -> io::Result<PathBuf> {
     )))
 }
 
+#[cfg(target_os = "linux")]
+fn opened_root_path(root: &File) -> io::Result<PathBuf> {
+    let path = std::fs::read_link(format!("/proc/self/fd/{}", root.as_raw_fd()))?;
+    let metadata = std::fs::metadata(&path)?;
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "workspace root is not a directory",
+        ));
+    }
+    Ok(path)
+}
+
 #[cfg(target_os = "macos")]
+fn open_relative_to(root: &File, path: &Path) -> io::Result<File> {
+    open_relative_to_with_hook(root, path, || Ok(()))
+}
+
+#[cfg(target_os = "linux")]
 fn open_relative_to(root: &File, path: &Path) -> io::Result<File> {
     open_relative_to_with_hook(root, path, || Ok(()))
 }
@@ -350,6 +410,43 @@ where
     Ok(file)
 }
 
+#[cfg(target_os = "linux")]
+fn open_relative_to_with_hook<F>(root: &File, path: &Path, pre_open: F) -> io::Result<File>
+where
+    F: FnOnce() -> io::Result<()>,
+{
+    validate_relative_path(path)?;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    pre_open()?;
+    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
+    how.flags = (libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) as u64;
+    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            root.as_raw_fd(),
+            path.as_ptr(),
+            &how,
+            std::mem::size_of::<libc::open_how>(),
+        ) as libc::c_int
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(file.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { stat.assume_init() }.st_mode & libc::S_IFMT != libc::S_IFREG {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "workspace descendant is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 #[cfg(target_os = "macos")]
 fn detect_case_sensitivity(root: &File) -> Option<bool> {
     unsafe {
@@ -361,6 +458,11 @@ fn detect_case_sensitivity(root: &File) -> Option<bool> {
             Some(result == 1)
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn detect_case_sensitivity(_: &File) -> Option<bool> {
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -376,6 +478,11 @@ fn detect_unicode_policy(root: &File) -> UnicodeNormalizationPolicy {
         b"apfs" => UnicodeNormalizationPolicy::Preserved,
         _ => UnicodeNormalizationPolicy::Unknown,
     }
+}
+
+#[cfg(target_os = "linux")]
+fn detect_unicode_policy(_: &File) -> UnicodeNormalizationPolicy {
+    UnicodeNormalizationPolicy::Unknown
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -476,7 +583,7 @@ mod tests {
         fs::write(replacement.join("identity"), "replacement").unwrap();
 
         let descriptor = registry
-            .register_macos(&selected, || {
+            .register_with_hook(&selected, || {
                 fs::rename(&selected, &displaced)?;
                 fs::rename(&replacement, &selected)?;
                 Ok(())
@@ -603,7 +710,7 @@ mod tests {
         let opening_registry = Arc::clone(&registry);
         let opening_id = workspace_id.clone();
         let opening = thread::spawn(move || {
-            opening_registry.open_descendant_macos(&opening_id, Path::new("value"), || {
+            opening_registry.open_descendant_with_hook(&opening_id, Path::new("value"), || {
                 cloned_tx.send(()).unwrap();
                 resume_rx.recv().unwrap();
                 Ok(())
@@ -634,7 +741,7 @@ mod tests {
         let opening_registry = Arc::clone(&registry);
         let opening_id = descriptor.workspace_id.clone();
         let opening = thread::spawn(move || {
-            opening_registry.open_descendant_macos(&opening_id, Path::new("value"), || {
+            opening_registry.open_descendant_with_hook(&opening_id, Path::new("value"), || {
                 cloned_tx.send(()).unwrap();
                 resume_rx.recv().unwrap();
                 Ok(())
