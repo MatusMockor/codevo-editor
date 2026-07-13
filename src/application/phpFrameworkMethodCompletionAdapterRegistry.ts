@@ -1,22 +1,20 @@
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import {
+  activePhpFrameworkSemanticAdapter,
+  type PhpFrameworkSemanticAdapterContribution,
+} from "./phpFrameworkSemanticAdapterRegistry";
 
-export interface PhpFrameworkMethodCompletionAdapterContribution<TAdapter> {
-  readonly providerId: string;
-  createAdapter(): TAdapter;
-}
+export type PhpFrameworkMethodCompletionAdapterContribution<TAdapter> =
+  PhpFrameworkSemanticAdapterContribution<TAdapter>;
 
 export function activePhpFrameworkMethodCompletionAdapter<TAdapter>(
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">,
   genericAdapter: TAdapter,
   contributions: readonly PhpFrameworkMethodCompletionAdapterContribution<TAdapter>[],
 ): TAdapter {
-  const contribution = contributions.find(({ providerId }) =>
-    frameworkRuntime.hasProvider(providerId),
+  return activePhpFrameworkSemanticAdapter(
+    frameworkRuntime,
+    contributions,
+    genericAdapter,
   );
-
-  if (!contribution) {
-    return genericAdapter;
-  }
-
-  return contribution.createAdapter();
 }

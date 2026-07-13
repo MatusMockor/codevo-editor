@@ -1,5 +1,6 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { activePhpFrameworkSemanticAdapter } from "./phpFrameworkSemanticAdapterRegistry";
 import {
   genericPhpMethodReturnTypeStrategy,
   type PhpMethodReturnTypeStrategy,
@@ -23,13 +24,20 @@ export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
   resolvePhpFrameworkBuilderModelType,
   resolvePhpFrameworkProjectMorphMapModelType,
 }: PhpFrameworkMethodReturnTypeStrategyAdapterDependencies): PhpMethodReturnTypeStrategy {
-  if (!frameworkRuntime.hasProvider("laravel")) {
-    return genericPhpMethodReturnTypeStrategy;
-  }
-
-  return createPhpLaravelMethodReturnTypeStrategyAdapter({
-    resolvePhpEloquentBuilderModelType: resolvePhpFrameworkBuilderModelType,
-    resolvePhpLaravelProjectMorphMapModelType:
-      resolvePhpFrameworkProjectMorphMapModelType,
-  });
+  return activePhpFrameworkSemanticAdapter(
+    frameworkRuntime,
+    [
+      {
+        providerId: "laravel",
+        createAdapter: () =>
+          createPhpLaravelMethodReturnTypeStrategyAdapter({
+            resolvePhpEloquentBuilderModelType:
+              resolvePhpFrameworkBuilderModelType,
+            resolvePhpLaravelProjectMorphMapModelType:
+              resolvePhpFrameworkProjectMorphMapModelType,
+          }),
+      },
+    ],
+    genericPhpMethodReturnTypeStrategy,
+  );
 }
