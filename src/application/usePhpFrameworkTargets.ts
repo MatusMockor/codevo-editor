@@ -1,27 +1,11 @@
 import type { MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpFrameworkRouteDefinition } from "../domain/phpFrameworkProviders";
-import type { PhpLaravelGateAbilityDefinition } from "../domain/phpLaravelAuthorization";
-import type { PhpLaravelConfigTarget } from "../domain/phpLaravelConfig";
-import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
 import type {
-  PhpLaravelMiddlewareAliasDefinition,
-} from "../domain/phpLaravelMiddleware";
-import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslations";
-import type { PhpLaravelViewTarget } from "../domain/phpLaravelViews";
+  PhpFrameworkAuthorizationAbilityDefinition,
+  PhpFrameworkMiddlewareAliasDefinition,
+  PhpFrameworkRouteDefinition,
+} from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchGateway } from "../domain/workspace";
-import type {
-  PhpLaravelAuthGuardTarget,
-  PhpLaravelBroadcastConnectionTarget,
-  PhpLaravelCacheStoreTarget,
-  PhpLaravelDatabaseConnectionTarget,
-  PhpLaravelLogChannelTarget,
-  PhpLaravelMailMailerTarget,
-  PhpLaravelPasswordBrokerTarget,
-  PhpLaravelQueueConnectionTarget,
-  PhpLaravelRedisConnectionTarget,
-  PhpLaravelStorageDiskTarget,
-} from "./phpLaravelConfigDerivedTargets";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { phpLaravelFrameworkTargetCollectorAdapter } from "./phpLaravelFrameworkTargetAdapter";
 import type { WorkspaceFileTarget } from "./phpWorkspaceTargetCollector";
@@ -41,25 +25,60 @@ export interface PhpFrameworkTargetsDependencies {
 export type PhpFrameworkNamedRouteTarget =
   WorkspaceFileTarget<PhpFrameworkRouteDefinition>;
 export type PhpFrameworkAuthorizationAbilityTarget =
-  WorkspaceFileTarget<PhpLaravelGateAbilityDefinition>;
+  WorkspaceFileTarget<PhpFrameworkAuthorizationAbilityDefinition>;
 export type PhpFrameworkMiddlewareAliasTarget =
-  WorkspaceFileTarget<PhpLaravelMiddlewareAliasDefinition>;
-export type PhpFrameworkEnvironmentTarget = PhpLaravelEnvTarget;
-export type PhpFrameworkViewTarget = PhpLaravelViewTarget;
-export type PhpFrameworkConfigTarget = PhpLaravelConfigTarget;
-export type PhpFrameworkTranslationTarget = PhpLaravelTranslationTarget;
-export type PhpFrameworkAuthGuardTarget = PhpLaravelAuthGuardTarget;
-export type PhpFrameworkCacheStoreTarget = PhpLaravelCacheStoreTarget;
+  WorkspaceFileTarget<PhpFrameworkMiddlewareAliasDefinition>;
+
+export interface PhpFrameworkEnvironmentTarget {
+  name: string;
+  path: string;
+  position: EditorPosition;
+  relativePath: string;
+}
+
+export interface PhpFrameworkViewTarget {
+  name: string;
+  path: string;
+  relativePath: string;
+}
+
+export interface PhpFrameworkConfigTarget {
+  key: string;
+  path: string;
+  position: EditorPosition;
+  relativePath: string;
+}
+
+export interface PhpFrameworkTranslationTarget {
+  key: string;
+  path: string;
+  position: EditorPosition;
+  relativePath: string;
+}
+
+export type PhpFrameworkConfigDerivedTarget<Property extends string> =
+  PhpFrameworkConfigTarget & Record<Property, string>;
+
+export type PhpFrameworkAuthGuardTarget =
+  PhpFrameworkConfigDerivedTarget<"guardName">;
+export type PhpFrameworkCacheStoreTarget =
+  PhpFrameworkConfigDerivedTarget<"storeName">;
 export type PhpFrameworkDatabaseConnectionTarget =
-  PhpLaravelDatabaseConnectionTarget;
+  PhpFrameworkConfigDerivedTarget<"connectionName">;
 export type PhpFrameworkBroadcastConnectionTarget =
-  PhpLaravelBroadcastConnectionTarget;
-export type PhpFrameworkQueueConnectionTarget = PhpLaravelQueueConnectionTarget;
-export type PhpFrameworkRedisConnectionTarget = PhpLaravelRedisConnectionTarget;
-export type PhpFrameworkMailMailerTarget = PhpLaravelMailMailerTarget;
-export type PhpFrameworkPasswordBrokerTarget = PhpLaravelPasswordBrokerTarget;
-export type PhpFrameworkLogChannelTarget = PhpLaravelLogChannelTarget;
-export type PhpFrameworkStorageDiskTarget = PhpLaravelStorageDiskTarget;
+  PhpFrameworkConfigDerivedTarget<"connectionName">;
+export type PhpFrameworkQueueConnectionTarget =
+  PhpFrameworkConfigDerivedTarget<"connectionName">;
+export type PhpFrameworkRedisConnectionTarget =
+  PhpFrameworkConfigDerivedTarget<"connectionName">;
+export type PhpFrameworkMailMailerTarget =
+  PhpFrameworkConfigDerivedTarget<"mailerName">;
+export type PhpFrameworkPasswordBrokerTarget =
+  PhpFrameworkConfigDerivedTarget<"brokerName">;
+export type PhpFrameworkLogChannelTarget =
+  PhpFrameworkConfigDerivedTarget<"channelName">;
+export type PhpFrameworkStorageDiskTarget =
+  PhpFrameworkConfigDerivedTarget<"diskName">;
 
 export interface PhpFrameworkViewNavigationTarget
   extends PhpFrameworkViewTarget {
