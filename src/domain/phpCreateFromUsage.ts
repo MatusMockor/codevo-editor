@@ -1668,6 +1668,10 @@ export function inferArgumentTypes(
 
   const args = splitArguments(source, masked, usage.argsStart, usage.argsEnd);
 
+  if (args.length === 1 && args[0] === "...") {
+    return [];
+  }
+
   return args.map(inferLiteralType);
 }
 
@@ -1845,7 +1849,11 @@ export function phpClassDeclaresMember(
   const structure = parsePhpClassStructure(source, target);
 
   if (kind === "method") {
-    return structure.methods.some((method) => method.name === name);
+    const loweredName = name.toLowerCase();
+
+    return structure.methods.some(
+      (method) => method.name.toLowerCase() === loweredName,
+    );
   }
 
   if (structure.properties.some((property) => property.name === name)) {

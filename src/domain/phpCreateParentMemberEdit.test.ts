@@ -629,3 +629,61 @@ describe("buildPhpCreateMemberWorkspaceEdit — external targets", () => {
     );
   });
 });
+
+describe("buildPhpCreateMemberWorkspaceEdit — member-name casing", () => {
+  it("returns null when the target declares the method with different casing", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Base",
+      "{",
+      "    protected function helper(): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(buildEdit(parentMethod({ name: "HELPER" }), source)).toBeNull();
+  });
+
+  it("returns null when the external target declares __CALL with different casing", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Base",
+      "{",
+      "    public function __CALL($name, $arguments)",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(buildEdit(externalMethod(), source)).toBeNull();
+  });
+
+  it("still inserts a constant whose name differs from an existing one only by case", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Base",
+      "{",
+      "    public const RETRIES = 3;",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(
+      editText(
+        {
+          kind: "constant",
+          name: "retries",
+          parentClass: "Base",
+          target: "parent",
+        },
+        source,
+      ),
+    ).toBe("\n    protected const retries = null;\n");
+  });
+});

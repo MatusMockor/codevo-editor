@@ -1924,3 +1924,182 @@ describe("create-from-usage target rendering", () => {
     ).toBe("    public User $user;");
   });
 });
+
+describe("planPhpCreateFromUsage — case-insensitive method existence", () => {
+  it("returns null when the method exists with different casing on $this", () => {
+    const { source, offset } = withMarker(
+      "    public function missing(): void\n    {\n    }\n\n    public function run(): void\n    {\n        $this->§MISSING();\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toBeNull();
+  });
+
+  it("returns null when the sibling class declares the static method with different casing", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "    public static function missing(): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::MISSING();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::MISSING") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when the sibling class declares __CALL with different casing", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "    public function __CALL($name, $arguments)",
+      "    {",
+      "    }",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("keeps constants case-sensitive: exact-case constant access stays suppressed", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "    public const FOO = 'x';",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return OtherClass::FOO;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.lastIndexOf("OtherClass::FOO") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("keeps constants case-sensitive: differently-cased constant access is still offered", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "    public const FOO = 'x';",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return OtherClass::foo;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::foo") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)?.member).toEqual({
+      kind: "constant",
+      name: "foo",
+      target: "external",
+      targetClass: "OtherClass",
+    });
+  });
+});
+
+describe("planPhpCreateFromUsage — first-class callable syntax", () => {
+  it("infers zero parameters for a $this-> first-class callable reference", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): callable\n    {\n        return $this->§handler(...);\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "handler",
+    });
+  });
+
+  it("infers zero parameters for a static first-class callable reference", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): callable",
+      "    {",
+      "        return Registry::factory(...);",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("Registry::factory") + "Registry::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)?.member).toEqual({
+      argTypes: [],
+      isStatic: true,
+      kind: "method",
+      name: "factory",
+      target: "external",
+      targetClass: "Registry",
+    });
+  });
+
+  it("still infers one parameter for a normal single-argument static call", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        Registry::bar($x);",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("Registry::bar") + "Registry::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)?.member).toEqual({
+      argTypes: [null],
+      isStatic: true,
+      kind: "method",
+      name: "bar",
+      target: "external",
+      targetClass: "Registry",
+    });
+  });
+});
