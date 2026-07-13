@@ -105,6 +105,12 @@ describe("editor surface language provider options", () => {
       templateLanguageProviders.latte.provideCompletions("latte", position),
     ).resolves.toEqual(latteCompletions);
     await expect(
+      templateLanguageProviders.latte.provideCodeActions(
+        "latte",
+        codeActionRange,
+      ),
+    ).resolves.toEqual(codeActions);
+    await expect(
       templateLanguageProviders.latte.provideDefinition("latte", 8),
     ).resolves.toBe(true);
     await expect(
@@ -363,6 +369,7 @@ function registrationRefs({
         provideDefinition: vi.fn(async () => true),
       },
       latte: {
+        provideCodeActions: vi.fn(async () => codeActions),
         provideCompletions: vi.fn(async () => latteCompletions),
         provideDefinition: vi.fn(async () => true),
       },

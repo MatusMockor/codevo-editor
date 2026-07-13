@@ -7,6 +7,10 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
 import type { NavigationRequest } from "./navigationRequest";
+import type {
+  PhpCodeActionDescriptor,
+  PhpCodeActionRange,
+} from "./phpCodeActionTypes";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 /** The minimal shape of the active editor document the hook reads (its path). */
@@ -68,6 +72,10 @@ export interface LatteIntelligenceDependencies {
 }
 
 export interface LatteIntelligence {
+  provideLatteCodeActions(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
   provideLatteCompletions(
     source: string,
     position: EditorPosition,

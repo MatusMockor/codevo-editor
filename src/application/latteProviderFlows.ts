@@ -23,10 +23,21 @@ import {
   provideLatteCompletions as provideLatteCompletionsFlow,
 } from "./latteCompletionProvider";
 import {
+  provideLatteCodeActions as provideLatteCodeActionsFlow,
+} from "./latteTemplateCodeActions";
+import {
   createLattePhpPresenterLinkFlow,
 } from "./lattePhpPresenterLinkFlow";
+import type {
+  PhpCodeActionDescriptor,
+  PhpCodeActionRange,
+} from "./phpCodeActionTypes";
 
 export interface LatteProviderFlows {
+  provideLatteCodeActions(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
   provideLatteCompletions(
     source: string,
     position: EditorPosition,
@@ -101,6 +112,8 @@ export function createLatteProviderFlows(
   const phpPresenterLinks = createLattePhpPresenterLinkFlow(options);
 
   return {
+    provideLatteCodeActions: (source, range) =>
+      provideLatteCodeActionsFlow(options, source, range),
     provideLatteCompletions: (source, position) =>
       provideLatteCompletionsFlow(options, source, position),
     provideLatteDefinition: (source, offset, request) =>

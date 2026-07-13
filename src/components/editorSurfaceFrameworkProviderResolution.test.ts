@@ -32,6 +32,9 @@ describe("editor surface framework provider resolution", () => {
       ),
     ).resolves.toEqual([]);
     await expect(
+      resolved.templateLanguageProviders.latte.provideCodeActions("", range()),
+    ).resolves.toEqual([]);
+    await expect(
       resolved.templateLanguageProviders.latte.provideDefinition("", 0),
     ).resolves.toBe(false);
     await expect(

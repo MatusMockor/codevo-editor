@@ -33,7 +33,7 @@ export function registerTemplateLanguageMonacoProviders<
   handlers: TemplateLanguageMonacoProviderHandlers<Context>,
 ): Disposable {
   const blade = registerBladeTemplateMonacoProviders(monaco, context, handlers);
-  const latte = registerLatteTemplateMonacoProviders(monaco, context);
+  const latte = registerLatteTemplateMonacoProviders(monaco, context, handlers);
   const neon = registerNeonTemplateMonacoProviders(monaco, context);
 
   return {

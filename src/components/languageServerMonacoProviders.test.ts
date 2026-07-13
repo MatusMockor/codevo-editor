@@ -61,6 +61,10 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
     expect(registered.signatureLanguage).toBe("php");
     expect(registered.codeActionLanguage).toBe("php");
+    expect(registered.latteCodeActionLanguage).toBe("latte");
+    expect(registered.latteCodeActionMetadata).toEqual({
+      providedCodeActionKinds: ["quickfix"],
+    });
     expect(registered.selectionRangeLanguage).toBe("php");
     expect(registered.renameLanguage).toBe("php");
     expect(registered.referenceLanguage).toBe("php");
@@ -108,6 +112,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.completionDispose).toHaveBeenCalled();
     expect(registered.signatureDispose).toHaveBeenCalled();
     expect(registered.codeActionDispose).toHaveBeenCalled();
+    expect(registered.latteCodeActionDispose).toHaveBeenCalled();
     expect(registered.selectionRangeDispose).toHaveBeenCalled();
     expect(registered.renameDispose).toHaveBeenCalled();
     expect(registered.referenceDispose).toHaveBeenCalled();
@@ -12032,6 +12037,10 @@ function createRegisteredProviders() {
     latteCompletionDispose: ReturnType<typeof vi.fn>;
     latteCompletionLanguage: string | null;
     latteCompletionProvider: any;
+    latteCodeActionDispose: ReturnType<typeof vi.fn>;
+    latteCodeActionLanguage: string | null;
+    latteCodeActionMetadata: any;
+    latteCodeActionProvider: any;
     latteDefinitionDispose: ReturnType<typeof vi.fn>;
     latteDefinitionLanguage: string | null;
     latteDefinitionProvider: any;
@@ -12134,6 +12143,10 @@ function createRegisteredProviders() {
     latteCompletionDispose,
     latteCompletionLanguage: null,
     latteCompletionProvider: null,
+    latteCodeActionDispose: vi.fn(),
+    latteCodeActionLanguage: null,
+    latteCodeActionMetadata: null,
+    latteCodeActionProvider: null,
     latteDefinitionDispose,
     latteDefinitionLanguage: null,
     latteDefinitionProvider: null,
@@ -12321,6 +12334,13 @@ function createRegisteredProviders() {
           registered.bladeCodeActionProvider = provider;
           registered.bladeCodeActionMetadata = metadata;
           return { dispose: bladeCodeActionDispose };
+        }
+
+        if (language === "latte") {
+          registered.latteCodeActionLanguage = language;
+          registered.latteCodeActionProvider = provider;
+          registered.latteCodeActionMetadata = metadata;
+          return { dispose: registered.latteCodeActionDispose };
         }
 
         registered.codeActionLanguage = language;
@@ -12534,6 +12554,9 @@ function providerContext(
     provideLatteCompletions: ReturnType<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
     >["latte"]["provideCompletions"];
+    provideLatteCodeActions: ReturnType<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
+    >["latte"]["provideCodeActions"];
     provideLatteDefinition: ReturnType<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["getTemplateLanguageProviders"]
     >["latte"]["provideDefinition"];
@@ -12600,6 +12623,8 @@ function providerContext(
           overrides.provideBladeDefinition ?? (async () => false),
       },
       latte: {
+        provideCodeActions:
+          overrides.provideLatteCodeActions ?? (async () => []),
         provideCompletions:
           overrides.provideLatteCompletions ?? (async () => []),
         provideDefinition:
@@ -12655,6 +12680,7 @@ function templateRegistry({
       provideDefinition: async () => false,
     },
     latte: {
+      provideCodeActions: async () => [],
       provideCompletions: async () => [],
       provideDefinition: async () => false,
     },

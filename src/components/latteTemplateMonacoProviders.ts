@@ -3,9 +3,11 @@ import type {
   LatteCompletion,
   LatteCompletionKind,
   TemplateLanguageMonacoProviderContext,
+  TemplateLanguageMonacoProviderHandlers,
 } from "./templateLanguageMonacoTypes";
 import {
   activeTemplateDocumentContext,
+  codeActionOffsetRange,
   isStoredWorkspaceRootActive,
   modelSource,
   offsetAtMonacoPosition,
@@ -19,9 +21,12 @@ type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
 
-export function registerLatteTemplateMonacoProviders(
+export function registerLatteTemplateMonacoProviders<
+  Context extends TemplateLanguageMonacoProviderContext,
+>(
   monaco: MonacoApi,
-  context: TemplateLanguageMonacoProviderContext,
+  context: Context,
+  handlers: TemplateLanguageMonacoProviderHandlers<Context>,
 ): Disposable {
   const definition = monaco.languages.registerDefinitionProvider
     ? monaco.languages.registerDefinitionProvider("latte", {
@@ -34,11 +39,27 @@ export function registerLatteTemplateMonacoProviders(
     provideCompletionItems: (model, position) =>
       provideLatteCompletionItems(monaco, context, model, position),
   });
+  const codeActions = monaco.languages.registerCodeActionProvider(
+    "latte",
+    {
+      provideCodeActions: (model, range, actionContext) =>
+        provideLatteCodeActions(
+          monaco,
+          context,
+          handlers,
+          model,
+          range,
+          actionContext,
+        ),
+    },
+    { providedCodeActionKinds: ["quickfix"] },
+  );
 
   return {
     dispose: () => {
       definition.dispose();
       completion.dispose();
+      codeActions.dispose();
     },
   };
 }
@@ -149,6 +170,60 @@ async function provideLatteCompletionItems(
 
     return { suggestions: [] };
   }
+}
+
+async function provideLatteCodeActions<
+  Context extends TemplateLanguageMonacoProviderContext,
+>(
+  monaco: MonacoApi,
+  context: Context,
+  handlers: TemplateLanguageMonacoProviderHandlers<Context>,
+  model: MonacoModel,
+  range: Monaco.Range,
+  actionContext: Monaco.languages.CodeActionContext,
+): Promise<Monaco.languages.CodeActionList> {
+  if (!latteQuickFixKindRequested(actionContext.only)) {
+    return emptyLatteCodeActions();
+  }
+
+  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+
+  if (!documentContext) {
+    return emptyLatteCodeActions();
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+
+  try {
+    const descriptors = await context
+      .getTemplateLanguageProviders()
+      .latte.provideCodeActions(source, codeActionOffsetRange(source, range));
+
+    if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      return emptyLatteCodeActions();
+    }
+
+    return {
+      actions: descriptors.map((descriptor) =>
+        handlers.toCodeAction(monaco, context, model, descriptor),
+      ),
+      dispose: () => undefined,
+    };
+  } catch (error) {
+    if (isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
+      context.reportError(error);
+    }
+
+    return emptyLatteCodeActions();
+  }
+}
+
+function latteQuickFixKindRequested(only: string | undefined): boolean {
+  return !only || only.startsWith("quickfix");
+}
+
+function emptyLatteCodeActions(): Monaco.languages.CodeActionList {
+  return { actions: [], dispose: () => undefined };
 }
 
 function monacoLatteCompletionKind(

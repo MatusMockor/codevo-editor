@@ -103,6 +103,10 @@ export interface TemplateLanguageProviderRegistry {
     ): Promise<boolean>;
   };
   latte: {
+    provideCodeActions(
+      source: string,
+      range: PhpCodeActionRange,
+    ): Promise<PhpCodeActionDescriptor[]>;
     provideCompletions(
       source: string,
       position: EditorPosition,

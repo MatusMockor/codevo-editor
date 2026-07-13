@@ -19,6 +19,7 @@ describe("useWorkbenchFrameworkProviderAdapter", () => {
       provideBladeCodeActions: vi.fn(async () => []),
       provideBladeCompletions: vi.fn(async () => []),
       provideBladeDefinition: vi.fn(async () => false),
+      provideLatteCodeActions: vi.fn(async () => []),
       provideLatteCompletions: vi.fn(async () => []),
       provideLatteDefinition: vi.fn(async () => false),
       provideNeonCompletions: vi.fn(async () => []),

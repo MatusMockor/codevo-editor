@@ -29,6 +29,10 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
     source: string,
     position: EditorPosition,
   ): Promise<LatteCompletion[]>;
+  provideLatteCodeActions?(
+    source: string,
+    range: PhpCodeActionRange,
+  ): Promise<PhpCodeActionDescriptor[]>;
   provideLatteDefinition?(
     source: string,
     offset: number,
@@ -112,6 +116,9 @@ export function resolveEditorSurfaceFrameworkProviders({
           noopPhpFrameworkDefinition,
       },
       latte: {
+        provideCodeActions:
+          frameworkIntelligenceProviders?.provideLatteCodeActions ??
+          noopPhpCodeActions,
         provideCompletions:
           frameworkIntelligenceProviders?.provideLatteCompletions ??
           noopLatteCompletions,
