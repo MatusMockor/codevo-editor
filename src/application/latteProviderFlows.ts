@@ -15,6 +15,7 @@ import { type LatteViewDataCache } from "./latteExpressionIntelligence";
 import type { LatteFilterCache } from "./latteFilterDiscovery";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
 import type {
+  LatteDefinitionOutcome,
   LatteFrameworkCapabilities,
   LatteIntelligence,
 } from "./latteIntelligenceContracts";
@@ -23,6 +24,7 @@ import type { NavigationRequest } from "./navigationRequest";
 import { type LatteProviderFlowFactoryOptions } from "./latteProviderFlowContext";
 import {
   provideLatteDefinition as provideLatteDefinitionFlow,
+  provideLatteDefinitionOutcome as provideLatteDefinitionOutcomeFlow,
 } from "./latteDefinitionProvider";
 import {
   provideLatteCompletions as provideLatteCompletionsFlow,
@@ -69,6 +71,11 @@ export interface LatteProviderFlows {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
+  provideLatteDefinitionOutcome(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<LatteDefinitionOutcome>;
   provideLattePresenterLinkDiagnostics(
     source: string,
     currentTemplateRelativePath: string,
@@ -154,6 +161,8 @@ export function createLatteProviderFlows(
       provideLatteCompletionsFlow(options, source, position),
     provideLatteDefinition: (source, offset, request) =>
       provideLatteDefinitionFlow(options, source, offset, request),
+    provideLatteDefinitionOutcome: (source, offset, request) =>
+      provideLatteDefinitionOutcomeFlow(options, source, offset, request),
     provideLattePresenterLinkDiagnostics: (source, currentTemplateRelativePath) =>
       provideLattePresenterLinkDiagnostics(
         options,

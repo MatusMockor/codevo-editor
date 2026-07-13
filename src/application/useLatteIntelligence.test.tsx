@@ -593,7 +593,12 @@ class ProductListControl extends Nette\\Application\\UI\\Control
       "App\\Model\\Consent",
       "name",
     );
-    expect(latte.shouldBlockLatteDefinitionFallback(source, offset)).toBe(true);
+    await expect(
+      latte.provideLatteDefinitionOutcome(source, offset),
+    ).resolves.toEqual({
+      handled: true,
+      shouldBlockFallback: true,
+    });
   });
 
   it("blocks generic fallback for an unresolved Latte property expression", async () => {
@@ -607,12 +612,14 @@ class ProductListControl extends Nette\\Application\\UI\\Control
     const source = "{varType App\\Model\\Consent $consent}\n{$consent->name}";
     const offset = source.indexOf("name") + 2;
 
-    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
-      false,
-    );
+    await expect(
+      latte.provideLatteDefinitionOutcome(source, offset),
+    ).resolves.toEqual({
+      handled: false,
+      shouldBlockFallback: true,
+    });
     expect(resolvePhpReceiverCompletions).toHaveBeenCalled();
     expect(openPhpPropertyTarget).not.toHaveBeenCalled();
-    expect(latte.shouldBlockLatteDefinitionFallback(source, offset)).toBe(true);
   });
 
   it("does nothing when the Nette framework is not active", async () => {

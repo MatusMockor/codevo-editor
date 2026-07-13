@@ -73,6 +73,11 @@ export interface LatteIntelligenceDependencies {
   workspaceRoot: string | null;
 }
 
+export interface LatteDefinitionOutcome {
+  handled: boolean;
+  shouldBlockFallback: boolean;
+}
+
 export interface LatteIntelligence {
   collectCompleteLatteTemplateRelativePaths(): Promise<readonly string[]>;
   collectLatteTemplateRelativePaths(): Promise<readonly string[]>;
@@ -90,10 +95,16 @@ export interface LatteIntelligence {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
+  provideLatteDefinitionOutcome(
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ): Promise<LatteDefinitionOutcome>;
   provideLattePresenterLinkDiagnostics(
     source: string,
     currentTemplateRelativePath: string,
   ): Promise<LanguageServerDiagnostic[]>;
+  /** @deprecated Use provideLatteDefinitionOutcome in navigation flows. */
   shouldBlockLatteDefinitionFallback(source: string, offset: number): boolean;
   providePhpPresenterLinkDefinition(
     source: string,

@@ -143,14 +143,16 @@ function renderNavigation(
     }),
     openPathForNavigation: vi.fn(async () => true),
     provideBladeDefinition: vi.fn(async () => false),
-    provideLatteDefinition: vi.fn(async () => false),
+    provideLatteDefinitionOutcome: vi.fn(async () => ({
+      handled: false,
+      shouldBlockFallback: false,
+    })),
     recordNavigationLocationSnapshot: vi.fn(),
     reportErrorForActiveWorkspaceRoot: vi.fn(),
     reportLanguageServerErrorForActiveWorkspaceRoot: vi.fn(),
     setEditorRevealTarget: vi.fn(),
     setImplementationChooser: vi.fn(),
     setMessage: vi.fn(),
-    shouldBlockLatteDefinitionFallback: vi.fn(() => false),
     workspaceFiles: workspaceFiles(),
     workspaceRoot: ROOT,
     ...overrides,
@@ -173,22 +175,20 @@ function renderNavigation(
 
 describe("useWorkbenchLanguageNavigation Latte definition fallback", () => {
   it("does not run indexed workspace-symbol fallback for unresolved Latte property expressions", async () => {
-    const shouldBlockLatteDefinitionFallback = vi.fn(() => true);
     const goToIndexedSymbolDefinition = vi.fn(async () => false);
     const { api, deps, root, source } = renderNavigation({
       goToIndexedSymbolDefinition,
-      shouldBlockLatteDefinitionFallback,
+      provideLatteDefinitionOutcome: vi.fn(async () => ({
+        handled: false,
+        shouldBlockFallback: true,
+      })),
     });
 
     await act(async () => {
       await api().goToDefinition();
     });
 
-    expect(deps.provideLatteDefinition).toHaveBeenCalledWith(
-      source,
-      source.indexOf("name"),
-    );
-    expect(shouldBlockLatteDefinitionFallback).toHaveBeenCalledWith(
+    expect(deps.provideLatteDefinitionOutcome).toHaveBeenCalledWith(
       source,
       source.indexOf("name"),
     );
@@ -201,7 +201,6 @@ describe("useWorkbenchLanguageNavigation Latte definition fallback", () => {
     const goToIndexedSymbolDefinition = vi.fn(async () => false);
     const { api, root } = renderNavigation({
       goToIndexedSymbolDefinition,
-      shouldBlockLatteDefinitionFallback: vi.fn(() => false),
     });
 
     await act(async () => {

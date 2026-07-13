@@ -7790,8 +7790,7 @@ export function useWorkbenchController(
     resetBladeIntelligenceCaches,
     collectCompleteLatteTemplateRelativePaths,
     provideLattePresenterLinkDiagnostics,
-    provideLatteDefinition,
-    shouldBlockLatteDefinitionFallback,
+    provideLatteDefinitionOutcome,
   } = workbenchFrameworkIntelligence;
 
   usePhpFrameworkActiveDocumentDiagnostics({
@@ -8042,8 +8041,7 @@ export function useWorkbenchController(
     latencyTrackerForRoot,
     openPathForNavigation,
     provideBladeDefinition,
-    provideLatteDefinition,
-    shouldBlockLatteDefinitionFallback,
+    provideLatteDefinitionOutcome,
     recordNavigationLocationSnapshot,
     reportErrorForActiveWorkspaceRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
