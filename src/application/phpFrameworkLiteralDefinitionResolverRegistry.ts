@@ -141,7 +141,7 @@ interface PhpFrameworkLiteralDefinitionResolverContribution {
 
 const TRANSLATION_LITERAL_DEFINITION_RESOLVER: PhpFrameworkLiteralDefinitionResolverEntry =
   {
-    id: "laravel.translation",
+    id: "framework.translation",
     resolveDirect: async ({ position, providers, source }, dependencies) => {
       const reference = phpFrameworkTranslationReferenceAt(
         source,

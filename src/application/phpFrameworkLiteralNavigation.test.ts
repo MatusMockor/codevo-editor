@@ -38,7 +38,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
       "laravel.view-reference",
       "laravel.config",
       "laravel.view",
-      "laravel.translation",
+      "framework.translation",
       "laravel.env",
       "laravel.route",
       "laravel.validation-table",
@@ -47,7 +47,7 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
       activePhpFrameworkLiteralDefinitionResolverEntries([
         phpNetteFrameworkProvider,
       ]).map((resolver) => resolver.id),
-    ).toEqual(["laravel.translation"]);
+    ).toEqual(["framework.translation"]);
     expect(
       activePhpFrameworkLiteralDefinitionResolverEntries([{ id: "custom" }]),
     ).toEqual([]);
