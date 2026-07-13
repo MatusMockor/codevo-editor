@@ -1,18 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { phpNettePresenterLinkCodeAction } from "./phpNettePresenterLinkCodeActions";
+import {
+  phpNettePresenterLinkCodeAction,
+  phpNettePresenterLinkCodeActions,
+} from "./phpNettePresenterLinkCodeActions";
 import type { PhpCodeActionDescriptor } from "./phpCodeActionTypes";
 
-function actionAt(
+function actionsAt(
   source: string,
   target: string,
-): PhpCodeActionDescriptor | null {
+): PhpCodeActionDescriptor[] {
   const start = source.indexOf(target);
 
   if (start < 0) {
     throw new Error(`Target not found: ${target}`);
   }
 
-  return phpNettePresenterLinkCodeAction(source, {
+  return phpNettePresenterLinkCodeActions(source, {
     end: start + target.length,
     start,
   });
@@ -57,7 +60,7 @@ function applyAction(source: string, action: PhpCodeActionDescriptor): string {
     );
 }
 
-describe("phpNettePresenterLinkCodeAction", () => {
+describe("phpNettePresenterLinkCodeActions", () => {
   it("offers action creation for a relative presenter link", () => {
     const source = `<?php
 
@@ -72,11 +75,20 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "show")).toMatchObject({
+    const actions = actionsAt(source, "show");
+
+    expect(actions.map((action) => action.title)).toEqual([
+      "Create actionShow",
+      "Create renderShow",
+    ]);
+    expect(actions[0]).toMatchObject({
       isPreferred: true,
       kind: "quickfix",
-      title: "Create actionShow",
     });
+    expect(actions[1]).toMatchObject({
+      kind: "quickfix",
+    });
+    expect(actions[1]?.isPreferred).toBeUndefined();
   });
 
   it("offers signal handler creation for an explicit same-presenter link", () => {
@@ -93,10 +105,38 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "Product:delete!")).toMatchObject({
+    expect(actionsAt(source, "Product:delete!")).toEqual([
+      expect.objectContaining({
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create handleDelete",
+      }),
+    ]);
+  });
+
+  it("keeps the singular compatibility wrapper on the first action", () => {
+    const source = `<?php
+
+use Nette\\Application\\UI\\Presenter;
+
+class ProductPresenter extends Presenter
+{
+    public function renderDefault(): void
+    {
+        $this->link('show');
+    }
+}
+`;
+    const start = source.indexOf("show");
+    const firstAction = phpNettePresenterLinkCodeAction(source, {
+      end: start + "show".length,
+      start,
+    });
+
+    expect(firstAction).toMatchObject({
       isPreferred: true,
       kind: "quickfix",
-      title: "Create handleDelete",
+      title: "Create actionShow",
     });
   });
 
@@ -120,7 +160,7 @@ class ProductPresenter extends Presenter
 }
 `;
 
-      expect(actionAt(source, "show")).toBeNull();
+      expect(actionsAt(source, "show")).toEqual([]);
     },
   );
 
@@ -138,7 +178,7 @@ class OrderPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "Product:delete!")).toBeNull();
+    expect(actionsAt(source, "Product:delete!")).toEqual([]);
   });
 
   it.each([":Product:delete!", "Admin:Product:delete!"])(
@@ -157,7 +197,7 @@ class ProductPresenter extends Presenter
 }
 `;
 
-      expect(actionAt(source, target)).toBeNull();
+      expect(actionsAt(source, target)).toEqual([]);
     },
   );
 
@@ -175,7 +215,7 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "$target")).toBeNull();
+    expect(actionsAt(source, "$target")).toEqual([]);
   });
 
   it("does not offer an action when a custom parent may provide the method", () => {
@@ -190,7 +230,7 @@ class ProductPresenter extends BasePresenter
 }
 `;
 
-    expect(actionAt(source, "show")).toBeNull();
+    expect(actionsAt(source, "show")).toEqual([]);
   });
 
   it("does not treat an imported app Presenter as direct Nette inheritance", () => {
@@ -207,7 +247,7 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "show")).toBeNull();
+    expect(actionsAt(source, "show")).toEqual([]);
   });
 
   it("allows bare Presenter when it resolves to the Nette presenter import", () => {
@@ -224,9 +264,10 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "show")).toMatchObject({
-      title: "Create actionShow",
-    });
+    expect(actionsAt(source, "show").map((action) => action.title)).toEqual([
+      "Create actionShow",
+      "Create renderShow",
+    ]);
   });
 
   it("does not offer an action when a trait may provide the method", () => {
@@ -245,7 +286,7 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "show")).toBeNull();
+    expect(actionsAt(source, "show")).toEqual([]);
   });
 
   it("ignores link-like calls on another receiver", () => {
@@ -262,7 +303,7 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(actionAt(source, "show")).toBeNull();
+    expect(actionsAt(source, "show")).toEqual([]);
   });
 
   it("inserts the missing method into the same presenter class body", () => {
@@ -282,9 +323,9 @@ class ProductPresenter extends Presenter
     }
 }
 `;
-    const action = actionAt(source, "edit");
+    const action = actionsAt(source, "edit")[0];
 
-    expect(action).not.toBeNull();
+    expect(action).toBeDefined();
     const result = applyAction(source, action!);
     const earlierBody = result.slice(0, result.indexOf("class ProductPresenter"));
     const productBody = result.slice(result.indexOf("class ProductPresenter"));

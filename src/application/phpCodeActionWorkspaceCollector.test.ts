@@ -48,6 +48,40 @@ function projectSymbol(
 }
 
 describe("phpCodeActionWorkspaceCollector", () => {
+  it("collects every action returned by a framework contribution", async () => {
+    const options = baseOptions({
+      frameworkCodeActionContributions: [
+        vi.fn(async () => [
+          { edits: [], title: "Create actionShow" },
+          { edits: [], title: "Create renderShow" },
+        ]),
+      ],
+    });
+
+    await expect(collectPhpWorkspaceCodeActions(options)).resolves.toEqual([
+      expect.objectContaining({ title: "Create actionShow" }),
+      expect.objectContaining({ title: "Create renderShow" }),
+    ]);
+  });
+
+  it("drops multiple framework actions when the root changes after the contribution resolves", async () => {
+    let active = true;
+    const options = baseOptions({
+      frameworkCodeActionContributions: [
+        vi.fn(async () => {
+          active = false;
+          return [
+            { edits: [], title: "Create actionShow" },
+            { edits: [], title: "Create renderShow" },
+          ];
+        }),
+      ],
+      isRequestedRootActive: vi.fn(() => active),
+    });
+
+    await expect(collectPhpWorkspaceCodeActions(options)).resolves.toBeNull();
+  });
+
   it("drops the provider response when the root changes after an async action", async () => {
     let active = true;
     const frameworkCodeActionContribution = vi.fn(async () => null);

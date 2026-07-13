@@ -5,7 +5,7 @@ import {
 import { missingLaravelViewReferenceAt } from "../domain/laravelDiagnostics";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
-import { phpNettePresenterLinkCodeAction } from "./phpNettePresenterLinkCodeActions";
+import { phpNettePresenterLinkCodeActions } from "./phpNettePresenterLinkCodeActions";
 
 export interface PhpFrameworkCodeActionContributionDependencies {
   collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
@@ -43,13 +43,16 @@ const PHP_FRAMEWORK_CODE_ACTION_CONTRIBUTIONS: readonly PhpFrameworkCodeActionRe
 
         return {
           createMissingBladeViewCodeAction,
-          providePhpCodeAction: (source, range, isRequestedRootActive) =>
-            createMissingBladeViewCodeAction(
+          providePhpCodeAction: async (source, range, isRequestedRootActive) => {
+            const action = await createMissingBladeViewCodeAction(
               source,
               range,
               "php",
               isRequestedRootActive,
-            ),
+            );
+
+            return action ? [action] : null;
+          },
         };
       },
     },
@@ -60,7 +63,7 @@ const PHP_FRAMEWORK_CODE_ACTION_CONTRIBUTIONS: readonly PhpFrameworkCodeActionRe
       create: () => ({
         providePhpCodeAction: async (source, range, isRequestedRootActive) =>
           isRequestedRootActive()
-            ? phpNettePresenterLinkCodeAction(source, range)
+            ? phpNettePresenterLinkCodeActions(source, range)
             : null,
       }),
     },

@@ -30,26 +30,33 @@ export function phpNettePresenterLinkCodeAction(
   source: string,
   range: PhpCodeActionRange,
 ): PhpCodeActionDescriptor | null {
+  return phpNettePresenterLinkCodeActions(source, range)[0] ?? null;
+}
+
+export function phpNettePresenterLinkCodeActions(
+  source: string,
+  range: PhpCodeActionRange,
+): PhpCodeActionDescriptor[] {
   const detection = detectPhpPresenterLinkAt(source, range.start);
 
   if (!detection) {
-    return null;
+    return [];
   }
 
   if (!isCurrentPresenterLinkCall(source, detection)) {
-    return null;
+    return [];
   }
 
   const target = parseNetteLinkTarget(detection.target);
 
   if (!target || target.absolute || target.module) {
-    return null;
+    return [];
   }
 
   const activeClass = activePresenterClassAt(source, detection.targetStart);
 
   if (!activeClass || !isEligiblePresenterClass(activeClass, target.presenter)) {
-    return null;
+    return [];
   }
 
   if (
@@ -62,7 +69,7 @@ export function phpNettePresenterLinkCodeAction(
       { barePresenterParentPolicy: "resolve-import" },
     )
   ) {
-    return null;
+    return [];
   }
 
   const candidateMethodNames = nettePresenterActionMethodCandidates(
@@ -71,7 +78,7 @@ export function phpNettePresenterLinkCodeAction(
   );
 
   if (candidateMethodNames.length === 0) {
-    return null;
+    return [];
   }
 
   const existingMethodNames = new Set(
@@ -83,14 +90,19 @@ export function phpNettePresenterLinkCodeAction(
       existingMethodNames.has(methodName.toLowerCase()),
     )
   ) {
-    return null;
+    return [];
   }
 
-  return createPresenterMethodAction(
-    source,
-    activeClass.typeDeclaration,
-    candidateMethodNames[0] ?? "",
-  );
+  return candidateMethodNames.flatMap((methodName, index) => {
+    const action = createPresenterMethodAction(
+      source,
+      activeClass.typeDeclaration,
+      methodName,
+      index === 0,
+    );
+
+    return action ? [action] : [];
+  });
 }
 
 function activePresenterClassAt(
@@ -154,6 +166,7 @@ function createPresenterMethodAction(
   source: string,
   typeDeclaration: PhpTypeDeclarationIdentity,
   methodName: string,
+  isPreferred: boolean,
 ): PhpCodeActionDescriptor | null {
   if (methodName.length === 0) {
     return null;
@@ -169,11 +182,25 @@ function createPresenterMethodAction(
     return null;
   }
 
-  return phpPreferredQuickfix(
-    phpClassBodyInsertionAction(source, stub, `Create ${methodName}`, {
+  const action = phpClassBodyInsertionAction(
+    source,
+    stub,
+    `Create ${methodName}`,
+    {
       bodyStartOffset: typeDeclaration.bodyStartOffset,
-    }),
+    },
   );
+
+  if (isPreferred) {
+    return phpPreferredQuickfix(action);
+  }
+
+  return action
+    ? {
+        ...action,
+        kind: "quickfix",
+      }
+    : null;
 }
 
 function escapeRegExp(value: string): string {

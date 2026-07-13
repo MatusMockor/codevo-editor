@@ -32,7 +32,7 @@ export type PhpFrameworkCodeActionContribution = (
   source: string,
   range: PhpCodeActionRange,
   isRequestedRootActive: () => boolean,
-) => Promise<PhpCodeActionDescriptor | null>;
+) => Promise<readonly PhpCodeActionDescriptor[] | null>;
 
 export interface PhpWorkspaceCodeActionCollectorOptions {
   activeDocumentPath: string | null;
@@ -91,7 +91,7 @@ export async function collectPhpWorkspaceCodeActions({
   }
 
   for (const contribution of frameworkCodeActionContributions) {
-    const frameworkAction = await contribution(
+    const frameworkActions = await contribution(
       source,
       range,
       isRequestedRootActive,
@@ -101,8 +101,8 @@ export async function collectPhpWorkspaceCodeActions({
       return null;
     }
 
-    if (frameworkAction) {
-      actions.push(frameworkAction);
+    if (frameworkActions) {
+      actions.push(...frameworkActions);
     }
   }
 

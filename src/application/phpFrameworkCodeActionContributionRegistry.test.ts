@@ -86,7 +86,10 @@ class ProductPresenter extends Presenter
 
     await expect(
       netteContribution?.(source, range, isRequestedRootActive),
-    ).resolves.toMatchObject({ title: "Create actionShow" });
+    ).resolves.toEqual([
+      expect.objectContaining({ title: "Create actionShow" }),
+      expect.objectContaining({ title: "Create renderShow" }),
+    ]);
 
     await expect(
       Promise.all(
