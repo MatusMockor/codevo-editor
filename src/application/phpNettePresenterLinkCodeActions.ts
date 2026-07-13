@@ -9,10 +9,8 @@ import {
   type PhpClassStructure,
   type PhpTypeDeclarationIdentity,
 } from "../domain/phpClassStructure";
-import { renderCreateMethodStub } from "../domain/phpCreateFromUsage";
 import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
-import { phpClassBodyInsertionAction } from "./phpClassGenerateCodeActions";
-import { phpPreferredQuickfix } from "./phpCreateMemberCodeActions";
+import { createNettePresenterMethodAction } from "./nettePresenterMethodActionFactory";
 import type {
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
@@ -94,12 +92,12 @@ export function phpNettePresenterLinkCodeActions(
   }
 
   return candidateMethodNames.flatMap((methodName, index) => {
-    const action = createPresenterMethodAction(
-      source,
-      activeClass.typeDeclaration,
+    const action = createNettePresenterMethodAction({
+      isPreferred: index === 0,
       methodName,
-      index === 0,
-    );
+      source,
+      typeDeclaration: activeClass.typeDeclaration,
+    });
 
     return action ? [action] : [];
   });
@@ -160,47 +158,6 @@ function isCurrentPresenterLinkCall(
   );
 
   return currentPresenterCallPattern.test(callPrefix);
-}
-
-function createPresenterMethodAction(
-  source: string,
-  typeDeclaration: PhpTypeDeclarationIdentity,
-  methodName: string,
-  isPreferred: boolean,
-): PhpCodeActionDescriptor | null {
-  if (methodName.length === 0) {
-    return null;
-  }
-
-  const stub = renderCreateMethodStub(methodName, [], {
-    indent: "",
-    target: { kind: "class", relationship: "self" },
-    visibility: "public",
-  });
-
-  if (!stub) {
-    return null;
-  }
-
-  const action = phpClassBodyInsertionAction(
-    source,
-    stub,
-    `Create ${methodName}`,
-    {
-      bodyStartOffset: typeDeclaration.bodyStartOffset,
-    },
-  );
-
-  if (isPreferred) {
-    return phpPreferredQuickfix(action);
-  }
-
-  return action
-    ? {
-        ...action,
-        kind: "quickfix",
-      }
-    : null;
 }
 
 function escapeRegExp(value: string): string {

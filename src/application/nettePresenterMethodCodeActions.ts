@@ -4,10 +4,8 @@ import {
   type PhpClassStructure,
   type PhpTypeDeclarationIdentity,
 } from "../domain/phpClassStructure";
-import { renderCreateMethodStub } from "../domain/phpCreateFromUsage";
 import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
-import { phpClassBodyInsertionAction } from "./phpClassGenerateCodeActions";
-import { phpPreferredQuickfix } from "./phpCreateMemberCodeActions";
+import { createNettePresenterMethodAction } from "./nettePresenterMethodActionFactory";
 import type { NettePresenterLinkDiagnosticData } from "./nettePresenterLinkDiagnostics";
 import type { PhpCodeActionDescriptor } from "./phpCodeActionTypes";
 
@@ -55,13 +53,13 @@ export function nettePresenterMethodCodeActionsFromDiagnosticData({
   let preferredAssigned = false;
 
   return candidateMethodNames.flatMap((methodName) => {
-    const action = createPresenterMethodAction(
-      presenterSource,
-      presenterPath,
-      target.typeDeclaration,
+    const action = createNettePresenterMethodAction({
+      editPath: presenterPath,
+      isPreferred: !preferredAssigned,
       methodName,
-      !preferredAssigned,
-    );
+      source: presenterSource,
+      typeDeclaration: target.typeDeclaration,
+    });
 
     if (!action) {
       return [];
@@ -117,47 +115,4 @@ function presenterClassNameFromPath(path: string): string | null {
   const className = fileName.slice(0, -".php".length);
 
   return className.endsWith("Presenter") ? className : null;
-}
-
-function createPresenterMethodAction(
-  source: string,
-  path: string,
-  typeDeclaration: PhpTypeDeclarationIdentity,
-  methodName: string,
-  isPreferred: boolean,
-): PhpCodeActionDescriptor | null {
-  if (methodName.length === 0) {
-    return null;
-  }
-
-  const stub = renderCreateMethodStub(methodName, [], {
-    indent: "",
-    target: { kind: "class", relationship: "self" },
-    visibility: "public",
-  });
-
-  if (!stub) {
-    return null;
-  }
-
-  const action = phpClassBodyInsertionAction(
-    source,
-    stub,
-    `Create ${methodName}`,
-    {
-      bodyStartOffset: typeDeclaration.bodyStartOffset,
-    },
-  );
-
-  if (!action) {
-    return null;
-  }
-
-  const crossFileAction: PhpCodeActionDescriptor = {
-    ...action,
-    edits: action.edits.map((edit) => ({ ...edit, path })),
-    kind: "quickfix",
-  };
-
-  return isPreferred ? phpPreferredQuickfix(crossFileAction) : crossFileAction;
 }
