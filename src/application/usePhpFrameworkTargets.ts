@@ -6,8 +6,11 @@ import type {
   PhpFrameworkRouteDefinition,
 } from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchGateway } from "../domain/workspace";
+import {
+  activePhpFrameworkTargetCollectorAdapter,
+  phpFrameworkTargetCollectorAdapters,
+} from "./phpFrameworkTargetCollectorAdapters";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import { phpLaravelFrameworkTargetCollectorAdapter } from "./phpLaravelFrameworkTargetAdapter";
 import type { WorkspaceFileTarget } from "./phpWorkspaceTargetCollector";
 
 export interface PhpFrameworkTargetsDependencies {
@@ -216,19 +219,17 @@ function inactivePhpFrameworkTargets(
   };
 }
 
-const phpFrameworkTargetCollectorAdapters: readonly PhpFrameworkTargetCollectorAdapter[] =
-  [phpLaravelFrameworkTargetCollectorAdapter];
-
 export function usePhpFrameworkTargets(
   dependencies: PhpFrameworkTargetsDependencies,
 ): PhpFrameworkTargets {
   const targetAdapters = phpFrameworkTargetCollectorAdapters.map((adapter) => ({
-    adapter,
+    providerId: adapter.providerId,
     targets: adapter.useTargets(dependencies),
   }));
 
-  const activeTargets = targetAdapters.find(({ adapter }) =>
-    dependencies.frameworkIntelligence.hasProvider(adapter.providerId),
+  const activeTargets = activePhpFrameworkTargetCollectorAdapter(
+    targetAdapters,
+    dependencies.frameworkIntelligence,
   )?.targets;
 
   return (
