@@ -2,7 +2,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodDefinitionHint } from "../domain/phpNavigation";
 import type { PhpIdentifierContext } from "../domain/phpNavigation";
 
-type PhpLaravelRelationStringContext = Extract<
+type PhpFrameworkRelationStringContext = Extract<
   PhpIdentifierContext,
   { kind: "laravelRelationString" }
 >;
@@ -19,7 +19,7 @@ export interface PhpDynamicWhereDefinitionNavigationContext {
 }
 
 export interface PhpRelationStringDefinitionNavigationContext {
-  context: PhpLaravelRelationStringContext;
+  context: PhpFrameworkRelationStringContext;
   isRequestStillCurrent: () => boolean;
   position: EditorPosition;
   source: string;
