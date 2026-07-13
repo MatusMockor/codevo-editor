@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -11,6 +12,13 @@ import { usePhpLaravelRelationResolver } from "./usePhpLaravelRelationResolver";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: [],
@@ -41,7 +49,7 @@ function phpDescriptor(): WorkspaceDescriptor {
 function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
   return {
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     readPhpClassMembersFromPath: vi.fn(async () => ({
       content: "",
       members: [],
@@ -89,11 +97,10 @@ function renderHook(options: HookOptions) {
 }
 
 describe("usePhpLaravelRelationResolver", () => {
-  it("uses runtime Laravel state over the legacy boolean", async () => {
+  it("uses runtime Laravel state for the Laravel gate", async () => {
     const resolvePhpClassSourcePaths = vi.fn(async () => ["/unused.php"]);
     const options = makeOptions({
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       resolvePhpClassSourcePaths,
     });
     const harness = renderHook(options);

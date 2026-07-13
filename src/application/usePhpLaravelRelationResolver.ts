@@ -28,8 +28,7 @@ export interface PhpClassMemberReadResult {
 
 export interface UsePhpLaravelRelationResolverOptions {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   readPhpClassMembersFromPath: (
     path: string,
     className: string,
@@ -58,7 +57,6 @@ export interface UsePhpLaravelRelationResolverOptions {
 export function usePhpLaravelRelationResolver({
   currentWorkspaceRootRef,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readPhpClassMembersFromPath,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
@@ -69,8 +67,7 @@ export function usePhpLaravelRelationResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelRelationResolverOptions) {
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const isLaravelFrameworkActive = frameworkRuntime.isLaravel;
 
   const resolvePhpClassPropertyOrRelationType = useCallback(
     async (
