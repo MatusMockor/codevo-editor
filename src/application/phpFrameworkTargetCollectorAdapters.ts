@@ -1,9 +1,13 @@
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { phpLaravelFrameworkTargetCollectorAdapter } from "./phpLaravelFrameworkTargetAdapter";
+import { phpNetteFrameworkTargetCollectorAdapter } from "./phpNetteFrameworkTargetAdapter";
 import type { PhpFrameworkTargetCollectorAdapter } from "./usePhpFrameworkTargets";
 
 export const phpFrameworkTargetCollectorAdapters: readonly PhpFrameworkTargetCollectorAdapter[] =
-  [phpLaravelFrameworkTargetCollectorAdapter];
+  [
+    phpLaravelFrameworkTargetCollectorAdapter,
+    phpNetteFrameworkTargetCollectorAdapter,
+  ];
 
 export function activePhpFrameworkTargetCollectorAdapter<
   Adapter extends Pick<PhpFrameworkTargetCollectorAdapter, "providerId">,

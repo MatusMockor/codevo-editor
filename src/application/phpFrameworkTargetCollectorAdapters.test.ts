@@ -4,11 +4,15 @@ import {
   activePhpFrameworkTargetCollectorAdapter,
   phpFrameworkTargetCollectorAdapters,
 } from "./phpFrameworkTargetCollectorAdapters";
+import { phpNetteFrameworkTargetCollectorAdapter } from "./phpNetteFrameworkTargetAdapter";
 
 describe("phpFrameworkTargetCollectorAdapters", () => {
-  it("contains the Laravel adapter by default", () => {
+  it("contains the framework target adapters by default", () => {
     expect(phpFrameworkTargetCollectorAdapters).toContain(
       phpLaravelFrameworkTargetCollectorAdapter,
+    );
+    expect(phpFrameworkTargetCollectorAdapters).toContain(
+      phpNetteFrameworkTargetCollectorAdapter,
     );
   });
 

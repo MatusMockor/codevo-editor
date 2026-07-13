@@ -7,6 +7,7 @@ import {
   phpFrameworkInertiaReferenceAt,
   phpFrameworkStringLiteralHelperAt,
   phpFrameworkTranslationLiteralTarget,
+  phpFrameworkTranslationReferenceAt,
   phpFrameworkViewLiteralTarget,
   phpFrameworkViewReferenceAt,
   type PhpFrameworkProvider,
@@ -137,6 +138,53 @@ interface PhpFrameworkLiteralDefinitionResolverContribution {
   readonly entries: readonly PhpFrameworkLiteralDefinitionResolverEntry[];
   readonly providerId: string;
 }
+
+const TRANSLATION_LITERAL_DEFINITION_RESOLVER: PhpFrameworkLiteralDefinitionResolverEntry =
+  {
+    id: "laravel.translation",
+    resolveDirect: async ({ position, providers, source }, dependencies) => {
+      const reference = phpFrameworkTranslationReferenceAt(
+        source,
+        position,
+        providers,
+      );
+
+      if (!reference) {
+        return undefined;
+      }
+
+      if (!phpFrameworkTranslationLiteralTarget(reference.key, providers)) {
+        return null;
+      }
+
+      const target = await dependencies.findTranslationTarget(reference.key);
+
+      return target
+        ? {
+            kind: "translation",
+            label: target.key,
+            path: target.path,
+            position: target.position,
+          }
+        : null;
+    },
+    resolveContextual: async ({ request }, dependencies) => {
+      if (request.kind !== "translation") {
+        return undefined;
+      }
+
+      const target = await dependencies.findTranslationTarget(request.key);
+
+      return target
+        ? {
+            kind: "translation",
+            label: target.key,
+            path: target.path,
+            position: target.position,
+          }
+        : null;
+    },
+  };
 
 const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefinitionResolverEntry[] =
   [
@@ -278,47 +326,7 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
           : null;
       },
     },
-    {
-      id: "laravel.translation",
-      resolveDirect: async ({ helperMatch, providers }, dependencies) => {
-        const match = helperMatch();
-
-        if (match?.helper !== "trans") {
-          return undefined;
-        }
-
-        if (!phpFrameworkTranslationLiteralTarget(match.literal, providers)) {
-          return null;
-        }
-
-        const target = await dependencies.findTranslationTarget(match.literal);
-
-        return target
-          ? {
-              kind: "translation",
-              label: target.key,
-              path: target.path,
-              position: target.position,
-            }
-          : null;
-      },
-      resolveContextual: async ({ request }, dependencies) => {
-        if (request.kind !== "translation") {
-          return undefined;
-        }
-
-        const target = await dependencies.findTranslationTarget(request.key);
-
-        return target
-          ? {
-              kind: "translation",
-              label: target.key,
-              path: target.path,
-              position: target.position,
-            }
-          : null;
-      },
-    },
+    TRANSLATION_LITERAL_DEFINITION_RESOLVER,
     {
       id: "laravel.env",
       resolveDirect: async ({ helperMatch, providers }, dependencies) => {
@@ -420,6 +428,10 @@ const PHP_FRAMEWORK_LITERAL_DEFINITION_RESOLVER_CONTRIBUTIONS: readonly PhpFrame
     {
       entries: LARAVEL_LITERAL_DEFINITION_RESOLVERS,
       providerId: "laravel",
+    },
+    {
+      entries: [TRANSLATION_LITERAL_DEFINITION_RESOLVER],
+      providerId: "nette",
     },
   ];
 

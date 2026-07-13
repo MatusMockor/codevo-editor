@@ -11,6 +11,10 @@ import {
   NETTE_VIEW_DATA_SEARCH_QUERIES,
   netteViewDataEntryFromSource,
 } from "./netteViewData";
+import {
+  netteTranslationKeysFromSource,
+  netteTranslationTargetFromSource,
+} from "./netteTranslations";
 import type { PhpFrameworkProvider } from "./phpFrameworkProviders";
 import type { PhpProjectDescriptor } from "./workspace";
 
@@ -148,6 +152,17 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   },
   neon: {
     supportsConfigIntelligence: true,
+  },
+  translations: {
+    completionInsertText: ({ key }) => key,
+    keysFromSource: ({ fileName, source }) =>
+      netteTranslationKeysFromSource(source, fileName),
+    resolveLiteralTarget: ({ literal }) =>
+      /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+$/.test(literal)
+        ? { key: literal }
+        : null,
+    targetFromSource: ({ fileName, key, source }) =>
+      netteTranslationTargetFromSource(source, fileName, key),
   },
   latte: {
     supportsPresenterLinkIntelligence: true,

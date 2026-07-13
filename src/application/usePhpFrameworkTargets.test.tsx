@@ -182,7 +182,7 @@ describe("usePhpFrameworkTargets", () => {
     harness.unmount();
   });
 
-  it("keeps the Laravel adapter inert for a non-Laravel provider", async () => {
+  it("keeps unrelated targets inert for the Nette provider", async () => {
     const harness = renderPhpFrameworkTargets({
       frameworkIntelligence: NETTE_FRAMEWORK_INTELLIGENCE,
     });
@@ -198,10 +198,8 @@ describe("usePhpFrameworkTargets", () => {
     expect(await harness.hook().collectEnvironmentTargets()).toEqual([]);
     expect(await harness.hook().collectViewTargets()).toEqual([]);
     expect(await harness.hook().collectConfigTargets()).toEqual([]);
-    expect(await harness.hook().collectTranslationTargets()).toEqual([]);
     expect(await harness.hook().findViewTarget("comments.show")).toBeNull();
     expect(await harness.hook().findConfigTarget("app.name")).toBeNull();
-    expect(await harness.hook().findTranslationTarget("messages.welcome")).toBeNull();
     expect(harness.searchText).not.toHaveBeenCalled();
     expect(harness.readFileContent).not.toHaveBeenCalled();
     expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();

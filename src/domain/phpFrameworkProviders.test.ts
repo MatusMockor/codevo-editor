@@ -93,6 +93,10 @@ import {
   phpLaravelEventListenerMap,
 } from "./phpLaravelDispatch";
 import { NETTE_VIEW_DATA_SEARCH_QUERIES } from "./netteViewData";
+import {
+  netteTranslationKeysFromSource,
+  netteTranslationTargetFromSource,
+} from "./netteTranslations";
 import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
 import {
   phpLaravelNamedRouteDefinitions,
@@ -2403,6 +2407,7 @@ class EventServiceProvider
     const referencePosition = { column: 18, lineNumber: 3 };
     const langFileSource = "<?php\n\nreturn [\n    'welcome' => 'Hi',\n];\n";
     const jsonLangSource = '{\n  "Welcome": "Vitajte"\n}\n';
+    const neonLangSource = "foo: Foo\nnested:\n  bar: Bar\n";
 
     it("dispatches Laravel translation references 1:1 through the provider", () => {
       const direct = phpLaravelTranslationReferenceContextAt(
@@ -2481,28 +2486,46 @@ class EventServiceProvider
       ).toBe(true);
       expect(
         phpFrameworkSupportsTranslations([phpNetteFrameworkProvider]),
-      ).toBe(false);
+      ).toBe(true);
       expect(phpFrameworkSupportsTranslations([])).toBe(false);
     });
 
-    it("stays a safe no-op for providers without the translations capability", () => {
+    it("dispatches Nette NEON translation keys through the provider", () => {
+      const fileName = "app/modules/usersModule/lang/users.cs_CZ.neon";
+      const direct = netteTranslationKeysFromSource(neonLangSource, fileName);
+
+      expect(direct.length).toBeGreaterThan(0);
+      expect(
+        phpFrameworkTranslationKeysFromSource(neonLangSource, fileName, [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toEqual(direct);
+    });
+
+    it("dispatches Nette NEON translation targets through the provider", () => {
+      const fileName = "app/modules/usersModule/lang/users.cs_CZ.neon";
+      const direct = netteTranslationTargetFromSource(
+        neonLangSource,
+        fileName,
+        "users.nested.bar",
+      );
+
+      expect(direct).not.toBeNull();
+      expect(
+        phpFrameworkTranslationTargetFromSource(
+          neonLangSource,
+          fileName,
+          "users.nested.bar",
+          [phpNetteFrameworkProvider],
+        ),
+      ).toEqual(direct);
+    });
+
+    it("keeps unsupported translation dispatchers as safe no-ops for Nette", () => {
       expect(
         phpFrameworkTranslationReferenceAt(referenceSource, referencePosition, [
           phpNetteFrameworkProvider,
         ]),
-      ).toBeNull();
-      expect(
-        phpFrameworkTranslationKeysFromSource(langFileSource, "messages", [
-          phpNetteFrameworkProvider,
-        ]),
-      ).toEqual([]);
-      expect(
-        phpFrameworkTranslationTargetFromSource(
-          langFileSource,
-          "messages",
-          "messages.welcome",
-          [phpNetteFrameworkProvider],
-        ),
       ).toBeNull();
       expect(
         phpFrameworkJsonTranslationKeysFromSource(jsonLangSource, [
@@ -2514,6 +2537,9 @@ class EventServiceProvider
           phpNetteFrameworkProvider,
         ]),
       ).toBeNull();
+    });
+
+    it("stays a safe no-op with an empty provider set", () => {
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(
         phpFrameworkTranslationReferenceAt(referenceSource, referencePosition, []),
@@ -2817,11 +2843,6 @@ class EventServiceProvider
         ]),
       ).toBeNull();
       expect(
-        phpFrameworkTranslationLiteralTarget("messages.welcome", [
-          phpNetteFrameworkProvider,
-        ]),
-      ).toBeNull();
-      expect(
         phpFrameworkEnvLiteralTarget("APP_ENV", [phpNetteFrameworkProvider]),
       ).toBeNull();
     });
@@ -2848,6 +2869,36 @@ class EventServiceProvider
       expect(
         phpFrameworkScopedStringCompletionContextAt(source, position, []),
       ).toBe(false);
+    });
+
+    it("treats provider-owned translation references as scoped completion contexts", () => {
+      const source =
+        "<?php\n$this->translator->translate('users.component.user_tokens.');";
+      const position = positionAfter(source, "user_tokens.");
+      const provider: PhpFrameworkProvider = {
+        id: "nette",
+        translations: {
+          completionInsertText: ({ key }) => key,
+          keysFromSource: () => [],
+          referenceAt: ({ position: currentPosition, source: currentSource }) =>
+            currentSource === source && currentPosition === position
+              ? {
+                  call: "translate",
+                  key: "users.component.user_tokens.",
+                  position,
+                  prefix: "users.component.user_tokens.",
+                }
+              : null,
+          resolveLiteralTarget: () => null,
+          targetFromSource: () => null,
+        },
+      };
+
+      expect(
+        phpFrameworkScopedStringCompletionContextAt(source, position, [
+          provider,
+        ]),
+      ).toBe(true);
     });
 
     it("resolves scoped PHP string completion formatting only from the owning provider", () => {

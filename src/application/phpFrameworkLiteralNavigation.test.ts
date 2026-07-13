@@ -46,8 +46,8 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
     expect(
       activePhpFrameworkLiteralDefinitionResolverEntries([
         phpNetteFrameworkProvider,
-      ]),
-    ).toEqual([]);
+      ]).map((resolver) => resolver.id),
+    ).toEqual(["laravel.translation"]);
     expect(
       activePhpFrameworkLiteralDefinitionResolverEntries([{ id: "custom" }]),
     ).toEqual([]);
@@ -202,6 +202,64 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
     });
 
     expect(deps.findConfigTarget).toHaveBeenCalledWith("app.name");
+  });
+
+  it("resolves provider-owned translation method literals without Laravel helper matching", async () => {
+    const translationReferenceAt = vi.fn(() => ({
+      call: "translate",
+      key: "users.component.user_tokens.header",
+      position: targetPosition,
+      prefix: "users.component.user_tokens.header",
+    }));
+    const helperAt = vi.fn(() => null);
+    const provider: PhpFrameworkProvider = {
+      id: "nette",
+      stringLiterals: {
+        helperAt,
+      },
+      translations: {
+        completionInsertText: ({ key }) => key,
+        keysFromSource: () => [],
+        referenceAt: translationReferenceAt,
+        resolveLiteralTarget: ({ literal }) =>
+          literal.startsWith("users.") ? { key: literal } : null,
+        targetFromSource: () => null,
+      },
+    };
+    const deps = dependencies({
+      findTranslationTarget: vi.fn(async () => ({
+        key: "users.component.user_tokens.header",
+        path: "/workspace/app/modules/usersModule/lang/users.cs_CZ.neon",
+        position: targetPosition,
+      })),
+    });
+    const source =
+      "<?php\nreturn $this->translator->translate('users.component.user_tokens.header');";
+
+    await expect(
+      resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: null,
+          offset: source.indexOf("user_tokens") + 1,
+          position,
+          providers: [provider],
+          source,
+          supportsStringLiterals: true,
+        },
+        deps,
+      ),
+    ).resolves.toEqual({
+      kind: "translation",
+      label: "users.component.user_tokens.header",
+      path: "/workspace/app/modules/usersModule/lang/users.cs_CZ.neon",
+      position: targetPosition,
+    });
+
+    expect(translationReferenceAt).toHaveBeenCalled();
+    expect(helperAt).not.toHaveBeenCalled();
+    expect(deps.findTranslationTarget).toHaveBeenCalledWith(
+      "users.component.user_tokens.header",
+    );
   });
 
   it("uses a supplied helper match without rescanning the source", async () => {
