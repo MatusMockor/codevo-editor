@@ -1,5 +1,9 @@
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
+  activePhpFrameworkSemanticAdapter,
+  type PhpFrameworkSemanticAdapterContribution,
+} from "./phpFrameworkSemanticAdapterRegistry";
+import {
   genericPhpFrameworkBuilderMagicExpressionTypeAdapter,
   type PhpFrameworkBuilderMagicExpressionTypeAdapter,
 } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
@@ -59,13 +63,6 @@ export interface PhpExpressionTypeAdapterDependencies {
   ) => Promise<string | null>;
 }
 
-interface PhpExpressionTypeAdapterContribution {
-  providerId: string;
-  createBundle(
-    dependencies: PhpExpressionTypeAdapterDependencies,
-  ): PhpExpressionTypeAdapterBundle;
-}
-
 const GENERIC_PHP_EXPRESSION_TYPE_ADAPTER_BUNDLE: PhpExpressionTypeAdapterBundle =
   {
     builderMagicExpressionTypeAdapter:
@@ -82,11 +79,13 @@ const GENERIC_PHP_EXPRESSION_TYPE_ADAPTER_BUNDLE: PhpExpressionTypeAdapterBundle
       genericPhpFrameworkTerminalModelRecoveryExpressionTypeAdapter,
   };
 
-const PHP_EXPRESSION_TYPE_ADAPTER_CONTRIBUTIONS: readonly PhpExpressionTypeAdapterContribution[] =
-  [
+function phpExpressionTypeAdapterContributions(
+  dependencies: PhpExpressionTypeAdapterDependencies,
+): readonly PhpFrameworkSemanticAdapterContribution<PhpExpressionTypeAdapterBundle>[] {
+  return [
     {
       providerId: "laravel",
-      createBundle: (dependencies) => ({
+      createAdapter: () => ({
         builderMagicExpressionTypeAdapter:
           phpLaravelBuilderMagicExpressionTypeAdapter({
             phpClassHasLaravelDynamicWhere:
@@ -109,6 +108,10 @@ const PHP_EXPRESSION_TYPE_ADAPTER_CONTRIBUTIONS: readonly PhpExpressionTypeAdapt
       }),
     },
   ];
+}
+
+const PHP_EXPRESSION_TYPE_ADAPTER_CONTRIBUTIONS =
+  phpExpressionTypeAdapterContributions;
 
 export function createPhpExpressionTypeAdapterBundle({
   frameworkRuntime,
@@ -116,13 +119,9 @@ export function createPhpExpressionTypeAdapterBundle({
 }: PhpExpressionTypeAdapterDependencies & {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
 }): PhpExpressionTypeAdapterBundle {
-  const contribution = PHP_EXPRESSION_TYPE_ADAPTER_CONTRIBUTIONS.find(
-    ({ providerId }) => frameworkRuntime.hasProvider(providerId),
+  return activePhpFrameworkSemanticAdapter(
+    frameworkRuntime,
+    PHP_EXPRESSION_TYPE_ADAPTER_CONTRIBUTIONS(dependencies),
+    GENERIC_PHP_EXPRESSION_TYPE_ADAPTER_BUNDLE,
   );
-
-  if (!contribution) {
-    return GENERIC_PHP_EXPRESSION_TYPE_ADAPTER_BUNDLE;
-  }
-
-  return contribution.createBundle(dependencies);
 }
