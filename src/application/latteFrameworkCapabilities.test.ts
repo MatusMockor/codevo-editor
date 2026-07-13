@@ -50,14 +50,15 @@ describe("netteLatteFrameworkCapabilities", () => {
     ).toEqual(["assignView("]);
   });
 
-  it("keeps Nette presenter link parsing wired into the capability object", () => {
-    const source = "$this->redirect('Product:show');";
-    const detection = netteLatteFrameworkCapabilities.detectPhpPresenterLinkAt(
-      source,
-      source.indexOf("Product:show"),
-    );
+  it("keeps Latte presenter link completion and parsing in the capability object", () => {
+    const source = "{link Product:s}";
+    const completion =
+      netteLatteFrameworkCapabilities.lattePresenterLinkCompletionContextAt(
+        source,
+        source.indexOf("Product:s") + "Product:s".length,
+      );
 
-    expect(detection?.target).toBe("Product:show");
+    expect(completion?.prefix).toBe("Product:s");
     expect(
       netteLatteFrameworkCapabilities.parsePresenterLinkTarget("Product:show"),
     ).toMatchObject({ action: "show", presenter: "Product" });

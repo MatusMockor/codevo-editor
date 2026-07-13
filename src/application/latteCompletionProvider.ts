@@ -74,10 +74,9 @@ export async function provideLatteCompletions(
 
   if (isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
     const linkCompletion =
-      options.frameworkCapabilities.presenterLinkCompletionContextAt(
+      options.frameworkCapabilities.lattePresenterLinkCompletionContextAt(
         source,
         offset,
-        "latte",
       );
 
     if (linkCompletion) {

@@ -132,14 +132,9 @@ export interface LatteFrameworkCapabilities {
     source: string,
     offset: number,
   ): LattePresenterLinkDetection | null;
-  detectPhpPresenterLinkAt(
+  lattePresenterLinkCompletionContextAt(
     source: string,
     offset: number,
-  ): LattePresenterLinkDetection | null;
-  presenterLinkCompletionContextAt(
-    source: string,
-    offset: number,
-    language: "latte" | "php",
   ): LattePresenterLinkCompletionContext | null;
   parsePresenterLinkTarget(target: string): LattePresenterLinkTarget | null;
   presenterActionMethodCandidates(

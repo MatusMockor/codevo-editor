@@ -118,12 +118,11 @@ function factoryOptions(): LatteProviderFlowFactoryOptions {
 function frameworkCapabilities(): LatteFrameworkCapabilities {
   return {
     detectLattePresenterLinkAt: () => null,
-    detectPhpPresenterLinkAt: () => null,
     isPresenterSourcePath: () => false,
+    lattePresenterLinkCompletionContextAt: () => null,
     parsePresenterLinkTarget: () => null,
     presenterActionMethodCandidates: () => [],
     presenterClassCandidatePathsForLink: () => [],
-    presenterLinkCompletionContextAt: () => null,
     presenterLinkTargetsFromSource: () => [],
     presenterScanDirectories: [],
     viewDataEntryFromSource: () => null,

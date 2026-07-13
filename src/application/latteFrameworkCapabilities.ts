@@ -1,6 +1,5 @@
 import {
   detectLatteLinkAt,
-  detectPhpPresenterLinkAt,
   nettePresenterActionMethodCandidates,
   nettePresenterClassCandidatePathsForLink,
   nettePresenterLinkCompletionContextAt,
@@ -16,14 +15,14 @@ import type { LatteFrameworkCapabilities } from "./latteIntelligenceContracts";
 
 export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
   detectLattePresenterLinkAt: detectLatteLinkAt,
-  detectPhpPresenterLinkAt,
+  lattePresenterLinkCompletionContextAt: (source, offset) =>
+    nettePresenterLinkCompletionContextAt(source, offset, "latte"),
   parsePresenterLinkTarget: parseNetteLinkTarget,
   presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
   presenterClassCandidatePathsForLink: nettePresenterClassCandidatePathsForLink,
   presenterLinkTargetsFromSource: nettePresenterLinkTargetsFromSource,
   presenterScanDirectories: ["app"],
   isPresenterSourcePath: isNettePresenterDiscoverySourcePath,
-  presenterLinkCompletionContextAt: nettePresenterLinkCompletionContextAt,
   viewDataEntryFromSource: phpFrameworkViewDataEntryFromSource,
   viewDataSearchQueries: phpFrameworkViewDataSearchQueries,
 };

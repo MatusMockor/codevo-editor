@@ -1,4 +1,8 @@
 import { detectNetteCreateComponentAt } from "../domain/netteComponents";
+import {
+  phpFrameworkPhpPresenterLinkAt,
+  phpFrameworkPhpPresenterLinkCompletionAt,
+} from "../domain/phpFrameworkProviders";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import {
   isLattePresenterLinkIntelligenceActive,
@@ -43,9 +47,10 @@ export async function providePhpPresenterLinkDefinition(
     isRequestedRootActive,
     requestedRoot,
   } = request;
-  const detection = options.frameworkCapabilities.detectPhpPresenterLinkAt(
+  const detection = phpFrameworkPhpPresenterLinkAt(
     source,
     offset,
+    deps.frameworkIntelligence.providers,
   );
 
   if (detection) {
@@ -86,10 +91,10 @@ export function isPhpPresenterLinkCompletionContext(
   }
 
   return Boolean(
-    options.frameworkCapabilities.presenterLinkCompletionContextAt(
+    phpFrameworkPhpPresenterLinkCompletionAt(
       source,
       offset,
-      "php",
+      deps.frameworkIntelligence.providers,
     ),
   );
 }
@@ -123,12 +128,11 @@ export async function providePhpPresenterLinkCompletions(
     return null;
   }
 
-  const linkCompletion =
-    options.frameworkCapabilities.presenterLinkCompletionContextAt(
-      source,
-      offset,
-      "php",
-    );
+  const linkCompletion = phpFrameworkPhpPresenterLinkCompletionAt(
+    source,
+    offset,
+    deps.frameworkIntelligence.providers,
+  );
 
   if (!linkCompletion) {
     return null;

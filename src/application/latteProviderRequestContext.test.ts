@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
-import {
-  type LatteFrameworkCapabilities,
-  type LatteIntelligenceDependencies,
-} from "./latteIntelligenceContracts";
+import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
+import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import {
   type LatteProviderFlowCaches,
   type LatteProviderFlowFactoryOptions,
@@ -26,19 +24,6 @@ const frameworkIntelligence = createPhpFrameworkIntelligence({
   profile: "generic",
   providers: [frameworkProvider],
 });
-const frameworkCapabilities: LatteFrameworkCapabilities = {
-  detectLattePresenterLinkAt: () => null,
-  detectPhpPresenterLinkAt: () => null,
-  isPresenterSourcePath: () => false,
-  parsePresenterLinkTarget: () => null,
-  presenterActionMethodCandidates: () => [],
-  presenterClassCandidatePathsForLink: () => [],
-  presenterLinkCompletionContextAt: () => null,
-  presenterLinkTargetsFromSource: () => [],
-  presenterScanDirectories: [],
-  viewDataEntryFromSource: () => null,
-  viewDataSearchQueries: () => [],
-};
 
 describe("latteProviderRequestContext", () => {
   it("returns request context for an active Latte workspace and evicts stale roots", () => {
@@ -132,7 +117,7 @@ function options(
 ): LatteProviderFlowFactoryOptions {
   return {
     caches,
-    frameworkCapabilities,
+    frameworkCapabilities: netteLatteFrameworkCapabilities,
     getDependencies: () => dependencies,
     inFlight: {
       presenterInFlight: new Map(),

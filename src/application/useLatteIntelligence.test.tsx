@@ -86,12 +86,51 @@ const CUSTOM_LATTE_LINK_PROVIDER: PhpFrameworkProvider = {
     supportsPresenterLinkIntelligence: true,
     supportsTemplateIntelligence: true,
   },
+  php: {
+    presenterLinkAt: ({ offset, source }) => {
+      const completion = customPhpPresenterLinkCompletionAt(source, offset);
+
+      if (!completion) {
+        return null;
+      }
+
+      return {
+        call: "jumpTo",
+        target: source.slice(completion.replaceStart, completion.replaceEnd),
+        targetEnd: completion.replaceEnd,
+        targetStart: completion.replaceStart,
+      };
+    },
+    presenterLinkCompletionAt: ({ offset, source }) =>
+      customPhpPresenterLinkCompletionAt(source, offset),
+  },
 };
 const CUSTOM_LATTE_LINK_FRAMEWORK = createPhpFrameworkIntelligence({
   matchedProviderIds: [CUSTOM_LATTE_LINK_PROVIDER.id],
   profile: "generic",
   providers: [CUSTOM_LATTE_LINK_PROVIDER],
 });
+
+function customPhpPresenterLinkCompletionAt(source: string, offset: number) {
+  const callStart = source.indexOf("$this->jumpTo('");
+
+  if (callStart < 0) {
+    return null;
+  }
+
+  const replaceStart = source.indexOf("'", callStart) + 1;
+  const replaceEnd = source.indexOf("'", replaceStart);
+
+  if (offset < replaceStart || offset > replaceEnd) {
+    return null;
+  }
+
+  return {
+    prefix: source.slice(replaceStart, offset),
+    replaceEnd,
+    replaceStart,
+  };
+}
 
 /**
  * Builds an in-memory workspace tree from a list of workspace-relative `.latte`
@@ -2741,13 +2780,13 @@ describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
     expect(openTarget).not.toHaveBeenCalled();
   });
 
-  it("does nothing when the Nette framework is inactive", async () => {
+  it("does not inherit Nette Latte links for a template-only provider", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace({
       "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
     });
     const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
-      frameworkIntelligence: GENERIC_FRAMEWORK,
+      frameworkIntelligence: CUSTOM_LATTE_TEMPLATE_FRAMEWORK,
       listDirectory,
       openTarget,
       readFileContent,
@@ -2784,6 +2823,7 @@ describe("createLatteIntelligence presenter link definition (S7 Latte)", () => {
     );
     expect(openTarget).not.toHaveBeenCalled();
   });
+
 });
 
 describe("createLatteIntelligence PHP presenter link definition (S7 PHP)", () => {
@@ -2890,14 +2930,15 @@ describe("createLatteIntelligence PHP presenter link definition (S7 PHP)", () =>
     expect(openTarget).not.toHaveBeenCalled();
   });
 
-  it("does nothing when the Nette framework is inactive", async () => {
-    const { readFileContent } = buildContentWorkspace({
+  it("does not inherit Nette PHP link detection for a template-only provider", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
       "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
     });
     const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
       getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
-      frameworkIntelligence: GENERIC_FRAMEWORK,
+      frameworkIntelligence: CUSTOM_LATTE_TEMPLATE_FRAMEWORK,
+      listDirectory,
       openTarget,
       readFileContent,
     });
@@ -2908,7 +2949,34 @@ describe("createLatteIntelligence PHP presenter link definition (S7 PHP)", () =>
     await expect(
       latte.provideNettePhpLinkDefinition(source, offset),
     ).resolves.toBe(false);
+    expect(listDirectory).not.toHaveBeenCalled();
     expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("uses the active provider registry for custom PHP presenter-link detection", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Product/ProductPresenter.php": PRODUCT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      frameworkIntelligence: CUSTOM_LATTE_LINK_FRAMEWORK,
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/HomePresenter.php` }),
+      listDirectory,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "$this->jumpTo('Product:show');";
+    const offset = source.indexOf("Product:show") + 2;
+
+    await expect(
+      latte.providePhpPresenterLinkDefinition(source, offset),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Product/ProductPresenter.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "Product:show",
+    );
   });
 });
 
@@ -3137,7 +3205,7 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     );
   });
 
-  it("routes PHP link completions through the injected presenter-link adapter", async () => {
+  it("uses the active provider registry for custom PHP completion ranges", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace({
       "src/Screen.screen.php": "<?php\n// screen show\n",
     });
@@ -3156,13 +3224,7 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     );
     const capabilities: LatteFrameworkCapabilities = {
       ...netteLatteFrameworkCapabilities,
-      detectPhpPresenterLinkAt: vi.fn(() => null),
       isPresenterSourcePath: (path) => path.endsWith(".screen.php"),
-      presenterLinkCompletionContextAt: vi.fn((_source, _offset, language) =>
-        language === "php"
-          ? { prefix: "Sc", replaceEnd, replaceStart }
-          : null,
-      ),
       presenterLinkTargetsFromSource,
       presenterScanDirectories: ["src"],
     };
@@ -3266,10 +3328,10 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     expect(listDirectory).not.toHaveBeenCalled();
   });
 
-  it("does not claim PHP presenter-link completion context outside Nette", () => {
+  it("does not inherit Nette PHP completion detection for a template-only provider", () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({
-      frameworkIntelligence: GENERIC_FRAMEWORK,
+      frameworkIntelligence: CUSTOM_LATTE_TEMPLATE_FRAMEWORK,
       listDirectory,
       readFileContent,
     });
@@ -3311,10 +3373,10 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     );
   });
 
-  it("returns null fast when the Nette framework is inactive (no scan)", async () => {
+  it("returns null fast for a template-only provider (no scan)", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace(PRESENTERS);
     const deps = makeDeps({
-      frameworkIntelligence: GENERIC_FRAMEWORK,
+      frameworkIntelligence: CUSTOM_LATTE_TEMPLATE_FRAMEWORK,
       listDirectory,
       readFileContent,
     });
