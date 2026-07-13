@@ -1477,7 +1477,10 @@ function setupMethodCompletionInRun(
   };
 }
 
-function neonServiceSetupMethods(source: string): NeonServiceSetupMethod[] {
+/** Every setup method call in `source`, in document order. */
+export function neonServiceSetupMethodsFromSource(
+  source: string,
+): NeonServiceSetupMethod[] {
   const lines = buildLines(source);
   const methods: NeonServiceSetupMethod[] = [];
 
@@ -1507,7 +1510,7 @@ export function detectNeonServiceSetupMethodAt(
     return null;
   }
 
-  for (const method of neonServiceSetupMethods(source)) {
+  for (const method of neonServiceSetupMethodsFromSource(source)) {
     if (offset >= method.span.start && offset <= method.span.end) {
       return method;
     }

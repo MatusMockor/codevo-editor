@@ -1,4 +1,8 @@
 import type { LatteExpressionResolutionContext } from "./latteExpressionIntelligence";
+import {
+  loadLatteFilterNames,
+  type LatteFilterDiscoveryContext,
+} from "./latteFilterDiscovery";
 import type { NetteControlCompletionContext } from "./netteControlContracts";
 import type {
   NettePresenterDiscoveryContext,
@@ -7,10 +11,12 @@ import type { NetteTemplateCompletionContext } from "./netteTemplateCompletions"
 import { isLatteScanSkippedDirectory } from "./netteTemplateDiscovery";
 import {
   LATTE_COMPONENT_CACHE_TTL_MS,
+  LATTE_FILTER_CACHE_TTL_MS,
   LATTE_MAX_COMPLETIONS,
   LATTE_PRESENTER_CACHE_TTL_MS,
   LATTE_TEMPLATE_CACHE_TTL_MS,
   LATTE_TEMPLATE_SCAN_DIRECTORIES,
+  MAX_LATTE_FILTER_CONFIG_FILES,
   MAX_LATTE_SCAN_DEPTH,
   MAX_LATTE_TEMPLATE_FILES,
 } from "./latteProviderFlowContext";
@@ -26,6 +32,8 @@ export function latteExpressionResolutionContext(
   request: LatteProviderRequestContext,
 ): LatteExpressionResolutionContext {
   return {
+    collectProjectFilterNames: () =>
+      loadLatteFilterNames(latteFilterDiscoveryContext(options, request)),
     deps: request.deps,
     frameworkCapabilities: options.frameworkCapabilities,
     isRequestedRootActive: request.isRequestedRootActive,
@@ -35,6 +43,24 @@ export function latteExpressionResolutionContext(
     templateTypeInFlight: options.inFlight.templateTypeInFlight,
     viewDataCache: options.caches.viewDataCache,
     viewDataInFlight: options.inFlight.viewDataInFlight,
+  };
+}
+
+export function latteFilterDiscoveryContext(
+  options: LatteProviderFlowFactoryOptions,
+  request: LatteProviderRequestContext,
+): LatteFilterDiscoveryContext {
+  return {
+    cache: options.caches.filterCache,
+    deps: request.deps,
+    inFlight: options.inFlight.filterInFlight,
+    isDirectorySkipped: isLatteScanSkippedDirectory,
+    isRequestedRootActive: request.isRequestedRootActive,
+    maxConfigFiles: MAX_LATTE_FILTER_CONFIG_FILES,
+    maxDepth: MAX_LATTE_SCAN_DEPTH,
+    requestedRoot: request.requestedRoot,
+    scanDirectories: LATTE_TEMPLATE_SCAN_DIRECTORIES,
+    ttlMs: LATTE_FILTER_CACHE_TTL_MS,
   };
 }
 

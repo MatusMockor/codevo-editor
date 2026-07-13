@@ -16,6 +16,7 @@ describe("latteProviderFlowContext", () => {
     evictLatteProviderCaches(caches, "/active");
 
     expect(Object.keys(caches.componentCache)).toEqual(["/active"]);
+    expect(Object.keys(caches.filterCache)).toEqual(["/active"]);
     expect(Object.keys(caches.presenterCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateTypeCache)).toEqual(["/active"]);
@@ -28,6 +29,7 @@ describe("latteProviderFlowContext", () => {
     evictLatteProviderCaches(caches, null);
 
     expect(caches.componentCache).toEqual({});
+    expect(caches.filterCache).toEqual({});
     expect(caches.presenterCache).toEqual({});
     expect(caches.templateCache).toEqual({});
     expect(caches.templateTypeCache).toEqual({});
@@ -48,6 +50,10 @@ function providerCaches(): LatteProviderFlowCaches {
         expiresAt: 1,
         templateRelativePath: "app/UI/Home/default.latte",
       },
+    },
+    filterCache: {
+      "/active": { expiresAt: 1, registrations: [] },
+      "/stale": { expiresAt: 1, registrations: [] },
     },
     presenterCache: {
       "/active": { expiresAt: 1, targets: [] },

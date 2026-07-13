@@ -12,6 +12,7 @@ import {
 import { isLatteMemberReferenceAt } from "./latteExpressionDetection";
 import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import { type LatteViewDataCache } from "./latteExpressionIntelligence";
+import type { LatteFilterCache } from "./latteFilterDiscovery";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
 import type {
   LatteFrameworkCapabilities,
@@ -107,10 +108,12 @@ export function createLatteIntelligence(
   componentCache: NetteControlCache = {},
   templateTypeCache: LatteTemplateTypeCache = {},
   frameworkCapabilities: LatteFrameworkCapabilities = netteLatteFrameworkCapabilities,
+  filterCache: LatteFilterCache = {},
 ): LatteIntelligence {
   const flows = createLatteProviderFlows({
     caches: {
       componentCache,
+      filterCache,
       presenterCache,
       templateCache,
       templateTypeCache,
@@ -119,6 +122,7 @@ export function createLatteIntelligence(
     frameworkCapabilities,
     getDependencies,
     inFlight: {
+      filterInFlight: new Map(),
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),

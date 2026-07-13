@@ -59,6 +59,7 @@ function flowOptions(): LatteProviderFlowFactoryOptions {
   return {
     caches: {
       componentCache: {},
+      filterCache: {},
       presenterCache: {},
       templateCache: {},
       templateTypeCache: {},
@@ -67,6 +68,7 @@ function flowOptions(): LatteProviderFlowFactoryOptions {
     frameworkCapabilities: {} as never,
     getDependencies: vi.fn(),
     inFlight: {
+      filterInFlight: new Map(),
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),

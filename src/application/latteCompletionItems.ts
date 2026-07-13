@@ -58,18 +58,32 @@ export function latteTagCompletions(
 export function latteFilterCompletions(
   filter: LatteFilterCompletionContext,
   maxCompletions: number,
+  projectFilterNames: readonly string[] = [],
 ): LatteCompletionItem[] {
   const normalizedPrefix = filter.prefix.toLowerCase();
-
-  return LATTE_BUILTIN_FILTERS.filter((name) =>
-    name.toLowerCase().startsWith(normalizedPrefix),
-  )
-    .slice(0, maxCompletions)
-    .map((name) => ({
+  const builtinNames = new Set(LATTE_BUILTIN_FILTERS);
+  const projectNames = projectFilterNames.filter(
+    (name) => !builtinNames.has(name),
+  );
+  const entries = [
+    ...LATTE_BUILTIN_FILTERS.map((name) => ({
       detail: "Latte filter",
-      insertText: name,
+      name,
+    })),
+    ...projectNames.map((name) => ({
+      detail: "Project Latte filter",
+      name,
+    })),
+  ];
+
+  return entries
+    .filter((entry) => entry.name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, maxCompletions)
+    .map((entry) => ({
+      detail: entry.detail,
+      insertText: entry.name,
       kind: "filter" as const,
-      label: name,
+      label: entry.name,
       replaceEnd: filter.end,
       replaceStart: filter.start,
     }));

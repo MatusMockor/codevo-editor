@@ -54,6 +54,7 @@ export type LatteViewDataCache = NetteViewDataCache;
 export type LatteViewDataInFlight = NetteViewDataInFlight;
 
 export interface LatteExpressionResolutionContext {
+  collectProjectFilterNames(): Promise<readonly string[]>;
   deps: LatteIntelligenceDependencies;
   frameworkCapabilities: LatteFrameworkCapabilities;
   isRequestedRootActive: () => boolean;
@@ -140,6 +141,7 @@ function latteExpressionCompletionContext(
   context: LatteExpressionResolutionContext,
 ) {
   return {
+    collectFilterNames: context.collectProjectFilterNames,
     collectVariableCandidates: (source: string, offset: number) =>
       collectLatteVariableCandidates(context, source, offset),
     deps: context.deps,

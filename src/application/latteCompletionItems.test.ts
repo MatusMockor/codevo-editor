@@ -42,6 +42,52 @@ describe("latteTagCompletions", () => {
 });
 
 describe("latteFilterCompletions", () => {
+  it("appends project filter names after builtins with a distinct detail", () => {
+    expect(
+      latteFilterCompletions(
+        {
+          end: 23,
+          prefix: "user",
+          start: 19,
+        },
+        10,
+        ["gravatar", "userDate"],
+      ),
+    ).toEqual([
+      {
+        detail: "Project Latte filter",
+        insertText: "userDate",
+        kind: "filter",
+        label: "userDate",
+        replaceEnd: 23,
+        replaceStart: 19,
+      },
+    ]);
+  });
+
+  it("keeps the builtin detail when a project filter re-registers a builtin name", () => {
+    const completions = latteFilterCompletions(
+      {
+        end: 5,
+        prefix: "date",
+        start: 1,
+      },
+      10,
+      ["date"],
+    );
+
+    expect(completions).toEqual([
+      {
+        detail: "Latte filter",
+        insertText: "date",
+        kind: "filter",
+        label: "date",
+        replaceEnd: 5,
+        replaceStart: 1,
+      },
+    ]);
+  });
+
   it("filters filters by prefix, caps results and preserves replacement range", () => {
     expect(
       latteFilterCompletions(

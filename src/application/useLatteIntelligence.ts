@@ -16,6 +16,7 @@ import {
 import {
   createLatteIntelligenceCaches,
 } from "./latteIntelligenceCaches";
+import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 
 export type {
   LatteFrameworkCapabilities,
@@ -50,6 +51,8 @@ export function useLatteIntelligence(
       caches.presenterCache,
       caches.componentCache,
       caches.templateTypeCache,
+      netteLatteFrameworkCapabilities,
+      caches.filterCache,
     );
   }
 

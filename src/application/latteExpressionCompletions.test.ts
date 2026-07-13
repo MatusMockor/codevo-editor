@@ -20,15 +20,18 @@ function method(
 function makeContext({
   active = true,
   members = [],
+  projectFilterNames = [],
   receiverType = "App\\Model\\Invoice",
 }: {
   active?: boolean | (() => boolean);
   members?: PhpMethodCompletion[];
+  projectFilterNames?: string[];
   receiverType?: string | null;
 } = {}): LatteExpressionCompletionContext {
   const isActive = typeof active === "function" ? active : () => active;
 
   return {
+    collectFilterNames: vi.fn(async () => projectFilterNames),
     collectVariableCandidates: vi.fn(async () => [
       {
         detail: "presenter data",
@@ -112,6 +115,45 @@ describe("latteExpressionCompletions", () => {
       replaceEnd: 12,
       replaceStart: 10,
     });
+  });
+
+  it("merges project filter names into filter completions", async () => {
+    const context = makeContext({
+      projectFilterNames: ["gravatar", "userDate"],
+    });
+    const source = "{$invoice|user}";
+
+    const result = await latteExpressionCompletions(
+      context,
+      source,
+      source.length - 1,
+    );
+
+    expect(result).toEqual([
+      {
+        detail: "Project Latte filter",
+        insertText: "userDate",
+        kind: "filter",
+        label: "userDate",
+        replaceEnd: 14,
+        replaceStart: 10,
+      },
+    ]);
+  });
+
+  it("drops filter completions when the root goes stale during project filter collection", async () => {
+    let active = true;
+    const context = makeContext({ active: () => active });
+    context.collectFilterNames = vi.fn(async () => {
+      active = false;
+
+      return [];
+    });
+    const source = "{$invoice|lo}";
+
+    await expect(
+      latteExpressionCompletions(context, source, source.length - 1),
+    ).resolves.toEqual([]);
   });
 
   it("returns member completions inside an n:if attribute value", async () => {

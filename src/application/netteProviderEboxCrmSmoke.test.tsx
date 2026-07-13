@@ -303,6 +303,13 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     expect(completions.map((item) => item.label)).toContain(
       "$groupAddonTypeGroups",
     );
+
+    const filterCompletions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offsetAfter(source, "created_at|user")),
+    );
+
+    expect(filterCompletions.map((item) => item.label)).toContain("userDate");
   });
 
   it("covers NEON class refs, service reference definition, service completions, and setup methods over real config", async () => {

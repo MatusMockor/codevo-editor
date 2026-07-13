@@ -4,6 +4,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import {
   latteExpressionCompletionTargetAt,
+  type LatteFilterCompletionContext,
   type LatteMemberAccess,
   type LatteVariableCompletionContext,
 } from "./latteExpressionDetection";
@@ -28,6 +29,7 @@ export interface LatteExpressionCompletionDependencies {
 }
 
 export interface LatteExpressionCompletionContext {
+  collectFilterNames(): Promise<readonly string[]>;
   collectVariableCandidates(
     source: string,
     offset: number,
@@ -64,10 +66,27 @@ export async function latteExpressionCompletions(
   }
 
   if (target.kind === "filter") {
-    return latteFilterCompletions(target.filter, context.maxCompletions);
+    return latteProjectAwareFilterCompletions(context, target.filter);
   }
 
   return latteVariableCompletions(context, source, offset, target.variable);
+}
+
+async function latteProjectAwareFilterCompletions(
+  context: LatteExpressionCompletionContext,
+  filter: LatteFilterCompletionContext,
+): Promise<LatteCompletionItem[]> {
+  const projectFilterNames = await context.collectFilterNames();
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  return latteFilterCompletions(
+    filter,
+    context.maxCompletions,
+    projectFilterNames,
+  );
 }
 
 async function latteMemberCompletions(

@@ -228,6 +228,44 @@ function makeDeps(
   };
 }
 
+function neonFilterWorkspaceOverrides(
+  root: string,
+  filterName: string,
+): Partial<LatteIntelligenceDependencies> {
+  const configPath = `${root}/app/config/config.neon`;
+  const neon = [
+    "services:",
+    "    filterLoader:",
+    "        setup:",
+    `            - register('${filterName}', [@templateHelper, process])`,
+    "    scenariosGenericEventsManager:",
+    "        setup:",
+    "            - register('generate_password_reset_url', App\\Scenarios\\GeneratePasswordResetUrl())",
+    "",
+  ].join("\n");
+
+  return {
+    listDirectory: vi.fn(async (path: string): Promise<LatteDirectoryEntry[]> => {
+      if (path === `${root}/app`) {
+        return [{ kind: "directory", path: `${root}/app/config` }];
+      }
+
+      if (path === `${root}/app/config`) {
+        return [{ kind: "file", path: configPath }];
+      }
+
+      throw new Error(`no such directory: ${path}`);
+    }),
+    readFileContent: vi.fn(async (path: string): Promise<string> => {
+      if (path === configPath) {
+        return neon;
+      }
+
+      throw new Error(`no such file: ${path}`);
+    }),
+  };
+}
+
 function positionAtOffset(source: string, offset: number) {
   const before = source.slice(0, offset);
   const lineNumber = before.split("\n").length;
@@ -2195,6 +2233,105 @@ class ProductPresenter extends BasePresenter
     await expect(
       latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
     ).resolves.toEqual([]);
+  });
+
+  it("merges project-registered NEON filters into | completions without non-filter leakage", async () => {
+    const deps = makeDeps(neonFilterWorkspaceOverrides(ROOT, "userDate"));
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$total|}";
+    const offset = source.indexOf("|") + 1;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("upper");
+    expect(labels).toContain("userDate");
+    expect(labels).not.toContain("generate_password_reset_url");
+    expect(
+      completions.find((completion) => completion.label === "userDate"),
+    ).toMatchObject({ detail: "Project Latte filter", kind: "filter" });
+  });
+
+  it("filters project filter names by the typed | prefix", async () => {
+    const deps = makeDeps(neonFilterWorkspaceOverrides(ROOT, "userDate"));
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$total|user}";
+    const offset = source.indexOf("user") + "user".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "userDate",
+    ]);
+  });
+
+  it("does not duplicate a builtin when a project re-registers its name", async () => {
+    const deps = makeDeps(neonFilterWorkspaceOverrides(ROOT, "date"));
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$total|date}";
+    const offset = source.indexOf("date") + "date".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toEqual([
+      expect.objectContaining({ detail: "Latte filter", label: "date" }),
+    ]);
+  });
+
+  it("never offers another root's project filters from a shared cache", async () => {
+    const rootA = "/ws-a";
+    const rootB = "/ws-b";
+    const filterCache = {};
+    const depsA = makeDeps({
+      ...neonFilterWorkspaceOverrides(rootA, "secretA"),
+      currentWorkspaceRootRef: { current: rootA },
+      getActiveDocument: () => ({ path: `${rootA}/app/UI/Home/default.latte` }),
+      workspaceRoot: rootA,
+    });
+    const latteA = createLatteIntelligence(
+      () => depsA,
+      {},
+      {},
+      {},
+      {},
+      {},
+      netteLatteFrameworkCapabilities,
+      filterCache,
+    );
+    const source = "{$total|secret}";
+    const position = positionAtOffset(source, source.indexOf("}"));
+
+    const completionsA = await latteA.provideLatteCompletions(source, position);
+    expect(completionsA.map((completion) => completion.label)).toContain(
+      "secretA",
+    );
+
+    const depsB = makeDeps({
+      currentWorkspaceRootRef: { current: rootB },
+      getActiveDocument: () => ({ path: `${rootB}/app/UI/Home/default.latte` }),
+      workspaceRoot: rootB,
+    });
+    const latteB = createLatteIntelligence(
+      () => depsB,
+      {},
+      {},
+      {},
+      {},
+      {},
+      netteLatteFrameworkCapabilities,
+      filterCache,
+    );
+
+    const completionsB = await latteB.provideLatteCompletions(source, position);
+    expect(completionsB.map((completion) => completion.label)).not.toContain(
+      "secretA",
+    );
   });
 });
 
