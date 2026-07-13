@@ -12,9 +12,9 @@ import {
   type PhpFrameworkRuntimeContext,
 } from "./phpFrameworkRuntimeContext";
 import {
-  useBladeLaravelDiagnosticsProvider,
-  type BladeLaravelDiagnosticsProviderDependencies,
-} from "./useBladeLaravelDiagnosticsProvider";
+  usePhpFrameworkActiveDocumentDiagnostics,
+  type PhpFrameworkActiveDocumentDiagnosticsHookDependencies,
+} from "./usePhpFrameworkActiveDocumentDiagnostics";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -28,11 +28,19 @@ const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [phpLaravelFrameworkProvider],
   }),
 );
-const VIEW_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
-  ...LARAVEL_RUNTIME,
-  isLaravel: false,
-  profile: "generic",
-};
+function runtimeWithProvider(
+  providerId: string | null,
+  overrides: Partial<PhpFrameworkRuntimeContext> = {},
+): PhpFrameworkRuntimeContext {
+  return {
+    ...LARAVEL_RUNTIME,
+    isLaravel: providerId === "laravel",
+    isNette: providerId === "nette",
+    profile: providerId === "nette" ? "nette" : "generic",
+    hasProvider: (candidateId) => candidateId === providerId,
+    ...overrides,
+  };
+}
 
 type MutableRef<T> = { current: T };
 
@@ -108,7 +116,7 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 function renderProvider(
-  overrides: Partial<BladeLaravelDiagnosticsProviderDependencies> = {},
+  overrides: Partial<PhpFrameworkActiveDocumentDiagnosticsHookDependencies> = {},
 ) {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -121,13 +129,13 @@ function renderProvider(
     Record<string, LanguageServerDiagnostic[]>
   >({});
 
-  let deps: BladeLaravelDiagnosticsProviderDependencies = {
+  let deps: PhpFrameworkActiveDocumentDiagnosticsHookDependencies = {
     activeDocument,
     activeDocumentRef,
     collectViewTargets: vi.fn(async () => [viewTarget("dashboard")]),
     currentWorkspaceRootRef,
     frameworkRuntime: LARAVEL_RUNTIME,
-    setLaravelDiagnosticsByPath: laravelDiagnostics.set,
+    setFrameworkDiagnosticsByPath: laravelDiagnostics.set,
     workspaceRoot: ROOT,
     ...overrides,
   };
@@ -135,14 +143,14 @@ function renderProvider(
   function Harness({
     dependencies,
   }: {
-    dependencies: BladeLaravelDiagnosticsProviderDependencies;
+    dependencies: PhpFrameworkActiveDocumentDiagnosticsHookDependencies;
   }) {
-    useBladeLaravelDiagnosticsProvider(dependencies);
+    usePhpFrameworkActiveDocumentDiagnostics(dependencies);
     return null;
   }
 
   const rerender = async (
-    next: Partial<BladeLaravelDiagnosticsProviderDependencies> = {},
+    next: Partial<PhpFrameworkActiveDocumentDiagnosticsHookDependencies> = {},
   ) => {
     deps = {
       ...deps,
@@ -168,9 +176,11 @@ function renderProvider(
   };
 }
 
-describe("useBladeLaravelDiagnosticsProvider", () => {
-  it("reports missing Blade view references for an active Laravel document", async () => {
-    const harness = renderProvider();
+describe("usePhpFrameworkActiveDocumentDiagnostics", () => {
+  it("activates Laravel Blade diagnostics by provider identity", async () => {
+    const harness = renderProvider({
+      frameworkRuntime: runtimeWithProvider("laravel", { isLaravel: false }),
+    });
 
     await harness.rerender();
 
@@ -212,23 +222,30 @@ describe("useBladeLaravelDiagnosticsProvider", () => {
     harness.unmount();
   });
 
-  it("clears stale diagnostics when Laravel is inactive even if view support is available", async () => {
-    const collectViewTargets = vi.fn(async () => [viewTarget("dashboard")]);
-    const harness = renderProvider({
-      collectViewTargets,
-      frameworkRuntime: VIEW_CAPABLE_NON_LARAVEL_RUNTIME,
-    });
-    harness.diagnostics.value = {
-      [BLADE_PATH]: [diagnostic()],
-    };
+  it.each([
+    ["generic", runtimeWithProvider(null)],
+    ["Nette", runtimeWithProvider("nette")],
+    ["custom", runtimeWithProvider("custom")],
+  ])(
+    "clears stale diagnostics and stays inert for a %s provider",
+    async (_label, frameworkRuntime) => {
+      const collectViewTargets = vi.fn(async () => [viewTarget("dashboard")]);
+      const harness = renderProvider({
+        collectViewTargets,
+        frameworkRuntime,
+      });
+      harness.diagnostics.value = {
+        [BLADE_PATH]: [diagnostic()],
+      };
 
-    await harness.rerender();
+      await harness.rerender();
 
-    expect(harness.diagnostics.value).toEqual({});
-    expect(collectViewTargets).not.toHaveBeenCalled();
+      expect(harness.diagnostics.value).toEqual({});
+      expect(collectViewTargets).not.toHaveBeenCalled();
 
-    harness.unmount();
-  });
+      harness.unmount();
+    },
+  );
 
   it("ignores stale async diagnostics when active document content changes", async () => {
     const collectRequests: Array<

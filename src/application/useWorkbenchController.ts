@@ -152,7 +152,7 @@ import {
   createPhpFrameworkFileChangeInvalidator,
 } from "./phpFrameworkFileChangeInvalidationRegistry";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { useBladeLaravelDiagnosticsProvider } from "./useBladeLaravelDiagnosticsProvider";
+import { usePhpFrameworkActiveDocumentDiagnostics } from "./usePhpFrameworkActiveDocumentDiagnostics";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
 import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
@@ -7705,13 +7705,13 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  useBladeLaravelDiagnosticsProvider({
+  usePhpFrameworkActiveDocumentDiagnostics({
     activeDocument,
     activeDocumentRef,
     collectViewTargets,
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
-    setLaravelDiagnosticsByPath,
+    setFrameworkDiagnosticsByPath: setLaravelDiagnosticsByPath,
     workspaceRoot,
   });
 
