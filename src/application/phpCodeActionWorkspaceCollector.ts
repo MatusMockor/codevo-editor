@@ -28,7 +28,7 @@ export type PhpCreateClassCodeAction = (
   isRequestedRootActive: () => boolean,
 ) => Promise<PhpCodeActionDescriptor | null>;
 
-export type PhpCreateParentMemberCodeAction = (
+export type PhpCreateMemberCodeAction = (
   source: string,
   range: PhpCodeActionRange,
   isRequestedRootActive: () => boolean,
@@ -48,7 +48,7 @@ export interface PhpWorkspaceCodeActionCollectorOptions {
   intelligenceMode: IntelligenceMode;
   isRequestedRootActive: () => boolean;
   phpCreateClassCodeAction: PhpCreateClassCodeAction;
-  phpCreateParentMemberCodeAction: PhpCreateParentMemberCodeAction;
+  phpCreateMemberCodeAction: PhpCreateMemberCodeAction;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   range: PhpCodeActionRange;
   readTestFileIfExists: (path: string) => Promise<string | null>;
@@ -72,7 +72,7 @@ export async function collectPhpWorkspaceCodeActions({
   intelligenceMode,
   isRequestedRootActive,
   phpCreateClassCodeAction,
-  phpCreateParentMemberCodeAction,
+  phpCreateMemberCodeAction,
   projectSymbolSearch,
   range,
   readTestFileIfExists,
@@ -98,7 +98,7 @@ export async function collectPhpWorkspaceCodeActions({
     actions.push(createClassAction);
   }
 
-  const createParentMemberAction = await phpCreateParentMemberCodeAction(
+  const createMemberAction = await phpCreateMemberCodeAction(
     source,
     range,
     isRequestedRootActive,
@@ -108,8 +108,8 @@ export async function collectPhpWorkspaceCodeActions({
     return null;
   }
 
-  if (createParentMemberAction) {
-    actions.push(createParentMemberAction);
+  if (createMemberAction) {
+    actions.push(createMemberAction);
   }
 
   for (const contribution of frameworkCodeActionContributions) {

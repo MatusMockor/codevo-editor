@@ -19,7 +19,7 @@ function baseOptions(
     intelligenceMode: "fullSmart",
     isRequestedRootActive: vi.fn(() => true),
     phpCreateClassCodeAction: vi.fn(async () => null),
-    phpCreateParentMemberCodeAction: vi.fn(async () => null),
+    phpCreateMemberCodeAction: vi.fn(async () => null),
     projectSymbolSearch: {
       searchProjectSymbols: vi.fn(async () => []),
     },
@@ -105,9 +105,9 @@ describe("phpCodeActionWorkspaceCollector", () => {
     expect(frameworkCodeActionContribution).not.toHaveBeenCalled();
   });
 
-  it("collects the cross-file create-parent-member action", async () => {
+  it("collects the cross-file create-member action", async () => {
     const options = baseOptions({
-      phpCreateParentMemberCodeAction: vi.fn(async () => ({
+      phpCreateMemberCodeAction: vi.fn(async () => ({
         edits: [],
         title: "Create method 'helper' in 'Base'",
         workspaceEdit: { changes: {} },
@@ -121,13 +121,13 @@ describe("phpCodeActionWorkspaceCollector", () => {
     );
   });
 
-  it("drops the provider response when the root changes after the create-parent-member action", async () => {
+  it("drops the provider response when the root changes after the create-member action", async () => {
     let active = true;
     const frameworkCodeActionContribution = vi.fn(async () => null);
     const options = baseOptions({
       frameworkCodeActionContributions: [frameworkCodeActionContribution],
       isRequestedRootActive: vi.fn(() => active),
-      phpCreateParentMemberCodeAction: vi.fn(async () => {
+      phpCreateMemberCodeAction: vi.fn(async () => {
         active = false;
         return {
           edits: [],

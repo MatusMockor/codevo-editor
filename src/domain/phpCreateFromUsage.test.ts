@@ -587,12 +587,30 @@ describe("detectMissingThisMember — typed property inference on assignment", (
 });
 
 describe("detectMissingThisMember — adversarial edges", () => {
-  it("does not mistake `myself::foo` for a self:: receiver", () => {
+  it.each([["SELF"], ["Static"], ["Parent"], ["PARENT"]])(
+    "does not surface an external candidate for the case-variant keyword receiver %s::",
+    (receiver) => {
+      const { source, offset } = withMarker(
+        `    public function run(): void\n    {\n        ${receiver}::§foo();\n    }`,
+      );
+
+      expect(detectMissingThisMember(source, offset)).toBeNull();
+    },
+  );
+
+  it("does not mistake `Myself::foo` for a self:: receiver", () => {
     const { source, offset } = withMarker(
       "    public function run(): void\n    {\n        $obj = Myself::§foo();\n    }",
     );
 
-    expect(detectMissingThisMember(source, offset)).toBeNull();
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes: [],
+      isStatic: true,
+      kind: "method",
+      name: "foo",
+      target: "external",
+      targetClass: "Myself",
+    });
   });
 
   it("infers a single string-literal method argument type (regression)", () => {
@@ -741,7 +759,7 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
     expect(plan?.sameFileExternal?.name).toBe("OtherClass");
   });
 
-  it("returns null when the receiver class is not declared in the file", () => {
+  it("surfaces a cross-file candidate when the receiver class is not in the file", () => {
     const source = [
       "<?php",
       "",
@@ -756,10 +774,47 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
     ].join("\n");
     const offset = source.indexOf("Unknown::missing") + "Unknown::".length;
 
-    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      isStatic: true,
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "Unknown",
+    });
+    expect(plan?.owner.name).toBe("Service");
+    expect(plan?.sameFileExternal).toBeUndefined();
   });
 
-  it("returns null when the receiver resolves to an imported class outside the file", () => {
+  it("surfaces a cross-file constant candidate when the receiver class is not in the file", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): string",
+      "    {",
+      "        return Unknown::MISSING;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("Unknown::MISSING") + "Unknown::".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      kind: "constant",
+      name: "MISSING",
+      target: "external",
+      targetClass: "Unknown",
+    });
+    expect(plan?.sameFileExternal).toBeUndefined();
+  });
+
+  it("surfaces a cross-file candidate when the receiver resolves to an imported class outside the file", () => {
     const source = [
       "<?php",
       "",
@@ -779,10 +834,16 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
     const offset =
       source.indexOf("OtherClass::missing") + "OtherClass::".length;
 
-    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toMatchObject({
+      target: "external",
+      targetClass: "OtherClass",
+    });
+    expect(plan?.sameFileExternal).toBeUndefined();
   });
 
-  it("returns null when an unqualified receiver only matches a class in another namespace", () => {
+  it("surfaces a cross-file candidate when an unqualified receiver only matches a class in another namespace", () => {
     const source = [
       "<?php",
       "",
@@ -806,7 +867,13 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
     const offset =
       source.indexOf("OtherClass::missing") + "OtherClass::".length;
 
-    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toMatchObject({
+      target: "external",
+      targetClass: "OtherClass",
+    });
+    expect(plan?.sameFileExternal).toBeUndefined();
   });
 
   it("returns null when the static method already exists on the sibling class", () => {

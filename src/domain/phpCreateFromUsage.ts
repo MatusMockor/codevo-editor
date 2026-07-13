@@ -36,8 +36,10 @@ export type PhpMemberKind = "method" | "property" | "constant";
  *  - `parent`: the parent class named by the enclosing class's `extends` clause
  *    (the `parent::` case — a cross-file edit the controller resolves and
  *    applies, conservatively, only when the parent file is unambiguous).
- *  - `external`: another class named by an explicit `ClassName::` receiver
- *    (offered only when the class is declared in the same file).
+ *  - `external`: another class named by an explicit `ClassName::` receiver.
+ *    When the class is declared in the same file the plan carries
+ *    `sameFileExternal` and the sync path applies the edit; otherwise the
+ *    controller resolves the class to a file, conservatively, like `parent`.
  */
 export type PhpCreateTarget = "self" | "parent" | "external";
 
@@ -518,6 +520,10 @@ function locateExternalReceiverAccess(
     return null;
   }
 
+  if (/^(?:self|static|parent)$/i.test(receiverClass)) {
+    return null;
+  }
+
   return { nameStart, receiver: "external", receiverClass };
 }
 
@@ -698,15 +704,20 @@ function planSameFileExternalMember(
     return null;
   }
 
-  const sameFileExternal = sameFileClassDeclaration(
-    masked,
-    targetClass,
-    enclosingType,
-  );
+  const declared = sameFileTypeDeclaration(masked, targetClass, enclosingType);
 
-  if (!sameFileExternal) {
+  if (!declared) {
+    return {
+      member: toMissingExternalMember(source, masked, usage, targetClass),
+      owner: declarationIdentity(enclosingType),
+    };
+  }
+
+  if (declared.kind !== "class") {
     return null;
   }
+
+  const sameFileExternal = declarationIdentity(declared);
 
   if (
     memberExists(source, usage.name, usage.kind, sameFileExternal.bodyStartOffset)
@@ -988,19 +999,31 @@ function sameFileClassDeclaration(
   reference: string,
   owner: EnclosingTypeDeclaration,
 ): PhpCreateDeclarationIdentity | null {
+  const declared = sameFileTypeDeclaration(masked, reference, owner);
+
+  if (!declared || declared.kind !== "class") {
+    return null;
+  }
+
+  return declarationIdentity(declared);
+}
+
+function sameFileTypeDeclaration(
+  masked: string,
+  reference: string,
+  owner: EnclosingTypeDeclaration,
+): EnclosingTypeDeclaration | null {
   const expectedFqn = resolveDeclarationReference(
     masked,
     reference,
     owner,
   ).toLowerCase();
-  const declarations = namedTypeDeclarations(masked).filter(
-    (declaration) => declaration.kind === "class",
-  );
-  const exact = declarations.find(
-    (declaration) => declarationFqn(declaration).toLowerCase() === expectedFqn,
-  );
 
-  return exact ? declarationIdentity(exact) : null;
+  return (
+    namedTypeDeclarations(masked).find(
+      (declaration) => declarationFqn(declaration).toLowerCase() === expectedFqn,
+    ) ?? null
+  );
 }
 
 function resolveDeclarationReference(

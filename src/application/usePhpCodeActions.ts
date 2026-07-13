@@ -8,7 +8,7 @@ import {
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeAction";
-import { buildPhpCreateParentMemberWorkspaceCodeAction } from "./phpCreateParentMemberWorkspaceCodeAction";
+import { buildPhpCreateMemberWorkspaceCodeAction } from "./phpCreateParentMemberWorkspaceCodeAction";
 import {
   collectPhpClassScopedCodeActions,
   collectPhpFileScopedCodeActions,
@@ -95,13 +95,14 @@ export function usePhpCodeActions({
     ],
   );
 
-  const phpCreateParentMemberCodeAction = useCallback(
-    buildPhpCreateParentMemberWorkspaceCodeAction({
+  const phpCreateMemberCodeAction = useCallback(
+    buildPhpCreateMemberWorkspaceCodeAction({
       getOpenDocumentSyncVersion: (path) =>
         workspaceRoot ? getPhpDocumentSyncVersion(workspaceRoot, path) : null,
       readOpenDocumentContent,
       readTestFileIfExists,
       resolvePhpClassSourcePaths,
+      workspaceRoot,
     }),
     [
       getPhpDocumentSyncVersion,
@@ -144,7 +145,7 @@ export function usePhpCodeActions({
           intelligenceMode,
           isRequestedRootActive,
           phpCreateClassCodeAction,
-          phpCreateParentMemberCodeAction,
+          phpCreateMemberCodeAction,
           projectSymbolSearch,
           range,
           readTestFileIfExists,
@@ -169,7 +170,7 @@ export function usePhpCodeActions({
       frameworkCodeActionContributions,
       intelligenceMode,
       phpCreateClassCodeAction,
-      phpCreateParentMemberCodeAction,
+      phpCreateMemberCodeAction,
       projectSymbolSearch,
       readTestFileIfExists,
       workspaceRoot,

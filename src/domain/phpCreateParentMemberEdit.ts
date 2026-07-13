@@ -15,26 +15,27 @@ import {
 } from "./phpInsertionPoint";
 import { maskPhpSource } from "./phpSourceMask";
 
-export interface PhpCreateParentMemberEditRequest {
-  expectedParentNamespace?: string | null;
+export interface PhpCreateMemberWorkspaceEditRequest {
+  expectedNamespace?: string | null;
   member: MissingThisMember;
-  parentClassName: string;
-  parentFileUri: string;
-  parentSource: string;
+  targetClassName: string;
+  targetFileUri: string;
+  targetSource: string;
 }
 
-interface ParentClassDeclaration {
+interface TargetClassDeclaration {
   bodyStartOffset: number;
+  hasExtendsClause: boolean;
   isReadonly: boolean;
   namespace: string | null;
 }
 
-export function buildPhpCreateParentMemberEdit(
-  request: PhpCreateParentMemberEditRequest,
+export function buildPhpCreateMemberWorkspaceEdit(
+  request: PhpCreateMemberWorkspaceEditRequest,
 ): LanguageServerWorkspaceEdit | null {
-  const { member, parentSource } = request;
+  const { member, targetSource } = request;
 
-  if (member.target !== "parent") {
+  if (member.target !== "parent" && member.target !== "external") {
     return null;
   }
 
@@ -42,27 +43,34 @@ export function buildPhpCreateParentMemberEdit(
     return null;
   }
 
-  const parent = locateUniqueParentClass(parentSource, request.parentClassName);
+  const target = locateUniqueTargetClass(targetSource, request.targetClassName);
 
-  if (!parent) {
+  if (!target) {
     return null;
   }
 
-  if (!expectedNamespaceMatches(request, parent)) {
+  if (!expectedNamespaceMatches(request, target)) {
     return null;
   }
 
-  const selector = { bodyStartOffset: parent.bodyStartOffset };
+  const selector = { bodyStartOffset: target.bodyStartOffset };
 
   if (
-    phpClassDeclaresMember(parentSource, member.name, member.kind, selector)
+    phpClassDeclaresMember(targetSource, member.name, member.kind, selector)
+  ) {
+    return null;
+  }
+
+  if (
+    member.target === "external" &&
+    mayInheritOrInterceptMembers(targetSource, target, selector)
   ) {
     return null;
   }
 
   const stub = renderMemberStub(member, {
-    kind: parent.isReadonly ? "readonly-class" : "class",
-    relationship: "parent",
+    kind: target.isReadonly ? "readonly-class" : "class",
+    relationship: member.target,
     typeContext: "external-namespace",
   });
 
@@ -70,7 +78,7 @@ export function buildPhpCreateParentMemberEdit(
     return null;
   }
 
-  const insertion = findClassBodyInsertionOffset(parentSource, selector);
+  const insertion = findClassBodyInsertionOffset(targetSource, selector);
 
   if (!insertion) {
     return null;
@@ -78,16 +86,16 @@ export function buildPhpCreateParentMemberEdit(
 
   const block = indentLines(
     stub,
-    detectClassMemberIndent(parentSource, selector),
+    detectClassMemberIndent(targetSource, selector),
   );
   const leadingBlankLine = insertion.needsLeadingBlankLine ? "\n" : "";
   const trailingBlankLine = insertion.needsTrailingBlankLine ? "\n" : "";
-  const position = offsetToPosition(parentSource, insertion.offset);
+  const position = offsetToPosition(targetSource, insertion.offset);
   const editPosition = { character: position.column, line: position.line };
 
   return {
     changes: {
-      [request.parentFileUri]: [
+      [request.targetFileUri]: [
         {
           newText: `${leadingBlankLine}${block}\n${trailingBlankLine}`,
           range: { end: editPosition, start: editPosition },
@@ -98,20 +106,35 @@ export function buildPhpCreateParentMemberEdit(
 }
 
 function expectedNamespaceMatches(
-  request: PhpCreateParentMemberEditRequest,
-  parent: ParentClassDeclaration,
+  request: PhpCreateMemberWorkspaceEditRequest,
+  target: TargetClassDeclaration,
 ): boolean {
-  const expected = request.expectedParentNamespace;
+  const expected = request.expectedNamespace;
 
   if (expected === undefined) {
     return true;
   }
 
-  if (expected === null || parent.namespace === null) {
-    return expected === parent.namespace;
+  if (expected === null || target.namespace === null) {
+    return expected === target.namespace;
   }
 
-  return expected.toLowerCase() === parent.namespace.toLowerCase();
+  return expected.toLowerCase() === target.namespace.toLowerCase();
+}
+
+function mayInheritOrInterceptMembers(
+  source: string,
+  target: TargetClassDeclaration,
+  selector: { bodyStartOffset: number },
+): boolean {
+  if (target.hasExtendsClause) {
+    return true;
+  }
+
+  return (
+    phpClassDeclaresMember(source, "__callStatic", "method", selector) ||
+    phpClassDeclaresMember(source, "__call", "method", selector)
+  );
 }
 
 function renderMemberStub(
@@ -129,19 +152,19 @@ function renderMemberStub(
   });
 }
 
-function locateUniqueParentClass(
+function locateUniqueTargetClass(
   source: string,
-  parentClassName: string,
-): ParentClassDeclaration | null {
-  if (!parentClassName) {
+  targetClassName: string,
+): TargetClassDeclaration | null {
+  if (!targetClassName) {
     return null;
   }
 
   const masked = maskPhpSource(source);
   const pattern =
     /(?<![:\\$>A-Za-z0-9_])((?:(?:abstract|final|readonly)\s+)*)(class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/g;
-  const expectedName = parentClassName.toLowerCase();
-  let found: ParentClassDeclaration | null = null;
+  const expectedName = targetClassName.toLowerCase();
+  let found: TargetClassDeclaration | null = null;
 
   for (const match of masked.matchAll(pattern)) {
     if ((match[3] ?? "").toLowerCase() !== expectedName) {
@@ -165,7 +188,7 @@ function locateUniqueParentClass(
 function classDeclarationAt(
   masked: string,
   match: RegExpMatchArray,
-): ParentClassDeclaration | null {
+): TargetClassDeclaration | null {
   const headerStart = match.index ?? 0;
   const bodyStartOffset = masked.indexOf("{", headerStart + match[0].length);
 
@@ -179,6 +202,9 @@ function classDeclarationAt(
 
   return {
     bodyStartOffset,
+    hasExtendsClause: /\bextends\b/.test(
+      masked.slice(headerStart + match[0].length, bodyStartOffset),
+    ),
     isReadonly: /\breadonly\b/.test(match[1] ?? ""),
     namespace: namespaceAtOffset(masked, headerStart),
   };
