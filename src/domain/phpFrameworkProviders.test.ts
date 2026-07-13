@@ -58,6 +58,7 @@ import {
   phpFrameworkSupportsPhpPresenterLinks,
   phpFrameworkSupportsRoutes,
   phpFrameworkSupportsStringLiterals,
+  phpFrameworkSuppressesSameSourceMethodReturnFallback,
   phpFrameworkSupportsTargetCollection,
   phpFrameworkSupportsTranslations,
   phpFrameworkSupportsValidation,
@@ -201,6 +202,37 @@ Post::query()->whereHas('comments', function ($query): void {
         [customProvider, phpLaravelFrameworkProvider],
       ),
     ).toBe(firstMatch);
+  });
+
+  it("dispatches same-source method return fallback suppression by provider", () => {
+    const inertCustomProvider: PhpFrameworkProvider = { id: "custom" };
+
+    expect(
+      phpFrameworkSuppressesSameSourceMethodReturnFallback("findOrFail", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(true);
+    expect(
+      phpFrameworkSuppressesSameSourceMethodReturnFallback("findOrFail", [
+        phpNetteFrameworkProvider,
+      ]),
+    ).toBe(false);
+    expect(
+      phpFrameworkSuppressesSameSourceMethodReturnFallback("findOrFail", [
+        inertCustomProvider,
+      ]),
+    ).toBe(false);
+    expect(
+      phpFrameworkSuppressesSameSourceMethodReturnFallback("findOrFail"),
+    ).toBe(true);
+    expect(
+      phpFrameworkSuppressesSameSourceMethodReturnFallback("findOrFail", []),
+    ).toBe(false);
+    expect(
+      phpFrameworkSuppressesSameSourceMethodReturnFallback("firstOrFail", [
+        phpLaravelFrameworkProvider,
+      ]),
+    ).toBe(false);
   });
 
   it("resolves container resolution expressions through the framework seam", () => {

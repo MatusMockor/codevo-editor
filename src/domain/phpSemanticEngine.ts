@@ -19,6 +19,7 @@ import {
   phpFrameworkContainerConcreteClassNameFromSource,
   phpFrameworkMethodCallReturnTypeFromSource,
   phpFrameworkPropertyTypeFromSource,
+  phpFrameworkSuppressesSameSourceMethodReturnFallback,
   type PhpFrameworkProvider,
   type PhpFrameworkSourceContext,
 } from "./phpFrameworkProviders";
@@ -82,8 +83,6 @@ export interface PhpSemanticEngineOptions {
   frameworkProviders?: readonly PhpFrameworkProvider[];
   frameworkSourceContext?: PhpFrameworkSourceContext;
 }
-
-const phpFrameworkOwnedMethodReturnNames = new Set(["findOrFail"]);
 
 export function phpCurrentClassName(source: string): string | null {
   const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
@@ -223,6 +222,7 @@ export function phpReceiverExpressionTypeInSource(
       source,
       methodCall.methodName,
       receiverType,
+      options.frameworkProviders,
     );
   }
 
@@ -246,6 +246,7 @@ export function phpReceiverExpressionTypeInSource(
       source,
       staticCall.methodName,
       fallbackReceiverType,
+      options.frameworkProviders,
     );
   }
 
@@ -436,6 +437,7 @@ function phpFrameworkMethodCallAssignmentReturnType(
       source,
       staticCall.methodName,
       fallbackReceiverType,
+      options.frameworkProviders,
     );
   }
 
@@ -466,6 +468,7 @@ function phpFrameworkMethodCallAssignmentReturnType(
     source,
     methodCall.methodName,
     receiverType,
+    options.frameworkProviders,
   );
 }
 
@@ -593,8 +596,14 @@ function phpSameSourceMethodCallReturnType(
   source: string,
   methodName: string,
   receiverType: string | null,
+  frameworkProviders?: readonly PhpFrameworkProvider[],
 ): string | null {
-  if (phpFrameworkOwnedMethodReturnNames.has(methodName)) {
+  if (
+    phpFrameworkSuppressesSameSourceMethodReturnFallback(
+      methodName,
+      frameworkProviders,
+    )
+  ) {
     return null;
   }
 

@@ -389,6 +389,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       phpLaravelScopedStringCompletionInsertText(kind, name),
   },
   semantics: {
+    suppressesSameSourceMethodReturnFallback: ({ methodName }) =>
+      methodName === "findOrFail",
     queryCallbackContextForVariable: ({ position, source, variableName }) =>
       phpLaravelQueryCallbackContextForVariable(source, position, variableName),
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>

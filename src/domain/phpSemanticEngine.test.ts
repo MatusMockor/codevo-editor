@@ -3878,7 +3878,7 @@ class ReadAlbumRepository extends BaseRepository
     ).toBe("App\\Models\\Album");
   });
 
-  it("does not infer Laravel repository assignments without an active Laravel provider", () => {
+  it("preserves default findOrFail suppression without explicit providers", () => {
     const source = `<?php
 namespace App\\Repositories;
 
@@ -3906,6 +3906,37 @@ class AlbumRepository
         "album",
       ),
     ).toBeNull();
+  });
+
+  it("infers same-source findOrFail return type with explicit empty providers", () => {
+    const source = `<?php
+namespace App\\Repositories;
+
+use App\\Models\\Album;
+
+class AlbumRepository
+{
+    public function findOrFail(int $id): Album
+    {
+    }
+
+    public function show(int $id): void
+    {
+        $album = $this->findOrFail($id);
+
+        $album->tit
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$album->tit"),
+        "album",
+        { frameworkProviders: [] },
+      ),
+    ).toBe("Album");
   });
 
   it("does not infer finder assignment model types from non-repository receivers", () => {

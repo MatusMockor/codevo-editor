@@ -83,6 +83,10 @@ export interface PhpFrameworkMethodCallReturnTypeContext {
   source: string;
 }
 
+export interface PhpFrameworkSameSourceMethodReturnFallbackContext {
+  methodName: string;
+}
+
 export interface PhpFrameworkContainerExpressionContext {
   expression: string;
 }
@@ -829,6 +833,9 @@ export interface PhpFrameworkProvider {
     methodCallReturnTypeFromSource?: (
       context: PhpFrameworkMethodCallReturnTypeContext,
     ) => string | null;
+    suppressesSameSourceMethodReturnFallback?: (
+      context: PhpFrameworkSameSourceMethodReturnFallbackContext,
+    ) => boolean;
     containerExpressionClassName?: (
       context: PhpFrameworkContainerExpressionContext,
     ) => string | null;
@@ -2155,6 +2162,26 @@ export function phpFrameworkMethodCallReturnTypeFromSource(
   }
 
   return null;
+}
+
+export function phpFrameworkSuppressesSameSourceMethodReturnFallback(
+  methodName: string,
+  providers?: readonly PhpFrameworkProvider[],
+): boolean {
+  if (!providers) {
+    return methodName === "findOrFail";
+  }
+
+  if (providers.length === 0) {
+    return false;
+  }
+
+  return providers.some(
+    (provider) =>
+      provider.semantics?.suppressesSameSourceMethodReturnFallback?.({
+        methodName,
+      }) === true,
+  );
 }
 
 export function phpFrameworkContainerExpressionClassName(
