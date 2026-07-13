@@ -27,6 +27,16 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   }),
 );
 
+function runtimeForProvider(provider: PhpFrameworkProvider) {
+  return createPhpFrameworkRuntimeContext(
+    createPhpFrameworkIntelligence({
+      matchedProviderIds: [provider.id],
+      profile: "generic",
+      providers: [provider],
+    }),
+  );
+}
+
 function position(lineNumber = 1, column = 1) {
   return { column, lineNumber };
 }
@@ -566,6 +576,90 @@ describe("provideBladeDefinition", () => {
       "App\\Models\\Comment",
       "author",
     );
+  });
+
+  it("uses provider-owned template names for typed Blade members in plain .php views", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const resolveBladeViewVariableTypeForView = vi.fn(
+      async () => "App\\Models\\Report",
+    );
+    const source = "{{ $report->total() }}";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "total"),
+        makeDeps({
+          activeDocument: {
+            content: "",
+            path: `${ROOT}/resources/views/reports/summary.php`,
+          },
+          openDirectPhpMethodTarget,
+          resolveBladeViewVariableTypeForView,
+        }),
+      ),
+    ).resolves.toBe(true);
+    expect(resolveBladeViewVariableTypeForView).toHaveBeenCalledWith(
+      "reports.summary",
+      "$report",
+    );
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Models\\Report",
+      "total",
+    );
+  });
+
+  it("does not resolve typed Blade members when providers cannot resolve the active template name", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const resolveBladeViewVariableTypeForView = vi.fn(async () => null);
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      templating: {
+        templateNameFromRelativePath: vi.fn(() => null),
+      },
+      viewData: {},
+    };
+    const source = "{{ $comment->author() }}";
+
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "author"),
+        makeDeps({
+          frameworkRuntime: runtimeForProvider(provider),
+          openDirectPhpMethodTarget,
+          resolveBladeViewVariableTypeForView,
+        }),
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "author"),
+        makeDeps({
+          activeDocument: null,
+          openDirectPhpMethodTarget,
+          resolveBladeViewVariableTypeForView,
+        }),
+      ),
+    ).resolves.toBe(false);
+    await expect(
+      provideBladeDefinition(
+        source,
+        offsetOf(source, "author"),
+        makeDeps({
+          activeDocument: {
+            content: "",
+            path: `${ROOT}/app/Http/Controllers/CommentController.php`,
+          },
+          openDirectPhpMethodTarget,
+          resolveBladeViewVariableTypeForView,
+        }),
+      ),
+    ).resolves.toBe(false);
+
+    expect(resolveBladeViewVariableTypeForView).not.toHaveBeenCalled();
+    expect(openDirectPhpMethodTarget).not.toHaveBeenCalled();
   });
 
   it("falls back from missing property to Laravel model attribute then direct property", async () => {

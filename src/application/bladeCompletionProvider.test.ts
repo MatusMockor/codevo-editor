@@ -27,6 +27,16 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   }),
 );
 
+function runtimeForProvider(provider: PhpFrameworkProvider) {
+  return createPhpFrameworkRuntimeContext(
+    createPhpFrameworkIntelligence({
+      matchedProviderIds: [provider.id],
+      profile: "generic",
+      providers: [provider],
+    }),
+  );
+}
+
 function makeDeps(
   overrides: Partial<BladeCompletionProviderDependencies> = {},
 ): BladeCompletionProviderDependencies {
@@ -87,6 +97,82 @@ describe("provideBladeCompletions", () => {
     );
   });
 
+  it("uses provider-owned template names for Laravel .blade.php and .php view paths", async () => {
+    const collectBladeViewVariablesWithDisplayTypes = vi.fn(async () => []);
+
+    await provideBladeCompletions(
+      "{{ $",
+      { column: 5, lineNumber: 1 },
+      makeDeps({ collectBladeViewVariablesWithDisplayTypes }),
+    );
+    await provideBladeCompletions(
+      "{{ $",
+      { column: 5, lineNumber: 1 },
+      makeDeps({
+        activeDocument: {
+          content: "",
+          path: `${ROOT}/resources/views/reports/summary.php`,
+        },
+        collectBladeViewVariablesWithDisplayTypes,
+      }),
+    );
+
+    expect(collectBladeViewVariablesWithDisplayTypes).toHaveBeenNthCalledWith(
+      1,
+      "invoices.show",
+    );
+    expect(collectBladeViewVariablesWithDisplayTypes).toHaveBeenNthCalledWith(
+      2,
+      "reports.summary",
+    );
+  });
+
+  it("does not collect Blade view-data completions when providers cannot resolve the active template name", async () => {
+    const collectBladeViewVariablesWithDisplayTypes = vi.fn(async () => []);
+    const collectBladeForeachLoopVariables = vi.fn(async () => []);
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      templating: {
+        templateNameFromRelativePath: vi.fn(() => null),
+      },
+      viewData: {},
+    };
+
+    await provideBladeCompletions(
+      "{{ $",
+      { column: 5, lineNumber: 1 },
+      makeDeps({
+        collectBladeForeachLoopVariables,
+        collectBladeViewVariablesWithDisplayTypes,
+        frameworkRuntime: runtimeForProvider(provider),
+      }),
+    );
+    await provideBladeCompletions(
+      "{{ $",
+      { column: 5, lineNumber: 1 },
+      makeDeps({
+        activeDocument: null,
+        collectBladeForeachLoopVariables,
+        collectBladeViewVariablesWithDisplayTypes,
+      }),
+    );
+    await provideBladeCompletions(
+      "{{ $",
+      { column: 5, lineNumber: 1 },
+      makeDeps({
+        activeDocument: {
+          content: "",
+          path: `${ROOT}/storage/framework/views/a.php`,
+        },
+        collectBladeForeachLoopVariables,
+        collectBladeViewVariablesWithDisplayTypes,
+      }),
+    );
+
+    expect(collectBladeViewVariablesWithDisplayTypes).not.toHaveBeenCalled();
+    expect(collectBladeForeachLoopVariables).not.toHaveBeenCalled();
+  });
+
   it("returns typed member completions through the injected PHP resolver", async () => {
     const members: PhpMethodCompletion[] = [
       {
@@ -113,6 +199,85 @@ describe("provideBladeCompletions", () => {
     expect(completions).toContainEqual(
       expect.objectContaining({ kind: "member", label: "total" }),
     );
+  });
+
+  it("does not resolve typed member completions when the active template has no provider view name", async () => {
+    const resolveBladeViewVariableTypeForView = vi.fn(async () => null);
+    const resolveBladeForeachElementTypeForVariable = vi.fn(async () => null);
+    const resolvePhpReceiverMethodCompletions = vi.fn(async () => []);
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      templating: {
+        templateNameFromRelativePath: vi.fn(() => null),
+      },
+      viewData: {},
+    };
+
+    await expect(
+      provideBladeCompletions(
+        "{{ $invoice->to",
+        { column: 16, lineNumber: 1 },
+        makeDeps({
+          frameworkRuntime: runtimeForProvider(provider),
+          resolveBladeForeachElementTypeForVariable,
+          resolveBladeViewVariableTypeForView,
+          resolvePhpReceiverMethodCompletions,
+        }),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      provideBladeCompletions(
+        "{{ $invoice->to",
+        { column: 16, lineNumber: 1 },
+        makeDeps({
+          activeDocument: null,
+          resolveBladeForeachElementTypeForVariable,
+          resolveBladeViewVariableTypeForView,
+          resolvePhpReceiverMethodCompletions,
+        }),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      provideBladeCompletions(
+        "{{ $invoice->to",
+        { column: 16, lineNumber: 1 },
+        makeDeps({
+          activeDocument: {
+            content: "",
+            path: `${ROOT}/app/Http/Controllers/InvoiceController.php`,
+          },
+          resolveBladeForeachElementTypeForVariable,
+          resolveBladeViewVariableTypeForView,
+          resolvePhpReceiverMethodCompletions,
+        }),
+      ),
+    ).resolves.toEqual([]);
+
+    expect(resolveBladeViewVariableTypeForView).not.toHaveBeenCalled();
+    expect(resolveBladeForeachElementTypeForVariable).not.toHaveBeenCalled();
+    expect(resolvePhpReceiverMethodCompletions).not.toHaveBeenCalled();
+  });
+
+  it("drops stale typed member completions after resolving the view variable type", async () => {
+    const currentWorkspaceRootRef = { current: ROOT };
+    const resolvePhpReceiverMethodCompletions = vi.fn(async () => []);
+
+    await expect(
+      provideBladeCompletions(
+        "{{ $invoice->to",
+        { column: 16, lineNumber: 1 },
+        makeDeps({
+          currentWorkspaceRootRef,
+          resolveBladeViewVariableTypeForView: vi.fn(async () => {
+            currentWorkspaceRootRef.current = "/other";
+
+            return "App\\Models\\Invoice";
+          }),
+          resolvePhpReceiverMethodCompletions,
+        }),
+      ),
+    ).resolves.toEqual([]);
+    expect(resolvePhpReceiverMethodCompletions).not.toHaveBeenCalled();
   });
 
   it("does not leak Laravel helper completions without framework string-literal support", async () => {

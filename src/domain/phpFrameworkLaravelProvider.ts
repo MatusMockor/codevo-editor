@@ -79,6 +79,7 @@ import {
 } from "./phpLaravelValidation";
 import {
   phpLaravelViewCompletionInsertText,
+  phpLaravelViewNameFromRelativePath,
   phpLaravelViewReferenceContextAt,
 } from "./phpLaravelViews";
 import type { PhpProjectDescriptor } from "./workspace";
@@ -362,6 +363,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
     referenceAt: ({ position, source }) =>
       phpLaravelViewReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelViewTarget(literal),
+    templateNameFromRelativePath: ({ relativePath }) =>
+      phpLaravelViewNameFromRelativePath(relativePath),
   },
   livewire: {
     resolveLiteralTarget: ({ literal }) => resolveLaravelLivewireTarget(literal),

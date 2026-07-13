@@ -65,6 +65,7 @@ import {
   phpFrameworkSupportsViewData,
   phpFrameworkSupportsViewDataComponentFactories,
   phpFrameworkSupportsViews,
+  phpFrameworkTemplateNameFromRelativePath,
   phpFrameworkTargetSearchQueries,
   phpFrameworkTranslationLiteralTarget,
   phpFrameworkTranslationKeysFromSource,
@@ -2527,6 +2528,21 @@ class EventServiceProvider
       ).toEqual(direct);
     });
 
+    it("dispatches Laravel template names from relative paths through the provider", () => {
+      expect(
+        phpFrameworkTemplateNameFromRelativePath(
+          "resources/views/users/index.blade.php",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toBe("users.index");
+      expect(
+        phpFrameworkTemplateNameFromRelativePath(
+          "storage/framework/views/a.php",
+          [phpLaravelFrameworkProvider],
+        ),
+      ).toBeNull();
+    });
+
     it("reports view support only for providers shipping the capability", () => {
       expect(phpFrameworkSupportsViews([phpLaravelFrameworkProvider])).toBe(
         true,
@@ -2544,6 +2560,18 @@ class EventServiceProvider
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(
         phpFrameworkViewReferenceAt(referenceSource, referencePosition, []),
+      ).toBeNull();
+      expect(
+        phpFrameworkTemplateNameFromRelativePath(
+          "resources/views/users/index.blade.php",
+          [phpNetteFrameworkProvider],
+        ),
+      ).toBeNull();
+      expect(
+        phpFrameworkTemplateNameFromRelativePath(
+          "resources/views/users/index.blade.php",
+          [],
+        ),
       ).toBeNull();
     });
   });

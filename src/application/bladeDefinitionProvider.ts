@@ -8,12 +8,12 @@ import {
 import { bladeFrameworkStringLiteralHelperAt } from "../domain/bladeFrameworkHelperCompletions";
 import {
   phpFrameworkConfigLiteralTarget,
+  phpFrameworkTemplateNameFromRelativePath,
   phpFrameworkTranslationLiteralTarget,
   phpFrameworkViewLiteralTarget,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
-import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
 import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { BladeIntelligenceDependencies } from "./bladeIntelligenceContracts";
@@ -119,6 +119,7 @@ export async function provideBladeDefinition(
         openPhpLaravelModelAttributeTarget,
         isRequestedRootActive,
       ),
+      frameworkProviders: frameworkRuntime.providers,
       relativeWorkspacePath,
       requestedRoot,
       resolveBladeViewVariableTypeForView,
@@ -309,6 +310,7 @@ async function openFrameworkHelperDefinition(
 
 interface BladeViewDataMemberDefinitionDependencies extends RequestedRootState {
   activeDocument: BladeIntelligenceDependencies["activeDocument"];
+  frameworkProviders: readonly PhpFrameworkProvider[];
   openDirectPhpMethodTarget: BladeIntelligenceDependencies["openDirectPhpMethodTarget"];
   openDirectPhpPropertyTarget: BladeIntelligenceDependencies["openDirectPhpPropertyTarget"];
   openPhpLaravelModelAttributeTarget: BladeIntelligenceDependencies["openPhpLaravelModelAttributeTarget"];
@@ -338,7 +340,10 @@ async function openBladeViewDataMemberDefinition(
   const relativePath = activePath
     ? dependencies.relativeWorkspacePath(dependencies.requestedRoot, activePath)
     : "";
-  const viewName = phpLaravelViewNameFromRelativePath(relativePath);
+  const viewName = phpFrameworkTemplateNameFromRelativePath(
+    relativePath,
+    dependencies.frameworkProviders,
+  );
   const variableName = memberContext.variableName
     ? `$${memberContext.variableName}`
     : "";

@@ -5,8 +5,8 @@ import {
 } from "../domain/bladeNavigation";
 import { bladeFrameworkHelperCompletionContextAt } from "../domain/bladeFrameworkHelperCompletions";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { phpFrameworkTemplateNameFromRelativePath } from "../domain/phpFrameworkProviders";
 import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
-import { phpLaravelViewNameFromRelativePath } from "../domain/phpLaravelViews";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
@@ -121,7 +121,10 @@ export async function provideBladeCompletions(
     const relativePath = activePath
       ? relativeWorkspacePath(requestedRoot, activePath)
       : "";
-    const viewName = phpLaravelViewNameFromRelativePath(relativePath);
+    const viewName = phpFrameworkTemplateNameFromRelativePath(
+      relativePath,
+      frameworkRuntime.providers,
+    );
 
     if (!viewName) {
       return [];
@@ -189,7 +192,10 @@ export async function provideBladeCompletions(
     const relativePath = activePath
       ? relativeWorkspacePath(requestedRoot, activePath)
       : "";
-    const viewName = phpLaravelViewNameFromRelativePath(relativePath);
+    const viewName = phpFrameworkTemplateNameFromRelativePath(
+      relativePath,
+      frameworkRuntime.providers,
+    );
     const variables = viewName
       ? await collectBladeViewVariablesWithDisplayTypes(viewName)
       : [];

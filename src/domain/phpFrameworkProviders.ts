@@ -353,6 +353,10 @@ export interface PhpFrameworkViewCompletionInsertTextContext {
   prefix: string;
 }
 
+export interface PhpFrameworkTemplateNameFromRelativePathContext {
+  relativePath: string;
+}
+
 export interface PhpFrameworkInertiaReference {
   call: string;
   name: string;
@@ -727,6 +731,9 @@ export interface PhpFrameworkProvider {
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
     ) => PhpFrameworkResolvedLiteralTarget | null;
+    templateNameFromRelativePath?: (
+      context: PhpFrameworkTemplateNameFromRelativePathContext,
+    ) => string | null;
   };
   viewData?: {
     /**
@@ -1703,6 +1710,22 @@ export function phpFrameworkViewLiteralTarget(
 
     if (target) {
       return target;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkTemplateNameFromRelativePath(
+  relativePath: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const templateName =
+      provider.templating?.templateNameFromRelativePath?.({ relativePath });
+
+    if (templateName) {
+      return templateName;
     }
   }
 
