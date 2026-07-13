@@ -10,6 +10,11 @@ export interface PhpCodeActionTextEditRange {
 }
 
 export interface PhpCodeActionTextEdit {
+  /**
+   * Optional absolute path for cross-file code actions. When omitted, the edit
+   * targets the active model that requested the action.
+   */
+  path?: string;
   range: PhpCodeActionTextEditRange;
   text: string;
 }

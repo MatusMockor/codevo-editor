@@ -2170,19 +2170,9 @@ function toPhpCodeAction(
   const versionId = model.getVersionId();
   const documentEdits: Array<
     Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
-  > = descriptor.edits.map((edit) => ({
-    resource: model.uri,
-    textEdit: {
-      range: new monaco.Range(
-        edit.range.startLineNumber,
-        edit.range.startColumn,
-        edit.range.endLineNumber,
-        edit.range.endColumn,
-      ),
-      text: edit.text,
-    },
-    versionId,
-  }));
+  > = descriptor.edits.flatMap((edit) =>
+    phpCodeActionDocumentEdit(monaco, context, model, edit, versionId),
+  );
 
   // When the host wires the disk-persisting callback, a new-file action (e.g.
   // "Extract interface") keeps its document edits out of the eager Monaco bulk
@@ -2221,6 +2211,57 @@ function toPhpCodeAction(
   };
 }
 
+function phpCodeActionDocumentEdit(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  edit: PhpCodeActionTextEdit,
+  modelVersionId: number,
+): Array<Monaco.languages.IWorkspaceTextEdit> {
+  const resource = phpCodeActionEditResource(monaco, context, model, edit);
+
+  if (!resource) {
+    return [];
+  }
+
+  return [
+    {
+      resource,
+      textEdit: {
+        range: new monaco.Range(
+          edit.range.startLineNumber,
+          edit.range.startColumn,
+          edit.range.endLineNumber,
+          edit.range.endColumn,
+        ),
+        text: edit.text,
+      },
+      versionId: phpCodeActionEditTargetsModel(edit, model)
+        ? modelVersionId
+        : undefined,
+    },
+  ];
+}
+
+function phpCodeActionEditResource(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  edit: PhpCodeActionTextEdit,
+): Monaco.Uri | null {
+  if (!edit.path) {
+    return model.uri;
+  }
+
+  const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+  if (!rootPath) {
+    return null;
+  }
+
+  return toWorkspaceMonacoUri(monaco, rootPath, edit.path);
+}
+
 /**
  * Builds the monaco command that persists a PHP code action's new file to disk.
  * The action itself has no eager document edits; this command writes the sibling
@@ -2234,7 +2275,7 @@ function applyPhpCodeActionNewFileCommand(
   return {
     arguments: [
       {
-        edits,
+        edits: edits.filter((edit) => !edit.path),
         newFile,
         sourcePath: modelPath(model),
         sourceModelUri: model.uri.toString(),
@@ -2247,6 +2288,17 @@ function applyPhpCodeActionNewFileCommand(
     id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
     title: "Create file",
   };
+}
+
+function phpCodeActionEditTargetsModel(
+  edit: PhpCodeActionTextEdit,
+  model: MonacoModel,
+): boolean {
+  if (!edit.path) {
+    return true;
+  }
+
+  return modelPath(model) === edit.path;
 }
 
 function applyPhpCodeActionDocumentEdits(

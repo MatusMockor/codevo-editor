@@ -7003,6 +7003,145 @@ function store($request): void
     );
   });
 
+  it("maps a PHP code action's path-scoped edit to the target workspace file", async () => {
+    const registered = createRegisteredProviders();
+    (registered.monaco.Uri as typeof registered.monaco.Uri & {
+      parse: typeof URI.parse;
+    }).parse = URI.parse;
+    const gateway = featuresGateway();
+    const presenterPath = "/project/app/UI/Home/OtherPresenter.php";
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            path: presenterPath,
+            range: {
+              endColumn: 1,
+              endLineNumber: 8,
+              startColumn: 1,
+              startLineNumber: 8,
+            },
+            text: "\n    public function renderDetail(): void\n    {\n    }\n",
+          },
+        ],
+        kind: "quickfix",
+        title: "Create renderDetail",
+      },
+    ]);
+    const source = "<?php\nclass HomePresenter\n{\n}\n";
+    const context = providerContext({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "HomePresenter.php",
+        path: "/project/app/UI/Home/HomePresenter.php",
+        savedContent: source,
+      },
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({
+        content: source,
+        path: "/project/app/UI/Home/HomePresenter.php",
+      }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const createRender = actions.actions.find(
+      (action: { title: string }) => action.title === "Create renderDetail",
+    );
+    const edits = createRender?.edit?.edits ?? [];
+
+    expect(edits).toEqual([
+      {
+        resource: expect.objectContaining({
+          path: (URI.parse(workspaceModelUri("/project", presenterPath)!) as {
+            path: string;
+          }).path,
+          scheme: "workspace-file",
+        }),
+        textEdit: {
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 8,
+            startColumn: 1,
+            startLineNumber: 8,
+          }),
+          text: "\n    public function renderDetail(): void\n    {\n    }\n",
+        },
+        versionId: undefined,
+      },
+    ]);
+  });
+
+  it("keeps the stale-edit version guard when a path-scoped edit targets the active model", async () => {
+    const registered = createRegisteredProviders();
+    (registered.monaco.Uri as typeof registered.monaco.Uri & {
+      parse: typeof URI.parse;
+    }).parse = URI.parse;
+    const gateway = featuresGateway();
+    const sourcePath = "/project/app/UI/Home/HomePresenter.php";
+    const source = "<?php\nclass HomePresenter\n{\n}\n";
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [
+          {
+            path: sourcePath,
+            range: {
+              endColumn: 1,
+              endLineNumber: 3,
+              startColumn: 1,
+              startLineNumber: 3,
+            },
+            text: "    public function renderDetail(): void {}\n",
+          },
+        ],
+        kind: "quickfix",
+        title: "Create renderDetail",
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "HomePresenter.php",
+        path: sourcePath,
+        savedContent: source,
+      },
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({ content: source, path: sourcePath }),
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const createRender = actions.actions.find(
+      (action: { title: string }) => action.title === "Create renderDetail",
+    );
+
+    expect(createRender?.edit?.edits[0]).toEqual(
+      expect.objectContaining({
+        versionId: 42,
+      }),
+    );
+  });
+
   it("forwards a PHP code action's isPreferred flag to Monaco", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway();
@@ -7280,6 +7419,68 @@ function store($request): void
     expect(applyPhpCodeActionNewFile).toHaveBeenCalled();
     expect(sourceModel.pushEditOperations).not.toHaveBeenCalled();
     expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("does not apply path-scoped edits through the PHP newFile source-model command", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Greeter\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const applyPhpCodeActionNewFile = vi.fn(async () => true);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
+    const context = providerContext({
+      applyPhpCodeActionNewFile,
+      featuresGateway: gateway,
+      providePhpCodeActions: vi.fn(async () => [
+        {
+          edits: [
+            {
+              path: "/project/src/Other.php",
+              range: {
+                endColumn: 1,
+                endLineNumber: 2,
+                startColumn: 1,
+                startLineNumber: 2,
+              },
+              text: "    public function run(): void {}\n",
+            },
+          ],
+          kind: "refactor.extract",
+          newFile: {
+            content: "<?php\n\ninterface GreeterInterface\n{\n}\n",
+            path: "/project/src/GreeterInterface.php",
+          },
+          title: "Extract interface",
+        },
+      ]),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "refactor",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const extractInterface = actions.actions.find(
+      (action: { title: string }) => action.title === "Extract interface",
+    );
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionNewFile"];
+
+    await run(null, extractInterface?.command?.arguments?.[0]);
+
+    expect(applyPhpCodeActionNewFile).toHaveBeenCalled();
+    expect(sourceModel.pushEditOperations).not.toHaveBeenCalled();
   });
 
   it("omits the PHP implement-methods code action when the callback returns nothing", async () => {
