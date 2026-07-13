@@ -464,6 +464,7 @@ import {
   type FileSearchGateway,
   type IntelligenceMode,
   type ManagedPhpactorInstallCompletionEvent,
+  type ManagedTypeScriptInstallCompletionEvent,
   type ManagedPhpactorInstallUnsubscribeFn,
   type PhpToolGateway,
   type PhpToolAvailability,
@@ -992,6 +993,8 @@ export function useWorkbenchController(
     useState<LanguageServerPlan | null>(null);
   const [installingManagedPhpactor, setInstallingManagedPhpactor] =
     useState(false);
+  const [installingManagedTypeScriptLanguageServer, setInstallingManagedTypeScriptLanguageServer] =
+    useState(false);
   const [
     javaScriptTypeScriptLanguageServerPlan,
     setJavaScriptTypeScriptLanguageServerPlan,
@@ -1286,6 +1289,7 @@ export function useWorkbenchController(
     new Set(),
   );
   const installingManagedPhpactorRootRef = useRef<string | null>(null);
+  const installingManagedTypeScriptLanguageServerRootRef = useRef<string | null>(null);
   const autoStartedJavaScriptTypeScriptLanguageServerRootRef = useRef<
     string | null
   >(null);
@@ -8610,6 +8614,24 @@ export function useWorkbenchController(
     ],
   );
 
+  const installManagedTypeScriptLanguageServer = useCallback(async () => {
+    if (!workspaceRoot || !phpToolGateway.installManagedTypeScriptLanguageServer) return;
+    installingManagedTypeScriptLanguageServerRootRef.current = workspaceRoot;
+    setInstallingManagedTypeScriptLanguageServer(true);
+    try { await phpToolGateway.installManagedTypeScriptLanguageServer(workspaceRoot); }
+    catch (error) { installingManagedTypeScriptLanguageServerRootRef.current = null; setInstallingManagedTypeScriptLanguageServer(false); reportJavaScriptTypeScriptLanguageServerError(error); }
+  }, [phpToolGateway, reportJavaScriptTypeScriptLanguageServerError, workspaceRoot]);
+
+  const handleManagedTypeScriptInstallCompletion = useCallback(async (event: ManagedTypeScriptInstallCompletionEvent) => {
+    if (!workspaceRootKeysEqual(installingManagedTypeScriptLanguageServerRootRef.current, event.root)) return;
+    installingManagedTypeScriptLanguageServerRootRef.current = null;
+    setInstallingManagedTypeScriptLanguageServer(false);
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.root)) return;
+    if (event.error) { reportJavaScriptTypeScriptLanguageServerError(event.error); return; }
+    await refreshJavaScriptTypeScriptLanguageServerPlan(event.root);
+    setMessage("Installed managed TypeScript IDE engine.");
+  }, [refreshJavaScriptTypeScriptLanguageServerPlan, reportJavaScriptTypeScriptLanguageServerError]);
+
   const {
     startHardReindex,
     startIndexScan,
@@ -9545,6 +9567,15 @@ export function useWorkbenchController(
     };
   }, [handleManagedPhpactorInstallCompletion, phpToolGateway, reportError]);
 
+  useEffect(() => {
+    if (!phpToolGateway.subscribeManagedTypeScriptLanguageServerInstall) return;
+    let unsubscribe: (() => void) | null = null;
+    void phpToolGateway.subscribeManagedTypeScriptLanguageServerInstall((event) => {
+      void handleManagedTypeScriptInstallCompletion(event);
+    }).then((dispose) => { unsubscribe = dispose; }).catch((error) => reportError("JavaScript/TypeScript", error));
+    return () => unsubscribe?.();
+  }, [handleManagedTypeScriptInstallCompletion, phpToolGateway, reportError]);
+
   useLanguageServerDiagnosticsSubscriptions({
     workspaceRoot,
     currentWorkspaceRootRef,
@@ -10330,6 +10361,8 @@ export function useWorkbenchController(
     startLanguageServer,
     startPhpReindex,
     installManagedPhpactor,
+    installManagedTypeScriptLanguageServer,
+    installingManagedTypeScriptLanguageServer,
     stopLanguageServer,
     settingsOpen,
     selectedGitChange,
