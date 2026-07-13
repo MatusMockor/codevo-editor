@@ -9,6 +9,7 @@ import type { LatteCompletionItem } from "./latteCompletionItems";
 import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
 import type { NavigationRequest } from "./navigationRequest";
 import type {
+  PhpCodeActionContext,
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
@@ -78,6 +79,7 @@ export interface LatteIntelligence {
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,
+    context?: PhpCodeActionContext,
   ): Promise<PhpCodeActionDescriptor[]>;
   provideLatteCompletions(
     source: string,

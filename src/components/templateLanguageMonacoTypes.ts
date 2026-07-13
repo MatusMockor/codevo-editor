@@ -1,5 +1,6 @@
 import type * as Monaco from "monaco-editor";
 import type {
+  PhpCodeActionContext,
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "../application/phpCodeActionTypes";
@@ -91,6 +92,7 @@ export interface TemplateLanguageProviderRegistry {
     provideCodeActions(
       source: string,
       range: PhpCodeActionRange,
+      context?: PhpCodeActionContext,
     ): Promise<PhpCodeActionDescriptor[]>;
     provideCompletions(
       source: string,
@@ -106,6 +108,7 @@ export interface TemplateLanguageProviderRegistry {
     provideCodeActions(
       source: string,
       range: PhpCodeActionRange,
+      context?: PhpCodeActionContext,
     ): Promise<PhpCodeActionDescriptor[]>;
     provideCompletions(
       source: string,

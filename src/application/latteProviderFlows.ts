@@ -47,6 +47,7 @@ import {
 import { latteProviderRequestContext } from "./latteProviderRequestContext";
 import type {
   PhpCodeActionDescriptor,
+  PhpCodeActionContext,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 
@@ -56,6 +57,7 @@ export interface LatteProviderFlows {
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,
+    context?: PhpCodeActionContext,
   ): Promise<PhpCodeActionDescriptor[]>;
   provideLatteCompletions(
     source: string,
@@ -142,8 +144,8 @@ export function createLatteProviderFlows(
     },
     collectLatteTemplateRelativePaths: () =>
       collectLatteTemplateRelativePaths(options),
-    provideLatteCodeActions: (source, range) =>
-      provideLatteCodeActionsFlow(options, source, range),
+    provideLatteCodeActions: (source, range, context) =>
+      provideLatteCodeActionsFlow(options, source, range, context),
     provideLatteCompletions: (source, position) =>
       provideLatteCompletionsFlow(options, source, position),
     provideLatteDefinition: (source, offset, request) =>

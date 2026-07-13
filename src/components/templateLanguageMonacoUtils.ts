@@ -1,6 +1,9 @@
 import type * as Monaco from "monaco-editor";
 import type { NavigationRequest } from "../application/navigationRequest";
-import type { PhpCodeActionRange } from "../application/phpCodeActionTypes";
+import type {
+  PhpCodeActionContext,
+  PhpCodeActionRange,
+} from "../application/phpCodeActionTypes";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { TemplateLanguageMonacoProviderContext } from "./templateLanguageMonacoTypes";
 import {
@@ -51,6 +54,29 @@ export function codeActionOffsetRange(
   return start <= end ? { end, start } : { end: start, start: end };
 }
 
+export function templateCodeActionContextFromMonaco(
+  markers: readonly Monaco.editor.IMarkerData[],
+): PhpCodeActionContext | undefined {
+  if (markers.length === 0) {
+    return undefined;
+  }
+
+  return {
+    diagnostics: markers.map((marker) => ({
+      ...optionalDiagnosticCode(marker),
+      ...optionalDiagnosticData(marker),
+      ...optionalDiagnosticSource(marker),
+      message: marker.message,
+      range: {
+        endColumn: marker.endColumn,
+        endLineNumber: marker.endLineNumber,
+        startColumn: marker.startColumn,
+        startLineNumber: marker.startLineNumber,
+      },
+    })),
+  };
+}
+
 export function isStoredWorkspaceRootActive(
   context: TemplateLanguageMonacoProviderContext,
   rootPath: string,
@@ -58,6 +84,38 @@ export function isStoredWorkspaceRootActive(
   const activeRootPath = context.getWorkspaceRoot?.() ?? null;
 
   return Boolean(activeRootPath && workspaceRootKeysEqual(activeRootPath, rootPath));
+}
+
+function optionalDiagnosticCode(
+  marker: Monaco.editor.IMarkerData,
+): Pick<PhpCodeActionContext["diagnostics"][number], "code"> {
+  if (!marker.code) {
+    return {};
+  }
+
+  if (typeof marker.code === "string" || typeof marker.code === "number") {
+    return { code: marker.code };
+  }
+
+  return { code: marker.code.value };
+}
+
+function optionalDiagnosticData(
+  marker: Monaco.editor.IMarkerData,
+): Pick<PhpCodeActionContext["diagnostics"][number], "data"> {
+  if (!Object.prototype.hasOwnProperty.call(marker, "data")) {
+    return {};
+  }
+
+  return {
+    data: (marker as Monaco.editor.IMarkerData & { data?: unknown }).data,
+  };
+}
+
+function optionalDiagnosticSource(
+  marker: Monaco.editor.IMarkerData,
+): Pick<PhpCodeActionContext["diagnostics"][number], "source"> {
+  return marker.source ? { source: marker.source } : {};
 }
 
 export function templateDefinitionNavigationRequest(

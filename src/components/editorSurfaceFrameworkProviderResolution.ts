@@ -1,5 +1,6 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { NavigationRequest } from "../application/navigationRequest";
+import type { PhpCodeActionContext } from "../application/phpCodeActionTypes";
 import type {
   BladeCompletion,
   LatteCompletion,
@@ -15,6 +16,7 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
   provideBladeCodeActions?(
     source: string,
     range: PhpCodeActionRange,
+    context?: PhpCodeActionContext,
   ): Promise<PhpCodeActionDescriptor[]>;
   provideBladeCompletions?(
     source: string,
@@ -32,6 +34,7 @@ export interface EditorSurfaceFrameworkIntelligenceProviders {
   provideLatteCodeActions?(
     source: string,
     range: PhpCodeActionRange,
+    context?: PhpCodeActionContext,
   ): Promise<PhpCodeActionDescriptor[]>;
   provideLatteDefinition?(
     source: string,

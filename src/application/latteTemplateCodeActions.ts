@@ -1,5 +1,6 @@
 import { missingLatteTemplateReferenceAt } from "../domain/netteTemplateReferences";
 import type {
+  PhpCodeActionContext,
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
@@ -17,6 +18,7 @@ export async function provideLatteCodeActions(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   range: PhpCodeActionRange,
+  _context?: PhpCodeActionContext,
 ): Promise<PhpCodeActionDescriptor[]> {
   const request = latteProviderRequestContext(options);
 

@@ -1,5 +1,6 @@
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
+  PhpCodeActionContext,
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
@@ -19,6 +20,7 @@ export async function provideBladeCodeActions(
   source: string,
   range: PhpCodeActionRange = { end: 0, start: 0 },
   dependencies: BladeCodeActionProviderDependencies,
+  _context?: PhpCodeActionContext,
 ): Promise<PhpCodeActionDescriptor[]> {
   const {
     createMissingBladeViewCodeAction,

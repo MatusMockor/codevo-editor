@@ -35,6 +35,18 @@ export interface PhpCodeActionDescriptor {
   title: string;
 }
 
+export interface PhpCodeActionDiagnostic {
+  code?: number | string;
+  data?: unknown;
+  message: string;
+  range: PhpCodeActionTextEditRange;
+  source?: string;
+}
+
+export interface PhpCodeActionContext {
+  diagnostics: readonly PhpCodeActionDiagnostic[];
+}
+
 /**
  * Cursor / selection covered by a PHP code-action request, expressed as
  * 0-based character offsets into the source.

@@ -13,6 +13,7 @@ import {
   offsetAtMonacoPosition,
   templateDefinitionNavigationRequest,
   templateCompletionFallbackRange,
+  templateCodeActionContextFromMonaco,
   templateReplaceRange,
 } from "./templateLanguageMonacoUtils";
 
@@ -193,11 +194,16 @@ async function provideLatteCodeActions<
   }
 
   const source = modelSource(model, documentContext.activeDocument.content);
+  const offsetRange = codeActionOffsetRange(source, range);
+  const diagnosticContext = templateCodeActionContextFromMonaco(
+    actionContext.markers,
+  );
 
   try {
-    const descriptors = await context
-      .getTemplateLanguageProviders()
-      .latte.provideCodeActions(source, codeActionOffsetRange(source, range));
+    const provider = context.getTemplateLanguageProviders().latte;
+    const descriptors = diagnosticContext
+      ? await provider.provideCodeActions(source, offsetRange, diagnosticContext)
+      : await provider.provideCodeActions(source, offsetRange);
 
     if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       return emptyLatteCodeActions();

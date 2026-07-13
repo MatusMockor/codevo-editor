@@ -15,8 +15,9 @@ import {
   isStoredWorkspaceRootActive,
   modelSource,
   offsetAtMonacoPosition,
-  templateDefinitionNavigationRequest,
   templateCompletionFallbackRange,
+  templateCodeActionContextFromMonaco,
+  templateDefinitionNavigationRequest,
   templateReplaceRange,
 } from "./templateLanguageMonacoUtils";
 
@@ -211,11 +212,16 @@ async function provideBladeCodeActions<
   }
 
   const source = modelSource(model, documentContext.activeDocument.content);
+  const offsetRange = codeActionOffsetRange(source, range);
+  const diagnosticContext = templateCodeActionContextFromMonaco(
+    actionContext.markers,
+  );
 
   try {
-    const descriptors = await context
-      .getTemplateLanguageProviders()
-      .blade.provideCodeActions(source, codeActionOffsetRange(source, range));
+    const provider = context.getTemplateLanguageProviders().blade;
+    const descriptors = diagnosticContext
+      ? await provider.provideCodeActions(source, offsetRange, diagnosticContext)
+      : await provider.provideCodeActions(source, offsetRange);
 
     if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {
       return emptyBladeCodeActions();

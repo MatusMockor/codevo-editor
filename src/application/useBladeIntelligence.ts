@@ -30,6 +30,7 @@ import type {
   BladeIntelligenceDependencies,
 } from "./bladeIntelligenceContracts";
 import type {
+  PhpCodeActionContext,
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
@@ -153,12 +154,18 @@ export function useBladeIntelligence(
     async (
       source: string,
       range: PhpCodeActionRange = { end: 0, start: 0 },
+      context?: PhpCodeActionContext,
     ): Promise<PhpCodeActionDescriptor[]> => {
-      return provideBladeCodeActionsFromProvider(source, range, {
-        createMissingBladeViewCodeAction,
-        currentWorkspaceRootRef,
-        workspaceRoot,
-      });
+      return provideBladeCodeActionsFromProvider(
+        source,
+        range,
+        {
+          createMissingBladeViewCodeAction,
+          currentWorkspaceRootRef,
+          workspaceRoot,
+        },
+        context,
+      );
     },
     [createMissingBladeViewCodeAction, currentWorkspaceRootRef, workspaceRoot],
   );

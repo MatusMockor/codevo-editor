@@ -54,6 +54,76 @@ describe("registerLatteTemplateMonacoProviders", () => {
     disposable.dispose();
     expect(registered.disposed).toEqual(["definition", "completion", "actions"]);
   });
+
+  it("maps Monaco markers into the Latte code-action diagnostic context", async () => {
+    const registered = registerProviders();
+    const provideCodeActions = vi.fn(async () => []);
+    const context = templateContext({ provideCodeActions });
+    const disposable = registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const markerData = {
+      candidateMethodNames: ["renderDetail"],
+      kind: "missing-presenter-method",
+      presenterPath: "/ws/app/UI/Home/HomePresenter.php",
+      target: "Home:detail",
+    };
+    const model = textModel("{link Home:detail}");
+
+    await registered.codeActionProvider?.provideCodeActions(
+      model,
+      {
+        endColumn: 18,
+        endLineNumber: 1,
+        startColumn: 7,
+        startLineNumber: 1,
+      } as Monaco.Range,
+      {
+        markers: [
+          {
+            code: "nette.missingPresenterMethod",
+            data: markerData,
+            endColumn: 18,
+            endLineNumber: 1,
+            message: "Missing presenter method.",
+            severity: 4,
+            source: "Nette",
+            startColumn: 7,
+            startLineNumber: 1,
+          },
+        ],
+        trigger: "manual",
+      } as unknown as Monaco.languages.CodeActionContext,
+      {} as never,
+    );
+
+    expect(provideCodeActions).toHaveBeenCalledWith(
+      "{link Home:detail}",
+      { end: 17, start: 6 },
+      {
+        diagnostics: [
+          {
+            code: "nette.missingPresenterMethod",
+            data: markerData,
+            message: "Missing presenter method.",
+            range: {
+              endColumn: 18,
+              endLineNumber: 1,
+              startColumn: 7,
+              startLineNumber: 1,
+            },
+            source: "Nette",
+          },
+        ],
+      },
+    );
+
+    disposable.dispose();
+  });
 });
 
 function registerProviders() {

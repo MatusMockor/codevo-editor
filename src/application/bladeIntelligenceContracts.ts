@@ -6,6 +6,7 @@ import type {
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import type {
+  PhpCodeActionContext,
   PhpCodeActionDescriptor,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
@@ -97,6 +98,7 @@ export interface BladeIntelligence {
   provideBladeCodeActions: (
     source: string,
     range?: PhpCodeActionRange,
+    context?: PhpCodeActionContext,
   ) => Promise<PhpCodeActionDescriptor[]>;
   provideBladeCompletions: (
     source: string,

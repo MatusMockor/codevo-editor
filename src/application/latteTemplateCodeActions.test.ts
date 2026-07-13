@@ -112,6 +112,53 @@ describe("provideLatteCodeActions", () => {
     ]);
   });
 
+  it("keeps existing missing-template actions unchanged when diagnostics are supplied", async () => {
+    const source = "{include 'partials/menu'}";
+    const actions = await provideLatteCodeActions(
+      makeOptions(),
+      source,
+      {
+        end: source.indexOf("menu") + "menu".length,
+        start: source.indexOf("menu"),
+      },
+      {
+        diagnostics: [
+          {
+            code: "nette.missingPresenterMethod",
+            data: {
+              candidateMethodNames: ["renderMenu"],
+              kind: "missing-presenter-method",
+              presenterPath: "/ws/app/UI/Home/HomePresenter.php",
+              target: "Home:menu",
+            },
+            message: "Missing presenter method.",
+            range: {
+              endColumn: 22,
+              endLineNumber: 1,
+              startColumn: 11,
+              startLineNumber: 1,
+            },
+            source: "Nette",
+          },
+        ],
+      },
+    );
+
+    expect(actions).toEqual([
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content: "",
+          path: "/ws/app/UI/Home/partials/menu.latte",
+          title: "Create Latte Template",
+        },
+        title: "Create Latte template partials/menu",
+      },
+    ]);
+  });
+
   it("does not create an action when an indexed candidate already exists", async () => {
     const source = "{include 'partials/menu'}";
     const actions = await provideLatteCodeActions(
