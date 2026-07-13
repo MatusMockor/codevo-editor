@@ -2,10 +2,7 @@ import {
   buildCreateMissingViewFileCodeAction,
   type CreateMissingViewFileCodeAction,
 } from "./phpBladeViewCodeActions";
-import {
-  phpLaravelFrameworkProvider,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
 import { phpNettePresenterLinkCodeActions } from "./phpNettePresenterLinkCodeActions";
@@ -31,22 +28,13 @@ export interface ActivePhpFrameworkCodeActions {
 
 export function activePhpFrameworkCodeActions({
   frameworkRuntime,
-  legacyIsLaravelFrameworkActive,
   ...dependencies
 }: PhpFrameworkCodeActionContributionDependencies & {
-  frameworkRuntime?: Pick<
-    PhpFrameworkRuntimeContext,
-    "providers" | "supports"
-  >;
-  legacyIsLaravelFrameworkActive: boolean;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "providers" | "supports">;
 }): ActivePhpFrameworkCodeActions {
-  const providers = frameworkRuntime
-    ? frameworkRuntime.supports("codeActions")
-      ? frameworkRuntime.providers
-      : []
-    : legacyIsLaravelFrameworkActive
-      ? [phpLaravelFrameworkProvider]
-      : [];
+  const providers = frameworkRuntime.supports("codeActions")
+    ? frameworkRuntime.providers
+    : [];
   const activeContributions = providers.flatMap((provider) =>
     phpFrameworkCodeActionContributionsForProvider(provider, dependencies),
   );

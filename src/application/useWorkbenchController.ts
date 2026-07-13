@@ -7547,7 +7547,6 @@ export function useWorkbenchController(
       activePhpFrameworkCodeActions({
         collectViewTargets: collectViewTargets,
         frameworkRuntime: phpFrameworkRuntimeContext,
-        legacyIsLaravelFrameworkActive: false,
         readTestFileIfExists,
         workspaceRoot,
       }),

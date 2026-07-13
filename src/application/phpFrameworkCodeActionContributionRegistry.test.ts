@@ -39,14 +39,10 @@ const CUSTOM_RUNTIME: PhpFrameworkRuntimeContext = {
   supports: (capability) => capability === "codeActions",
 };
 
-function selectActions(
-  frameworkRuntime: PhpFrameworkRuntimeContext | undefined,
-  legacyIsLaravelFrameworkActive = false,
-) {
+function selectActions(frameworkRuntime: PhpFrameworkRuntimeContext) {
   return activePhpFrameworkCodeActions({
     collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
     frameworkRuntime,
-    legacyIsLaravelFrameworkActive,
     readTestFileIfExists: vi.fn(async () => null),
     workspaceRoot: ROOT,
   });
@@ -118,11 +114,7 @@ class ProductPresenter extends Presenter
       supports: (capability) => capability !== "codeActions",
     };
 
-    expect(selectActions(runtime, true).contributions).toEqual([]);
-  });
-
-  it("keeps the legacy Laravel activation fallback without a runtime", () => {
-    expect(selectActions(undefined, true).contributions).toHaveLength(1);
+    expect(selectActions(runtime).contributions).toEqual([]);
   });
 
   it("preserves the missing Blade view creation descriptor", async () => {

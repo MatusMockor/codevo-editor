@@ -91,7 +91,6 @@ class OrderController
     const { contributions } = activePhpFrameworkCodeActions({
       collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
       frameworkRuntime: LARAVEL_RUNTIME,
-      legacyIsLaravelFrameworkActive: false,
       readTestFileIfExists: vi.fn(async () => null),
       workspaceRoot: ROOT,
     });
