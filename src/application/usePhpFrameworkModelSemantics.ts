@@ -139,7 +139,6 @@ export function usePhpFrameworkModelSemantics({
     ): Promise<string | null> => null,
   );
   const { resolvePhpMethodReturnType } = usePhpMethodReturnTypeResolver({
-    activePhpFrameworkProviders,
     currentWorkspaceRootRef,
     frameworkRuntime,
     readPhpClassMembersFromPath,

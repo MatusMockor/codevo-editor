@@ -16,12 +16,10 @@ import { phpMethodReturnExpressions } from "../domain/phpTypeAnalysis";
 import {
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import { createPhpFrameworkMethodReturnTypeStrategyAdapters } from "./phpFrameworkMethodReturnTypeStrategyAdapters";
 
 export interface PhpClassMemberReadResult {
@@ -38,10 +36,8 @@ export type PhpMethodReturnTypeResolver = (
 ) => Promise<string | null>;
 
 export interface UsePhpMethodReturnTypeResolverOptions {
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   readPhpClassMembersFromPath: (
     path: string,
     className: string,
@@ -84,10 +80,8 @@ export interface UsePhpMethodReturnTypeResolverOptions {
 }
 
 export function usePhpMethodReturnTypeResolver({
-  activePhpFrameworkProviders,
   currentWorkspaceRootRef,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readPhpClassMembersFromPath,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
@@ -101,20 +95,11 @@ export function usePhpMethodReturnTypeResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpMethodReturnTypeResolverOptions) {
-  const activeFrameworkRuntime = useMemo(
-    () =>
-      phpFrameworkRuntimeContextFromDependencies({
-        activePhpFrameworkProviders,
-        frameworkRuntime,
-        isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
-      }),
-    [activePhpFrameworkProviders, frameworkRuntime, legacyIsLaravelFrameworkActive],
-  );
-  const frameworkProviders = activeFrameworkRuntime.providers;
+  const frameworkProviders = frameworkRuntime.providers;
   const returnTypeStrategy = useMemo(
     () =>
       createPhpFrameworkMethodReturnTypeStrategyAdapters({
-        frameworkRuntime: activeFrameworkRuntime,
+        frameworkRuntime,
         resolvePhpFrameworkBuilderModelType: (source, position, expression) =>
           resolvePhpEloquentBuilderModelTypeRef.current(
             source,
@@ -125,7 +110,7 @@ export function usePhpMethodReturnTypeResolver({
           resolvePhpLaravelProjectMorphMapModelType,
       }),
     [
-      activeFrameworkRuntime,
+      frameworkRuntime,
       resolvePhpEloquentBuilderModelTypeRef,
       resolvePhpLaravelProjectMorphMapModelType,
     ],

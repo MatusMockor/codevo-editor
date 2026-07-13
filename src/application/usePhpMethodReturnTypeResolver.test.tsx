@@ -85,10 +85,8 @@ function makeOptions(
   );
 
   return {
-    activePhpFrameworkProviders: [],
     currentWorkspaceRootRef,
     frameworkRuntime: LARAVEL_RUNTIME,
-    isLaravelFrameworkActive: false,
     readPhpClassMembersFromPath: vi.fn(async (path: string) => {
       const className = pathToClassName.get(path);
 
@@ -172,7 +170,7 @@ function renderHook(options: HookOptions) {
 }
 
 describe("usePhpMethodReturnTypeResolver", () => {
-  it("keeps generic runtime inert despite the legacy Laravel flag", async () => {
+  it("uses runtime Laravel state for the Laravel gate", async () => {
     const resolvePhpEloquentBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
@@ -195,9 +193,7 @@ class Posts
           },
         },
         {
-          activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
           frameworkRuntime: GENERIC_RUNTIME,
-          isLaravelFrameworkActive: true,
           resolvePhpEloquentBuilderModelTypeRef: {
             current: resolvePhpEloquentBuilderModelType,
           },
