@@ -49,8 +49,10 @@ import {
   phpVariableTypeInSource,
 } from "./phpSemanticEngine";
 import {
+  phpIdentifierContextAtWithLaravel as phpIdentifierContextAt,
+} from "./phpLaravelIdentifierNavigation";
+import {
   phpExtendsClassName,
-  phpIdentifierContextAt,
   phpMethodPositionOrNull,
 } from "./phpNavigation";
 import {

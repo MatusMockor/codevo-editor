@@ -4,6 +4,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import {
   goToPhpFrameworkIdentifierDefinition,
@@ -58,6 +62,7 @@ function makeDeps(
     goToPhpMemberPropertyDefinition: falseHandler,
     goToPhpMethodCallDefinition: falseHandler,
     goToPhpStaticMethodCallDefinition: falseHandler,
+    providers: [phpLaravelFrameworkProvider],
     ...overrides,
   };
 }
@@ -357,6 +362,38 @@ Route::get('/reports', [ReportController::class, 'store']);`;
 
       harness.unmount();
     }
+  });
+
+  it.each([
+    { label: "generic", providers: [] },
+    { label: "Nette-only", providers: [phpNetteFrameworkProvider] },
+  ])("uses core context with $label providers", async ({ providers }) => {
+    const source = "<?php route('dashboard');";
+    const goToPhpFrameworkIdentifierDefinition = vi.fn(async () => false);
+    const goToPhpClassIdentifierDefinition = vi.fn(async () => true);
+    const deps = makeDeps({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "web.php",
+        path: `${ROOT}/routes/web.php`,
+        savedContent: "",
+      },
+      activeEditorPositionRef: { current: positionAfter(source, "dashboard") },
+      goToPhpClassIdentifierDefinition,
+      goToPhpFrameworkIdentifierDefinition,
+      providers,
+    });
+    const harness = renderHook(deps);
+
+    await expect(harness.api().goToContextualPhpDefinition()).resolves.toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinition).toHaveBeenCalledWith({
+      kind: "classIdentifier",
+      name: "dashboard",
+    });
+    expect(goToPhpClassIdentifierDefinition).toHaveBeenCalledWith("dashboard");
+
+    harness.unmount();
   });
 
   it("ignores non-PHP documents", async () => {

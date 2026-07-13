@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  phpIdentifierContextAtWithLaravel as phpIdentifierContextAt,
+} from "./phpLaravelIdentifierNavigation";
+import {
   phpClassConstantPositionOrNull,
   phpClassIdentifierNameAt,
   phpClassPathCandidates,
@@ -7,7 +10,6 @@ import {
   phpDocMethodPositionOrNull,
   phpEnclosingMethodNameAt,
   phpExtendsClassName,
-  phpIdentifierContextAt,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
   phpLaravelRouteActionMethodCompletionContextAt,

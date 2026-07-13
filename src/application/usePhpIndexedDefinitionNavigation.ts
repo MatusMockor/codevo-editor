@@ -1,16 +1,15 @@
 import { useCallback, type MutableRefObject } from "react";
 import { shouldIndexWorkspace } from "../domain/intelligence";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpIdentifierContextAt,
-  type PhpIdentifierContext,
-} from "../domain/phpNavigation";
+import type { PhpIdentifierContext } from "../domain/phpNavigation";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import type { EditorDocument, IntelligenceMode } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   type PhpFrameworkIdentifierDefinitionHandler,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
+import { resolvePhpIdentifierContextAt } from "./phpFrameworkIdentifierContextResolverRegistry";
 import {
   bestIndexedSymbolMatch,
   editorPositionFromProjectSymbol,
@@ -40,6 +39,7 @@ export interface PhpIndexedDefinitionNavigationDependencies {
     label: string,
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
+  providers: readonly PhpFrameworkProvider[];
   reportErrorForActiveWorkspaceRoot(
     rootPath: string,
     title: string,
@@ -66,6 +66,7 @@ export function usePhpIndexedDefinitionNavigation({
   intelligenceMode,
   openNavigationTarget,
   projectSymbolSearch,
+  providers,
   reportErrorForActiveWorkspaceRoot,
   setMessage,
   workspaceRoot,
@@ -132,9 +133,10 @@ export function usePhpIndexedDefinitionNavigation({
         return await openIndexedSymbolByName(symbolName);
       }
 
-      const context = phpIdentifierContextAt(
+      const context = resolvePhpIdentifierContextAt(
         activeDocument.content,
         editorPosition,
+        providers,
       );
 
       if (!context) {
@@ -206,6 +208,7 @@ export function usePhpIndexedDefinitionNavigation({
     intelligenceMode,
     openNavigationTarget,
     projectSymbolSearch,
+    providers,
     reportErrorForActiveWorkspaceRoot,
     setMessage,
     workspaceRoot,

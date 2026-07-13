@@ -8085,6 +8085,7 @@ export function useWorkbenchController(
     goToPhpMemberPropertyDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
+    providers: activePhpFrameworkProviders,
   });
 
   const { goToSuperMethod } = usePhpSuperMethodNavigation({
@@ -8113,6 +8114,7 @@ export function useWorkbenchController(
     intelligenceMode,
     openNavigationTarget,
     projectSymbolSearch,
+    providers: activePhpFrameworkProviders,
     reportErrorForActiveWorkspaceRoot,
     setMessage,
     workspaceRoot,

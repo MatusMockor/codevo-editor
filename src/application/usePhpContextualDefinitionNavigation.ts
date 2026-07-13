@@ -1,13 +1,12 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpIdentifierContextAt,
-  type PhpIdentifierContext,
-} from "../domain/phpNavigation";
+import type { PhpIdentifierContext } from "../domain/phpNavigation";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import {
   type PhpFrameworkIdentifierDefinitionHandler,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
+import { resolvePhpIdentifierContextAt } from "./phpFrameworkIdentifierContextResolverRegistry";
 
 type PhpContextHandler<Kind extends PhpIdentifierContext["kind"]> = (
   context: Extract<PhpIdentifierContext, { kind: Kind }>,
@@ -22,6 +21,7 @@ export interface PhpContextualDefinitionNavigationDependencies {
   goToPhpMemberPropertyDefinition: PhpContextHandler<"memberPropertyAccess">;
   goToPhpMethodCallDefinition: PhpContextHandler<"methodCall">;
   goToPhpStaticMethodCallDefinition: PhpContextHandler<"staticMethodCall">;
+  providers: readonly PhpFrameworkProvider[];
 }
 
 export interface PhpContextualDefinitionNavigation {
@@ -37,6 +37,7 @@ export function usePhpContextualDefinitionNavigation({
   goToPhpMemberPropertyDefinition,
   goToPhpMethodCallDefinition,
   goToPhpStaticMethodCallDefinition,
+  providers,
 }: PhpContextualDefinitionNavigationDependencies): PhpContextualDefinitionNavigation {
   const goToContextualPhpDefinition = useCallback(async (): Promise<boolean> => {
     if (!activeDocument || activeDocument.language !== "php") {
@@ -49,7 +50,11 @@ export function usePhpContextualDefinitionNavigation({
       return false;
     }
 
-    const context = phpIdentifierContextAt(activeDocument.content, editorPosition);
+    const context = resolvePhpIdentifierContextAt(
+      activeDocument.content,
+      editorPosition,
+      providers,
+    );
 
     if (!context) {
       return false;
@@ -92,6 +97,7 @@ export function usePhpContextualDefinitionNavigation({
     goToPhpMemberPropertyDefinition,
     goToPhpMethodCallDefinition,
     goToPhpStaticMethodCallDefinition,
+    providers,
   ]);
 
   return { goToContextualPhpDefinition };

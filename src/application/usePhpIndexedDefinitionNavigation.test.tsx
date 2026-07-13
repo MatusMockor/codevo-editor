@@ -3,6 +3,10 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { ProjectSymbolSearchResult } from "../domain/projectSymbols";
 import {
   usePhpIndexedDefinitionNavigation,
@@ -57,6 +61,7 @@ function makeDeps(
     projectSymbolSearch: {
       searchProjectSymbols: vi.fn(async () => [symbol()]),
     },
+    providers: [phpLaravelFrameworkProvider],
     reportErrorForActiveWorkspaceRoot: vi.fn(),
     setMessage: vi.fn(),
     workspaceRoot: ROOT,
@@ -196,6 +201,74 @@ route('dashboard');`,
       routeName: "dashboard",
     });
     expect(deps.projectSymbolSearch.searchProjectSymbols).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not reinterpret a recognized unresolved Laravel route action as core PHP", async () => {
+    const source = "<?php Route::get('/', [ReportController::class, 'missing']);";
+    const goToPhpFrameworkIdentifierDefinition = vi.fn(async () => false);
+    const goToPhpClassIdentifierDefinition = vi.fn(async () => true);
+    const deps = makeDeps({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "web.php",
+        path: `${ROOT}/routes/web.php`,
+        savedContent: "",
+      },
+      activeEditorPositionRef: {
+        current: { column: source.indexOf("missing") + 7, lineNumber: 1 },
+      },
+      goToPhpClassIdentifierDefinition,
+      goToPhpFrameworkIdentifierDefinition,
+      identifierAtEditorPosition: vi.fn(() => "missing"),
+    });
+    const harness = renderHook(deps);
+
+    await expect(harness.api().goToIndexedSymbolDefinition()).resolves.toBe(false);
+    expect(goToPhpFrameworkIdentifierDefinition).toHaveBeenCalledWith({
+      className: "ReportController",
+      kind: "laravelRouteActionMethod",
+      methodName: "missing",
+    });
+    expect(goToPhpClassIdentifierDefinition).not.toHaveBeenCalled();
+    expect(deps.projectSymbolSearch.searchProjectSymbols).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it.each([
+    { label: "generic", providers: [] },
+    { label: "Nette-only", providers: [phpNetteFrameworkProvider] },
+  ])("uses core context with $label providers", async ({ providers }) => {
+    const source = "<?php route('dashboard');";
+    const goToPhpFrameworkIdentifierDefinition = vi.fn(async () => false);
+    const goToPhpClassIdentifierDefinition = vi.fn(async () => true);
+    const deps = makeDeps({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "web.php",
+        path: `${ROOT}/routes/web.php`,
+        savedContent: "",
+      },
+      activeEditorPositionRef: {
+        current: { column: source.indexOf("dashboard") + 9, lineNumber: 1 },
+      },
+      goToPhpClassIdentifierDefinition,
+      goToPhpFrameworkIdentifierDefinition,
+      identifierAtEditorPosition: vi.fn(() => "dashboard"),
+      providers,
+    });
+    const harness = renderHook(deps);
+
+    await expect(harness.api().goToIndexedSymbolDefinition()).resolves.toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinition).toHaveBeenCalledWith({
+      kind: "classIdentifier",
+      name: "dashboard",
+    });
+    expect(goToPhpClassIdentifierDefinition).toHaveBeenCalledWith("dashboard");
 
     harness.unmount();
   });
