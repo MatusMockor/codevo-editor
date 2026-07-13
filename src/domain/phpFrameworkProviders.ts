@@ -550,6 +550,16 @@ export interface PhpFrameworkTargetCollectionCapability {
   searchQueries: readonly string[];
 }
 
+export type PhpFrameworkActiveDocumentDiagnosticsDescriptor =
+  | {
+      kind: "bladeViewReferences";
+      language: "blade";
+    }
+  | {
+      kind: "lattePresenterLinks" | "latteTemplateReferences";
+      language: "latte";
+    };
+
 export interface PhpFrameworkNewFileSkeleton {
   importName: string;
   parentName: string;
@@ -608,6 +618,7 @@ export interface PhpFrameworkProvider {
     magicSource?: string;
   };
   targetCollections?: readonly PhpFrameworkTargetCollectionCapability[];
+  activeDocumentDiagnostics?: readonly PhpFrameworkActiveDocumentDiagnosticsDescriptor[];
   routes?: {
     referenceAt?: (
       context: PhpFrameworkRouteReferenceContext,

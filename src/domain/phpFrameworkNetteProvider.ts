@@ -86,6 +86,16 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       searchQueries: NETTE_VIEW_DATA_SEARCH_QUERIES,
     },
   ],
+  activeDocumentDiagnostics: [
+    {
+      kind: "latteTemplateReferences",
+      language: "latte",
+    },
+    {
+      kind: "lattePresenterLinks",
+      language: "latte",
+    },
+  ],
   diagnostics: {
     // Nette magic suppression (spec §4.6): calls/properties on the Latte
     // template object (`$this->template->foo`, `$this->template->foo()`) and

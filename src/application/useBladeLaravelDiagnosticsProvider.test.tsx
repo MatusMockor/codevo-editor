@@ -4,7 +4,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
@@ -33,10 +37,21 @@ function runtimeWithProvider(
   providerId: string | null,
   overrides: Partial<PhpFrameworkRuntimeContext> = {},
 ): PhpFrameworkRuntimeContext {
+  const providerById: Record<string, PhpFrameworkProvider> = {
+    custom: { id: "custom" },
+    laravel: phpLaravelFrameworkProvider,
+    nette: phpNetteFrameworkProvider,
+  };
+  const provider = providerId
+    ? (providerById[providerId] ?? { id: providerId })
+    : null;
+  const providers = provider ? [provider] : [];
+
   return {
     ...LARAVEL_RUNTIME,
     isLaravel: providerId === "laravel",
     isNette: providerId === "nette",
+    providers,
     profile: providerId === "nette" ? "nette" : "generic",
     hasProvider: (candidateId) => candidateId === providerId,
     ...overrides,

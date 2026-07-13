@@ -359,6 +359,12 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       searchQueries: laravelViewDataSearchQueries,
     },
   ],
+  activeDocumentDiagnostics: [
+    {
+      kind: "bladeViewReferences",
+      language: "blade",
+    },
+  ],
   config: {
     completionInsertText: ({ key, prefix }) =>
       phpLaravelConfigCompletionInsertText(key, prefix),

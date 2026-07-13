@@ -1,10 +1,93 @@
 import { describe, expect, it, vi } from "vitest";
-import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpNetteFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { activePhpFrameworkDocumentDiagnosticsProvider } from "./phpFrameworkActiveDocumentDiagnosticsRegistry";
 
 describe("activePhpFrameworkDocumentDiagnosticsProvider", () => {
+  it("runs provider-owned descriptors from the active runtime", async () => {
+    const descriptorProvider: PhpFrameworkProvider = {
+      id: "custom-blade",
+      activeDocumentDiagnostics: [
+        {
+          kind: "bladeViewReferences",
+          language: "blade",
+        },
+      ],
+    };
+    const collectViewTargets = vi.fn(async () => [
+      {
+        name: "dashboard",
+        path: "/repo/resources/views/dashboard.blade.php",
+        relativePath: "resources/views/dashboard.blade.php",
+      },
+    ]);
+    const provider = activePhpFrameworkDocumentDiagnosticsProvider({
+      collectCompleteLatteTemplateRelativePaths: vi.fn(async () => []),
+      collectViewTargets,
+      provideLattePresenterLinkDiagnostics: vi.fn(async () => []),
+      document: {
+        content: "@include('partials.missing')",
+        language: "blade",
+        name: "show.blade.php",
+        path: "/repo/resources/views/show.blade.php",
+        savedContent: "",
+      },
+      frameworkRuntime: createPhpFrameworkRuntimeContext(
+        createPhpFrameworkIntelligence({
+          matchedProviderIds: ["custom-blade"],
+          profile: "generic",
+          providers: [descriptorProvider],
+        }),
+      ),
+      workspaceRoot: "/repo",
+    });
+
+    await expect(provider?.provideDiagnostics()).resolves.toMatchObject([
+      {
+        code: "laravel.missingView",
+      },
+    ]);
+    expect(collectViewTargets).toHaveBeenCalledTimes(1);
+  });
+
+  it("filters active-document descriptors by document language", () => {
+    const descriptorProvider: PhpFrameworkProvider = {
+      id: "custom-blade",
+      activeDocumentDiagnostics: [
+        {
+          kind: "bladeViewReferences",
+          language: "blade",
+        },
+      ],
+    };
+    const provider = activePhpFrameworkDocumentDiagnosticsProvider({
+      collectCompleteLatteTemplateRelativePaths: vi.fn(async () => []),
+      collectViewTargets: vi.fn(async () => []),
+      provideLattePresenterLinkDiagnostics: vi.fn(async () => []),
+      document: {
+        content: "<?php\n",
+        language: "php",
+        name: "index.php",
+        path: "/repo/index.php",
+        savedContent: "",
+      },
+      frameworkRuntime: createPhpFrameworkRuntimeContext(
+        createPhpFrameworkIntelligence({
+          matchedProviderIds: ["custom-blade"],
+          profile: "generic",
+          providers: [descriptorProvider],
+        }),
+      ),
+      workspaceRoot: "/repo",
+    });
+
+    expect(provider).toBeNull();
+  });
+
   it("normalizes workspace paths before resolving Nette Latte template references", async () => {
     const provider = activePhpFrameworkDocumentDiagnosticsProvider({
       collectCompleteLatteTemplateRelativePaths: vi.fn(async () => [
