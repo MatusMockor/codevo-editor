@@ -28,10 +28,9 @@ export type PhpCreateClassCodeAction = (
   isRequestedRootActive: () => boolean,
 ) => Promise<PhpCodeActionDescriptor | null>;
 
-export type CreateMissingBladeViewCodeAction = (
+export type PhpFrameworkCodeActionContribution = (
   source: string,
   range: PhpCodeActionRange,
-  language: "blade" | "php",
   isRequestedRootActive: () => boolean,
 ) => Promise<PhpCodeActionDescriptor | null>;
 
@@ -39,7 +38,7 @@ export interface PhpWorkspaceCodeActionCollectorOptions {
   activeDocumentPath: string | null;
   collectPhpAbstractMembersToImplement: PhpAbstractMembersCollector;
   collectPhpOverridableParentMethods: PhpOverridableParentMethodsCollector;
-  createMissingBladeViewCodeAction: CreateMissingBladeViewCodeAction;
+  frameworkCodeActionContributions: readonly PhpFrameworkCodeActionContribution[];
   intelligenceMode: IntelligenceMode;
   isRequestedRootActive: () => boolean;
   phpCreateClassCodeAction: PhpCreateClassCodeAction;
@@ -62,7 +61,7 @@ export async function collectPhpWorkspaceCodeActions({
   activeDocumentPath,
   collectPhpAbstractMembersToImplement,
   collectPhpOverridableParentMethods,
-  createMissingBladeViewCodeAction,
+  frameworkCodeActionContributions,
   intelligenceMode,
   isRequestedRootActive,
   phpCreateClassCodeAction,
@@ -91,19 +90,20 @@ export async function collectPhpWorkspaceCodeActions({
     actions.push(createClassAction);
   }
 
-  const createMissingViewAction = await createMissingBladeViewCodeAction(
-    source,
-    range,
-    "php",
-    isRequestedRootActive,
-  );
+  for (const contribution of frameworkCodeActionContributions) {
+    const frameworkAction = await contribution(
+      source,
+      range,
+      isRequestedRootActive,
+    );
 
-  if (!isRequestedRootActive()) {
-    return null;
-  }
+    if (!isRequestedRootActive()) {
+      return null;
+    }
 
-  if (createMissingViewAction) {
-    actions.push(createMissingViewAction);
+    if (frameworkAction) {
+      actions.push(frameworkAction);
+    }
   }
 
   if (!structure) {

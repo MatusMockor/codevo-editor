@@ -8,15 +8,13 @@ import {
   type UsePhpCodeActionsResult,
 } from "./usePhpCodeActions";
 import { usePhpInheritedMemberCollector } from "./usePhpInheritedMemberCollector";
-import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
 
 interface UsePhpCodeActionProviderOptions {
   activeDocumentPath: string | null;
-  collectPhpLaravelViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
   currentWorkspaceRootRef: { readonly current: string | null };
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  frameworkCodeActionContributions: readonly PhpFrameworkCodeActionContribution[];
   intelligenceMode: IntelligenceMode;
-  isLaravelFrameworkActive?: boolean;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent: (path: string) => Promise<string>;
   readTestFileIfExists: (path: string) => Promise<string | null>;
@@ -25,22 +23,11 @@ interface UsePhpCodeActionProviderOptions {
   workspaceRoot: string | null;
 }
 
-interface PhpCodeActionFrameworkCapabilityOptions {
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  legacyIsLaravelFrameworkActive: boolean;
-}
-
-interface PhpCodeActionFrameworkCapabilities {
-  canCreateMissingBladeViews: boolean;
-}
-
 export function usePhpCodeActionProvider({
   activeDocumentPath,
-  collectPhpLaravelViewTargets,
   currentWorkspaceRootRef,
-  frameworkRuntime,
+  frameworkCodeActionContributions,
   intelligenceMode,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   projectSymbolSearch,
   readNavigationFileContent,
   readTestFileIfExists,
@@ -55,19 +42,12 @@ export function usePhpCodeActionProvider({
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
   });
-  const { canCreateMissingBladeViews } =
-    resolvePhpCodeActionFrameworkCapabilities({
-      frameworkRuntime,
-      legacyIsLaravelFrameworkActive,
-    });
-
   return usePhpCodeActions({
     activeDocumentPath,
-    canCreateMissingBladeViews,
     collectPhpAbstractMembersToImplement,
-    collectPhpLaravelViewTargets,
     collectPhpOverridableParentMethods,
     currentWorkspaceRootRef,
+    frameworkCodeActionContributions,
     intelligenceMode,
     projectSymbolSearch,
     readTestFileIfExists,
@@ -75,20 +55,4 @@ export function usePhpCodeActionProvider({
     workspaceDescriptor,
     workspaceRoot,
   });
-}
-
-function resolvePhpCodeActionFrameworkCapabilities({
-  frameworkRuntime,
-  legacyIsLaravelFrameworkActive,
-}: PhpCodeActionFrameworkCapabilityOptions): PhpCodeActionFrameworkCapabilities {
-  if (!frameworkRuntime) {
-    return {
-      canCreateMissingBladeViews: legacyIsLaravelFrameworkActive,
-    };
-  }
-
-  return {
-    canCreateMissingBladeViews:
-      frameworkRuntime.isLaravel && frameworkRuntime.supports("views"),
-  };
 }

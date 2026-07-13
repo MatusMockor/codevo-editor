@@ -180,6 +180,7 @@ export type {
   PhpCodeActionNewFile,
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
+import { activePhpFrameworkCodeActions } from "./phpFrameworkCodeActionContributionRegistry";
 import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
 import {
   shouldApplyClassEditAfterWrite,
@@ -7635,20 +7636,37 @@ export function useWorkbenchController(
       workspaceRoot,
     });
 
-  const { createMissingBladeViewCodeAction, providePhpCodeActions } =
-    usePhpCodeActionProvider({
-      activeDocumentPath: activeDocument?.path ?? null,
-      collectPhpLaravelViewTargets: collectViewTargets,
-      currentWorkspaceRootRef,
-      frameworkRuntime: phpFrameworkRuntimeContext,
-      intelligenceMode,
-      projectSymbolSearch,
-      readNavigationFileContent,
+  const {
+    contributions: phpFrameworkCodeActionContributions,
+    createMissingBladeViewCodeAction,
+  } = useMemo(
+    () =>
+      activePhpFrameworkCodeActions({
+        collectPhpLaravelViewTargets: collectViewTargets,
+        frameworkRuntime: phpFrameworkRuntimeContext,
+        legacyIsLaravelFrameworkActive: false,
+        readTestFileIfExists,
+        workspaceRoot,
+      }),
+    [
+      collectViewTargets,
+      phpFrameworkRuntimeContext,
       readTestFileIfExists,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
       workspaceRoot,
-    });
+    ],
+  );
+  const { providePhpCodeActions } = usePhpCodeActionProvider({
+    activeDocumentPath: activeDocument?.path ?? null,
+    currentWorkspaceRootRef,
+    frameworkCodeActionContributions: phpFrameworkCodeActionContributions,
+    intelligenceMode,
+    projectSymbolSearch,
+    readNavigationFileContent,
+    readTestFileIfExists,
+    resolvePhpClassSourcePaths,
+    workspaceDescriptor,
+    workspaceRoot,
+  });
 
   const { openPhpClassTarget } = usePhpClassTargetNavigation({
     activeDocument,

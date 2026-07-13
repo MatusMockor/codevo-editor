@@ -15,7 +15,7 @@ function baseOptions(
     activeDocumentPath: `${ROOT}/src/Example.php`,
     collectPhpAbstractMembersToImplement: vi.fn(async () => null),
     collectPhpOverridableParentMethods: vi.fn(async () => null),
-    createMissingBladeViewCodeAction: vi.fn(async () => null),
+    frameworkCodeActionContributions: [],
     intelligenceMode: "fullSmart",
     isRequestedRootActive: vi.fn(() => true),
     phpCreateClassCodeAction: vi.fn(async () => null),
@@ -50,7 +50,7 @@ function projectSymbol(
 describe("phpCodeActionWorkspaceCollector", () => {
   it("drops the provider response when the root changes after an async action", async () => {
     let active = true;
-    const createMissingBladeViewCodeAction = vi.fn(async () => null);
+    const frameworkCodeActionContribution = vi.fn(async () => null);
     const options = baseOptions({
       isRequestedRootActive: vi.fn(() => active),
       phpCreateClassCodeAction: vi.fn(async () => {
@@ -61,13 +61,13 @@ describe("phpCodeActionWorkspaceCollector", () => {
           title: "Create class Invoice",
         };
       }),
-      createMissingBladeViewCodeAction,
+      frameworkCodeActionContributions: [frameworkCodeActionContribution],
     });
 
     const actions = await collectPhpWorkspaceCodeActions(options);
 
     expect(actions).toBeNull();
-    expect(createMissingBladeViewCodeAction).not.toHaveBeenCalled();
+    expect(frameworkCodeActionContribution).not.toHaveBeenCalled();
   });
 
   it("collects type-symbol import actions from the per-root index", async () => {

@@ -12,17 +12,19 @@ export interface CreateMissingBladeViewCodeActionOptions {
   workspaceRoot: string | null;
 }
 
+export type CreateMissingBladeViewCodeAction = (
+  source: string,
+  range: PhpCodeActionRange,
+  language: "blade" | "php",
+  isRequestedRootActive: () => boolean,
+) => Promise<PhpCodeActionDescriptor | null>;
+
 export function buildCreateMissingBladeViewCodeAction({
   canCreateMissingBladeViews,
   collectPhpLaravelViewTargets,
   readTestFileIfExists,
   workspaceRoot,
-}: CreateMissingBladeViewCodeActionOptions): (
-  source: string,
-  range: PhpCodeActionRange,
-  language: "blade" | "php",
-  isRequestedRootActive: () => boolean,
-) => Promise<PhpCodeActionDescriptor | null> {
+}: CreateMissingBladeViewCodeActionOptions): CreateMissingBladeViewCodeAction {
   return async (
     source,
     range,

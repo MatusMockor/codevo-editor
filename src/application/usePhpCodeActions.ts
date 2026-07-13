@@ -7,7 +7,6 @@ import {
   type WorkspaceDescriptor,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { buildCreateMissingBladeViewCodeAction } from "./phpBladeViewCodeActions";
 import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeAction";
 import {
   collectPhpClassScopedCodeActions,
@@ -20,7 +19,7 @@ import type {
 import { orderPhpCodeActions } from "./phpCodeActionOrdering";
 import {
   collectPhpWorkspaceCodeActions,
-  type CreateMissingBladeViewCodeAction,
+  type PhpFrameworkCodeActionContribution,
 } from "./phpCodeActionWorkspaceCollector";
 import {
   type PhpAbstractMembersCollector,
@@ -45,9 +44,8 @@ export type {
 export interface UsePhpCodeActionsOptions {
   activeDocumentPath: string | null;
   collectPhpAbstractMembersToImplement: PhpAbstractMembersCollector;
-  collectPhpLaravelViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
   collectPhpOverridableParentMethods: PhpOverridableParentMethodsCollector;
-  canCreateMissingBladeViews: boolean;
+  frameworkCodeActionContributions: readonly PhpFrameworkCodeActionContribution[];
   currentWorkspaceRootRef: { readonly current: string | null };
   intelligenceMode: IntelligenceMode;
   projectSymbolSearch: ProjectSymbolSearchGateway;
@@ -58,7 +56,6 @@ export interface UsePhpCodeActionsOptions {
 }
 
 export interface UsePhpCodeActionsResult {
-  createMissingBladeViewCodeAction: CreateMissingBladeViewCodeAction;
   providePhpCodeActions: (
     source: string,
     range?: PhpCodeActionRange,
@@ -67,11 +64,10 @@ export interface UsePhpCodeActionsResult {
 
 export function usePhpCodeActions({
   activeDocumentPath,
-  canCreateMissingBladeViews,
   collectPhpAbstractMembersToImplement,
-  collectPhpLaravelViewTargets,
   collectPhpOverridableParentMethods,
   currentWorkspaceRootRef,
+  frameworkCodeActionContributions,
   intelligenceMode,
   projectSymbolSearch,
   readTestFileIfExists,
@@ -79,21 +75,6 @@ export function usePhpCodeActions({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpCodeActionsOptions): UsePhpCodeActionsResult {
-  const createMissingBladeViewCodeAction = useCallback(
-    buildCreateMissingBladeViewCodeAction({
-      canCreateMissingBladeViews,
-      collectPhpLaravelViewTargets,
-      readTestFileIfExists,
-      workspaceRoot,
-    }),
-    [
-      canCreateMissingBladeViews,
-      collectPhpLaravelViewTargets,
-      readTestFileIfExists,
-      workspaceRoot,
-    ],
-  );
-
   const phpCreateClassCodeAction = useCallback(
     buildPhpCreateClassCodeAction({
       readTestFileIfExists,
@@ -137,7 +118,7 @@ export function usePhpCodeActions({
           activeDocumentPath,
           collectPhpAbstractMembersToImplement,
           collectPhpOverridableParentMethods,
-          createMissingBladeViewCodeAction,
+          frameworkCodeActionContributions,
           intelligenceMode,
           isRequestedRootActive,
           phpCreateClassCodeAction,
@@ -162,7 +143,7 @@ export function usePhpCodeActions({
       activeDocumentPath,
       collectPhpAbstractMembersToImplement,
       collectPhpOverridableParentMethods,
-      createMissingBladeViewCodeAction,
+      frameworkCodeActionContributions,
       intelligenceMode,
       phpCreateClassCodeAction,
       projectSymbolSearch,
@@ -171,5 +152,5 @@ export function usePhpCodeActions({
     ],
   );
 
-  return { createMissingBladeViewCodeAction, providePhpCodeActions };
+  return { providePhpCodeActions };
 }
