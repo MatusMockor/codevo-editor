@@ -73,6 +73,8 @@ import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavi
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
 import { usePhpFrameworkIdentifierDefinitionNavigation } from "./usePhpFrameworkIdentifierDefinitionNavigation";
 import { createPhpFrameworkIdentifierNavigationAdapters } from "./phpFrameworkIdentifierNavigationAdapterComposition";
+import { createPhpLaravelIdentifierNavigationActivationAdapter } from "./phpLaravelIdentifierNavigationActivationAdapter";
+import { createPhpNetteIdentifierNavigationActivationAdapter } from "./phpNetteIdentifierNavigationActivationAdapter";
 import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
 import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
 import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
@@ -7916,28 +7918,33 @@ export function useWorkbenchController(
   } = useMemo(
     () =>
       createPhpFrameworkIdentifierNavigationAdapters({
-        activeDocument,
+        activationAdapters: [
+          createPhpLaravelIdentifierNavigationActivationAdapter({
+            activeDocument,
+            goToPhpFrameworkLiteralDefinition,
+            goToPhpLaravelAuthGuardDefinition,
+            goToPhpLaravelBroadcastConnectionDefinition,
+            goToPhpLaravelCacheStoreDefinition,
+            goToPhpLaravelDatabaseConnectionDefinition,
+            goToPhpLaravelGateAbilityDefinition,
+            goToPhpLaravelLogChannelDefinition,
+            goToPhpLaravelMailMailerDefinition,
+            goToPhpLaravelMiddlewareAliasDefinition,
+            goToPhpLaravelPasswordBrokerDefinition,
+            goToPhpLaravelQueueConnectionDefinition,
+            goToPhpLaravelRedisConnectionDefinition,
+            goToPhpLaravelRelationStringDefinition,
+            goToPhpLaravelStorageDiskDefinition,
+            openDirectPhpMethodTarget,
+            openPhpClassTarget,
+          }),
+          createPhpNetteIdentifierNavigationActivationAdapter({
+            activeDocument,
+            activeEditorPositionRef,
+            providePhpNetteInjectionDefinition,
+          }),
+        ],
         frameworkRuntime: phpFrameworkRuntimeContext,
-        goToPhpFrameworkLiteralDefinition,
-        goToPhpLaravelAuthGuardDefinition,
-        goToPhpLaravelBroadcastConnectionDefinition,
-        goToPhpLaravelCacheStoreDefinition,
-        goToPhpLaravelDatabaseConnectionDefinition,
-        goToPhpLaravelGateAbilityDefinition,
-        goToPhpLaravelLogChannelDefinition,
-        goToPhpLaravelMailMailerDefinition,
-        goToPhpLaravelMiddlewareAliasDefinition,
-        goToPhpLaravelPasswordBrokerDefinition,
-        goToPhpLaravelQueueConnectionDefinition,
-        goToPhpLaravelRedisConnectionDefinition,
-        goToPhpLaravelRelationStringDefinition,
-        goToPhpLaravelStorageDiskDefinition,
-        netteDependencies: {
-          activeEditorPositionRef,
-          providePhpNetteInjectionDefinition,
-        },
-        openDirectPhpMethodTarget,
-        openPhpClassTarget,
       }),
     [
       activeDocument,

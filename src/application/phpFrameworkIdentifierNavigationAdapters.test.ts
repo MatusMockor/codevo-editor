@@ -7,8 +7,10 @@ import {
 } from "./phpFrameworkIdentifierNavigationAdapters";
 import {
   createPhpFrameworkIdentifierNavigationAdapters,
-  type PhpFrameworkIdentifierNavigationAdapterDependencies,
 } from "./phpFrameworkIdentifierNavigationAdapterComposition";
+import { createPhpLaravelIdentifierNavigationActivationAdapter } from "./phpLaravelIdentifierNavigationActivationAdapter";
+import type { PhpLaravelIdentifierDefinitionNavigationAdapterDependencies } from "./phpLaravelIdentifierDefinitionNavigationAdapter";
+import { createPhpNetteIdentifierNavigationActivationAdapter } from "./phpNetteIdentifierNavigationActivationAdapter";
 
 const ROOT = "/workspace";
 
@@ -31,13 +33,12 @@ const routeActionContext: PhpIdentifierContext = {
 };
 
 function makeDeps(
-  overrides: Partial<PhpFrameworkIdentifierNavigationAdapterDependencies> = {},
-): PhpFrameworkIdentifierNavigationAdapterDependencies {
+  overrides: Partial<PhpLaravelIdentifierDefinitionNavigationAdapterDependencies> = {},
+): PhpLaravelIdentifierDefinitionNavigationAdapterDependencies {
   const falseHandler = vi.fn(async () => false);
 
   return {
     activeDocument,
-    frameworkRuntime: { hasProvider: () => true },
     goToPhpFrameworkLiteralDefinition: falseHandler,
     goToPhpLaravelAuthGuardDefinition: falseHandler,
     goToPhpLaravelBroadcastConnectionDefinition: falseHandler,
@@ -116,9 +117,12 @@ describe("phpFrameworkIdentifierNavigationAdapters", () => {
 
   it("returns no adapters without the Laravel provider", () => {
     const adapters = createPhpFrameworkIdentifierNavigationAdapters(
-      makeDeps({
+      {
+        activationAdapters: [
+          createPhpLaravelIdentifierNavigationActivationAdapter(makeDeps()),
+        ],
         frameworkRuntime: { hasProvider: () => false },
-      }),
+      },
     );
 
     expect(adapters.adapters).toHaveLength(0);
@@ -129,10 +133,17 @@ describe("phpFrameworkIdentifierNavigationAdapters", () => {
     const openDirectPhpMethodTarget = vi.fn(async () => false);
     const openPhpClassTarget = vi.fn(async () => true);
     const adapters = createPhpFrameworkIdentifierNavigationAdapters(
-      makeDeps({
-        openDirectPhpMethodTarget,
-        openPhpClassTarget,
-      }),
+      {
+        activationAdapters: [
+          createPhpLaravelIdentifierNavigationActivationAdapter(
+            makeDeps({
+              openDirectPhpMethodTarget,
+              openPhpClassTarget,
+            }),
+          ),
+        ],
+        frameworkRuntime: { hasProvider: () => true },
+      },
     );
 
     await expect(
@@ -149,10 +160,17 @@ describe("phpFrameworkIdentifierNavigationAdapters", () => {
     const openDirectPhpMethodTarget = vi.fn(async () => false);
     const openPhpClassTarget = vi.fn(async () => true);
     const adapters = createPhpFrameworkIdentifierNavigationAdapters(
-      makeDeps({
-        openDirectPhpMethodTarget,
-        openPhpClassTarget,
-      }),
+      {
+        activationAdapters: [
+          createPhpLaravelIdentifierNavigationActivationAdapter(
+            makeDeps({
+              openDirectPhpMethodTarget,
+              openPhpClassTarget,
+            }),
+          ),
+        ],
+        frameworkRuntime: { hasProvider: () => true },
+      },
     );
 
     await expect(
@@ -172,16 +190,23 @@ describe("phpFrameworkIdentifierNavigationAdapters", () => {
     const source = "<?php class P { public function __construct(Catalog $catalog) {} }";
     const providePhpNetteInjectionDefinition = vi.fn(async () => true);
     const adapters = createPhpFrameworkIdentifierNavigationAdapters(
-      makeDeps({
-        activeDocument: { ...activeDocument, content: source },
+      {
+        activationAdapters: [
+          createPhpLaravelIdentifierNavigationActivationAdapter(
+            makeDeps({
+              activeDocument: { ...activeDocument, content: source },
+            }),
+          ),
+          createPhpNetteIdentifierNavigationActivationAdapter({
+            activeDocument: { ...activeDocument, content: source },
+            activeEditorPositionRef: {
+              current: { column: source.indexOf("Catalog") + 2, lineNumber: 1 },
+            },
+            providePhpNetteInjectionDefinition,
+          }),
+        ],
         frameworkRuntime: { hasProvider: (id) => id === "nette" },
-        netteDependencies: {
-          activeEditorPositionRef: {
-            current: { column: source.indexOf("Catalog") + 2, lineNumber: 1 },
-          },
-          providePhpNetteInjectionDefinition,
-        },
-      }),
+      },
     );
 
     expect(adapters.adapters).toHaveLength(1);
@@ -200,13 +225,17 @@ describe("phpFrameworkIdentifierNavigationAdapters", () => {
 
   it("does not wire Nette injection navigation for a non-Nette provider", () => {
     const adapters = createPhpFrameworkIdentifierNavigationAdapters(
-      makeDeps({
+      {
+        activationAdapters: [
+          createPhpLaravelIdentifierNavigationActivationAdapter(makeDeps()),
+          createPhpNetteIdentifierNavigationActivationAdapter({
+            activeDocument,
+            activeEditorPositionRef: { current: { column: 1, lineNumber: 1 } },
+            providePhpNetteInjectionDefinition: vi.fn(async () => true),
+          }),
+        ],
         frameworkRuntime: { hasProvider: (id) => id === "laravel" },
-        netteDependencies: {
-          activeEditorPositionRef: { current: { column: 1, lineNumber: 1 } },
-          providePhpNetteInjectionDefinition: vi.fn(async () => true),
-        },
-      }),
+      },
     );
 
     expect(adapters.adapters).toHaveLength(1);
