@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
   phpFrameworkProvidersForProject,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
+import { activePhpFrameworkLiteralDefinitionResolverEntries } from "./phpFrameworkLiteralDefinitionResolverRegistry";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLiteralNavigation";
 import type { PhpProjectDescriptor } from "../domain/workspace";
@@ -26,6 +28,75 @@ function dependencies(
 }
 
 describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
+  it("activates ordered Laravel resolver entries only for Laravel", () => {
+    expect(
+      activePhpFrameworkLiteralDefinitionResolverEntries(
+        [phpLaravelFrameworkProvider],
+      ).map((resolver) => resolver.id),
+    ).toEqual([
+      "laravel.inertia-reference",
+      "laravel.view-reference",
+      "laravel.config",
+      "laravel.view",
+      "laravel.translation",
+      "laravel.env",
+      "laravel.route",
+      "laravel.validation-table",
+    ]);
+    expect(
+      activePhpFrameworkLiteralDefinitionResolverEntries([
+        phpNetteFrameworkProvider,
+      ]),
+    ).toEqual([]);
+    expect(
+      activePhpFrameworkLiteralDefinitionResolverEntries([{ id: "custom" }]),
+    ).toEqual([]);
+  });
+
+  it("stops at a matched view reference before generic helper resolution", async () => {
+    const provider: PhpFrameworkProvider = {
+      id: "laravel",
+      config: {
+        resolveLiteralTarget: () => ({}),
+      },
+      stringLiterals: {
+        helperAt: vi.fn(() => ({
+          helper: "config",
+          literal: "app.name",
+          literalEnd: 24,
+          literalStart: 16,
+        }) as const),
+      },
+      templating: {
+        referenceAt: () => ({
+          call: "view",
+          name: "dashboard",
+          position,
+          prefix: "dashboard",
+        }),
+      },
+    };
+    const deps = dependencies();
+
+    await expect(
+      resolvePhpFrameworkLiteralNavigationTarget(
+        {
+          activeDocument: null,
+          offset: 18,
+          position,
+          providers: [provider],
+          source: "<?php view('dashboard');",
+          supportsStringLiterals: true,
+        },
+        deps,
+      ),
+    ).resolves.toBeNull();
+
+    expect(deps.findViewTarget).toHaveBeenCalledWith("dashboard");
+    expect(provider.stringLiterals?.helperAt).not.toHaveBeenCalled();
+    expect(deps.findConfigTarget).not.toHaveBeenCalled();
+  });
+
   it("resolves an Inertia component literal through the provider branch", async () => {
     const providers = phpFrameworkProvidersForProject(phpProjectDescriptor({
       packageName: "laravel/laravel",

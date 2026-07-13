@@ -1,67 +1,18 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
-  phpFrameworkConfigLiteralTarget,
-  phpFrameworkEnvLiteralTarget,
-  phpFrameworkInertiaLiteralTarget,
-  phpFrameworkInertiaReferenceAt,
-  phpFrameworkStringLiteralHelperAt,
-  phpFrameworkTranslationLiteralTarget,
-  phpFrameworkViewLiteralTarget,
-  phpFrameworkViewReferenceAt,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+  resolvePhpFrameworkDirectLiteralDefinitionTarget,
+  type PhpFrameworkLiteralNavigationDependencies,
+  type PhpFrameworkLiteralNavigationDocument,
+  type PhpFrameworkLiteralNavigationTarget,
+} from "./phpFrameworkLiteralDefinitionResolverRegistry";
 
-export interface PhpFrameworkLiteralNavigationDocument {
-  content: string;
-  path: string;
-}
-
-export interface PhpFrameworkLiteralNavigationTarget {
-  kind:
-    | "config"
-    | "env"
-    | "inertia"
-    | "route"
-    | "translation"
-    | "validationTable"
-    | "view";
-  label: string;
-  path: string;
-  position: EditorPosition;
-}
-
-export interface PhpFrameworkLiteralRouteTarget {
-  name: string;
-  path: string;
-  position: EditorPosition;
-}
-
-export interface PhpFrameworkLiteralNavigationDependencies {
-  collectNamedRouteTargets: (
-    currentSource: string,
-    currentPath: string,
-  ) => Promise<readonly PhpFrameworkLiteralRouteTarget[]>;
-  findConfigTarget: (
-    configKey: string,
-  ) => Promise<{ key: string; path: string; position: EditorPosition } | null>;
-  findEnvTarget: (
-    envName: string,
-  ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
-  findInertiaComponentTarget?: (
-    componentName: string,
-  ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
-  findPhpLaravelValidationRuleModelTargets?: (
-    tableName: string,
-  ) => Promise<
-    readonly { label: string; path: string; position: EditorPosition }[]
-  >;
-  findTranslationTarget: (
-    translationKey: string,
-  ) => Promise<{ key: string; path: string; position: EditorPosition } | null>;
-  findViewTarget: (
-    viewName: string,
-  ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
-}
+export type {
+  PhpFrameworkLiteralNavigationDependencies,
+  PhpFrameworkLiteralNavigationDocument,
+  PhpFrameworkLiteralNavigationTarget,
+  PhpFrameworkLiteralRouteTarget,
+} from "./phpFrameworkLiteralDefinitionResolverRegistry";
 
 export interface PhpFrameworkLiteralNavigationRequest {
   activeDocument: PhpFrameworkLiteralNavigationDocument | null;
@@ -76,161 +27,12 @@ export async function resolvePhpFrameworkLiteralNavigationTarget(
   request: PhpFrameworkLiteralNavigationRequest,
   dependencies: PhpFrameworkLiteralNavigationDependencies,
 ): Promise<PhpFrameworkLiteralNavigationTarget | null> {
-  const {
-    activeDocument,
-    offset,
-    position,
-    providers,
-    source,
-    supportsStringLiterals,
-  } = request;
-
-  if (!supportsStringLiterals) {
+  if (!request.supportsStringLiterals) {
     return null;
   }
 
-  const inertiaReference = phpFrameworkInertiaReferenceAt(
-    source,
-    position,
-    providers,
+  return resolvePhpFrameworkDirectLiteralDefinitionTarget(
+    request,
+    dependencies,
   );
-
-  if (inertiaReference) {
-    if (!phpFrameworkInertiaLiteralTarget(inertiaReference.name, providers)) {
-      return null;
-    }
-
-    if (!dependencies.findInertiaComponentTarget) {
-      return null;
-    }
-
-    const target = await dependencies.findInertiaComponentTarget(
-      inertiaReference.name,
-    );
-
-    if (!target) {
-      return null;
-    }
-
-    return {
-      kind: "inertia",
-      label: target.name,
-      path: target.path,
-      position: target.position,
-    };
-  }
-
-  const viewReference = phpFrameworkViewReferenceAt(source, position, providers);
-
-  if (viewReference) {
-    const target = await dependencies.findViewTarget(viewReference.name);
-
-    return target
-      ? {
-          kind: "view",
-          label: target.name,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  const match = phpFrameworkStringLiteralHelperAt(source, offset, providers);
-
-  if (!match) {
-    return null;
-  }
-
-  if (match.helper === "config") {
-    if (!phpFrameworkConfigLiteralTarget(match.literal, providers)) {
-      return null;
-    }
-
-    const target = await dependencies.findConfigTarget(match.literal);
-
-    return target
-      ? {
-          kind: "config",
-          label: target.key,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (match.helper === "view") {
-    if (!phpFrameworkViewLiteralTarget(match.literal, providers)) {
-      return null;
-    }
-
-    const target = await dependencies.findViewTarget(match.literal);
-
-    return target
-      ? {
-          kind: "view",
-          label: target.name,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (match.helper === "trans") {
-    if (!phpFrameworkTranslationLiteralTarget(match.literal, providers)) {
-      return null;
-    }
-
-    const target = await dependencies.findTranslationTarget(match.literal);
-
-    return target
-      ? {
-          kind: "translation",
-          label: target.key,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (match.helper === "env") {
-    if (!phpFrameworkEnvLiteralTarget(match.literal, providers)) {
-      return null;
-    }
-
-    const target = await dependencies.findEnvTarget(match.literal);
-
-    return target
-      ? {
-          kind: "env",
-          label: target.name,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (match.helper === "route") {
-    if (!activeDocument) {
-      return null;
-    }
-
-    const routes = await dependencies.collectNamedRouteTargets(
-      activeDocument.content,
-      activeDocument.path,
-    );
-    const target = routes.find(
-      (route) => route.name.toLowerCase() === match.literal.toLowerCase(),
-    );
-
-    return target
-      ? {
-          kind: "route",
-          label: target.name,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  return null;
 }

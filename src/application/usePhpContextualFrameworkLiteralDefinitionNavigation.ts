@@ -1,51 +1,22 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpFrameworkSupportsValidation,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
+  resolvePhpFrameworkContextualLiteralDefinitionTarget,
+  type PhpContextualFrameworkLiteralDefinitionRequest,
   type PhpFrameworkLiteralNavigationDependencies,
-  type PhpFrameworkLiteralNavigationTarget,
-} from "./phpFrameworkLiteralNavigation";
+} from "./phpFrameworkLiteralDefinitionResolverRegistry";
+
+export type {
+  PhpContextualFrameworkLiteralDefinitionRequest,
+} from "./phpFrameworkLiteralDefinitionResolverRegistry";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
 }
-
-export type PhpContextualFrameworkLiteralDefinitionRequest =
-  | {
-      kind: "route";
-      missingMessage: string;
-      name: string;
-    }
-  | {
-      key: string;
-      kind: "config";
-      missingMessage: string;
-    }
-  | {
-      kind: "env";
-      missingMessage: string;
-      name: string;
-    }
-  | {
-      key: string;
-      kind: "translation";
-      missingMessage: string;
-    }
-  | {
-      kind: "view";
-      missingMessage: string;
-      name: string;
-    }
-  | {
-      kind: "validationTable";
-      tableName: string;
-    };
 
 export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
@@ -96,20 +67,18 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
         return false;
       }
 
-      if (
-        request.kind === "validationTable" &&
-        !phpFrameworkSupportsValidation(providers)
-      ) {
-        return false;
-      }
-
-      const target = await resolveContextualFrameworkLiteralTarget(
+      const target = await resolvePhpFrameworkContextualLiteralDefinitionTarget(
         request,
         activeDocument,
+        providers,
         frameworkLiteralNavigationDependencies,
       );
 
       if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (target === undefined) {
         return false;
       }
 
@@ -153,97 +122,4 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
   );
 
   return { goToPhpFrameworkLiteralDefinition };
-}
-
-async function resolveContextualFrameworkLiteralTarget(
-  request: PhpContextualFrameworkLiteralDefinitionRequest,
-  activeDocument: EditorDocument,
-  dependencies: PhpFrameworkLiteralNavigationDependencies,
-): Promise<PhpFrameworkLiteralNavigationTarget | null> {
-  if (request.kind === "route") {
-    const routes = await dependencies.collectNamedRouteTargets(
-      activeDocument.content,
-      activeDocument.path,
-    );
-    const target = routes.find(
-      (route) =>
-        route.name.toLowerCase() === request.name.toLowerCase(),
-    );
-
-    return target
-      ? {
-          kind: "route",
-          label: target.name,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (request.kind === "config") {
-    const target = await dependencies.findConfigTarget(request.key);
-
-    return target
-      ? {
-          kind: "config",
-          label: target.key,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (request.kind === "env") {
-    const target = await dependencies.findEnvTarget(request.name);
-
-    return target
-      ? {
-          kind: "env",
-          label: target.name,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (request.kind === "translation") {
-    const target = await dependencies.findTranslationTarget(request.key);
-
-    return target
-      ? {
-          kind: "translation",
-          label: target.key,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  if (request.kind === "validationTable") {
-    const targets =
-      await dependencies.findPhpLaravelValidationRuleModelTargets?.(
-        request.tableName,
-      );
-    const target = targets?.[0];
-
-    return target
-      ? {
-          kind: "validationTable",
-          label: target.label,
-          path: target.path,
-          position: target.position,
-        }
-      : null;
-  }
-
-  const target = await dependencies.findViewTarget(request.name);
-
-  return target
-    ? {
-        kind: "view",
-        label: target.name,
-        path: target.path,
-        position: target.position,
-      }
-    : null;
 }

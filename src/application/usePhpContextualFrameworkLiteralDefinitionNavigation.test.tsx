@@ -398,6 +398,43 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     harness.unmount();
   });
 
+  it("keeps Laravel contextual resolvers inert without the Laravel provider", async () => {
+    const findConfigTarget = vi.fn(async () => ({
+      key: "app.name",
+      path: `${ROOT}/config/app.php`,
+      position: POSITION,
+    }));
+    const openNavigationTarget = vi.fn(async () => true);
+    const setMessage = vi.fn();
+    const deps = makeDeps({
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget,
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => null),
+      },
+      openNavigationTarget,
+      providers: [{ id: "custom" }],
+      setMessage,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().goToPhpFrameworkLiteralDefinition({
+        key: "app.name",
+        kind: "config",
+        missingMessage: "No Laravel config key app.name found.",
+      }),
+    ).resolves.toBe(false);
+
+    expect(findConfigTarget).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+    expect(setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("preserves missing Laravel literal messages", async () => {
     const cases = [
       {
