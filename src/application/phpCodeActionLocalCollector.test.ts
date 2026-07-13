@@ -710,6 +710,70 @@ function run(OtherClass $other)
     expect(otherBody).toContain("public function missing()");
   });
 
+  it("creates a public typed property in a same-file external class for a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(OtherClass $other): void
+    {
+        $other->missing = 'value';
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create property 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain("public string $missing;");
+  });
+
+  it("creates a public untyped property for a plain read on a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(OtherClass $other): string
+    {
+        return $other->missing;
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create property 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain("public $missing;");
+  });
+
   it("creates a public constant in a same-file external class", () => {
     const source = `<?php
 

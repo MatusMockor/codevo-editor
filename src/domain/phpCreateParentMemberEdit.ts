@@ -2,10 +2,13 @@ import type { LanguageServerWorkspaceEdit } from "./languageServerFeatures";
 import {
   matchingPairOffset,
   phpClassDeclaresMember,
+  phpMemberInterceptingMagicMethods,
   renderCreateConstantStub,
   renderCreateMethodStub,
+  renderCreatePropertyStub,
   type MissingThisMember,
   type PhpCreateRenderTarget,
+  type PhpMemberKind,
 } from "./phpCreateFromUsage";
 import {
   detectClassMemberIndent,
@@ -39,7 +42,7 @@ export function buildPhpCreateMemberWorkspaceEdit(
     return null;
   }
 
-  if (member.kind !== "method" && member.kind !== "constant") {
+  if (member.kind === "property" && member.target !== "external") {
     return null;
   }
 
@@ -63,7 +66,7 @@ export function buildPhpCreateMemberWorkspaceEdit(
 
   if (
     member.target === "external" &&
-    mayInheritOrInterceptMembers(targetSource, target, selector)
+    mayInheritOrInterceptMembers(targetSource, target, selector, member.kind)
   ) {
     return null;
   }
@@ -126,14 +129,14 @@ function mayInheritOrInterceptMembers(
   source: string,
   target: TargetClassDeclaration,
   selector: { bodyStartOffset: number },
+  memberKind: PhpMemberKind,
 ): boolean {
   if (target.hasExtendsClause) {
     return true;
   }
 
-  return (
-    phpClassDeclaresMember(source, "__callStatic", "method", selector) ||
-    phpClassDeclaresMember(source, "__call", "method", selector)
+  return phpMemberInterceptingMagicMethods(memberKind).some((magicMethod) =>
+    phpClassDeclaresMember(source, magicMethod, "method", selector),
   );
 }
 
@@ -143,6 +146,14 @@ function renderMemberStub(
 ): string | null {
   if (member.kind === "constant") {
     return renderCreateConstantStub(member.name, { indent: "", target });
+  }
+
+  if (member.kind === "property") {
+    return renderCreatePropertyStub(member.name, {
+      indent: "",
+      target,
+      type: member.propertyType ?? null,
+    });
   }
 
   return renderCreateMethodStub(member.name, member.argTypes ?? [], {

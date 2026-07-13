@@ -245,8 +245,25 @@ function phpCreateExternalMemberCodeAction(
     );
   }
 
-  if (member.kind !== "method") {
-    return null;
+  if (member.kind === "property") {
+    const stub = renderCreatePropertyStub(member.name, {
+      indent: "",
+      target: renderTarget,
+      type: member.propertyType ?? null,
+    });
+
+    if (!stub) {
+      return null;
+    }
+
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        stub,
+        `Create property '${member.name}' in '${sibling.name}'`,
+        insertionTarget,
+      ),
+    );
   }
 
   const stub = renderCreateMethodStub(member.name, member.argTypes ?? [], {

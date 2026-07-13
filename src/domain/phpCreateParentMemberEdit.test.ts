@@ -415,7 +415,56 @@ describe("buildPhpCreateMemberWorkspaceEdit — external instance targets", () =
     expect(text).not.toContain("static");
   });
 
-  it("returns null for an external instance property", () => {
+  it("inserts a public untyped property stub for an external instance property", () => {
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBe("\n    public $profile;\n");
+  });
+
+  it("keeps a builtin property type cross-file", () => {
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          propertyType: "int",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBe("\n    public int $profile;\n");
+  });
+
+  it("drops a short class property type cross-file", () => {
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          propertyType: "Profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBe("\n    public $profile;\n");
+  });
+
+  it("returns null for an external property when the class declares __get", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __get($name)\n    {\n    }\n\n    public function existing(): void",
+    );
+
     expect(
       buildEdit(
         {
@@ -424,7 +473,103 @@ describe("buildPhpCreateMemberWorkspaceEdit — external instance targets", () =
           target: "external",
           targetClass: "Base",
         },
-        BASE_SOURCE,
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for an external property when the class declares __set", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __set($name, $value)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("creates the external property when the class declares __call but no __get or __set", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __call($name, $arguments)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBe("\n    public $profile;\n");
+  });
+
+  it("still creates the external method when the class declares __get only", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __get($name)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      editText(
+        {
+          argTypes: [],
+          kind: "method",
+          name: "make",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBe("\n    public function make()\n    {\n    }\n");
+  });
+
+  it("returns null when the external class already declares the property", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public $profile;\n\n    public function existing(): void",
+    );
+
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for a property when the external class extends another class", () => {
+    const source = BASE_SOURCE.replace(
+      "class Base",
+      "class Base extends Ancestor",
+    );
+
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
       ),
     ).toBeNull();
   });

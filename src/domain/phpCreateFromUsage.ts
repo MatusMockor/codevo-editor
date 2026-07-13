@@ -1017,7 +1017,7 @@ function planSameFileExternalMember(
     return { member: toMissingMember(source, masked, usage, "self"), owner };
   }
 
-  if (sameFileSiblingMayInterceptMembers(source, masked, declared)) {
+  if (sameFileSiblingMayInterceptMembers(source, masked, declared, usage.kind)) {
     return null;
   }
 
@@ -1036,7 +1036,7 @@ function planTypedVariableExternalMember(
   targetClass: string,
   usageOffset: number,
 ): PhpCreateFromUsagePlan | null {
-  if (usage.kind !== "method" || !targetClass) {
+  if (usage.kind === "constant" || !targetClass) {
     return null;
   }
 
@@ -1070,7 +1070,7 @@ function planTypedVariableExternalMember(
     return { member: toMissingMember(source, masked, usage, "this"), owner };
   }
 
-  if (sameFileSiblingMayInterceptMembers(source, masked, declared)) {
+  if (sameFileSiblingMayInterceptMembers(source, masked, declared, usage.kind)) {
     return null;
   }
 
@@ -1085,6 +1085,7 @@ function sameFileSiblingMayInterceptMembers(
   source: string,
   masked: string,
   declared: EnclosingTypeDeclaration,
+  memberKind: PhpMemberKind,
 ): boolean {
   if (enclosingExtendsClause(masked, declared)) {
     return true;
@@ -1092,10 +1093,19 @@ function sameFileSiblingMayInterceptMembers(
 
   const selector = { bodyStartOffset: declared.bodyStart };
 
-  return (
-    phpClassDeclaresMember(source, "__callStatic", "method", selector) ||
-    phpClassDeclaresMember(source, "__call", "method", selector)
+  return phpMemberInterceptingMagicMethods(memberKind).some((magicMethod) =>
+    phpClassDeclaresMember(source, magicMethod, "method", selector),
   );
+}
+
+export function phpMemberInterceptingMagicMethods(
+  memberKind: PhpMemberKind,
+): string[] {
+  if (memberKind === "property") {
+    return ["__get", "__set"];
+  }
+
+  return ["__callStatic", "__call"];
 }
 
 function toMissingExternalMember(
@@ -1109,6 +1119,22 @@ function toMissingExternalMember(
     return {
       kind: "constant",
       name: usage.name,
+      target: "external",
+      targetClass,
+    };
+  }
+
+  if (usage.kind === "property") {
+    const propertyType = inferAssignedPropertyType(
+      source,
+      masked,
+      usage.argsEnd,
+    );
+
+    return {
+      kind: "property",
+      name: usage.name,
+      ...(propertyType === null ? {} : { propertyType }),
       target: "external",
       targetClass,
     };
