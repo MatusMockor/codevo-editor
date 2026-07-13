@@ -8,6 +8,67 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use std::{env, fs};
+
+pub const MANAGED_TYPESCRIPT_LANGUAGE_SERVER_INSTALL_COMPLETED_EVENT: &str =
+    "typescript://managed-language-server-install-completed";
+const MANAGED_TYPESCRIPT_LANGUAGE_SERVER_VERSION: &str = "5.3.0";
+const MANAGED_TYPESCRIPT_VERSION: &str = "5.8.3";
+const CODEVO_EDITOR_NODE_PATH: &str = "CODEVO_EDITOR_NODE_PATH";
+
+pub(crate) trait ManagedTypeScriptInstallEventSink: Send + 'static {
+    fn emit_completion(&self, root: String, error: Option<String>);
+}
+
+pub(crate) fn spawn_managed_typescript_language_server_install<S>(root: String, sink: S)
+where
+    S: ManagedTypeScriptInstallEventSink,
+{
+    std::thread::spawn(move || sink.emit_completion(root, install_managed_typescript_language_server().err()));
+}
+
+pub(crate) fn node_executable_path() -> Option<String> {
+    let configured = env::var_os(CODEVO_EDITOR_NODE_PATH).map(PathBuf::from);
+    if let Some(path) = configured.filter(|path| path.is_file()) {
+        return Some(path.to_string_lossy().to_string());
+    }
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .map(|directory| directory.join("node"))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.to_string_lossy().to_string())
+}
+
+pub(crate) fn install_managed_typescript_language_server() -> Result<(), String> {
+    let root = managed_typescript_language_server_root()?;
+    fs::create_dir_all(&root).map_err(|error| format!("Unable to create managed TypeScript directory: {error}"))?;
+    fs::write(root.join("package.json"), managed_package_json())
+        .map_err(|error| format!("Unable to write managed TypeScript package manifest: {error}"))?;
+    let node = node_executable_path().ok_or_else(|| "Node.js 20 or newer is required to install the managed TypeScript IDE engine. Install Node.js and restart Codevo Editor.".to_string())?;
+    let version = std::process::Command::new(&node).arg("--version").output()
+        .map_err(|error| format!("Unable to run Node.js: {error}"))?;
+    let version = String::from_utf8_lossy(&version.stdout);
+    let major = version.trim().trim_start_matches('v').split('.').next().and_then(|value| value.parse::<u32>().ok()).unwrap_or(0);
+    if !version_status_success(&version, major) { return Err("Node.js 20 or newer is required to install the managed TypeScript IDE engine.".to_string()); }
+    let npm = PathBuf::from(&node).parent().map(|dir| dir.join("npm")).filter(|path| path.is_file()).unwrap_or_else(|| PathBuf::from("npm"));
+    let output = std::process::Command::new(npm).args(["install", "--omit=dev", "--no-audit", "--no-fund"])
+        .current_dir(&root).output().map_err(|error| format!("Unable to run npm: {error}"))?;
+    if output.status.success() { Ok(()) } else { Err(format!("Unable to install managed TypeScript IDE engine: {}", String::from_utf8_lossy(&output.stderr).trim())) }
+}
+
+pub(crate) fn managed_typescript_language_server_root() -> Result<PathBuf, String> {
+    let home = env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "Unable to determine the home directory for the managed TypeScript IDE engine.".to_string())?;
+    #[cfg(target_os = "macos")]
+    { return Ok(home.join("Library/Application Support/Codevo Editor/tools/typescript-language-server")); }
+    #[cfg(not(target_os = "macos"))]
+    Ok(home.join(".codevo-editor/tools/typescript-language-server"))
+}
+
+fn managed_package_json() -> String {
+    format!("{{\n  \"private\": true,\n  \"dependencies\": {{\n    \"typescript-language-server\": \"{MANAGED_TYPESCRIPT_LANGUAGE_SERVER_VERSION}\",\n    \"typescript\": \"{MANAGED_TYPESCRIPT_VERSION}\"\n  }}\n}}\n")
+}
+
+fn version_status_success(version: &str, major: u32) -> bool { !version.trim().is_empty() && major >= 20 }
 
 #[cfg(unix)]
 pub(crate) fn cleanup_orphaned_javascript_typescript_processes(
@@ -85,6 +146,10 @@ fn typescript_language_server_path_in_command<'a>(
 
 #[cfg(unix)]
 fn is_typescript_language_server_path(path: &str, root_path: &str) -> bool {
+    let normalized = normalize_path(path);
+    if normalized.ends_with("/node_modules/typescript-language-server/lib/cli.mjs") {
+        return true;
+    }
     if !is_typescript_language_server_binary_name(
         &Path::new(path)
             .file_name()
@@ -95,7 +160,6 @@ fn is_typescript_language_server_path(path: &str, root_path: &str) -> bool {
         return false;
     }
 
-    let normalized = normalize_path(path);
     let root = normalized_workspace_root_key(root_path);
     normalized == format!("{root}/node_modules/.bin/typescript-language-server")
         || normalized.ends_with("/node_modules/.bin/typescript-language-server")
@@ -174,7 +238,7 @@ fn inferred_tsserver_paths(command: &LanguageServerCommand, root_path: &str) -> 
     if let Some(server_path) =
         typescript_language_server_path_in_command(command, root_path).map(PathBuf::from)
     {
-        if let Some(node_modules) = node_modules_root_from_bin_tool_path(&server_path) {
+        if let Some(node_modules) = node_modules_root_from_typescript_language_server_path(&server_path) {
             paths.push(
                 node_modules
                     .join("typescript")
@@ -206,7 +270,7 @@ fn should_cleanup_tsserver_path(
     }
 
     if let Some(server_path) = typescript_language_server_path_in_command(command, root_path) {
-        if let Some(node_modules) = node_modules_root_from_bin_tool_path(Path::new(server_path)) {
+        if let Some(node_modules) = node_modules_root_from_typescript_language_server_path(Path::new(server_path)) {
             let expected = normalize_path(
                 &node_modules
                     .join("typescript")
@@ -251,6 +315,17 @@ fn node_modules_root_from_bin_tool_path(path: &Path) -> Option<PathBuf> {
     }
 
     Some(node_modules.to_path_buf())
+}
+
+#[cfg(unix)]
+fn node_modules_root_from_typescript_language_server_path(path: &Path) -> Option<PathBuf> {
+    node_modules_root_from_bin_tool_path(path).or_else(|| {
+        let package = path.parent()?.parent()?;
+        if package.file_name()?.to_str()? != "typescript-language-server" {
+            return None;
+        }
+        Some(package.parent()?.to_path_buf())
+    })
 }
 
 #[cfg(unix)]

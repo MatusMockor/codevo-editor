@@ -211,6 +211,28 @@ struct AppHandleManagedPhpactorInstallEventSink {
     app: AppHandle,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedTypeScriptInstallCompletionEvent {
+    root: String,
+    error: Option<String>,
+}
+
+struct AppHandleManagedTypeScriptInstallEventSink {
+    app: AppHandle,
+}
+
+impl managed_javascript_typescript::ManagedTypeScriptInstallEventSink
+    for AppHandleManagedTypeScriptInstallEventSink
+{
+    fn emit_completion(&self, root: String, error: Option<String>) {
+        let _ = self.app.emit(
+            managed_javascript_typescript::MANAGED_TYPESCRIPT_LANGUAGE_SERVER_INSTALL_COMPLETED_EVENT,
+            ManagedTypeScriptInstallCompletionEvent { root, error },
+        );
+    }
+}
+
 impl managed_phpactor::ManagedPhpactorInstallEventSink
     for AppHandleManagedPhpactorInstallEventSink
 {
@@ -227,6 +249,14 @@ fn install_managed_phpactor(app: AppHandle, root: String) {
     managed_phpactor::spawn_managed_phpactor_install(
         root,
         AppHandleManagedPhpactorInstallEventSink { app },
+    );
+}
+
+#[tauri::command]
+fn install_managed_typescript_language_server(app: AppHandle, root: String) {
+    managed_javascript_typescript::spawn_managed_typescript_language_server_install(
+        root,
+        AppHandleManagedTypeScriptInstallEventSink { app },
     );
 }
 
@@ -9435,6 +9465,7 @@ pub fn run() {
             apply_workspace_edit,
             commit_git_changes,
             install_managed_phpactor,
+            install_managed_typescript_language_server,
             open_workspace_from_picker,
             unregister_workspace,
             get_workspace_descriptor,
