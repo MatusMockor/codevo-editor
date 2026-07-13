@@ -13,9 +13,9 @@ function makeDeps(
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     frameworkRuntime: { hasProvider: () => true },
     resolvePhpClassReference: vi.fn(() => null),
-    resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+    resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     resolvePhpExpressionType: vi.fn(async () => null),
-    resolvePhpLaravelRelationPathOwnerType: vi.fn(async () => null),
+    resolvePhpFrameworkRelationPathOwnerType: vi.fn(async () => null),
     ...overrides,
   };
 }

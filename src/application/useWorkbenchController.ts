@@ -7590,7 +7590,7 @@ export function useWorkbenchController(
     frameworkRuntime: phpFrameworkRuntimeContext,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
-    resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
   });
 
@@ -7620,9 +7620,10 @@ export function useWorkbenchController(
     ensurePhpFrameworkSourceCollectionsLoaded,
     frameworkRuntime: phpFrameworkRuntimeContext,
     resolvePhpClassReference,
-    resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
-    resolvePhpLaravelRelationPathOwnerType,
+    resolvePhpFrameworkRelationPathOwnerType:
+      resolvePhpLaravelRelationPathOwnerType,
     resolvePhpReceiverMethodCompletions,
     resolvePhpStaticMethodCompletions,
     workspaceRoot,

@@ -32,7 +32,7 @@ export interface PhpMethodCompletionResolverDependencies {
   isLaravelFrameworkActive?: boolean;
   phpNormalizedReceiverExpressionIsThis(receiverExpression: string): boolean;
   resolvePhpClassReference(source: string, className: string): string | null;
-  resolvePhpEloquentBuilderModelType(
+  resolvePhpFrameworkBuilderModelType(
     source: string,
     position: EditorPosition,
     expression: string,
@@ -69,7 +69,7 @@ export function usePhpMethodCompletionResolvers(
     isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
-    resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
   const activeFrameworkRuntime = useMemo(
@@ -91,12 +91,12 @@ export function usePhpMethodCompletionResolvers(
       createPhpFrameworkMethodCompletionSemanticsAdapters({
         collectPhpFrameworkSyntheticMethodsForClass,
         frameworkRuntime: activeFrameworkRuntime,
-        resolvePhpEloquentBuilderModelType,
+        resolvePhpFrameworkBuilderModelType,
       }),
     [
       collectPhpFrameworkSyntheticMethodsForClass,
       activeFrameworkRuntime,
-      resolvePhpEloquentBuilderModelType,
+      resolvePhpFrameworkBuilderModelType,
     ],
   );
 

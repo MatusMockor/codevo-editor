@@ -57,7 +57,7 @@ function makeDeps(
     phpNormalizedReceiverExpressionIsThis: (receiverExpression) =>
       receiverExpression.trim() === "$this",
     resolvePhpClassReference: (_source, className) => className,
-    resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+    resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     resolvePhpExpressionType: vi.fn(async () => null),
     ...overrides,
   };
@@ -112,7 +112,7 @@ describe("usePhpMethodCompletionResolvers", () => {
       method("published", { kind: "scope" }),
       method("save"),
     ]);
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpFrameworkBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const deps = makeDeps({
@@ -120,7 +120,7 @@ describe("usePhpMethodCompletionResolvers", () => {
       collectPhpMethodsForClass,
       frameworkRuntime: GENERIC_RUNTIME,
       isLaravelFrameworkActive: true,
-      resolvePhpEloquentBuilderModelType,
+      resolvePhpFrameworkBuilderModelType,
       resolvePhpExpressionType: vi.fn(async () => "App\\Models\\Post"),
     });
     const harness = renderHook(deps);
@@ -144,7 +144,7 @@ describe("usePhpMethodCompletionResolvers", () => {
       "save",
     ]);
     expect(staticCompletions).toEqual([]);
-    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    expect(resolvePhpFrameworkBuilderModelType).not.toHaveBeenCalled();
     expect(collectPhpFrameworkSyntheticMethodsForClass).not.toHaveBeenCalled();
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",
@@ -181,7 +181,7 @@ describe("usePhpMethodCompletionResolvers", () => {
         }),
       ]),
       collectPhpMethodsForClass,
-      resolvePhpEloquentBuilderModelType: vi.fn(
+      resolvePhpFrameworkBuilderModelType: vi.fn(
         async () => "App\\Models\\Post",
       ),
       resolvePhpExpressionType: vi.fn(

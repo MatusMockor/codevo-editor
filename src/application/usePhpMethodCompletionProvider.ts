@@ -42,7 +42,7 @@ export interface PhpMethodCompletionProviderDependencies
   frameworkRuntime?: PhpFrameworkRuntimeContext;
   isLaravelFrameworkActive?: boolean;
   resolvePhpClassReference(source: string, className: string): string | null;
-  resolvePhpEloquentBuilderModelType(
+  resolvePhpFrameworkBuilderModelType(
     source: string,
     position: EditorPosition,
     expression: string,
@@ -52,7 +52,7 @@ export interface PhpMethodCompletionProviderDependencies
     position: EditorPosition,
     expression: string,
   ): Promise<string | null>;
-  resolvePhpLaravelRelationPathOwnerType(
+  resolvePhpFrameworkRelationPathOwnerType(
     className: string,
     relationNames: readonly string[],
   ): Promise<string | null>;
@@ -110,9 +110,9 @@ export function usePhpMethodCompletionProvider({
   frameworkRuntime,
   isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   resolvePhpClassReference,
-  resolvePhpEloquentBuilderModelType,
+  resolvePhpFrameworkBuilderModelType,
   resolvePhpExpressionType,
-  resolvePhpLaravelRelationPathOwnerType,
+  resolvePhpFrameworkRelationPathOwnerType,
   resolvePhpReceiverMethodCompletions,
   resolvePhpStaticMethodCompletions,
   workspaceRoot,
@@ -136,9 +136,9 @@ export function usePhpMethodCompletionProvider({
         ensurePhpFrameworkSourceCollectionsLoaded,
         frameworkRuntime: methodCompletionFrameworkRuntime,
         resolvePhpClassReference,
-        resolvePhpEloquentBuilderModelType,
+        resolvePhpFrameworkBuilderModelType,
         resolvePhpExpressionType,
-        resolvePhpLaravelRelationPathOwnerType,
+        resolvePhpFrameworkRelationPathOwnerType,
       }),
     [
       collectPhpFrameworkRelationCompletionsForClass,
@@ -146,9 +146,9 @@ export function usePhpMethodCompletionProvider({
       ensurePhpFrameworkSourceCollectionsLoaded,
       methodCompletionFrameworkRuntime,
       resolvePhpClassReference,
-      resolvePhpEloquentBuilderModelType,
+      resolvePhpFrameworkBuilderModelType,
       resolvePhpExpressionType,
-      resolvePhpLaravelRelationPathOwnerType,
+      resolvePhpFrameworkRelationPathOwnerType,
     ],
   );
 

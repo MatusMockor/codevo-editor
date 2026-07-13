@@ -1,3 +1,5 @@
+import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { activePhpFrameworkMethodCompletionAdapter } from "./phpFrameworkMethodCompletionAdapterRegistry";
 import {
@@ -6,17 +8,25 @@ import {
 } from "./phpFrameworkMethodCompletionSemantics";
 import {
   createPhpLaravelMethodCompletionSemanticsAdapter,
-  type PhpLaravelMethodCompletionSemanticsAdapterDependencies,
 } from "./phpLaravelMethodCompletionSemanticsAdapter";
 
-export interface PhpFrameworkMethodCompletionSemanticsAdapterDependencies
-  extends PhpLaravelMethodCompletionSemanticsAdapterDependencies {
+export interface PhpFrameworkMethodCompletionSemanticsAdapterDependencies {
+  collectPhpFrameworkSyntheticMethodsForClass(
+    className: string,
+    options?: { isStatic?: boolean },
+  ): Promise<PhpMethodCompletion[]>;
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  resolvePhpFrameworkBuilderModelType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+  ): Promise<string | null>;
 }
 
 export function createPhpFrameworkMethodCompletionSemanticsAdapters({
+  collectPhpFrameworkSyntheticMethodsForClass,
   frameworkRuntime,
-  ...laravelDependencies
+  resolvePhpFrameworkBuilderModelType,
 }: PhpFrameworkMethodCompletionSemanticsAdapterDependencies): PhpFrameworkMethodCompletionSemanticsAdapter {
   return activePhpFrameworkMethodCompletionAdapter(
     frameworkRuntime,
@@ -25,9 +35,11 @@ export function createPhpFrameworkMethodCompletionSemanticsAdapters({
       {
         providerId: "laravel",
         createAdapter: () =>
-          createPhpLaravelMethodCompletionSemanticsAdapter(
-            laravelDependencies,
-          ),
+          createPhpLaravelMethodCompletionSemanticsAdapter({
+            collectPhpFrameworkSyntheticMethodsForClass,
+            resolvePhpEloquentBuilderModelType:
+              resolvePhpFrameworkBuilderModelType,
+          }),
       },
     ],
   );

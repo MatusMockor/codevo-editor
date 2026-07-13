@@ -114,9 +114,9 @@ function makeDeps(
     resolvePhpClassReference: vi.fn(
       (_source: string, className: string) => `App\\Http\\Controllers\\${className}`,
     ),
-    resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+    resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     resolvePhpExpressionType: vi.fn(async () => null),
-    resolvePhpLaravelRelationPathOwnerType: vi.fn(async () => null),
+    resolvePhpFrameworkRelationPathOwnerType: vi.fn(async () => null),
     resolvePhpReceiverMethodCompletions: vi.fn(async () => []),
     resolvePhpStaticMethodCompletions: vi.fn(async () => []),
     workspaceRoot: ROOT,
@@ -215,13 +215,13 @@ Comment::with('par')->first();
     const resolvePhpClassReference = vi.fn(
       (_source: string, className: string) => `App\\Models\\${className}`,
     );
-    const resolvePhpLaravelRelationPathOwnerType = vi.fn(
+    const resolvePhpFrameworkRelationPathOwnerType = vi.fn(
       async (className: string) => className,
     );
     const deps = makeDeps({
       collectPhpFrameworkRelationCompletionsForClass,
       resolvePhpClassReference,
-      resolvePhpLaravelRelationPathOwnerType,
+      resolvePhpFrameworkRelationPathOwnerType,
     });
     const harness = renderHook(deps);
 
@@ -234,7 +234,7 @@ Comment::with('par')->first();
       "participants",
     ]);
     expect(resolvePhpClassReference).toHaveBeenCalledWith(source, "Comment");
-    expect(resolvePhpLaravelRelationPathOwnerType).toHaveBeenCalledWith(
+    expect(resolvePhpFrameworkRelationPathOwnerType).toHaveBeenCalledWith(
       "App\\Models\\Comment",
       [],
     );
@@ -372,7 +372,7 @@ Comment::with('par')->first();
       ensurePhpFrameworkSourceCollectionsLoaded,
       frameworkRuntime: undefined,
       isLaravelFrameworkActive: true,
-      resolvePhpLaravelRelationPathOwnerType: vi.fn(
+      resolvePhpFrameworkRelationPathOwnerType: vi.fn(
         async (className: string) => className,
       ),
       resolvePhpReceiverMethodCompletions: vi.fn(async () => [method("load")]),

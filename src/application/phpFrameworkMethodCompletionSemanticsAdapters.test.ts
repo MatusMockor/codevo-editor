@@ -25,7 +25,7 @@ function makeDeps(
   return {
     collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
     frameworkRuntime: { hasProvider: () => true },
-    resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+    resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     ...overrides,
   };
 }
@@ -39,7 +39,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
     const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
       method("whereEmail", { kind: "magic-where" }),
     ]);
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpFrameworkBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const frameworkRuntime = {
@@ -52,7 +52,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
       makeDeps({
         collectPhpFrameworkSyntheticMethodsForClass,
         frameworkRuntime,
-        resolvePhpEloquentBuilderModelType,
+        resolvePhpFrameworkBuilderModelType,
       }),
     );
 
@@ -92,7 +92,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
       dynamicWhereMethods: [],
       localScopeMethods: [],
     });
-    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    expect(resolvePhpFrameworkBuilderModelType).not.toHaveBeenCalled();
     expect(collectPhpFrameworkSyntheticMethodsForClass).not.toHaveBeenCalled();
   });
 
