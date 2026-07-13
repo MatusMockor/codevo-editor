@@ -281,6 +281,12 @@ export interface PhpFrameworkEnvCompletionInsertTextContext {
   prefix: string;
 }
 
+export interface PhpFrameworkHelperNameCompletion {
+  detail: string;
+  insertText: string;
+  label: string;
+}
+
 /**
  * A translation reference detected at the cursor (e.g. the `__('x')` /
  * `trans('x')` argument). Framework-agnostic mirror of the Laravel translation
@@ -771,6 +777,7 @@ export interface PhpFrameworkProvider {
     helperAt?: (
       context: PhpFrameworkStringLiteralContext,
     ) => PhpFrameworkStringLiteralHelperMatch | null;
+    helperNameCompletions?: () => readonly PhpFrameworkHelperNameCompletion[];
   };
   php?: {
     /**

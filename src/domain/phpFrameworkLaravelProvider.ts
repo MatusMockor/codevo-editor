@@ -137,6 +137,39 @@ const laravelViewDataSearchQueries: readonly string[] = [
   "compact(",
 ];
 
+const laravelStringLiteralHelperNameCompletions = [
+  {
+    detail: "Laravel helper",
+    insertText: "old()",
+    label: "old",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "route()",
+    label: "route",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "asset()",
+    label: "asset",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "config()",
+    label: "config",
+  },
+  {
+    detail: "Laravel translation helper",
+    insertText: "__()",
+    label: "__",
+  },
+  {
+    detail: "Laravel helper",
+    insertText: "csrf_field()",
+    label: "csrf_field",
+  },
+] as const;
+
 function isLaravelContainerBindingCandidatePath(path: string): boolean {
   const normalizedPath = path.split("\\").join("/").toLowerCase();
 
@@ -382,6 +415,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   stringLiterals: {
     helperAt: ({ offset, source }) =>
       detectLaravelStringLiteralHelper(source, offset),
+    helperNameCompletions: () => laravelStringLiteralHelperNameCompletions,
   },
   php: {
     isScopedStringCompletionContext: ({ position, source }) =>

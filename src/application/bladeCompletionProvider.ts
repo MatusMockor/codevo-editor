@@ -15,9 +15,9 @@ import type {
 } from "./bladeIntelligenceContracts";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
-  provideBladeLaravelHelperCompletionItems,
-  bladeLaravelHelperNameCompletions,
-} from "./bladeLaravelHelperCompletionItems";
+  bladeFrameworkHelperNameCompletions,
+  bladeFrameworkLiteralCompletionItems,
+} from "./bladeFrameworkHelperCompletionItems";
 import {
   bladeComponentCompletionItems,
   bladeDirectiveCompletionItems,
@@ -32,6 +32,7 @@ import {
   bladePhpLikeCompletionAt,
   bladePhpMemberAccessCompletionAt,
 } from "./bladePhpCompletionContext";
+import { resolvePhpFrameworkLiteralCompletions } from "./phpFrameworkLiteralCompletions";
 import { synthesizePhpTypedReceiverSource } from "./phpTypedReceiverSource";
 
 export interface BladeCompletionProviderDependencies {
@@ -92,8 +93,6 @@ export async function provideBladeCompletions(
     workspaceRoot,
   } = dependencies;
   const supportsStringLiterals = frameworkRuntime.supports("stringLiterals");
-  const supportsLaravelStringLiterals =
-    supportsStringLiterals && frameworkRuntime.hasProvider("laravel");
   const supportsViews = frameworkRuntime.supports("views");
   const supportsViewData = frameworkRuntime.supports("viewData");
   const requestedRoot = workspaceRoot;
@@ -223,14 +222,18 @@ export async function provideBladeCompletions(
   }
 
   if (phpLikeCompletion?.kind === "helper") {
-    if (!supportsLaravelStringLiterals) {
+    if (!supportsStringLiterals) {
       return [];
     }
 
-    return bladeLaravelHelperNameCompletions(phpLikeCompletion.prefix, {
-      replaceEnd: phpLikeCompletion.end,
-      replaceStart: phpLikeCompletion.start,
-    });
+    return bladeFrameworkHelperNameCompletions(
+      phpLikeCompletion.prefix,
+      {
+        replaceEnd: phpLikeCompletion.end,
+        replaceStart: phpLikeCompletion.start,
+      },
+      frameworkRuntime.providers,
+    );
   }
 
   if (supportsStringLiterals) {
@@ -240,15 +243,32 @@ export async function provideBladeCompletions(
       frameworkRuntime.providers,
     );
 
-    if (helperCompletion?.providerId === "laravel") {
-      return provideBladeLaravelHelperCompletionItems(helperCompletion, offset, {
-        collectPhpLaravelConfigTargets,
-        collectPhpLaravelNamedRouteTargets,
-        collectPhpLaravelTranslationTargets,
-        currentDocumentContent: source,
-        currentDocumentPath: activeDocument?.path ?? "",
-        isRequestedRootActive,
-      });
+    if (helperCompletion) {
+      const completions = await resolvePhpFrameworkLiteralCompletions(
+        {
+          activeDocument: {
+            content: source,
+            path: activeDocument?.path ?? "",
+          },
+          position: helperCompletion.position,
+          providers: frameworkRuntime.providers,
+          source: helperCompletion.source,
+        },
+        {
+          collectConfigTargets: collectPhpLaravelConfigTargets,
+          collectEnvTargets: async () => [],
+          collectNamedRouteTargets: collectPhpLaravelNamedRouteTargets,
+          collectTranslationTargets: collectPhpLaravelTranslationTargets,
+          collectViewTargets: async () => [],
+          isRequestStillCurrent: isRequestedRootActive,
+        },
+      );
+
+      return bladeFrameworkLiteralCompletionItems(
+        completions ?? [],
+        offset,
+        helperCompletion.prefix,
+      );
     }
   }
 

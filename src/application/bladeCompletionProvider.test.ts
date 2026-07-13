@@ -381,6 +381,45 @@ describe("provideBladeCompletions", () => {
     ).resolves.toEqual([]);
   });
 
+  it("offers helper-name completions owned by custom string-literal providers", async () => {
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      stringLiterals: {
+        helperAt: vi.fn(() => null),
+        helperNameCompletions: () => [
+          {
+            detail: "Custom framework helper",
+            insertText: "routeTo()",
+            label: "routeTo",
+          },
+        ],
+      },
+    };
+
+    await expect(
+      provideBladeCompletions(
+        "{{ ro",
+        { column: 6, lineNumber: 1 },
+        makeDeps({
+          frameworkRuntime: createPhpFrameworkRuntimeContext(
+            createPhpFrameworkIntelligence({
+              matchedProviderIds: ["custom"],
+              profile: "generic",
+              providers: [provider],
+            }),
+          ),
+        }),
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        detail: "Custom framework helper",
+        insertText: "routeTo()",
+        kind: "helper",
+        label: "routeTo",
+      }),
+    ]);
+  });
+
   it("does not collect Laravel helper literals for a custom string-literal provider", async () => {
     const routeReferenceAt = vi.fn(() => ({
       call: "route",
@@ -421,6 +460,61 @@ describe("provideBladeCompletions", () => {
     ).resolves.toEqual([]);
     expect(routeReferenceAt).toHaveBeenCalled();
     expect(collectPhpLaravelNamedRouteTargets).not.toHaveBeenCalled();
+  });
+
+  it("uses provider-owned formatting for custom Blade helper literal completions", async () => {
+    const routeReferenceAt = vi.fn(() => ({
+      call: "route",
+      name: "dash",
+      position: { column: 11, lineNumber: 1 },
+      prefix: "dash",
+    }));
+    const provider: PhpFrameworkProvider = {
+      id: "custom",
+      routes: {
+        completionInsertText: ({ name, prefix }) => name.slice(prefix.length),
+        referenceAt: routeReferenceAt,
+      },
+      stringLiterals: { helperAt: vi.fn(() => null) },
+    };
+    const collectPhpLaravelNamedRouteTargets = vi.fn(async () => [
+      {
+        name: "dashboard",
+        path: `${ROOT}/routes/web.php`,
+        position: { column: 1, lineNumber: 1 },
+        relativePath: "routes/web.php",
+      },
+    ]);
+    const source = "{{ route('dash') }}";
+
+    await expect(
+      provideBladeCompletions(
+        source,
+        { column: source.indexOf("dash") + "dash".length + 1, lineNumber: 1 },
+        makeDeps({
+          collectPhpLaravelNamedRouteTargets,
+          frameworkRuntime: createPhpFrameworkRuntimeContext(
+            createPhpFrameworkIntelligence({
+              matchedProviderIds: ["custom"],
+              profile: "generic",
+              providers: [provider],
+            }),
+          ),
+        }),
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        detail: "routes/web.php",
+        insertText: "board",
+        kind: "helper",
+        label: "dashboard",
+      }),
+    ]);
+    expect(routeReferenceAt).toHaveBeenCalled();
+    expect(collectPhpLaravelNamedRouteTargets).toHaveBeenCalledWith(
+      source,
+      BLADE_PATH,
+    );
   });
 
   it("does not collect Laravel views without framework view support", async () => {

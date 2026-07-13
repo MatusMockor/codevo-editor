@@ -9,9 +9,27 @@ import {
 } from "./phpFrameworkProviders";
 
 export type BladeFrameworkHelperCompletionContext =
-  | { kind: "route"; prefix: string; providerId: string }
-  | { kind: "config"; prefix: string; providerId: string }
-  | { kind: "trans"; prefix: string; providerId: string };
+  | {
+      kind: "route";
+      position: EditorPosition;
+      prefix: string;
+      providerId: string;
+      source: string;
+    }
+  | {
+      kind: "config";
+      position: EditorPosition;
+      prefix: string;
+      providerId: string;
+      source: string;
+    }
+  | {
+      kind: "trans";
+      position: EditorPosition;
+      prefix: string;
+      providerId: string;
+      source: string;
+    };
 
 interface BladeEchoSpan {
   contentStart: number;
@@ -87,8 +105,10 @@ function bladeFrameworkHelperContextFromScannerInput(
   if (route) {
     return {
       kind: "route",
+      position,
       prefix: route.match.prefix,
       providerId: route.providerId,
+      source,
     };
   }
 
@@ -99,8 +119,10 @@ function bladeFrameworkHelperContextFromScannerInput(
   if (translation) {
     return {
       kind: "trans",
+      position,
       prefix: translation.match.prefix,
       providerId: translation.providerId,
+      source,
     };
   }
 
@@ -111,8 +133,10 @@ function bladeFrameworkHelperContextFromScannerInput(
   if (config) {
     return {
       kind: "config",
+      position,
       prefix: config.match.prefix,
       providerId: config.providerId,
+      source,
     };
   }
 
