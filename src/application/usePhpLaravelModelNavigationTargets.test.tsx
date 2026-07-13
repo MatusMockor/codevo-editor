@@ -19,6 +19,13 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const ROOT = "/workspace";
 const OTHER_ROOT = "/other";
 const MODEL_PATH = `${ROOT}/app/Models/Comment.php`;
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
+  }),
+);
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: [],
@@ -48,7 +55,7 @@ function makeDeps(
 ): PhpLaravelModelNavigationTargetsDependencies {
   return {
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     openNavigationTarget: vi.fn(async () => true),
     projectSymbolSearch: {
       searchProjectSymbols: vi.fn(async () => []),
@@ -256,12 +263,11 @@ class User extends Model {}
     harness.unmount();
   });
 
-  it("uses runtime Laravel state over the legacy boolean", async () => {
+  it("skips model attribute navigation when the runtime is not Laravel", async () => {
     const openNavigationTarget = vi.fn(async () => true);
     const readNavigationFileContent = vi.fn(async () => modelSource());
     const deps = makeDeps({
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       openNavigationTarget,
       readNavigationFileContent,
     });

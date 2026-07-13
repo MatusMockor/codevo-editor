@@ -24,8 +24,7 @@ interface OpenNavigationOptions {
 
 export interface PhpLaravelModelNavigationTargetsDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   openNavigationTarget(
     path: string,
     position: EditorPosition,
@@ -63,7 +62,6 @@ export interface PhpLaravelValidationRuleModelTarget {
 export function usePhpLaravelModelNavigationTargets({
   currentWorkspaceRootRef,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   openNavigationTarget,
   projectSymbolSearch,
   providers,
@@ -72,8 +70,7 @@ export function usePhpLaravelModelNavigationTargets({
   workspaceDescriptor,
   workspaceRoot,
 }: PhpLaravelModelNavigationTargetsDependencies): PhpLaravelModelNavigationTargets {
-  const canOpenLaravelModelSourceTargets =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
+  const canOpenLaravelModelSourceTargets = frameworkRuntime.isLaravel;
 
   const findPhpLaravelValidationRuleModelTargets = useCallback(
     async (
