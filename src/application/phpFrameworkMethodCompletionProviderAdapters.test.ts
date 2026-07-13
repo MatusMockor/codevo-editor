@@ -8,7 +8,7 @@ function makeDeps(
   overrides: Partial<PhpFrameworkMethodCompletionProviderAdapterDependencies> = {},
 ): PhpFrameworkMethodCompletionProviderAdapterDependencies {
   return {
-    collectPhpLaravelRelationCompletionsForClass: vi.fn(async () => []),
+    collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     frameworkRuntime: { hasProvider: () => true },

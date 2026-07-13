@@ -49,7 +49,7 @@ function makeDeps(
 ): PhpMethodCompletionResolverDependencies {
   return {
     activePhpFrameworkProviders: [],
-    collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => []),
+    collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
     currentPhpFrameworkSourceContext: () => ({ workspaceSources: [] }),
     frameworkRuntime: LARAVEL_RUNTIME,
@@ -104,7 +104,7 @@ function renderHook(deps: PhpMethodCompletionResolverDependencies) {
 describe("usePhpMethodCompletionResolvers", () => {
   it("keeps generic runtime inert even when legacy Laravel fallback is true", async () => {
     const source = "<?php\n$post->";
-    const collectPhpLaravelDynamicWhereMethodsForClass = vi.fn(async () => [
+    const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
       method("whereEmail", { kind: "magic-where" }),
     ]);
     const collectPhpMethodsForClass = vi.fn(async () => [
@@ -116,7 +116,7 @@ describe("usePhpMethodCompletionResolvers", () => {
       async () => "App\\Models\\Post",
     );
     const deps = makeDeps({
-      collectPhpLaravelDynamicWhereMethodsForClass,
+      collectPhpFrameworkSyntheticMethodsForClass,
       collectPhpMethodsForClass,
       frameworkRuntime: GENERIC_RUNTIME,
       isLaravelFrameworkActive: true,
@@ -145,7 +145,7 @@ describe("usePhpMethodCompletionResolvers", () => {
     ]);
     expect(staticCompletions).toEqual([]);
     expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
-    expect(collectPhpLaravelDynamicWhereMethodsForClass).not.toHaveBeenCalled();
+    expect(collectPhpFrameworkSyntheticMethodsForClass).not.toHaveBeenCalled();
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",
     );
@@ -173,7 +173,7 @@ describe("usePhpMethodCompletionResolvers", () => {
       ];
     });
     const deps = makeDeps({
-      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
         method("whereEmail", { kind: "magic-where" }),
         method("whereEmail", {
           declaringClassName: "App\\Models\\Duplicate",
@@ -220,7 +220,7 @@ describe("usePhpMethodCompletionResolvers", () => {
   it("keeps Laravel static model completions wired to scopes and dynamic where methods", async () => {
     const source = "<?php\nuse App\\Models\\Post;\nPost::";
     const deps = makeDeps({
-      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
         method("whereTitle", { isStatic: true, kind: "magic-where" }),
       ]),
       collectPhpMethodsForClass: vi.fn(async () => [
@@ -246,7 +246,7 @@ describe("usePhpMethodCompletionResolvers", () => {
       "published",
       "whereTitle",
     ]);
-    expect(deps.collectPhpLaravelDynamicWhereMethodsForClass).toHaveBeenCalledWith(
+    expect(deps.collectPhpFrameworkSyntheticMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",
       { isStatic: true },
     );

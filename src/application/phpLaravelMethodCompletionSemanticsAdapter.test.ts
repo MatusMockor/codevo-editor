@@ -23,7 +23,7 @@ function makeDeps(
   overrides: Partial<PhpLaravelMethodCompletionSemanticsAdapterDependencies> = {},
 ): PhpLaravelMethodCompletionSemanticsAdapterDependencies {
   return {
-    collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => []),
+    collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
     resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
     ...overrides,
   };
@@ -47,12 +47,12 @@ describe("phpLaravelMethodCompletionSemanticsAdapter", () => {
       }),
       method("title", { kind: "property" }),
     ]);
-    const collectPhpLaravelDynamicWhereMethodsForClass = vi.fn(async () => [
+    const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
       method("whereEmail", { kind: "magic-where" }),
     ]);
     const adapter = createPhpLaravelMethodCompletionSemanticsAdapter(
       makeDeps({
-        collectPhpLaravelDynamicWhereMethodsForClass,
+        collectPhpFrameworkSyntheticMethodsForClass,
         resolvePhpEloquentBuilderModelType: vi.fn(
           async () => "App\\Models\\Post",
         ),
@@ -88,7 +88,7 @@ describe("phpLaravelMethodCompletionSemanticsAdapter", () => {
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",
     );
-    expect(collectPhpLaravelDynamicWhereMethodsForClass).toHaveBeenCalledWith(
+    expect(collectPhpFrameworkSyntheticMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",
     );
   });
@@ -121,11 +121,11 @@ describe("phpLaravelMethodCompletionSemanticsAdapter", () => {
   });
 
   it("adds static model members, local scopes, and dynamic where methods", async () => {
-    const collectPhpLaravelDynamicWhereMethodsForClass = vi.fn(async () => [
+    const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
       method("whereTitle", { isStatic: true, kind: "magic-where" }),
     ]);
     const adapter = createPhpLaravelMethodCompletionSemanticsAdapter(
-      makeDeps({ collectPhpLaravelDynamicWhereMethodsForClass }),
+      makeDeps({ collectPhpFrameworkSyntheticMethodsForClass }),
     );
 
     const groups = await adapter.staticCompletionGroups({
@@ -156,7 +156,7 @@ describe("phpLaravelMethodCompletionSemanticsAdapter", () => {
     expect(groups.dynamicWhereMethods).toEqual([
       method("whereTitle", { isStatic: true, kind: "magic-where" }),
     ]);
-    expect(collectPhpLaravelDynamicWhereMethodsForClass).toHaveBeenCalledWith(
+    expect(collectPhpFrameworkSyntheticMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",
       { isStatic: true },
     );

@@ -23,7 +23,7 @@ function makeDeps(
   overrides: Partial<PhpLaravelMethodCompletionProviderAdapterDependencies> = {},
 ): PhpLaravelMethodCompletionProviderAdapterDependencies {
   return {
-    collectPhpLaravelRelationCompletionsForClass: vi.fn(async () => []),
+    collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     resolvePhpClassReference: vi.fn(
@@ -130,7 +130,7 @@ Route::get('/posts', [PostController::class, 'in']);
     );
     const adapter = createPhpLaravelMethodCompletionProviderAdapter(
       makeDeps({
-        collectPhpLaravelRelationCompletionsForClass: vi.fn(async () => [
+        collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => [
           method("author"),
           method("attachments"),
         ]),
@@ -159,7 +159,7 @@ Route::get('/posts', [PostController::class, 'in']);
     );
     const adapter = createPhpLaravelMethodCompletionProviderAdapter(
       makeDeps({
-        collectPhpLaravelRelationCompletionsForClass: vi.fn(async () => [
+        collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => [
           method("re"),
           ...relations,
         ]),
@@ -191,7 +191,7 @@ Route::get('/posts', [PostController::class, 'in']);
     ["relation collection", 4],
   ])("checks request currency after %s", async (_stage, staleCheck) => {
     const source = "<?php\n$post->load('comments.aut');";
-    const collectPhpLaravelRelationCompletionsForClass = vi.fn(async () => [
+    const collectPhpFrameworkRelationCompletionsForClass = vi.fn(async () => [
       method("author"),
     ]);
     const resolvePhpLaravelRelationPathOwnerType = vi.fn(
@@ -199,7 +199,7 @@ Route::get('/posts', [PostController::class, 'in']);
     );
     const adapter = createPhpLaravelMethodCompletionProviderAdapter(
       makeDeps({
-        collectPhpLaravelRelationCompletionsForClass,
+        collectPhpFrameworkRelationCompletionsForClass,
         resolvePhpExpressionType: vi.fn(async () => "App\\Models\\Post"),
         resolvePhpLaravelRelationPathOwnerType,
       }),
@@ -219,7 +219,7 @@ Route::get('/posts', [PostController::class, 'in']);
       expect(resolvePhpLaravelRelationPathOwnerType).not.toHaveBeenCalled();
     }
     if (staleCheck < 4) {
-      expect(collectPhpLaravelRelationCompletionsForClass).not.toHaveBeenCalled();
+      expect(collectPhpFrameworkRelationCompletionsForClass).not.toHaveBeenCalled();
     }
   });
 

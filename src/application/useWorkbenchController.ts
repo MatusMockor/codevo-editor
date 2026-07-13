@@ -7318,8 +7318,8 @@ export function useWorkbenchController(
   const {
     readPhpClassMembersFromPath,
     collectPhpMethodsForClass,
-    collectPhpLaravelDynamicWhereMethodsForClass,
-    collectPhpLaravelRelationCompletionsForClass,
+    collectPhpFrameworkSyntheticMethodsForClass,
+    collectPhpFrameworkRelationCompletionsForClass,
     resolvePhpGenericTemplateTypesForInheritedClass,
     resolvePhpGenericTemplateTypesForMixinClass,
     resetPhpClassMemberCache,
@@ -7417,7 +7417,7 @@ export function useWorkbenchController(
     phpClassHasLaravelDynamicWhere,
     phpClassHasLaravelLocalScope,
   } = usePhpLaravelScopePredicates({
-    collectPhpLaravelDynamicWhereMethodsForClass,
+    collectPhpFrameworkSyntheticMethodsForClass,
     collectPhpMethodsForClass,
     frameworkRuntime: phpFrameworkRuntimeContext,
   });
@@ -7584,7 +7584,7 @@ export function useWorkbenchController(
     resolvePhpStaticMethodCompletions,
   } = usePhpMethodCompletionResolvers({
     activePhpFrameworkProviders,
-    collectPhpLaravelDynamicWhereMethodsForClass,
+    collectPhpFrameworkSyntheticMethodsForClass,
     collectPhpMethodsForClass,
     currentPhpFrameworkSourceContext,
     frameworkRuntime: phpFrameworkRuntimeContext,
@@ -7609,7 +7609,7 @@ export function useWorkbenchController(
     collectMiddlewareAliasTargets,
     collectNamedRouteTargets,
     collectPasswordBrokerTargets,
-    collectPhpLaravelRelationCompletionsForClass,
+    collectPhpFrameworkRelationCompletionsForClass,
     collectPhpMethodsForClass,
     collectQueueConnectionTargets,
     collectRedisConnectionTargets,

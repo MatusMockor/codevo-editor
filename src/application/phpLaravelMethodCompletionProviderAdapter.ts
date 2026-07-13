@@ -7,7 +7,7 @@ import {
 import type { PhpFrameworkMethodCompletionProviderAdapter } from "./phpFrameworkMethodCompletionProviderAdapter";
 
 export interface PhpLaravelMethodCompletionProviderAdapterDependencies {
-  collectPhpLaravelRelationCompletionsForClass(
+  collectPhpFrameworkRelationCompletionsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
@@ -30,7 +30,7 @@ export interface PhpLaravelMethodCompletionProviderAdapterDependencies {
 }
 
 export function createPhpLaravelMethodCompletionProviderAdapter({
-  collectPhpLaravelRelationCompletionsForClass,
+  collectPhpFrameworkRelationCompletionsForClass,
   collectPhpMethodsForClass,
   ensurePhpFrameworkSourceCollectionsLoaded,
   resolvePhpClassReference,
@@ -115,7 +115,7 @@ export function createPhpLaravelMethodCompletionProviderAdapter({
 
       const normalizedPrefix = relationContext.prefix.toLowerCase();
       const relations =
-        await collectPhpLaravelRelationCompletionsForClass(relationOwnerType);
+        await collectPhpFrameworkRelationCompletionsForClass(relationOwnerType);
 
       if (!isRequestStillCurrent()) {
         return [];

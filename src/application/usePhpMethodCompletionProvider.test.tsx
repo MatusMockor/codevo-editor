@@ -100,7 +100,7 @@ function makeDeps(
     collectMiddlewareAliasTargets: vi.fn(async () => []),
     collectNamedRouteTargets: vi.fn(async () => []),
     collectPasswordBrokerTargets: vi.fn(async () => []),
-    collectPhpLaravelRelationCompletionsForClass: vi.fn(async () => []),
+    collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
     collectQueueConnectionTargets: vi.fn(async () => []),
     collectRedisConnectionTargets: vi.fn(async () => []),
@@ -207,7 +207,7 @@ use App\\Models\\Comment;
 
 Comment::with('par')->first();
 `;
-    const collectPhpLaravelRelationCompletionsForClass = vi.fn(async () => [
+    const collectPhpFrameworkRelationCompletionsForClass = vi.fn(async () => [
       method("children"),
       method("parent"),
       method("participants"),
@@ -219,7 +219,7 @@ Comment::with('par')->first();
       async (className: string) => className,
     );
     const deps = makeDeps({
-      collectPhpLaravelRelationCompletionsForClass,
+      collectPhpFrameworkRelationCompletionsForClass,
       resolvePhpClassReference,
       resolvePhpLaravelRelationPathOwnerType,
     });
@@ -238,7 +238,7 @@ Comment::with('par')->first();
       "App\\Models\\Comment",
       [],
     );
-    expect(collectPhpLaravelRelationCompletionsForClass).toHaveBeenCalledWith(
+    expect(collectPhpFrameworkRelationCompletionsForClass).toHaveBeenCalledWith(
       "App\\Models\\Comment",
     );
 
@@ -365,7 +365,7 @@ Comment::with('par')->first();
     );
     const deps = makeDeps({
       activePhpFrameworkProviders: [],
-      collectPhpLaravelRelationCompletionsForClass: vi.fn(async () => [
+      collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => [
         method("parent"),
       ]),
       collectPhpMethodsForClass: vi.fn(async () => [method("index")]),

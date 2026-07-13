@@ -33,7 +33,7 @@ export interface PhpMethodCompletionProviderDependencies
     Omit<PhpFrameworkScopedCompletionDependencies, "isRequestStillCurrent"> {
   activeDocument: EditorDocument | null;
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
-  collectPhpLaravelRelationCompletionsForClass(
+  collectPhpFrameworkRelationCompletionsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
@@ -98,7 +98,7 @@ export function usePhpMethodCompletionProvider({
   collectMiddlewareAliasTargets,
   collectNamedRouteTargets,
   collectPasswordBrokerTargets,
-  collectPhpLaravelRelationCompletionsForClass,
+  collectPhpFrameworkRelationCompletionsForClass,
   collectPhpMethodsForClass,
   collectQueueConnectionTargets,
   collectRedisConnectionTargets,
@@ -131,7 +131,7 @@ export function usePhpMethodCompletionProvider({
   const methodCompletionAdapter = useMemo(
     () =>
       createPhpFrameworkMethodCompletionProviderAdapters({
-        collectPhpLaravelRelationCompletionsForClass,
+        collectPhpFrameworkRelationCompletionsForClass,
         collectPhpMethodsForClass,
         ensurePhpFrameworkSourceCollectionsLoaded,
         frameworkRuntime: methodCompletionFrameworkRuntime,
@@ -141,7 +141,7 @@ export function usePhpMethodCompletionProvider({
         resolvePhpLaravelRelationPathOwnerType,
       }),
     [
-      collectPhpLaravelRelationCompletionsForClass,
+      collectPhpFrameworkRelationCompletionsForClass,
       collectPhpMethodsForClass,
       ensurePhpFrameworkSourceCollectionsLoaded,
       methodCompletionFrameworkRuntime,
@@ -332,7 +332,7 @@ export function usePhpMethodCompletionProvider({
       collectMiddlewareAliasTargets,
       collectNamedRouteTargets,
       collectPasswordBrokerTargets,
-      collectPhpLaravelRelationCompletionsForClass,
+      collectPhpFrameworkRelationCompletionsForClass,
       collectPhpMethodsForClass,
       collectQueueConnectionTargets,
       collectRedisConnectionTargets,

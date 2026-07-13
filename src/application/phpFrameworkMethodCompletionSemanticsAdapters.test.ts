@@ -23,7 +23,7 @@ function makeDeps(
   overrides: Partial<PhpFrameworkMethodCompletionSemanticsAdapterDependencies> = {},
 ): PhpFrameworkMethodCompletionSemanticsAdapterDependencies {
   return {
-    collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => []),
+    collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
     frameworkRuntime: { hasProvider: () => true },
     resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
     ...overrides,
@@ -36,7 +36,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
     { activeProviderId: "nette", label: "Nette" },
     { activeProviderId: "custom", label: "custom" },
   ])("keeps $label providers inert", async ({ activeProviderId }) => {
-    const collectPhpLaravelDynamicWhereMethodsForClass = vi.fn(async () => [
+    const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
       method("whereEmail", { kind: "magic-where" }),
     ]);
     const resolvePhpEloquentBuilderModelType = vi.fn(
@@ -50,7 +50,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
     };
     const adapter = createPhpFrameworkMethodCompletionSemanticsAdapters(
       makeDeps({
-        collectPhpLaravelDynamicWhereMethodsForClass,
+        collectPhpFrameworkSyntheticMethodsForClass,
         frameworkRuntime,
         resolvePhpEloquentBuilderModelType,
       }),
@@ -93,7 +93,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
       localScopeMethods: [],
     });
     expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
-    expect(collectPhpLaravelDynamicWhereMethodsForClass).not.toHaveBeenCalled();
+    expect(collectPhpFrameworkSyntheticMethodsForClass).not.toHaveBeenCalled();
   });
 
   it("returns Laravel method completion semantics when the Laravel provider is active", () => {

@@ -10,7 +10,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpFrameworkMethodCompletionSemanticsAdapter } from "./phpFrameworkMethodCompletionSemantics";
 
 export interface PhpLaravelMethodCompletionSemanticsAdapterDependencies {
-  collectPhpLaravelDynamicWhereMethodsForClass(
+  collectPhpFrameworkSyntheticMethodsForClass(
     className: string,
     options?: { isStatic?: boolean },
   ): Promise<PhpMethodCompletion[]>;
@@ -22,7 +22,7 @@ export interface PhpLaravelMethodCompletionSemanticsAdapterDependencies {
 }
 
 export function createPhpLaravelMethodCompletionSemanticsAdapter({
-  collectPhpLaravelDynamicWhereMethodsForClass,
+  collectPhpFrameworkSyntheticMethodsForClass,
   resolvePhpEloquentBuilderModelType,
 }: PhpLaravelMethodCompletionSemanticsAdapterDependencies): PhpFrameworkMethodCompletionSemanticsAdapter {
   return {
@@ -49,7 +49,7 @@ export function createPhpLaravelMethodCompletionSemanticsAdapter({
           context.collectPhpMethodsForClass,
         );
       const dynamicWhereMethods = builderModelType
-        ? await collectPhpLaravelDynamicWhereMethodsForClass(builderModelType)
+        ? await collectPhpFrameworkSyntheticMethodsForClass(builderModelType)
         : [];
 
       return {
@@ -70,7 +70,7 @@ export function createPhpLaravelMethodCompletionSemanticsAdapter({
           ? phpLaravelStaticModelMemberCompletionsFromMethods(methods)
           : methods.filter((method) => method.isStatic),
         dynamicWhereMethods:
-          await collectPhpLaravelDynamicWhereMethodsForClass(className, {
+          await collectPhpFrameworkSyntheticMethodsForClass(className, {
             isStatic: true,
           }),
         localScopeMethods: phpLaravelStaticLocalScopeCompletionsFromMethods(

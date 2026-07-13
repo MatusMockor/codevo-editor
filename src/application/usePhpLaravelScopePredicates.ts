@@ -4,7 +4,7 @@ import { phpLaravelLocalScopeCompletionsFromMethods } from "../domain/phpFramewo
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface UsePhpLaravelScopePredicatesOptions {
-  collectPhpLaravelDynamicWhereMethodsForClass(
+  collectPhpFrameworkSyntheticMethodsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
@@ -13,7 +13,7 @@ interface UsePhpLaravelScopePredicatesOptions {
 }
 
 export function usePhpLaravelScopePredicates({
-  collectPhpLaravelDynamicWhereMethodsForClass,
+  collectPhpFrameworkSyntheticMethodsForClass,
   collectPhpMethodsForClass,
   frameworkRuntime,
   isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
@@ -29,13 +29,13 @@ export function usePhpLaravelScopePredicates({
 
       const methodLookup = methodName.toLowerCase();
       const dynamicWhereCompletions =
-        await collectPhpLaravelDynamicWhereMethodsForClass(className);
+        await collectPhpFrameworkSyntheticMethodsForClass(className);
 
       return dynamicWhereCompletions.some(
         (method) => method.name.toLowerCase() === methodLookup,
       );
     },
-    [collectPhpLaravelDynamicWhereMethodsForClass, isLaravelFrameworkActive],
+    [collectPhpFrameworkSyntheticMethodsForClass, isLaravelFrameworkActive],
   );
 
   const phpClassHasLaravelLocalScope = useCallback(

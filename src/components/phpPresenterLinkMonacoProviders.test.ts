@@ -3,10 +3,10 @@ import {
   phpPresenterLinkCompletionSuggestions,
   providePhpPresenterLinkDefinition,
   type PhpPresenterLinkMonacoProviderContext,
-} from "./nettePhpLinkMonacoProviders";
+} from "./phpPresenterLinkMonacoProviders";
 import type { LatteCompletion } from "./templateLanguageMonacoProviders";
 
-describe("nette PHP link Monaco providers", () => {
+describe("PHP presenter-link Monaco providers", () => {
   it("delegates presenter-link definition with the current PHP source offset", async () => {
     const source = "<?php\n$this->link('Product:show');";
     const context = providerContext({

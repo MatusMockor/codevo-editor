@@ -221,7 +221,7 @@ class User
     );
 
     const completions =
-      await harness.api().collectPhpLaravelDynamicWhereMethodsForClass(
+      await harness.api().collectPhpFrameworkSyntheticMethodsForClass(
         "App\\Models\\User",
         { isStatic: true },
       );
@@ -262,13 +262,13 @@ class User
     );
 
     await expect(
-      harness.api().collectPhpLaravelDynamicWhereMethodsForClass(
+      harness.api().collectPhpFrameworkSyntheticMethodsForClass(
         "App\\Models\\User",
         { isStatic: true },
       ),
     ).resolves.toEqual([]);
     await expect(
-      harness.api().collectPhpLaravelRelationCompletionsForClass(
+      harness.api().collectPhpFrameworkRelationCompletionsForClass(
         "App\\Models\\User",
       ),
     ).resolves.toEqual([]);
@@ -301,7 +301,7 @@ class User
     );
 
     const completions =
-      await harness.api().collectPhpLaravelRelationCompletionsForClass(
+      await harness.api().collectPhpFrameworkRelationCompletionsForClass(
         "App\\Models\\User",
       );
 

@@ -22,7 +22,7 @@ interface PhpFrameworkSourceRegistryContext {
 
 export interface PhpMethodCompletionResolverDependencies {
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
-  collectPhpLaravelDynamicWhereMethodsForClass(
+  collectPhpFrameworkSyntheticMethodsForClass(
     className: string,
     options?: { isStatic?: boolean },
   ): Promise<PhpMethodCompletion[]>;
@@ -62,7 +62,7 @@ export function usePhpMethodCompletionResolvers(
 ): PhpMethodCompletionResolvers {
   const {
     activePhpFrameworkProviders,
-    collectPhpLaravelDynamicWhereMethodsForClass,
+    collectPhpFrameworkSyntheticMethodsForClass,
     collectPhpMethodsForClass,
     currentPhpFrameworkSourceContext,
     frameworkRuntime,
@@ -89,12 +89,12 @@ export function usePhpMethodCompletionResolvers(
   const frameworkSemantics = useMemo(
     () =>
       createPhpFrameworkMethodCompletionSemanticsAdapters({
-        collectPhpLaravelDynamicWhereMethodsForClass,
+        collectPhpFrameworkSyntheticMethodsForClass,
         frameworkRuntime: activeFrameworkRuntime,
         resolvePhpEloquentBuilderModelType,
       }),
     [
-      collectPhpLaravelDynamicWhereMethodsForClass,
+      collectPhpFrameworkSyntheticMethodsForClass,
       activeFrameworkRuntime,
       resolvePhpEloquentBuilderModelType,
     ],

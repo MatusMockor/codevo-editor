@@ -56,11 +56,11 @@ export interface UsePhpClassMemberCollectorsOptions {
 }
 
 export interface PhpClassMemberCollectors {
-  collectPhpLaravelDynamicWhereMethodsForClass: (
+  collectPhpFrameworkSyntheticMethodsForClass: (
     className: string,
     options?: { isStatic?: boolean },
   ) => Promise<PhpMethodCompletion[]>;
-  collectPhpLaravelRelationCompletionsForClass: (
+  collectPhpFrameworkRelationCompletionsForClass: (
     className: string,
   ) => Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass: (
@@ -453,7 +453,7 @@ export function usePhpClassMemberCollectors({
     ],
   );
 
-  const collectPhpLaravelDynamicWhereMethodsForClass = useCallback(
+  const collectPhpFrameworkSyntheticMethodsForClass = useCallback(
     async (
       className: string,
       options: { isStatic?: boolean } = {},
@@ -533,7 +533,7 @@ export function usePhpClassMemberCollectors({
     ],
   );
 
-  const collectPhpLaravelRelationCompletionsForClass = useCallback(
+  const collectPhpFrameworkRelationCompletionsForClass = useCallback(
     async (className: string): Promise<PhpMethodCompletion[]> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
@@ -666,8 +666,8 @@ export function usePhpClassMemberCollectors({
   );
 
   return {
-    collectPhpLaravelDynamicWhereMethodsForClass,
-    collectPhpLaravelRelationCompletionsForClass,
+    collectPhpFrameworkSyntheticMethodsForClass,
+    collectPhpFrameworkRelationCompletionsForClass,
     collectPhpMethodsForClass,
     readPhpClassMembersFromPath,
     resetPhpClassMemberCache,

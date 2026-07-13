@@ -45,7 +45,7 @@ function methodCompletion(
 
 function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
   return {
-    collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => []),
+    collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
     isLaravelFrameworkActive: true,
     ...overrides,
@@ -85,7 +85,7 @@ function renderHook(options: HookOptions) {
 describe("usePhpLaravelScopePredicates", () => {
   it("matches Laravel dynamic where methods case-insensitively", async () => {
     const options = makeOptions({
-      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
         methodCompletion("whereEmailAddress"),
       ]),
     });
@@ -98,7 +98,7 @@ describe("usePhpLaravelScopePredicates", () => {
     ).resolves.toBe(true);
 
     expect(
-      options.collectPhpLaravelDynamicWhereMethodsForClass,
+      options.collectPhpFrameworkSyntheticMethodsForClass,
     ).toHaveBeenCalledWith("App\\Models\\User");
 
     harness.unmount();
@@ -106,7 +106,7 @@ describe("usePhpLaravelScopePredicates", () => {
 
   it("returns false for Laravel dynamic where methods when no method matches", async () => {
     const options = makeOptions({
-      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
         methodCompletion("whereName"),
       ]),
     });
@@ -164,7 +164,7 @@ describe("usePhpLaravelScopePredicates", () => {
 
   it("does not expose Laravel dynamic where or local scopes for a generic runtime", async () => {
     const options = makeOptions({
-      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
         methodCompletion("whereEmailAddress"),
       ]),
       collectPhpMethodsForClass: vi.fn(async () => [
@@ -187,7 +187,7 @@ describe("usePhpLaravelScopePredicates", () => {
     ).resolves.toBe(false);
 
     expect(
-      options.collectPhpLaravelDynamicWhereMethodsForClass,
+      options.collectPhpFrameworkSyntheticMethodsForClass,
     ).not.toHaveBeenCalled();
     expect(options.collectPhpMethodsForClass).not.toHaveBeenCalled();
 
@@ -196,7 +196,7 @@ describe("usePhpLaravelScopePredicates", () => {
 
   it("exposes Laravel dynamic where and local scopes for a Laravel runtime", async () => {
     const options = makeOptions({
-      collectPhpLaravelDynamicWhereMethodsForClass: vi.fn(async () => [
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
         methodCompletion("whereEmailAddress"),
       ]),
       collectPhpMethodsForClass: vi.fn(async () => [
@@ -219,7 +219,7 @@ describe("usePhpLaravelScopePredicates", () => {
     ).resolves.toBe(true);
 
     expect(
-      options.collectPhpLaravelDynamicWhereMethodsForClass,
+      options.collectPhpFrameworkSyntheticMethodsForClass,
     ).toHaveBeenCalledWith("App\\Models\\User");
     expect(options.collectPhpMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",

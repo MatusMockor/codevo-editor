@@ -11,7 +11,7 @@ import {
   phpPresenterLinkCompletionSuggestions,
   providePhpPresenterLinkDefinition,
   type PhpPresenterLinkMonacoProviderContext,
-} from "./nettePhpLinkMonacoProviders";
+} from "./phpPresenterLinkMonacoProviders";
 
 type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
