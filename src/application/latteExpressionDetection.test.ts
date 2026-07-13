@@ -3,6 +3,8 @@ import {
   hasUnclosedStringLiteral,
   isLatteMemberReferenceAt,
   latteExpressionCompletionTargetAt,
+  latteExpressionNavigationAt,
+  latteFilterReferenceAt,
   latteMemberReferenceAt,
   latteVariableNameAt,
 } from "./latteExpressionDetection";
@@ -75,6 +77,50 @@ describe("latteExpressionCompletionTargetAt", () => {
     });
   });
 
+  it("detects member completion inside an n:if attribute value", () => {
+    const source = '<span n:if="$user->isAc">x</span>';
+    const target = latteExpressionCompletionTargetAt(
+      source,
+      offsetAfter(source, "isAc"),
+    );
+
+    expect(target).toEqual({
+      kind: "member",
+      member: {
+        end: offsetAfter(source, "isAc"),
+        prefix: "isAc",
+        receiverExpression: "$user",
+        start: offsetAfter(source, "isAc") - 4,
+        variableName: "user",
+      },
+    });
+  });
+
+  it("detects variable completion inside an n:foreach attribute value", () => {
+    const source = '<tr n:foreach="$ite as $item">x</tr>';
+    const target = latteExpressionCompletionTargetAt(
+      source,
+      offsetAfter(source, "$ite"),
+    );
+
+    expect(target).toEqual({
+      kind: "variable",
+      variable: {
+        end: offsetAfter(source, "$ite"),
+        prefix: "ite",
+        start: source.indexOf("$ite"),
+      },
+    });
+  });
+
+  it("does not offer expression completions inside an n:href attribute value", () => {
+    const source = '<a n:href="Product:sh">x</a>';
+
+    expect(
+      latteExpressionCompletionTargetAt(source, offsetAfter(source, "Product")),
+    ).toBeNull();
+  });
+
   it("does not offer expression completions inside string literals", () => {
     const source = `{var $label = 'hello |upp $invoice->na'}`;
 
@@ -111,6 +157,104 @@ describe("latte variable and member reference detection", () => {
       memberName: "name",
       receiverExpression: "$invoice->customer",
       variableName: "invoice",
+    });
+  });
+
+  it("does not resolve a variable through an attribute opener masked by a comment", () => {
+    const source = '{* <div n:if="$cond> *} hello $world <div class="box">';
+
+    expect(latteVariableNameAt(source, offsetAfter(source, "$wor"))).toBeNull();
+  });
+
+  it("finds the variable name inside an n:if attribute value", () => {
+    const source = '<div n:if="$invoice">x</div>';
+
+    expect(latteVariableNameAt(source, offsetAfter(source, "$inv"))).toBe(
+      "invoice",
+    );
+  });
+
+  it("finds member references inside an n:foreach attribute value", () => {
+    const source = '<tr n:foreach="$invoice->items as $item">x</tr>';
+    const offset = offsetAfter(source, "->ite");
+
+    expect(latteMemberReferenceAt(source, offset)).toEqual({
+      memberName: "items",
+      receiverExpression: "$invoice",
+      variableName: "invoice",
+    });
+  });
+});
+
+describe("latte filter reference detection", () => {
+  it("finds a filter name under the cursor for definition navigation", () => {
+    const source = "{$createdAt|UserDate|noescape}";
+
+    expect(latteFilterReferenceAt(source, offsetAfter(source, "User"))).toEqual({
+      name: "UserDate",
+    });
+    expect(
+      latteFilterReferenceAt(source, offsetAfter(source, "noesc")),
+    ).toEqual({
+      name: "noescape",
+    });
+  });
+
+  it("rejects logical-or and strings when resolving filter references", () => {
+    expect(latteFilterReferenceAt("{if $left || $right}", 11)).toBeNull();
+    expect(
+      latteFilterReferenceAt(
+        `{var $label = 'created|UserDate'}`,
+        offsetAfter(`{var $label = 'created|UserDate'}`, "User"),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("latteExpressionNavigationAt", () => {
+  it("returns the variable view for a variable reference", () => {
+    const source = "{if $invoice}";
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "$inv")),
+    ).toEqual({ memberReference: null, variableName: "invoice" });
+  });
+
+  it("returns the member view for a member reference", () => {
+    const source = "{$invoice->customer->name}";
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "na")),
+    ).toEqual({
+      memberReference: {
+        memberName: "name",
+        receiverExpression: "$invoice->customer",
+        variableName: "invoice",
+      },
+      variableName: null,
+    });
+  });
+
+  it("returns empty views outside latte expression context", () => {
+    const source = "<div>$invoice</div>";
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "$inv")),
+    ).toEqual({ memberReference: null, variableName: null });
+  });
+
+  it("returns the member view inside an n:foreach attribute value", () => {
+    const source = '<tr n:foreach="$invoice->items as $item">x</tr>';
+
+    expect(
+      latteExpressionNavigationAt(source, offsetAfter(source, "->ite")),
+    ).toEqual({
+      memberReference: {
+        memberName: "items",
+        receiverExpression: "$invoice",
+        variableName: "invoice",
+      },
+      variableName: null,
     });
   });
 });

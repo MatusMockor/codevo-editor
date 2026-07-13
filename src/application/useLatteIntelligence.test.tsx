@@ -228,6 +228,44 @@ function makeDeps(
   };
 }
 
+function neonFilterWorkspaceOverrides(
+  root: string,
+  filterName: string,
+): Partial<LatteIntelligenceDependencies> {
+  const configPath = `${root}/app/config/config.neon`;
+  const neon = [
+    "services:",
+    "    filterLoader:",
+    "        setup:",
+    `            - register('${filterName}', [@templateHelper, process])`,
+    "    scenariosGenericEventsManager:",
+    "        setup:",
+    "            - register('generate_password_reset_url', App\\Scenarios\\GeneratePasswordResetUrl())",
+    "",
+  ].join("\n");
+
+  return {
+    listDirectory: vi.fn(async (path: string): Promise<LatteDirectoryEntry[]> => {
+      if (path === `${root}/app`) {
+        return [{ kind: "directory", path: `${root}/app/config` }];
+      }
+
+      if (path === `${root}/app/config`) {
+        return [{ kind: "file", path: configPath }];
+      }
+
+      throw new Error(`no such directory: ${path}`);
+    }),
+    readFileContent: vi.fn(async (path: string): Promise<string> => {
+      if (path === configPath) {
+        return neon;
+      }
+
+      throw new Error(`no such file: ${path}`);
+    }),
+  };
+}
+
 function positionAtOffset(source: string, offset: number) {
   const before = source.slice(0, offset);
   const lineNumber = before.split("\n").length;
@@ -555,7 +593,12 @@ class ProductListControl extends Nette\\Application\\UI\\Control
       "App\\Model\\Consent",
       "name",
     );
-    expect(latte.shouldBlockLatteDefinitionFallback(source, offset)).toBe(true);
+    await expect(
+      latte.provideLatteDefinitionOutcome(source, offset),
+    ).resolves.toEqual({
+      handled: true,
+      shouldBlockFallback: true,
+    });
   });
 
   it("blocks generic fallback for an unresolved Latte property expression", async () => {
@@ -569,12 +612,14 @@ class ProductListControl extends Nette\\Application\\UI\\Control
     const source = "{varType App\\Model\\Consent $consent}\n{$consent->name}";
     const offset = source.indexOf("name") + 2;
 
-    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
-      false,
-    );
+    await expect(
+      latte.provideLatteDefinitionOutcome(source, offset),
+    ).resolves.toEqual({
+      handled: false,
+      shouldBlockFallback: true,
+    });
     expect(resolvePhpReceiverCompletions).toHaveBeenCalled();
     expect(openPhpPropertyTarget).not.toHaveBeenCalled();
-    expect(latte.shouldBlockLatteDefinitionFallback(source, offset)).toBe(true);
   });
 
   it("does nothing when the Nette framework is not active", async () => {
@@ -2196,6 +2241,105 @@ class ProductPresenter extends BasePresenter
       latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
     ).resolves.toEqual([]);
   });
+
+  it("merges project-registered NEON filters into | completions without non-filter leakage", async () => {
+    const deps = makeDeps(neonFilterWorkspaceOverrides(ROOT, "userDate"));
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$total|}";
+    const offset = source.indexOf("|") + 1;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("upper");
+    expect(labels).toContain("userDate");
+    expect(labels).not.toContain("generate_password_reset_url");
+    expect(
+      completions.find((completion) => completion.label === "userDate"),
+    ).toMatchObject({ detail: "Project Latte filter", kind: "filter" });
+  });
+
+  it("filters project filter names by the typed | prefix", async () => {
+    const deps = makeDeps(neonFilterWorkspaceOverrides(ROOT, "userDate"));
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$total|user}";
+    const offset = source.indexOf("user") + "user".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "userDate",
+    ]);
+  });
+
+  it("does not duplicate a builtin when a project re-registers its name", async () => {
+    const deps = makeDeps(neonFilterWorkspaceOverrides(ROOT, "date"));
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$total|date}";
+    const offset = source.indexOf("date") + "date".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toEqual([
+      expect.objectContaining({ detail: "Latte filter", label: "date" }),
+    ]);
+  });
+
+  it("never offers another root's project filters from a shared cache", async () => {
+    const rootA = "/ws-a";
+    const rootB = "/ws-b";
+    const filterCache = {};
+    const depsA = makeDeps({
+      ...neonFilterWorkspaceOverrides(rootA, "secretA"),
+      currentWorkspaceRootRef: { current: rootA },
+      getActiveDocument: () => ({ path: `${rootA}/app/UI/Home/default.latte` }),
+      workspaceRoot: rootA,
+    });
+    const latteA = createLatteIntelligence(
+      () => depsA,
+      {},
+      {},
+      {},
+      {},
+      {},
+      netteLatteFrameworkCapabilities,
+      filterCache,
+    );
+    const source = "{$total|secret}";
+    const position = positionAtOffset(source, source.indexOf("}"));
+
+    const completionsA = await latteA.provideLatteCompletions(source, position);
+    expect(completionsA.map((completion) => completion.label)).toContain(
+      "secretA",
+    );
+
+    const depsB = makeDeps({
+      currentWorkspaceRootRef: { current: rootB },
+      getActiveDocument: () => ({ path: `${rootB}/app/UI/Home/default.latte` }),
+      workspaceRoot: rootB,
+    });
+    const latteB = createLatteIntelligence(
+      () => depsB,
+      {},
+      {},
+      {},
+      {},
+      {},
+      netteLatteFrameworkCapabilities,
+      filterCache,
+    );
+
+    const completionsB = await latteB.provideLatteCompletions(source, position);
+    expect(completionsB.map((completion) => completion.label)).not.toContain(
+      "secretA",
+    );
+  });
 });
 
 describe("createLatteIntelligence view-data cache lifecycle", () => {
@@ -3472,7 +3616,13 @@ class HomePresenter extends Presenter
 
     protected function createComponentContactForm(): Form
     {
-        return new Form();
+        $form = new Form();
+        $form->addText('email', 'Email');
+        $form->addSelect('role', 'Role');
+        $form->addTextArea('message', 'Message');
+        $form->addSubmit('send', 'Send');
+
+        return $form;
     }
 
     protected function createComponentProductList(): ProductListControl
@@ -3651,6 +3801,50 @@ class ApiConsoleControl extends Control
     });
     const latte = createLatteIntelligence(() => deps);
     const source = '<input n:name="email">';
+    const offset = source.indexOf("email") + 1;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      false,
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("navigates an input n:name to a field inside the active form component", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="contactForm"><input n:name="email"></form>';
+    const offset = source.indexOf("email") + 1;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/HomePresenter.php",
+      expect.objectContaining({ lineNumber: 17 }),
+      "email",
+    );
+  });
+
+  it("does not resolve a field n:name when the active form is dynamic", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="$form"><input n:name="email"></form>';
     const offset = source.indexOf("email") + 1;
 
     await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
@@ -3906,6 +4100,90 @@ describe("createLatteIntelligence {control} completion (Fáza 2)", () => {
         replaceStart: source.indexOf("cont"),
       }),
     );
+  });
+
+  it("offers field names for input/select/textarea/button n:name inside the active form", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = [
+      '<form n:name="contactForm">',
+      '  <input n:name="e">',
+      '  <select n:name="r"></select>',
+      '  <textarea n:name="m"></textarea>',
+      '  <button n:name="s"></button>',
+      "</form>",
+    ].join("\n");
+
+    await expect(
+      latte.provideLatteCompletions(
+        source,
+        positionAtOffset(source, source.indexOf('"e"') + 2),
+      ),
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        detail: "Nette form field",
+        insertText: "email",
+        label: "email",
+      }),
+    );
+    await expect(
+      latte.provideLatteCompletions(
+        source,
+        positionAtOffset(source, source.indexOf('"r"') + 2),
+      ),
+    ).resolves.toContainEqual(expect.objectContaining({ label: "role" }));
+    await expect(
+      latte.provideLatteCompletions(
+        source,
+        positionAtOffset(source, source.indexOf('"m"') + 2),
+      ),
+    ).resolves.toContainEqual(expect.objectContaining({ label: "message" }));
+    await expect(
+      latte.provideLatteCompletions(
+        source,
+        positionAtOffset(source, source.indexOf('"s"') + 2),
+      ),
+    ).resolves.toContainEqual(expect.objectContaining({ label: "send" }));
+  });
+
+  it("does not offer field completions for standalone, data-n:name, or dynamic form cases", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const standalone = '<input n:name="e">';
+    const dataAttribute =
+      '<form n:name="contactForm"><input data-n:name="e"></form>';
+    const dynamic = '<form n:name="$form"><input n:name="e"></form>';
+
+    await expect(
+      latte.provideLatteCompletions(
+        standalone,
+        positionAtOffset(standalone, standalone.indexOf("e") + 1),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      latte.provideLatteCompletions(
+        dataAttribute,
+        positionAtOffset(dataAttribute, dataAttribute.indexOf("e") + 1),
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      latte.provideLatteCompletions(
+        dynamic,
+        positionAtOffset(dynamic, dynamic.lastIndexOf("e") + 1),
+      ),
+    ).resolves.toEqual([]);
   });
 
   it("caches the presenter component scan across completion requests", async () => {

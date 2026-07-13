@@ -98,6 +98,32 @@ const LATTE_TAG_NAME_HEAD = /^[A-Za-z_][A-Za-z0-9_]*/;
 const LATTE_SYNTAX_OFF = /^\{syntax\s+off\s*\}/;
 const LATTE_SYNTAX_CLOSE = "{/syntax}";
 
+export const LATTE_N_ATTRIBUTE_EXPRESSION_NAMES: readonly string[] = [
+  "n:attr",
+  "n:class",
+  "n:elseif",
+  "n:for",
+  "n:foreach",
+  "n:if",
+  "n:ifchanged",
+  "n:ifset",
+  "n:inner-foreach",
+  "n:inner-if",
+  "n:show",
+  "n:tag",
+  "n:tag-if",
+  "n:while",
+];
+
+const MAX_LATTE_N_ATTRIBUTE_SCAN = 4000;
+
+const LATTE_N_ATTRIBUTE_EXPRESSION_OPENING = new RegExp(
+  `(?:^|[\\s<])(${[...LATTE_N_ATTRIBUTE_EXPRESSION_NAMES]
+    .sort((left, right) => right.length - left.length)
+    .join("|")})\\s*=\\s*(["'])`,
+  "g",
+);
+
 /** The kinds of variable declarations a `.latte` template can carry inline. */
 export type LatteVariableDeclarationKind =
   | "var"
@@ -248,8 +274,14 @@ export function innermostLatteExpressionSpanAt(
   offset: number,
 ): LatteExpressionSpan | null {
   const clamped = Math.max(0, Math.min(offset, source.length));
-  const tags = collectLatteTags(source, clamped);
 
+  return innermostLatteExpressionSpanFromTags(collectLatteTags(source, clamped), clamped);
+}
+
+function innermostLatteExpressionSpanFromTags(
+  tags: readonly LatteTagToken[],
+  clamped: number,
+): LatteExpressionSpan | null {
   for (let index = tags.length - 1; index >= 0; index -= 1) {
     const tag = tags[index];
 
@@ -275,6 +307,108 @@ export function innermostLatteExpressionSpanAt(
   }
 
   return null;
+}
+
+export interface LatteNAttributeExpressionSpan {
+  attributeName: string;
+  contentEnd: number;
+  expressionStart: number;
+}
+
+export function innermostLatteNAttributeExpressionSpanAt(
+  source: string,
+  offset: number,
+): LatteNAttributeExpressionSpan | null {
+  const clamped = Math.max(0, Math.min(offset, source.length));
+
+  return innermostLatteNAttributeExpressionSpanFromMaskedRegions(
+    source,
+    collectLatteMaskedRegions(source, clamped),
+    clamped,
+  );
+}
+
+function innermostLatteNAttributeExpressionSpanFromMaskedRegions(
+  source: string,
+  maskedRegions: readonly LatteMaskedRegion[],
+  clamped: number,
+): LatteNAttributeExpressionSpan | null {
+  if (isOffsetInsideLatteMaskedRegion(maskedRegions, clamped)) {
+    return null;
+  }
+
+  const lineStart = source.lastIndexOf("\n", clamped - 1) + 1;
+  const windowStart = Math.max(lineStart, clamped - MAX_LATTE_N_ATTRIBUTE_SCAN);
+  const window = source.slice(windowStart, clamped);
+  let innermost: LatteNAttributeExpressionSpan | null = null;
+
+  for (const match of window.matchAll(LATTE_N_ATTRIBUTE_EXPRESSION_OPENING)) {
+    const attributeName = match[1] ?? "";
+    const quote = match[2] ?? "";
+    const expressionStart = windowStart + match.index + match[0].length;
+
+    if (isOffsetInsideLatteMaskedRegion(maskedRegions, expressionStart)) {
+      continue;
+    }
+
+    const contentEnd = latteNAttributeValueEnd(source, expressionStart, quote);
+
+    if (contentEnd === null) {
+      continue;
+    }
+
+    if (clamped < expressionStart || clamped > contentEnd) {
+      continue;
+    }
+
+    innermost = { attributeName, contentEnd, expressionStart };
+  }
+
+  return innermost;
+}
+
+/**
+ * The innermost Latte expression context around an offset - either a `{...}`
+ * expression tag or an `n:if="..."`-style attribute value. See
+ * `innermostLatteExpressionContextAt`.
+ */
+export type LatteExpressionContext =
+  | { kind: "tag"; span: LatteExpressionSpan }
+  | { kind: "nAttribute"; span: LatteNAttributeExpressionSpan };
+
+/**
+ * Combined entry point over `innermostLatteExpressionSpanAt` and
+ * `innermostLatteNAttributeExpressionSpanAt` that runs the underlying
+ * `scanLatteSource` pass ONCE and reuses it for both lookups (tag first,
+ * n-attribute as the fallback), exactly matching the sequential result of the
+ * two separate calls. The application layer's expression detection uses this
+ * so a completion / definition request costs a single document scan instead of
+ * two; callers that need only one of the lookups keep using the specific
+ * functions.
+ */
+export function innermostLatteExpressionContextAt(
+  source: string,
+  offset: number,
+): LatteExpressionContext | null {
+  const clamped = Math.max(0, Math.min(offset, source.length));
+  const scan = scanLatteSource(source, clamped);
+  const span = innermostLatteExpressionSpanFromTags(scan.tags, clamped);
+
+  if (span) {
+    return { kind: "tag", span };
+  }
+
+  const attribute = innermostLatteNAttributeExpressionSpanFromMaskedRegions(
+    source,
+    scan.maskedRegions,
+    clamped,
+  );
+
+  if (!attribute) {
+    return null;
+  }
+
+  return { kind: "nAttribute", span: attribute };
 }
 
 /**
@@ -477,6 +611,36 @@ export function latteVariableDeclarations(
 }
 
 // --- internal helpers -------------------------------------------------------
+
+function latteNAttributeValueEnd(
+  source: string,
+  valueStart: number,
+  quote: string,
+): number | null {
+  for (let index = valueStart; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (char === quote) {
+      return index;
+    }
+
+    if (char === "\n") {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function isOffsetInsideLatteMaskedRegion(
+  regions: readonly LatteMaskedRegion[],
+  offset: number,
+): boolean {
+  return regions.some(
+    (region) =>
+      offset > region.start && (offset < region.end || !region.closed),
+  );
+}
 
 /**
  * Scans `source` once (up to `untilOffset`) and returns every Latte tag token in

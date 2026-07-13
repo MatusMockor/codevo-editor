@@ -14,9 +14,11 @@ interface UsePhpCodeActionProviderOptions {
   activeDocumentPath: string | null;
   currentWorkspaceRootRef: { readonly current: string | null };
   frameworkCodeActionContributions: readonly PhpFrameworkCodeActionContribution[];
+  getPhpDocumentSyncVersion: (rootPath: string, path: string) => number | null;
   intelligenceMode: IntelligenceMode;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent: (path: string) => Promise<string>;
+  readOpenDocumentContent: (path: string) => string | null;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -27,9 +29,11 @@ export function usePhpCodeActionProvider({
   activeDocumentPath,
   currentWorkspaceRootRef,
   frameworkCodeActionContributions,
+  getPhpDocumentSyncVersion,
   intelligenceMode,
   projectSymbolSearch,
   readNavigationFileContent,
+  readOpenDocumentContent,
   readTestFileIfExists,
   resolvePhpClassSourcePaths,
   workspaceDescriptor,
@@ -48,8 +52,10 @@ export function usePhpCodeActionProvider({
     collectPhpOverridableParentMethods,
     currentWorkspaceRootRef,
     frameworkCodeActionContributions,
+    getPhpDocumentSyncVersion,
     intelligenceMode,
     projectSymbolSearch,
+    readOpenDocumentContent,
     readTestFileIfExists,
     resolvePhpClassSourcePaths,
     workspaceDescriptor,

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { MissingThisMember } from "./phpCreateFromUsage";
 import {
-  buildPhpCreateParentMemberEdit,
-  type PhpCreateParentMemberEditRequest,
+  buildPhpCreateMemberWorkspaceEdit,
+  type PhpCreateMemberWorkspaceEditRequest,
 } from "./phpCreateParentMemberEdit";
 
 const PARENT_URI = "file:///project/src/Base.php";
@@ -34,30 +34,44 @@ function parentMethod(
   };
 }
 
+function externalMethod(
+  overrides: Partial<MissingThisMember> = {},
+): MissingThisMember {
+  return {
+    argTypes: [],
+    isStatic: true,
+    kind: "method",
+    name: "make",
+    target: "external",
+    targetClass: "Base",
+    ...overrides,
+  };
+}
+
 function buildEdit(
   member: MissingThisMember,
-  parentSource: string,
-  overrides: Partial<PhpCreateParentMemberEditRequest> = {},
+  targetSource: string,
+  overrides: Partial<PhpCreateMemberWorkspaceEditRequest> = {},
 ) {
-  return buildPhpCreateParentMemberEdit({
+  return buildPhpCreateMemberWorkspaceEdit({
     member,
-    parentClassName: "Base",
-    parentFileUri: PARENT_URI,
-    parentSource,
+    targetClassName: "Base",
+    targetFileUri: PARENT_URI,
+    targetSource,
     ...overrides,
   });
 }
 
 function editText(
   member: MissingThisMember,
-  parentSource: string,
-  overrides: Partial<PhpCreateParentMemberEditRequest> = {},
+  targetSource: string,
+  overrides: Partial<PhpCreateMemberWorkspaceEditRequest> = {},
 ): string | undefined {
-  return buildEdit(member, parentSource, overrides)?.changes[PARENT_URI]?.[0]
+  return buildEdit(member, targetSource, overrides)?.changes[PARENT_URI]?.[0]
     ?.newText;
 }
 
-describe("buildPhpCreateParentMemberEdit — success", () => {
+describe("buildPhpCreateMemberWorkspaceEdit — parent success", () => {
   it("inserts a protected method stub before the parent class closing brace", () => {
     expect(buildEdit(parentMethod(), BASE_SOURCE)).toEqual({
       changes: {
@@ -104,7 +118,7 @@ describe("buildPhpCreateParentMemberEdit — success", () => {
       editText(
         parentMethod({ argTypes: ["UserRepository", "int"] }),
         BASE_SOURCE,
-        { expectedParentNamespace: "App" },
+        { expectedNamespace: "App" },
       ),
     ).toBe("\n    protected function helper($arg0, int $arg1)\n    {\n    }\n");
   });
@@ -123,7 +137,7 @@ describe("buildPhpCreateParentMemberEdit — success", () => {
   it("inserts when the expected parent namespace matches the located class", () => {
     expect(
       editText(parentMethod(), BASE_SOURCE, {
-        expectedParentNamespace: "App",
+        expectedNamespace: "App",
       }),
     ).toBe("\n    protected function helper()\n    {\n    }\n");
   });
@@ -132,7 +146,7 @@ describe("buildPhpCreateParentMemberEdit — success", () => {
     const source = ["<?php", "", "class Base", "{", "}", ""].join("\n");
 
     expect(
-      editText(parentMethod(), source, { expectedParentNamespace: null }),
+      editText(parentMethod(), source, { expectedNamespace: null }),
     ).toBe("    protected function helper()\n    {\n    }\n");
   });
 
@@ -227,7 +241,7 @@ describe("buildPhpCreateParentMemberEdit — success", () => {
   });
 });
 
-describe("buildPhpCreateParentMemberEdit — conservative null", () => {
+describe("buildPhpCreateMemberWorkspaceEdit — conservative null", () => {
   it("returns null for a member that does not target the parent class", () => {
     expect(
       buildEdit({ kind: "method", name: "helper" }, BASE_SOURCE),
@@ -356,7 +370,7 @@ describe("buildPhpCreateParentMemberEdit — conservative null", () => {
   it("returns null when the expected parent namespace does not match", () => {
     expect(
       buildEdit(parentMethod(), BASE_SOURCE, {
-        expectedParentNamespace: "Domain",
+        expectedNamespace: "Domain",
       }),
     ).toBeNull();
   });
@@ -364,7 +378,7 @@ describe("buildPhpCreateParentMemberEdit — conservative null", () => {
   it("returns null when expecting the global namespace but the parent is namespaced", () => {
     expect(
       buildEdit(parentMethod(), BASE_SOURCE, {
-        expectedParentNamespace: null,
+        expectedNamespace: null,
       }),
     ).toBeNull();
   });
@@ -381,5 +395,440 @@ describe("buildPhpCreateParentMemberEdit — conservative null", () => {
     ].join("\n");
 
     expect(buildEdit(parentMethod(), source)).toBeNull();
+  });
+});
+
+describe("buildPhpCreateMemberWorkspaceEdit — external instance targets", () => {
+  it("inserts a public instance method stub when the member is not static", () => {
+    const text = editText(
+      {
+        argTypes: ["string"],
+        kind: "method",
+        name: "make",
+        target: "external",
+        targetClass: "Base",
+      },
+      BASE_SOURCE,
+    );
+
+    expect(text).toContain("public function make(string $arg0)");
+    expect(text).not.toContain("static");
+  });
+
+  it("inserts a public untyped property stub for an external instance property", () => {
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBe("\n    public $profile;\n");
+  });
+
+  it("keeps a builtin property type cross-file", () => {
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          propertyType: "int",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBe("\n    public int $profile;\n");
+  });
+
+  it("drops a short class property type cross-file", () => {
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          propertyType: "Profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBe("\n    public $profile;\n");
+  });
+
+  it("returns null for an external property when the class declares __get", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __get($name)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for an external property when the class declares __set", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __set($name, $value)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("creates the external property when the class declares __call but no __get or __set", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __call($name, $arguments)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      editText(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBe("\n    public $profile;\n");
+  });
+
+  it("still creates the external method when the class declares __get only", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __get($name)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      editText(
+        {
+          argTypes: [],
+          kind: "method",
+          name: "make",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBe("\n    public function make()\n    {\n    }\n");
+  });
+
+  it("returns null when the external class already declares the property", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public $profile;\n\n    public function existing(): void",
+    );
+
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for a property when the external class extends another class", () => {
+    const source = BASE_SOURCE.replace(
+      "class Base",
+      "class Base extends Ancestor",
+    );
+
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for an instance method when the external class extends another class", () => {
+    const source = BASE_SOURCE.replace(
+      "class Base",
+      "class Base extends Ancestor",
+    );
+
+    expect(
+      buildEdit(
+        {
+          argTypes: [],
+          kind: "method",
+          name: "make",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for an instance method when the external class declares __call", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __call($name, $arguments)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      buildEdit(
+        {
+          argTypes: [],
+          kind: "method",
+          name: "make",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("buildPhpCreateMemberWorkspaceEdit — external targets", () => {
+  it("inserts a public static method stub into the external class", () => {
+    expect(buildEdit(externalMethod(), BASE_SOURCE)).toEqual({
+      changes: {
+        [PARENT_URI]: [
+          {
+            newText: "\n    public static function make()\n    {\n    }\n",
+            range: {
+              end: { character: 0, line: 9 },
+              start: { character: 0, line: 9 },
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  it("inserts a public constant stub into the external class", () => {
+    expect(
+      editText(
+        {
+          kind: "constant",
+          name: "RETRIES",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBe("\n    public const RETRIES = null;\n");
+  });
+
+  it("drops a short class type for an external target, keeping builtins", () => {
+    expect(
+      editText(
+        externalMethod({ argTypes: ["UserRepository", "int"] }),
+        BASE_SOURCE,
+        { expectedNamespace: "App" },
+      ),
+    ).toBe(
+      "\n    public static function make($arg0, int $arg1)\n    {\n    }\n",
+    );
+  });
+
+  it("keeps a fully-qualified class type for an external target", () => {
+    expect(
+      editText(externalMethod({ argTypes: ["\\Vendor\\UserRepository"] }), BASE_SOURCE),
+    ).toBe(
+      "\n    public static function make(\\Vendor\\UserRepository $arg0)\n    {\n    }\n",
+    );
+  });
+
+  it("returns null for an external target on a readonly class", () => {
+    const source = ["<?php", "", "readonly class Base", "{", "}", ""].join(
+      "\n",
+    );
+
+    expect(buildEdit(externalMethod(), source)).toBeNull();
+  });
+
+  it("returns null when the external class already declares the method", () => {
+    const source = BASE_SOURCE.replace("function existing", "function make");
+
+    expect(buildEdit(externalMethod(), source)).toBeNull();
+  });
+
+  it("returns null when the expected namespace does not match the external class", () => {
+    expect(
+      buildEdit(externalMethod(), BASE_SOURCE, {
+        expectedNamespace: "Domain",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when the external class extends another class", () => {
+    const source = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "class Base extends Model",
+      "{",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(buildEdit(externalMethod(), source)).toBeNull();
+  });
+
+  it("returns null when the external class declares __callStatic", () => {
+    const source = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "class Base",
+      "{",
+      "    public static function __callStatic(string $name, array $args): mixed",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(buildEdit(externalMethod(), source)).toBeNull();
+  });
+
+  it("returns null when the external class declares __call", () => {
+    const source = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "class Base",
+      "{",
+      "    public function __call(string $name, array $args): mixed",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(buildEdit(externalMethod(), source)).toBeNull();
+  });
+
+  it("ignores an extends keyword that only appears inside a string literal", () => {
+    const source = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "class Base",
+      "{",
+      "    public string $note = 'extends Model';",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(editText(externalMethod(), source)).toBe(
+      "\n    public static function make()\n    {\n    }\n",
+    );
+  });
+
+  it("still inserts into a parent class that itself extends another class", () => {
+    const source = [
+      "<?php",
+      "",
+      "namespace App;",
+      "",
+      "class Base extends Model",
+      "{",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(editText(parentMethod(), source)).toBe(
+      "    protected function helper()\n    {\n    }\n",
+    );
+  });
+});
+
+describe("buildPhpCreateMemberWorkspaceEdit — member-name casing", () => {
+  it("returns null when the target declares the method with different casing", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Base",
+      "{",
+      "    protected function helper(): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(buildEdit(parentMethod({ name: "HELPER" }), source)).toBeNull();
+  });
+
+  it("returns null when the external target declares __CALL with different casing", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Base",
+      "{",
+      "    public function __CALL($name, $arguments)",
+      "    {",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(buildEdit(externalMethod(), source)).toBeNull();
+  });
+
+  it("still inserts a constant whose name differs from an existing one only by case", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Base",
+      "{",
+      "    public const RETRIES = 3;",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(
+      editText(
+        {
+          kind: "constant",
+          name: "retries",
+          parentClass: "Base",
+          target: "parent",
+        },
+        source,
+      ),
+    ).toBe("\n    protected const retries = null;\n");
   });
 });

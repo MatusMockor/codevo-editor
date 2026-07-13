@@ -644,6 +644,73 @@ Post::query()->whereHas('comments', function ($query): void {
     harness.unmount();
   });
 
+  it("resolves collection callback variables to the element type with incremented depth", async () => {
+    const source = `<?php
+$users->map(fn ($user) => $user->nam);
+`;
+    const position = positionAfter(source, "$user->nam");
+    const resolvePhpCollectionModelType = vi.fn(
+      async () => "App\\Models\\User",
+    );
+    const harness = renderHook(
+      makeOptions({ resolvePhpCollectionModelType }),
+    );
+
+    await expect(
+      harness.api().resolvePhpExpressionType(source, position, "$user"),
+    ).resolves.toBe("App\\Models\\User");
+    expect(resolvePhpCollectionModelType).toHaveBeenCalledWith(
+      source,
+      position,
+      "$users",
+      1,
+    );
+    harness.unmount();
+  });
+
+  it("never overrides an explicitly typed collection callback parameter", async () => {
+    const source = `<?php
+$users->map(function (Post $user) {
+    $user->probe;
+});
+`;
+    const position = positionAfter(source, "$user->probe");
+    const resolvePhpCollectionModelType = vi.fn(
+      async () => "App\\Models\\User",
+    );
+    const harness = renderHook(
+      makeOptions({ resolvePhpCollectionModelType }),
+    );
+
+    await expect(
+      harness.api().resolvePhpExpressionType(source, position, "$user"),
+    ).resolves.toBeNull();
+    expect(resolvePhpCollectionModelType).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not resolve collection callback element types under an explicit generic runtime", async () => {
+    const source = `<?php
+$users->map(fn ($user) => $user->nam);
+`;
+    const position = positionAfter(source, "$user->nam");
+    const resolvePhpCollectionModelType = vi.fn(
+      async () => "App\\Models\\User",
+    );
+    const harness = renderHook(
+      makeOptions({
+        frameworkRuntime: GENERIC_RUNTIME,
+        resolvePhpCollectionModelType,
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpExpressionType(source, position, "$user"),
+    ).resolves.toBeNull();
+    expect(resolvePhpCollectionModelType).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("recurses through assignments", async () => {
     const source = `<?php
 $original = new Post();

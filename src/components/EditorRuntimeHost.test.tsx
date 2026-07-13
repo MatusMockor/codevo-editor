@@ -14,6 +14,9 @@ import {
   type EditorRuntimeSurfaceRegistration,
   type EditorRuntimeSurfaceRouting,
 } from "./EditorRuntimeHost";
+import type {
+  EditorSurfaceLanguageProviderRegistrationRefs,
+} from "./editorSurfaceLanguageProviderOptions";
 
 const runtimeMocks = vi.hoisted(() => ({
   javaScriptContext: null as {
@@ -131,6 +134,52 @@ describe("EditorRuntimeHost", () => {
     expect(runtimeMocks.registerLanguage).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.registerJavaScriptTypeScript).toHaveBeenCalledTimes(1);
     expect(runtimeMocks.configureTypescriptJavascriptDefaultsOnce).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes PHP code actions by source when the focused group is different", async () => {
+    const fixture = runtimeFixture();
+    const leftCodeActions = vi.fn(async () => []);
+    const rightCodeActions = vi.fn(async () => []);
+    const leftSource = "<?php\nclass LeftFile {}\n";
+    const rightSource = "<?php\nclass RightFile {}\n";
+
+    await act(async () => {
+      root.render(
+        <EditorRuntimeHost>
+          <RuntimeSurface
+            {...fixture}
+            content={leftSource}
+            groupId="left"
+            key="left"
+            name="left.php"
+            phpCodeActions={leftCodeActions}
+          />
+          <RuntimeSurface
+            {...fixture}
+            content={rightSource}
+            groupId="right"
+            key="right"
+            name="right.php"
+            phpCodeActions={rightCodeActions}
+          />
+        </EditorRuntimeHost>,
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-group='right']")?.click();
+    });
+
+    const providerContext = runtimeMocks.registerLanguage.mock.calls[0]?.[1];
+    await providerContext.providePhpCodeActions(leftSource, {
+      endColumn: 1,
+      endLineNumber: 1,
+      startColumn: 1,
+      startLineNumber: 1,
+    });
+
+    expect(leftCodeActions).toHaveBeenCalledOnce();
+    expect(rightCodeActions).not.toHaveBeenCalled();
   });
 
   it("subscribes to Monaco marker changes once and fans them out to owning surfaces", async () => {
@@ -892,6 +941,7 @@ describe("EditorRuntimeHost", () => {
 });
 
 function RuntimeSurface({
+  content = "<?php",
   groupId,
   featuresGateway,
   leftEditor,
@@ -901,31 +951,34 @@ function RuntimeSurface({
   name,
   onMarkerUrisChanged,
   path,
+  phpCodeActions,
   rightEditor,
   transitionWorkspaceRoot,
   validationEnabled = true,
   workspaceRoot,
 }: ReturnType<typeof runtimeFixture> & {
+  content?: string;
   groupId: string;
   name: string;
   localMarkers?: readonly Monaco.editor.IMarkerData[];
   onMarkerUrisChanged?: (uris: readonly Monaco.Uri[]) => void;
+  phpCodeActions?: EditorSurfaceLanguageProviderRegistrationRefs["phpCodeActionsRef"]["current"];
   transitionWorkspaceRoot?: string;
   validationEnabled?: boolean;
 }) {
   const runtime = useEditorRuntimeContext();
   const registrationRef = useRef<EditorRuntimeSurfaceRegistration | null>(null);
   const document: EditorDocument = {
-    content: "<?php",
+    content,
     language: "php",
     name,
     path,
-    savedContent: "<?php",
+    savedContent: content,
   };
 
   useEffect(() => {
     const currentRef = { current: document };
-    const providerRefs = providerRefsFor(currentRef);
+    const providerRefs = providerRefsFor(currentRef, { phpCodeActions });
     const registration = {
       activePath: document.path,
       diagnosticsByPath: {
@@ -983,6 +1036,7 @@ function RuntimeSurface({
     model,
     monaco,
     onMarkerUrisChanged,
+    phpCodeActions,
     rightEditor,
     runtime,
     validationEnabled,
@@ -1113,11 +1167,17 @@ function runtimeFixture(
 
 function providerRefsFor(
   activeDocumentRef: { current: EditorDocument },
+  overrides: {
+    phpCodeActions?: EditorSurfaceLanguageProviderRegistrationRefs["phpCodeActionsRef"]["current"];
+  } = {},
 ): EditorRuntimeSurfaceRouting["providerRefs"] {
   return new Proxy({} as Record<string, { current: unknown }>, {
     get(_target, property) {
       if (property === "activeDocumentRef") {
         return activeDocumentRef;
+      }
+      if (property === "phpCodeActionsRef" && overrides.phpCodeActions) {
+        return { current: overrides.phpCodeActions };
       }
       return { current: vi.fn() };
     },

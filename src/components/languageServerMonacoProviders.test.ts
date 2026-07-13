@@ -6594,6 +6594,87 @@ function store($request): void
     ]);
   });
 
+  it("uses the captured PHP workspace root for workspace-edit code actions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.create_member",
+            title: "Create member",
+          },
+          data: { id: "create-member" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: 'Fix "Method "formatTotals" does not exist"',
+        },
+      ],
+    });
+    const applyWorkspaceEdit = vi.fn(async () => ({ kind: "accepted" as const }));
+    const workspaceEdit = {
+      changes: {
+        "file:///project/app/Support/QaBase.php": [
+          {
+            newText: "\n    protected function formatTotals()\n    {\n    }\n",
+            range: {
+              end: { character: 1, line: 5 },
+              start: { character: 1, line: 5 },
+            },
+          },
+        ],
+      },
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'formatTotals' in 'QaBase'",
+        workspaceEdit,
+        workspaceRoot: "/project",
+      },
+    ]);
+    const context = providerContext({
+      applyWorkspaceEdit,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({
+        content:
+          "<?php\nclass QaChild extends QaBase\n{\n    public function run(): void\n    {\n        parent::formatTotals();\n    }\n}\n",
+      }),
+      new registered.monaco.Range(6, 9, 6, 31),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(actions.actions[0]).toEqual(
+      expect.objectContaining({
+        command: expect.objectContaining({
+          id: "mockor.php.applyCodeActionWorkspaceEdit",
+          arguments: [
+            expect.objectContaining({
+              rootPath: "/project",
+              edit: workspaceEdit,
+            }),
+          ],
+        }),
+        title: "Create method 'formatTotals' in 'QaBase'",
+      }),
+    );
+    expect(actions.actions.map((action: { title: string }) => action.title)).toContain(
+      'Fix "Method "formatTotals" does not exist"',
+    );
+  });
+
   it("orders local Create class before external phpactor create-file actions", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -7283,6 +7364,195 @@ function store($request): void
       ],
       expect.any(Function),
     );
+  });
+
+  it("routes a PHP code action's workspaceEdit through the workspace-edit apply command", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Child extends Base\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const parentEdit = {
+      changes: {
+        "file:///project/src/Base.php": [
+          {
+            newText: "\n    protected function helper()\n    {\n    }\n",
+            range: {
+              end: { character: 0, line: 3 },
+              start: { character: 0, line: 3 },
+            },
+          },
+        ],
+      },
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'helper' in 'Base'",
+        workspaceEdit: parentEdit,
+      },
+    ]);
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([
+      sourceModel,
+    ]);
+    const context = providerContext({
+      applyWorkspaceEdit,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    const createMethod = actions.actions.find(
+      (action: { title: string }) =>
+        action.title === "Create method 'helper' in 'Base'",
+    );
+    expect(createMethod).toBeDefined();
+    expect(createMethod?.edit?.edits ?? []).toEqual([]);
+    expect(createMethod?.command?.id).toBe(
+      "mockor.php.applyCodeActionWorkspaceEdit",
+    );
+
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionWorkspaceEdit"];
+    expect(run).toBeDefined();
+    await run(null, createMethod?.command?.arguments?.[0]);
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      parentEdit,
+      expect.objectContaining({
+        applyOpenModels: expect.any(Function),
+        openPaths: [],
+        rootPath: "/project",
+      }),
+    );
+  });
+
+  it("drops a PHP workspaceEdit code action when the workspace-edit applier is not wired", async () => {
+    const registered = createRegisteredProviders();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Child extends Base\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'helper' in 'Base'",
+        workspaceEdit: {
+          changes: {
+            "file:///project/src/Base.php": [
+              {
+                newText: "\n    protected function helper()\n    {\n    }\n",
+                range: {
+                  end: { character: 0, line: 3 },
+                  start: { character: 0, line: 3 },
+                },
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    const context = providerContext({ providePhpCodeActions });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(
+      actions.actions.map((action: { title: string }) => action.title),
+    ).not.toContain("Create method 'helper' in 'Base'");
+  });
+
+  it("drops a PHP workspaceEdit code action when no workspace root is active", async () => {
+    const registered = createRegisteredProviders();
+    const sourceModel = {
+      ...model({
+        content: "<?php\nclass Child extends Base\n{\n}\n",
+      }),
+      pushEditOperations: vi.fn(),
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'helper' in 'Base'",
+        workspaceEdit: {
+          changes: {
+            "file:///project/src/Base.php": [
+              {
+                newText: "\n    protected function helper()\n    {\n    }\n",
+                range: {
+                  end: { character: 0, line: 3 },
+                  start: { character: 0, line: 3 },
+                },
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const context = providerContext({
+      applyWorkspaceEdit,
+      getWorkspaceRoot: () => null,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      sourceModel,
+      new registered.monaco.Range(2, 1, 2, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(
+      actions.actions.map((action: { title: string }) => action.title),
+    ).not.toContain("Create method 'helper' in 'Base'");
+  });
+
+  it("does not apply a PHP workspaceEdit command without a payload edit", async () => {
+    const registered = createRegisteredProviders();
+    const applyWorkspaceEdit = vi.fn(async () => undefined);
+    const context = providerContext({ applyWorkspaceEdit });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const run =
+      registered.commandRunsById["mockor.php.applyCodeActionWorkspaceEdit"];
+    expect(run).toBeDefined();
+    await run(null, undefined);
+
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
   });
 
   it("does not apply a PHP newFile action's document edits when disk persistence fails", async () => {

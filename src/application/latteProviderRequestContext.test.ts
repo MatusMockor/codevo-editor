@@ -38,6 +38,7 @@ describe("latteProviderRequestContext", () => {
     expect(request?.isRequestedRootActive()).toBe(true);
     expect(cacheRoots(caches)).toEqual({
       componentCache: [root],
+      filterCache: [root],
       presenterCache: [root],
       templateCache: [root],
       templateTypeCache: [root],
@@ -66,6 +67,7 @@ describe("latteProviderRequestContext", () => {
     expect(request).toBeNull();
     expect(cacheRoots(caches)).toEqual({
       componentCache: [],
+      filterCache: [],
       presenterCache: [],
       templateCache: [],
       templateTypeCache: [],
@@ -120,6 +122,7 @@ function options(
     frameworkCapabilities: netteLatteFrameworkCapabilities,
     getDependencies: () => dependencies,
     inFlight: {
+      filterInFlight: new Map(),
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
@@ -140,6 +143,10 @@ function providerCaches(): LatteProviderFlowCaches {
         expiresAt: 1,
         templateRelativePath: "app/UI/Home/default.latte",
       },
+    },
+    filterCache: {
+      [root]: { expiresAt: 1, registrations: [] },
+      [staleRoot]: { expiresAt: 1, registrations: [] },
     },
     presenterCache: {
       [root]: { expiresAt: 1, targets: [] },
@@ -163,6 +170,7 @@ function providerCaches(): LatteProviderFlowCaches {
 function cacheRoots(caches: LatteProviderFlowCaches) {
   return {
     componentCache: Object.keys(caches.componentCache),
+    filterCache: Object.keys(caches.filterCache),
     presenterCache: Object.keys(caches.presenterCache),
     templateCache: Object.keys(caches.templateCache),
     templateTypeCache: Object.keys(caches.templateTypeCache),

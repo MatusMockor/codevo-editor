@@ -1,3 +1,5 @@
+import type { LanguageServerWorkspaceEdit } from "../domain/languageServerFeatures";
+
 /**
  * Shared shape for synthesized PHP code actions. Kept application-level because
  * these descriptors bridge domain planners and the Monaco/LSP adapter.
@@ -38,6 +40,13 @@ export interface PhpCodeActionDescriptor {
   kind?: string;
   newFile?: PhpCodeActionNewFile;
   title: string;
+  workspaceEdit?: LanguageServerWorkspaceEdit;
+  /**
+   * Captured workspace root for workspace edits that were planned against a
+   * specific project tab. This keeps multi-project code actions isolated even
+   * when the UI context root changes while Monaco is rendering/applying them.
+   */
+  workspaceRoot?: string;
 }
 
 export interface PhpCodeActionDiagnostic {

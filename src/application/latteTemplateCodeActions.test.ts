@@ -74,6 +74,7 @@ function makeOptions(
   return {
     caches: {
       componentCache: {},
+      filterCache: {},
       presenterCache: {},
       templateCache: {
         [ROOT]: {
@@ -90,6 +91,7 @@ function makeOptions(
     frameworkCapabilities: {} as never,
     getDependencies: () => deps,
     inFlight: {
+      filterInFlight: new Map(),
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),

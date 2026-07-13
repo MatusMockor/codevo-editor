@@ -20,6 +20,7 @@ import {
   detectLanguage,
   getFileName,
   getParentPath,
+  isLspExcludedDirectoryPath,
   joinWorkspacePath,
   readWorkspaceTextFileSnapshot,
   workspaceRelativePath,
@@ -476,27 +477,35 @@ export function useWorkbenchFileOperations(
         return;
       }
 
+      const skipLspRename = isLspExcludedDirectoryPath(requestedRoot, oldPath);
+
       try {
-        await applyPhpRenameEdits(oldPath, nextPath);
+        if (!skipLspRename) {
+          await applyPhpRenameEdits(oldPath, nextPath);
 
-        const mayRename = await applyJavaScriptTypeScriptRenameEdits(
-          oldPath,
-          nextPath,
-        );
-        if (!mayRename) {
-          return;
-        }
+          const mayRename = await applyJavaScriptTypeScriptRenameEdits(
+            oldPath,
+            nextPath,
+          );
+          if (!mayRename) {
+            return;
+          }
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
+          if (
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+          ) {
+            return;
+          }
         }
 
         await workspaceFiles.renamePath(oldPath, nextPath);
         filePrefetchCacheRef.current.invalidate(oldPath);
         filePrefetchCacheRef.current.invalidate(nextPath);
 
-        await notifyPhpFileRenamed(oldPath, nextPath);
-        await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
+        if (!skipLspRename) {
+          await notifyPhpFileRenamed(oldPath, nextPath);
+          await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
+        }
 
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;

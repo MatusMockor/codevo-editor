@@ -85,10 +85,24 @@ export interface LatteFormNameCompletionDetection {
   replaceStart: number;
 }
 
+/** The form component enclosing a Latte form-field `n:name`, when static. */
+export interface LatteActiveFormComponent {
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
 /** The reverse of a `createComponent<Name>` factory: the backing component. */
 export interface NetteCreateComponentDetection {
   componentName: string;
   methodName: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
+/** One static `$form->addText('field')`-style field declared by a form factory. */
+export interface NetteFormFieldDefinition {
+  name: string;
   nameEnd: number;
   nameStart: number;
 }
@@ -319,6 +333,67 @@ export function detectLatteFormNameCompletionAt(
 }
 
 /**
+ * Returns the static `<form n:name="...">` component enclosing `offset`, or
+ * `null` when there is no unambiguous active Latte form. Field intelligence uses
+ * this as its context guard so a standalone `<input n:name="email">` does not
+ * guess at a form component.
+ */
+export function latteActiveFormComponentAt(
+  source: string,
+  offset: number,
+): LatteActiveFormComponent | null {
+  if (offset < 0 || offset > source.length || isInsideMask(source, offset)) {
+    return null;
+  }
+
+  const masks = collectLatteMaskedRegions(source);
+  let active: LatteActiveFormComponent | null = null;
+
+  for (const attribute of nNameAttributes(source)) {
+    if (attribute.keywordStart > offset) {
+      break;
+    }
+
+    if (isOffsetMasked(attribute.keywordStart, masks)) {
+      continue;
+    }
+
+    if (elementTagBefore(source, attribute.keywordStart) !== "form") {
+      continue;
+    }
+
+    const name = source.slice(attribute.valueStart, attribute.valueEnd);
+
+    if (!isIdentifier(name)) {
+      active = null;
+      continue;
+    }
+
+    const tagEnd = source.indexOf(">", attribute.valueEnd);
+
+    if (tagEnd < 0 || tagEnd > offset) {
+      active = null;
+      continue;
+    }
+
+    const closeStart = closingFormStart(source, tagEnd + 1);
+
+    if (closeStart !== null && closeStart < offset) {
+      active = null;
+      continue;
+    }
+
+    active = {
+      name,
+      nameEnd: attribute.valueEnd,
+      nameStart: attribute.valueStart,
+    };
+  }
+
+  return active;
+}
+
+/**
  * Builds the Nette factory method name for a control name: `createComponent`
  * plus the upper-cased control name (`contactForm` → `createComponentContactForm`).
  */
@@ -478,6 +553,51 @@ export function netteCreateComponentFactoryContextAt(
   }
 
   return null;
+}
+
+/**
+ * Returns static field names declared in a form component factory. Conservative:
+ * only fields added to variables that are visibly initialised with `new Form`
+ * inside the same factory are reported, and dynamic field names are skipped.
+ */
+export function netteFormFieldDefinitionsInCreateComponent(
+  phpSource: string,
+  componentName: string,
+): NetteFormFieldDefinition[] {
+  const method = findPhpMethodByName(
+    phpSource,
+    netteCreateComponentMethodName(componentName),
+  );
+
+  if (!method) {
+    return [];
+  }
+
+  const afterParams = matchingParenClose(phpSource, method.openParen);
+
+  if (afterParams === null) {
+    return [];
+  }
+
+  const bodyStart = methodBodyStart(phpSource, afterParams);
+
+  if (bodyStart === null) {
+    return [];
+  }
+
+  const bodyEnd = matchingBraceClose(phpSource, bodyStart);
+  const formVariables = formVariablesInBody(phpSource, bodyStart + 1, bodyEnd);
+
+  if (formVariables.size === 0) {
+    return [];
+  }
+
+  return formFieldDefinitionsInBody(
+    phpSource,
+    bodyStart + 1,
+    bodyEnd,
+    formVariables,
+  );
 }
 
 function createComponentFactoryContextFromMethod(
@@ -796,6 +916,132 @@ function tagNameAfterOpen(source: string, from: number): string | null {
   }
 
   return source.slice(from, index).toLowerCase();
+}
+
+function closingFormStart(source: string, from: number): number | null {
+  const match = /<\/\s*form\s*>/gi.exec(source.slice(from));
+
+  return match ? from + match.index : null;
+}
+
+// --- form factory field scanning -------------------------------------------
+
+const FORM_NEW_ASSIGNMENT =
+  /\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+\\?(?:Nette\\Application\\UI\\)?Form\b/g;
+const FORM_ADD_CALL =
+  /\$([A-Za-z_][A-Za-z0-9_]*)\s*->\s*add[A-Za-z_][A-Za-z0-9_]*\s*\(/g;
+
+function formVariablesInBody(
+  source: string,
+  from: number,
+  limit: number,
+): Set<string> {
+  const variables = new Set<string>();
+
+  forEachPhpBodyMatch(source, FORM_NEW_ASSIGNMENT, from, limit, (match) => {
+    const variable = match[1];
+
+    if (variable) {
+      variables.add(variable);
+    }
+  });
+
+  return variables;
+}
+
+function formFieldDefinitionsInBody(
+  source: string,
+  from: number,
+  limit: number,
+  formVariables: ReadonlySet<string>,
+): NetteFormFieldDefinition[] {
+  const fields: NetteFormFieldDefinition[] = [];
+  const seen = new Set<string>();
+
+  forEachPhpBodyMatch(source, FORM_ADD_CALL, from, limit, (match) => {
+    const variable = match[1];
+
+    if (!variable || !formVariables.has(variable)) {
+      return;
+    }
+
+    const openParen = match.index + match[0].length - 1;
+    const field = firstStaticStringArgument(source, openParen, limit);
+
+    if (!field || !isIdentifier(field.name) || seen.has(field.name)) {
+      return;
+    }
+
+    seen.add(field.name);
+    fields.push(field);
+  });
+
+  return fields;
+}
+
+function firstStaticStringArgument(
+  source: string,
+  openParen: number,
+  limit: number,
+): NetteFormFieldDefinition | null {
+  let index = skipWhitespace(source, openParen + 1);
+  const quote = source[index];
+
+  if (quote !== "'" && quote !== '"') {
+    return null;
+  }
+
+  const nameStart = index + 1;
+
+  for (index = nameStart; index < limit; index += 1) {
+    const character = source[index];
+
+    if (character === "\\") {
+      return null;
+    }
+
+    if (character === "\n" || character === "\r") {
+      return null;
+    }
+
+    if (character !== quote) {
+      continue;
+    }
+
+    return {
+      name: source.slice(nameStart, index),
+      nameEnd: index,
+      nameStart,
+    };
+  }
+
+  return null;
+}
+
+function forEachPhpBodyMatch(
+  source: string,
+  pattern: RegExp,
+  from: number,
+  limit: number,
+  handle: (match: RegExpExecArray) => void,
+): void {
+  pattern.lastIndex = from;
+
+  for (
+    let match = pattern.exec(source);
+    match !== null && match.index < limit;
+    match = pattern.exec(source)
+  ) {
+    if (pattern.lastIndex <= match.index) {
+      pattern.lastIndex = match.index + 1;
+    }
+
+    if (skipPhpIgnored(source, match.index, limit) !== match.index) {
+      continue;
+    }
+
+    handle(match);
+  }
 }
 
 // --- component usage scanning -----------------------------------------------

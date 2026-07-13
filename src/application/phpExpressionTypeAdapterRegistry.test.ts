@@ -4,6 +4,7 @@ import {
   phpNetteFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { genericPhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
+import { genericPhpFrameworkCollectionCallbackVariableExpressionTypeAdapter } from "./phpFrameworkCollectionCallbackVariableExpressionTypeAdapter";
 import { genericPhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDatabaseExpressionTypeAdapter";
 import { genericPhpFrameworkModelBuilderTransitionExpressionTypeAdapter } from "./phpFrameworkModelBuilderTransitionExpressionTypeAdapter";
 import { genericPhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFrameworkModelFluentExpressionTypeAdapter";
@@ -11,6 +12,7 @@ import { genericPhpFrameworkQueryCallbackVariableExpressionTypeAdapter } from ".
 import { genericPhpFrameworkTerminalModelRecoveryExpressionTypeAdapter } from "./phpFrameworkTerminalModelRecoveryExpressionTypeAdapter";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { phpLaravelCollectionCallbackVariableExpressionTypeAdapter } from "./phpLaravelCollectionCallbackVariableExpressionTypeAdapter";
 import { phpLaravelDatabaseExpressionTypeAdapter } from "./phpLaravelDatabaseExpressionTypeAdapter";
 import { phpLaravelModelBuilderTransitionExpressionTypeAdapter } from "./phpLaravelModelBuilderTransitionExpressionTypeAdapter";
 import { phpLaravelModelFluentExpressionTypeAdapter } from "./phpLaravelModelFluentExpressionTypeAdapter";
@@ -61,6 +63,8 @@ describe("phpExpressionTypeAdapterRegistry", () => {
     expect(bundle).toEqual({
       builderMagicExpressionTypeAdapter:
         genericPhpFrameworkBuilderMagicExpressionTypeAdapter,
+      collectionCallbackVariableExpressionTypeAdapter:
+        genericPhpFrameworkCollectionCallbackVariableExpressionTypeAdapter,
       databaseExpressionTypeAdapter:
         genericPhpFrameworkDatabaseExpressionTypeAdapter,
       modelBuilderTransitionExpressionTypeAdapter:
@@ -74,7 +78,7 @@ describe("phpExpressionTypeAdapterRegistry", () => {
     });
   });
 
-  it("activates the exact six Laravel adapters through provider membership", async () => {
+  it("activates the exact seven Laravel adapters through provider membership", async () => {
     const phpClassHasNamedBuilderScope = vi.fn(async () => true);
     const resolvePropertyOrRelationType = vi.fn(
       async () => "App\\Models\\Comment",
@@ -86,6 +90,9 @@ describe("phpExpressionTypeAdapterRegistry", () => {
       resolvePropertyOrRelationType,
     });
 
+    expect(bundle.collectionCallbackVariableExpressionTypeAdapter).toBe(
+      phpLaravelCollectionCallbackVariableExpressionTypeAdapter,
+    );
     expect(bundle.databaseExpressionTypeAdapter).toBe(
       phpLaravelDatabaseExpressionTypeAdapter,
     );

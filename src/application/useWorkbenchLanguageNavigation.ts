@@ -33,6 +33,7 @@ import {
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { LatteDefinitionOutcome } from "./latteIntelligenceContracts";
 
 export interface ImplementationChooserState {
   targets: ImplementationTarget[];
@@ -94,14 +95,10 @@ export interface WorkbenchLanguageNavigationDependencies {
     source: string,
     offset: number,
   ) => Promise<boolean>;
-  provideLatteDefinition: (
+  provideLatteDefinitionOutcome: (
     source: string,
     offset: number,
-  ) => Promise<boolean>;
-  shouldBlockLatteDefinitionFallback: (
-    source: string,
-    offset: number,
-  ) => boolean;
+  ) => Promise<LatteDefinitionOutcome>;
   reportErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
     source: string,
@@ -170,8 +167,7 @@ export function useWorkbenchLanguageNavigation(
     latencyTrackerForRoot,
     openPathForNavigation,
     provideBladeDefinition,
-    provideLatteDefinition,
-    shouldBlockLatteDefinitionFallback,
+    provideLatteDefinitionOutcome,
     reportErrorForActiveWorkspaceRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     currentNavigationLocation,
@@ -696,15 +692,12 @@ export function useWorkbenchLanguageNavigation(
         document.content,
         editorPosition,
       );
-      const openedLatteTarget = await provideLatteDefinition(
+      const latteDefinition = await provideLatteDefinitionOutcome(
         document.content,
         offset,
       );
 
-      if (
-        openedLatteTarget ||
-        shouldBlockLatteDefinitionFallback(document.content, offset)
-      ) {
+      if (latteDefinition.handled || latteDefinition.shouldBlockFallback) {
         return;
       }
     }
@@ -744,8 +737,7 @@ export function useWorkbenchLanguageNavigation(
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
     provideBladeDefinition,
-    provideLatteDefinition,
-    shouldBlockLatteDefinitionFallback,
+    provideLatteDefinitionOutcome,
   ]);
 
   const goToSourceDefinition = useCallback(async () => {

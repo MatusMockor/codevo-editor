@@ -614,6 +614,326 @@ namespace App {
     expect(baseBody).toContain("protected function missing()");
   });
 
+  it("creates a public static method in a same-file external class", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(): void
+    {
+        OtherClass::missing('value');
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create method 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain(
+      "public static function missing(string $arg0)",
+    );
+  });
+
+  it("creates a public instance method in a same-file external class for a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(OtherClass $other): void
+    {
+        $other->missing('value');
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create method 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain("public function missing(string $arg0)");
+    expect(otherBody).not.toContain("static");
+  });
+
+  it("creates the instance method from a free function with a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+function run(OtherClass $other)
+{
+    $other->missing();
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create method 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("function run"),
+    );
+
+    expect(otherBody).toContain("public function missing()");
+  });
+
+  it("creates a public typed property in a same-file external class for a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(OtherClass $other): void
+    {
+        $other->missing = 'value';
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create property 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain("public string $missing;");
+  });
+
+  it("creates a public untyped property for a plain read on a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(OtherClass $other): string
+    {
+        return $other->missing;
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create property 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain("public $missing;");
+  });
+
+  it("creates a public constant in a same-file external class", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(): string
+    {
+        return OtherClass::MISSING;
+    }
+}
+`;
+    const start = source.indexOf("MISSING");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "MISSING".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create constant 'MISSING' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain("public const MISSING = null;");
+  });
+
+  it("keeps short types for a same-namespace external sibling", () => {
+    const source = `<?php
+
+class Payload
+{
+}
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(): void
+    {
+        OtherClass::missing(new Payload());
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain(
+      "public static function missing(Payload $arg0)",
+    );
+  });
+
+  it("drops unresolved short types when the external sibling is in another namespace", () => {
+    const source = `<?php
+
+namespace A {
+    class OtherClass
+    {
+    }
+}
+
+namespace B {
+    use A\\OtherClass;
+
+    class Local
+    {
+    }
+
+    class Service
+    {
+        public function run(): void
+        {
+            OtherClass::missing(new Local());
+        }
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("namespace B"),
+    );
+
+    expect(otherBody).toContain("public static function missing($arg0)");
+    expect(otherBody).not.toContain("Local $arg0");
+  });
+
+  it("creates a private static method when a class calls itself by name", () => {
+    const source = `<?php
+
+class Service
+{
+    public function run(): void
+    {
+        Service::missing();
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create method 'missing'");
+    expect(applyAction(source, action!)).toContain(
+      "private static function missing()",
+    );
+  });
+
+  it("suppresses creation in a readonly same-file external class", () => {
+    const source = `<?php
+
+readonly class OtherClass
+{
+}
+
+class Service
+{
+    public function run(): void
+    {
+        OtherClass::missing();
+    }
+}
+`;
+    const start = source.indexOf("missing");
+
+    expect(
+      phpCreateFromUsageCodeAction(source, {
+        end: start + "missing".length,
+        start,
+      }),
+    ).toBeNull();
+  });
+
   it.each([
     "use Vendor\\Package as V;",
     "use Vendor\\{Package as V};",

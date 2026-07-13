@@ -4,11 +4,13 @@ import {
   detectLatteFormNameAt,
   detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
+  latteActiveFormComponentAt,
   netteComponentClassFromCreateMethod,
   netteCreateComponentFactoryContextAt,
   netteCreateComponentFactoryContexts,
   netteComponentUsagesInLatte,
   netteCreateComponentMethodName,
+  netteFormFieldDefinitionsInCreateComponent,
   nettePresenterLifecycleInfo,
 } from "./netteComponents";
 
@@ -215,6 +217,86 @@ describe("detectLatteFormNameCompletionAt", () => {
     const offset = offsetOf(source, "$form", 3);
 
     expect(detectLatteFormNameCompletionAt(source, offset)).toBeNull();
+  });
+});
+
+describe("latteActiveFormComponentAt", () => {
+  it("returns the enclosing static form component for a field n:name", () => {
+    const source = '<form n:name="contactForm"><input n:name="email"></form>';
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toEqual({
+      name: "contactForm",
+      nameStart: source.indexOf("contactForm"),
+      nameEnd: source.indexOf("contactForm") + "contactForm".length,
+    });
+  });
+
+  it("returns null after the form closes", () => {
+    const source = '<form n:name="contactForm"></form><input n:name="email">';
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toBeNull();
+  });
+
+  it("returns null for a dynamic enclosing form name", () => {
+    const source = '<form n:name="$form"><input n:name="email"></form>';
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toBeNull();
+  });
+});
+
+describe("netteFormFieldDefinitionsInCreateComponent", () => {
+  it("finds static fields added to a Form variable in the component factory", () => {
+    const source = `<?php
+use Nette\\Application\\UI\\Form;
+
+class HomePresenter
+{
+    protected function createComponentContactForm(): Form
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        $form->addSelect("role", 'Role');
+
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
+    ).toEqual([
+      {
+        name: "email",
+        nameStart: source.indexOf("email"),
+        nameEnd: source.indexOf("email") + "email".length,
+      },
+      {
+        name: "role",
+        nameStart: source.indexOf("role"),
+        nameEnd: source.indexOf("role") + "role".length,
+      },
+    ]);
+  });
+
+  it("skips dynamic field names and calls on non-form variables", () => {
+    const source = `<?php
+class HomePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText($fieldName, 'Dynamic');
+        $other->addText('notAForm', 'Nope');
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
+    ).toEqual([]);
   });
 });
 

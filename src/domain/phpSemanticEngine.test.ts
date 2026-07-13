@@ -4632,6 +4632,43 @@ Album::with(relations: ['tracks' => function ($namedEagerQuery): void {
     });
   });
 
+  it("ignores commented-out and string method calls when resolving query callback context", () => {
+    const source = `<?php
+use App\\Models\\Album;
+
+Album::query()->whereHas('artists', /* $wrong->where( */ function ($commentQuery): void {
+    $commentQuery->ord
+});
+
+Album::query()->when("$flag->where(", fn ($stringQuery) => $stringQuery->pub);
+`;
+
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$commentQuery->ord"),
+        "commentQuery",
+      ),
+    ).toEqual({
+      methodName: "whereHas",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: "artists",
+    });
+    expect(
+      phpLaravelQueryCallbackContextForVariable(
+        source,
+        positionAfter(source, "$stringQuery->pub"),
+        "stringQuery",
+      ),
+    ).toEqual({
+      methodName: "when",
+      modelClassName: null,
+      receiverExpression: "Album::query()",
+      relationName: null,
+    });
+  });
+
   it("extracts Laravel container bindings from service providers", () => {
     expect(
       phpLaravelContainerBindingsFromSource(`<?php

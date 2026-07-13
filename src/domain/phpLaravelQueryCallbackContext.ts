@@ -7,6 +7,7 @@ import {
   PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
 } from "./phpReceiverExpressions";
+import { maskPhpSource } from "./phpSourceMask";
 
 export interface PhpLaravelQueryCallbackContext {
   methodName: string;
@@ -68,8 +69,10 @@ export function phpLaravelQueryCallbackContextForVariable(
       String.raw`)\s*\(`,
     "g",
   );
+  const maskedSource = maskPhpSource(source);
   const methodCallContext = phpCallbackMethodCallContext(
     source,
+    maskedSource,
     callback.startOffset,
     methodCallPattern,
   );
@@ -93,6 +96,7 @@ export function phpLaravelQueryCallbackContextForVariable(
 
   const staticCallContext = phpCallbackMethodCallContext(
     source,
+    maskedSource,
     callback.startOffset,
     staticCallPattern,
   );
@@ -115,11 +119,16 @@ export function phpLaravelQueryCallbackContextForVariable(
   return null;
 }
 
-function phpClosureCallbackForVariable(
+export interface PhpCallbackForVariable {
+  parametersSource: string;
+  startOffset: number;
+}
+
+export function phpClosureCallbackForVariable(
   source: string,
   position: EditorPosition,
   variableName: string,
-): { startOffset: number } | null {
+): PhpCallbackForVariable | null {
   const offset = offsetAtPosition(source, position);
   const callbackPattern =
     /\bfunction\s*\(([^)]*)\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{]+)?\{/g;
@@ -147,17 +156,17 @@ function phpClosureCallbackForVariable(
       continue;
     }
 
-    return { startOffset };
+    return { parametersSource: match[1] ?? "", startOffset };
   }
 
   return null;
 }
 
-function phpArrowCallbackForVariable(
+export function phpArrowCallbackForVariable(
   source: string,
   position: EditorPosition,
   variableName: string,
-): { startOffset: number } | null {
+): PhpCallbackForVariable | null {
   const offset = offsetAtPosition(source, position);
   const callbackPattern = /\bfn\s*\(([^)]*)\)\s*(?::\s*[^=]+)?=>/g;
 
@@ -182,7 +191,7 @@ function phpArrowCallbackForVariable(
       continue;
     }
 
-    return { startOffset };
+    return { parametersSource: match[1] ?? "", startOffset };
   }
 
   return null;
@@ -199,6 +208,7 @@ function phpParameterListHasVariable(
 
 function phpCallbackMethodCallContext(
   source: string,
+  maskedSource: string,
   callbackStartOffset: number,
   pattern: RegExp,
 ): {
@@ -217,7 +227,7 @@ function phpCallbackMethodCallContext(
     startOffset: number;
   } | null = null;
 
-  for (const match of source.matchAll(pattern)) {
+  for (const match of maskedSource.matchAll(pattern)) {
     const startOffset = match.index ?? 0;
 
     if (startOffset > callbackStartOffset) {
@@ -230,7 +240,7 @@ function phpCallbackMethodCallContext(
       continue;
     }
 
-    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+    const closeOffset = matchingPairOffset(maskedSource, openOffset, "(", ")");
 
     if (
       closeOffset === null ||
@@ -240,7 +250,9 @@ function phpCallbackMethodCallContext(
       continue;
     }
 
-    const receiverOrClassName = match[1]?.trim() ?? "";
+    const receiverOrClassName = source
+      .slice(startOffset, startOffset + (match[1] ?? "").trimEnd().length)
+      .trim();
     const methodName = match[2] ?? "";
 
     if (!receiverOrClassName || !methodName) {
@@ -333,7 +345,7 @@ function phpLaravelQueryCallbackArgumentMatches(
   );
 }
 
-function phpCallbackArgumentIndex(
+export function phpCallbackArgumentIndex(
   source: string,
   argumentsStartOffset: number,
   argumentsEndOffset: number,
@@ -638,7 +650,7 @@ function topLevelFatArrowIndexBefore(
   return null;
 }
 
-function splitPhpArgumentsWithOffsets(
+export function splitPhpArgumentsWithOffsets(
   argumentsSource: string,
 ): Array<{ end: number; start: number; value: string }> {
   const argumentsList: Array<{ end: number; start: number; value: string }> = [];
@@ -722,7 +734,7 @@ function phpStringLiteralValue(expression: string): string | null {
   return match?.[2] ?? null;
 }
 
-function matchingPairOffset(
+export function matchingPairOffset(
   source: string,
   openOffset: number,
   open: string,

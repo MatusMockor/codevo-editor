@@ -1,4 +1,4 @@
-import { innermostLatteExpressionSpanAt } from "../domain/latteSyntax";
+import { innermostLatteExpressionContextAt } from "../domain/latteSyntax";
 
 export interface LatteMemberAccess {
   end: number;
@@ -20,6 +20,10 @@ export interface LatteFilterCompletionContext {
   start: number;
 }
 
+export interface LatteFilterReference {
+  name: string;
+}
+
 export interface LatteVariableCompletionContext {
   end: number;
   prefix: string;
@@ -31,19 +35,52 @@ export type LatteExpressionCompletionTarget =
   | { kind: "filter"; filter: LatteFilterCompletionContext }
   | { kind: "variable"; variable: LatteVariableCompletionContext };
 
+export interface LatteExpressionNavigation {
+  memberReference: LatteMemberReference | null;
+  variableName: string | null;
+}
+
 const LATTE_MEMBER_ACCESS =
   /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
 const LATTE_MEMBER_REFERENCE =
   /(\$([A-Za-z_][A-Za-z0-9_]*)(?:\s*\??->\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\??->\s*([A-Za-z_][A-Za-z0-9_]*)/g;
+const LATTE_FILTER_REFERENCE = /\|\s*([A-Za-z_][A-Za-z0-9_]*)/g;
 const LATTE_FILTER_TAIL = /\|\s*([A-Za-z_][A-Za-z0-9_]*)?$/;
 const LATTE_VARIABLE_REFERENCE = /\$([A-Za-z_][A-Za-z0-9_]*)/g;
 const LATTE_VARIABLE_TAIL = /(?<![A-Za-z0-9_>])\$([A-Za-z_][A-Za-z0-9_]*)?$/;
+
+interface LatteDetectedExpressionSpan {
+  contentEnd: number;
+  contentStart: number;
+  expressionStart: number;
+}
+
+function latteDetectedExpressionSpanAt(
+  source: string,
+  offset: number,
+): LatteDetectedExpressionSpan | null {
+  const context = innermostLatteExpressionContextAt(source, offset);
+
+  if (!context) {
+    return null;
+  }
+
+  if (context.kind === "tag") {
+    return context.span;
+  }
+
+  return {
+    contentEnd: context.span.contentEnd,
+    contentStart: context.span.expressionStart,
+    expressionStart: context.span.expressionStart,
+  };
+}
 
 export function latteExpressionCompletionTargetAt(
   source: string,
   offset: number,
 ): LatteExpressionCompletionTarget | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteDetectedExpressionSpanAt(source, offset);
 
   if (!span) {
     return null;
@@ -80,16 +117,45 @@ export function isLatteMemberReferenceAt(source: string, offset: number): boolea
   return latteMemberReferenceAt(source, offset) !== null;
 }
 
+/**
+ * Computes both navigation views (variable name and member reference) at
+ * `offset` from a single expression-context detection, so a definition request
+ * scans the template source once instead of once per view.
+ */
+export function latteExpressionNavigationAt(
+  source: string,
+  offset: number,
+): LatteExpressionNavigation {
+  const span = latteDetectedExpressionSpanAt(source, offset);
+
+  if (!span) {
+    return { memberReference: null, variableName: null };
+  }
+
+  return {
+    memberReference: latteMemberReferenceInSpan(source, offset, span),
+    variableName: latteVariableNameInSpan(source, offset, span),
+  };
+}
+
 export function latteVariableNameAt(
   source: string,
   offset: number,
 ): string | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteDetectedExpressionSpanAt(source, offset);
 
   if (!span) {
     return null;
   }
 
+  return latteVariableNameInSpan(source, offset, span);
+}
+
+function latteVariableNameInSpan(
+  source: string,
+  offset: number,
+  span: LatteDetectedExpressionSpan,
+): string | null {
   const expression = source.slice(span.expressionStart, span.contentEnd);
   const relativeOffset = offset - span.expressionStart;
   const before = expression.slice(0, Math.max(0, relativeOffset));
@@ -123,12 +189,63 @@ export function latteMemberReferenceAt(
   source: string,
   offset: number,
 ): LatteMemberReference | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const span = latteDetectedExpressionSpanAt(source, offset);
 
   if (!span) {
     return null;
   }
 
+  return latteMemberReferenceInSpan(source, offset, span);
+}
+
+export function latteFilterReferenceAt(
+  source: string,
+  offset: number,
+): LatteFilterReference | null {
+  const span = latteDetectedExpressionSpanAt(source, offset);
+
+  if (!span) {
+    return null;
+  }
+
+  const expression = source.slice(span.expressionStart, span.contentEnd);
+  const relativeOffset = offset - span.expressionStart;
+
+  for (const match of expression.matchAll(LATTE_FILTER_REFERENCE)) {
+    const name = match[1];
+
+    if (!name || match.index === undefined) {
+      continue;
+    }
+
+    if (expression[match.index - 1] === "|") {
+      continue;
+    }
+
+    const nameStart = match.index + match[0].lastIndexOf(name);
+    const nameEnd = nameStart + name.length;
+
+    if (relativeOffset < nameStart || relativeOffset > nameEnd) {
+      continue;
+    }
+
+    const beforeName = expression.slice(0, nameStart);
+
+    if (hasUnclosedStringLiteral(beforeName)) {
+      continue;
+    }
+
+    return { name };
+  }
+
+  return null;
+}
+
+function latteMemberReferenceInSpan(
+  source: string,
+  offset: number,
+  span: LatteDetectedExpressionSpan,
+): LatteMemberReference | null {
   const expression = source.slice(span.expressionStart, span.contentEnd);
   const relativeOffset = offset - span.expressionStart;
   const before = expression.slice(0, Math.max(0, relativeOffset));

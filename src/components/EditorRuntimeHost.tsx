@@ -690,6 +690,41 @@ function routedRefs(
           return routedRef;
         }
 
+        if (property === "phpCodeActionsRef") {
+          routedRef = {
+            get current() {
+              return (
+                source: string,
+                range: Parameters<
+                  EditorSurfaceLanguageProviderRegistrationRefs["phpCodeActionsRef"]["current"]
+                >[1],
+              ) => {
+                const registration =
+                  registrationForPhpProviderSource(
+                    [...registrationsRef.current.values()].filter(
+                      (candidate) =>
+                        registrationOwnsRuntime(
+                          candidate,
+                          activeRegistrationRef.current?.workspaceRoot ?? null,
+                        ),
+                    ),
+                    source,
+                    focusedGroupRef.current,
+                  ) ?? activeRegistrationRef.current;
+
+                return (
+                  registration?.routing.providerRefs.phpCodeActionsRef.current(
+                    source,
+                    range,
+                  ) ?? Promise.resolve([])
+                );
+              };
+            },
+          };
+          cache.set(property, routedRef);
+          return routedRef;
+        }
+
         routedRef = {
           get current() {
             return Reflect.get(
@@ -704,6 +739,28 @@ function routedRefs(
       return routedRef;
     },
   });
+}
+
+function registrationForPhpProviderSource(
+  registrations: readonly EditorRuntimeSurfaceRegistration[],
+  source: string,
+  focusedGroupId: string | null,
+): EditorRuntimeSurfaceRegistration | null {
+  const matches = registrations.filter((registration) => {
+    const document = registration.routing.activeDocumentRef.current;
+
+    return document?.language === "php" && document.content === source;
+  });
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  return (
+    matches.find((registration) => registration.groupId === focusedGroupId) ??
+    matches[0] ??
+    null
+  );
 }
 
 function canAdmitRegistration(

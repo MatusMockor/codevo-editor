@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
+  type PhpFrameworkProvider,
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
 } from "../domain/phpFrameworkProviders";
@@ -18,6 +19,7 @@ import {
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
+import type { PhpFrameworkCollectionCallbackVariableExpressionTypeAdapter } from "./phpFrameworkCollectionCallbackVariableExpressionTypeAdapter";
 import type { PhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDatabaseExpressionTypeAdapter";
 import type { PhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
 import type { PhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFrameworkModelFluentExpressionTypeAdapter";
@@ -258,6 +260,13 @@ export function usePhpExpressionTypeResolver({
             expression,
             depth + 1,
           ),
+        resolveCollectionElementType: (receiverExpression) =>
+          resolvePhpCollectionModelType(
+            source,
+            position,
+            receiverExpression,
+            depth + 1,
+          ),
         source,
         variableName: variableMatch?.[1] ?? null,
       });
@@ -456,6 +465,7 @@ export function usePhpExpressionTypeResolver({
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
       phpClassMethodReturnsClassStringArgument,
+      resolvePhpCollectionModelType,
       resolvePhpFrameworkBoundConcrete,
       resolvePhpFrameworkReturnTypeReference,
       resolvePhpMethodReturnType,
@@ -466,6 +476,17 @@ export function usePhpExpressionTypeResolver({
   return { resolvePhpExpressionType };
 }
 
+interface PhpExpressionVariableTypeStrategyContext {
+  frameworkProviders: readonly PhpFrameworkProvider[];
+  position: EditorPosition;
+  resolveBuilderModelType: () => Promise<string | null>;
+  resolveCollectionElementType: (
+    receiverExpression: string,
+  ) => Promise<string | null>;
+  source: string;
+  variableName: string | null;
+}
+
 interface PhpExpressionTypeStrategy {
   methodCallType: (
     context: PhpExpressionMethodCallStrategyContext,
@@ -474,11 +495,14 @@ interface PhpExpressionTypeStrategy {
   staticCallType: (
     context: PhpExpressionStaticCallStrategyContext,
   ) => Promise<string | null>;
-  variableType: PhpFrameworkQueryCallbackVariableExpressionTypeAdapter["variableType"];
+  variableType: (
+    context: PhpExpressionVariableTypeStrategyContext,
+  ) => Promise<string | null>;
 }
 
 interface PhpExpressionTypeStrategyOptions {
   builderMagicExpressionTypeAdapter: PhpFrameworkBuilderMagicExpressionTypeAdapter;
+  collectionCallbackVariableExpressionTypeAdapter: PhpFrameworkCollectionCallbackVariableExpressionTypeAdapter;
   databaseExpressionTypeAdapter: PhpFrameworkDatabaseExpressionTypeAdapter;
   modelBuilderTransitionExpressionTypeAdapter: PhpFrameworkModelBuilderTransitionExpressionTypeAdapter;
   modelFluentExpressionTypeAdapter: PhpFrameworkModelFluentExpressionTypeAdapter;
@@ -505,6 +529,7 @@ interface PhpExpressionStaticCallStrategyContext {
 
 function createPhpExpressionTypeStrategy({
   builderMagicExpressionTypeAdapter,
+  collectionCallbackVariableExpressionTypeAdapter,
   databaseExpressionTypeAdapter,
   modelBuilderTransitionExpressionTypeAdapter,
   modelFluentExpressionTypeAdapter,
@@ -658,6 +683,17 @@ function createPhpExpressionTypeStrategy({
 
       return null;
     },
-    variableType: queryCallbackVariableExpressionTypeAdapter.variableType,
+    variableType: async (context) => {
+      const queryCallbackVariableType =
+        await queryCallbackVariableExpressionTypeAdapter.variableType(context);
+
+      if (queryCallbackVariableType) {
+        return queryCallbackVariableType;
+      }
+
+      return collectionCallbackVariableExpressionTypeAdapter.variableType(
+        context,
+      );
+    },
   };
 }

@@ -36,8 +36,12 @@ export type PhpMemberKind = "method" | "property" | "constant";
  *  - `parent`: the parent class named by the enclosing class's `extends` clause
  *    (the `parent::` case — a cross-file edit the controller resolves and
  *    applies, conservatively, only when the parent file is unambiguous).
+ *  - `external`: another class named by an explicit `ClassName::` receiver.
+ *    When the class is declared in the same file the plan carries
+ *    `sameFileExternal` and the sync path applies the edit; otherwise the
+ *    controller resolves the class to a file, conservatively, like `parent`.
  */
-export type PhpCreateTarget = "self" | "parent";
+export type PhpCreateTarget = "self" | "parent" | "external";
 
 export type PhpCreateRenderRelationship = "self" | "parent" | "external";
 
@@ -71,7 +75,8 @@ export interface PhpCreateDeclarationIdentity {
 
 export interface PhpCreateFromUsagePlan {
   member: MissingThisMember;
-  owner: PhpCreateDeclarationIdentity;
+  owner?: PhpCreateDeclarationIdentity;
+  sameFileExternal?: PhpCreateDeclarationIdentity;
   sameFileParent?: PhpCreateDeclarationIdentity;
 }
 
@@ -104,6 +109,7 @@ export interface MissingThisMember {
    * for backward compatibility with the original `$this->` behaviour.
    */
   target?: PhpCreateTarget;
+  targetClass?: string;
 }
 
 export interface RenderCreateMethodOptions {
@@ -172,6 +178,17 @@ export function planPhpCreateFromUsage(
 
   const enclosingType = enclosingTypeDeclaration(masked, access.nameStart);
 
+  if (access.receiver === "variable") {
+    return planTypedVariableExternalMember(
+      source,
+      masked,
+      usage,
+      enclosingType,
+      access.receiverClass ?? "",
+      access.nameStart,
+    );
+  }
+
   if (!enclosingType) {
     return null;
   }
@@ -190,13 +207,23 @@ export function planPhpCreateFromUsage(
     }
 
     const owner = declarationIdentity(enclosingType);
-    const sameFileParent = sameFileParentDeclaration(
+    const sameFileParent = sameFileClassDeclaration(
       masked,
       member.parentClass ?? "",
       enclosingType,
     );
 
     return { member, owner, ...(sameFileParent ? { sameFileParent } : {}) };
+  }
+
+  if (access.receiver === "external") {
+    return planSameFileExternalMember(
+      source,
+      masked,
+      usage,
+      enclosingType,
+      access.receiverClass ?? "",
+    );
   }
 
   if (memberExists(source, usage.name, usage.kind, enclosingType.bodyStart)) {
@@ -277,11 +304,18 @@ export function renderCreatePropertyStub(
  * original instance access; `self` / `static` are static accesses on the
  * current class; `parent` targets the parent class's body (cross-file).
  */
-type Receiver = "this" | "self" | "static" | "parent";
+type Receiver =
+  | "this"
+  | "self"
+  | "static"
+  | "parent"
+  | "external"
+  | "variable";
 
 interface MemberAccess {
   nameStart: number;
   receiver: Receiver;
+  receiverClass?: string;
 }
 
 interface MemberUsage {
@@ -467,27 +501,275 @@ function locateMemberAccess(
     // character abuts it (e.g. `myself::`, `$notthis->`) so we never mistake a
     // longer token's tail for a real receiver.
     if (isIdentifierChar(masked[accessStart - 1] || "")) {
-      return null;
+      break;
     }
 
     return { nameStart, receiver: token.receiver };
   }
 
-  return null;
+  return (
+    locateExternalReceiverAccess(masked, nameStart) ??
+    locateTypedVariableReceiverAccess(masked, nameStart)
+  );
 }
+
+function locateExternalReceiverAccess(
+  masked: string,
+  nameStart: number,
+): MemberAccess | null {
+  const operatorStart = nameStart - 2;
+
+  if (operatorStart <= 0 || masked.slice(operatorStart, nameStart) !== "::") {
+    return null;
+  }
+
+  const receiverStart = identifierStartAt(masked, operatorStart - 1);
+
+  if (receiverStart === null) {
+    return null;
+  }
+
+  const receiverClass = masked.slice(receiverStart, operatorStart);
+  const previous = masked[receiverStart - 1] || "";
+
+  if (previous === "$" || previous === "\\") {
+    return null;
+  }
+
+  if (!/^[A-Za-z_]/.test(receiverClass)) {
+    return null;
+  }
+
+  if (/^(?:self|static|parent)$/i.test(receiverClass)) {
+    return null;
+  }
+
+  return { nameStart, receiver: "external", receiverClass };
+}
+
+function locateTypedVariableReceiverAccess(
+  masked: string,
+  nameStart: number,
+): MemberAccess | null {
+  const operatorStart = nameStart - 2;
+
+  if (operatorStart <= 0 || masked.slice(operatorStart, nameStart) !== "->") {
+    return null;
+  }
+
+  const receiverStart = identifierStartAt(masked, operatorStart - 1);
+
+  if (receiverStart === null || masked[receiverStart - 1] !== "$") {
+    return null;
+  }
+
+  const beforeDollar = masked[receiverStart - 2] || "";
+
+  if (beforeDollar === "$" || beforeDollar === ">" || beforeDollar === ":") {
+    return null;
+  }
+
+  const variableName = masked.slice(receiverStart, operatorStart);
+
+  if (variableName === "this") {
+    return null;
+  }
+
+  const receiverClass = enclosingSignatureParameterType(
+    masked,
+    nameStart,
+    variableName,
+  );
+
+  if (!receiverClass) {
+    return null;
+  }
+
+  return { nameStart, receiver: "variable", receiverClass };
+}
+
+interface CallableSignature {
+  bodyEnd: number;
+  bodyStart: number;
+  paramsEnd: number;
+  paramsStart: number;
+}
+
+function enclosingSignatureParameterType(
+  masked: string,
+  offset: number,
+  variableName: string,
+): string | null {
+  const signature = innermostCallableSignature(masked, offset);
+
+  if (!signature) {
+    return null;
+  }
+
+  const parameter = signatureParameter(masked, signature, variableName);
+
+  if (!parameter) {
+    return null;
+  }
+
+  return classLikeParameterType(parameter, variableName);
+}
+
+function innermostCallableSignature(
+  masked: string,
+  offset: number,
+): CallableSignature | null {
+  const signatures = [
+    ...functionCallableSignatures(masked),
+    ...arrowCallableSignatures(masked),
+  ].filter(
+    (signature) => offset > signature.bodyStart && offset < signature.bodyEnd,
+  );
+  let innermost: CallableSignature | null = null;
+
+  for (const signature of signatures) {
+    if (innermost && signature.bodyStart <= innermost.bodyStart) {
+      continue;
+    }
+
+    innermost = signature;
+  }
+
+  return innermost;
+}
+
+function functionCallableSignatures(masked: string): CallableSignature[] {
+  const pattern =
+    /\bfunction\b[^\S\r\n]*&?[^\S\r\n]*(?:[A-Za-z_][A-Za-z0-9_]*\s*)?\(/g;
+  const signatures: CallableSignature[] = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const openParen = start + match[0].length - 1;
+    const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    const bodyStart = executableBodyStart(masked, closeParen + 1);
+
+    if (bodyStart === null) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    signatures.push({
+      bodyEnd,
+      bodyStart,
+      paramsEnd: closeParen,
+      paramsStart: openParen + 1,
+    });
+  }
+
+  return signatures;
+}
+
+function arrowCallableSignatures(masked: string): CallableSignature[] {
+  const pattern = /\bfn\s*&?\s*\(/g;
+  const signatures: CallableSignature[] = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const openParen = start + match[0].length - 1;
+    const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    const arrow = masked.indexOf("=>", closeParen + 1);
+
+    if (arrow < 0) {
+      continue;
+    }
+
+    if (!/^[^;{}()]*$/.test(masked.slice(closeParen + 1, arrow))) {
+      continue;
+    }
+
+    signatures.push({
+      bodyEnd: arrowExpressionEnd(masked, arrow + 2),
+      bodyStart: arrow + 1,
+      paramsEnd: closeParen,
+      paramsStart: openParen + 1,
+    });
+  }
+
+  return signatures;
+}
+
+function signatureParameter(
+  masked: string,
+  signature: CallableSignature,
+  variableName: string,
+): string | null {
+  const segments = splitArguments(
+    masked,
+    masked,
+    signature.paramsStart,
+    signature.paramsEnd,
+  );
+  const declaration = new RegExp(String.raw`\$${variableName}\b`);
+
+  return segments.find((segment) => declaration.test(segment)) ?? null;
+}
+
+function classLikeParameterType(
+  parameter: string,
+  variableName: string,
+): string | null {
+  const pattern = new RegExp(
+    String.raw`^(?:(?:public|protected|private|readonly)\s+)*(\\?[A-Za-z_][A-Za-z0-9_\\]*)\s+&?\s*\$${variableName}$`,
+  );
+  const type = pattern.exec(parameter.trim())?.[1];
+
+  if (!type || NON_CLASS_PARAMETER_TYPES.has(type.toLowerCase())) {
+    return null;
+  }
+
+  return type;
+}
+
+const NON_CLASS_PARAMETER_TYPES = new Set([
+  ...BUILTIN_TYPES,
+  "parent",
+  "private",
+  "protected",
+  "public",
+  "readonly",
+  "self",
+  "static",
+]);
 
 /**
  * Resolve the start offset of the member identifier that the cursor is on,
  * tolerating a cursor that sits on the `->` operator just before the name.
  */
 function memberNameStart(masked: string, offset: number): number | null {
-  const onName = identifierStartAt(masked, offset);
+  const onName = memberOrReceiverNameStartAt(masked, offset);
 
   if (onName !== null) {
     return onName;
   }
 
-  return identifierStartAt(masked, skipForwardToIdentifier(masked, offset));
+  const afterName = memberOrReceiverNameStartAt(masked, offset - 1);
+
+  if (afterName !== null) {
+    return afterName;
+  }
+
+  return memberOrReceiverNameStartAt(masked, skipForwardToIdentifier(masked, offset));
 }
 
 function skipForwardToIdentifier(masked: string, offset: number): number {
@@ -512,6 +794,61 @@ function identifierStartAt(masked: string, offset: number): number | null {
   }
 
   return start;
+}
+
+function memberOrReceiverNameStartAt(
+  masked: string,
+  offset: number,
+): number | null {
+  const start = identifierStartAt(masked, offset);
+
+  if (start === null) {
+    return null;
+  }
+
+  return memberNameAfterReceiver(masked, start) ?? start;
+}
+
+function memberNameAfterReceiver(
+  masked: string,
+  receiverStart: number,
+): number | null {
+  const receiverIdentifier = readIdentifier(masked, receiverStart);
+
+  if (!receiverIdentifier) {
+    return null;
+  }
+
+  const receiverName = receiverIdentifier.toLowerCase();
+  const operatorStart = skipWhitespace(
+    masked,
+    receiverStart + receiverName.length,
+  );
+
+  if (
+    receiverName === "this" &&
+    masked[receiverStart - 1] === "$" &&
+    masked.slice(operatorStart, operatorStart + 2) === "->"
+  ) {
+    return identifierStartAt(
+      masked,
+      skipForwardToIdentifier(masked, operatorStart + 2),
+    );
+  }
+
+  if (
+    (receiverName === "self" ||
+      receiverName === "static" ||
+      receiverName === "parent") &&
+    masked.slice(operatorStart, operatorStart + 2) === "::"
+  ) {
+    return identifierStartAt(
+      masked,
+      skipForwardToIdentifier(masked, operatorStart + 2),
+    );
+  }
+
+  return null;
 }
 
 function readMemberUsage(
@@ -552,7 +889,7 @@ function readMemberUsage(
  * Covers `self::`, `static::` and `parent::`.
  */
 function usesScopeResolution(receiver: Receiver): boolean {
-  return receiver === "self" || receiver === "static" || receiver === "parent";
+  return receiver !== "this" && receiver !== "variable";
 }
 
 /**
@@ -639,6 +976,177 @@ function toMissingParentMember(
     name: usage.name,
     parentClass,
     target: "parent",
+  };
+}
+
+function planSameFileExternalMember(
+  source: string,
+  masked: string,
+  usage: MemberUsage,
+  enclosingType: EnclosingTypeDeclaration,
+  targetClass: string,
+): PhpCreateFromUsagePlan | null {
+  if (usage.kind === "property" || usage.name.toLowerCase() === "class") {
+    return null;
+  }
+
+  const declared = sameFileTypeDeclaration(masked, targetClass, enclosingType);
+
+  if (!declared) {
+    return {
+      member: toMissingExternalMember(source, masked, usage, targetClass, true),
+      owner: declarationIdentity(enclosingType),
+    };
+  }
+
+  if (declared.kind !== "class") {
+    return null;
+  }
+
+  const sameFileExternal = declarationIdentity(declared);
+
+  if (
+    memberExists(source, usage.name, usage.kind, sameFileExternal.bodyStartOffset)
+  ) {
+    return null;
+  }
+
+  const owner = declarationIdentity(enclosingType);
+
+  if (sameFileExternal.bodyStartOffset === owner.bodyStartOffset) {
+    return { member: toMissingMember(source, masked, usage, "self"), owner };
+  }
+
+  if (sameFileSiblingMayInterceptMembers(source, masked, declared, usage.kind)) {
+    return null;
+  }
+
+  return {
+    member: toMissingExternalMember(source, masked, usage, targetClass, true),
+    owner,
+    sameFileExternal,
+  };
+}
+
+function planTypedVariableExternalMember(
+  source: string,
+  masked: string,
+  usage: MemberUsage,
+  enclosingType: EnclosingTypeDeclaration | null,
+  targetClass: string,
+  usageOffset: number,
+): PhpCreateFromUsagePlan | null {
+  if (usage.kind === "constant" || !targetClass) {
+    return null;
+  }
+
+  const anchor = enclosingType ?? {
+    headerStart: usageOffset,
+    namespace: namespaceAtOffset(masked, usageOffset),
+  };
+  const declared = sameFileTypeDeclaration(masked, targetClass, anchor);
+  const owner = enclosingType ? declarationIdentity(enclosingType) : undefined;
+
+  if (!declared) {
+    return {
+      member: toMissingExternalMember(source, masked, usage, targetClass, false),
+      ...(owner ? { owner } : {}),
+    };
+  }
+
+  if (declared.kind !== "class") {
+    return null;
+  }
+
+  const sameFileExternal = declarationIdentity(declared);
+
+  if (
+    memberExists(source, usage.name, usage.kind, sameFileExternal.bodyStartOffset)
+  ) {
+    return null;
+  }
+
+  if (owner && sameFileExternal.bodyStartOffset === owner.bodyStartOffset) {
+    return { member: toMissingMember(source, masked, usage, "this"), owner };
+  }
+
+  if (sameFileSiblingMayInterceptMembers(source, masked, declared, usage.kind)) {
+    return null;
+  }
+
+  return {
+    member: toMissingExternalMember(source, masked, usage, targetClass, false),
+    ...(owner ? { owner } : {}),
+    sameFileExternal,
+  };
+}
+
+function sameFileSiblingMayInterceptMembers(
+  source: string,
+  masked: string,
+  declared: EnclosingTypeDeclaration,
+  memberKind: PhpMemberKind,
+): boolean {
+  if (enclosingExtendsClause(masked, declared)) {
+    return true;
+  }
+
+  const selector = { bodyStartOffset: declared.bodyStart };
+
+  return phpMemberInterceptingMagicMethods(memberKind).some((magicMethod) =>
+    phpClassDeclaresMember(source, magicMethod, "method", selector),
+  );
+}
+
+export function phpMemberInterceptingMagicMethods(
+  memberKind: PhpMemberKind,
+): string[] {
+  if (memberKind === "property") {
+    return ["__get", "__set"];
+  }
+
+  return ["__callStatic", "__call"];
+}
+
+function toMissingExternalMember(
+  source: string,
+  masked: string,
+  usage: MemberUsage,
+  targetClass: string,
+  isStatic: boolean,
+): MissingThisMember {
+  if (usage.kind === "constant") {
+    return {
+      kind: "constant",
+      name: usage.name,
+      target: "external",
+      targetClass,
+    };
+  }
+
+  if (usage.kind === "property") {
+    const propertyType = inferAssignedPropertyType(
+      source,
+      masked,
+      usage.argsEnd,
+    );
+
+    return {
+      kind: "property",
+      name: usage.name,
+      ...(propertyType === null ? {} : { propertyType }),
+      target: "external",
+      targetClass,
+    };
+  }
+
+  return {
+    argTypes: inferArgumentTypes(source, masked, usage),
+    ...(isStatic ? { isStatic: true } : {}),
+    kind: "method",
+    name: usage.name,
+    target: "external",
+    targetClass,
   };
 }
 
@@ -873,30 +1381,47 @@ function declarationIdentity(
   };
 }
 
-function sameFileParentDeclaration(
+function sameFileClassDeclaration(
   masked: string,
-  parentReference: string,
+  reference: string,
   owner: EnclosingTypeDeclaration,
 ): PhpCreateDeclarationIdentity | null {
+  const declared = sameFileTypeDeclaration(masked, reference, owner);
+
+  if (!declared || declared.kind !== "class") {
+    return null;
+  }
+
+  return declarationIdentity(declared);
+}
+
+interface DeclarationReferenceScope {
+  headerStart: number;
+  namespace: string | null;
+}
+
+function sameFileTypeDeclaration(
+  masked: string,
+  reference: string,
+  owner: DeclarationReferenceScope,
+): EnclosingTypeDeclaration | null {
   const expectedFqn = resolveDeclarationReference(
     masked,
-    parentReference,
+    reference,
     owner,
   ).toLowerCase();
-  const declarations = namedTypeDeclarations(masked).filter(
-    (declaration) => declaration.kind === "class",
-  );
-  const exact = declarations.find(
-    (declaration) => declarationFqn(declaration).toLowerCase() === expectedFqn,
-  );
 
-  return exact ? declarationIdentity(exact) : null;
+  return (
+    namedTypeDeclarations(masked).find(
+      (declaration) => declarationFqn(declaration).toLowerCase() === expectedFqn,
+    ) ?? null
+  );
 }
 
 function resolveDeclarationReference(
   masked: string,
   reference: string,
-  owner: EnclosingTypeDeclaration,
+  owner: DeclarationReferenceScope,
 ): string {
   if (reference.startsWith("\\")) {
     return reference.slice(1);
@@ -924,7 +1449,7 @@ function resolveDeclarationReference(
 function importedClassReference(
   masked: string,
   shortName: string,
-  owner: EnclosingTypeDeclaration,
+  owner: DeclarationReferenceScope,
 ): string | null {
   const pattern = /\buse\s+([^;]+);/gi;
   const ownerDepth = braceDepthAt(masked, owner.headerStart);
@@ -1169,6 +1694,10 @@ export function inferArgumentTypes(
 
   const args = splitArguments(source, masked, usage.argsStart, usage.argsEnd);
 
+  if (args.length === 1 && args[0] === "...") {
+    return [];
+  }
+
   return args.map(inferLiteralType);
 }
 
@@ -1346,7 +1875,11 @@ export function phpClassDeclaresMember(
   const structure = parsePhpClassStructure(source, target);
 
   if (kind === "method") {
-    return structure.methods.some((method) => method.name === name);
+    const loweredName = name.toLowerCase();
+
+    return structure.methods.some(
+      (method) => method.name.toLowerCase() === loweredName,
+    );
   }
 
   if (structure.properties.some((property) => property.name === name)) {

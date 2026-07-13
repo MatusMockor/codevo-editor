@@ -285,6 +285,99 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     expect(memberCompletions.map((item) => item.label)).toContain("id");
   });
 
+  it("covers variable completion inside a real n:foreach attribute value", async () => {
+    const templatePath =
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/showAddons.latte";
+    const source = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
+    const deps = makeLatteDeps(templatePath);
+    const latte = createLatteIntelligence(() => deps);
+
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(
+        source,
+        offsetAfter(source, 'n:foreach="$groupAddonTypeGr'),
+      ),
+    );
+
+    expect(completions.map((item) => item.label)).toContain(
+      "$groupAddonTypeGroups",
+    );
+
+    const filterCompletions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offsetAfter(source, "created_at|user")),
+    );
+
+    expect(filterCompletions.map((item) => item.label)).toContain("userDate");
+  });
+
+  it("covers real ebox Latte filter definition targets from NEON registrations", async () => {
+    const usersTemplatePath =
+      "app/modules/usersModule/templates/UsersAdmin/show.latte";
+    const usersSource = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, usersTemplatePath),
+    );
+    const usersDeps = makeLatteDeps(usersTemplatePath);
+    const usersLatte = createLatteIntelligence(() => usersDeps);
+    const usersConfigPath = "app/modules/usersModule/config/config.neon";
+    const usersConfig = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, usersConfigPath),
+    );
+
+    await expect(
+      usersLatte.provideLatteDefinition(
+        usersSource,
+        offsetInside(usersSource, "userLabel"),
+      ),
+    ).resolves.toBe(true);
+    expect(usersDeps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, usersConfigPath),
+      positionAtOffset(usersConfig, usersConfig.indexOf("userLabel")),
+      "userLabel",
+    );
+
+    await expect(
+      usersLatte.provideLatteDefinition(
+        usersSource,
+        offsetInside(usersSource, "gravatar"),
+      ),
+    ).resolves.toBe(true);
+    expect(usersDeps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, usersConfigPath),
+      positionAtOffset(usersConfig, usersConfig.indexOf("gravatar")),
+      "gravatar",
+    );
+
+    const subscriptionTemplatePath =
+      "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/default.latte";
+    const subscriptionSource = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, subscriptionTemplatePath),
+    );
+    const subscriptionDeps = makeLatteDeps(subscriptionTemplatePath);
+    const subscriptionLatte = createLatteIntelligence(() => subscriptionDeps);
+    const integrationConfigPath =
+      "app/modules/integrationModule/config/config.neon";
+    const integrationConfig = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, integrationConfigPath),
+    );
+
+    await expect(
+      subscriptionLatte.provideLatteDefinition(
+        subscriptionSource,
+        offsetInside(subscriptionSource, "formatContentGroups"),
+      ),
+    ).resolves.toBe(true);
+    expect(subscriptionDeps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, integrationConfigPath),
+      positionAtOffset(
+        integrationConfig,
+        integrationConfig.indexOf("formatContentGroups"),
+      ),
+      "formatContentGroups",
+    );
+  });
+
   it("covers NEON class refs, service reference definition, service completions, and setup methods over real config", async () => {
     const configPath = "app/modules/usersModule/config/config.neon";
     const source = await readFileContent(joinPath(EBOX_CRM_ROOT, configPath));

@@ -4,6 +4,7 @@ import {
   getFileName,
   getParentPath,
   isDirty,
+  isLspExcludedDirectoryPath,
   javaScriptTypeScriptProjectScopeLabel,
   javaScriptTypeScriptVersionLabel,
   javaScriptTypeScriptWorkspaceLabel,
@@ -95,6 +96,65 @@ describe("workspace path helpers", () => {
     expect(workspaceRelativePath("/project", "/other/Foo.php")).toBeNull();
     expect(workspaceRelativePath("/project", "/project")).toBeNull();
     expect(workspaceRelativePath("/project", "/projectile/Foo.php")).toBeNull();
+  });
+
+  it.each([
+    "/project/vendor",
+    "/project/node_modules",
+    "/project/.git",
+    "/project/target",
+    "/project/dist",
+    "/project/build",
+    "/project/.next",
+    "/project/.turbo",
+    "/project/.cache",
+    "/project/coverage",
+  ])("marks %s as LSP-excluded", (path) => {
+    expect(isLspExcludedDirectoryPath("/project", path)).toBe(true);
+  });
+
+  it("marks directories nested inside an excluded tree as LSP-excluded", () => {
+    expect(
+      isLspExcludedDirectoryPath("/project", "/project/node_modules/pkg"),
+    ).toBe(true);
+    expect(
+      isLspExcludedDirectoryPath("/project", "/project/vendor/laravel/framework"),
+    ).toBe(true);
+    expect(
+      isLspExcludedDirectoryPath("/project", "/project/app/vendor/generated"),
+    ).toBe(true);
+  });
+
+  it("does not mark normal directories as LSP-excluded", () => {
+    expect(isLspExcludedDirectoryPath("/project", "/project/src/models")).toBe(
+      false,
+    );
+    expect(isLspExcludedDirectoryPath("/project", "/project/app/Services")).toBe(
+      false,
+    );
+    expect(isLspExcludedDirectoryPath("/project", "/project/vendors")).toBe(
+      false,
+    );
+    expect(isLspExcludedDirectoryPath("/project", "/project/my-dist")).toBe(
+      false,
+    );
+  });
+
+  it("matches excluded directory names case-sensitively", () => {
+    expect(isLspExcludedDirectoryPath("/project", "/project/Vendor")).toBe(
+      false,
+    );
+    expect(isLspExcludedDirectoryPath("/project", "/project/NODE_MODULES")).toBe(
+      false,
+    );
+  });
+
+  it("ignores excluded names in segments above the workspace root", () => {
+    expect(
+      isLspExcludedDirectoryPath("/home/user/build/project", "/home/user/build/project/src"),
+    ).toBe(false);
+    expect(isLspExcludedDirectoryPath("/project", "/other/vendor")).toBe(false);
+    expect(isLspExcludedDirectoryPath("/project", "/project")).toBe(false);
   });
 
   it("detects dirty editor documents", () => {

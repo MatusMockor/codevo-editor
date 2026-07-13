@@ -3,9 +3,11 @@ import {
   detectLatteFormNameAt,
   detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
+  latteActiveFormComponentAt,
   netteComponentUsagesInLatte,
   netteCreateComponentFactoryContexts,
   netteCreateComponentMethodName,
+  netteFormFieldDefinitionsInCreateComponent,
   nettePresenterLifecycleInfo,
 } from "../domain/netteComponents";
 import { innermostLatteExpressionSpanAt } from "../domain/latteSyntax";
@@ -40,9 +42,17 @@ interface LatteControlCompletion {
 }
 
 interface NetteControlReference {
+  fieldName?: string;
   name: string;
   part?: string;
 }
+
+const FORM_FIELD_TAGS: ReadonlySet<string> = new Set([
+  "button",
+  "input",
+  "select",
+  "textarea",
+]);
 
 export function netteControlReferenceAt(
   source: string,
@@ -62,6 +72,14 @@ export function netteControlReferenceAt(
     return { name: formName.name };
   }
 
+  if (formName && isFormFieldTag(formName.elementTag)) {
+    const activeForm = latteActiveFormComponentAt(source, offset);
+
+    if (activeForm) {
+      return { fieldName: formName.name, name: activeForm.name };
+    }
+  }
+
   return null;
 }
 
@@ -76,7 +94,7 @@ export async function resolveNetteControlDefinition(
     return false;
   }
 
-  const { name: componentName, part } = reference;
+  const { fieldName, name: componentName, part } = reference;
   const methodName = netteCreateComponentMethodName(componentName);
   const candidatePaths = componentOwnerCandidatePathsForTemplate(
     currentRelativePath,
@@ -102,6 +120,23 @@ export async function resolveNetteControlDefinition(
 
     if (!isRequestedRootActive()) {
       return false;
+    }
+
+    if (fieldName) {
+      const field = netteFormFieldDefinitionsInCreateComponent(
+        content,
+        componentName,
+      ).find((definition) => definition.name === fieldName);
+
+      if (!field) {
+        continue;
+      }
+
+      return deps.openTarget(
+        path,
+        editorPositionAtOffset(content, field.nameStart),
+        fieldName,
+      );
     }
 
     const position = phpMethodPositionInSource(content, [methodName]);
@@ -154,7 +189,14 @@ export function latteFormNameCompletionAt(
 ): LatteControlCompletion | null {
   const completion = detectLatteFormNameCompletionAt(source, offset);
 
-  if (!completion || completion.elementTag !== "form") {
+  if (!completion) {
+    return null;
+  }
+
+  if (
+    completion.elementTag !== "form" &&
+    !isFormFieldTag(completion.elementTag)
+  ) {
     return null;
   }
 
@@ -163,6 +205,35 @@ export function latteFormNameCompletionAt(
     replaceEnd: completion.replaceEnd,
     replaceStart: completion.replaceStart,
   };
+}
+
+export async function latteFormNameCompletions(
+  context: NetteControlCompletionContext,
+  source: string,
+  offset: number,
+  completion: LatteControlCompletion,
+): Promise<NetteControlCompletionItem[]> {
+  const detected = detectLatteFormNameCompletionAt(source, offset);
+
+  if (!detected) {
+    return [];
+  }
+
+  if (detected.elementTag === "form") {
+    return latteControlCompletions(context, completion);
+  }
+
+  if (!isFormFieldTag(detected.elementTag)) {
+    return [];
+  }
+
+  const activeForm = latteActiveFormComponentAt(source, offset);
+
+  if (!activeForm) {
+    return [];
+  }
+
+  return latteFormFieldCompletions(context, activeForm.name, completion);
 }
 
 export async function latteControlCompletions(
@@ -188,6 +259,73 @@ export async function latteControlCompletions(
       replaceEnd: completion.replaceEnd,
       replaceStart: completion.replaceStart,
     }));
+}
+
+async function latteFormFieldCompletions(
+  context: NetteControlCompletionContext,
+  componentName: string,
+  completion: LatteControlCompletion,
+): Promise<NetteControlCompletionItem[]> {
+  const fields = await loadNetteFormFieldDefinitions(context, componentName);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return fields
+    .filter((field) => field.name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, context.maxCompletions)
+    .map((field) => ({
+      detail: "Nette form field",
+      insertText: field.name,
+      kind: "component" as const,
+      label: field.name,
+      replaceEnd: completion.replaceEnd,
+      replaceStart: completion.replaceStart,
+    }));
+}
+
+async function loadNetteFormFieldDefinitions(
+  context: NetteControlCompletionContext,
+  componentName: string,
+): Promise<ReturnType<typeof netteFormFieldDefinitionsInCreateComponent>> {
+  const {
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+    templateRelativePath,
+  } = context;
+
+  for (const relativePath of componentOwnerCandidatePathsForTemplate(
+    templateRelativePath,
+  )) {
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    const path = deps.joinPath(requestedRoot, relativePath);
+    let content: string;
+
+    try {
+      content = await deps.readFileContent(path);
+    } catch {
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return netteFormFieldDefinitionsInCreateComponent(content, componentName);
+  }
+
+  return [];
 }
 
 export async function resolveNetteCreateComponentReverse(
@@ -299,6 +437,10 @@ function netteControlRenderMethodName(part: string): string | null {
   }
 
   return `render${normalized}`;
+}
+
+function isFormFieldTag(elementTag: string | null): boolean {
+  return elementTag !== null && FORM_FIELD_TAGS.has(elementTag);
 }
 
 function presenterViewNames(presenterSource: string): string[] {

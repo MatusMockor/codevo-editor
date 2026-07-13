@@ -5,6 +5,12 @@ import {
   resolveLatteBlockDefinition,
 } from "./latteBlockDefinitions";
 import {
+  latteExpressionNavigationAt,
+} from "./latteExpressionDetection";
+import {
+  resolveLatteFilterDefinition,
+} from "./latteFilterDefinitions";
+import {
   resolveLatteMemberDefinition,
   resolveNettePresenterVariableDefinition,
 } from "./latteExpressionIntelligence";
@@ -22,6 +28,7 @@ import {
   resolveLatteTemplateDefinition,
 } from "./netteTemplateDefinitions";
 import {
+  latteFilterDefinitionContext,
   latteExpressionResolutionContext,
   nettePresenterLinkDefinitionContext,
 } from "./netteLatteProviderOptions";
@@ -32,6 +39,7 @@ import {
   guardedLatteProviderRequestContext,
   latteProviderRequestContext,
 } from "./latteProviderRequestContext";
+import type { LatteDefinitionOutcome } from "./latteIntelligenceContracts";
 import type { NavigationRequest } from "./navigationRequest";
 
 export async function provideLatteDefinition(
@@ -40,13 +48,29 @@ export async function provideLatteDefinition(
   offset: number,
   navigationRequest?: NavigationRequest,
 ): Promise<boolean> {
+  const outcome = await provideLatteDefinitionOutcome(
+    options,
+    source,
+    offset,
+    navigationRequest,
+  );
+
+  return outcome.handled;
+}
+
+export async function provideLatteDefinitionOutcome(
+  options: LatteProviderFlowFactoryOptions,
+  source: string,
+  offset: number,
+  navigationRequest?: NavigationRequest,
+): Promise<LatteDefinitionOutcome> {
   const request = guardedLatteProviderRequestContext(
     latteProviderRequestContext(options),
     navigationRequest,
   );
 
   if (!request) {
-    return false;
+    return latteDefinitionOutcome(false, false);
   }
 
   const {
@@ -63,7 +87,7 @@ export async function provideLatteDefinition(
     );
 
     if (linkHandled) {
-      return true;
+      return latteDefinitionOutcome(true, false);
     }
   }
 
@@ -76,55 +100,74 @@ export async function provideLatteDefinition(
   );
 
   if (controlHandled) {
-    return true;
+    return latteDefinitionOutcome(true, false);
   }
+
+  const expressionNavigation = latteExpressionNavigationAt(source, offset);
+  const shouldBlockFallback = expressionNavigation.memberReference !== null;
 
   const variableHandled = await resolveNettePresenterVariableDefinition(
     latteExpressionResolutionContext(options, request),
     source,
     offset,
+    expressionNavigation,
   );
 
   if (variableHandled) {
-    return true;
+    return latteDefinitionOutcome(true, shouldBlockFallback);
   }
 
   const memberHandled = await resolveLatteMemberDefinition(
     latteExpressionResolutionContext(options, request),
     source,
     offset,
+    expressionNavigation,
   );
 
   if (memberHandled) {
-    return true;
+    return latteDefinitionOutcome(true, shouldBlockFallback);
+  }
+
+  const filterHandled = await resolveLatteFilterDefinition(
+    latteFilterDefinitionContext(options, request),
+    source,
+    offset,
+  );
+
+  if (filterHandled) {
+    return latteDefinitionOutcome(true, shouldBlockFallback);
   }
 
   const reference = detectLatteReferenceAt(source, offset);
 
   if (reference?.kind === "control") {
-    return resolveNetteControlDefinition(
+    const handled = await resolveNetteControlDefinition(
       deps,
       requestedRoot,
       isRequestedRootActive,
       { name: reference.name },
       currentTemplateRelativePath,
     );
+
+    return latteDefinitionOutcome(handled, shouldBlockFallback);
   }
 
   if (reference?.kind === "block") {
-    return resolveLatteBlockDefinition(
+    const handled = await resolveLatteBlockDefinition(
       deps,
       source,
       reference,
       currentTemplateRelativePath,
     );
+
+    return latteDefinitionOutcome(handled, shouldBlockFallback);
   }
 
   if (reference && reference.kind !== "template") {
-    return false;
+    return latteDefinitionOutcome(false, shouldBlockFallback);
   }
 
-  return resolveLatteTemplateDefinition(
+  const handled = await resolveLatteTemplateDefinition(
     {
       currentTemplateRelativePath,
       deps,
@@ -135,4 +178,13 @@ export async function provideLatteDefinition(
     source,
     offset,
   );
+
+  return latteDefinitionOutcome(handled, shouldBlockFallback);
+}
+
+function latteDefinitionOutcome(
+  handled: boolean,
+  shouldBlockFallback: boolean,
+): LatteDefinitionOutcome {
+  return { handled, shouldBlockFallback };
 }

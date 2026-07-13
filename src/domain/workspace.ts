@@ -545,3 +545,31 @@ export function workspaceRelativePath(
 
   return relativePath || null;
 }
+
+const LSP_EXCLUDED_DIRECTORY_NAMES: ReadonlySet<string> = new Set([
+  ".cache",
+  ".git",
+  ".next",
+  ".turbo",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+  "target",
+  "vendor",
+]);
+
+export function isLspExcludedDirectoryPath(
+  workspaceRootPath: string,
+  path: string,
+): boolean {
+  const relativePath = workspaceRelativePath(workspaceRootPath, path);
+
+  if (!relativePath) {
+    return false;
+  }
+
+  return relativePath
+    .split("/")
+    .some((segment) => LSP_EXCLUDED_DIRECTORY_NAMES.has(segment));
+}

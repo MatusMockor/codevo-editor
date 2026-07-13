@@ -6,6 +6,7 @@ import {
   renderCreatePropertyStub,
   type MissingThisMember,
   type PhpCreateDeclarationIdentity,
+  type PhpCreateRenderTarget,
 } from "../domain/phpCreateFromUsage";
 import { findClassBodyInsertionOffset } from "../domain/phpInsertionPoint";
 import { phpClassBodyInsertionAction } from "./phpClassGenerateCodeActions";
@@ -25,6 +26,19 @@ export function phpCreateFromUsageCodeAction(
   const plan = planPhpCreateFromUsage(source, range.start);
 
   if (!plan) {
+    return null;
+  }
+
+  if (plan.member.target === "external") {
+    return phpCreateExternalMemberCodeAction(
+      source,
+      plan.member,
+      plan.owner,
+      plan.sameFileExternal,
+    );
+  }
+
+  if (!plan.owner) {
     return null;
   }
 
@@ -189,6 +203,87 @@ function phpCreateParentMemberCodeAction(
   }
 
   return null;
+}
+
+function phpCreateExternalMemberCodeAction(
+  source: string,
+  member: MissingThisMember,
+  owner: PhpCreateDeclarationIdentity | undefined,
+  sibling: PhpCreateDeclarationIdentity | undefined,
+): PhpCodeActionDescriptor | null {
+  if (!sibling) {
+    return null;
+  }
+
+  const insertionTarget = { bodyStartOffset: sibling.bodyStartOffset };
+  const renderTarget: PhpCreateRenderTarget = {
+    kind: sibling.kind,
+    relationship: "external",
+    typeContext:
+      owner && owner.namespace === sibling.namespace
+        ? "same-namespace"
+        : "external-namespace",
+  };
+
+  if (member.kind === "constant") {
+    const stub = renderCreateConstantStub(member.name, {
+      indent: "",
+      target: renderTarget,
+    });
+
+    if (!stub) {
+      return null;
+    }
+
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        stub,
+        `Create constant '${member.name}' in '${sibling.name}'`,
+        insertionTarget,
+      ),
+    );
+  }
+
+  if (member.kind === "property") {
+    const stub = renderCreatePropertyStub(member.name, {
+      indent: "",
+      target: renderTarget,
+      type: member.propertyType ?? null,
+    });
+
+    if (!stub) {
+      return null;
+    }
+
+    return phpPreferredQuickfix(
+      phpClassBodyInsertionAction(
+        source,
+        stub,
+        `Create property '${member.name}' in '${sibling.name}'`,
+        insertionTarget,
+      ),
+    );
+  }
+
+  const stub = renderCreateMethodStub(member.name, member.argTypes ?? [], {
+    indent: "",
+    isStatic: member.isStatic,
+    target: renderTarget,
+  });
+
+  if (!stub) {
+    return null;
+  }
+
+  return phpPreferredQuickfix(
+    phpClassBodyInsertionAction(
+      source,
+      stub,
+      `Create method '${member.name}' in '${sibling.name}'`,
+      insertionTarget,
+    ),
+  );
 }
 
 export function phpPreferredQuickfix(
