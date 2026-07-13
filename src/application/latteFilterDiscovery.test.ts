@@ -310,4 +310,58 @@ describe("loadLatteFilterRegistrations", () => {
 
     expect(workspace.readFileContent).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps scanning NEON configs after PHP source files hit their own budget", async () => {
+    const firstPhpSource = latteExtensionSource("firstPhpFilter");
+    const skippedPhpSource = latteExtensionSource("skippedPhpFilter");
+    const configSource = filterLoaderConfig("neonFilter");
+    const { context } = makeContext(
+      {
+        "app/a/FirstExtension.php": firstPhpSource,
+        "app/b/SecondExtension.php": skippedPhpSource,
+        "app/c/config.neon": configSource,
+      },
+      { maxConfigFiles: 1 },
+    );
+
+    await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
+      {
+        name: "firstPhpFilter",
+        offset: firstPhpSource.indexOf("firstPhpFilter"),
+        path: `${ROOT}/app/a/FirstExtension.php`,
+      },
+      {
+        name: "neonFilter",
+        offset: configSource.indexOf("neonFilter"),
+        path: `${ROOT}/app/c/config.neon`,
+      },
+    ]);
+  });
+
+  it("keeps scanning PHP extensions after NEON configs hit their own budget", async () => {
+    const firstConfigSource = filterLoaderConfig("firstNeonFilter");
+    const skippedConfigSource = filterLoaderConfig("skippedNeonFilter");
+    const phpSource = latteExtensionSource("phpFilter");
+    const { context } = makeContext(
+      {
+        "app/a/config.neon": firstConfigSource,
+        "app/b/config.neon": skippedConfigSource,
+        "app/c/AppLatteExtension.php": phpSource,
+      },
+      { maxConfigFiles: 1 },
+    );
+
+    await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
+      {
+        name: "firstNeonFilter",
+        offset: firstConfigSource.indexOf("firstNeonFilter"),
+        path: `${ROOT}/app/a/config.neon`,
+      },
+      {
+        name: "phpFilter",
+        offset: phpSource.indexOf("phpFilter"),
+        path: `${ROOT}/app/c/AppLatteExtension.php`,
+      },
+    ]);
+  });
 });

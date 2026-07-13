@@ -43,7 +43,8 @@ export interface LatteFilterDiscoveryContext {
 }
 
 interface FilterConfigScanState {
-  sourceFilesFound: number;
+  neonConfigFilesFound: number;
+  phpSourceFilesFound: number;
   visitedDirectories: Set<string>;
 }
 
@@ -100,7 +101,8 @@ async function scanLatteFilterRegistrations(
   const neonPaths = new Set<string>();
   const phpPaths = new Set<string>();
   const scanState: FilterConfigScanState = {
-    sourceFilesFound: 0,
+    neonConfigFilesFound: 0,
+    phpSourceFilesFound: 0,
     visitedDirectories: new Set<string>(),
   };
 
@@ -118,7 +120,7 @@ async function scanLatteFilterRegistrations(
       return [];
     }
 
-    if (scanState.sourceFilesFound >= maxConfigFiles) {
+    if (areFilterSourceBudgetsExhausted(scanState, maxConfigFiles)) {
       break;
     }
   }
@@ -220,7 +222,7 @@ async function collectLatteFilterSourcePaths(
     return;
   }
 
-  if (scanState.sourceFilesFound >= maxConfigFiles) {
+  if (areFilterSourceBudgetsExhausted(scanState, maxConfigFiles)) {
     return;
   }
 
@@ -247,7 +249,7 @@ async function collectLatteFilterSourcePaths(
       return;
     }
 
-    if (scanState.sourceFilesFound >= maxConfigFiles) {
+    if (areFilterSourceBudgetsExhausted(scanState, maxConfigFiles)) {
       return;
     }
 
@@ -267,19 +269,30 @@ async function collectLatteFilterSourcePaths(
       continue;
     }
 
-    if (
-      !entry.path.endsWith(NEON_EXTENSION) &&
-      !entry.path.endsWith(PHP_EXTENSION)
-    ) {
-      continue;
-    }
-
     if (entry.path.endsWith(NEON_EXTENSION)) {
-      neonPaths.add(entry.path);
-    } else {
-      phpPaths.add(entry.path);
-    }
+      if (scanState.neonConfigFilesFound >= maxConfigFiles) {
+        continue;
+      }
 
-    scanState.sourceFilesFound += 1;
+      neonPaths.add(entry.path);
+      scanState.neonConfigFilesFound += 1;
+    } else if (entry.path.endsWith(PHP_EXTENSION)) {
+      if (scanState.phpSourceFilesFound >= maxConfigFiles) {
+        continue;
+      }
+
+      phpPaths.add(entry.path);
+      scanState.phpSourceFilesFound += 1;
+    }
   }
+}
+
+function areFilterSourceBudgetsExhausted(
+  scanState: FilterConfigScanState,
+  maxSourceFiles: number,
+): boolean {
+  return (
+    scanState.neonConfigFilesFound >= maxSourceFiles &&
+    scanState.phpSourceFilesFound >= maxSourceFiles
+  );
 }
