@@ -27,11 +27,13 @@ function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
     activeDocumentPath: `${ROOT}/app/Http/Controllers/OrderController.php`,
     currentWorkspaceRootRef: { current: ROOT },
     frameworkCodeActionContributions: [],
+    getPhpDocumentSyncVersion: vi.fn(() => null),
     intelligenceMode: "fullSmart",
     projectSymbolSearch: {
       searchProjectSymbols: vi.fn(async () => []),
     },
     readNavigationFileContent: vi.fn(async () => ""),
+    readOpenDocumentContent: vi.fn(() => null),
     readTestFileIfExists: vi.fn(async () => null),
     resolvePhpClassSourcePaths: vi.fn(async () => []),
     workspaceDescriptor: null,

@@ -7553,13 +7553,27 @@ export function useWorkbenchController(
       workspaceRoot,
     ],
   );
+  const getPhpDocumentSyncVersion = useCallback(
+    (rootPath: string, path: string): number | null =>
+      documentVersionsRef.current[
+        languageServerDocumentSyncKey(rootPath, path)
+      ] ?? null,
+    [],
+  );
+  const readOpenDocumentContent = useCallback(
+    (path: string): string | null =>
+      documentsRef.current[path]?.content ?? null,
+    [],
+  );
   const { providePhpCodeActions } = usePhpCodeActionProvider({
     activeDocumentPath: activeDocument?.path ?? null,
     currentWorkspaceRootRef,
     frameworkCodeActionContributions: phpFrameworkCodeActionContributions,
+    getPhpDocumentSyncVersion,
     intelligenceMode,
     projectSymbolSearch,
     readNavigationFileContent,
+    readOpenDocumentContent,
     readTestFileIfExists,
     resolvePhpClassSourcePaths,
     workspaceDescriptor,

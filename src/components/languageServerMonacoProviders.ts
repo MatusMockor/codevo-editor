@@ -204,6 +204,11 @@ interface ApplyPhpCodeActionNewFilePayload {
   versionId: number | undefined;
 }
 
+interface ApplyPhpCodeActionWorkspaceEditPayload {
+  edit: LanguageServerWorkspaceEdit;
+  rootPath: string;
+}
+
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.php.executeLanguageServerCommand";
 const RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID =
@@ -216,6 +221,8 @@ const RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID =
  */
 const APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID =
   "mockor.php.applyCodeActionNewFile";
+const APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID =
+  "mockor.php.applyCodeActionWorkspaceEdit";
 /**
  * Upper bound (ms) for an interactive hover / navigation request before the
  * provider gives up and resolves to "no result". A cold phpactor (mid-index or
@@ -676,6 +683,28 @@ export function registerLanguageServerMonacoProviders(
       }
     },
   });
+  const applyCodeActionWorkspaceEditCommand = monaco.editor.addCommand({
+    id: APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID,
+    run: async (
+      _accessor,
+      payload: ApplyPhpCodeActionWorkspaceEditPayload | undefined,
+    ) => {
+      if (!payload?.edit || !payload.rootPath) {
+        return;
+      }
+
+      try {
+        await applyWorkspaceEditWithOpenModels(
+          monaco,
+          context,
+          payload.edit,
+          payload.rootPath,
+        );
+      } catch (error) {
+        context.reportError(error);
+      }
+    },
+  });
   const hover = monaco.languages.registerHoverProvider("php", {
     provideHover: (model, position, token) =>
       provideHover(monaco, context, model, position, token),
@@ -886,6 +915,7 @@ export function registerLanguageServerMonacoProviders(
       command.dispose();
       resolveAndApplyCodeActionCommand.dispose();
       applyNewFileCommand.dispose();
+      applyCodeActionWorkspaceEditCommand.dispose();
       hover.dispose();
       completion.dispose();
       signature.dispose();
@@ -2089,8 +2119,10 @@ async function providePhpSourceCodeActions(
       return [];
     }
 
-    return descriptors.map((descriptor) =>
-      toPhpCodeAction(monaco, context, model, descriptor),
+    return descriptors.flatMap((descriptor) =>
+      canApplyPhpWorkspaceEditDescriptor(context, descriptor)
+        ? [toPhpCodeAction(monaco, context, model, descriptor)]
+        : [],
     );
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
@@ -2161,12 +2193,42 @@ function phpCodeActionOffsetRange(
   return start <= end ? { end, start } : { end: start, start: end };
 }
 
+function canApplyPhpWorkspaceEditDescriptor(
+  context: LanguageServerMonacoProviderContext,
+  descriptor: PhpCodeActionDescriptor,
+): boolean {
+  if (!descriptor.workspaceEdit) {
+    return true;
+  }
+
+  return Boolean(
+    context.applyWorkspaceEdit && (context.getWorkspaceRoot?.() ?? null),
+  );
+}
+
 function toPhpCodeAction(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   descriptor: PhpCodeActionDescriptor,
 ): Monaco.languages.CodeAction {
+  if (descriptor.workspaceEdit && context.applyWorkspaceEdit) {
+    const rootPath = context.getWorkspaceRoot?.() ?? null;
+
+    if (rootPath) {
+      return {
+        command: applyPhpCodeActionWorkspaceEditCommand(
+          descriptor.workspaceEdit,
+          rootPath,
+        ),
+        edit: { edits: [] },
+        isPreferred: descriptor.isPreferred,
+        kind: descriptor.kind ?? "quickfix",
+        title: descriptor.title,
+      };
+    }
+  }
+
   const versionId = model.getVersionId();
   const documentEdits: Array<
     Monaco.languages.IWorkspaceTextEdit | Monaco.languages.IWorkspaceFileEdit
@@ -2287,6 +2349,19 @@ function applyPhpCodeActionNewFileCommand(
     ],
     id: APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID,
     title: "Create file",
+  };
+}
+
+function applyPhpCodeActionWorkspaceEditCommand(
+  edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
+): Monaco.languages.Command {
+  return {
+    arguments: [
+      { edit, rootPath } satisfies ApplyPhpCodeActionWorkspaceEditPayload,
+    ],
+    id: APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID,
+    title: "Apply workspace edit",
   };
 }
 

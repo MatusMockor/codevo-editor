@@ -8,6 +8,7 @@ import {
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeAction";
+import { buildPhpCreateParentMemberWorkspaceCodeAction } from "./phpCreateParentMemberWorkspaceCodeAction";
 import {
   collectPhpClassScopedCodeActions,
   collectPhpFileScopedCodeActions,
@@ -47,8 +48,10 @@ export interface UsePhpCodeActionsOptions {
   collectPhpOverridableParentMethods: PhpOverridableParentMethodsCollector;
   frameworkCodeActionContributions: readonly PhpFrameworkCodeActionContribution[];
   currentWorkspaceRootRef: { readonly current: string | null };
+  getPhpDocumentSyncVersion: (rootPath: string, path: string) => number | null;
   intelligenceMode: IntelligenceMode;
   projectSymbolSearch: ProjectSymbolSearchGateway;
+  readOpenDocumentContent: (path: string) => string | null;
   readTestFileIfExists: (path: string) => Promise<string | null>;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -68,8 +71,10 @@ export function usePhpCodeActions({
   collectPhpOverridableParentMethods,
   currentWorkspaceRootRef,
   frameworkCodeActionContributions,
+  getPhpDocumentSyncVersion,
   intelligenceMode,
   projectSymbolSearch,
+  readOpenDocumentContent,
   readTestFileIfExists,
   resolvePhpClassSourcePaths,
   workspaceDescriptor,
@@ -86,6 +91,23 @@ export function usePhpCodeActions({
       readTestFileIfExists,
       resolvePhpClassSourcePaths,
       workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const phpCreateParentMemberCodeAction = useCallback(
+    buildPhpCreateParentMemberWorkspaceCodeAction({
+      getOpenDocumentSyncVersion: (path) =>
+        workspaceRoot ? getPhpDocumentSyncVersion(workspaceRoot, path) : null,
+      readOpenDocumentContent,
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths,
+    }),
+    [
+      getPhpDocumentSyncVersion,
+      readOpenDocumentContent,
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths,
       workspaceRoot,
     ],
   );
@@ -122,6 +144,7 @@ export function usePhpCodeActions({
           intelligenceMode,
           isRequestedRootActive,
           phpCreateClassCodeAction,
+          phpCreateParentMemberCodeAction,
           projectSymbolSearch,
           range,
           readTestFileIfExists,
@@ -146,6 +169,7 @@ export function usePhpCodeActions({
       frameworkCodeActionContributions,
       intelligenceMode,
       phpCreateClassCodeAction,
+      phpCreateParentMemberCodeAction,
       projectSymbolSearch,
       readTestFileIfExists,
       workspaceRoot,
