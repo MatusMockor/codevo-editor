@@ -37,7 +37,6 @@ function makeDeps(
   overrides: Partial<PhpDiagnosticContextFilterDependencies> = {},
 ): PhpDiagnosticContextFilterDependencies {
   return {
-    activePhpFrameworkProviders: [],
     contextualDiagnosticsFilterRef: {
       current: async (_path, diagnostics) => diagnostics,
     },

@@ -7466,7 +7466,6 @@ export function useWorkbenchController(
   });
 
   usePhpDiagnosticContextFilter({
-    activePhpFrameworkProviders,
     contextualDiagnosticsFilterRef,
     currentPhpFrameworkSourceContext,
     currentWorkspaceRoot: () => currentWorkspaceRootRef.current,

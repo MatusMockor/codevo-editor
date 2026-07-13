@@ -17,12 +17,8 @@ import {
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import { phpCurrentClassName, phpPropertyAccessExpression } from "../domain/phpSemanticEngine";
 import { phpCurrentTypeKind } from "../domain/phpNavigation";
-import type {
-  PhpFrameworkProvider,
-  PhpFrameworkSourceContext,
-} from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkSourceContext } from "../domain/phpFrameworkProviders";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import { createPhpFrameworkDiagnosticContextStrategyAdapters } from "./phpFrameworkDiagnosticContextStrategyAdapters";
 import type { PhpDiagnosticEditorPosition } from "./phpDiagnosticContextStrategy";
 
@@ -36,13 +32,11 @@ export type PhpContextualDiagnosticsFilter = (
 ) => Promise<LanguageServerDiagnostic[]>;
 
 export interface PhpDiagnosticContextFilterDependencies {
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   contextualDiagnosticsFilterRef: MutableRefObject<PhpContextualDiagnosticsFilter>;
   currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
   currentWorkspaceRoot(): string | null;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   isPhpPath(path: string): boolean;
   phpClassHasLaravelDynamicWhere(
     className: string,
@@ -99,13 +93,11 @@ export function usePhpDiagnosticContextFilter(
   dependencies: PhpDiagnosticContextFilterDependencies,
 ): PhpContextualDiagnosticsFilter {
   const {
-    activePhpFrameworkProviders,
     contextualDiagnosticsFilterRef,
     currentPhpFrameworkSourceContext,
     currentWorkspaceRoot,
     ensurePhpFrameworkSourceCollectionsLoaded,
     frameworkRuntime,
-    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
     isPhpPath,
     phpClassHasLaravelDynamicWhere,
     phpClassHasLaravelLocalScope,
@@ -121,24 +113,19 @@ export function usePhpDiagnosticContextFilter(
     resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
-  const activeFrameworkRuntime = phpFrameworkRuntimeContextFromDependencies({
-    activePhpFrameworkProviders,
-    frameworkRuntime,
-    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
-  });
-  const frameworkProviders = activeFrameworkRuntime.providers;
+  const frameworkProviders = frameworkRuntime.providers;
   const diagnosticContextStrategy = useMemo(
     () =>
       createPhpFrameworkDiagnosticContextStrategyAdapters({
         ensurePhpFrameworkSourceCollectionsLoaded,
-        frameworkRuntime: activeFrameworkRuntime,
+        frameworkRuntime,
         phpClassHasDynamicBuilderFinder: phpClassHasLaravelDynamicWhere,
         phpClassHasNamedBuilderScope: phpClassHasLaravelLocalScope,
         resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
       }),
     [
-      activeFrameworkRuntime,
       ensurePhpFrameworkSourceCollectionsLoaded,
+      frameworkRuntime,
       phpClassHasLaravelDynamicWhere,
       phpClassHasLaravelLocalScope,
       resolvePhpEloquentBuilderModelType,
