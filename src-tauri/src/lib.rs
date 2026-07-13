@@ -9060,10 +9060,12 @@ mod tests {
             plan.status,
             crate::lsp::LanguageServerPlanStatus::Ready
         ));
-        assert_eq!(
-            plan.command.expect("language server command").executable,
-            path_string(&language_server)
-        );
+        let command = plan.command.expect("language server command");
+        assert!(command.executable.ends_with("node"));
+        assert_eq!(command.args[1], "--stdio");
+        assert!(command.args[0].ends_with(
+            "node_modules/typescript-language-server/lib/cli.mjs"
+        ));
         assert!(plan.initialize_request.is_some());
         fs::remove_dir_all(root).expect("cleanup");
     }
