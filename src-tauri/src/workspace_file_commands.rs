@@ -1560,15 +1560,25 @@ fn open_regular_beneath(root: RawFd, path: &CStr, flags: libc::c_int) -> io::Res
     let mut how: libc::open_how = unsafe { std::mem::zeroed() };
     how.flags = (flags | libc::O_NONBLOCK | libc::O_CLOEXEC) as u64;
     how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
-    Ok(unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            root,
-            path.as_ptr(),
-            &how,
-            std::mem::size_of::<libc::open_how>(),
-        ) as libc::c_int
-    })
+    let mut attempts = 0;
+    loop {
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_openat2,
+                root,
+                path.as_ptr(),
+                &how,
+                std::mem::size_of::<libc::open_how>(),
+            ) as libc::c_int
+        };
+        if fd >= 0
+            || io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN)
+            || attempts == 2
+        {
+            return Ok(fd);
+        }
+        attempts += 1;
+    }
 }
 fn open_regular_at(parent: RawFd, name: &CStr, flags: libc::c_int) -> io::Result<File> {
     let fd = unsafe {

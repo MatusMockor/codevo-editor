@@ -33,6 +33,11 @@ case and Unicode-normalization properties where they cannot be safely probed,
 and use Linux `renameat2` and xattr syscalls for atomic mutations and metadata
 preservation.
 
+This requires Linux kernel 5.6 or newer, where `openat2` is available. Older
+kernels return `ENOSYS` and are unsupported because a path-based fallback would
+weaken the descriptor boundary. Calls that return transient `EAGAIN` are retried
+up to three times before the existing command error is returned.
+
 ## Platform Behaviour
 
 - macOS retains its current trusted workspace behavior.

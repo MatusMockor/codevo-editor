@@ -555,7 +555,9 @@ where
         configure_typescript_import_preferences(&mut initialize_request, settings);
         configure_typescript_validation(&mut initialize_request, settings.validation);
 
-        let Some(node) = crate::managed_javascript_typescript::node_executable_path() else {
+        let Some(node) =
+            crate::managed_javascript_typescript::node_executable_path_with_min_version(20)
+        else {
             return unavailable_javascript_typescript_plan(
                 "Node.js 20 or newer is required for the TypeScript language server.",
             );
@@ -584,9 +586,7 @@ fn typescript_language_server_entrypoint(path: &str) -> Option<String> {
     if bin.file_name()?.to_str()? != ".bin" {
         return None;
     }
-    let entrypoint = bin
-        .parent()?
-        .join("typescript-language-server/lib/cli.mjs");
+    let entrypoint = bin.parent()?.join("typescript-language-server/lib/cli.mjs");
     Some(entrypoint.to_string_lossy().to_string())
 }
 

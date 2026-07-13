@@ -421,14 +421,24 @@ where
     let mut how: libc::open_how = unsafe { std::mem::zeroed() };
     how.flags = (libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC) as u64;
     how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            root.as_raw_fd(),
-            path.as_ptr(),
-            &how,
-            std::mem::size_of::<libc::open_how>(),
-        ) as libc::c_int
+    let mut attempts = 0;
+    let fd = loop {
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_openat2,
+                root.as_raw_fd(),
+                path.as_ptr(),
+                &how,
+                std::mem::size_of::<libc::open_how>(),
+            ) as libc::c_int
+        };
+        if fd >= 0
+            || io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN)
+            || attempts == 2
+        {
+            break fd;
+        }
+        attempts += 1;
     };
     if fd < 0 {
         return Err(io::Error::last_os_error());
