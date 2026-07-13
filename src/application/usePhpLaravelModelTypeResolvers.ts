@@ -12,11 +12,13 @@ import {
   phpLaravelEloquentBuilderModelTypeCandidate,
 } from "../domain/phpFrameworkLaravel";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
-import { phpFrameworkContainerExpressionClassName } from "../domain/phpFrameworkProviders";
+import {
+  phpFrameworkContainerExpressionClassName,
+  phpFrameworkQueryCallbackContextForVariable,
+} from "../domain/phpFrameworkProviders";
 import {
   phpAssignmentExpressionForVariableBefore,
   phpDocRawTypeForVariableBefore,
-  phpLaravelQueryCallbackContextForVariable,
   phpMethodCallExpression,
   phpNewExpressionClassName,
   phpReceiverExpressionTypeInSource,
@@ -190,10 +192,11 @@ export function usePhpLaravelModelTypeResolvers({
       );
 
       if (variableMatch?.[1]) {
-        const callbackContext = phpLaravelQueryCallbackContextForVariable(
+        const callbackContext = phpFrameworkQueryCallbackContextForVariable(
           source,
           position,
           variableMatch[1],
+          frameworkProviders,
         );
 
         if (callbackContext) {

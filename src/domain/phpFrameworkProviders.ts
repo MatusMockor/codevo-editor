@@ -54,6 +54,26 @@ export interface PhpFrameworkPropertyTypeContext {
   source: string;
 }
 
+/**
+ * Framework-neutral query callback context. Laravel currently supplies this
+ * for Eloquent builder callbacks; other providers remain inert unless they
+ * explicitly add the capability.
+ */
+export interface PhpFrameworkQueryCallbackContext {
+  methodName: string;
+  modelClassName: string | null;
+  morphTypeClassNames?: string[];
+  previousRelationNames?: string[];
+  receiverExpression: string | null;
+  relationName: string | null;
+}
+
+export interface PhpFrameworkQueryCallbackVariableContext {
+  position: EditorPosition;
+  source: string;
+  variableName: string;
+}
+
 export interface PhpFrameworkMethodCallReturnTypeContext {
   callExpression: string | null;
   methodName: string;
@@ -800,6 +820,9 @@ export interface PhpFrameworkProvider {
     supportsPresenterLinkIntelligence?: true;
   };
   semantics?: {
+    queryCallbackContextForVariable?: (
+      context: PhpFrameworkQueryCallbackVariableContext,
+    ) => PhpFrameworkQueryCallbackContext | null;
     propertyTypeFromSource?: (
       context: PhpFrameworkPropertyTypeContext,
     ) => string | null;
@@ -2076,6 +2099,31 @@ export function phpFrameworkPropertyTypeFromSource(
 
     if (propertyType) {
       return propertyType;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * First query-callback context returned by the active providers. Provider
+ * order is precedence order; providers without the capability are inert.
+ */
+export function phpFrameworkQueryCallbackContextForVariable(
+  source: string,
+  position: EditorPosition,
+  variableName: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): PhpFrameworkQueryCallbackContext | null {
+  for (const provider of providers) {
+    const context = provider.semantics?.queryCallbackContextForVariable?.({
+      position,
+      source,
+      variableName,
+    });
+
+    if (context) {
+      return context;
     }
   }
 

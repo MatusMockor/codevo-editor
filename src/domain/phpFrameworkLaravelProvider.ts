@@ -82,6 +82,7 @@ import {
   phpLaravelViewReferenceContextAt,
 } from "./phpLaravelViews";
 import type { PhpProjectDescriptor } from "./workspace";
+import { phpLaravelQueryCallbackContextForVariable } from "./phpLaravelQueryCallbackContext";
 
 interface PhpLaravelFrameworkProvider extends PhpFrameworkProvider {
   livewire?: {
@@ -388,6 +389,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       phpLaravelScopedStringCompletionInsertText(kind, name),
   },
   semantics: {
+    queryCallbackContextForVariable: ({ position, source, variableName }) =>
+      phpLaravelQueryCallbackContextForVariable(source, position, variableName),
     propertyTypeFromSource: ({ propertyName, receiverType, source }) =>
       phpLaravelModelPropertyClassTypeFromSource(
         source,

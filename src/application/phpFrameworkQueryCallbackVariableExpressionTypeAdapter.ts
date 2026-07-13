@@ -1,7 +1,9 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 
 export interface PhpFrameworkQueryCallbackVariableExpressionTypeAdapter {
   variableType(context: {
+    frameworkProviders: readonly PhpFrameworkProvider[];
     position: EditorPosition;
     resolveBuilderModelType: () => Promise<string | null>;
     source: string;

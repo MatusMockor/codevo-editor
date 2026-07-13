@@ -1,4 +1,4 @@
-import { phpLaravelQueryCallbackContextForVariable } from "../domain/phpSemanticEngine";
+import { phpFrameworkQueryCallbackContextForVariable } from "../domain/phpFrameworkProviders";
 import type { PhpFrameworkQueryCallbackVariableExpressionTypeAdapter } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapter";
 
 const ELOQUENT_BUILDER_TYPE = "Illuminate\\Database\\Eloquent\\Builder";
@@ -6,6 +6,7 @@ const ELOQUENT_BUILDER_TYPE = "Illuminate\\Database\\Eloquent\\Builder";
 export const phpLaravelQueryCallbackVariableExpressionTypeAdapter: PhpFrameworkQueryCallbackVariableExpressionTypeAdapter =
   {
     variableType: async ({
+      frameworkProviders,
       position,
       resolveBuilderModelType,
       source,
@@ -16,10 +17,11 @@ export const phpLaravelQueryCallbackVariableExpressionTypeAdapter: PhpFrameworkQ
       }
 
       if (
-        !phpLaravelQueryCallbackContextForVariable(
+        !phpFrameworkQueryCallbackContextForVariable(
           source,
           position,
           variableName,
+          frameworkProviders,
         )
       ) {
         return null;

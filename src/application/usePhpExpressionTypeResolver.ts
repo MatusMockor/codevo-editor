@@ -257,6 +257,7 @@ export function usePhpExpressionTypeResolver({
       }
 
       const strategyVariableType = await expressionTypeStrategy.variableType({
+        frameworkProviders,
         position,
         resolveBuilderModelType: () =>
           resolvePhpEloquentBuilderModelType(

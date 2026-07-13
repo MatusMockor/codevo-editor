@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkQueryCallbackVariableExpressionTypeAdapters } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapters";
 
 const SOURCE = `<?php
@@ -16,6 +17,7 @@ describe("phpFrameworkQueryCallbackVariableExpressionTypeAdapters", () => {
 
     await expect(
       adapter.variableType({
+        frameworkProviders: [],
         position: POSITION,
         resolveBuilderModelType,
         source: SOURCE,
@@ -31,6 +33,7 @@ describe("phpFrameworkQueryCallbackVariableExpressionTypeAdapters", () => {
 
     await expect(
       adapter.variableType({
+        frameworkProviders: [phpLaravelFrameworkProvider],
         position: POSITION,
         resolveBuilderModelType: async () => "App\\Models\\Comment",
         source: SOURCE,

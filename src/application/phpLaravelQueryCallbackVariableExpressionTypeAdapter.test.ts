@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { phpLaravelQueryCallbackVariableExpressionTypeAdapter } from "./phpLaravelQueryCallbackVariableExpressionTypeAdapter";
 
 const CALLBACK_SOURCE = `<?php
@@ -16,6 +17,7 @@ function context(
   > = {},
 ) {
   return {
+    frameworkProviders: [phpLaravelFrameworkProvider],
     position: CALLBACK_POSITION,
     resolveBuilderModelType: vi.fn(async () => "App\\Models\\Comment"),
     source: CALLBACK_SOURCE,

@@ -26,6 +26,7 @@ import {
   phpFrameworkMiddlewareAliasDefinitionsFromSource,
   phpFrameworkMiddlewareAliasSearchQueries,
   phpFrameworkPropertyTypeFromSource,
+  phpFrameworkQueryCallbackContextForVariable,
   phpFrameworkProvidersForProject,
   phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigReferenceAt,
@@ -135,6 +136,73 @@ import {
 import type { PhpProjectDescriptor } from "./workspace";
 
 describe("phpFrameworkProviders", () => {
+  const queryCallbackSource = `<?php
+Post::query()->whereHas('comments', function ($query): void {
+    $query->where('active', true);
+});
+`;
+  const queryCallbackPosition = positionAfter(
+    queryCallbackSource,
+    "$query->where",
+  );
+
+  it("dispatches query-callback context only through an active provider capability", () => {
+    expect(
+      phpFrameworkQueryCallbackContextForVariable(
+        queryCallbackSource,
+        queryCallbackPosition,
+        "query",
+        [phpLaravelFrameworkProvider],
+      ),
+    ).toEqual({
+      methodName: "whereHas",
+      modelClassName: null,
+      receiverExpression: "Post::query()",
+      relationName: "comments",
+    });
+
+    const inertCustomProvider: PhpFrameworkProvider = { id: "custom" };
+
+    for (const providers of [
+      [],
+      [phpNetteFrameworkProvider],
+      [inertCustomProvider],
+    ]) {
+      expect(
+        phpFrameworkQueryCallbackContextForVariable(
+          queryCallbackSource,
+          queryCallbackPosition,
+          "query",
+          providers,
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it("uses provider order as first-match precedence for query callbacks", () => {
+    const firstMatch = {
+      methodName: "customWhere",
+      modelClassName: "CustomModel",
+      receiverExpression: null,
+      relationName: "customRelation",
+    };
+    const customProvider: PhpFrameworkProvider = {
+      id: "custom-query-callbacks",
+      semantics: {
+        queryCallbackContextForVariable: () => firstMatch,
+      },
+    };
+
+    expect(
+      phpFrameworkQueryCallbackContextForVariable(
+        queryCallbackSource,
+        queryCallbackPosition,
+        "query",
+        [customProvider, phpLaravelFrameworkProvider],
+      ),
+    ).toBe(firstMatch);
+  });
+
   it("resolves container resolution expressions through the framework seam", () => {
     const providers = [phpLaravelFrameworkProvider];
 
