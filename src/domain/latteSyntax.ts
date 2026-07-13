@@ -99,14 +99,20 @@ const LATTE_SYNTAX_OFF = /^\{syntax\s+off\s*\}/;
 const LATTE_SYNTAX_CLOSE = "{/syntax}";
 
 export const LATTE_N_ATTRIBUTE_EXPRESSION_NAMES: readonly string[] = [
+  "n:attr",
   "n:class",
   "n:elseif",
+  "n:for",
   "n:foreach",
   "n:if",
+  "n:ifchanged",
   "n:ifset",
   "n:inner-foreach",
+  "n:inner-if",
   "n:show",
+  "n:tag",
   "n:tag-if",
+  "n:while",
 ];
 
 const MAX_LATTE_N_ATTRIBUTE_SCAN = 4000;

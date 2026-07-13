@@ -126,9 +126,15 @@ describe("innermostLatteNAttributeExpressionSpanAt", () => {
     ["n:ifset", "$user->avatar"],
     ["n:foreach", "$items as $item"],
     ["n:inner-foreach", "$rows as $row"],
+    ["n:inner-if", "$row->visible"],
     ["n:class", "$active ? active"],
     ["n:show", "$visible"],
+    ["n:tag", "$heading ? h1 : div"],
     ["n:tag-if", "$linkable"],
+    ["n:attr", "title: $tooltip"],
+    ["n:for", "$i = 0; $i < 5; $i++"],
+    ["n:while", "$row = $rows->fetch()"],
+    ["n:ifchanged", "$item->group"],
   ])("returns the value span of an expression-bearing %s attribute", (name, value) => {
     const source = `<div ${name}="${value}">x</div>`;
     const span = innermostLatteNAttributeExpressionSpanAt(
