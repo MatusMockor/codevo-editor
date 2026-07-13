@@ -464,7 +464,7 @@ export function usePhpClassMemberCollectors({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !memberCollectionStrategy.canCollectLaravelMembers ||
+        !memberCollectionStrategy.canCollectSyntheticMembers ||
         !requestedRoot ||
         !requestedDescriptor?.php
       ) {
@@ -541,7 +541,7 @@ export function usePhpClassMemberCollectors({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !memberCollectionStrategy.canCollectLaravelMembers ||
+        !memberCollectionStrategy.canCollectSyntheticMembers ||
         !requestedRoot ||
         !requestedDescriptor?.php
       ) {

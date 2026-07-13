@@ -1,7 +1,7 @@
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 
 export interface PhpFrameworkClassMemberCollectionProviderAdapter {
-  canCollectLaravelMembers: boolean;
+  canCollectSyntheticMembers: boolean;
   dynamicWhereMethods(
     context: PhpDynamicWhereMemberCollectionContext,
   ): PhpMethodCompletion[];
@@ -23,7 +23,7 @@ export interface PhpRelationMemberCollectionContext {
 
 export const genericPhpFrameworkClassMemberCollectionProviderAdapter: PhpFrameworkClassMemberCollectionProviderAdapter =
   {
-    canCollectLaravelMembers: false,
+    canCollectSyntheticMembers: false,
     dynamicWhereMethods: () => [],
     relationCompletions: () => [],
   };

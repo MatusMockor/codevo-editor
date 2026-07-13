@@ -15,7 +15,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
       resolvePhpDeclaredType,
     });
 
-    expect(adapter.canCollectLaravelMembers).toBe(false);
+    expect(adapter.canCollectSyntheticMembers).toBe(false);
     expect(
       adapter.dynamicWhereMethods({
         className: "App\\Models\\User",
@@ -43,7 +43,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
       resolvePhpDeclaredType: vi.fn(() => null),
     });
 
-    expect(adapter.canCollectLaravelMembers).toBe(true);
+    expect(adapter.canCollectSyntheticMembers).toBe(true);
     expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
   });
 
@@ -53,7 +53,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
       resolvePhpDeclaredType: vi.fn(() => null),
     });
 
-    expect(adapter.canCollectLaravelMembers).toBe(true);
+    expect(adapter.canCollectSyntheticMembers).toBe(true);
   });
 
   it("uses the generic adapter without runtime or legacy Laravel state", () => {
@@ -61,6 +61,6 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
       resolvePhpDeclaredType: vi.fn(() => null),
     });
 
-    expect(adapter.canCollectLaravelMembers).toBe(false);
+    expect(adapter.canCollectSyntheticMembers).toBe(false);
   });
 });

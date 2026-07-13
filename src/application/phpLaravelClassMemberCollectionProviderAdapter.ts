@@ -17,7 +17,7 @@ export function createPhpLaravelClassMemberCollectionProviderAdapter({
   resolvePhpDeclaredType,
 }: PhpLaravelClassMemberCollectionProviderAdapterDependencies): PhpFrameworkClassMemberCollectionProviderAdapter {
   return {
-    canCollectLaravelMembers: true,
+    canCollectSyntheticMembers: true,
     dynamicWhereMethods: ({ className, options, source }) =>
       phpLaravelDynamicWhereCompletionsFromSource(source, className, options),
     relationCompletions: ({ className, source }) =>
