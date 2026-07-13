@@ -1,6 +1,6 @@
 import {
-  buildCreateMissingBladeViewCodeAction,
-  type CreateMissingBladeViewCodeAction,
+  buildCreateMissingViewFileCodeAction,
+  type CreateMissingViewFileCodeAction,
 } from "./phpBladeViewCodeActions";
 import {
   phpLaravelFrameworkProvider,
@@ -17,16 +17,16 @@ export interface PhpFrameworkCodeActionContributionDependencies {
 }
 
 interface ActivePhpFrameworkCodeActionContribution {
-  readonly createMissingBladeViewCodeAction?: CreateMissingBladeViewCodeAction;
+  readonly createMissingBladeViewCodeAction?: CreateMissingViewFileCodeAction;
   readonly providePhpCodeAction: PhpFrameworkCodeActionContribution;
 }
 
-const NO_FRAMEWORK_CODE_ACTION: CreateMissingBladeViewCodeAction = async () =>
+const NO_FRAMEWORK_CODE_ACTION: CreateMissingViewFileCodeAction = async () =>
   null;
 
 export interface ActivePhpFrameworkCodeActions {
   readonly contributions: readonly PhpFrameworkCodeActionContribution[];
-  readonly createMissingBladeViewCodeAction: CreateMissingBladeViewCodeAction;
+  readonly createMissingBladeViewCodeAction: CreateMissingViewFileCodeAction;
 }
 
 export function activePhpFrameworkCodeActions({
@@ -77,7 +77,7 @@ function phpFrameworkCodeActionContributionsForProvider(
 
   if (missingTemplateFile) {
     const createMissingBladeViewCodeAction =
-      buildCreateMissingBladeViewCodeAction({
+      buildCreateMissingViewFileCodeAction({
         ...dependencies,
         canCreateMissingViewFiles: true,
         detectMissingViewReference: missingTemplateFile.detectMissingReference,

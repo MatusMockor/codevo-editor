@@ -11,7 +11,7 @@ export type MissingViewReferenceDetector = (
   viewNames: readonly string[],
 ) => { name: string; relativePath: string } | null;
 
-export interface CreateMissingBladeViewCodeActionOptions {
+export interface CreateMissingViewFileCodeActionOptions {
   canCreateMissingViewFiles: boolean;
   collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
   detectMissingViewReference: MissingViewReferenceDetector;
@@ -19,20 +19,20 @@ export interface CreateMissingBladeViewCodeActionOptions {
   workspaceRoot: string | null;
 }
 
-export type CreateMissingBladeViewCodeAction = (
+export type CreateMissingViewFileCodeAction = (
   source: string,
   range: PhpCodeActionRange,
   language: "blade" | "php",
   isRequestedRootActive: () => boolean,
 ) => Promise<PhpCodeActionDescriptor | null>;
 
-export function buildCreateMissingBladeViewCodeAction({
+export function buildCreateMissingViewFileCodeAction({
   canCreateMissingViewFiles,
   collectViewTargets,
   detectMissingViewReference,
   readTestFileIfExists,
   workspaceRoot,
-}: CreateMissingBladeViewCodeActionOptions): CreateMissingBladeViewCodeAction {
+}: CreateMissingViewFileCodeActionOptions): CreateMissingViewFileCodeAction {
   return async (
     source,
     range,
