@@ -115,13 +115,14 @@ export function usePhpMethodReturnTypeResolver({
     () =>
       createPhpFrameworkMethodReturnTypeStrategyAdapters({
         frameworkRuntime: activeFrameworkRuntime,
-        resolvePhpEloquentBuilderModelType: (source, position, expression) =>
+        resolvePhpFrameworkBuilderModelType: (source, position, expression) =>
           resolvePhpEloquentBuilderModelTypeRef.current(
             source,
             position,
             expression,
           ),
-        resolvePhpLaravelProjectMorphMapModelType,
+        resolvePhpFrameworkProjectMorphMapModelType:
+          resolvePhpLaravelProjectMorphMapModelType,
       }),
     [
       activeFrameworkRuntime,

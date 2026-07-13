@@ -1,3 +1,4 @@
+import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   genericPhpMethodReturnTypeStrategy,
@@ -5,21 +6,30 @@ import {
 } from "./phpMethodReturnTypeStrategy";
 import {
   createPhpLaravelMethodReturnTypeStrategyAdapter,
-  type PhpLaravelMethodReturnTypeStrategyAdapterDependencies,
 } from "./phpLaravelMethodReturnTypeStrategyAdapter";
 
-export interface PhpFrameworkMethodReturnTypeStrategyAdapterDependencies
-  extends PhpLaravelMethodReturnTypeStrategyAdapterDependencies {
+export interface PhpFrameworkMethodReturnTypeStrategyAdapterDependencies {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  resolvePhpFrameworkBuilderModelType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+  ): Promise<string | null>;
+  resolvePhpFrameworkProjectMorphMapModelType(): Promise<string | null>;
 }
 
 export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
   frameworkRuntime,
-  ...laravelDependencies
+  resolvePhpFrameworkBuilderModelType,
+  resolvePhpFrameworkProjectMorphMapModelType,
 }: PhpFrameworkMethodReturnTypeStrategyAdapterDependencies): PhpMethodReturnTypeStrategy {
   if (!frameworkRuntime.hasProvider("laravel")) {
     return genericPhpMethodReturnTypeStrategy;
   }
 
-  return createPhpLaravelMethodReturnTypeStrategyAdapter(laravelDependencies);
+  return createPhpLaravelMethodReturnTypeStrategyAdapter({
+    resolvePhpEloquentBuilderModelType: resolvePhpFrameworkBuilderModelType,
+    resolvePhpLaravelProjectMorphMapModelType:
+      resolvePhpFrameworkProjectMorphMapModelType,
+  });
 }

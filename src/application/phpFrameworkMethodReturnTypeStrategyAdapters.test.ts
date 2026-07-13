@@ -9,10 +9,10 @@ function makeDeps(
 ): PhpFrameworkMethodReturnTypeStrategyAdapterDependencies {
   return {
     frameworkRuntime: { hasProvider: (providerId) => providerId === "laravel" },
-    resolvePhpEloquentBuilderModelType: vi.fn(
+    resolvePhpFrameworkBuilderModelType: vi.fn(
       async () => null as string | null,
     ),
-    resolvePhpLaravelProjectMorphMapModelType: vi.fn(
+    resolvePhpFrameworkProjectMorphMapModelType: vi.fn(
       async () => null as string | null,
     ),
     ...overrides,
@@ -21,10 +21,10 @@ function makeDeps(
 
 describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
   it("returns generic return-type strategy without the Laravel provider", async () => {
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpFrameworkBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const frameworkRuntime = {
@@ -33,8 +33,8 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
     const adapter = createPhpFrameworkMethodReturnTypeStrategyAdapters(
       makeDeps({
         frameworkRuntime,
-        resolvePhpEloquentBuilderModelType,
-        resolvePhpLaravelProjectMorphMapModelType,
+        resolvePhpFrameworkBuilderModelType,
+        resolvePhpFrameworkProjectMorphMapModelType,
       }),
     );
 
@@ -62,12 +62,12 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
         methodName: "findOrFail",
       }),
     ).toBeNull();
-    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
-    expect(resolvePhpLaravelProjectMorphMapModelType).not.toHaveBeenCalled();
+    expect(resolvePhpFrameworkBuilderModelType).not.toHaveBeenCalled();
+    expect(resolvePhpFrameworkProjectMorphMapModelType).not.toHaveBeenCalled();
   });
 
   it("keeps a Laravel profile without the Laravel provider generic", async () => {
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const frameworkRuntime = {
@@ -78,7 +78,7 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
     const adapter = createPhpFrameworkMethodReturnTypeStrategyAdapters(
       makeDeps({
         frameworkRuntime,
-        resolvePhpLaravelProjectMorphMapModelType,
+        resolvePhpFrameworkProjectMorphMapModelType,
       }),
     );
 
@@ -88,11 +88,11 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
         returnType: "MorphTo",
       }),
     ).resolves.toBeNull();
-    expect(resolvePhpLaravelProjectMorphMapModelType).not.toHaveBeenCalled();
+    expect(resolvePhpFrameworkProjectMorphMapModelType).not.toHaveBeenCalled();
   });
 
   it("delegates to the Laravel strategy when the Laravel provider is active", async () => {
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const adapter = createPhpFrameworkMethodReturnTypeStrategyAdapters(
@@ -100,7 +100,7 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
         frameworkRuntime: {
           hasProvider: (providerId: string) => providerId === "laravel",
         },
-        resolvePhpLaravelProjectMorphMapModelType,
+        resolvePhpFrameworkProjectMorphMapModelType,
       }),
     );
 
