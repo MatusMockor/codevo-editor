@@ -757,13 +757,19 @@ const NON_CLASS_PARAMETER_TYPES = new Set([
  * tolerating a cursor that sits on the `->` operator just before the name.
  */
 function memberNameStart(masked: string, offset: number): number | null {
-  const onName = identifierStartAt(masked, offset);
+  const onName = memberOrReceiverNameStartAt(masked, offset);
 
   if (onName !== null) {
     return onName;
   }
 
-  return identifierStartAt(masked, skipForwardToIdentifier(masked, offset));
+  const afterName = memberOrReceiverNameStartAt(masked, offset - 1);
+
+  if (afterName !== null) {
+    return afterName;
+  }
+
+  return memberOrReceiverNameStartAt(masked, skipForwardToIdentifier(masked, offset));
 }
 
 function skipForwardToIdentifier(masked: string, offset: number): number {
@@ -788,6 +794,61 @@ function identifierStartAt(masked: string, offset: number): number | null {
   }
 
   return start;
+}
+
+function memberOrReceiverNameStartAt(
+  masked: string,
+  offset: number,
+): number | null {
+  const start = identifierStartAt(masked, offset);
+
+  if (start === null) {
+    return null;
+  }
+
+  return memberNameAfterReceiver(masked, start) ?? start;
+}
+
+function memberNameAfterReceiver(
+  masked: string,
+  receiverStart: number,
+): number | null {
+  const receiverIdentifier = readIdentifier(masked, receiverStart);
+
+  if (!receiverIdentifier) {
+    return null;
+  }
+
+  const receiverName = receiverIdentifier.toLowerCase();
+  const operatorStart = skipWhitespace(
+    masked,
+    receiverStart + receiverName.length,
+  );
+
+  if (
+    receiverName === "this" &&
+    masked[receiverStart - 1] === "$" &&
+    masked.slice(operatorStart, operatorStart + 2) === "->"
+  ) {
+    return identifierStartAt(
+      masked,
+      skipForwardToIdentifier(masked, operatorStart + 2),
+    );
+  }
+
+  if (
+    (receiverName === "self" ||
+      receiverName === "static" ||
+      receiverName === "parent") &&
+    masked.slice(operatorStart, operatorStart + 2) === "::"
+  ) {
+    return identifierStartAt(
+      masked,
+      skipForwardToIdentifier(masked, operatorStart + 2),
+    );
+  }
+
+  return null;
 }
 
 function readMemberUsage(

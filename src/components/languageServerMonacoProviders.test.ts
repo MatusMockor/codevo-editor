@@ -6594,6 +6594,87 @@ function store($request): void
     ]);
   });
 
+  it("uses the captured PHP workspace root for workspace-edit code actions", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command: {
+            arguments: [],
+            command: "phpactor.create_member",
+            title: "Create member",
+          },
+          data: { id: "create-member" },
+          edit: null,
+          isPreferred: false,
+          kind: "quickfix",
+          title: 'Fix "Method "formatTotals" does not exist"',
+        },
+      ],
+    });
+    const applyWorkspaceEdit = vi.fn(async () => ({ kind: "accepted" as const }));
+    const workspaceEdit = {
+      changes: {
+        "file:///project/app/Support/QaBase.php": [
+          {
+            newText: "\n    protected function formatTotals()\n    {\n    }\n",
+            range: {
+              end: { character: 1, line: 5 },
+              start: { character: 1, line: 5 },
+            },
+          },
+        ],
+      },
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        title: "Create method 'formatTotals' in 'QaBase'",
+        workspaceEdit,
+        workspaceRoot: "/project",
+      },
+    ]);
+    const context = providerContext({
+      applyWorkspaceEdit,
+      featuresGateway: gateway,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model({
+        content:
+          "<?php\nclass QaChild extends QaBase\n{\n    public function run(): void\n    {\n        parent::formatTotals();\n    }\n}\n",
+      }),
+      new registered.monaco.Range(6, 9, 6, 31),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+
+    expect(actions.actions[0]).toEqual(
+      expect.objectContaining({
+        command: expect.objectContaining({
+          id: "mockor.php.applyCodeActionWorkspaceEdit",
+          arguments: [
+            expect.objectContaining({
+              rootPath: "/project",
+              edit: workspaceEdit,
+            }),
+          ],
+        }),
+        title: "Create method 'formatTotals' in 'QaBase'",
+      }),
+    );
+    expect(actions.actions.map((action: { title: string }) => action.title)).toContain(
+      'Fix "Method "formatTotals" does not exist"',
+    );
+  });
+
   it("orders local Create class before external phpactor create-file actions", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({

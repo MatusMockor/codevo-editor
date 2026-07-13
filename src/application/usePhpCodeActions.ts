@@ -102,6 +102,7 @@ export function usePhpCodeActions({
       readOpenDocumentContent,
       readTestFileIfExists,
       resolvePhpClassSourcePaths,
+      workspaceDescriptor,
       workspaceRoot,
     }),
     [
@@ -109,6 +110,7 @@ export function usePhpCodeActions({
       readOpenDocumentContent,
       readTestFileIfExists,
       resolvePhpClassSourcePaths,
+      workspaceDescriptor,
       workspaceRoot,
     ],
   );

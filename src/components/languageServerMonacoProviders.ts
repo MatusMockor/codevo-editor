@@ -2202,7 +2202,8 @@ function canApplyPhpWorkspaceEditDescriptor(
   }
 
   return Boolean(
-    context.applyWorkspaceEdit && (context.getWorkspaceRoot?.() ?? null),
+    context.applyWorkspaceEdit &&
+      (descriptor.workspaceRoot ?? context.getWorkspaceRoot?.() ?? null),
   );
 }
 
@@ -2213,7 +2214,7 @@ function toPhpCodeAction(
   descriptor: PhpCodeActionDescriptor,
 ): Monaco.languages.CodeAction {
   if (descriptor.workspaceEdit && context.applyWorkspaceEdit) {
-    const rootPath = context.getWorkspaceRoot?.() ?? null;
+    const rootPath = descriptor.workspaceRoot ?? context.getWorkspaceRoot?.() ?? null;
 
     if (rootPath) {
       return {

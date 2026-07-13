@@ -41,6 +41,12 @@ export interface PhpCodeActionDescriptor {
   newFile?: PhpCodeActionNewFile;
   title: string;
   workspaceEdit?: LanguageServerWorkspaceEdit;
+  /**
+   * Captured workspace root for workspace edits that were planned against a
+   * specific project tab. This keeps multi-project code actions isolated even
+   * when the UI context root changes while Monaco is rendering/applying them.
+   */
+  workspaceRoot?: string;
 }
 
 export interface PhpCodeActionDiagnostic {

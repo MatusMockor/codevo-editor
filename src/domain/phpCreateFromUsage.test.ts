@@ -51,6 +51,18 @@ describe("detectMissingThisMember — method calls", () => {
     });
   });
 
+  it("detects the method when the diagnostic range starts on $this", () => {
+    const { source, offset } = withMarker(
+      "    public function run(): void\n    {\n        $§this->handle('x');\n    }",
+    );
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes: ["string"],
+      kind: "method",
+      name: "handle",
+    });
+  });
+
   it("infers float, bool and array literal argument types", () => {
     const { source, offset } = withMarker(
       "    public function run(): void\n    {\n        $this->§calc(1.5, true, false, [1, 2]);\n    }",
@@ -347,6 +359,54 @@ describe("detectMissingThisMember — parent:: cross-class members", () => {
       argTypes: ["string"],
       target: "parent",
       parentClass: "Base",
+    });
+  });
+
+  it("detects a missing parent:: method when the cursor sits after the method name", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Child extends Base",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        parent::handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::handle") + "parent::handle".length;
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "handle",
+      parentClass: "Base",
+      target: "parent",
+    });
+  });
+
+  it("detects a missing parent:: method when the diagnostic range starts on parent", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Child extends Base",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        parent::handle();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("parent::handle");
+
+    expect(detectMissingThisMember(source, offset)).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "handle",
+      parentClass: "Base",
+      target: "parent",
     });
   });
 

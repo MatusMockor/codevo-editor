@@ -77,6 +77,103 @@ function renderHook(options: HookOptions) {
 }
 
 describe("usePhpCodeActionProvider", () => {
+  it("offers parent create-method actions from PSR-4 paths before indexing catches up", async () => {
+    const childSource = `<?php
+
+namespace App\\Support;
+
+class QaChild extends QaBase
+{
+    public function run(): void
+    {
+        parent::formatTotals();
+    }
+}
+`;
+    const basePath = `${ROOT}/app/Support/QaBase.php`;
+    const readTestFileIfExists = vi.fn(async (path: string) =>
+      path === basePath
+        ? `<?php
+
+namespace App\\Support;
+
+class QaBase
+{
+}
+`
+        : null,
+    );
+    const resolvePhpClassSourcePaths = vi.fn(async () => []);
+    const harness = renderHook(
+      makeOptions({
+        readTestFileIfExists,
+        resolvePhpClassSourcePaths,
+        workspaceDescriptor: {
+          javaScriptTypeScript: null,
+          php: {
+            classmapRoots: [],
+            hasComposer: true,
+            packageName: "app/demo",
+            packages: [],
+            phpPlatformVersion: null,
+            phpVersionConstraint: null,
+            psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
+          },
+          rootPath: ROOT,
+        },
+      }),
+    );
+
+    try {
+      const start = childSource.indexOf("parent::formatTotals");
+      const actions = await harness.api().providePhpCodeActions(childSource, {
+        end: start + "parent::formatTotals".length,
+        start,
+      });
+      const action = actions.find(
+        (candidate) =>
+          candidate.title === "Create method 'formatTotals' in 'QaBase'",
+      );
+
+      expect(action).toBeDefined();
+      expect(
+        action?.workspaceEdit?.changes[`file://${basePath}`]?.[0]?.newText,
+      ).toContain("protected function formatTotals()");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("keeps same-file create-method actions available after workspace actions", async () => {
+    const source = `<?php
+
+namespace App\\Support;
+
+class QaChild
+{
+    public function run(): void
+    {
+        $this->missingLocal();
+    }
+}
+`;
+    const harness = renderHook(makeOptions());
+
+    try {
+      const start = source.indexOf("missingLocal") + "missingLocal".length;
+      const actions = await harness.api().providePhpCodeActions(source, {
+        end: start,
+        start,
+      });
+
+      expect(actions.map((action) => action.title)).toContain(
+        "Create method 'missingLocal'",
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
+
   it("preserves framework action ordering relative to generic PHP actions", async () => {
     const source = `<?php
 class OrderController

@@ -73,6 +73,7 @@ function buildAction(
     readOpenDocumentContent: vi.fn(() => null),
     readTestFileIfExists: vi.fn(async () => PARENT_SOURCE),
     resolvePhpClassSourcePaths: vi.fn(async () => [PARENT_PATH]),
+    workspaceDescriptor: null,
     workspaceRoot: "/workspace",
     ...overrides,
   });
@@ -236,14 +237,167 @@ describe("buildPhpCreateMemberWorkspaceCodeAction — parent targets", () => {
   });
 
   it("returns null when the class resolver finds no source file", async () => {
-    const readTestFileIfExists = vi.fn(async () => PARENT_SOURCE);
+    const readTestFileIfExists = vi.fn(async () => null);
     const action = await buildAction({
       readTestFileIfExists,
       resolvePhpClassSourcePaths: vi.fn(async () => []),
     })(CHILD_SOURCE, rangeAt(CHILD_SOURCE, "helper"), () => true);
 
     expect(action).toBeNull();
-    expect(readTestFileIfExists).not.toHaveBeenCalled();
+    expect(readTestFileIfExists).toHaveBeenCalledWith("/workspace/app/Base.php");
+  });
+
+  it("falls back to Composer PSR-4 paths before the symbol index sees a new parent file", async () => {
+    const readTestFileIfExists = vi.fn(async (path: string) =>
+      path === PARENT_PATH ? PARENT_SOURCE : null,
+    );
+    const action = await buildAction({
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths: vi.fn(async () => []),
+      workspaceDescriptor: {
+        javaScriptTypeScript: null,
+        php: {
+          classmapRoots: [],
+          hasComposer: true,
+          packageName: "app/demo",
+          packages: [],
+          phpPlatformVersion: null,
+          phpVersionConstraint: null,
+          psr4Roots: [{ dev: false, namespace: "App\\", paths: ["src/"] }],
+        },
+        rootPath: "/workspace",
+      },
+    })(CHILD_SOURCE, rangeAt(CHILD_SOURCE, "helper"), () => true);
+
+    expect(action?.title).toBe("Create method 'helper' in 'Base'");
+    expect(readTestFileIfExists).toHaveBeenCalledWith(PARENT_PATH);
+    expect(action?.workspaceEdit?.changes[PARENT_URI]?.[0]?.newText).toContain(
+      "protected function helper()",
+    );
+  });
+
+  it("falls back to nested Composer PSR-4 paths before the symbol index sees a new parent file", async () => {
+    const source = CHILD_SOURCE.replace(
+      "namespace App;",
+      "namespace App\\Support;",
+    )
+      .replace("class Child", "class QaChild");
+    const parentPath = "/workspace/app/Support/Base.php";
+    const readTestFileIfExists = vi.fn(async (path: string) =>
+      path === parentPath
+        ? PARENT_SOURCE.replace("namespace App;", "namespace App\\Support;")
+        : null,
+    );
+    const action = await buildAction({
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths: vi.fn(async () => []),
+      workspaceDescriptor: {
+        javaScriptTypeScript: null,
+        php: {
+          classmapRoots: [],
+          hasComposer: true,
+          packageName: "app/demo",
+          packages: [],
+          phpPlatformVersion: null,
+          phpVersionConstraint: null,
+          psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
+        },
+        rootPath: "/workspace",
+      },
+    })(source, rangeAt(source, "helper"), () => true);
+
+    expect(action?.title).toBe("Create method 'helper' in 'Base'");
+    expect(readTestFileIfExists).toHaveBeenCalledWith(parentPath);
+    expect(
+      action?.workspaceEdit?.changes[
+        "file:///workspace/app/Support/Base.php"
+      ]?.[0]?.newText,
+    ).toContain("protected function helper()");
+  });
+
+  it("uses the Composer PSR-4 path when the symbol index has ambiguous parent candidates", async () => {
+    const source = CHILD_SOURCE.replace(
+      "namespace App;",
+      "namespace App\\Support;",
+    )
+      .replace("class Child", "class QaChild");
+    const parentPath = "/workspace/app/Support/Base.php";
+    const readTestFileIfExists = vi.fn(async (path: string) =>
+      path === parentPath
+        ? PARENT_SOURCE.replace("namespace App;", "namespace App\\Support;")
+        : null,
+    );
+    const action = await buildAction({
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths: vi.fn(async () => [
+        "/workspace/vendor/package/Base.php",
+        "/workspace/legacy/Base.php",
+      ]),
+      workspaceDescriptor: {
+        javaScriptTypeScript: null,
+        php: {
+          classmapRoots: [],
+          hasComposer: true,
+          packageName: "app/demo",
+          packages: [],
+          phpPlatformVersion: null,
+          phpVersionConstraint: null,
+          psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app/"] }],
+        },
+        rootPath: "/workspace",
+      },
+    })(source, rangeAt(source, "helper"), () => true);
+
+    expect(action?.title).toBe("Create method 'helper' in 'Base'");
+    expect(readTestFileIfExists).toHaveBeenCalledWith(parentPath);
+  });
+
+  it("falls back to the conventional Laravel app path when the descriptor is not ready", async () => {
+    const source = CHILD_SOURCE.replace(
+      "namespace App;",
+      "namespace App\\Support;",
+    )
+      .replace("class Child", "class QaChild");
+    const parentPath = "/workspace/app/Support/Base.php";
+    const readTestFileIfExists = vi.fn(async (path: string) =>
+      path === parentPath
+        ? PARENT_SOURCE.replace("namespace App;", "namespace App\\Support;")
+        : null,
+    );
+    const action = await buildAction({
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths: vi.fn(async () => []),
+      workspaceDescriptor: null,
+    })(source, rangeAt(source, "helper"), () => true);
+
+    expect(action?.title).toBe("Create method 'helper' in 'Base'");
+    expect(readTestFileIfExists).toHaveBeenCalledWith(parentPath);
+  });
+
+  it("finds parent create-method usage when Monaco asks for a broad line range", async () => {
+    const source = CHILD_SOURCE.replace(
+      "namespace App;",
+      "namespace App\\Support;",
+    ).replace("class Child", "class QaChild");
+    const parentPath = "/workspace/app/Support/Base.php";
+    const readTestFileIfExists = vi.fn(async (path: string) =>
+      path === parentPath
+        ? PARENT_SOURCE.replace("namespace App;", "namespace App\\Support;")
+        : null,
+    );
+    const lineStart = source.indexOf("        parent::helper();");
+    const action = await buildAction({
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths: vi.fn(async () => []),
+      workspaceDescriptor: null,
+    })(
+      source,
+      { end: source.indexOf(";", lineStart) + 1, start: lineStart },
+      () => true,
+    );
+
+    expect(action?.title).toBe("Create method 'helper' in 'Base'");
+    expect(readTestFileIfExists).toHaveBeenCalledWith(parentPath);
   });
 
   it("returns null when the class resolver finds multiple source files", async () => {
