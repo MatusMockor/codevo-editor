@@ -8,6 +8,10 @@ import {
   type PhpFrameworkBuilderMagicExpressionTypeAdapter,
 } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
 import {
+  genericPhpFrameworkCollectionCallbackVariableExpressionTypeAdapter,
+  type PhpFrameworkCollectionCallbackVariableExpressionTypeAdapter,
+} from "./phpFrameworkCollectionCallbackVariableExpressionTypeAdapter";
+import {
   genericPhpFrameworkDatabaseExpressionTypeAdapter,
   type PhpFrameworkDatabaseExpressionTypeAdapter,
 } from "./phpFrameworkDatabaseExpressionTypeAdapter";
@@ -30,6 +34,7 @@ import {
 import {
   phpLaravelBuilderMagicExpressionTypeAdapter,
 } from "./phpLaravelBuilderMagicExpressionTypeAdapter";
+import { phpLaravelCollectionCallbackVariableExpressionTypeAdapter } from "./phpLaravelCollectionCallbackVariableExpressionTypeAdapter";
 import { phpLaravelDatabaseExpressionTypeAdapter } from "./phpLaravelDatabaseExpressionTypeAdapter";
 import { phpLaravelModelBuilderTransitionExpressionTypeAdapter } from "./phpLaravelModelBuilderTransitionExpressionTypeAdapter";
 import { phpLaravelModelFluentExpressionTypeAdapter } from "./phpLaravelModelFluentExpressionTypeAdapter";
@@ -40,6 +45,7 @@ import {
 
 export interface PhpExpressionTypeAdapterBundle {
   builderMagicExpressionTypeAdapter: PhpFrameworkBuilderMagicExpressionTypeAdapter;
+  collectionCallbackVariableExpressionTypeAdapter: PhpFrameworkCollectionCallbackVariableExpressionTypeAdapter;
   databaseExpressionTypeAdapter: PhpFrameworkDatabaseExpressionTypeAdapter;
   modelBuilderTransitionExpressionTypeAdapter: PhpFrameworkModelBuilderTransitionExpressionTypeAdapter;
   modelFluentExpressionTypeAdapter: PhpFrameworkModelFluentExpressionTypeAdapter;
@@ -67,6 +73,8 @@ const GENERIC_PHP_EXPRESSION_TYPE_ADAPTER_BUNDLE: PhpExpressionTypeAdapterBundle
   {
     builderMagicExpressionTypeAdapter:
       genericPhpFrameworkBuilderMagicExpressionTypeAdapter,
+    collectionCallbackVariableExpressionTypeAdapter:
+      genericPhpFrameworkCollectionCallbackVariableExpressionTypeAdapter,
     databaseExpressionTypeAdapter:
       genericPhpFrameworkDatabaseExpressionTypeAdapter,
     modelBuilderTransitionExpressionTypeAdapter:
@@ -93,6 +101,8 @@ function phpExpressionTypeAdapterContributions(
             phpClassHasLaravelLocalScope:
               dependencies.phpClassHasNamedBuilderScope,
           }),
+        collectionCallbackVariableExpressionTypeAdapter:
+          phpLaravelCollectionCallbackVariableExpressionTypeAdapter,
         databaseExpressionTypeAdapter: phpLaravelDatabaseExpressionTypeAdapter,
         modelBuilderTransitionExpressionTypeAdapter:
           phpLaravelModelBuilderTransitionExpressionTypeAdapter,

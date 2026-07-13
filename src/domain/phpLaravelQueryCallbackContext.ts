@@ -115,11 +115,16 @@ export function phpLaravelQueryCallbackContextForVariable(
   return null;
 }
 
-function phpClosureCallbackForVariable(
+export interface PhpCallbackForVariable {
+  parametersSource: string;
+  startOffset: number;
+}
+
+export function phpClosureCallbackForVariable(
   source: string,
   position: EditorPosition,
   variableName: string,
-): { startOffset: number } | null {
+): PhpCallbackForVariable | null {
   const offset = offsetAtPosition(source, position);
   const callbackPattern =
     /\bfunction\s*\(([^)]*)\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{]+)?\{/g;
@@ -147,17 +152,17 @@ function phpClosureCallbackForVariable(
       continue;
     }
 
-    return { startOffset };
+    return { parametersSource: match[1] ?? "", startOffset };
   }
 
   return null;
 }
 
-function phpArrowCallbackForVariable(
+export function phpArrowCallbackForVariable(
   source: string,
   position: EditorPosition,
   variableName: string,
-): { startOffset: number } | null {
+): PhpCallbackForVariable | null {
   const offset = offsetAtPosition(source, position);
   const callbackPattern = /\bfn\s*\(([^)]*)\)\s*(?::\s*[^=]+)?=>/g;
 
@@ -182,7 +187,7 @@ function phpArrowCallbackForVariable(
       continue;
     }
 
-    return { startOffset };
+    return { parametersSource: match[1] ?? "", startOffset };
   }
 
   return null;
@@ -333,7 +338,7 @@ function phpLaravelQueryCallbackArgumentMatches(
   );
 }
 
-function phpCallbackArgumentIndex(
+export function phpCallbackArgumentIndex(
   source: string,
   argumentsStartOffset: number,
   argumentsEndOffset: number,
@@ -638,7 +643,7 @@ function topLevelFatArrowIndexBefore(
   return null;
 }
 
-function splitPhpArgumentsWithOffsets(
+export function splitPhpArgumentsWithOffsets(
   argumentsSource: string,
 ): Array<{ end: number; start: number; value: string }> {
   const argumentsList: Array<{ end: number; start: number; value: string }> = [];
@@ -722,7 +727,7 @@ function phpStringLiteralValue(expression: string): string | null {
   return match?.[2] ?? null;
 }
 
-function matchingPairOffset(
+export function matchingPairOffset(
   source: string,
   openOffset: number,
   open: string,
