@@ -39,9 +39,8 @@ export interface PhpLaravelGenericModelTypeHelpers {
 
 export interface UsePhpLaravelMethodGenericModelTypeOptions {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   helpers: PhpLaravelGenericModelTypeHelpers;
-  isLaravelFrameworkActive?: boolean;
   readPhpClassMembersFromPath: (
     path: string,
     className: string,
@@ -56,16 +55,12 @@ export function usePhpLaravelMethodGenericModelType({
   currentWorkspaceRootRef,
   frameworkRuntime,
   helpers,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   readPhpClassMembersFromPath,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelMethodGenericModelTypeOptions) {
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
-
   const resolvePhpLaravelMethodGenericModelType = useCallback(
     async (
       carrierKind: PhpLaravelCarrierKind,
@@ -77,7 +72,7 @@ export function usePhpLaravelMethodGenericModelType({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !isLaravelFrameworkActive ||
+        !frameworkRuntime.isLaravel ||
         !requestedRoot ||
         !workspaceDescriptor?.php ||
         !isRequestedRootActive()
@@ -179,8 +174,8 @@ export function usePhpLaravelMethodGenericModelType({
     },
     [
       currentWorkspaceRootRef,
+      frameworkRuntime.isLaravel,
       helpers,
-      isLaravelFrameworkActive,
       readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
