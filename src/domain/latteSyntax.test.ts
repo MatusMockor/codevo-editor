@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  innermostLatteExpressionContextAt,
   innermostLatteExpressionSpanAt,
   innermostLatteNAttributeExpressionSpanAt,
   LATTE_BUILTIN_FILTERS,
@@ -310,6 +311,54 @@ describe("innermostLatteNAttributeExpressionSpanAt", () => {
     expect(innermostLatteExpressionSpanAt(source, curlyOffset)).not.toBeNull();
     expect(
       innermostLatteExpressionSpanAt(source, offsetAfter(source, "$a")),
+    ).toBeNull();
+  });
+});
+
+describe("innermostLatteExpressionContextAt", () => {
+  it("returns a tag context matching the tag-specific detector", () => {
+    const source = "<p>{$user->}</p>";
+    const offset = offsetAfter(source, "->");
+    const context = innermostLatteExpressionContextAt(source, offset);
+
+    expect(context?.kind).toBe("tag");
+    expect(context?.span).toEqual(innermostLatteExpressionSpanAt(source, offset));
+  });
+
+  it("falls back to an n-attribute context matching the attribute detector", () => {
+    const source = '<div n:if="$user->name">x</div>';
+    const offset = offsetAfter(source, "->");
+    const context = innermostLatteExpressionContextAt(source, offset);
+
+    expect(context?.kind).toBe("nAttribute");
+    expect(context?.span).toEqual(
+      innermostLatteNAttributeExpressionSpanAt(source, offset),
+    );
+  });
+
+  it("prefers the `{...}` tag over an enclosing n-attribute element", () => {
+    const source = '<div n:if="$a">{$user->name}</div>';
+    const context = innermostLatteExpressionContextAt(
+      source,
+      offsetAfter(source, "{$user->"),
+    );
+
+    expect(context?.kind).toBe("tag");
+  });
+
+  it("returns null in plain HTML", () => {
+    const source = "<p>hello</p>";
+
+    expect(
+      innermostLatteExpressionContextAt(source, source.indexOf("hello")),
+    ).toBeNull();
+  });
+
+  it("returns null inside a `{* comment *}`", () => {
+    const source = "{* {$user->name} *}";
+
+    expect(
+      innermostLatteExpressionContextAt(source, offsetAfter(source, "->")),
     ).toBeNull();
   });
 });

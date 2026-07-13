@@ -274,8 +274,14 @@ export function innermostLatteExpressionSpanAt(
   offset: number,
 ): LatteExpressionSpan | null {
   const clamped = Math.max(0, Math.min(offset, source.length));
-  const tags = collectLatteTags(source, clamped);
 
+  return innermostLatteExpressionSpanFromTags(collectLatteTags(source, clamped), clamped);
+}
+
+function innermostLatteExpressionSpanFromTags(
+  tags: readonly LatteTagToken[],
+  clamped: number,
+): LatteExpressionSpan | null {
   for (let index = tags.length - 1; index >= 0; index -= 1) {
     const tag = tags[index];
 
@@ -314,8 +320,19 @@ export function innermostLatteNAttributeExpressionSpanAt(
   offset: number,
 ): LatteNAttributeExpressionSpan | null {
   const clamped = Math.max(0, Math.min(offset, source.length));
-  const maskedRegions = collectLatteMaskedRegions(source, clamped);
 
+  return innermostLatteNAttributeExpressionSpanFromMaskedRegions(
+    source,
+    collectLatteMaskedRegions(source, clamped),
+    clamped,
+  );
+}
+
+function innermostLatteNAttributeExpressionSpanFromMaskedRegions(
+  source: string,
+  maskedRegions: readonly LatteMaskedRegion[],
+  clamped: number,
+): LatteNAttributeExpressionSpan | null {
   if (isOffsetInsideLatteMaskedRegion(maskedRegions, clamped)) {
     return null;
   }
@@ -348,6 +365,50 @@ export function innermostLatteNAttributeExpressionSpanAt(
   }
 
   return innermost;
+}
+
+/**
+ * The innermost Latte expression context around an offset - either a `{...}`
+ * expression tag or an `n:if="..."`-style attribute value. See
+ * `innermostLatteExpressionContextAt`.
+ */
+export type LatteExpressionContext =
+  | { kind: "tag"; span: LatteExpressionSpan }
+  | { kind: "nAttribute"; span: LatteNAttributeExpressionSpan };
+
+/**
+ * Combined entry point over `innermostLatteExpressionSpanAt` and
+ * `innermostLatteNAttributeExpressionSpanAt` that runs the underlying
+ * `scanLatteSource` pass ONCE and reuses it for both lookups (tag first,
+ * n-attribute as the fallback), exactly matching the sequential result of the
+ * two separate calls. The application layer's expression detection uses this
+ * so a completion / definition request costs a single document scan instead of
+ * two; callers that need only one of the lookups keep using the specific
+ * functions.
+ */
+export function innermostLatteExpressionContextAt(
+  source: string,
+  offset: number,
+): LatteExpressionContext | null {
+  const clamped = Math.max(0, Math.min(offset, source.length));
+  const scan = scanLatteSource(source, clamped);
+  const span = innermostLatteExpressionSpanFromTags(scan.tags, clamped);
+
+  if (span) {
+    return { kind: "tag", span };
+  }
+
+  const attribute = innermostLatteNAttributeExpressionSpanFromMaskedRegions(
+    source,
+    scan.maskedRegions,
+    clamped,
+  );
+
+  if (!attribute) {
+    return null;
+  }
+
+  return { kind: "nAttribute", span: attribute };
 }
 
 /**

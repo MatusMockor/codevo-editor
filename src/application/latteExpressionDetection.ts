@@ -1,7 +1,4 @@
-import {
-  innermostLatteExpressionSpanAt,
-  innermostLatteNAttributeExpressionSpanAt,
-} from "../domain/latteSyntax";
+import { innermostLatteExpressionContextAt } from "../domain/latteSyntax";
 
 export interface LatteMemberAccess {
   end: number;
@@ -52,22 +49,20 @@ function latteDetectedExpressionSpanAt(
   source: string,
   offset: number,
 ): LatteDetectedExpressionSpan | null {
-  const span = innermostLatteExpressionSpanAt(source, offset);
+  const context = innermostLatteExpressionContextAt(source, offset);
 
-  if (span) {
-    return span;
-  }
-
-  const attribute = innermostLatteNAttributeExpressionSpanAt(source, offset);
-
-  if (!attribute) {
+  if (!context) {
     return null;
   }
 
+  if (context.kind === "tag") {
+    return context.span;
+  }
+
   return {
-    contentEnd: attribute.contentEnd,
-    contentStart: attribute.expressionStart,
-    expressionStart: attribute.expressionStart,
+    contentEnd: context.span.contentEnd,
+    contentStart: context.span.expressionStart,
+    expressionStart: context.span.expressionStart,
   };
 }
 
