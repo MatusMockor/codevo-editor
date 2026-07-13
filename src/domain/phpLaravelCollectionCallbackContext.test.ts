@@ -59,6 +59,10 @@ $users->map(function (User $typed) {
 
 $users->filter(fn (User $typedArrow) => $typedArrow->act);
 
+$users->map(/* $wrong->filter( */ fn ($commented) => $commented->na);
+
+$users->pluck("->filter(")->map(fn ($stringArg) => $stringArg->na);
+
 $plain->nam;
 `;
 
@@ -104,6 +108,43 @@ $plain->nam;
         "outer",
       ),
     ).toEqual({ methodName: "map", receiverExpression: "$users" });
+  });
+
+  it("ignores commented-out method calls when resolving the receiver", () => {
+    expect(
+      phpLaravelCollectionCallbackContextForVariable(
+        source,
+        positionAfter(source, "$commented->na"),
+        "commented",
+      ),
+    ).toEqual({ methodName: "map", receiverExpression: "$users" });
+  });
+
+  it("ignores string-literal method calls when resolving the receiver", () => {
+    expect(
+      phpLaravelCollectionCallbackContextForVariable(
+        source,
+        positionAfter(source, "$stringArg->na"),
+        "stringArg",
+      ),
+    ).toEqual({
+      methodName: "map",
+      receiverExpression: '$users->pluck("->filter(")',
+    });
+  });
+
+  it("drops a trailing comment between the receiver and the method call", () => {
+    const commentedChain = `<?php
+$order->items /* pending */ ->map(fn ($line) => $line->na);
+`;
+
+    expect(
+      phpLaravelCollectionCallbackContextForVariable(
+        commentedChain,
+        positionAfter(commentedChain, "$line->na"),
+        "line",
+      ),
+    ).toEqual({ methodName: "map", receiverExpression: "$order->items" });
   });
 
   it("detects the first parameter of a multi-parameter callback", () => {

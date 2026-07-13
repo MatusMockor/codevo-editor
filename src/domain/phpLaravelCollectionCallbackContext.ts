@@ -13,6 +13,7 @@ import {
   PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
 } from "./phpReceiverExpressions";
+import { maskPhpSource } from "./phpSourceMask";
 
 export interface PhpLaravelCollectionCallbackContext {
   methodName: string;
@@ -47,9 +48,10 @@ export function phpLaravelCollectionCallbackContextForVariable(
       String.raw`([A-Za-z_][A-Za-z0-9_]*)\s*\(`,
     "g",
   );
+  const maskedSource = maskPhpSource(source);
   let context: PhpLaravelCollectionCallbackContext | null = null;
 
-  for (const match of source.matchAll(methodCallPattern)) {
+  for (const match of maskedSource.matchAll(methodCallPattern)) {
     const startOffset = match.index ?? 0;
 
     if (startOffset > callback.startOffset) {
@@ -68,7 +70,7 @@ export function phpLaravelCollectionCallbackContextForVariable(
       continue;
     }
 
-    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+    const closeOffset = matchingPairOffset(maskedSource, openOffset, "(", ")");
 
     if (
       closeOffset === null ||
@@ -90,7 +92,9 @@ export function phpLaravelCollectionCallbackContextForVariable(
     }
 
     const receiverExpression = phpNormalizeReceiverExpression(
-      match[1]?.trim() ?? "",
+      source
+        .slice(startOffset, startOffset + (match[1] ?? "").trimEnd().length)
+        .trim(),
     );
 
     if (!receiverExpression) {

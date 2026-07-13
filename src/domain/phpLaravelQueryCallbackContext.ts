@@ -7,6 +7,7 @@ import {
   PHP_MEMBER_CHAIN_SEGMENT_PATTERN,
   phpNormalizeReceiverExpression,
 } from "./phpReceiverExpressions";
+import { maskPhpSource } from "./phpSourceMask";
 
 export interface PhpLaravelQueryCallbackContext {
   methodName: string;
@@ -68,8 +69,10 @@ export function phpLaravelQueryCallbackContextForVariable(
       String.raw`)\s*\(`,
     "g",
   );
+  const maskedSource = maskPhpSource(source);
   const methodCallContext = phpCallbackMethodCallContext(
     source,
+    maskedSource,
     callback.startOffset,
     methodCallPattern,
   );
@@ -93,6 +96,7 @@ export function phpLaravelQueryCallbackContextForVariable(
 
   const staticCallContext = phpCallbackMethodCallContext(
     source,
+    maskedSource,
     callback.startOffset,
     staticCallPattern,
   );
@@ -204,6 +208,7 @@ function phpParameterListHasVariable(
 
 function phpCallbackMethodCallContext(
   source: string,
+  maskedSource: string,
   callbackStartOffset: number,
   pattern: RegExp,
 ): {
@@ -222,7 +227,7 @@ function phpCallbackMethodCallContext(
     startOffset: number;
   } | null = null;
 
-  for (const match of source.matchAll(pattern)) {
+  for (const match of maskedSource.matchAll(pattern)) {
     const startOffset = match.index ?? 0;
 
     if (startOffset > callbackStartOffset) {
@@ -235,7 +240,7 @@ function phpCallbackMethodCallContext(
       continue;
     }
 
-    const closeOffset = matchingPairOffset(source, openOffset, "(", ")");
+    const closeOffset = matchingPairOffset(maskedSource, openOffset, "(", ")");
 
     if (
       closeOffset === null ||
@@ -245,7 +250,9 @@ function phpCallbackMethodCallContext(
       continue;
     }
 
-    const receiverOrClassName = match[1]?.trim() ?? "";
+    const receiverOrClassName = source
+      .slice(startOffset, startOffset + (match[1] ?? "").trimEnd().length)
+      .trim();
     const methodName = match[2] ?? "";
 
     if (!receiverOrClassName || !methodName) {
