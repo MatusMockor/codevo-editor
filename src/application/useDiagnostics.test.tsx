@@ -128,7 +128,7 @@ interface Harness {
     Record<string, LanguageServerDiagnostic[]>
   >;
   phpLocalDiagnostics: StateHolder<Record<string, LanguageServerDiagnostic[]>>;
-  laravelDiagnostics: StateHolder<Record<string, LanguageServerDiagnostic[]>>;
+  frameworkDiagnostics: StateHolder<Record<string, LanguageServerDiagnostic[]>>;
   notices: StateHolder<WorkbenchNotice[]>;
   removedPaths: Set<string>;
   gatewayValidate: ReturnType<typeof vi.fn>;
@@ -173,7 +173,7 @@ function createHarness(): Harness {
   const phpLocalDiagnostics = stateHolder<
     Record<string, LanguageServerDiagnostic[]>
   >({});
-  const laravelDiagnostics = stateHolder<
+  const frameworkDiagnostics = stateHolder<
     Record<string, LanguageServerDiagnostic[]>
   >({});
   const notices = stateHolder<WorkbenchNotice[]>([]);
@@ -209,7 +209,7 @@ function createHarness(): Harness {
     setJavaScriptTypeScriptDiagnosticsByPath:
       javaScriptTypeScriptDiagnostics.set,
     setPhpLocalDiagnosticsByPath: phpLocalDiagnostics.set,
-    setLaravelDiagnosticsByPath: laravelDiagnostics.set,
+    setFrameworkDiagnosticsByPath: frameworkDiagnostics.set,
     setNotices: notices.set,
     languageServerDiagnosticsByRootRef: lsByRootRef,
     javaScriptTypeScriptDiagnosticsByRootRef: jstsByRootRef,
@@ -244,7 +244,7 @@ function createHarness(): Harness {
     languageServerDiagnostics,
     javaScriptTypeScriptDiagnostics,
     phpLocalDiagnostics,
-    laravelDiagnostics,
+    frameworkDiagnostics,
     notices,
     removedPaths,
     gatewayValidate,
@@ -850,7 +850,7 @@ describe("useDiagnostics - delete / rename path cleanup", () => {
     harness.javaScriptTypeScriptDiagnostics.value = {
       [USER_PATH]: [errorDiagnostic()],
     };
-    harness.laravelDiagnostics.value = { [USER_PATH]: [errorDiagnostic()] };
+    harness.frameworkDiagnostics.value = { [USER_PATH]: [errorDiagnostic()] };
     harness.phpLocalDiagnostics.value = { [USER_PATH]: [errorDiagnostic()] };
     const { api } = renderDiagnostics(harness.deps);
 
@@ -862,7 +862,7 @@ describe("useDiagnostics - delete / rename path cleanup", () => {
     expect(
       harness.javaScriptTypeScriptDiagnostics.value[USER_PATH],
     ).toBeUndefined();
-    expect(harness.laravelDiagnostics.value[USER_PATH]).toBeUndefined();
+    expect(harness.frameworkDiagnostics.value[USER_PATH]).toBeUndefined();
     expect(harness.phpLocalDiagnostics.value[USER_PATH]).toBeUndefined();
   });
 });

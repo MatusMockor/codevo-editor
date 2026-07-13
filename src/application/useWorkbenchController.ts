@@ -1035,7 +1035,7 @@ export function useWorkbenchController(
     javaScriptTypeScriptDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
   ] = useState<Record<string, LanguageServerDiagnostic[]>>({});
-  const [laravelDiagnosticsByPath, setLaravelDiagnosticsByPath] =
+  const [frameworkDiagnosticsByPath, setFrameworkDiagnosticsByPath] =
     useState<Record<string, LanguageServerDiagnostic[]>>({});
   const [phpLocalDiagnosticsByPath, setPhpLocalDiagnosticsByPath] =
     useState<Record<string, LanguageServerDiagnostic[]>>({});
@@ -2521,7 +2521,7 @@ export function useWorkbenchController(
     setLanguageServerDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
     setPhpLocalDiagnosticsByPath,
-    setLaravelDiagnosticsByPath,
+    setFrameworkDiagnosticsByPath,
     setNotices,
     languageServerDiagnosticsByRootRef,
     javaScriptTypeScriptDiagnosticsByRootRef,
@@ -7919,7 +7919,7 @@ export function useWorkbenchController(
     collectViewTargets,
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
-    setFrameworkDiagnosticsByPath: setLaravelDiagnosticsByPath,
+    setFrameworkDiagnosticsByPath,
     workspaceRoot,
   });
 
@@ -10051,14 +10051,14 @@ export function useWorkbenchController(
       mergeDiagnosticsByPath(
         languageServerDiagnosticsByPath,
         javaScriptTypeScriptDiagnosticsByPath,
-        laravelDiagnosticsByPath,
+        frameworkDiagnosticsByPath,
         activeDotenvDiagnosticsByPath,
       ),
     [
       activeDotenvDiagnosticsByPath,
       javaScriptTypeScriptDiagnosticsByPath,
       languageServerDiagnosticsByPath,
-      laravelDiagnosticsByPath,
+      frameworkDiagnosticsByPath,
     ],
   );
   const activePhpLocalDiagnosticsByPath = useMemo(() => {

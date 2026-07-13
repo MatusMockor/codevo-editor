@@ -85,7 +85,7 @@ export interface DiagnosticsDependencies {
   setPhpLocalDiagnosticsByPath: Dispatch<
     SetStateAction<Record<string, LanguageServerDiagnostic[]>>
   >;
-  setLaravelDiagnosticsByPath: Dispatch<
+  setFrameworkDiagnosticsByPath: Dispatch<
     SetStateAction<Record<string, LanguageServerDiagnostic[]>>
   >;
   setNotices: Dispatch<SetStateAction<WorkbenchNotice[]>>;
@@ -214,7 +214,7 @@ export function useDiagnostics(
     setLanguageServerDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
     setPhpLocalDiagnosticsByPath,
-    setLaravelDiagnosticsByPath,
+    setFrameworkDiagnosticsByPath,
     setNotices,
     languageServerDiagnosticsByRootRef,
     javaScriptTypeScriptDiagnosticsByRootRef,
@@ -527,7 +527,7 @@ export function useDiagnostics(
         });
       }
 
-      setLaravelDiagnosticsByPath((current) => {
+      setFrameworkDiagnosticsByPath((current) => {
         if (!(diagnosticPath in current)) {
           return current;
         }
