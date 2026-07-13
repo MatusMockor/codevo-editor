@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -21,6 +22,13 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     matchedProviderIds: [],
     profile: "generic",
     providers: [],
+  }),
+);
+const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel"],
+    profile: "laravel",
+    providers: [phpLaravelFrameworkProvider],
   }),
 );
 
@@ -53,7 +61,7 @@ function makeDeps(
     },
     activeEditorPositionRef: { current: { column: 1, lineNumber: 1 } },
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     openDirectPhpMethodTarget: vi.fn(async () => false),
     openNavigationTarget: vi.fn(async () => true),
     openPhpClassTarget: vi.fn(async () => true),
@@ -230,13 +238,12 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
     harness.unmount();
   });
 
-  it("uses runtime Laravel state over the legacy boolean for relation navigation", async () => {
+  it("keeps relation navigation inactive for a generic runtime", async () => {
     const resolvePhpLaravelRelationPathOwnerType = vi.fn(
       async () => "App\\Models\\Comment",
     );
     const deps = makeDeps({
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       resolvePhpLaravelRelationPathOwnerType,
     });
     const harness = renderHook(deps);
@@ -311,7 +318,6 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
     );
     const deps = makeDeps({
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       openPhpLaravelDynamicWhereTarget,
       openPhpMethodHintTarget,
       resolvePhpEloquentBuilderModelType,
@@ -339,7 +345,6 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
     const openPhpLaravelDynamicWhereTarget = vi.fn(async () => true);
     const deps = makeDeps({
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
       resolvePhpClassReference: vi.fn(() => "App\\Models\\Post"),

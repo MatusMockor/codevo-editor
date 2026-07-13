@@ -30,6 +30,7 @@ describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
     const providerContribution = makeProviderContribution();
     const adapter =
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
+        frameworkRuntime: { hasProvider: () => false },
         providerContributions: [providerContribution],
       });
 
@@ -68,7 +69,6 @@ describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
     const adapter =
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
         frameworkRuntime: { hasProvider },
-        isLaravelFrameworkActive: true,
         providerContributions: [makeProviderContribution()],
       });
 
@@ -82,17 +82,6 @@ describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
         frameworkRuntime: {
           hasProvider: (providerId) => providerId === "laravel",
         },
-        isLaravelFrameworkActive: false,
-        providerContributions: [makeProviderContribution()],
-      });
-
-    expect(adapter.supportsBuilderModelNavigation()).toBe(true);
-  });
-
-  it("falls back to the legacy flag when no runtime exists", () => {
-    const adapter =
-      createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
-        isLaravelFrameworkActive: true,
         providerContributions: [makeProviderContribution()],
       });
 

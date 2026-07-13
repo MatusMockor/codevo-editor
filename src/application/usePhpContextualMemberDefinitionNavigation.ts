@@ -43,8 +43,7 @@ export interface PhpContextualMemberDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   openDirectPhpMethodTarget(
     className: string,
     methodName: string,
@@ -101,7 +100,6 @@ export function usePhpContextualMemberDefinitionNavigation({
   activeEditorPositionRef,
   currentWorkspaceRootRef,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   openDirectPhpMethodTarget,
   openNavigationTarget,
   openPhpClassTarget,
@@ -121,7 +119,6 @@ export function usePhpContextualMemberDefinitionNavigation({
     () =>
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
         frameworkRuntime,
-        isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
         providerContributions: [
           {
             providerId: "laravel",
@@ -138,7 +135,6 @@ export function usePhpContextualMemberDefinitionNavigation({
       }),
     [
       frameworkRuntime,
-      legacyIsLaravelFrameworkActive,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
       resolvePhpEloquentBuilderModelType,
