@@ -967,8 +967,6 @@ export function useWorkbenchController(
     [phpFrameworkIntelligence],
   );
   const activePhpFrameworkProviders = phpFrameworkIntelligence.providers;
-  const activePhpFrameworkProviderSignature =
-    phpFrameworkIntelligence.providerSignature;
   const isNetteFrameworkActive = phpFrameworkIntelligence.isNette;
   // Provider-owned presentation for the exclusive winner. Framework identity
   // remains available on the intelligence boundary for non-presentation gates.
@@ -1656,13 +1654,13 @@ export function useWorkbenchController(
     return [
       workspaceRoot,
       languageServerRuntimeStatus.sessionId ?? "managed",
-      activePhpFrameworkProviderSignature,
+      phpFrameworkIntelligence.providerSignature,
       indexProgress.rootPath ?? "no-index-root",
       indexProgress.status,
       indexProgress.indexedFiles,
     ].join(":");
   }, [
-    activePhpFrameworkProviderSignature,
+    phpFrameworkIntelligence.providerSignature,
     indexProgress.indexedFiles,
     indexProgress.rootPath,
     indexProgress.status,
