@@ -4,6 +4,7 @@ import type {
   LatteLinkDetection,
   NetteLinkTarget,
 } from "../domain/latteLinkNavigation";
+import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 
 export interface NettePresenterLinkDiagnosticDependencies {
@@ -36,12 +37,6 @@ export interface NettePresenterLinkDiagnosticData {
 }
 
 const NETTE_THIS_ACTION = "this";
-const DIRECT_NETTE_PRESENTER_PARENTS = new Set([
-  "Presenter",
-  "\\Nette\\Application\\UI\\Presenter",
-  "Nette\\Application\\UI\\Presenter",
-]);
-
 interface DiagnosticsRunState {
   lineStarts: readonly number[];
   presenterSources: Map<string, string | null>;
@@ -142,7 +137,11 @@ async function diagnosticForDetection(
       continue;
     }
 
-    if (!canProvePresenterMethodAbsenceLocally(presenterSource)) {
+    if (
+      !canProveNettePresenterMethodAbsenceLocally(presenterSource, undefined, {
+        barePresenterParentPolicy: "accept",
+      })
+    ) {
       return null;
     }
 
@@ -205,73 +204,6 @@ async function readPresenterSource(
     run.presenterSources.set(presenterPath, null);
     return null;
   }
-}
-
-function canProvePresenterMethodAbsenceLocally(source: string): boolean {
-  if (hasTraitUseInsideFirstClass(source)) {
-    return false;
-  }
-
-  const parent = firstClassParent(source);
-
-  if (parent === null) {
-    return true;
-  }
-
-  return DIRECT_NETTE_PRESENTER_PARENTS.has(parent);
-}
-
-function firstClassParent(source: string): string | null {
-  const match =
-    /\bclass\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+extends\s+([\\A-Za-z_][\\A-Za-z0-9_]*))?/.exec(
-      source,
-    );
-
-  return match?.[1] ?? null;
-}
-
-function hasTraitUseInsideFirstClass(source: string): boolean {
-  const classStart = /\bclass\s+[A-Za-z_][A-Za-z0-9_]*/.exec(source);
-
-  if (!classStart) {
-    return false;
-  }
-
-  const bodyStart = source.indexOf("{", classStart.index);
-
-  if (bodyStart < 0) {
-    return false;
-  }
-
-  const bodyEnd = firstClassBodyEnd(source, bodyStart);
-  const body = source.slice(bodyStart + 1, bodyEnd);
-
-  return /^\s*use\s+[^;]+;/m.test(body);
-}
-
-function firstClassBodyEnd(source: string, bodyStart: number): number {
-  let depth = 0;
-
-  for (let index = bodyStart; index < source.length; index += 1) {
-    const character = source[index];
-
-    if (character === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (character !== "}") {
-      continue;
-    }
-
-    depth -= 1;
-
-    if (depth === 0) {
-      return index;
-    }
-  }
-
-  return source.length;
 }
 
 function lineStartsForSource(source: string): readonly number[] {

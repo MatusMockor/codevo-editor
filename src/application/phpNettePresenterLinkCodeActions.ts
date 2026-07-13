@@ -10,6 +10,7 @@ import {
   type PhpTypeDeclarationIdentity,
 } from "../domain/phpClassStructure";
 import { renderCreateMethodStub } from "../domain/phpCreateFromUsage";
+import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
 import { phpClassBodyInsertionAction } from "./phpClassGenerateCodeActions";
 import { phpPreferredQuickfix } from "./phpCreateMemberCodeActions";
 import type {
@@ -18,11 +19,6 @@ import type {
 } from "./phpCodeActionTypes";
 
 const PRESENTER_SUFFIX = "Presenter";
-const NETTE_PRESENTER_FQN = "Nette\\Application\\UI\\Presenter";
-const DIRECT_NETTE_PRESENTER_PARENTS = new Set([
-  "\\Nette\\Application\\UI\\Presenter",
-  "Nette\\Application\\UI\\Presenter",
-]);
 
 interface ActivePresenterClass {
   name: string;
@@ -56,7 +52,16 @@ export function phpNettePresenterLinkCodeAction(
     return null;
   }
 
-  if (!canProvePresenterMethodAbsenceLocally(source, activeClass)) {
+  if (
+    !canProveNettePresenterMethodAbsenceLocally(
+      source,
+      {
+        ...activeClass.typeDeclaration,
+        name: activeClass.name,
+      },
+      { barePresenterParentPolicy: "resolve-import" },
+    )
+  ) {
     return null;
   }
 
@@ -126,101 +131,6 @@ function isEligiblePresenterClass(
   }
 
   return activeClass.name.slice(0, -PRESENTER_SUFFIX.length) === targetPresenter;
-}
-
-function canProvePresenterMethodAbsenceLocally(
-  source: string,
-  activeClass: ActivePresenterClass,
-): boolean {
-  if (hasTraitUseInsideClass(source, activeClass.typeDeclaration)) {
-    return false;
-  }
-
-  const parent = classParent(source, activeClass);
-
-  if (parent === null) {
-    return true;
-  }
-
-  if (DIRECT_NETTE_PRESENTER_PARENTS.has(parent)) {
-    return true;
-  }
-
-  if (parent !== "Presenter") {
-    return false;
-  }
-
-  return barePresenterParentResolvesToNette(source, activeClass);
-}
-
-function hasTraitUseInsideClass(
-  source: string,
-  typeDeclaration: PhpTypeDeclarationIdentity,
-): boolean {
-  const body = source.slice(
-    typeDeclaration.bodyStartOffset + 1,
-    typeDeclaration.bodyEndOffset,
-  );
-
-  return /^\s*use\s+[^;]+;/m.test(body);
-}
-
-function classParent(
-  source: string,
-  activeClass: ActivePresenterClass,
-): string | null {
-  const header = source.slice(0, activeClass.typeDeclaration.bodyStartOffset);
-  const classPattern = new RegExp(
-    `\\bclass\\s+${escapeRegExp(activeClass.name)}\\b(?:\\s+extends\\s+([\\\\A-Za-z_][\\\\A-Za-z0-9_]*))?`,
-    "g",
-  );
-  let parent: string | null = null;
-
-  for (const match of header.matchAll(classPattern)) {
-    parent = match[1] ?? null;
-  }
-
-  return parent;
-}
-
-function barePresenterParentResolvesToNette(
-  source: string,
-  activeClass: ActivePresenterClass,
-): boolean {
-  const header = source.slice(0, activeClass.typeDeclaration.bodyStartOffset);
-  const importedPresenter = topLevelUseImportForShortName(header, "Presenter");
-
-  if (importedPresenter === null) {
-    return true;
-  }
-
-  return importedPresenter === NETTE_PRESENTER_FQN;
-}
-
-function topLevelUseImportForShortName(
-  header: string,
-  shortName: string,
-): string | null {
-  const importPattern =
-    /^\s*use\s+([^;{]+?)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;/gim;
-
-  for (const match of header.matchAll(importPattern)) {
-    const importedName = match[1]?.trim();
-
-    if (!importedName) {
-      continue;
-    }
-
-    const alias = match[2]?.trim() ?? importedName.split("\\").pop();
-
-    if (alias !== shortName) {
-      continue;
-    }
-
-    return importedName.replace(/^\\/, "");
-  }
-
-  return null;
 }
 
 function isCurrentPresenterLinkCall(
