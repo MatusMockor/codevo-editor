@@ -17229,6 +17229,113 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it.each([
+    ["/workspace/vendor", "vendor", "vendor-old", "/workspace/vendor-old"],
+    [
+      "/workspace/node_modules",
+      "node_modules",
+      "node_modules-old",
+      "/workspace/node_modules-old",
+    ],
+    [
+      "/workspace/node_modules/pkg",
+      "pkg",
+      "pkg-two",
+      "/workspace/node_modules/pkg-two",
+    ],
+  ])(
+    "skips JavaScript TypeScript rename machinery for excluded folder %s",
+    async (oldPath, oldName, nextName, newPath) => {
+      const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+      const runningStatus: LanguageServerRuntimeStatus = {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          didRenameFiles: true,
+          willRenameFiles: true,
+        },
+        kind: "running",
+        sessionId: 624,
+      };
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+        javaScriptTypeScriptLanguageServerFeaturesGateway,
+        javaScriptTypeScriptRuntimeStatus: runningStatus,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns(24);
+      vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce(nextName);
+
+      await act(async () => {
+        await getWorkbench().renameEntry({
+          kind: "directory",
+          name: oldName,
+          path: oldPath,
+        });
+      });
+
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+      ).not.toHaveBeenCalled();
+      expect(
+        javaScriptTypeScriptLanguageServerFeaturesGateway.didRenameFiles,
+      ).not.toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.applyWorkspaceEdit,
+      ).not.toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.renamePath,
+      ).toHaveBeenCalledWith(oldPath, newPath);
+    },
+  );
+
+  it("skips PHP rename machinery for an excluded vendor folder", async () => {
+    const oldPath = "/workspace/vendor";
+    const newPath = "/workspace/vendor-old";
+    const languageServerFeaturesGateway = featuresGateway();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 628,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerFeaturesGateway,
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("vendor-old");
+
+    await act(async () => {
+      await getWorkbench().renameEntry({
+        kind: "directory",
+        name: "vendor",
+        path: oldPath,
+      });
+    });
+
+    expect(languageServerFeaturesGateway.willRenameFiles).not.toHaveBeenCalled();
+    expect(languageServerFeaturesGateway.didRenameFiles).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceGateways.files.renamePath).toHaveBeenCalledWith(
+      oldPath,
+      newPath,
+    );
+  });
+
   it("asks the PHP language server for file rename edits before renaming a PHP file", async () => {
     const oldPath = "/workspace/src/User.php";
     const newPath = "/workspace/src/Account.php";
