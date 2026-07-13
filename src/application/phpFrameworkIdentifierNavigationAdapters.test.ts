@@ -3,10 +3,12 @@ import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import {
   activePhpFrameworkIdentifierNavigationAdapters,
-  createPhpFrameworkIdentifierNavigationAdapters,
   type PhpFrameworkIdentifierNavigationActivationAdapter,
-  type PhpFrameworkIdentifierNavigationAdapterDependencies,
 } from "./phpFrameworkIdentifierNavigationAdapters";
+import {
+  createPhpFrameworkIdentifierNavigationAdapters,
+  type PhpFrameworkIdentifierNavigationAdapterDependencies,
+} from "./phpFrameworkIdentifierNavigationAdapterComposition";
 
 const ROOT = "/workspace";
 

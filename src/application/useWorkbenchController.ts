@@ -72,7 +72,7 @@ import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
 import { usePhpFrameworkIdentifierDefinitionNavigation } from "./usePhpFrameworkIdentifierDefinitionNavigation";
-import { createPhpFrameworkIdentifierNavigationAdapters } from "./phpFrameworkIdentifierNavigationAdapters";
+import { createPhpFrameworkIdentifierNavigationAdapters } from "./phpFrameworkIdentifierNavigationAdapterComposition";
 import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
 import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
 import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
