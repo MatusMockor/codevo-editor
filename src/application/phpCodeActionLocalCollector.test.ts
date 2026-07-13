@@ -648,6 +648,68 @@ class Service
     );
   });
 
+  it("creates a public instance method in a same-file external class for a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+class Service
+{
+    public function run(OtherClass $other): void
+    {
+        $other->missing('value');
+    }
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create method 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("class Service"),
+    );
+
+    expect(otherBody).toContain("public function missing(string $arg0)");
+    expect(otherBody).not.toContain("static");
+  });
+
+  it("creates the instance method from a free function with a typed parameter", () => {
+    const source = `<?php
+
+class OtherClass
+{
+}
+
+function run(OtherClass $other)
+{
+    $other->missing();
+}
+`;
+    const start = source.indexOf("missing");
+    const action = phpCreateFromUsageCodeAction(source, {
+      end: start + "missing".length,
+      start,
+    });
+
+    expect(action).not.toBeNull();
+    expect(action?.title).toBe("Create method 'missing' in 'OtherClass'");
+    const result = applyAction(source, action!);
+    const otherBody = result.slice(
+      result.indexOf("class OtherClass"),
+      result.indexOf("function run"),
+    );
+
+    expect(otherBody).toContain("public function missing()");
+  });
+
   it("creates a public constant in a same-file external class", () => {
     const source = `<?php
 

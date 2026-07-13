@@ -398,6 +398,78 @@ describe("buildPhpCreateMemberWorkspaceEdit — conservative null", () => {
   });
 });
 
+describe("buildPhpCreateMemberWorkspaceEdit — external instance targets", () => {
+  it("inserts a public instance method stub when the member is not static", () => {
+    const text = editText(
+      {
+        argTypes: ["string"],
+        kind: "method",
+        name: "make",
+        target: "external",
+        targetClass: "Base",
+      },
+      BASE_SOURCE,
+    );
+
+    expect(text).toContain("public function make(string $arg0)");
+    expect(text).not.toContain("static");
+  });
+
+  it("returns null for an external instance property", () => {
+    expect(
+      buildEdit(
+        {
+          kind: "property",
+          name: "profile",
+          target: "external",
+          targetClass: "Base",
+        },
+        BASE_SOURCE,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for an instance method when the external class extends another class", () => {
+    const source = BASE_SOURCE.replace(
+      "class Base",
+      "class Base extends Ancestor",
+    );
+
+    expect(
+      buildEdit(
+        {
+          argTypes: [],
+          kind: "method",
+          name: "make",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null for an instance method when the external class declares __call", () => {
+    const source = BASE_SOURCE.replace(
+      "    public function existing(): void",
+      "    public function __call($name, $arguments)\n    {\n    }\n\n    public function existing(): void",
+    );
+
+    expect(
+      buildEdit(
+        {
+          argTypes: [],
+          kind: "method",
+          name: "make",
+          target: "external",
+          targetClass: "Base",
+        },
+        source,
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("buildPhpCreateMemberWorkspaceEdit — external targets", () => {
   it("inserts a public static method stub into the external class", () => {
     expect(buildEdit(externalMethod(), BASE_SOURCE)).toEqual({

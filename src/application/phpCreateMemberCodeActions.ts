@@ -29,21 +29,25 @@ export function phpCreateFromUsageCodeAction(
     return null;
   }
 
-  if (plan.member.target === "parent") {
-    return phpCreateParentMemberCodeAction(
-      source,
-      plan.member,
-      plan.owner,
-      plan.sameFileParent,
-    );
-  }
-
   if (plan.member.target === "external") {
     return phpCreateExternalMemberCodeAction(
       source,
       plan.member,
       plan.owner,
       plan.sameFileExternal,
+    );
+  }
+
+  if (!plan.owner) {
+    return null;
+  }
+
+  if (plan.member.target === "parent") {
+    return phpCreateParentMemberCodeAction(
+      source,
+      plan.member,
+      plan.owner,
+      plan.sameFileParent,
     );
   }
 
@@ -204,7 +208,7 @@ function phpCreateParentMemberCodeAction(
 function phpCreateExternalMemberCodeAction(
   source: string,
   member: MissingThisMember,
-  owner: PhpCreateDeclarationIdentity,
+  owner: PhpCreateDeclarationIdentity | undefined,
   sibling: PhpCreateDeclarationIdentity | undefined,
 ): PhpCodeActionDescriptor | null {
   if (!sibling) {
@@ -216,7 +220,7 @@ function phpCreateExternalMemberCodeAction(
     kind: sibling.kind,
     relationship: "external",
     typeContext:
-      owner.namespace === sibling.namespace
+      owner && owner.namespace === sibling.namespace
         ? "same-namespace"
         : "external-namespace",
   };

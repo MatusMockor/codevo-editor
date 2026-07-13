@@ -719,7 +719,7 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
       target: "external",
       targetClass: "OtherClass",
     });
-    expect(plan?.owner.name).toBe("Service");
+    expect(plan?.owner?.name).toBe("Service");
     expect(plan?.sameFileExternal).toMatchObject({
       kind: "class",
       name: "OtherClass",
@@ -784,7 +784,7 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
       target: "external",
       targetClass: "Unknown",
     });
-    expect(plan?.owner.name).toBe("Service");
+    expect(plan?.owner?.name).toBe("Service");
     expect(plan?.sameFileExternal).toBeUndefined();
   });
 
@@ -874,6 +874,55 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
       targetClass: "OtherClass",
     });
     expect(plan?.sameFileExternal).toBeUndefined();
+  });
+
+  it("returns null when the same-file sibling class extends another class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass extends Model",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when the same-file sibling class declares __callStatic", () => {
+    const source = [
+      "<?php",
+      "",
+      "class OtherClass",
+      "{",
+      "    public static function __callStatic($name, $arguments)",
+      "    {",
+      "    }",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        OtherClass::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.indexOf("OtherClass::missing") + "OtherClass::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
   });
 
   it("returns null when the static method already exists on the sibling class", () => {
@@ -1087,7 +1136,7 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
       name: "missing",
       target: "self",
     });
-    expect(plan?.owner.name).toBe("Service");
+    expect(plan?.owner?.name).toBe("Service");
     expect(plan?.sameFileExternal).toBeUndefined();
   });
 
@@ -1120,6 +1169,508 @@ describe("planPhpCreateFromUsage — same-file external ClassName:: members", ()
       target: "self",
     });
     expect(plan?.sameFileExternal).toBeUndefined();
+  });
+});
+
+describe("planPhpCreateFromUsage — typed parameter $var-> instance members", () => {
+  it("surfaces a cross-file instance method candidate for a typed method parameter", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user->missing('x');",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: ["string"],
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "User",
+    });
+    expect(plan?.owner?.name).toBe("Service");
+    expect(plan?.sameFileExternal).toBeUndefined();
+  });
+
+  it("plans an instance method on a same-file sibling class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class User",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "User",
+    });
+    expect(plan?.sameFileExternal).toMatchObject({
+      kind: "class",
+      name: "User",
+    });
+  });
+
+  it("offers the instance method from a free function with a typed parameter", () => {
+    const source = [
+      "<?php",
+      "",
+      "function run(User $user)",
+      "{",
+      "    $user->missing();",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "User",
+    });
+    expect(plan?.owner).toBeUndefined();
+    expect(plan?.sameFileExternal).toBeUndefined();
+  });
+
+  it("resolves a same-file sibling from a free function usage", () => {
+    const source = [
+      "<?php",
+      "",
+      "class User",
+      "{",
+      "}",
+      "",
+      "function run(User $user)",
+      "{",
+      "    $user->missing();",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "User",
+    });
+    expect(plan?.owner).toBeUndefined();
+    expect(plan?.sameFileExternal?.name).toBe("User");
+  });
+
+  it("folds a typed parameter of the enclosing class into a non-static self member", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(Service $other): void",
+      "    {",
+      "        $other->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$other->missing") + "$other->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+    });
+    expect(plan?.owner?.name).toBe("Service");
+    expect(plan?.sameFileExternal).toBeUndefined();
+  });
+
+  it("resolves a promoted constructor parameter typehint", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function __construct(private LoggerContract $logger)",
+      "    {",
+      "        $logger->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$logger->missing") + "$logger->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "LoggerContract",
+    });
+  });
+
+  it("resolves a typed closure parameter as the enclosing signature", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        $callback = function (User $user) {",
+      "            $user->missing();",
+      "        };",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "User",
+    });
+  });
+
+  it("resolves a typed arrow function parameter", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        $callback = fn (User $user) => $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+      target: "external",
+      targetClass: "User",
+    });
+  });
+
+  it("returns null when the same-file sibling class extends another class", () => {
+    const source = [
+      "<?php",
+      "",
+      "class User extends Model",
+      "{",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when the same-file sibling class declares __call", () => {
+    const source = [
+      "<?php",
+      "",
+      "class User",
+      "{",
+      "    public function __call($name, $arguments)",
+      "    {",
+      "    }",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null when the method already exists on the same-file sibling", () => {
+    const source = [
+      "<?php",
+      "",
+      "class User",
+      "{",
+      "    public function missing(): void",
+      "    {",
+      "    }",
+      "}",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset =
+      source.lastIndexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it.each([
+    ["an untyped parameter", "$user"],
+    ["a nullable typehint", "?User $user"],
+    ["a union typehint", "User|Admin $user"],
+    ["an intersection typehint", "Countable&Stringable $user"],
+    ["a builtin string typehint", "string $user"],
+    ["a builtin array typehint", "array $user"],
+    ["an object typehint", "object $user"],
+    ["a mixed typehint", "mixed $user"],
+    ["a self typehint", "self $user"],
+    ["a static typehint", "static $user"],
+    ["a variadic typehint", "User ...$user"],
+    ["a defaulted nullable parameter", "User $user = null"],
+  ])("returns null for %s", (_name, parameter) => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      `    public function run(${parameter}): void`,
+      "    {",
+      "        $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for a local variable that is not a parameter", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(): void",
+      "    {",
+      "        $user = new User();",
+      "        $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for an outer parameter captured inside an arrow function", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $callback = fn () => $user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for an outer parameter used inside a closure via use", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $callback = function () use ($user) {",
+      "            $user->missing();",
+      "        };",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for a non-call property access on a typed parameter", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user->missing = 1;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("keeps rejecting a static call on a variable receiver", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user::missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user::missing") + "$user::".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for a nullsafe access on a typed parameter", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $user?->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user?->missing") + "$user?->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("returns null for a dynamic property receiver", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $this->$user->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("missing");
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("ignores a typed-parameter usage inside a heredoc", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): string",
+      "    {",
+      "        return <<<EOT",
+      "        value $user->missing()",
+      "        EOT;",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$user->missing") + "$user->".length;
+
+    expect(planPhpCreateFromUsage(source, offset)).toBeNull();
+  });
+
+  it("keeps `$this->` usages on the self path", () => {
+    const source = [
+      "<?php",
+      "",
+      "class Service",
+      "{",
+      "    public function run(User $user): void",
+      "    {",
+      "        $this->missing();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const offset = source.indexOf("$this->missing") + "$this->".length;
+
+    const plan = planPhpCreateFromUsage(source, offset);
+
+    expect(plan?.member).toEqual({
+      argTypes: [],
+      kind: "method",
+      name: "missing",
+    });
+    expect(plan?.owner?.name).toBe("Service");
   });
 });
 

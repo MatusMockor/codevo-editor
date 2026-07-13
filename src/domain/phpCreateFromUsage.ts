@@ -75,7 +75,7 @@ export interface PhpCreateDeclarationIdentity {
 
 export interface PhpCreateFromUsagePlan {
   member: MissingThisMember;
-  owner: PhpCreateDeclarationIdentity;
+  owner?: PhpCreateDeclarationIdentity;
   sameFileExternal?: PhpCreateDeclarationIdentity;
   sameFileParent?: PhpCreateDeclarationIdentity;
 }
@@ -177,6 +177,17 @@ export function planPhpCreateFromUsage(
   }
 
   const enclosingType = enclosingTypeDeclaration(masked, access.nameStart);
+
+  if (access.receiver === "variable") {
+    return planTypedVariableExternalMember(
+      source,
+      masked,
+      usage,
+      enclosingType,
+      access.receiverClass ?? "",
+      access.nameStart,
+    );
+  }
 
   if (!enclosingType) {
     return null;
@@ -293,7 +304,13 @@ export function renderCreatePropertyStub(
  * original instance access; `self` / `static` are static accesses on the
  * current class; `parent` targets the parent class's body (cross-file).
  */
-type Receiver = "this" | "self" | "static" | "parent" | "external";
+type Receiver =
+  | "this"
+  | "self"
+  | "static"
+  | "parent"
+  | "external"
+  | "variable";
 
 interface MemberAccess {
   nameStart: number;
@@ -490,7 +507,10 @@ function locateMemberAccess(
     return { nameStart, receiver: token.receiver };
   }
 
-  return locateExternalReceiverAccess(masked, nameStart);
+  return (
+    locateExternalReceiverAccess(masked, nameStart) ??
+    locateTypedVariableReceiverAccess(masked, nameStart)
+  );
 }
 
 function locateExternalReceiverAccess(
@@ -526,6 +546,211 @@ function locateExternalReceiverAccess(
 
   return { nameStart, receiver: "external", receiverClass };
 }
+
+function locateTypedVariableReceiverAccess(
+  masked: string,
+  nameStart: number,
+): MemberAccess | null {
+  const operatorStart = nameStart - 2;
+
+  if (operatorStart <= 0 || masked.slice(operatorStart, nameStart) !== "->") {
+    return null;
+  }
+
+  const receiverStart = identifierStartAt(masked, operatorStart - 1);
+
+  if (receiverStart === null || masked[receiverStart - 1] !== "$") {
+    return null;
+  }
+
+  const beforeDollar = masked[receiverStart - 2] || "";
+
+  if (beforeDollar === "$" || beforeDollar === ">" || beforeDollar === ":") {
+    return null;
+  }
+
+  const variableName = masked.slice(receiverStart, operatorStart);
+
+  if (variableName === "this") {
+    return null;
+  }
+
+  const receiverClass = enclosingSignatureParameterType(
+    masked,
+    nameStart,
+    variableName,
+  );
+
+  if (!receiverClass) {
+    return null;
+  }
+
+  return { nameStart, receiver: "variable", receiverClass };
+}
+
+interface CallableSignature {
+  bodyEnd: number;
+  bodyStart: number;
+  paramsEnd: number;
+  paramsStart: number;
+}
+
+function enclosingSignatureParameterType(
+  masked: string,
+  offset: number,
+  variableName: string,
+): string | null {
+  const signature = innermostCallableSignature(masked, offset);
+
+  if (!signature) {
+    return null;
+  }
+
+  const parameter = signatureParameter(masked, signature, variableName);
+
+  if (!parameter) {
+    return null;
+  }
+
+  return classLikeParameterType(parameter, variableName);
+}
+
+function innermostCallableSignature(
+  masked: string,
+  offset: number,
+): CallableSignature | null {
+  const signatures = [
+    ...functionCallableSignatures(masked),
+    ...arrowCallableSignatures(masked),
+  ].filter(
+    (signature) => offset > signature.bodyStart && offset < signature.bodyEnd,
+  );
+  let innermost: CallableSignature | null = null;
+
+  for (const signature of signatures) {
+    if (innermost && signature.bodyStart <= innermost.bodyStart) {
+      continue;
+    }
+
+    innermost = signature;
+  }
+
+  return innermost;
+}
+
+function functionCallableSignatures(masked: string): CallableSignature[] {
+  const pattern =
+    /\bfunction\b[^\S\r\n]*&?[^\S\r\n]*(?:[A-Za-z_][A-Za-z0-9_]*\s*)?\(/g;
+  const signatures: CallableSignature[] = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const openParen = start + match[0].length - 1;
+    const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    const bodyStart = executableBodyStart(masked, closeParen + 1);
+
+    if (bodyStart === null) {
+      continue;
+    }
+
+    const bodyEnd = matchingPairOffset(masked, bodyStart, "{", "}");
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    signatures.push({
+      bodyEnd,
+      bodyStart,
+      paramsEnd: closeParen,
+      paramsStart: openParen + 1,
+    });
+  }
+
+  return signatures;
+}
+
+function arrowCallableSignatures(masked: string): CallableSignature[] {
+  const pattern = /\bfn\s*&?\s*\(/g;
+  const signatures: CallableSignature[] = [];
+
+  for (const match of masked.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const openParen = start + match[0].length - 1;
+    const closeParen = matchingPairOffset(masked, openParen, "(", ")");
+
+    if (closeParen === null) {
+      continue;
+    }
+
+    const arrow = masked.indexOf("=>", closeParen + 1);
+
+    if (arrow < 0) {
+      continue;
+    }
+
+    if (!/^[^;{}()]*$/.test(masked.slice(closeParen + 1, arrow))) {
+      continue;
+    }
+
+    signatures.push({
+      bodyEnd: arrowExpressionEnd(masked, arrow + 2),
+      bodyStart: arrow + 1,
+      paramsEnd: closeParen,
+      paramsStart: openParen + 1,
+    });
+  }
+
+  return signatures;
+}
+
+function signatureParameter(
+  masked: string,
+  signature: CallableSignature,
+  variableName: string,
+): string | null {
+  const segments = splitArguments(
+    masked,
+    masked,
+    signature.paramsStart,
+    signature.paramsEnd,
+  );
+  const declaration = new RegExp(String.raw`\$${variableName}\b`);
+
+  return segments.find((segment) => declaration.test(segment)) ?? null;
+}
+
+function classLikeParameterType(
+  parameter: string,
+  variableName: string,
+): string | null {
+  const pattern = new RegExp(
+    String.raw`^(?:(?:public|protected|private|readonly)\s+)*(\\?[A-Za-z_][A-Za-z0-9_\\]*)\s+&?\s*\$${variableName}$`,
+  );
+  const type = pattern.exec(parameter.trim())?.[1];
+
+  if (!type || NON_CLASS_PARAMETER_TYPES.has(type.toLowerCase())) {
+    return null;
+  }
+
+  return type;
+}
+
+const NON_CLASS_PARAMETER_TYPES = new Set([
+  ...BUILTIN_TYPES,
+  "parent",
+  "private",
+  "protected",
+  "public",
+  "readonly",
+  "self",
+  "static",
+]);
 
 /**
  * Resolve the start offset of the member identifier that the cursor is on,
@@ -603,7 +828,7 @@ function readMemberUsage(
  * Covers `self::`, `static::` and `parent::`.
  */
 function usesScopeResolution(receiver: Receiver): boolean {
-  return receiver !== "this";
+  return receiver !== "this" && receiver !== "variable";
 }
 
 /**
@@ -708,7 +933,7 @@ function planSameFileExternalMember(
 
   if (!declared) {
     return {
-      member: toMissingExternalMember(source, masked, usage, targetClass),
+      member: toMissingExternalMember(source, masked, usage, targetClass, true),
       owner: declarationIdentity(enclosingType),
     };
   }
@@ -731,11 +956,85 @@ function planSameFileExternalMember(
     return { member: toMissingMember(source, masked, usage, "self"), owner };
   }
 
+  if (sameFileSiblingMayInterceptMembers(source, masked, declared)) {
+    return null;
+  }
+
   return {
-    member: toMissingExternalMember(source, masked, usage, targetClass),
+    member: toMissingExternalMember(source, masked, usage, targetClass, true),
     owner,
     sameFileExternal,
   };
+}
+
+function planTypedVariableExternalMember(
+  source: string,
+  masked: string,
+  usage: MemberUsage,
+  enclosingType: EnclosingTypeDeclaration | null,
+  targetClass: string,
+  usageOffset: number,
+): PhpCreateFromUsagePlan | null {
+  if (usage.kind !== "method" || !targetClass) {
+    return null;
+  }
+
+  const anchor = enclosingType ?? {
+    headerStart: usageOffset,
+    namespace: namespaceAtOffset(masked, usageOffset),
+  };
+  const declared = sameFileTypeDeclaration(masked, targetClass, anchor);
+  const owner = enclosingType ? declarationIdentity(enclosingType) : undefined;
+
+  if (!declared) {
+    return {
+      member: toMissingExternalMember(source, masked, usage, targetClass, false),
+      ...(owner ? { owner } : {}),
+    };
+  }
+
+  if (declared.kind !== "class") {
+    return null;
+  }
+
+  const sameFileExternal = declarationIdentity(declared);
+
+  if (
+    memberExists(source, usage.name, usage.kind, sameFileExternal.bodyStartOffset)
+  ) {
+    return null;
+  }
+
+  if (owner && sameFileExternal.bodyStartOffset === owner.bodyStartOffset) {
+    return { member: toMissingMember(source, masked, usage, "this"), owner };
+  }
+
+  if (sameFileSiblingMayInterceptMembers(source, masked, declared)) {
+    return null;
+  }
+
+  return {
+    member: toMissingExternalMember(source, masked, usage, targetClass, false),
+    ...(owner ? { owner } : {}),
+    sameFileExternal,
+  };
+}
+
+function sameFileSiblingMayInterceptMembers(
+  source: string,
+  masked: string,
+  declared: EnclosingTypeDeclaration,
+): boolean {
+  if (enclosingExtendsClause(masked, declared)) {
+    return true;
+  }
+
+  const selector = { bodyStartOffset: declared.bodyStart };
+
+  return (
+    phpClassDeclaresMember(source, "__callStatic", "method", selector) ||
+    phpClassDeclaresMember(source, "__call", "method", selector)
+  );
 }
 
 function toMissingExternalMember(
@@ -743,6 +1042,7 @@ function toMissingExternalMember(
   masked: string,
   usage: MemberUsage,
   targetClass: string,
+  isStatic: boolean,
 ): MissingThisMember {
   if (usage.kind === "constant") {
     return {
@@ -755,7 +1055,7 @@ function toMissingExternalMember(
 
   return {
     argTypes: inferArgumentTypes(source, masked, usage),
-    isStatic: true,
+    ...(isStatic ? { isStatic: true } : {}),
     kind: "method",
     name: usage.name,
     target: "external",
@@ -1008,10 +1308,15 @@ function sameFileClassDeclaration(
   return declarationIdentity(declared);
 }
 
+interface DeclarationReferenceScope {
+  headerStart: number;
+  namespace: string | null;
+}
+
 function sameFileTypeDeclaration(
   masked: string,
   reference: string,
-  owner: EnclosingTypeDeclaration,
+  owner: DeclarationReferenceScope,
 ): EnclosingTypeDeclaration | null {
   const expectedFqn = resolveDeclarationReference(
     masked,
@@ -1029,7 +1334,7 @@ function sameFileTypeDeclaration(
 function resolveDeclarationReference(
   masked: string,
   reference: string,
-  owner: EnclosingTypeDeclaration,
+  owner: DeclarationReferenceScope,
 ): string {
   if (reference.startsWith("\\")) {
     return reference.slice(1);
@@ -1057,7 +1362,7 @@ function resolveDeclarationReference(
 function importedClassReference(
   masked: string,
   shortName: string,
-  owner: EnclosingTypeDeclaration,
+  owner: DeclarationReferenceScope,
 ): string | null {
   const pattern = /\buse\s+([^;]+);/gi;
   const ownerDepth = braceDepthAt(masked, owner.headerStart);

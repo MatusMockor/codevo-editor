@@ -522,6 +522,125 @@ class Service
   });
 });
 
+describe("buildPhpCreateMemberWorkspaceCodeAction — typed parameter instance targets", () => {
+  const INSTANCE_SOURCE = `<?php
+
+namespace App;
+
+class Service
+{
+    public function run(Registry $registry): void
+    {
+        $registry->missing();
+    }
+}
+`;
+
+  it("offers a non-static create-method action for a typed parameter receiver", async () => {
+    const resolvePhpClassSourcePaths = vi.fn(async () => [TARGET_PATH]);
+    const action = await buildAction({
+      readTestFileIfExists: vi.fn(async () => REGISTRY_SOURCE),
+      resolvePhpClassSourcePaths,
+    })(
+      INSTANCE_SOURCE,
+      rangeAfter(INSTANCE_SOURCE, "$registry->", "missing"),
+      () => true,
+    );
+
+    expect(resolvePhpClassSourcePaths).toHaveBeenCalledWith("App\\Registry");
+    expect(action?.title).toBe("Create method 'missing' in 'Registry'");
+    expect(action?.isPreferred).toBe(true);
+    expect(action?.kind).toBe("quickfix");
+    const newText = action?.workspaceEdit?.changes[TARGET_URI]?.[0]?.newText;
+
+    expect(newText).toContain("public function missing()");
+    expect(newText).not.toContain("static");
+  });
+
+  it("resolves an imported parameter typehint through the use statement", async () => {
+    const source = INSTANCE_SOURCE.replace(
+      "namespace App;",
+      "namespace App;\n\nuse Vendor\\Registry;",
+    );
+    const resolvePhpClassSourcePaths = vi.fn(async () => [TARGET_PATH]);
+    const action = await buildAction({
+      readTestFileIfExists: vi.fn(async () =>
+        REGISTRY_SOURCE.replace("namespace App;", "namespace Vendor;"),
+      ),
+      resolvePhpClassSourcePaths,
+    })(source, rangeAfter(source, "$registry->", "missing"), () => true);
+
+    expect(resolvePhpClassSourcePaths).toHaveBeenCalledWith(
+      "Vendor\\Registry",
+    );
+    expect(action?.title).toBe("Create method 'missing' in 'Registry'");
+  });
+
+  it("returns null when the target class extends another class", async () => {
+    const action = await buildAction({
+      readTestFileIfExists: vi.fn(async () =>
+        REGISTRY_SOURCE.replace("class Registry", "class Registry extends Base"),
+      ),
+      resolvePhpClassSourcePaths: vi.fn(async () => [TARGET_PATH]),
+    })(
+      INSTANCE_SOURCE,
+      rangeAfter(INSTANCE_SOURCE, "$registry->", "missing"),
+      () => true,
+    );
+
+    expect(action).toBeNull();
+  });
+
+  it("returns null when the target class declares __call", async () => {
+    const action = await buildAction({
+      readTestFileIfExists: vi.fn(async () =>
+        REGISTRY_SOURCE.replace(
+          "class Registry\n{\n}",
+          "class Registry\n{\n    public function __call($name, $arguments)\n    {\n    }\n}",
+        ),
+      ),
+      resolvePhpClassSourcePaths: vi.fn(async () => [TARGET_PATH]),
+    })(
+      INSTANCE_SOURCE,
+      rangeAfter(INSTANCE_SOURCE, "$registry->", "missing"),
+      () => true,
+    );
+
+    expect(action).toBeNull();
+  });
+
+  it("returns null for a parameter typehint under a vendor PSR-4 namespace", async () => {
+    const source = INSTANCE_SOURCE.replace(
+      "namespace App;",
+      "namespace App;\n\nuse Illuminate\\Support\\Registry;",
+    );
+    const resolvePhpClassSourcePaths = vi.fn(async () => [TARGET_PATH]);
+    const action = await buildAction({ resolvePhpClassSourcePaths })(
+      source,
+      rangeAfter(source, "$registry->", "missing"),
+      () => true,
+    );
+
+    expect(action).toBeNull();
+    expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the target resolves into the vendor directory for an instance receiver", async () => {
+    const action = await buildAction({
+      readTestFileIfExists: vi.fn(async () => REGISTRY_SOURCE),
+      resolvePhpClassSourcePaths: vi.fn(async () => [
+        "/workspace/vendor/acme/src/Registry.php",
+      ]),
+    })(
+      INSTANCE_SOURCE,
+      rangeAfter(INSTANCE_SOURCE, "$registry->", "missing"),
+      () => true,
+    );
+
+    expect(action).toBeNull();
+  });
+});
+
 describe("buildPhpCreateMemberWorkspaceCodeAction — workspace containment", () => {
   it("returns null when the target resolves into the vendor directory", async () => {
     const readTestFileIfExists = vi.fn(async () => REGISTRY_SOURCE);
