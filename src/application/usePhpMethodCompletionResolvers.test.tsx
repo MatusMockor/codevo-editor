@@ -48,12 +48,10 @@ function makeDeps(
   overrides: Partial<PhpMethodCompletionResolverDependencies> = {},
 ): PhpMethodCompletionResolverDependencies {
   return {
-    activePhpFrameworkProviders: [],
     collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
     currentPhpFrameworkSourceContext: () => ({ workspaceSources: [] }),
     frameworkRuntime: LARAVEL_RUNTIME,
-    isLaravelFrameworkActive: true,
     phpNormalizedReceiverExpressionIsThis: (receiverExpression) =>
       receiverExpression.trim() === "$this",
     resolvePhpClassReference: (_source, className) => className,
@@ -102,7 +100,7 @@ function renderHook(deps: PhpMethodCompletionResolverDependencies) {
 }
 
 describe("usePhpMethodCompletionResolvers", () => {
-  it("keeps generic runtime inert even when legacy Laravel fallback is true", async () => {
+  it("uses runtime Laravel state for the Laravel gate", async () => {
     const source = "<?php\n$post->";
     const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
       method("whereEmail", { kind: "magic-where" }),
@@ -119,7 +117,6 @@ describe("usePhpMethodCompletionResolvers", () => {
       collectPhpFrameworkSyntheticMethodsForClass,
       collectPhpMethodsForClass,
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       resolvePhpFrameworkBuilderModelType,
       resolvePhpExpressionType: vi.fn(async () => "App\\Models\\Post"),
     });

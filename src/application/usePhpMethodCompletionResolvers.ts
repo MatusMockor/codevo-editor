@@ -4,10 +4,8 @@ import {
   phpMethodCompletionsFromSource,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
 import { createPhpFrameworkMethodCompletionSemanticsAdapters } from "./phpFrameworkMethodCompletionSemanticsAdapters";
-import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpTraitThisCompletionContext {
@@ -21,15 +19,13 @@ interface PhpFrameworkSourceRegistryContext {
 }
 
 export interface PhpMethodCompletionResolverDependencies {
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   collectPhpFrameworkSyntheticMethodsForClass(
     className: string,
     options?: { isStatic?: boolean },
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
   currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   phpNormalizedReceiverExpressionIsThis(receiverExpression: string): boolean;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpFrameworkBuilderModelType(
@@ -61,41 +57,26 @@ export function usePhpMethodCompletionResolvers(
   dependencies: PhpMethodCompletionResolverDependencies,
 ): PhpMethodCompletionResolvers {
   const {
-    activePhpFrameworkProviders,
     collectPhpFrameworkSyntheticMethodsForClass,
     collectPhpMethodsForClass,
     currentPhpFrameworkSourceContext,
     frameworkRuntime,
-    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
     resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
-  const activeFrameworkRuntime = useMemo(
-    () =>
-      phpFrameworkRuntimeContextFromDependencies({
-        activePhpFrameworkProviders,
-        frameworkRuntime,
-        isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
-      }),
-    [
-      activePhpFrameworkProviders,
-      frameworkRuntime,
-      legacyIsLaravelFrameworkActive,
-    ],
-  );
-  const frameworkProviders = activeFrameworkRuntime.providers;
+  const frameworkProviders = frameworkRuntime.providers;
   const frameworkSemantics = useMemo(
     () =>
       createPhpFrameworkMethodCompletionSemanticsAdapters({
         collectPhpFrameworkSyntheticMethodsForClass,
-        frameworkRuntime: activeFrameworkRuntime,
+        frameworkRuntime,
         resolvePhpFrameworkBuilderModelType,
       }),
     [
       collectPhpFrameworkSyntheticMethodsForClass,
-      activeFrameworkRuntime,
+      frameworkRuntime,
       resolvePhpFrameworkBuilderModelType,
     ],
   );

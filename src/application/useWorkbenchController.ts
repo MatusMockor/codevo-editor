@@ -7492,7 +7492,6 @@ export function useWorkbenchController(
     resolvePhpReceiverMethodCompletions,
     resolvePhpStaticMethodCompletions,
   } = usePhpMethodCompletionResolvers({
-    activePhpFrameworkProviders,
     collectPhpFrameworkSyntheticMethodsForClass,
     collectPhpMethodsForClass,
     currentPhpFrameworkSourceContext,
