@@ -55,7 +55,7 @@ function makeDeps(
     openDirectPhpMethodTarget: vi.fn(async () => false),
     openDirectPhpPropertyTarget: vi.fn(async () => false),
     openNavigationTarget: vi.fn(async () => true),
-    openPhpModelAttributeTarget: vi.fn(async () => false),
+    openPhpFrameworkModelAttributeTarget: vi.fn(async () => false),
     readNavigationFileContent: vi.fn(async () => ""),
     relativeWorkspacePath: (root, path) =>
       path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path,
@@ -705,7 +705,7 @@ describe("provideBladeDefinition", () => {
 
   it("falls back from missing property to Laravel model attribute then direct property", async () => {
     const openDirectPhpPropertyTarget = vi.fn(async () => true);
-    const openPhpModelAttributeTarget = vi.fn(async () => false);
+    const openPhpFrameworkModelAttributeTarget = vi.fn(async () => false);
     const source = "{{ $comment->title }}";
 
     await expect(
@@ -714,14 +714,14 @@ describe("provideBladeDefinition", () => {
         offsetOf(source, "title"),
         makeDeps({
           openDirectPhpPropertyTarget,
-          openPhpModelAttributeTarget,
+          openPhpFrameworkModelAttributeTarget,
           resolveBladeViewVariableTypeForView: vi.fn(
             async () => "App\\Models\\Comment",
           ),
         }),
       ),
     ).resolves.toBe(true);
-    expect(openPhpModelAttributeTarget).toHaveBeenCalledWith(
+    expect(openPhpFrameworkModelAttributeTarget).toHaveBeenCalledWith(
       "App\\Models\\Comment",
       "title",
     );

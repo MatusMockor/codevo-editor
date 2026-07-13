@@ -1,5 +1,5 @@
 /**
- * Blade (Laravel) navigation + completion intelligence, extracted VERBATIM from
+ * Blade navigation + completion intelligence, extracted VERBATIM from
  * the workbench controller as a sibling strangler module (mirrors
  * `useLatteIntelligence` / `useNeonIntelligence`): the controller keeps only a
  * thin mount that injects the shared collaborators, while every Blade decision
@@ -12,13 +12,13 @@
  *     `$var->member` completions, and `route()`/`config()`/`trans()`/`__()`
  *     helper literals.
  *   - `provideBladeCodeActions`: the "create missing view" quickfix.
- *   - `provideBladeDefinition` (Cmd+B): view / component navigation plus Laravel
+ *   - `provideBladeDefinition` (Cmd+B): view / component navigation plus framework
  *     helper-literal and typed view-data member jumps.
  *   - the per-root view-data / component-name caches and their invalidation.
  *
  * ISOLATION (project rule): each async flow captures the requested workspace
  * root up front and re-checks the LIVE root after every await, dropping stale
- * results so nothing leaks across project tabs. The heavy PHP/Laravel resolvers,
+ * results so nothing leaks across project tabs. The heavy PHP framework resolvers,
  * target collectors and navigation primitives are injected (pass-through) so the
  * expensive engines are owned by the controller and merely wired here.
  */
@@ -71,7 +71,7 @@ export function useBladeIntelligence(
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
     openNavigationTarget,
-    openPhpModelAttributeTarget,
+    openPhpFrameworkModelAttributeTarget,
     readNavigationFileContent,
     relativeWorkspacePath,
     resolvePhpClassPropertyOrRelationType,
@@ -105,7 +105,7 @@ export function useBladeIntelligence(
   });
 
   // Completion for `.blade.php` documents: `@directive` names, view names,
-  // `<x-...>` component names, Blade variables, and Laravel helper literals.
+  // `<x-...>` component names, Blade variables, and framework helper literals.
   const provideBladeCompletions = useCallback(
     async (
       source: string,
@@ -187,7 +187,7 @@ export function useBladeIntelligence(
         openDirectPhpMethodTarget,
         openDirectPhpPropertyTarget,
         openNavigationTarget,
-        openPhpModelAttributeTarget,
+        openPhpFrameworkModelAttributeTarget,
         readNavigationFileContent,
         relativeWorkspacePath,
         resolveBladeViewVariableTypeForView,
@@ -205,7 +205,7 @@ export function useBladeIntelligence(
       openDirectPhpMethodTarget,
       openDirectPhpPropertyTarget,
       openNavigationTarget,
-      openPhpModelAttributeTarget,
+      openPhpFrameworkModelAttributeTarget,
       readNavigationFileContent,
       relativeWorkspacePath,
       resolveBladeViewVariableTypeForView,

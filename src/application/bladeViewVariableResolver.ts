@@ -1,6 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { phpLaravelCollectionModelTypeCandidate } from "../domain/phpFrameworkLaravel";
-import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import {
   bladeForeachLoopBindingsAt,
   bladeViewVariableSightingsForView,
@@ -16,6 +15,7 @@ import {
   bladeShortTypeName,
   editorPositionAtOffset,
 } from "./bladePhpCompletionContext";
+import type { BladeViewVariable } from "./bladeIntelligenceContracts";
 
 const BLADE_FOREACH_MAX_RELATION_CHAIN_LENGTH = 8;
 
@@ -43,11 +43,11 @@ export interface BladeViewVariableResolver {
     viewName: string,
     source: string,
     offset: number,
-    alreadyListed: readonly PhpLaravelViewVariable[],
-  ) => Promise<PhpLaravelViewVariable[]>;
+    alreadyListed: readonly BladeViewVariable[],
+  ) => Promise<BladeViewVariable[]>;
   collectBladeViewVariablesWithDisplayTypes: (
     viewName: string,
-  ) => Promise<PhpLaravelViewVariable[]>;
+  ) => Promise<BladeViewVariable[]>;
   resolveBladeForeachElementTypeForVariable: (
     viewName: string,
     source: string,
@@ -247,7 +247,7 @@ export function createBladeViewVariableResolver(
 
   const collectBladeViewVariables = async (
     viewName: string,
-  ): Promise<PhpLaravelViewVariable[]> => {
+  ): Promise<BladeViewVariable[]> => {
     const requestedRoot = workspaceRoot;
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -269,8 +269,8 @@ export function createBladeViewVariableResolver(
     viewName: string,
     source: string,
     offset: number,
-    alreadyListed: readonly PhpLaravelViewVariable[],
-  ): Promise<PhpLaravelViewVariable[]> => {
+    alreadyListed: readonly BladeViewVariable[],
+  ): Promise<BladeViewVariable[]> => {
     const requestedRoot = workspaceRoot;
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -278,7 +278,7 @@ export function createBladeViewVariableResolver(
     const listedNames = new Set(
       alreadyListed.map((variable) => variable.name.toLowerCase()),
     );
-    const loopVariables: PhpLaravelViewVariable[] = [];
+    const loopVariables: BladeViewVariable[] = [];
     const seenNames = new Set<string>();
 
     for (const binding of bindings) {
@@ -316,7 +316,7 @@ export function createBladeViewVariableResolver(
 
   const collectBladeViewVariablesWithDisplayTypes = async (
     viewName: string,
-  ): Promise<PhpLaravelViewVariable[]> => {
+  ): Promise<BladeViewVariable[]> => {
     const requestedRoot = workspaceRoot;
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -326,7 +326,7 @@ export function createBladeViewVariableResolver(
       return [];
     }
 
-    const enriched: PhpLaravelViewVariable[] = [];
+    const enriched: BladeViewVariable[] = [];
 
     for (const variable of variables) {
       if (variable.typeHint) {

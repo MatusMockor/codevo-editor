@@ -3,6 +3,7 @@ import type {
   FileEntry,
   TextSearchGateway,
 } from "../domain/workspace";
+import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import type {
@@ -27,9 +28,11 @@ export interface BladeCompletionItem {
   replaceEnd?: number;
 }
 
+export type BladeViewVariable = PhpLaravelViewVariable;
+
 /**
  * Collaborators the Blade intelligence needs from the workbench shell. The heavy
- * PHP/Laravel resolvers, target collectors and navigation primitives are
+ * PHP framework resolvers, target collectors and navigation primitives are
  * injected so expensive engines stay owned by the controller.
  */
 export interface BladeIntelligenceDependencies {
@@ -83,7 +86,7 @@ export interface BladeIntelligenceDependencies {
     methodName: string,
     request?: NavigationRequest,
   ) => Promise<boolean>;
-  openPhpModelAttributeTarget: (
+  openPhpFrameworkModelAttributeTarget: (
     className: string,
     attributeName: string,
   ) => Promise<boolean>;

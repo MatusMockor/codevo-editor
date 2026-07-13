@@ -6,12 +6,12 @@ import {
 import { bladeFrameworkHelperCompletionContextAt } from "../domain/bladeFrameworkHelperCompletions";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { phpFrameworkTemplateNameFromRelativePath } from "../domain/phpFrameworkProviders";
-import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   BladeCompletionItem,
   BladeIntelligenceDependencies,
+  BladeViewVariable,
 } from "./bladeIntelligenceContracts";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
@@ -42,11 +42,11 @@ export interface BladeCompletionProviderDependencies {
     viewName: string,
     source: string,
     offset: number,
-    alreadyListed: readonly PhpLaravelViewVariable[],
-  ) => Promise<PhpLaravelViewVariable[]>;
+    alreadyListed: readonly BladeViewVariable[],
+  ) => Promise<BladeViewVariable[]>;
   collectBladeViewVariablesWithDisplayTypes: (
     viewName: string,
-  ) => Promise<PhpLaravelViewVariable[]>;
+  ) => Promise<BladeViewVariable[]>;
   collectConfigTargets: BladeIntelligenceDependencies["collectConfigTargets"];
   collectNamedRouteTargets: BladeIntelligenceDependencies["collectNamedRouteTargets"];
   collectTranslationTargets: BladeIntelligenceDependencies["collectTranslationTargets"];

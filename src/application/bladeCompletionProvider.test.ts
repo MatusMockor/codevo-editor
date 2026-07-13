@@ -3,8 +3,8 @@ import {
   phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
-import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import type { BladeViewVariable } from "./bladeIntelligenceContracts";
 import { provideBladeCompletions } from "./bladeCompletionProvider";
 import type { BladeCompletionProviderDependencies } from "./bladeCompletionProvider";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
@@ -74,7 +74,7 @@ describe("provideBladeCompletions", () => {
   });
 
   it("returns view-variable completions before built-ins", async () => {
-    const invoiceVariable: PhpLaravelViewVariable = {
+    const invoiceVariable: BladeViewVariable = {
       detail: "controller data",
       name: "$invoice",
       typeHint: "Invoice",
@@ -292,7 +292,7 @@ describe("provideBladeCompletions", () => {
     ).resolves.toEqual([]);
   });
 
-  it("does not collect Laravel helper literals without framework string-literal support", async () => {
+  it("does not collect framework helper literals without framework string-literal support", async () => {
     const collectNamedRouteTargets = vi.fn(async () => [
       {
         name: "dashboard",
@@ -420,7 +420,7 @@ describe("provideBladeCompletions", () => {
     ]);
   });
 
-  it("does not collect Laravel helper literals for a custom string-literal provider", async () => {
+  it("does not collect framework helper literals for a custom string-literal provider", async () => {
     const routeReferenceAt = vi.fn(() => ({
       call: "route",
       name: "dash",

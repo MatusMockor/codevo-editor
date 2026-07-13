@@ -1,7 +1,9 @@
-import type { PhpLaravelViewVariable } from "../domain/phpLaravelViewData";
-import type { BladeCompletionItem } from "./bladeIntelligenceContracts";
+import type {
+  BladeCompletionItem,
+  BladeViewVariable,
+} from "./bladeIntelligenceContracts";
 
-export const BLADE_BUILT_IN_VARIABLES: readonly PhpLaravelViewVariable[] = [
+export const BLADE_BUILT_IN_VARIABLES: readonly BladeViewVariable[] = [
   {
     detail: "Laravel Blade variable",
     name: "$errors",
@@ -19,7 +21,7 @@ export const BLADE_BUILT_IN_VARIABLES: readonly PhpLaravelViewVariable[] = [
 ] as const;
 
 export function bladeVariableCompletionItems(
-  variables: readonly PhpLaravelViewVariable[],
+  variables: readonly BladeViewVariable[],
   prefix: string,
   range: { replaceEnd: number; replaceStart: number },
 ): BladeCompletionItem[] {
