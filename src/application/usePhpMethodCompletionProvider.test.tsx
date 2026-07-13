@@ -87,7 +87,6 @@ function makeDeps(
       path: `${ROOT}/routes/web.php`,
       savedContent: "",
     },
-    activePhpFrameworkProviders: [],
     collectAuthGuardTargets: vi.fn(async () => []),
     collectBroadcastConnectionTargets: vi.fn(async () => []),
     collectCacheStoreTargets: vi.fn(async () => []),
@@ -110,7 +109,6 @@ function makeDeps(
     currentWorkspaceRootRef: { current: ROOT },
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     frameworkRuntime: LARAVEL_RUNTIME,
-    isLaravelFrameworkActive: true,
     resolvePhpClassReference: vi.fn(
       (_source: string, className: string) => `App\\Http\\Controllers\\${className}`,
     ),
@@ -294,7 +292,7 @@ $comment->lo`;
     harness.unmount();
   });
 
-  it("does not use legacy Laravel magic when runtime is generic", async () => {
+  it("uses runtime Laravel state for the Laravel gate", async () => {
     const source = `<?php
 $comment->lo`;
     const ensurePhpFrameworkSourceCollectionsLoaded = vi.fn(
@@ -303,7 +301,6 @@ $comment->lo`;
     const deps = makeDeps({
       ensurePhpFrameworkSourceCollectionsLoaded,
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
       resolvePhpReceiverMethodCompletions: vi.fn(async () => [
         method("load"),
       ]),
@@ -320,10 +317,9 @@ $comment->lo`;
     harness.unmount();
   });
 
-  it("keeps scoped Laravel completions for legacy callers without runtime context", async () => {
+  it("provides scoped Laravel completions under the Laravel runtime", async () => {
     const source = "<?php\nreturn Auth::guard('ad');";
     const deps = makeDeps({
-      activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
       collectAuthGuardTargets: vi.fn(async () => [
         {
           guardName: "admin",
@@ -333,8 +329,7 @@ $comment->lo`;
           relativePath: "config/auth.php",
         },
       ]),
-      frameworkRuntime: undefined,
-      isLaravelFrameworkActive: true,
+      frameworkRuntime: LARAVEL_RUNTIME,
     });
     const harness = renderHook(deps);
 
@@ -348,7 +343,7 @@ $comment->lo`;
     harness.unmount();
   });
 
-  it("keeps Laravel method completion adapters for boolean-only legacy callers", async () => {
+  it("keeps Laravel method completion adapters active under the Laravel runtime", async () => {
     const routeSource = `<?php
 use App\\Http\\Controllers\\ReportController;
 
@@ -364,14 +359,12 @@ Comment::with('par')->first();
       async () => undefined,
     );
     const deps = makeDeps({
-      activePhpFrameworkProviders: [],
       collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => [
         method("parent"),
       ]),
       collectPhpMethodsForClass: vi.fn(async () => [method("index")]),
       ensurePhpFrameworkSourceCollectionsLoaded,
-      frameworkRuntime: undefined,
-      isLaravelFrameworkActive: true,
+      frameworkRuntime: LARAVEL_RUNTIME,
       resolvePhpFrameworkRelationPathOwnerType: vi.fn(
         async (className: string) => className,
       ),

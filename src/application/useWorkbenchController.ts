@@ -7504,7 +7504,6 @@ export function useWorkbenchController(
 
   const { providePhpMethodCompletions } = usePhpMethodCompletionProvider({
     activeDocument,
-    activePhpFrameworkProviders,
     collectAuthGuardTargets,
     collectBroadcastConnectionTargets,
     collectCacheStoreTargets,

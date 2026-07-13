@@ -8,13 +8,11 @@ import {
 import {
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
-  type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpFrameworkMethodCompletionProviderAdapters } from "./phpFrameworkMethodCompletionProviderAdapters";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import {
   resolvePhpFrameworkLiteralCompletions,
   type PhpFrameworkLiteralCompletionDependencies,
@@ -32,15 +30,13 @@ export interface PhpMethodCompletionProviderDependencies
     >,
     Omit<PhpFrameworkScopedCompletionDependencies, "isRequestStillCurrent"> {
   activeDocument: EditorDocument | null;
-  activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
   collectPhpFrameworkRelationCompletionsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpFrameworkBuilderModelType(
     source: string,
@@ -76,16 +72,8 @@ export interface PhpMethodCompletionProvider {
   ): Promise<PhpMethodCompletion[]>;
 }
 
-const legacyLaravelMethodCompletionFrameworkRuntime: Pick<
-  PhpFrameworkRuntimeContext,
-  "hasProvider"
-> = {
-  hasProvider: (providerId) => providerId === "laravel",
-};
-
 export function usePhpMethodCompletionProvider({
   activeDocument,
-  activePhpFrameworkProviders,
   collectAuthGuardTargets,
   collectBroadcastConnectionTargets,
   collectCacheStoreTargets,
@@ -108,7 +96,6 @@ export function usePhpMethodCompletionProvider({
   currentWorkspaceRootRef,
   ensurePhpFrameworkSourceCollectionsLoaded,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
   resolvePhpClassReference,
   resolvePhpFrameworkBuilderModelType,
   resolvePhpExpressionType,
@@ -117,24 +104,14 @@ export function usePhpMethodCompletionProvider({
   resolvePhpStaticMethodCompletions,
   workspaceRoot,
 }: PhpMethodCompletionProviderDependencies): PhpMethodCompletionProvider {
-  const activeFrameworkRuntime = phpFrameworkRuntimeContextFromDependencies({
-    activePhpFrameworkProviders,
-    frameworkRuntime,
-    isLaravelFrameworkActive: legacyIsLaravelFrameworkActive,
-  });
-  const frameworkProviders = activeFrameworkRuntime.providers;
-  const methodCompletionFrameworkRuntime =
-    frameworkRuntime ??
-    (legacyIsLaravelFrameworkActive
-      ? legacyLaravelMethodCompletionFrameworkRuntime
-      : activeFrameworkRuntime);
+  const frameworkProviders = frameworkRuntime.providers;
   const methodCompletionAdapter = useMemo(
     () =>
       createPhpFrameworkMethodCompletionProviderAdapters({
         collectPhpFrameworkRelationCompletionsForClass,
         collectPhpMethodsForClass,
         ensurePhpFrameworkSourceCollectionsLoaded,
-        frameworkRuntime: methodCompletionFrameworkRuntime,
+        frameworkRuntime,
         resolvePhpClassReference,
         resolvePhpFrameworkBuilderModelType,
         resolvePhpExpressionType,
@@ -144,7 +121,7 @@ export function usePhpMethodCompletionProvider({
       collectPhpFrameworkRelationCompletionsForClass,
       collectPhpMethodsForClass,
       ensurePhpFrameworkSourceCollectionsLoaded,
-      methodCompletionFrameworkRuntime,
+      frameworkRuntime,
       resolvePhpClassReference,
       resolvePhpFrameworkBuilderModelType,
       resolvePhpExpressionType,
@@ -198,7 +175,7 @@ export function usePhpMethodCompletionProvider({
                 path: activeDocument.path,
               }
             : null,
-          frameworkRuntime: activeFrameworkRuntime,
+          frameworkRuntime,
           position,
           source,
         },
@@ -340,7 +317,7 @@ export function usePhpMethodCompletionProvider({
       collectTranslationTargets,
       collectViewTargets,
       currentWorkspaceRootRef,
-      activeFrameworkRuntime,
+      frameworkRuntime,
       frameworkProviders,
       methodCompletionAdapter,
       resolvePhpReceiverMethodCompletions,
