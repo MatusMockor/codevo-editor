@@ -25,7 +25,6 @@ import {
 } from "./phpFrameworkTerminalModelRecoveryExpressionTypeAdapter";
 import {
   phpLaravelBuilderMagicExpressionTypeAdapter,
-  type PhpLaravelBuilderMagicExpressionTypeAdapterOptions,
 } from "./phpLaravelBuilderMagicExpressionTypeAdapter";
 import { phpLaravelDatabaseExpressionTypeAdapter } from "./phpLaravelDatabaseExpressionTypeAdapter";
 import { phpLaravelModelBuilderTransitionExpressionTypeAdapter } from "./phpLaravelModelBuilderTransitionExpressionTypeAdapter";
@@ -33,7 +32,6 @@ import { phpLaravelModelFluentExpressionTypeAdapter } from "./phpLaravelModelFlu
 import { phpLaravelQueryCallbackVariableExpressionTypeAdapter } from "./phpLaravelQueryCallbackVariableExpressionTypeAdapter";
 import {
   phpLaravelTerminalModelRecoveryExpressionTypeAdapter,
-  type PhpLaravelTerminalModelRecoveryExpressionTypeAdapterOptions,
 } from "./phpLaravelTerminalModelRecoveryExpressionTypeAdapter";
 
 export interface PhpExpressionTypeAdapterBundle {
@@ -45,9 +43,21 @@ export interface PhpExpressionTypeAdapterBundle {
   terminalModelRecoveryExpressionTypeAdapter: PhpFrameworkTerminalModelRecoveryExpressionTypeAdapter;
 }
 
-export interface PhpExpressionTypeAdapterDependencies
-  extends PhpLaravelBuilderMagicExpressionTypeAdapterOptions,
-    PhpLaravelTerminalModelRecoveryExpressionTypeAdapterOptions {}
+export interface PhpExpressionTypeAdapterDependencies {
+  phpClassHasDynamicBuilderFinder: (
+    className: string,
+    methodName: string,
+  ) => Promise<boolean>;
+  phpClassHasNamedBuilderScope: (
+    className: string,
+    methodName: string,
+  ) => Promise<boolean>;
+  resolvePropertyOrRelationType: (
+    className: string,
+    propertyName: string,
+    includeCollectionRelations?: boolean,
+  ) => Promise<string | null>;
+}
 
 interface PhpExpressionTypeAdapterContribution {
   providerId: string;
@@ -78,7 +88,12 @@ const PHP_EXPRESSION_TYPE_ADAPTER_CONTRIBUTIONS: readonly PhpExpressionTypeAdapt
       providerId: "laravel",
       createBundle: (dependencies) => ({
         builderMagicExpressionTypeAdapter:
-          phpLaravelBuilderMagicExpressionTypeAdapter(dependencies),
+          phpLaravelBuilderMagicExpressionTypeAdapter({
+            phpClassHasLaravelDynamicWhere:
+              dependencies.phpClassHasDynamicBuilderFinder,
+            phpClassHasLaravelLocalScope:
+              dependencies.phpClassHasNamedBuilderScope,
+          }),
         databaseExpressionTypeAdapter: phpLaravelDatabaseExpressionTypeAdapter,
         modelBuilderTransitionExpressionTypeAdapter:
           phpLaravelModelBuilderTransitionExpressionTypeAdapter,
@@ -87,7 +102,10 @@ const PHP_EXPRESSION_TYPE_ADAPTER_CONTRIBUTIONS: readonly PhpExpressionTypeAdapt
         queryCallbackVariableExpressionTypeAdapter:
           phpLaravelQueryCallbackVariableExpressionTypeAdapter,
         terminalModelRecoveryExpressionTypeAdapter:
-          phpLaravelTerminalModelRecoveryExpressionTypeAdapter(dependencies),
+          phpLaravelTerminalModelRecoveryExpressionTypeAdapter({
+            resolvePropertyOrRelationType:
+              dependencies.resolvePropertyOrRelationType,
+          }),
       }),
     },
   ];

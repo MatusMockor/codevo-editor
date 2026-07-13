@@ -25,12 +25,18 @@ import type { PhpFrameworkModelFluentExpressionTypeAdapter } from "./phpFramewor
 import type { PhpFrameworkModelBuilderTransitionExpressionTypeAdapter } from "./phpFrameworkModelBuilderTransitionExpressionTypeAdapter";
 import type { PhpFrameworkQueryCallbackVariableExpressionTypeAdapter } from "./phpFrameworkQueryCallbackVariableExpressionTypeAdapter";
 import type { PhpFrameworkTerminalModelRecoveryExpressionTypeAdapter } from "./phpFrameworkTerminalModelRecoveryExpressionTypeAdapter";
-import type { PhpLaravelModelTypeResolver } from "./usePhpLaravelModelTypeResolvers";
 import type { PhpMethodReturnTypeResolver } from "./usePhpMethodReturnTypeResolver";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { createPhpExpressionTypeAdapterBundle } from "./phpExpressionTypeAdapterRegistry";
 
 export type PhpExpressionTypeResolver = (
+  source: string,
+  position: EditorPosition,
+  expression: string,
+  depth?: number,
+) => Promise<string | null>;
+
+export type PhpFrameworkModelCarrierTypeResolver = (
   source: string,
   position: EditorPosition,
   expression: string,
@@ -43,12 +49,12 @@ export interface UsePhpExpressionTypeResolverOptions {
     className: string,
   ) => Promise<PhpMethodCompletion[]>;
   frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
-  phpClassHasLaravelDynamicWhere: (
+  legacyIsFrameworkProviderActive?: boolean;
+  phpClassHasDynamicBuilderFinder: (
     className: string,
     methodName: string,
   ) => Promise<boolean>;
-  phpClassHasLaravelLocalScope: (
+  phpClassHasNamedBuilderScope: (
     className: string,
     methodName: string,
   ) => Promise<boolean>;
@@ -58,7 +64,7 @@ export interface UsePhpExpressionTypeResolverOptions {
     includeCollectionRelations?: boolean,
   ) => Promise<string | null>;
   resolvePhpClassReference: (source: string, className: string) => string | null;
-  resolvePhpEloquentBuilderModelType: PhpLaravelModelTypeResolver;
+  resolvePhpBuilderModelType: PhpFrameworkModelCarrierTypeResolver;
   resolvePhpFrameworkBoundConcrete: (
     className: string,
   ) => Promise<string | null>;
@@ -66,7 +72,7 @@ export interface UsePhpExpressionTypeResolverOptions {
     source: string,
     typeName: string | null,
   ) => string | null;
-  resolvePhpLaravelCollectionModelType: PhpLaravelModelTypeResolver;
+  resolvePhpCollectionModelType: PhpFrameworkModelCarrierTypeResolver;
   resolvePhpMethodReturnType: PhpMethodReturnTypeResolver;
   resolvePhpSemanticTypeReference: (
     source: string,
@@ -78,15 +84,15 @@ export function usePhpExpressionTypeResolver({
   activePhpFrameworkProviders,
   collectPhpMethodsForClass,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
-  phpClassHasLaravelDynamicWhere,
-  phpClassHasLaravelLocalScope,
+  legacyIsFrameworkProviderActive = false,
+  phpClassHasDynamicBuilderFinder,
+  phpClassHasNamedBuilderScope,
   resolvePhpClassPropertyOrRelationType,
   resolvePhpClassReference,
-  resolvePhpEloquentBuilderModelType,
+  resolvePhpBuilderModelType,
   resolvePhpFrameworkBoundConcrete,
   resolvePhpFrameworkReturnTypeReference,
-  resolvePhpLaravelCollectionModelType,
+  resolvePhpCollectionModelType,
   resolvePhpMethodReturnType,
   resolvePhpSemanticTypeReference,
 }: UsePhpExpressionTypeResolverOptions) {
@@ -96,32 +102,32 @@ export function usePhpExpressionTypeResolver({
     () =>
       frameworkRuntime ?? {
         hasProvider: (providerId: string) =>
-          providerId === "laravel" && legacyIsLaravelFrameworkActive,
+          providerId === "laravel" && legacyIsFrameworkProviderActive,
       },
-    [frameworkRuntime, legacyIsLaravelFrameworkActive],
+    [frameworkRuntime, legacyIsFrameworkProviderActive],
   );
   const expressionTypeStrategy = useMemo(
     () => {
       const adapterBundle = createPhpExpressionTypeAdapterBundle({
         frameworkRuntime: expressionTypeAdapterRuntime,
-        phpClassHasLaravelDynamicWhere,
-        phpClassHasLaravelLocalScope,
+        phpClassHasDynamicBuilderFinder,
+        phpClassHasNamedBuilderScope,
         resolvePropertyOrRelationType: resolvePhpClassPropertyOrRelationType,
       });
 
       return createPhpExpressionTypeStrategy({
         ...adapterBundle,
-        resolvePhpEloquentBuilderModelType,
-        resolvePhpLaravelCollectionModelType,
+        resolvePhpBuilderModelType,
+        resolvePhpCollectionModelType,
       });
     },
     [
       expressionTypeAdapterRuntime,
-      phpClassHasLaravelDynamicWhere,
-      phpClassHasLaravelLocalScope,
+      phpClassHasDynamicBuilderFinder,
+      phpClassHasNamedBuilderScope,
       resolvePhpClassPropertyOrRelationType,
-      resolvePhpEloquentBuilderModelType,
-      resolvePhpLaravelCollectionModelType,
+      resolvePhpBuilderModelType,
+      resolvePhpCollectionModelType,
     ],
   );
 
@@ -260,7 +266,7 @@ export function usePhpExpressionTypeResolver({
         frameworkProviders,
         position,
         resolveBuilderModelType: () =>
-          resolvePhpEloquentBuilderModelType(
+          resolvePhpBuilderModelType(
             source,
             position,
             expression,
@@ -492,8 +498,8 @@ interface PhpExpressionTypeStrategyOptions {
   modelFluentExpressionTypeAdapter: PhpFrameworkModelFluentExpressionTypeAdapter;
   queryCallbackVariableExpressionTypeAdapter: PhpFrameworkQueryCallbackVariableExpressionTypeAdapter;
   terminalModelRecoveryExpressionTypeAdapter: PhpFrameworkTerminalModelRecoveryExpressionTypeAdapter;
-  resolvePhpEloquentBuilderModelType: PhpLaravelModelTypeResolver;
-  resolvePhpLaravelCollectionModelType: PhpLaravelModelTypeResolver;
+  resolvePhpBuilderModelType: PhpFrameworkModelCarrierTypeResolver;
+  resolvePhpCollectionModelType: PhpFrameworkModelCarrierTypeResolver;
 }
 
 interface PhpExpressionMethodCallStrategyContext {
@@ -518,8 +524,8 @@ function createPhpExpressionTypeStrategy({
   modelFluentExpressionTypeAdapter,
   queryCallbackVariableExpressionTypeAdapter,
   terminalModelRecoveryExpressionTypeAdapter,
-  resolvePhpEloquentBuilderModelType,
-  resolvePhpLaravelCollectionModelType,
+  resolvePhpBuilderModelType,
+  resolvePhpCollectionModelType,
 }: PhpExpressionTypeStrategyOptions): PhpExpressionTypeStrategy {
   return {
     methodCallType: async ({
@@ -539,7 +545,7 @@ function createPhpExpressionTypeStrategy({
               {
                 receiverExpression: methodCall.receiverExpression,
                 resolveCollectionModelType: () =>
-                  resolvePhpLaravelCollectionModelType(
+                  resolvePhpCollectionModelType(
                     source,
                     position,
                     methodCall.receiverExpression,
@@ -555,7 +561,7 @@ function createPhpExpressionTypeStrategy({
               },
             ),
           resolveModelFactoryModelType: () =>
-            resolvePhpEloquentBuilderModelType(
+            resolvePhpBuilderModelType(
               source,
               position,
               expression,
@@ -566,7 +572,7 @@ function createPhpExpressionTypeStrategy({
               {
                 receiverExpression: methodCall.receiverExpression,
                 resolveBuilderModelType: () =>
-                  resolvePhpEloquentBuilderModelType(
+                  resolvePhpBuilderModelType(
                     source,
                     position,
                     methodCall.receiverExpression,
@@ -582,14 +588,14 @@ function createPhpExpressionTypeStrategy({
               },
             ),
           resolveBuilderModelType: () =>
-            resolvePhpEloquentBuilderModelType(
+            resolvePhpBuilderModelType(
               source,
               position,
               methodCall.receiverExpression,
               depth + 1,
             ),
           resolveCollectionModelType: () =>
-            resolvePhpLaravelCollectionModelType(
+            resolvePhpCollectionModelType(
               source,
               position,
               methodCall.receiverExpression,
@@ -615,7 +621,7 @@ function createPhpExpressionTypeStrategy({
         await builderMagicExpressionTypeAdapter.methodCallType({
           methodName: methodCall.methodName,
           resolveBuilderModelType: () =>
-            resolvePhpEloquentBuilderModelType(
+            resolvePhpBuilderModelType(
               source,
               position,
               methodCall.receiverExpression,

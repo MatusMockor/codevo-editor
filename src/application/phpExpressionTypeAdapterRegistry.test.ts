@@ -44,8 +44,8 @@ function createBundle(
 ) {
   return createPhpExpressionTypeAdapterBundle({
     frameworkRuntime,
-    phpClassHasLaravelDynamicWhere: vi.fn(async () => false),
-    phpClassHasLaravelLocalScope: vi.fn(async () => false),
+    phpClassHasDynamicBuilderFinder: vi.fn(async () => false),
+    phpClassHasNamedBuilderScope: vi.fn(async () => false),
     resolvePropertyOrRelationType: vi.fn(async () => null),
   });
 }
@@ -75,14 +75,14 @@ describe("phpExpressionTypeAdapterRegistry", () => {
   });
 
   it("activates the exact six Laravel adapters through provider membership", async () => {
-    const phpClassHasLaravelLocalScope = vi.fn(async () => true);
+    const phpClassHasNamedBuilderScope = vi.fn(async () => true);
     const resolvePropertyOrRelationType = vi.fn(
       async () => "App\\Models\\Comment",
     );
     const bundle = createPhpExpressionTypeAdapterBundle({
       frameworkRuntime: LARAVEL_RUNTIME,
-      phpClassHasLaravelDynamicWhere: vi.fn(async () => false),
-      phpClassHasLaravelLocalScope,
+      phpClassHasDynamicBuilderFinder: vi.fn(async () => false),
+      phpClassHasNamedBuilderScope,
       resolvePropertyOrRelationType,
     });
 

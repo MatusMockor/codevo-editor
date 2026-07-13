@@ -59,15 +59,15 @@ function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
     activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
     collectPhpMethodsForClass: vi.fn(async () => []),
     frameworkRuntime: LARAVEL_RUNTIME,
-    isLaravelFrameworkActive: false,
-    phpClassHasLaravelDynamicWhere: vi.fn(async () => false),
-    phpClassHasLaravelLocalScope: vi.fn(async () => false),
+    legacyIsFrameworkProviderActive: false,
+    phpClassHasDynamicBuilderFinder: vi.fn(async () => false),
+    phpClassHasNamedBuilderScope: vi.fn(async () => false),
     resolvePhpClassPropertyOrRelationType: vi.fn(async () => null),
     resolvePhpClassReference: resolveClassReference,
-    resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+    resolvePhpBuilderModelType: vi.fn(async () => null),
     resolvePhpFrameworkBoundConcrete: vi.fn(async () => null),
     resolvePhpFrameworkReturnTypeReference: resolveClassReference,
-    resolvePhpLaravelCollectionModelType: vi.fn(async () => null),
+    resolvePhpCollectionModelType: vi.fn(async () => null),
     resolvePhpMethodReturnType: vi.fn(async () => null),
     resolvePhpSemanticTypeReference: resolveClassReference,
     ...overrides,
@@ -147,13 +147,13 @@ const POSITION = positionAfter(SOURCE, "$probe");
 describe("usePhpExpressionTypeResolver", () => {
   it("resolves model factories and builder fluent methods to Builder", async () => {
     const calls: Array<[string, string, number | undefined]> = [];
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpBuilderModelType = vi.fn(
       async (_source, _position, expression, depth) => {
         calls.push(["builder-model", expression, depth]);
         return "App\\Models\\Post";
       },
     );
-    const options = makeOptions({ resolvePhpEloquentBuilderModelType });
+    const options = makeOptions({ resolvePhpBuilderModelType });
     const harness = renderHook(options);
 
     await expect(
@@ -183,7 +183,7 @@ describe("usePhpExpressionTypeResolver", () => {
 
   it("keeps failed factory and receiver fluent probes distinct", async () => {
     const calls: Array<[string, number | undefined]> = [];
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpBuilderModelType = vi.fn(
       async (_source, _position, expression, depth) => {
         calls.push([expression, depth]);
 
@@ -191,7 +191,7 @@ describe("usePhpExpressionTypeResolver", () => {
       },
     );
     const harness = renderHook(
-      makeOptions({ resolvePhpEloquentBuilderModelType }),
+      makeOptions({ resolvePhpBuilderModelType }),
     );
 
     await expect(
@@ -207,11 +207,11 @@ describe("usePhpExpressionTypeResolver", () => {
   });
 
   it("resolves builder terminal and collection methods from the builder model", async () => {
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
-      makeOptions({ resolvePhpEloquentBuilderModelType }),
+      makeOptions({ resolvePhpBuilderModelType }),
     );
 
     await expect(
@@ -225,7 +225,7 @@ describe("usePhpExpressionTypeResolver", () => {
         .resolvePhpExpressionType(SOURCE, POSITION, "$builder->get()"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Collection");
 
-    expect(resolvePhpEloquentBuilderModelType).toHaveBeenCalledWith(
+    expect(resolvePhpBuilderModelType).toHaveBeenCalledWith(
       SOURCE,
       POSITION,
       "$builder",
@@ -255,11 +255,11 @@ describe("usePhpExpressionTypeResolver", () => {
   });
 
   it("keeps collection chains as Eloquent collections", async () => {
-    const resolvePhpLaravelCollectionModelType = vi.fn(
+    const resolvePhpCollectionModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
-      makeOptions({ resolvePhpLaravelCollectionModelType }),
+      makeOptions({ resolvePhpCollectionModelType }),
     );
 
     await expect(
@@ -267,7 +267,7 @@ describe("usePhpExpressionTypeResolver", () => {
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "$collection->filter()"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Collection");
-    expect(resolvePhpLaravelCollectionModelType).toHaveBeenCalledWith(
+    expect(resolvePhpCollectionModelType).toHaveBeenCalledWith(
       SOURCE,
       POSITION,
       "$collection",
@@ -277,16 +277,16 @@ describe("usePhpExpressionTypeResolver", () => {
   });
 
   it("falls back to the collection model for a plain collection terminal", async () => {
-    const resolvePhpLaravelCollectionModelType = vi.fn(
+    const resolvePhpCollectionModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Fallback",
     );
     const harness = renderHook(
       makeOptions({
-        resolvePhpEloquentBuilderModelType,
-        resolvePhpLaravelCollectionModelType,
+        resolvePhpBuilderModelType,
+        resolvePhpCollectionModelType,
       }),
     );
 
@@ -295,13 +295,13 @@ describe("usePhpExpressionTypeResolver", () => {
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "$collection->first()"),
     ).resolves.toBe("App\\Models\\Post");
-    expect(resolvePhpLaravelCollectionModelType).toHaveBeenCalledWith(
+    expect(resolvePhpCollectionModelType).toHaveBeenCalledWith(
       SOURCE,
       POSITION,
       "$collection",
       1,
     );
-    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    expect(resolvePhpBuilderModelType).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -323,19 +323,19 @@ describe("usePhpExpressionTypeResolver", () => {
           return "App\\Models\\Comment";
         },
       );
-      const resolvePhpLaravelCollectionModelType = vi.fn(async () => {
+      const resolvePhpCollectionModelType = vi.fn(async () => {
         calls.push("collection");
         return null;
       });
-      const resolvePhpEloquentBuilderModelType = vi.fn(async () => {
+      const resolvePhpBuilderModelType = vi.fn(async () => {
         calls.push("builder");
         return "App\\Models\\Fallback";
       });
       const harness = renderHook(
         makeOptions({
           resolvePhpClassPropertyOrRelationType,
-          resolvePhpEloquentBuilderModelType,
-          resolvePhpLaravelCollectionModelType,
+          resolvePhpBuilderModelType,
+          resolvePhpCollectionModelType,
         }),
       );
 
@@ -361,11 +361,11 @@ describe("usePhpExpressionTypeResolver", () => {
             return null;
           },
         ),
-        resolvePhpEloquentBuilderModelType: vi.fn(async () => {
+        resolvePhpBuilderModelType: vi.fn(async () => {
           calls.push("builder");
           return null;
         }),
-        resolvePhpLaravelCollectionModelType: vi.fn(async () => {
+        resolvePhpCollectionModelType: vi.fn(async () => {
           calls.push("collection");
           return null;
         }),
@@ -392,13 +392,13 @@ describe("usePhpExpressionTypeResolver", () => {
     const calls: Array<[string, number | undefined]> = [];
     const harness = renderHook(
       makeOptions({
-        resolvePhpEloquentBuilderModelType: vi.fn(
+        resolvePhpBuilderModelType: vi.fn(
           async (_source, _position, expression, depth) => {
             calls.push([expression, depth]);
             return "App\\Models\\Post";
           },
         ),
-        resolvePhpLaravelCollectionModelType: vi.fn(
+        resolvePhpCollectionModelType: vi.fn(
           async (_source, _position, expression, depth) => {
             calls.push([expression, depth]);
             return null;
@@ -455,26 +455,26 @@ describe("usePhpExpressionTypeResolver", () => {
 
   it("resolves static and chained local scopes before dynamic where", async () => {
     const calls: string[] = [];
-    const phpClassHasLaravelLocalScope = vi.fn(
+    const phpClassHasNamedBuilderScope = vi.fn(
       async (_className, methodName) => {
         calls.push(`scope:${methodName}`);
         return methodName === "published";
       },
     );
-    const phpClassHasLaravelDynamicWhere = vi.fn(
+    const phpClassHasDynamicBuilderFinder = vi.fn(
       async (_className, methodName) => {
         calls.push(`dynamic:${methodName}`);
         return methodName === "whereTitle";
       },
     );
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
       makeOptions({
-        phpClassHasLaravelDynamicWhere,
-        phpClassHasLaravelLocalScope,
-        resolvePhpEloquentBuilderModelType,
+        phpClassHasDynamicBuilderFinder,
+        phpClassHasNamedBuilderScope,
+        resolvePhpBuilderModelType,
       }),
     );
 
@@ -500,9 +500,9 @@ describe("usePhpExpressionTypeResolver", () => {
     expect(calls).toContain("scope:whereTitle");
     expect(calls).toContain("dynamic:whereTitle");
     expect(calls).not.toContain("dynamic:published");
-    const localScopeCallOrder = phpClassHasLaravelLocalScope.mock.invocationCallOrder;
+    const localScopeCallOrder = phpClassHasNamedBuilderScope.mock.invocationCallOrder;
     const dynamicWhereCallOrder =
-      phpClassHasLaravelDynamicWhere.mock.invocationCallOrder;
+      phpClassHasDynamicBuilderFinder.mock.invocationCallOrder;
     expect(
       localScopeCallOrder[localScopeCallOrder.length - 1] ?? Infinity,
     ).toBeLessThan(
@@ -512,14 +512,14 @@ describe("usePhpExpressionTypeResolver", () => {
   });
 
   it("resolves a chained dynamic where terminal to its builder model", async () => {
-    const resolvePhpLaravelCollectionModelType = vi.fn(async () => null);
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpCollectionModelType = vi.fn(async () => null);
+    const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
       makeOptions({
-        resolvePhpEloquentBuilderModelType,
-        resolvePhpLaravelCollectionModelType,
+        resolvePhpBuilderModelType,
+        resolvePhpCollectionModelType,
       }),
     );
 
@@ -530,7 +530,7 @@ describe("usePhpExpressionTypeResolver", () => {
         "Post::whereTitle('published')->first()",
       ),
     ).resolves.toBe("App\\Models\\Post");
-    expect(resolvePhpEloquentBuilderModelType).toHaveBeenCalledWith(
+    expect(resolvePhpBuilderModelType).toHaveBeenCalledWith(
       SOURCE,
       POSITION,
       "Post::whereTitle('published')",
@@ -540,16 +540,16 @@ describe("usePhpExpressionTypeResolver", () => {
   });
 
   it("uses only local scopes for a receiver model fallback", async () => {
-    const phpClassHasLaravelDynamicWhere = vi.fn(async () => true);
-    const phpClassHasLaravelLocalScope = vi.fn(
+    const phpClassHasDynamicBuilderFinder = vi.fn(async () => true);
+    const phpClassHasNamedBuilderScope = vi.fn(
       async (className) => className === "App\\Models\\Post",
     );
-    const resolvePhpEloquentBuilderModelType = vi.fn(async () => null);
+    const resolvePhpBuilderModelType = vi.fn(async () => null);
     const harness = renderHook(
       makeOptions({
-        phpClassHasLaravelDynamicWhere,
-        phpClassHasLaravelLocalScope,
-        resolvePhpEloquentBuilderModelType,
+        phpClassHasDynamicBuilderFinder,
+        phpClassHasNamedBuilderScope,
+        resolvePhpBuilderModelType,
       }),
     );
 
@@ -558,28 +558,28 @@ describe("usePhpExpressionTypeResolver", () => {
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "$model->published()"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
-    expect(resolvePhpEloquentBuilderModelType).toHaveBeenCalledWith(
+    expect(resolvePhpBuilderModelType).toHaveBeenCalledWith(
       SOURCE,
       POSITION,
       "$model",
       1,
     );
-    expect(phpClassHasLaravelLocalScope).toHaveBeenCalledWith(
+    expect(phpClassHasNamedBuilderScope).toHaveBeenCalledWith(
       "App\\Models\\Post",
       "published",
     );
-    expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+    expect(phpClassHasDynamicBuilderFinder).not.toHaveBeenCalled();
     harness.unmount();
   });
 
   it("does not use dynamic where for a receiver model fallback", async () => {
-    const phpClassHasLaravelDynamicWhere = vi.fn(async () => true);
-    const phpClassHasLaravelLocalScope = vi.fn(async () => false);
+    const phpClassHasDynamicBuilderFinder = vi.fn(async () => true);
+    const phpClassHasNamedBuilderScope = vi.fn(async () => false);
     const harness = renderHook(
       makeOptions({
-        phpClassHasLaravelDynamicWhere,
-        phpClassHasLaravelLocalScope,
-        resolvePhpEloquentBuilderModelType: vi.fn(async () => null),
+        phpClassHasDynamicBuilderFinder,
+        phpClassHasNamedBuilderScope,
+        resolvePhpBuilderModelType: vi.fn(async () => null),
       }),
     );
 
@@ -588,11 +588,11 @@ describe("usePhpExpressionTypeResolver", () => {
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "$model->whereTitle()"),
     ).resolves.toBeNull();
-    expect(phpClassHasLaravelLocalScope).toHaveBeenCalledWith(
+    expect(phpClassHasNamedBuilderScope).toHaveBeenCalledWith(
       "App\\Models\\Post",
       "whereTitle",
     );
-    expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+    expect(phpClassHasDynamicBuilderFinder).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -603,17 +603,17 @@ Post::query()->whereHas('comments', function ($query): void {
 });
 `;
     const position = positionAfter(source, "$query->where");
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Comment",
     );
     const harness = renderHook(
-      makeOptions({ resolvePhpEloquentBuilderModelType }),
+      makeOptions({ resolvePhpBuilderModelType }),
     );
 
     await expect(
       harness.api().resolvePhpExpressionType(source, position, "$query"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
-    expect(resolvePhpEloquentBuilderModelType).toHaveBeenCalledWith(
+    expect(resolvePhpBuilderModelType).toHaveBeenCalledWith(
       source,
       position,
       "$query",
@@ -629,21 +629,21 @@ Post::query()->whereHas('comments', function ($query): void {
 });
 `;
     const position = positionAfter(source, "$query->where");
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Comment",
     );
     const harness = renderHook(
       makeOptions({
         frameworkRuntime: GENERIC_RUNTIME,
-        isLaravelFrameworkActive: true,
-        resolvePhpEloquentBuilderModelType,
+        legacyIsFrameworkProviderActive: true,
+        resolvePhpBuilderModelType,
       }),
     );
 
     await expect(
       harness.api().resolvePhpExpressionType(source, position, "$query"),
     ).resolves.toBeNull();
-    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    expect(resolvePhpBuilderModelType).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -679,25 +679,25 @@ $loop->probe;
         .api()
         .resolvePhpExpressionType(source, position, "$loop", 8),
     ).resolves.toBeNull();
-    expect(options.resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    expect(options.resolvePhpBuilderModelType).not.toHaveBeenCalled();
     expect(resolvePhpFrameworkReturnTypeReference).toHaveBeenCalledTimes(1);
     expect(options.resolvePhpMethodReturnType).not.toHaveBeenCalled();
     harness.unmount();
   });
 
   it("disables Laravel predicates under an explicit generic runtime", async () => {
-    const phpClassHasLaravelLocalScope = vi.fn(async () => true);
-    const phpClassHasLaravelDynamicWhere = vi.fn(async () => true);
-    const resolvePhpEloquentBuilderModelType = vi.fn(
+    const phpClassHasNamedBuilderScope = vi.fn(async () => true);
+    const phpClassHasDynamicBuilderFinder = vi.fn(async () => true);
+    const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
       makeOptions({
         frameworkRuntime: GENERIC_RUNTIME,
-        isLaravelFrameworkActive: true,
-        phpClassHasLaravelDynamicWhere,
-        phpClassHasLaravelLocalScope,
-        resolvePhpEloquentBuilderModelType,
+        legacyIsFrameworkProviderActive: true,
+        phpClassHasDynamicBuilderFinder,
+        phpClassHasNamedBuilderScope,
+        resolvePhpBuilderModelType,
       }),
     );
 
@@ -716,9 +716,9 @@ $loop->probe;
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "$model->load('comments')"),
     ).resolves.toBeNull();
-    expect(phpClassHasLaravelLocalScope).not.toHaveBeenCalled();
-    expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
-    expect(resolvePhpEloquentBuilderModelType).not.toHaveBeenCalled();
+    expect(phpClassHasNamedBuilderScope).not.toHaveBeenCalled();
+    expect(phpClassHasDynamicBuilderFinder).not.toHaveBeenCalled();
+    expect(resolvePhpBuilderModelType).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -726,8 +726,8 @@ $loop->probe;
     const legacyEnabled = renderHook(
       makeOptions({
         frameworkRuntime: undefined,
-        isLaravelFrameworkActive: true,
-        resolvePhpEloquentBuilderModelType: vi.fn(
+        legacyIsFrameworkProviderActive: true,
+        resolvePhpBuilderModelType: vi.fn(
           async () => "App\\Models\\Post",
         ),
       }),
@@ -736,8 +736,8 @@ $loop->probe;
     const legacyDisabled = renderHook(
       makeOptions({
         frameworkRuntime: undefined,
-        isLaravelFrameworkActive: false,
-        phpClassHasLaravelLocalScope: legacyDisabledPredicate,
+        legacyIsFrameworkProviderActive: false,
+        phpClassHasNamedBuilderScope: legacyDisabledPredicate,
       }),
     );
 
@@ -757,12 +757,12 @@ $loop->probe;
   });
 
   it("keeps Laravel runtime authoritative when the legacy flag is false", async () => {
-    const phpClassHasLaravelLocalScope = vi.fn(async () => true);
+    const phpClassHasNamedBuilderScope = vi.fn(async () => true);
     const harness = renderHook(
       makeOptions({
         frameworkRuntime: LARAVEL_RUNTIME,
-        isLaravelFrameworkActive: false,
-        phpClassHasLaravelLocalScope,
+        legacyIsFrameworkProviderActive: false,
+        phpClassHasNamedBuilderScope,
       }),
     );
 
@@ -771,7 +771,7 @@ $loop->probe;
         .api()
         .resolvePhpExpressionType(SOURCE, POSITION, "Post::published()"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
-    expect(phpClassHasLaravelLocalScope).toHaveBeenCalledWith(
+    expect(phpClassHasNamedBuilderScope).toHaveBeenCalledWith(
       "App\\Models\\Post",
       "published",
     );
@@ -783,7 +783,7 @@ $loop->probe;
     const genericResolver = vi.fn(async () => "App\\Models\\Generic");
     const latestResolver = vi.fn(async () => "App\\Models\\Latest");
     const harness = renderHook(
-      makeOptions({ resolvePhpEloquentBuilderModelType: firstResolver }),
+      makeOptions({ resolvePhpBuilderModelType: firstResolver }),
     );
 
     await expect(
@@ -795,8 +795,8 @@ $loop->probe;
     harness.rerender(
       makeOptions({
         frameworkRuntime: GENERIC_RUNTIME,
-        isLaravelFrameworkActive: true,
-        resolvePhpEloquentBuilderModelType: genericResolver,
+        legacyIsFrameworkProviderActive: true,
+        resolvePhpBuilderModelType: genericResolver,
       }),
     );
     await expect(
@@ -806,7 +806,7 @@ $loop->probe;
     ).resolves.toBeNull();
 
     harness.rerender(
-      makeOptions({ resolvePhpEloquentBuilderModelType: latestResolver }),
+      makeOptions({ resolvePhpBuilderModelType: latestResolver }),
     );
     await expect(
       harness
@@ -831,7 +831,7 @@ $loop->probe;
     );
     const options = makeOptions({
       resolvePhpClassPropertyOrRelationType: firstRelationResolver,
-      resolvePhpLaravelCollectionModelType: firstCollectionResolver,
+      resolvePhpCollectionModelType: firstCollectionResolver,
     });
     const harness = renderHook(options);
 
@@ -851,7 +851,7 @@ $loop->probe;
     harness.rerender({
       ...options,
       resolvePhpClassPropertyOrRelationType: latestRelationResolver,
-      resolvePhpLaravelCollectionModelType: latestCollectionResolver,
+      resolvePhpCollectionModelType: latestCollectionResolver,
     });
     await expect(
       harness.api().resolvePhpExpressionType(
@@ -892,12 +892,12 @@ $loop->probe;
   });
 
   it("uses the latest dynamic-where predicate after a predicate-only rerender", async () => {
-    const phpClassHasLaravelLocalScope = vi.fn(async () => false);
+    const phpClassHasNamedBuilderScope = vi.fn(async () => false);
     const firstDynamicWhere = vi.fn(async () => false);
     const latestDynamicWhere = vi.fn(async () => true);
     const options = makeOptions({
-      phpClassHasLaravelDynamicWhere: firstDynamicWhere,
-      phpClassHasLaravelLocalScope,
+      phpClassHasDynamicBuilderFinder: firstDynamicWhere,
+      phpClassHasNamedBuilderScope,
     });
     const harness = renderHook(options);
 
@@ -909,7 +909,7 @@ $loop->probe;
 
     harness.rerender({
       ...options,
-      phpClassHasLaravelDynamicWhere: latestDynamicWhere,
+      phpClassHasDynamicBuilderFinder: latestDynamicWhere,
     });
     await expect(
       harness
@@ -917,7 +917,7 @@ $loop->probe;
         .resolvePhpExpressionType(SOURCE, POSITION, "Post::whereTitle()"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
 
-    expect(phpClassHasLaravelLocalScope).toHaveBeenCalledTimes(2);
+    expect(phpClassHasNamedBuilderScope).toHaveBeenCalledTimes(2);
     expect(firstDynamicWhere).toHaveBeenCalledTimes(1);
     expect(latestDynamicWhere).toHaveBeenCalledWith(
       "App\\Models\\Post",
