@@ -59,7 +59,6 @@ function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
     activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
     collectPhpMethodsForClass: vi.fn(async () => []),
     frameworkRuntime: LARAVEL_RUNTIME,
-    legacyIsFrameworkProviderActive: false,
     phpClassHasDynamicBuilderFinder: vi.fn(async () => false),
     phpClassHasNamedBuilderScope: vi.fn(async () => false),
     resolvePhpClassPropertyOrRelationType: vi.fn(async () => null),
@@ -635,7 +634,6 @@ Post::query()->whereHas('comments', function ($query): void {
     const harness = renderHook(
       makeOptions({
         frameworkRuntime: GENERIC_RUNTIME,
-        legacyIsFrameworkProviderActive: true,
         resolvePhpBuilderModelType,
       }),
     );
@@ -694,7 +692,6 @@ $loop->probe;
     const harness = renderHook(
       makeOptions({
         frameworkRuntime: GENERIC_RUNTIME,
-        legacyIsFrameworkProviderActive: true,
         phpClassHasDynamicBuilderFinder,
         phpClassHasNamedBuilderScope,
         resolvePhpBuilderModelType,
@@ -722,46 +719,11 @@ $loop->probe;
     harness.unmount();
   });
 
-  it("uses the legacy flag only when runtime is absent", async () => {
-    const legacyEnabled = renderHook(
-      makeOptions({
-        frameworkRuntime: undefined,
-        legacyIsFrameworkProviderActive: true,
-        resolvePhpBuilderModelType: vi.fn(
-          async () => "App\\Models\\Post",
-        ),
-      }),
-    );
-    const legacyDisabledPredicate = vi.fn(async () => true);
-    const legacyDisabled = renderHook(
-      makeOptions({
-        frameworkRuntime: undefined,
-        legacyIsFrameworkProviderActive: false,
-        phpClassHasNamedBuilderScope: legacyDisabledPredicate,
-      }),
-    );
-
-    await expect(
-      legacyEnabled
-        .api()
-        .resolvePhpExpressionType(SOURCE, POSITION, "$builder->first()"),
-    ).resolves.toBe("App\\Models\\Post");
-    await expect(
-      legacyDisabled
-        .api()
-        .resolvePhpExpressionType(SOURCE, POSITION, "Post::published()"),
-    ).resolves.toBeNull();
-    expect(legacyDisabledPredicate).not.toHaveBeenCalled();
-    legacyEnabled.unmount();
-    legacyDisabled.unmount();
-  });
-
-  it("keeps Laravel runtime authoritative when the legacy flag is false", async () => {
+  it("keeps Laravel runtime authoritative", async () => {
     const phpClassHasNamedBuilderScope = vi.fn(async () => true);
     const harness = renderHook(
       makeOptions({
         frameworkRuntime: LARAVEL_RUNTIME,
-        legacyIsFrameworkProviderActive: false,
         phpClassHasNamedBuilderScope,
       }),
     );
@@ -795,7 +757,6 @@ $loop->probe;
     harness.rerender(
       makeOptions({
         frameworkRuntime: GENERIC_RUNTIME,
-        legacyIsFrameworkProviderActive: true,
         resolvePhpBuilderModelType: genericResolver,
       }),
     );

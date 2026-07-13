@@ -48,8 +48,7 @@ export interface UsePhpExpressionTypeResolverOptions {
   collectPhpMethodsForClass: (
     className: string,
   ) => Promise<PhpMethodCompletion[]>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  legacyIsFrameworkProviderActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   phpClassHasDynamicBuilderFinder: (
     className: string,
     methodName: string,
@@ -81,10 +80,8 @@ export interface UsePhpExpressionTypeResolverOptions {
 }
 
 export function usePhpExpressionTypeResolver({
-  activePhpFrameworkProviders,
   collectPhpMethodsForClass,
   frameworkRuntime,
-  legacyIsFrameworkProviderActive = false,
   phpClassHasDynamicBuilderFinder,
   phpClassHasNamedBuilderScope,
   resolvePhpClassPropertyOrRelationType,
@@ -96,20 +93,11 @@ export function usePhpExpressionTypeResolver({
   resolvePhpMethodReturnType,
   resolvePhpSemanticTypeReference,
 }: UsePhpExpressionTypeResolverOptions) {
-  const frameworkProviders =
-    frameworkRuntime?.providers ?? activePhpFrameworkProviders;
-  const expressionTypeAdapterRuntime = useMemo(
-    () =>
-      frameworkRuntime ?? {
-        hasProvider: (providerId: string) =>
-          providerId === "laravel" && legacyIsFrameworkProviderActive,
-      },
-    [frameworkRuntime, legacyIsFrameworkProviderActive],
-  );
+  const frameworkProviders = frameworkRuntime.providers;
   const expressionTypeStrategy = useMemo(
     () => {
       const adapterBundle = createPhpExpressionTypeAdapterBundle({
-        frameworkRuntime: expressionTypeAdapterRuntime,
+        frameworkRuntime,
         phpClassHasDynamicBuilderFinder,
         phpClassHasNamedBuilderScope,
         resolvePropertyOrRelationType: resolvePhpClassPropertyOrRelationType,
@@ -122,7 +110,7 @@ export function usePhpExpressionTypeResolver({
       });
     },
     [
-      expressionTypeAdapterRuntime,
+      frameworkRuntime,
       phpClassHasDynamicBuilderFinder,
       phpClassHasNamedBuilderScope,
       resolvePhpClassPropertyOrRelationType,
