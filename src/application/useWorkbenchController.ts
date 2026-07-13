@@ -8620,11 +8620,47 @@ export function useWorkbenchController(
 
   const installManagedTypeScriptLanguageServer = useCallback(async () => {
     if (!workspaceRoot || !phpToolGateway.installManagedTypeScriptLanguageServer) return;
-    installingManagedTypeScriptLanguageServerRootRef.current = workspaceRoot;
+    if (
+      installingManagedTypeScriptLanguageServer &&
+      workspaceRootKeysEqual(
+        installingManagedTypeScriptLanguageServerRootRef.current,
+        workspaceRoot,
+      )
+    ) {
+      return;
+    }
+
+    const targetWorkspaceRoot = workspaceRoot;
+    installingManagedTypeScriptLanguageServerRootRef.current = targetWorkspaceRoot;
     setInstallingManagedTypeScriptLanguageServer(true);
-    try { await phpToolGateway.installManagedTypeScriptLanguageServer(workspaceRoot); }
-    catch (error) { installingManagedTypeScriptLanguageServerRootRef.current = null; setInstallingManagedTypeScriptLanguageServer(false); reportJavaScriptTypeScriptLanguageServerError(error); }
-  }, [phpToolGateway, reportJavaScriptTypeScriptLanguageServerError, workspaceRoot]);
+    try {
+      await phpToolGateway.installManagedTypeScriptLanguageServer(targetWorkspaceRoot);
+    } catch (error) {
+      if (
+        workspaceRootKeysEqual(
+          installingManagedTypeScriptLanguageServerRootRef.current,
+          targetWorkspaceRoot,
+        )
+      ) {
+        installingManagedTypeScriptLanguageServerRootRef.current = null;
+        setInstallingManagedTypeScriptLanguageServer(false);
+
+        if (
+          workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            targetWorkspaceRoot,
+          )
+        ) {
+          reportJavaScriptTypeScriptLanguageServerError(error);
+        }
+      }
+    }
+  }, [
+    installingManagedTypeScriptLanguageServer,
+    phpToolGateway,
+    reportJavaScriptTypeScriptLanguageServerError,
+    workspaceRoot,
+  ]);
 
   const handleManagedTypeScriptInstallCompletion = useCallback(async (event: ManagedTypeScriptInstallCompletionEvent) => {
     if (!workspaceRootKeysEqual(installingManagedTypeScriptLanguageServerRootRef.current, event.root)) return;
