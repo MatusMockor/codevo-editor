@@ -251,7 +251,7 @@ describe("ideActivityStatus composed with the PHPactor and TS Server labels", ()
       runningTs,
       progress,
       combinedLabel,
-      "generic",
+      null,
     );
 
     expect(activity.label).toBe(
@@ -286,7 +286,7 @@ describe("ideActivityStatus index progress", () => {
       null,
       progress,
       null,
-      "generic",
+      null,
     );
 
     expect(activity.state).toBe("scanning");
@@ -314,7 +314,7 @@ describe("ideActivityStatus index progress", () => {
       null,
       progress,
       null,
-      "generic",
+      null,
     );
 
     expect(activity.label).toBe("IDE: Indexing 320 files");
@@ -352,7 +352,7 @@ describe("ideActivityStatus framework profile segment", () => {
         null,
         completedIndex,
         phpChipLabel(),
-        "laravel",
+        "Laravel",
       ).label,
     ).toBe("IDE: PHPactor running · Laravel · Index 610 files");
     expect(
@@ -362,7 +362,7 @@ describe("ideActivityStatus framework profile segment", () => {
         null,
         completedIndex,
         phpChipLabel(),
-        "nette",
+        "Nette",
       ).label,
     ).toBe("IDE: PHPactor running · Nette · Index 610 files");
   });
@@ -374,7 +374,7 @@ describe("ideActivityStatus framework profile segment", () => {
       null,
       completedIndex,
       phpChipLabel(),
-      "generic",
+      null,
     ).label;
 
     expect(label).toBe("IDE: PHPactor running · Index 610 files");
@@ -390,7 +390,7 @@ describe("ideActivityStatus framework profile segment", () => {
     };
 
     expect(
-      ideActivityStatus("/workspace", null, null, idleIndex, null, "nette")
+      ideActivityStatus("/workspace", null, null, idleIndex, null, "Nette")
         .label,
     ).toBeNull();
   });

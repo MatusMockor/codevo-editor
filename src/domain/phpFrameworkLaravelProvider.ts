@@ -174,6 +174,7 @@ const laravelInertiaCapability: NonNullable<
 
 export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   id: "laravel",
+  presentation: { activityLabel: "Laravel" },
   appliesTo: (php) => isLaravelPhpProject(php),
   newFiles: {
     skeletonForPath: ({ path }) => {

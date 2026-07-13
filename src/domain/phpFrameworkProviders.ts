@@ -520,6 +520,10 @@ export interface PhpFrameworkNewFileContext {
 
 export interface PhpFrameworkProvider {
   id: string;
+  presentation?: {
+    /** Compact framework name shown alongside active IDE runtime status. */
+    activityLabel?: string;
+  };
   forProject?: (php: PhpProjectDescriptor) => PhpFrameworkProvider;
   /**
    * Plugin detection: returns true when this framework is present in the
@@ -2248,6 +2252,8 @@ export interface PhpFrameworkResolution {
   readonly providers: readonly PhpFrameworkProvider[];
   /** Exclusive framework profile derived from the winning provider. */
   readonly profile: FrameworkProfile;
+  /** Presentation metadata from the exclusive winning provider. */
+  readonly activityLabel?: string | null;
   /**
    * Every provider id whose detection matched, in registry (priority) order.
    * More than one id means the project declared several framework signals at
@@ -2286,20 +2292,33 @@ export function resolvePhpFrameworkProfile(
   registry: readonly PhpFrameworkProvider[] = phpFrameworkProviderRegistry,
 ): PhpFrameworkResolution {
   if (!php) {
-    return { matchedProviderIds: [], profile: "generic", providers: [] };
+    return {
+      activityLabel: null,
+      matchedProviderIds: [],
+      profile: "generic",
+      providers: [],
+    };
   }
 
   const matches = matchingPhpFrameworkProviders(php, registry);
   const [winner] = matches;
 
   if (!winner) {
-    return { matchedProviderIds: [], profile: "generic", providers: [] };
+    return {
+      activityLabel: null,
+      matchedProviderIds: [],
+      profile: "generic",
+      providers: [],
+    };
   }
 
+  const projectProvider = winner.forProject?.(php) ?? winner;
+
   return {
+    activityLabel: projectProvider.presentation?.activityLabel ?? null,
     matchedProviderIds: matches.map((provider) => provider.id),
     profile: frameworkProfileFromProviderId(winner.id),
-    providers: [winner.forProject?.(php) ?? winner],
+    providers: [projectProvider],
   };
 }
 

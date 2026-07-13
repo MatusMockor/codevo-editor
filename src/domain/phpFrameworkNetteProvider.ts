@@ -56,6 +56,7 @@ export function isNettePhpProject(php: PhpProjectDescriptor): boolean {
  */
 export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   id: "nette",
+  presentation: { activityLabel: "Nette" },
   appliesTo: (php) => isNettePhpProject(php),
   newFiles: {
     skeletonForPath: ({ path }) => {

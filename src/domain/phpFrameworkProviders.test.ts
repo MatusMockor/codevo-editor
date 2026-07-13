@@ -1620,6 +1620,7 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       // Single winner + laravel profile, but both matches surface for the edge log.
       expect(resolution.providers).toEqual([phpLaravelFrameworkProvider]);
       expect(resolution.profile).toBe("laravel");
+      expect(resolution.activityLabel).toBe("Laravel");
       expect(resolution.matchedProviderIds).toEqual(["laravel", "nette"]);
       // The public helpers agree with the resolution (single source of truth).
       expect(phpFrameworkProvidersForProject(php)).toEqual(resolution.providers);
@@ -1627,14 +1628,76 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
     });
 
     it("reports a single match for single-framework projects (no edge log)", () => {
+      const resolution = resolvePhpFrameworkProfile(
+        phpProjectDescriptor({
+          packageName: "nette/web-project",
+          packages: [{ name: "latte/latte" }],
+        }),
+      );
+
+      expect(resolution.matchedProviderIds).toEqual(["nette"]);
+      expect(resolution.activityLabel).toBe("Nette");
+    });
+
+    it("uses presentation metadata from the winning custom provider", () => {
+      const first: PhpFrameworkProvider = {
+        id: "custom-first",
+        appliesTo: () => true,
+        presentation: { activityLabel: "Custom First" },
+      };
+      const second: PhpFrameworkProvider = {
+        id: "custom-second",
+        appliesTo: () => true,
+        presentation: { activityLabel: "Custom Second" },
+      };
+      const resolution = resolvePhpFrameworkProfile(
+        phpProjectDescriptor({ packageName: "custom/app" }),
+        [first, second],
+      );
+
+      expect(resolution.activityLabel).toBe("Custom First");
+      expect(resolution.providers).toEqual([first]);
+      expect(resolution.matchedProviderIds).toEqual([
+        "custom-first",
+        "custom-second",
+      ]);
+    });
+
+    it("uses presentation metadata from the project-specific provider", () => {
+      const projectProvider: PhpFrameworkProvider = {
+        id: "custom",
+        presentation: { activityLabel: "Project Custom" },
+      };
+      const provider: PhpFrameworkProvider = {
+        id: "custom",
+        appliesTo: () => true,
+        forProject: () => projectProvider,
+        presentation: { activityLabel: "Registry Custom" },
+      };
+      const resolution = resolvePhpFrameworkProfile(
+        phpProjectDescriptor({ packageName: "custom/app" }),
+        [provider],
+      );
+
+      expect(resolution.providers).toEqual([projectProvider]);
+      expect(resolution.activityLabel).toBe(
+        resolution.providers[0]?.presentation?.activityLabel,
+      );
+      expect(resolution.activityLabel).toBe("Project Custom");
+    });
+
+    it("omits presentation for a winning provider without metadata", () => {
+      const provider: PhpFrameworkProvider = {
+        id: "headless",
+        appliesTo: () => true,
+      };
+
       expect(
         resolvePhpFrameworkProfile(
-          phpProjectDescriptor({
-            packageName: "nette/web-project",
-            packages: [{ name: "latte/latte" }],
-          }),
-        ).matchedProviderIds,
-      ).toEqual(["nette"]);
+          phpProjectDescriptor({ packageName: "custom/app" }),
+          [provider],
+        ).activityLabel,
+      ).toBeNull();
     });
   });
 

@@ -983,9 +983,9 @@ export function useWorkbenchController(
   const activePhpFrameworkProviderSignature =
     phpFrameworkIntelligence.providerSignature;
   const isNetteFrameworkActive = phpFrameworkIntelligence.isNette;
-  // Exclusive, per-workspace framework profile - the single discriminator the
-  // status-bar chip and future gating key off.
-  const activeFrameworkProfile = phpFrameworkIntelligence.profile;
+  // Provider-owned presentation for the exclusive winner. Framework identity
+  // remains available on the intelligence boundary for non-presentation gates.
+  const activeFrameworkActivityLabel = phpFrameworkIntelligence.activityLabel;
   // Edge (spec 4.1): a project that declares several framework signals at once
   // (e.g. a Laravel app carrying latte/latte transitively in composer.lock)
   // resolves to a single exclusive profile by registry priority. Surface the
@@ -10336,7 +10336,7 @@ export function useWorkbenchController(
     indexHealthLogs,
     indexProgress,
     intelligenceMode,
-    activeFrameworkProfile,
+    activeFrameworkActivityLabel,
     isNetteFrameworkActive,
     implementationChooser,
     languageServerDiagnosticsByPath: mergedLanguageServerDiagnosticsByPath,

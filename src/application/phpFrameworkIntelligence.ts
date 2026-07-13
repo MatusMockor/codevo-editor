@@ -12,6 +12,7 @@ import {
  * instead of separate Laravel/Nette booleans plus a provider array.
  */
 export interface PhpFrameworkIntelligence {
+  readonly activityLabel: string | null;
   readonly matchedProviderIds: readonly string[];
   readonly profile: FrameworkProfile;
   readonly providerIds: readonly string[];
@@ -32,6 +33,10 @@ export function createPhpFrameworkIntelligence(
   );
 
   return {
+    activityLabel:
+      resolution.activityLabel ??
+      resolution.providers[0]?.presentation?.activityLabel ??
+      null,
     matchedProviderIds: resolution.matchedProviderIds,
     profile: resolution.profile,
     providerIds,
