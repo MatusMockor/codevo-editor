@@ -8,22 +8,17 @@ interface UsePhpLaravelScopePredicatesOptions {
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
-  isLaravelFrameworkActive?: boolean;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
 }
 
 export function usePhpLaravelScopePredicates({
   collectPhpFrameworkSyntheticMethodsForClass,
   collectPhpMethodsForClass,
   frameworkRuntime,
-  isLaravelFrameworkActive: legacyIsLaravelFrameworkActive = false,
 }: UsePhpLaravelScopePredicatesOptions) {
-  const isLaravelFrameworkActive =
-    frameworkRuntime?.isLaravel ?? legacyIsLaravelFrameworkActive;
-
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
-      if (!isLaravelFrameworkActive) {
+      if (!frameworkRuntime.isLaravel) {
         return false;
       }
 
@@ -35,12 +30,12 @@ export function usePhpLaravelScopePredicates({
         (method) => method.name.toLowerCase() === methodLookup,
       );
     },
-    [collectPhpFrameworkSyntheticMethodsForClass, isLaravelFrameworkActive],
+    [collectPhpFrameworkSyntheticMethodsForClass, frameworkRuntime.isLaravel],
   );
 
   const phpClassHasLaravelLocalScope = useCallback(
     async (className: string, scopeName: string): Promise<boolean> => {
-      if (!isLaravelFrameworkActive) {
+      if (!frameworkRuntime.isLaravel) {
         return false;
       }
 
@@ -53,7 +48,7 @@ export function usePhpLaravelScopePredicates({
         (scope) => scope.name.toLowerCase() === scopeLookup,
       );
     },
-    [collectPhpMethodsForClass, isLaravelFrameworkActive],
+    [collectPhpMethodsForClass, frameworkRuntime.isLaravel],
   );
 
   return {

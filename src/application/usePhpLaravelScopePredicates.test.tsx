@@ -47,7 +47,7 @@ function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
   return {
     collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
-    isLaravelFrameworkActive: true,
+    frameworkRuntime: LARAVEL_RUNTIME,
     ...overrides,
   };
 }
@@ -142,12 +142,12 @@ describe("usePhpLaravelScopePredicates", () => {
     harness.unmount();
   });
 
-  it("short-circuits Laravel local scope checks when Laravel is inactive", async () => {
+  it("short-circuits Laravel local scope checks for a generic runtime", async () => {
     const options = makeOptions({
       collectPhpMethodsForClass: vi.fn(async () => [
         methodCompletion("scopePublished"),
       ]),
-      isLaravelFrameworkActive: false,
+      frameworkRuntime: GENERIC_RUNTIME,
     });
     const harness = renderHook(options);
 
@@ -171,7 +171,6 @@ describe("usePhpLaravelScopePredicates", () => {
         methodCompletion("scopePublished"),
       ]),
       frameworkRuntime: GENERIC_RUNTIME,
-      isLaravelFrameworkActive: true,
     });
     const harness = renderHook(options);
 
@@ -203,7 +202,6 @@ describe("usePhpLaravelScopePredicates", () => {
         methodCompletion("scopePublished"),
       ]),
       frameworkRuntime: LARAVEL_RUNTIME,
-      isLaravelFrameworkActive: false,
     });
     const harness = renderHook(options);
 
