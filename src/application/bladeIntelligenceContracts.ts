@@ -82,7 +82,7 @@ export interface BladeIntelligenceDependencies {
     methodName: string,
     request?: NavigationRequest,
   ) => Promise<boolean>;
-  openPhpLaravelModelAttributeTarget: (
+  openPhpModelAttributeTarget: (
     className: string,
     attributeName: string,
   ) => Promise<boolean>;

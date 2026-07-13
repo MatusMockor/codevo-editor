@@ -7775,7 +7775,7 @@ export function useWorkbenchController(
   const {
     findPhpLaravelValidationRuleModelTargets: findValidationRuleModelTargets,
     openPhpLaravelDynamicWhereTarget,
-    openPhpLaravelModelAttributeTarget,
+    openPhpLaravelModelAttributeTarget: openPhpModelAttributeTarget,
   } = usePhpLaravelModelNavigationTargets({
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
@@ -7796,7 +7796,7 @@ export function useWorkbenchController(
       openDirectPhpMethodTarget,
       openDirectPhpPropertyTarget,
       openPhpClassTarget,
-      openPhpLaravelModelAttributeTarget,
+      openPhpLaravelModelAttributeTarget: openPhpModelAttributeTarget,
       phpClassHierarchyHasProperty,
       resolvePhpExpressionType,
       setMessage,
@@ -7847,7 +7847,7 @@ export function useWorkbenchController(
       openDirectPhpMethodTarget,
       openDirectPhpPropertyTarget,
       openNavigationTarget,
-      openPhpLaravelModelAttributeTarget,
+      openPhpModelAttributeTarget,
       readNavigationFileContent,
       relativeWorkspacePath,
       resolvePhpClassPropertyOrRelationType,

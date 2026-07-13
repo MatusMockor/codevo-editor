@@ -107,7 +107,7 @@ function makeDeps(
     findTranslationTarget: vi.fn(async () => null),
     createMissingBladeViewCodeAction: vi.fn(async () => null),
     openDirectPhpMethodTarget: vi.fn(async () => false),
-    openPhpLaravelModelAttributeTarget: vi.fn(async () => false),
+    openPhpModelAttributeTarget: vi.fn(async () => false),
     openDirectPhpPropertyTarget: vi.fn(async () => false),
     ...overrides,
   };

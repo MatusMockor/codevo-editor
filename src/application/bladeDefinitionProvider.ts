@@ -29,7 +29,7 @@ export interface BladeDefinitionProviderDependencies {
   openDirectPhpMethodTarget: BladeIntelligenceDependencies["openDirectPhpMethodTarget"];
   openDirectPhpPropertyTarget: BladeIntelligenceDependencies["openDirectPhpPropertyTarget"];
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"];
-  openPhpLaravelModelAttributeTarget: BladeIntelligenceDependencies["openPhpLaravelModelAttributeTarget"];
+  openPhpModelAttributeTarget: BladeIntelligenceDependencies["openPhpModelAttributeTarget"];
   readNavigationFileContent: BladeIntelligenceDependencies["readNavigationFileContent"];
   relativeWorkspacePath: BladeIntelligenceDependencies["relativeWorkspacePath"];
   resolveBladeViewVariableTypeForView: (
@@ -56,7 +56,7 @@ export async function provideBladeDefinition(
     openDirectPhpMethodTarget,
     openDirectPhpPropertyTarget,
     openNavigationTarget,
-    openPhpLaravelModelAttributeTarget,
+    openPhpModelAttributeTarget,
     readNavigationFileContent,
     relativeWorkspacePath,
     resolveBladeViewVariableTypeForView,
@@ -112,8 +112,8 @@ export async function provideBladeDefinition(
         openDirectPhpPropertyTarget,
         isRequestedRootActive,
       ),
-      openPhpLaravelModelAttributeTarget: guardedClassMemberNavigation(
-        openPhpLaravelModelAttributeTarget,
+      openPhpModelAttributeTarget: guardedClassMemberNavigation(
+        openPhpModelAttributeTarget,
         isRequestedRootActive,
       ),
       frameworkProviders: frameworkRuntime.providers,
@@ -238,7 +238,7 @@ interface BladeViewDataMemberDefinitionDependencies extends RequestedRootState {
   frameworkProviders: readonly PhpFrameworkProvider[];
   openDirectPhpMethodTarget: BladeIntelligenceDependencies["openDirectPhpMethodTarget"];
   openDirectPhpPropertyTarget: BladeIntelligenceDependencies["openDirectPhpPropertyTarget"];
-  openPhpLaravelModelAttributeTarget: BladeIntelligenceDependencies["openPhpLaravelModelAttributeTarget"];
+  openPhpModelAttributeTarget: BladeIntelligenceDependencies["openPhpModelAttributeTarget"];
   relativeWorkspacePath: BladeIntelligenceDependencies["relativeWorkspacePath"];
   requestedRoot: string;
   resolveBladeViewVariableTypeForView: BladeDefinitionProviderDependencies["resolveBladeViewVariableTypeForView"];
@@ -311,7 +311,7 @@ async function openBladeViewDataMemberDefinition(
     return false;
   }
 
-  const openedAttribute = await dependencies.openPhpLaravelModelAttributeTarget(
+  const openedAttribute = await dependencies.openPhpModelAttributeTarget(
     className,
     memberName,
   );
