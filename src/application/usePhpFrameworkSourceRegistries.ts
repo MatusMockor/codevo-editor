@@ -6,7 +6,6 @@ import {
   activePhpFrameworkSourceRegistryProviders,
   type PhpFrameworkSourceRegistryAdapter,
 } from "./phpFrameworkSourceRegistryAdapters";
-import { phpFrameworkRuntimeContextFromDependencies } from "./phpFrameworkRuntimeDependencies";
 import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
 import type { WorkspaceFileGateway } from "../domain/workspace";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -19,7 +18,7 @@ export interface PhpFrameworkSourceRegistryContext {
 
 export interface UsePhpFrameworkSourceRegistriesDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  frameworkRuntime?: PhpFrameworkRuntimeContext;
+  frameworkRuntime: PhpFrameworkRuntimeContext;
   onSourcesLoaded(rootPath: string): void;
   workspaceFiles: Pick<WorkspaceFileGateway, "readDirectory" | "readTextFile">;
 }
@@ -43,11 +42,9 @@ export interface PhpFrameworkSourceRegistries {
 function usePhpFrameworkSourceRegistryAdapters(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
 ): readonly PhpFrameworkSourceRegistryAdapter[] {
-  const frameworkRuntime =
-    phpFrameworkRuntimeContextFromDependencies(dependencies);
   const laravelSources = useLaravelSourceRegistries({
     ...dependencies,
-    isLaravelFrameworkActive: frameworkRuntime.hasProvider(
+    isLaravelFrameworkActive: dependencies.frameworkRuntime.hasProvider(
       phpLaravelFrameworkSourceRegistryProviderId,
     ),
   });
@@ -58,9 +55,7 @@ function usePhpFrameworkSourceRegistryAdapters(
 export function usePhpFrameworkSourceRegistries(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
 ): PhpFrameworkSourceRegistries {
-  const { currentWorkspaceRootRef } = dependencies;
-  const frameworkRuntime =
-    phpFrameworkRuntimeContextFromDependencies(dependencies);
+  const { currentWorkspaceRootRef, frameworkRuntime } = dependencies;
   const sourceRegistryAdapters =
     usePhpFrameworkSourceRegistryAdapters(dependencies);
   const sourceRegistryProviders = sourceRegistryAdapters.map((adapter) =>
