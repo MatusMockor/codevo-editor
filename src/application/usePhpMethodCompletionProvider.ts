@@ -154,7 +154,7 @@ export function usePhpMethodCompletionProvider({
       const offset = offsetAtPosition(source, position);
 
       if (
-        frameworkRuntime.isNette &&
+        frameworkRuntime.hasProvider("nette") &&
         activeDocument &&
         detectNetteRedrawControlCompletionAt(source, offset)
       ) {

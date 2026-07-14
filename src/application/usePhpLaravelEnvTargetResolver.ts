@@ -31,7 +31,7 @@ export function usePhpLaravelEnvTargetResolver({
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!frameworkRuntime.isLaravel || !requestedRoot) {
+      if (!frameworkRuntime.hasProvider("laravel") || !requestedRoot) {
         return null;
       }
 

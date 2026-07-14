@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import {
+  createPhpFrameworkRuntimeContext,
+  type PhpFrameworkRuntimeContext,
+} from "./phpFrameworkRuntimeContext";
 import {
   usePhpLaravelLiteralDefinitionNavigation,
   type PhpLaravelLiteralDefinitionNavigation,
@@ -25,6 +28,11 @@ const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [phpLaravelFrameworkProvider],
   }),
 );
+const LARAVEL_PROFILE_WITHOUT_PROVIDER_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  providers: [],
+  hasProvider: () => false,
+};
 
 function target<Name extends string>(
   key: Name,
@@ -167,6 +175,31 @@ describe("usePhpLaravelLiteralDefinitionNavigation", () => {
     expect(setMessage).toHaveBeenCalledWith(
       "No Laravel cache store missing found.",
     );
+
+    harness.unmount();
+  });
+
+  it("does not resolve or open Laravel-owned targets when only the legacy Laravel profile flag is active", async () => {
+    const findAuthGuardTarget = vi.fn(async () => target("guardName", "web"));
+    const openNavigationTarget = vi.fn(async () => true);
+    const setMessage = vi.fn();
+    const deps = makeDeps({
+      findAuthGuardTarget,
+      frameworkRuntime: LARAVEL_PROFILE_WITHOUT_PROVIDER_RUNTIME,
+      openNavigationTarget,
+      setMessage,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpLaravelAuthGuardDefinition({
+      guardName: "web",
+      kind: "laravelAuthGuardString",
+    });
+
+    expect(handled).toBe(false);
+    expect(findAuthGuardTarget).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+    expect(setMessage).not.toHaveBeenCalled();
 
     harness.unmount();
   });

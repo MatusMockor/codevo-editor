@@ -512,4 +512,58 @@ Comment::with('par')->first();
 
     harness.unmount();
   });
+
+  it("does not collect Nette snippets when the Nette profile lacks the provider boundary", async () => {
+    const source = "<?php\n$this->redrawControl('mai');";
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const deps = makeDeps({
+      collectNetteRedrawControlSnippetTargets,
+      frameworkRuntime: {
+        ...NETTE_RUNTIME,
+        hasProvider: (providerId: string) =>
+          providerId === "nette" ? false : NETTE_RUNTIME.hasProvider(providerId),
+      },
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .providePhpMethodCompletions(source, positionAfter(source, "mai")),
+    ).resolves.toEqual([]);
+    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not collect Nette snippets for Laravel runtimes with redrawControl source", async () => {
+    const source = "<?php\n$this->redrawControl('mai');";
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const deps = makeDeps({
+      collectNetteRedrawControlSnippetTargets,
+      frameworkRuntime: LARAVEL_RUNTIME,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .providePhpMethodCompletions(source, positionAfter(source, "mai")),
+    ).resolves.toEqual([]);
+    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
 });

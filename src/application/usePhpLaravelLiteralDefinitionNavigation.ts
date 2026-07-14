@@ -149,7 +149,7 @@ export function usePhpLaravelLiteralDefinitionNavigation({
   setMessage,
   workspaceRoot,
 }: PhpLaravelLiteralDefinitionNavigationDependencies): PhpLaravelLiteralDefinitionNavigation {
-  const supportsLaravelOnlyTargets = frameworkRuntime.isLaravel;
+  const supportsLaravelOnlyTargets = frameworkRuntime.hasProvider("laravel");
   const openResolvedTarget = useCallback(
     async <Target extends NamedNavigationTarget>({
       gate = supportsLaravelOnlyTargets,

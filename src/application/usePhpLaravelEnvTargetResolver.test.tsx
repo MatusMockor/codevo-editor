@@ -33,6 +33,11 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [],
   }),
 );
+const LARAVEL_PROFILE_WITHOUT_PROVIDER_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  providers: [],
+  hasProvider: () => false,
+};
 const ENV_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
   ...GENERIC_RUNTIME,
   supports: (capability) => capability === "env",
@@ -144,6 +149,23 @@ describe("usePhpLaravelEnvTargetResolver", () => {
     const harness = renderHook(
       makeDeps({
         frameworkRuntime: ENV_CAPABLE_NON_LARAVEL_RUNTIME,
+        readNavigationFileContent,
+      }),
+    );
+
+    await expect(harness.resolver()("APP_URL")).resolves.toBeNull();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not read env files when only the legacy Laravel profile flag is active", async () => {
+    const readNavigationFileContent = vi.fn(
+      async () => "APP_URL=https://local.test",
+    );
+    const harness = renderHook(
+      makeDeps({
+        frameworkRuntime: LARAVEL_PROFILE_WITHOUT_PROVIDER_RUNTIME,
         readNavigationFileContent,
       }),
     );
