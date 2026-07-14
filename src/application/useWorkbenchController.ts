@@ -73,9 +73,10 @@ import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
 import { usePhpFrameworkIdentifierDefinitionNavigation } from "./usePhpFrameworkIdentifierDefinitionNavigation";
-import { createPhpFrameworkIdentifierNavigationAdapters } from "./phpFrameworkIdentifierNavigationAdapterComposition";
-import { createPhpLaravelIdentifierNavigationActivationAdapter } from "./phpLaravelIdentifierNavigationActivationAdapter";
-import { createPhpNetteIdentifierNavigationActivationAdapter } from "./phpNetteIdentifierNavigationActivationAdapter";
+import {
+  createDefaultPhpFrameworkIdentifierNavigationActivationAdapters,
+  createPhpFrameworkIdentifierNavigationAdapters,
+} from "./phpFrameworkIdentifierNavigationAdapterComposition";
 import { usePhpClassTargetNavigation } from "./usePhpClassTargetNavigation";
 import { usePhpMethodTargetNavigation } from "./usePhpMethodTargetNavigation";
 import { usePhpPropertyTargetNavigation } from "./usePhpPropertyTargetNavigation";
@@ -7939,22 +7940,23 @@ export function useWorkbenchController(
   } = useMemo(
     () =>
       createPhpFrameworkIdentifierNavigationAdapters({
-        activationAdapters: [
-          createPhpLaravelIdentifierNavigationActivationAdapter({
-            activeDocument,
-            goToPhpFrameworkLiteralDefinition,
-            goToPhpFrameworkAuthorizationAbilityDefinition,
-            goToPhpFrameworkMiddlewareAliasDefinition,
-            goToPhpLaravelRelationStringDefinition,
-            openDirectPhpMethodTarget,
-            openPhpClassTarget,
+        activationAdapters:
+          createDefaultPhpFrameworkIdentifierNavigationActivationAdapters({
+            laravel: {
+              activeDocument,
+              goToPhpFrameworkLiteralDefinition,
+              goToPhpFrameworkAuthorizationAbilityDefinition,
+              goToPhpFrameworkMiddlewareAliasDefinition,
+              goToPhpLaravelRelationStringDefinition,
+              openDirectPhpMethodTarget,
+              openPhpClassTarget,
+            },
+            nette: {
+              activeDocument,
+              activeEditorPositionRef,
+              providePhpNetteInjectionDefinition,
+            },
           }),
-          createPhpNetteIdentifierNavigationActivationAdapter({
-            activeDocument,
-            activeEditorPositionRef,
-            providePhpNetteInjectionDefinition,
-          }),
-        ],
         frameworkRuntime: phpFrameworkRuntimeContext,
       }),
     [

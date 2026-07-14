@@ -8,6 +8,7 @@ import {
   resolvePhpClassName,
 } from "../domain/phpNavigation";
 import type { PhpFrameworkContextualMemberDefinitionNavigationAdapter } from "./phpFrameworkContextualMemberDefinitionNavigationAdapter";
+import type { PhpFrameworkContextualMemberDefinitionNavigationContribution } from "./phpFrameworkContextualMemberDefinitionNavigationAdapters";
 
 const ELOQUENT_BUILDER_CLASS_NAME = "Illuminate\\Database\\Eloquent\\Builder";
 
@@ -150,5 +151,15 @@ export function createPhpLaravelContextualMemberDefinitionNavigationAdapter({
 
       return ELOQUENT_BUILDER_CLASS_NAME;
     },
+  };
+}
+
+export function createPhpLaravelContextualMemberDefinitionNavigationContribution(
+  deps: PhpLaravelContextualMemberDefinitionNavigationAdapterDependencies,
+): PhpFrameworkContextualMemberDefinitionNavigationContribution {
+  return {
+    providerId: "laravel",
+    createAdapter: () =>
+      createPhpLaravelContextualMemberDefinitionNavigationAdapter(deps),
   };
 }

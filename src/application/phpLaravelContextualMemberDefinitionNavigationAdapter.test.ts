@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createPhpLaravelContextualMemberDefinitionNavigationAdapter,
+  createPhpLaravelContextualMemberDefinitionNavigationContribution,
   type PhpLaravelContextualMemberDefinitionNavigationAdapterDependencies,
 } from "./phpLaravelContextualMemberDefinitionNavigationAdapter";
 
@@ -40,6 +41,19 @@ function relationContext(
 }
 
 describe("phpLaravelContextualMemberDefinitionNavigationAdapter", () => {
+  it("creates a Laravel provider contribution for contextual member navigation", () => {
+    const openPhpLaravelDynamicWhereTarget = vi.fn(async () => true);
+    const contribution =
+      createPhpLaravelContextualMemberDefinitionNavigationContribution(
+        makeDeps({ openPhpLaravelDynamicWhereTarget }),
+      );
+
+    expect(contribution.providerId).toBe("laravel");
+    expect(contribution.createAdapter().supportsBuilderModelNavigation()).toBe(
+      true,
+    );
+  });
+
   it("keeps synchronous Laravel member semantics", () => {
     const adapter =
       createPhpLaravelContextualMemberDefinitionNavigationAdapter(makeDeps());

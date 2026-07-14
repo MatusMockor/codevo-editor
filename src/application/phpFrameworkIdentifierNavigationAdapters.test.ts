@@ -6,6 +6,7 @@ import {
   type PhpFrameworkIdentifierNavigationActivationAdapter,
 } from "./phpFrameworkIdentifierNavigationAdapters";
 import {
+  createDefaultPhpFrameworkIdentifierNavigationActivationAdapters,
   createPhpFrameworkIdentifierNavigationAdapters,
 } from "./phpFrameworkIdentifierNavigationAdapterComposition";
 import { createPhpLaravelIdentifierNavigationActivationAdapter } from "./phpLaravelIdentifierNavigationActivationAdapter";
@@ -84,6 +85,23 @@ describe("phpFrameworkIdentifierNavigationAdapters", () => {
     expect(
       active.contextualAdapters.map((adapter) => adapter.goToDefinition),
     ).toEqual([laravel, nette]);
+  });
+
+  it("creates default activation adapters in Laravel then Nette order", () => {
+    const activationAdapters =
+      createDefaultPhpFrameworkIdentifierNavigationActivationAdapters({
+        laravel: makeDeps(),
+        nette: {
+          activeDocument,
+          activeEditorPositionRef: { current: { column: 1, lineNumber: 1 } },
+          providePhpNetteInjectionDefinition: vi.fn(async () => false),
+        },
+      });
+
+    expect(activationAdapters.map((adapter) => adapter.providerId)).toEqual([
+      "laravel",
+      "nette",
+    ]);
   });
 
   it("selects no adapters for a generic provider", () => {
