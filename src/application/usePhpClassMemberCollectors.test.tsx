@@ -208,6 +208,71 @@ class User
     harness.unmount();
   });
 
+  it("expands interface members with a unique framework-bound concrete", async () => {
+    const resolvePhpFrameworkBoundConcrete = vi.fn(
+      async (className: string) =>
+        className === "App\\Contracts\\StorageInterface"
+          ? "App\\Storage\\RedisStorage"
+          : null,
+    );
+    const harness = renderHook(
+      makeOptions(
+        {
+          "App\\Contracts\\StorageInterface": `<?php
+namespace App\\Contracts;
+
+interface StorageInterface
+{
+    public function touch(): void;
+}
+`,
+          "App\\Storage\\RedisStorage": `<?php
+namespace App\\Storage;
+
+use App\\Contracts\\StorageInterface;
+
+class RedisStorage implements StorageInterface
+{
+    public function touch(): void {}
+
+    public function score(): int
+    {
+        return 0;
+    }
+}
+`,
+        },
+        { resolvePhpFrameworkBoundConcrete },
+      ),
+    );
+
+    const completions = await harness.api().collectPhpMethodsForClass(
+      "App\\Contracts\\StorageInterface",
+    );
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "touch",
+      "score",
+    ]);
+    expect(completions[0]).toEqual(
+      expect.objectContaining({
+        declaringClassName: "App\\Contracts\\StorageInterface",
+        name: "touch",
+      }),
+    );
+    expect(completions[1]).toEqual(
+      expect.objectContaining({
+        declaringClassName: "App\\Storage\\RedisStorage",
+        name: "score",
+      }),
+    );
+    expect(resolvePhpFrameworkBoundConcrete).toHaveBeenCalledWith(
+      "App\\Contracts\\StorageInterface",
+    );
+
+    harness.unmount();
+  });
+
   it("collects Laravel dynamic where methods from model attributes", async () => {
     const harness = renderHook(
       makeOptions(

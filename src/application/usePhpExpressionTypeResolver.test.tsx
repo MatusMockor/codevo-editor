@@ -4,7 +4,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
@@ -37,6 +40,13 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     matchedProviderIds: [],
     profile: "generic",
     providers: [],
+  }),
+);
+const NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["nette"],
+    profile: "nette",
+    providers: [phpNetteFrameworkProvider],
   }),
 );
 
@@ -980,4 +990,253 @@ $reporter->table('events');
     );
     harness.unmount();
   });
+
+  it.each([
+    [
+      "typed property",
+      `<?php
+namespace App\\Presenters;
+
+use App\\Storage\\IRecencyStorage;
+
+final class DashboardPresenter
+{
+    private IRecencyStorage $recencyStorage;
+
+    public function show(): void
+    {
+        $this->recencyStorage->latest();
+    }
+}
+`,
+    ],
+    [
+      "promoted constructor property",
+      `<?php
+namespace App\\Presenters;
+
+use App\\Storage\\IRecencyStorage;
+
+final class DashboardPresenter
+{
+    public function __construct(
+        private IRecencyStorage $recencyStorage,
+    ) {
+    }
+
+    public function show(): void
+    {
+        $this->recencyStorage->latest();
+    }
+}
+`,
+    ],
+    [
+      "constructor-assigned property",
+      `<?php
+namespace App\\Presenters;
+
+use App\\Storage\\IRecencyStorage;
+
+final class DashboardPresenter
+{
+    private $recencyStorage;
+
+    public function __construct(IRecencyStorage $recencyStorage)
+    {
+        $this->recencyStorage = $recencyStorage;
+    }
+
+    public function show(): void
+    {
+        $this->recencyStorage->latest();
+    }
+}
+`,
+    ],
+  ])(
+    "uses a Nette-bound concrete service for a %s interface method return",
+    async (_kind, source) => {
+      const position = positionAfter(source, "$this->recencyStorage->");
+      const resolvePhpFrameworkBoundConcrete = vi.fn(
+        async (className: string) =>
+          className === "App\\Storage\\IRecencyStorage"
+            ? "App\\Storage\\RedisRecencyStorage"
+            : null,
+      );
+      const resolvePhpMethodReturnType = vi.fn(async (className: string) =>
+        className === "App\\Storage\\RedisRecencyStorage"
+          ? "App\\Dto\\RecentItemList"
+          : null,
+      );
+      const harness = renderHook(
+        makeOptions({
+          frameworkRuntime: NETTE_RUNTIME,
+          resolvePhpFrameworkBoundConcrete,
+          resolvePhpMethodReturnType,
+          resolvePhpSemanticTypeReference: (_source, typeName) => {
+            if (typeName === "IRecencyStorage") {
+              return "App\\Storage\\IRecencyStorage";
+            }
+
+            return resolveClassReference(_source, typeName);
+          },
+        }),
+      );
+
+      await expect(
+        harness.api().resolvePhpExpressionType(
+          source,
+          position,
+          "$this->recencyStorage",
+        ),
+      ).resolves.toBe("App\\Storage\\IRecencyStorage");
+      await expect(
+        harness.api().resolvePhpExpressionType(
+          source,
+          position,
+          "$this->recencyStorage->latest()",
+        ),
+      ).resolves.toBe("App\\Dto\\RecentItemList");
+      expect(resolvePhpFrameworkBoundConcrete).toHaveBeenCalledWith(
+        "App\\Storage\\IRecencyStorage",
+      );
+      expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
+        "App\\Storage\\RedisRecencyStorage",
+        "latest",
+      );
+      expect(resolvePhpMethodReturnType).not.toHaveBeenCalledWith(
+        "App\\Storage\\IRecencyStorage",
+        "latest",
+      );
+      harness.unmount();
+    },
+  );
+
+  it("keeps a Nette interface receiver when no concrete binding is resolved", async () => {
+    const source = `<?php
+namespace App\\Presenters;
+
+use App\\Storage\\IRecencyStorage;
+
+final class DashboardPresenter
+{
+    public function __construct(
+        private IRecencyStorage $recencyStorage,
+    ) {
+    }
+
+    public function show(): void
+    {
+        $this->recencyStorage->latest();
+    }
+}
+`;
+    const position = positionAfter(source, "$this->recencyStorage->");
+    const resolvePhpFrameworkBoundConcrete = vi.fn(async () => null);
+    const resolvePhpMethodReturnType = vi.fn(async (className: string) =>
+      className === "App\\Storage\\IRecencyStorage"
+        ? "App\\Dto\\InterfaceRecentItemList"
+        : null,
+    );
+    const harness = renderHook(
+      makeOptions({
+        frameworkRuntime: NETTE_RUNTIME,
+        resolvePhpFrameworkBoundConcrete,
+        resolvePhpMethodReturnType,
+        resolvePhpSemanticTypeReference: (_source, typeName) => {
+          if (typeName === "IRecencyStorage") {
+            return "App\\Storage\\IRecencyStorage";
+          }
+
+          return resolveClassReference(_source, typeName);
+        },
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        source,
+        position,
+        "$this->recencyStorage",
+      ),
+    ).resolves.toBe("App\\Storage\\IRecencyStorage");
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        source,
+        position,
+        "$this->recencyStorage->latest()",
+      ),
+    ).resolves.toBe("App\\Dto\\InterfaceRecentItemList");
+    expect(resolvePhpFrameworkBoundConcrete).toHaveBeenCalledWith(
+      "App\\Storage\\IRecencyStorage",
+    );
+    expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
+      "App\\Storage\\IRecencyStorage",
+      "latest",
+    );
+    harness.unmount();
+  });
+
+  it("falls back to the interface return when a Nette-bound concrete has no method type", async () => {
+    const source = `<?php
+namespace App\\Presenters;
+
+use App\\Storage\\IRecencyStorage;
+
+final class DashboardPresenter
+{
+    public function __construct(
+        private IRecencyStorage $recencyStorage,
+    ) {
+    }
+
+    public function show(): void
+    {
+        $this->recencyStorage->latest();
+    }
+}
+`;
+    const position = positionAfter(source, "$this->recencyStorage->");
+    const resolvePhpFrameworkBoundConcrete = vi.fn(
+      async () => "App\\Storage\\RedisRecencyStorage",
+    );
+    const resolvePhpMethodReturnType = vi.fn(async (className: string) =>
+      className === "App\\Storage\\IRecencyStorage"
+        ? "App\\Dto\\InterfaceRecentItemList"
+        : null,
+    );
+    const harness = renderHook(
+      makeOptions({
+        frameworkRuntime: NETTE_RUNTIME,
+        resolvePhpFrameworkBoundConcrete,
+        resolvePhpMethodReturnType,
+        resolvePhpSemanticTypeReference: (_source, typeName) => {
+          if (typeName === "IRecencyStorage") {
+            return "App\\Storage\\IRecencyStorage";
+          }
+
+          return resolveClassReference(_source, typeName);
+        },
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        source,
+        position,
+        "$this->recencyStorage->latest()",
+      ),
+    ).resolves.toBe("App\\Dto\\InterfaceRecentItemList");
+    expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
+      "App\\Storage\\RedisRecencyStorage",
+      "latest",
+    );
+    expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
+      "App\\Storage\\IRecencyStorage",
+      "latest",
+    );
+    harness.unmount();
+  });
+
 });

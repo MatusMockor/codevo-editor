@@ -99,6 +99,22 @@ function renderHook(deps: PhpMethodCompletionResolverDependencies) {
   };
 }
 
+function positionAfter(source: string, needle: string) {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing marker ${needle}`);
+  }
+
+  const before = source.slice(0, offset + needle.length);
+  const lines = before.split("\n");
+
+  return {
+    column: lines[lines.length - 1]?.length ?? 0,
+    lineNumber: lines.length,
+  };
+}
+
 describe("usePhpMethodCompletionResolvers", () => {
   it("uses runtime Laravel state for the Laravel gate", async () => {
     const source = "<?php\n$post->";
@@ -209,6 +225,64 @@ describe("usePhpMethodCompletionResolvers", () => {
     );
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "App\\Models\\Post",
+    );
+
+    harness.unmount();
+  });
+
+  it("uses collected concrete-only members for interface receiver completions", async () => {
+    const source = `<?php
+namespace App\\Repository;
+
+use App\\Contracts\\StorageInterface;
+
+class ReportRepository
+{
+    public function __construct(private StorageInterface $storage)
+    {
+    }
+
+    public function run(): void
+    {
+        $this->storage->
+    }
+}
+`;
+    const collectPhpMethodsForClass = vi.fn(async (className: string) => {
+      if (className === "App\\Contracts\\StorageInterface") {
+        return [
+          method("touch", {
+            declaringClassName: "App\\Contracts\\StorageInterface",
+          }),
+          method("score", { declaringClassName: "App\\Storage\\RedisStorage" }),
+        ];
+      }
+
+      return [];
+    });
+    const deps = makeDeps({
+      collectPhpMethodsForClass,
+      frameworkRuntime: GENERIC_RUNTIME,
+      resolvePhpExpressionType: vi.fn(
+        async () => "App\\Contracts\\StorageInterface",
+      ),
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        source,
+        positionAfter(source, "$this->storage->"),
+        "$this->storage",
+      );
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "touch",
+      "score",
+    ]);
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
+      "App\\Contracts\\StorageInterface",
     );
 
     harness.unmount();
