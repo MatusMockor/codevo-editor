@@ -12,6 +12,11 @@ import {
   netteViewDataEntryFromSource,
 } from "./netteViewData";
 import {
+  isNetteContainerBindingCandidatePath,
+  phpNetteContainerBindingsFromSource,
+  phpNetteContainerExpressionClassName,
+} from "./phpFrameworkNette";
+import {
   phpNetteTranslationReferenceContextAt,
 } from "./phpNetteTranslations";
 import {
@@ -179,5 +184,13 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       detectPhpPresenterLinkAt(source, offset),
     presenterLinkCompletionAt: ({ offset, source }) =>
       nettePresenterLinkCompletionContextAt(source, offset, "php"),
+  },
+  semantics: {
+    containerExpressionClassName: ({ expression }) =>
+      phpNetteContainerExpressionClassName(expression),
+    containerBindingsFromSource: ({ source }) =>
+      phpNetteContainerBindingsFromSource(source),
+    isContainerBindingCandidatePath: ({ path }) =>
+      isNetteContainerBindingCandidatePath(path),
   },
 };

@@ -1974,7 +1974,7 @@ Route::model('user', AdminUser::class);
       expect(netteRegistry.supportsTargetCollection("routes")).toBe(false);
     });
 
-    it("reports container binding source ownership only for Laravel", () => {
+    it("reports container binding source ownership for configured providers", () => {
       const laravelRegistry = createPhpFrameworkProviderCapabilityRegistry([
         phpLaravelFrameworkProvider,
       ]);
@@ -1984,7 +1984,7 @@ Route::model('user', AdminUser::class);
       const genericRegistry = createPhpFrameworkProviderCapabilityRegistry([]);
 
       expect(laravelRegistry.supports("containerBindingsFromSource")).toBe(true);
-      expect(netteRegistry.supports("containerBindingsFromSource")).toBe(false);
+      expect(netteRegistry.supports("containerBindingsFromSource")).toBe(true);
       expect(genericRegistry.supports("containerBindingsFromSource")).toBe(false);
       expect(
         phpFrameworkSupportsContainerBindingsFromSource([
@@ -1995,7 +1995,7 @@ Route::model('user', AdminUser::class);
         phpFrameworkSupportsContainerBindingsFromSource([
           phpNetteFrameworkProvider,
         ]),
-      ).toBe(false);
+      ).toBe(true);
       expect(phpFrameworkSupportsContainerBindingsFromSource([])).toBe(false);
       expect(
         isPhpFrameworkContainerBindingCandidatePath(
@@ -2009,6 +2009,12 @@ Route::model('user', AdminUser::class);
           [phpNetteFrameworkProvider],
         ),
       ).toBe(false);
+      expect(
+        isPhpFrameworkContainerBindingCandidatePath(
+          "/workspace/config/services.neon",
+          [phpNetteFrameworkProvider],
+        ),
+      ).toBe(true);
       expect(
         isPhpFrameworkContainerBindingCandidatePath(
           "/workspace/app/Services/Unrelated.php",

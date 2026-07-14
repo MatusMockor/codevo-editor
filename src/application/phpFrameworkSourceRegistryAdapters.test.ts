@@ -44,21 +44,22 @@ describe("activePhpFrameworkSourceRegistryProviders", () => {
     expect(hasProvider).toHaveBeenCalledWith("laravel");
   });
 
-  it("does not select Laravel for generic or Nette providers", () => {
+  it("does not select inactive providers", () => {
     const laravelAdapter = adapter("laravel", "laravel");
+    const netteAdapter = adapter("nette", "nette");
 
     expect(
       activePhpFrameworkSourceRegistryProviders(
         { hasProvider: () => false },
-        [laravelAdapter],
+        [laravelAdapter, netteAdapter],
       ),
     ).toEqual([]);
     expect(
       activePhpFrameworkSourceRegistryProviders(
         { hasProvider: (providerId) => providerId === "nette" },
-        [laravelAdapter],
+        [laravelAdapter, netteAdapter],
       ),
-    ).toEqual([]);
+    ).toEqual([netteAdapter.provider]);
   });
 
   it("preserves registry order when multiple contributors are active", () => {

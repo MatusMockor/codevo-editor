@@ -7073,12 +7073,11 @@ export function useWorkbenchController(
       );
       const knownCandidateChanged = eventPaths.some(
         (path) =>
-          detectLanguage(path) === "php" &&
-          (isPhpFrameworkBindingSearchCandidatePath(path) ||
-            isPhpFrameworkContainerBindingCandidatePath(
-              path,
-              activePhpFrameworkProviders,
-            )),
+          isPhpFrameworkBindingSearchCandidatePath(path) ||
+          isPhpFrameworkContainerBindingCandidatePath(
+            path,
+            activePhpFrameworkProviders,
+          ),
       );
 
       if (knownCandidateChanged) {

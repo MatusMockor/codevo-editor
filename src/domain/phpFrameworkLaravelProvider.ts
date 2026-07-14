@@ -478,6 +478,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       phpLaravelContainerBindingsFromSource(source),
     isContainerBindingCandidatePath: ({ path }) =>
       isLaravelContainerBindingCandidatePath(path),
+    supportsContainerBindingTextSearch: true,
   },
 };
 

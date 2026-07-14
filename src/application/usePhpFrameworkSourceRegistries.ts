@@ -1,4 +1,5 @@
 import { usePhpLaravelFrameworkSourceRegistryContribution } from "./phpLaravelFrameworkSourceRegistryAdapter";
+import { usePhpNetteFrameworkSourceRegistryContribution } from "./phpNetteFrameworkSourceRegistryAdapter";
 import {
   activePhpFrameworkSourceRegistryProviders,
   type PhpFrameworkSourceRegistryAdapter,
@@ -40,8 +41,10 @@ function usePhpFrameworkSourceRegistryAdapters(
 ): readonly PhpFrameworkSourceRegistryAdapter[] {
   const laravelContribution =
     usePhpLaravelFrameworkSourceRegistryContribution(dependencies);
+  const netteContribution =
+    usePhpNetteFrameworkSourceRegistryContribution(dependencies);
 
-  return [laravelContribution];
+  return [laravelContribution, netteContribution];
 }
 
 export function usePhpFrameworkSourceRegistries(

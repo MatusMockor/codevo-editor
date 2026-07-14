@@ -4,7 +4,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { FileEntry, WorkspaceFileGateway } from "../domain/workspace";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
@@ -18,8 +21,10 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const ROOT = "/workspace";
 const MIGRATION_PATH = `${ROOT}/database/migrations/2026_07_05_000000_create_posts.php`;
 const PROVIDER_PATH = `${ROOT}/app/Providers/AppServiceProvider.php`;
+const NEON_PATH = `${ROOT}/config/config.neon`;
 const MIGRATION_SOURCE = "<?php Schema::create('posts', fn () => null);";
 const PROVIDER_SOURCE = "<?php Builder::macro('published', fn () => $this);";
+const NEON_SOURCE = "services:\n  App\\Contracts\\Gateway: App\\NetteGateway";
 const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: ["laravel"],
@@ -32,6 +37,20 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     matchedProviderIds: [],
     profile: "generic",
     providers: [],
+  }),
+);
+const NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["nette"],
+    profile: "nette",
+    providers: [phpNetteFrameworkProvider],
+  }),
+);
+const HYBRID_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["laravel", "nette"],
+    profile: "generic",
+    providers: [phpLaravelFrameworkProvider, phpNetteFrameworkProvider],
   }),
 );
 
@@ -53,6 +72,14 @@ function makeWorkspaceFiles(): Pick<
         return [fileEntry(PROVIDER_PATH)];
       }
 
+      if (path === `${ROOT}/config`) {
+        return [fileEntry(NEON_PATH)];
+      }
+
+      if (path === `${ROOT}/app/config` || path === `${ROOT}/app/modules`) {
+        return [];
+      }
+
       return [];
     }),
     readTextFile: vi.fn(async (path: string) => {
@@ -62,6 +89,10 @@ function makeWorkspaceFiles(): Pick<
 
       if (path === PROVIDER_PATH) {
         return PROVIDER_SOURCE;
+      }
+
+      if (path === NEON_PATH) {
+        return NEON_SOURCE;
       }
 
       throw new Error(`Unexpected read: ${path}`);
@@ -137,6 +168,34 @@ describe("usePhpFrameworkSourceRegistries", () => {
     expect(sourceContext.signature).toContain("m:");
     expect(sourceContext.signature).toContain("|p:");
     expect(deps.onSourcesLoaded).toHaveBeenCalledWith(ROOT);
+
+    harness.unmount();
+  });
+
+  it("loads Nette NEON sources through the same framework source context", async () => {
+    const deps = makeDeps({ frameworkRuntime: NETTE_RUNTIME });
+    const harness = renderHook(deps);
+
+    await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
+
+    const sourceContext = harness.api().currentPhpFrameworkSourceContext();
+    expect(sourceContext.workspaceSources).toEqual([NEON_SOURCE]);
+    expect(sourceContext.signature).toContain("neon:");
+
+    harness.unmount();
+  });
+
+  it("merges active framework source providers in registry order", async () => {
+    const deps = makeDeps({ frameworkRuntime: HYBRID_RUNTIME });
+    const harness = renderHook(deps);
+
+    await harness.api().ensurePhpFrameworkSourceCollectionsLoaded(ROOT);
+
+    expect(harness.api().currentPhpFrameworkSourceContext().workspaceSources).toEqual([
+      MIGRATION_SOURCE,
+      PROVIDER_SOURCE,
+      NEON_SOURCE,
+    ]);
 
     harness.unmount();
   });

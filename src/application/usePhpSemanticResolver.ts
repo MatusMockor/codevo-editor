@@ -268,6 +268,16 @@ export function usePhpSemanticResolver({
       }
 
       const lookup = (async (): Promise<string | null> => {
+        if (
+          !activePhpFrameworkProviders.some(
+            (provider) =>
+              provider.semantics?.supportsContainerBindingTextSearch === true,
+          )
+        ) {
+          phpFrameworkBindingCacheRef.current[cacheKey] = null;
+          return null;
+        }
+
         let concreteClassName: string | null = null;
         let candidateReadFailed = false;
         const shortName = shortPhpName(normalizedClassName);

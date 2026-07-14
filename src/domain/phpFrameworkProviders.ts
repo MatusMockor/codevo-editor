@@ -937,6 +937,7 @@ export interface PhpFrameworkProvider {
     isContainerBindingCandidatePath?: (
       context: PhpFrameworkContainerBindingPathContext,
     ) => boolean;
+    supportsContainerBindingTextSearch?: true;
   };
 }
 
