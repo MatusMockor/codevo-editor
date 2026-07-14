@@ -56,6 +56,7 @@ function makeOptions(
 ): UsePhpSemanticResolverOptions {
   return {
     activePhpFrameworkProviders: [phpLaravelFrameworkProvider],
+    currentPhpFrameworkSourceContext: () => ({ signature: "", workspaceSources: [] }),
     currentWorkspaceRootRef: { current: ROOT },
     fileSearch: { searchFiles: vi.fn(async () => []) },
     intelligenceMode: "basic",
@@ -127,6 +128,77 @@ describe("usePhpSemanticResolver container binding scans", () => {
     ).resolves.toBeNull();
 
     expect(searchText).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("resolves Nette container bindings from loaded NEON framework sources without text search", async () => {
+    const searchText = vi.fn(async () => []);
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:1",
+          workspaceSources: [
+            [
+              "services:",
+              "    App\\Contracts\\Gateway: App\\Services\\NetteGateway",
+            ].join("\n"),
+          ],
+        }),
+        textSearch: {
+          replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+          searchText,
+        },
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
+    ).resolves.toBe("App\\Services\\NetteGateway");
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("invalidates cached Nette misses when framework source signatures change", async () => {
+    const searchText = vi.fn(async () => []);
+    const emptySources = {
+      signature: "",
+      workspaceSources: [],
+    };
+    const loadedSources = {
+      signature: "neon:1",
+      workspaceSources: [
+        [
+          "services:",
+          "    App\\Contracts\\Gateway: App\\Services\\NetteGateway",
+        ].join("\n"),
+      ],
+    };
+    const baseOptions = makeOptions({
+      activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+      currentPhpFrameworkSourceContext: () => emptySources,
+      textSearch: {
+        replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+        searchText,
+      },
+    });
+    const harness = renderResolver(baseOptions);
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
+    ).resolves.toBeNull();
+
+    harness.rerender({
+      ...baseOptions,
+      currentPhpFrameworkSourceContext: () => loadedSources,
+    });
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
+    ).resolves.toBe("App\\Services\\NetteGateway");
+    expect(searchText).not.toHaveBeenCalled();
+
     harness.unmount();
   });
 

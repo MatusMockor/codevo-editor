@@ -26,11 +26,16 @@ import {
 } from "./phpTypeAnalysis";
 import {
   phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
 
 const laravelOptions = {
   frameworkProviders: [phpLaravelFrameworkProvider],
+};
+
+const netteOptions = {
+  frameworkProviders: [phpNetteFrameworkProvider],
 };
 
 function positionAfter(source: string, needle: string) {
@@ -4225,6 +4230,101 @@ class Comment extends Model
         laravelOptions,
       ),
     ).not.toBe("App\\Models\\Comment");
+  });
+
+  it("resolves Nette getByType container expressions as receiver and assignment types", () => {
+    const source = `<?php
+namespace App\\Presenters;
+
+class DashboardPresenter
+{
+    public function actionDefault(): void
+    {
+        $repo = $this->container->getByType(App\\Repo::class);
+
+        $this->container->getByType(App\\Repo::class)->findAll();
+        $repo->findAll();
+    }
+}
+`;
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->container->getByType(App\\Repo::class)"),
+        "$this->container->getByType(App\\Repo::class)",
+        netteOptions,
+      ),
+    ).toBe("App\\Repo");
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$repo->findAll"),
+        "repo",
+        netteOptions,
+      ),
+    ).toBe("App\\Repo");
+    expect(
+      phpReceiverExpressionTypeInSource(
+        source,
+        positionAfter(source, "$this->container->getByType(App\\Repo::class)"),
+        "$this->container->getByType(App\\Repo::class)",
+        {},
+      ),
+    ).toBeNull();
+  });
+
+  it("uses Nette NEON bindings from workspace sources for getByType concrete types", () => {
+    const presenterSource = `<?php
+namespace App\\Presenters;
+
+class DashboardPresenter
+{
+    public function actionDefault(): void
+    {
+        $repo = $this->container->getByType(App\\Contracts\\Repo::class);
+
+        $this->container->getByType(App\\Contracts\\Repo::class)->findAll();
+        $repo->findAll();
+    }
+}
+`;
+    const neonSource = `
+services:
+    App\\Contracts\\Repo: App\\Repo
+`;
+    const options = {
+      ...netteOptions,
+      frameworkSourceContext: { workspaceSources: [neonSource] },
+    };
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        presenterSource,
+        positionAfter(
+          presenterSource,
+          "$this->container->getByType(App\\Contracts\\Repo::class)",
+        ),
+        "$this->container->getByType(App\\Contracts\\Repo::class)",
+        options,
+      ),
+    ).toBe("App\\Repo");
+    expect(
+      phpVariableTypeInSource(
+        presenterSource,
+        positionAfter(presenterSource, "$repo->findAll"),
+        "repo",
+        options,
+      ),
+    ).toBe("App\\Repo");
+    expect(
+      phpVariableTypeInSource(
+        presenterSource,
+        positionAfter(presenterSource, "$repo->findAll"),
+        "repo",
+        netteOptions,
+      ),
+    ).toBe("App\\Contracts\\Repo");
   });
 
   it("resolves parenthesized new Laravel resource chains to JsonResponse", () => {

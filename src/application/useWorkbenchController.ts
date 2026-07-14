@@ -7041,6 +7041,7 @@ export function useWorkbenchController(
     resolvePhpSemanticTypeReference,
   } = usePhpSemanticResolver({
     activePhpFrameworkProviders,
+    currentPhpFrameworkSourceContext,
     currentWorkspaceRootRef,
     fileSearch,
     intelligenceMode,

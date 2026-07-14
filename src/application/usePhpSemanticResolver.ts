@@ -15,6 +15,7 @@ import {
   phpFrameworkSupportsContainerBindingsFromSource,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkSourceRegistryContext } from "./usePhpFrameworkSourceRegistries";
 import {
   isTypeProjectSymbol,
   type ProjectSymbolSearchGateway,
@@ -29,6 +30,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 export interface UsePhpSemanticResolverOptions {
   activePhpFrameworkProviders: readonly PhpFrameworkProvider[];
+  currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   fileSearch: FileSearchGateway;
   intelligenceMode: IntelligenceMode;
@@ -43,6 +45,7 @@ export interface UsePhpSemanticResolverOptions {
 
 export function usePhpSemanticResolver({
   activePhpFrameworkProviders,
+  currentPhpFrameworkSourceContext,
   currentWorkspaceRootRef,
   fileSearch,
   intelligenceMode,
@@ -62,12 +65,16 @@ export function usePhpSemanticResolver({
   const providerSignature = phpFrameworkProviderSignature(
     activePhpFrameworkProviders,
   );
+  const frameworkSourceSignature = currentPhpFrameworkSourceContext().signature;
   const phpFrameworkBindingCacheOwnerRef = useRef({
+    frameworkSourceSignature,
     providerSignature,
     workspaceRoot,
   });
 
   if (
+    phpFrameworkBindingCacheOwnerRef.current.frameworkSourceSignature !==
+      frameworkSourceSignature ||
     phpFrameworkBindingCacheOwnerRef.current.providerSignature !==
       providerSignature ||
     !workspaceRootKeysEqual(
@@ -76,6 +83,7 @@ export function usePhpSemanticResolver({
     )
   ) {
     phpFrameworkBindingCacheOwnerRef.current = {
+      frameworkSourceSignature,
       providerSignature,
       workspaceRoot,
     };
@@ -268,6 +276,20 @@ export function usePhpSemanticResolver({
       }
 
       const lookup = (async (): Promise<string | null> => {
+        const sourceContext = currentPhpFrameworkSourceContext();
+        const sourceConcrete = phpFrameworkBoundConcreteFromSources(
+          normalizedClassName,
+          sourceContext.workspaceSources,
+          activePhpFrameworkProviders,
+          (source, bindingClassName) =>
+            resolvePhpClassReference(source, bindingClassName),
+        );
+
+        if (sourceConcrete) {
+          phpFrameworkBindingCacheRef.current[cacheKey] = sourceConcrete;
+          return sourceConcrete;
+        }
+
         if (
           !activePhpFrameworkProviders.some(
             (provider) =>
@@ -379,6 +401,7 @@ export function usePhpSemanticResolver({
     },
     [
       activePhpFrameworkProviders,
+      currentPhpFrameworkSourceContext,
       currentWorkspaceRootRef,
       phpFrameworkBindingCacheRef,
       readNavigationFileContent,
@@ -629,6 +652,44 @@ export function usePhpSemanticResolver({
     resolvePhpMethodDeclaredReturnType,
     resolvePhpSemanticTypeReference,
   };
+}
+
+function phpFrameworkBoundConcreteFromSources(
+  normalizedClassName: string,
+  sources: readonly string[],
+  providers: readonly PhpFrameworkProvider[],
+  resolveClassName: (source: string, className: string) => string | null,
+): string | null {
+  const normalizedTarget = normalizePhpFrameworkBindingClassName(normalizedClassName);
+
+  for (const source of sources) {
+    for (const binding of phpFrameworkContainerBindingsFromSource(
+      source,
+      providers,
+    )) {
+      const abstractClassName = resolveClassName(source, binding.abstractClassName);
+
+      if (
+        !abstractClassName ||
+        normalizePhpFrameworkBindingClassName(abstractClassName) !==
+          normalizedTarget
+      ) {
+        continue;
+      }
+
+      const concreteClassName = resolveClassName(source, binding.concreteClassName);
+
+      if (concreteClassName) {
+        return concreteClassName;
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizePhpFrameworkBindingClassName(className: string): string {
+  return className.trim().replace(/^\\+/, "").toLowerCase();
 }
 
 function isPhpPath(path: string): boolean {
