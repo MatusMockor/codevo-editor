@@ -61,6 +61,14 @@ export interface BladeComponentCompletion {
   replaceEnd: number;
 }
 
+export interface BladeComponentAttributeCompletion {
+  componentName: string;
+  existingAttributeNames: string[];
+  prefix: string;
+  replaceStart: number;
+  replaceEnd: number;
+}
+
 /** Directory holding anonymous Blade components, relative to the workspace root. */
 export const BLADE_ANONYMOUS_COMPONENTS_DIR = "resources/views/components";
 
@@ -306,6 +314,145 @@ export function detectBladeComponentCompletionAt(
   }
 
   return { prefix: source.slice(replaceStart, offset), replaceStart, replaceEnd };
+}
+
+const ATTRIBUTE_NAME_CHAR = /[A-Za-z0-9_:.-]/;
+
+export function detectBladeComponentAttributeCompletionAt(
+  source: string,
+  offset: number,
+): BladeComponentAttributeCompletion | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  if (isInsideMaskedRegion(source, offset)) {
+    return null;
+  }
+
+  const tagPrefix = "x-";
+  const searchStart = Math.max(0, offset - 1000);
+  const openAngle = lastTagOpenBefore(source, offset, searchStart);
+
+  if (openAngle === null) {
+    return null;
+  }
+
+  if (source[openAngle + 1] === "/") {
+    return null;
+  }
+
+  if (!source.startsWith(tagPrefix, openAngle + 1)) {
+    return null;
+  }
+
+  const componentNameStart = openAngle + 1 + tagPrefix.length;
+  const nameEnd = componentNameEnd(source, componentNameStart);
+  const componentName = source.slice(componentNameStart, nameEnd);
+
+  if (source.startsWith("::", nameEnd)) {
+    return null;
+  }
+
+  if (!isUsableName(componentName)) {
+    return null;
+  }
+
+  if (offset <= nameEnd) {
+    return null;
+  }
+
+  let replaceStart = offset;
+
+  while (
+    replaceStart > nameEnd &&
+    ATTRIBUTE_NAME_CHAR.test(source[replaceStart - 1] ?? "")
+  ) {
+    replaceStart -= 1;
+  }
+
+  if (replaceStart <= nameEnd) {
+    return null;
+  }
+
+  if (!/\s/.test(source[replaceStart - 1] ?? "")) {
+    return null;
+  }
+
+  let replaceEnd = offset;
+
+  while (
+    replaceEnd < source.length &&
+    ATTRIBUTE_NAME_CHAR.test(source[replaceEnd] ?? "")
+  ) {
+    replaceEnd += 1;
+  }
+
+  return {
+    componentName,
+    existingAttributeNames: componentTagAttributeNames(
+      source,
+      nameEnd,
+      replaceStart,
+    ),
+    prefix: source.slice(replaceStart, offset),
+    replaceStart,
+    replaceEnd,
+  };
+}
+
+function componentTagAttributeNames(
+  source: string,
+  scanStart: number,
+  excludeTokenStart: number,
+): string[] {
+  const names: string[] = [];
+  let index = scanStart;
+
+  while (index < source.length) {
+    const character = source[index] ?? "";
+
+    if (character === ">") {
+      return names;
+    }
+
+    if (character === "'" || character === "\"") {
+      const end = stringLiteralEnd(source, index);
+
+      if (end >= source.length) {
+        return names;
+      }
+
+      index = end + 1;
+      continue;
+    }
+
+    if (!ATTRIBUTE_NAME_CHAR.test(character)) {
+      index += 1;
+      continue;
+    }
+
+    const tokenStart = index;
+
+    while (
+      index < source.length &&
+      ATTRIBUTE_NAME_CHAR.test(source[index] ?? "")
+    ) {
+      index += 1;
+    }
+
+    if (tokenStart === excludeTokenStart) {
+      continue;
+    }
+
+    const attributeName = source.slice(tokenStart, index).replace(/^:+/, "");
+
+    if (attributeName.length > 0) {
+      names.push(attributeName);
+    }
+  }
+
+  return names;
 }
 
 /**

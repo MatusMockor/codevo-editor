@@ -1,4 +1,5 @@
 import {
+  detectBladeComponentAttributeCompletionAt,
   detectBladeComponentCompletionAt,
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
@@ -19,6 +20,7 @@ import {
   bladeFrameworkLiteralCompletionItems,
 } from "./bladeFrameworkHelperCompletionItems";
 import {
+  bladeComponentAttributeCompletionItems,
   bladeComponentCompletionItems,
   bladeDirectiveCompletionItems,
 } from "./bladeStaticCompletionItems";
@@ -37,6 +39,7 @@ import { synthesizePhpTypedReceiverSource } from "./phpTypedReceiverSource";
 
 export interface BladeCompletionProviderDependencies {
   activeDocument: { content: string; path: string } | null;
+  collectBladeComponentAttributes: (componentName: string) => Promise<string[]>;
   collectBladeComponentNames: () => Promise<string[]>;
   collectBladeForeachLoopVariables: (
     viewName: string,
@@ -76,6 +79,7 @@ export async function provideBladeCompletions(
 ): Promise<BladeCompletionItem[]> {
   const {
     activeDocument,
+    collectBladeComponentAttributes,
     collectBladeComponentNames,
     collectBladeForeachLoopVariables,
     collectBladeViewVariablesWithDisplayTypes,
@@ -298,6 +302,26 @@ export async function provideBladeCompletions(
         replaceEnd: reference.nameEnd,
         replaceStart: reference.nameStart,
       }));
+  }
+
+  const attributeCompletion = detectBladeComponentAttributeCompletionAt(
+    source,
+    offset,
+  );
+
+  if (attributeCompletion) {
+    const attributeNames = await collectBladeComponentAttributes(
+      attributeCompletion.componentName,
+    );
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return bladeComponentAttributeCompletionItems(
+      attributeNames,
+      attributeCompletion,
+    );
   }
 
   const componentCompletion = detectBladeComponentCompletionAt(source, offset);

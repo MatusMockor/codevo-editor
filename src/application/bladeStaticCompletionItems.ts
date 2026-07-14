@@ -21,6 +21,43 @@ export function bladeDirectiveCompletionItems(
     }));
 }
 
+export function bladeComponentAttributeCompletionItems(
+  attributeNames: readonly string[],
+  completion: {
+    existingAttributeNames: readonly string[];
+    prefix: string;
+    replaceStart: number;
+    replaceEnd: number;
+  },
+): BladeCompletionItem[] {
+  const existingNames = new Set(completion.existingAttributeNames);
+  const normalizedPrefix = completion.prefix.toLowerCase();
+  const items: BladeCompletionItem[] = [];
+
+  for (const attributeName of attributeNames) {
+    if (existingNames.has(attributeName)) {
+      continue;
+    }
+
+    for (const candidate of [attributeName, `:${attributeName}`]) {
+      if (!candidate.toLowerCase().startsWith(normalizedPrefix)) {
+        continue;
+      }
+
+      items.push({
+        detail: "Component attribute",
+        insertText: candidate,
+        kind: "member",
+        label: candidate,
+        replaceEnd: completion.replaceEnd,
+        replaceStart: completion.replaceStart,
+      });
+    }
+  }
+
+  return items.slice(0, 100);
+}
+
 export function bladeComponentCompletionItems(
   componentNames: readonly string[],
   prefix: string,

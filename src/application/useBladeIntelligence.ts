@@ -83,6 +83,7 @@ export function useBladeIntelligence(
     workspaceRoot,
   } = deps;
   const {
+    collectBladeComponentAttributes,
     collectBladeComponentNames,
     collectBladeForeachLoopVariables,
     collectBladeViewVariablesWithDisplayTypes,
@@ -113,6 +114,7 @@ export function useBladeIntelligence(
     ): Promise<BladeCompletionItem[]> => {
       return provideBladeCompletionsFromProvider(source, position, {
         activeDocument,
+        collectBladeComponentAttributes,
         collectBladeComponentNames,
         collectBladeForeachLoopVariables,
         collectBladeViewVariablesWithDisplayTypes,
@@ -132,6 +134,7 @@ export function useBladeIntelligence(
     },
     [
       activeDocument,
+      collectBladeComponentAttributes,
       collectBladeComponentNames,
       collectBladeForeachLoopVariables,
       collectBladeViewVariablesWithDisplayTypes,

@@ -45,6 +45,7 @@ function makeDeps(
       content: "",
       path: BLADE_PATH,
     },
+    collectBladeComponentAttributes: vi.fn(async () => []),
     collectBladeComponentNames: vi.fn(async () => ["alert", "forms.input"]),
     collectBladeForeachLoopVariables: vi.fn(async () => []),
     collectBladeViewVariablesWithDisplayTypes: vi.fn(async () => []),
@@ -541,6 +542,127 @@ describe("provideBladeCompletions", () => {
       ),
     ).resolves.toEqual([]);
     expect(collectViewTargets).not.toHaveBeenCalled();
+  });
+
+  it("completes @props attributes inside x-alert tag", async () => {
+    const collectBladeComponentAttributes = vi.fn(async () => [
+      "type",
+      "message",
+    ]);
+    const source = "<x-alert ";
+
+    const completions = await provideBladeCompletions(
+      source,
+      { column: source.length + 1, lineNumber: 1 },
+      makeDeps({ collectBladeComponentAttributes }),
+    );
+
+    expect(collectBladeComponentAttributes).toHaveBeenCalledWith("alert");
+    expect(completions).toContainEqual(
+      expect.objectContaining({
+        insertText: "type",
+        label: "type",
+        replaceEnd: source.length,
+        replaceStart: source.length,
+      }),
+    );
+    expect(completions).toContainEqual(
+      expect.objectContaining({ insertText: "message", label: "message" }),
+    );
+  });
+
+  it("offers :type bound variant", async () => {
+    const source = "<x-alert :ty";
+
+    const completions = await provideBladeCompletions(
+      source,
+      { column: source.length + 1, lineNumber: 1 },
+      makeDeps({
+        collectBladeComponentAttributes: vi.fn(async () => ["type"]),
+      }),
+    );
+
+    expect(completions).toEqual([
+      expect.objectContaining({
+        insertText: ":type",
+        label: ":type",
+        replaceEnd: source.length,
+        replaceStart: source.indexOf(":ty"),
+      }),
+    ]);
+  });
+
+  it("skips attributes already set on the tag", async () => {
+    const source = '<x-alert type="info" ';
+
+    const completions = await provideBladeCompletions(
+      source,
+      { column: source.length + 1, lineNumber: 1 },
+      makeDeps({
+        collectBladeComponentAttributes: vi.fn(async () => [
+          "type",
+          "message",
+        ]),
+      }),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({ label: "message" }),
+    );
+    expect(completions).not.toContainEqual(
+      expect.objectContaining({ label: "type" }),
+    );
+    expect(completions).not.toContainEqual(
+      expect.objectContaining({ label: ":type" }),
+    );
+  });
+
+  it("no completions outside a component tag", async () => {
+    const collectBladeComponentAttributes = vi.fn(async () => ["type"]);
+    const source = "<div ";
+
+    await expect(
+      provideBladeCompletions(
+        source,
+        { column: source.length + 1, lineNumber: 1 },
+        makeDeps({ collectBladeComponentAttributes }),
+      ),
+    ).resolves.toEqual([]);
+    expect(collectBladeComponentAttributes).not.toHaveBeenCalled();
+  });
+
+  it("no completions inside attribute value", async () => {
+    const collectBladeComponentAttributes = vi.fn(async () => ["type"]);
+    const source = '<x-alert type="in';
+
+    await expect(
+      provideBladeCompletions(
+        source,
+        { column: source.length + 1, lineNumber: 1 },
+        makeDeps({ collectBladeComponentAttributes }),
+      ),
+    ).resolves.toEqual([]);
+    expect(collectBladeComponentAttributes).not.toHaveBeenCalled();
+  });
+
+  it("drops async attribute completions after a root switch", async () => {
+    const currentWorkspaceRootRef = { current: ROOT };
+    const source = "<x-alert ";
+
+    await expect(
+      provideBladeCompletions(
+        source,
+        { column: source.length + 1, lineNumber: 1 },
+        makeDeps({
+          collectBladeComponentAttributes: vi.fn(async () => {
+            currentWorkspaceRootRef.current = "/other";
+
+            return ["type"];
+          }),
+          currentWorkspaceRootRef,
+        }),
+      ),
+    ).resolves.toEqual([]);
   });
 
   it("drops async component completions after a root switch", async () => {

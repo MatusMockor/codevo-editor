@@ -4,6 +4,11 @@ import type { FileEntry, TextSearchGateway } from "../domain/workspace";
 import type { BladeIntelligenceDependencies } from "./bladeIntelligenceContracts";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
+  collectBladeComponentAttributes as collectBladeComponentAttributesFromWorkspace,
+  invalidateBladeComponentAttributesForPath as invalidateBladeComponentAttributesForCachePath,
+  type BladeComponentAttributesCacheRef,
+} from "./bladeComponentAttributeDiscovery";
+import {
   collectBladeComponentNames as collectBladeComponentNamesFromWorkspace,
   invalidateBladeComponentNamesForPath as invalidateBladeComponentNamesForCachePath,
 } from "./bladeComponentDiscovery";
@@ -30,6 +35,7 @@ export interface BladeIntelligenceCacheDependencies {
 }
 
 export interface BladeIntelligenceCaches extends BladeViewVariableResolver {
+  collectBladeComponentAttributes: (componentName: string) => Promise<string[]>;
   collectBladeComponentNames: () => Promise<string[]>;
   invalidateBladeComponentNamesForPath: (root: string, path: string) => void;
   invalidateBladeViewDataEntriesForPath: (root: string, path: string) => void;
@@ -58,6 +64,8 @@ export function useBladeIntelligenceCaches(
     Map<string, Promise<BladeViewDataEntry[] | null>>
   >(new Map());
   const bladeComponentNamesByRootRef = useRef<Record<string, string[]>>({});
+  const bladeComponentAttributesByRootRef =
+    useRef<BladeComponentAttributesCacheRef["current"]>({});
 
   const ensureBladeViewDataEntriesLoaded = useCallback(
     async (requestedRoot: string): Promise<BladeViewDataEntry[] | null> => {
@@ -125,10 +133,27 @@ export function useBladeIntelligenceCaches(
     workspaceRoot,
   ]);
 
+  const collectBladeComponentAttributes = useCallback(
+    async (componentName: string): Promise<string[]> => {
+      return collectBladeComponentAttributesFromWorkspace(componentName, {
+        cacheRef: bladeComponentAttributesByRootRef,
+        currentWorkspaceRootRef,
+        readNavigationFileContent,
+        workspaceRoot,
+      });
+    },
+    [currentWorkspaceRootRef, readNavigationFileContent, workspaceRoot],
+  );
+
   const invalidateBladeComponentNamesForPath = useCallback(
     (root: string, path: string): void => {
       invalidateBladeComponentNamesForCachePath(
         bladeComponentNamesByRootRef,
+        root,
+        path,
+      );
+      invalidateBladeComponentAttributesForCachePath(
+        bladeComponentAttributesByRootRef,
         root,
         path,
       );
@@ -140,9 +165,11 @@ export function useBladeIntelligenceCaches(
     bladeViewDataEntriesByRootRef.current = {};
     bladeViewDataEntriesLoadInFlightRef.current = new Map();
     bladeComponentNamesByRootRef.current = {};
+    bladeComponentAttributesByRootRef.current = {};
   }, []);
 
   return {
+    collectBladeComponentAttributes,
     collectBladeComponentNames,
     collectBladeForeachLoopVariables:
       viewVariableResolver.collectBladeForeachLoopVariables,

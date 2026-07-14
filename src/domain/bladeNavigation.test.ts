@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BLADE_DIRECTIVES,
+  detectBladeComponentAttributeCompletionAt,
   detectBladeComponentCompletionAt,
   detectBladeDirectiveCompletionAt,
   detectBladeReferenceAt,
@@ -886,6 +887,130 @@ describe("detectBladeComponentCompletionAt", () => {
 
     expect(
       detectBladeComponentCompletionAt(source, offsetOf(source, "text", 2)),
+    ).toBeNull();
+  });
+});
+
+describe("detectBladeComponentAttributeCompletionAt", () => {
+  it("offers attribute completion with an empty prefix inside an opening tag", () => {
+    const source = "<x-alert ";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toEqual({
+      componentName: "alert",
+      existingAttributeNames: [],
+      prefix: "",
+      replaceStart: source.length,
+      replaceEnd: source.length,
+    });
+  });
+
+  it("captures the typed attribute prefix", () => {
+    const source = "<x-alert ty";
+    const offset = source.length;
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, offset),
+    ).toEqual({
+      componentName: "alert",
+      existingAttributeNames: [],
+      prefix: "ty",
+      replaceStart: offsetOf(source, "ty"),
+      replaceEnd: offset,
+    });
+  });
+
+  it("captures a bound attribute prefix starting with a colon", () => {
+    const source = "<x-alert :ty";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toEqual({
+      componentName: "alert",
+      existingAttributeNames: [],
+      prefix: ":ty",
+      replaceStart: offsetOf(source, ":ty"),
+      replaceEnd: source.length,
+    });
+  });
+
+  it("lists attributes already present on the tag", () => {
+    const source = '<x-alert type="info" :message="$m" ic />';
+    const offset = offsetOf(source, "ic", 2);
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, offset),
+    ).toEqual({
+      componentName: "alert",
+      existingAttributeNames: ["type", "message"],
+      prefix: "ic",
+      replaceStart: offsetOf(source, "ic"),
+      replaceEnd: offsetOf(source, "ic") + 2,
+    });
+  });
+
+  it("does not fire inside the component name", () => {
+    const source = "<x-alert ";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, offsetOf(source, "alert", 2)),
+    ).toBeNull();
+  });
+
+  it("does not fire outside a component tag", () => {
+    const source = "<div ";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toBeNull();
+  });
+
+  it("does not fire after the tag closed", () => {
+    const source = "<x-alert> te";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toBeNull();
+  });
+
+  it("does not fire inside a closing component tag", () => {
+    const source = "</x-alert ";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toBeNull();
+  });
+
+  it("does not fire inside an attribute value string", () => {
+    const source = '<x-alert type="inf';
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toBeNull();
+  });
+
+  it("does not fire after an unquoted equals sign", () => {
+    const source = "<x-alert type=inf";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toBeNull();
+  });
+
+  it("declines package-namespaced components", () => {
+    const source = "<x-mail::message ty";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, source.length),
+    ).toBeNull();
+  });
+
+  it("does not fire inside Blade comments", () => {
+    const source = "{{-- <x-alert ty --}}";
+
+    expect(
+      detectBladeComponentAttributeCompletionAt(source, offsetOf(source, "ty", 2)),
     ).toBeNull();
   });
 });
