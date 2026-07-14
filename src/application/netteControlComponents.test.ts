@@ -892,6 +892,353 @@ class GatewayFormFactory
       }),
     );
   });
+
+  it("offers form fields defined by a factory in the parent presenter class", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\BasePresenter;
+
+class HomePresenter extends BasePresenter
+{
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI;
+
+class BasePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\UI\\BasePresenter"
+        ? { path: `${ROOT}/app/UI/BasePresenter.php`, source: basePresenter }
+        : null,
+    );
+    const source = "{form contactForm}{input em}{/form}";
+    const offset = source.indexOf("em") + "em".length;
+    const completion = latteFormFieldMacroCompletionAt(source, offset);
+
+    await expect(
+      latteFormFieldMacroCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+            resolveDeclaredType: (_source, typeHint) =>
+              typeHint === "BasePresenter" ? "App\\UI\\BasePresenter" : typeHint,
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        source,
+        offset,
+        completion!,
+      ),
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        detail: "Nette form field",
+        insertText: "email",
+        label: "email",
+      }),
+    );
+
+    expect(readPhpClassSource).toHaveBeenCalledWith("App\\UI\\BasePresenter");
+  });
+
+  it("offers form fields from a factory declared in a used trait", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\Components\\FormTrait;
+
+class HomePresenter
+{
+    use FormTrait;
+}
+`;
+    const formTrait = `<?php
+namespace App\\UI\\Components;
+
+trait FormTrait
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\UI\\Components\\FormTrait"
+        ? { path: `${ROOT}/app/UI/Components/FormTrait.php`, source: formTrait }
+        : null,
+    );
+    const source = "{form contactForm}{input em}{/form}";
+    const offset = source.indexOf("em") + "em".length;
+    const completion = latteFormFieldMacroCompletionAt(source, offset);
+
+    await expect(
+      latteFormFieldMacroCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+            resolveDeclaredType: (_source, typeHint) =>
+              typeHint === "FormTrait"
+                ? "App\\UI\\Components\\FormTrait"
+                : typeHint,
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        source,
+        offset,
+        completion!,
+      ),
+    ).resolves.toContainEqual(expect.objectContaining({ label: "email" }));
+  });
+
+  it("prefers a trait factory over a parent factory for the same component", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\Components\\FormTrait;
+use App\\UI\\BasePresenter;
+
+class HomePresenter extends BasePresenter
+{
+    use FormTrait;
+}
+`;
+    const formTrait = `<?php
+namespace App\\UI\\Components;
+
+trait FormTrait
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('traitEmail', 'Email');
+        return $form;
+    }
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI;
+
+class BasePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('parentEmail', 'Email');
+        return $form;
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) => {
+      if (className === "App\\UI\\Components\\FormTrait") {
+        return {
+          path: `${ROOT}/app/UI/Components/FormTrait.php`,
+          source: formTrait,
+        };
+      }
+
+      if (className === "App\\UI\\BasePresenter") {
+        return {
+          path: `${ROOT}/app/UI/BasePresenter.php`,
+          source: basePresenter,
+        };
+      }
+
+      return null;
+    });
+    const source = "{form contactForm}{input tr}{/form}";
+    const offset = source.indexOf("tr}") + "tr".length;
+    const completion = latteFormFieldMacroCompletionAt(source, offset);
+    const fields = await latteFormFieldMacroCompletions(
+      {
+        componentCache: {},
+        deps: {
+          ...deps,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource,
+          resolveDeclaredType: (_source, typeHint) => {
+            if (typeHint === "FormTrait") {
+              return "App\\UI\\Components\\FormTrait";
+            }
+
+            if (typeHint === "BasePresenter") {
+              return "App\\UI\\BasePresenter";
+            }
+
+            return typeHint;
+          },
+        },
+        isRequestedRootActive: () => true,
+        maxCompletions: 100,
+        requestedRoot: ROOT,
+        templateRelativePath: "app/UI/Home/default.latte",
+        ttlMs: 5000,
+      },
+      source,
+      offset,
+      completion!,
+    );
+
+    expect(fields).toContainEqual(
+      expect.objectContaining({ label: "traitEmail" }),
+    );
+    expect(fields).not.toContainEqual(
+      expect.objectContaining({ label: "parentEmail" }),
+    );
+  });
+
+  it("does not hang on a cycle when collecting inherited form fields", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter extends LoopPresenter
+{
+}
+`;
+    const loopPresenter = `<?php
+namespace App\\UI\\Home;
+
+class LoopPresenter extends HomePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) => {
+      if (className === "App\\UI\\Home\\LoopPresenter") {
+        return {
+          path: `${ROOT}/app/UI/Home/LoopPresenter.php`,
+          source: loopPresenter,
+        };
+      }
+
+      if (className === "App\\UI\\Home\\HomePresenter") {
+        return {
+          path: `${ROOT}/app/UI/Home/HomePresenter.php`,
+          source: presenter,
+        };
+      }
+
+      return null;
+    });
+    const source = "{form contactForm}{input em}{/form}";
+    const offset = source.indexOf("em") + "em".length;
+    const completion = latteFormFieldMacroCompletionAt(source, offset);
+
+    await expect(
+      latteFormFieldMacroCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+            resolveDeclaredType: (_source, typeHint) =>
+              typeHint ? `App\\UI\\Home\\${typeHint.replace(/^\\+/, "")}` : typeHint,
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        source,
+        offset,
+        completion!,
+      ),
+    ).resolves.toContainEqual(expect.objectContaining({ label: "email" }));
+
+    expect(readPhpClassSource.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it("drops inherited form fields when the requested root goes stale during the ancestor walk", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter extends BasePresenter
+{
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI\\Home;
+
+class BasePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const cache: NetteControlCache = {};
+    let active = true;
+    const readPhpClassSource = vi.fn(async () => {
+      active = false;
+
+      return {
+        path: `${ROOT}/app/UI/Home/BasePresenter.php`,
+        source: basePresenter,
+      };
+    });
+    const source = "{form contactForm}{input em}{/form}";
+    const offset = source.indexOf("em") + "em".length;
+    const completion = latteFormFieldMacroCompletionAt(source, offset);
+
+    await expect(
+      latteFormFieldMacroCompletions(
+        {
+          componentCache: cache,
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+          },
+          isRequestedRootActive: () => active,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        source,
+        offset,
+        completion!,
+      ),
+    ).resolves.toEqual([]);
+
+    expect(readPhpClassSource).toHaveBeenCalledTimes(1);
+    expect(cache).toEqual({});
+  });
 });
 
 describe("resolveNetteControlDefinition", () => {
@@ -1375,5 +1722,112 @@ class GatewayFormFactory
       expect.objectContaining({ lineNumber: 9 }),
       "email",
     );
+  });
+
+  it("navigates {input email} to the addText declaration in the ancestor class file", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\BasePresenter;
+
+class HomePresenter extends BasePresenter
+{
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI;
+
+class BasePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\UI\\BasePresenter"
+        ? { path: `${ROOT}/app/UI/BasePresenter.php`, source: basePresenter }
+        : null,
+    );
+    const source = "{form contactForm}{input email}{/form}";
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource,
+          resolveDeclaredType: (_source, typeHint) =>
+            typeHint === "BasePresenter" ? "App\\UI\\BasePresenter" : typeHint,
+        },
+        ROOT,
+        () => true,
+        netteControlReferenceAt(source, source.indexOf("email") + 2),
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/UI/BasePresenter.php`,
+      expect.objectContaining({ lineNumber: 9 }),
+      "email",
+    );
+  });
+
+  it("does not navigate to inherited form fields when the requested root goes stale during the ancestor walk", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter extends BasePresenter
+{
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI\\Home;
+
+class BasePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    let active = true;
+    const readPhpClassSource = vi.fn(async () => {
+      active = false;
+
+      return {
+        path: `${ROOT}/app/UI/Home/BasePresenter.php`,
+        source: basePresenter,
+      };
+    });
+    const source = "{form contactForm}{input email}{/form}";
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource,
+        },
+        ROOT,
+        () => active,
+        netteControlReferenceAt(source, source.indexOf("email") + 2),
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(false);
+
+    expect(readPhpClassSource).toHaveBeenCalledTimes(1);
+    expect(openTarget).not.toHaveBeenCalled();
   });
 });

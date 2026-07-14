@@ -151,35 +151,63 @@ export async function resolveNetteControlDefinition(
     }
 
     if (fieldName) {
+      const fieldContext = context ?? {
+        componentCache: {},
+        deps,
+        isRequestedRootActive,
+        maxCompletions: 0,
+        requestedRoot,
+        templateRelativePath: currentRelativePath,
+        ttlMs: 0,
+      };
       const fields = await loadNetteFormFieldDefinitionsFromOwner({
-        context: context ?? {
-          componentCache: {},
-          deps,
-          isRequestedRootActive,
-          maxCompletions: 0,
-          requestedRoot,
-          templateRelativePath: currentRelativePath,
-          ttlMs: 0,
-        },
+        context: fieldContext,
         ownerPath: path,
         ownerSource: content,
         componentName,
       });
-      const field = fields.find((definition) => definition.name === fieldName);
 
-      if (!field) {
-        if (netteCreateComponentFactoryExists(content, componentName)) {
-          return false;
-        }
-
-        continue;
+      if (!isRequestedRootActive()) {
+        return false;
       }
 
-      return deps.openTarget(
-        field.path,
-        editorPositionAtOffset(field.source, field.nameStart),
-        fieldName,
+      const field = fields.find((definition) => definition.name === fieldName);
+
+      if (field) {
+        return deps.openTarget(
+          field.path,
+          editorPositionAtOffset(field.source, field.nameStart),
+          fieldName,
+        );
+      }
+
+      if (netteCreateComponentFactoryExists(content, componentName)) {
+        return false;
+      }
+
+      const inheritedFields = await loadNetteFormFieldDefinitionsFromAncestors(
+        fieldContext,
+        content,
+        componentName,
       );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      const inheritedField = inheritedFields.find(
+        (definition) => definition.name === fieldName,
+      );
+
+      if (inheritedField) {
+        return deps.openTarget(
+          inheritedField.path,
+          editorPositionAtOffset(inheritedField.source, inheritedField.nameStart),
+          fieldName,
+        );
+      }
+
+      continue;
     }
 
     const position = phpMethodPositionInSource(content, [methodName]);
@@ -495,11 +523,69 @@ async function loadNetteFormFieldDefinitions(
       componentName,
     });
 
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
     if (fields.length > 0) {
       return fields;
     }
 
     if (netteCreateComponentFactoryExists(content, componentName)) {
+      return [];
+    }
+
+    const inheritedFields = await loadNetteFormFieldDefinitionsFromAncestors(
+      context,
+      content,
+      componentName,
+    );
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (inheritedFields.length > 0) {
+      return inheritedFields;
+    }
+  }
+
+  return [];
+}
+
+async function loadNetteFormFieldDefinitionsFromAncestors(
+  context: NetteControlCompletionContext,
+  ownerSource: string,
+  componentName: string,
+): Promise<LoadedNetteFormFieldDefinition[]> {
+  const { deps, isRequestedRootActive } = context;
+  const ancestors = await netteAncestorComponentSources(
+    deps,
+    isRequestedRootActive,
+    ownerSource,
+  );
+
+  if (!isRequestedRootActive()) {
+    return [];
+  }
+
+  for (const ancestor of ancestors) {
+    const fields = await loadNetteFormFieldDefinitionsFromOwner({
+      context,
+      ownerPath: ancestor.path,
+      ownerSource: ancestor.source,
+      componentName,
+    });
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    if (fields.length > 0) {
+      return fields;
+    }
+
+    if (netteCreateComponentFactoryExists(ancestor.source, componentName)) {
       return [];
     }
   }

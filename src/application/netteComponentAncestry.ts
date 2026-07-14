@@ -76,7 +76,7 @@ function ancestorClassReferences(source: string): string[] {
     return references.traitNames;
   }
 
-  return [references.parentClassName, ...references.traitNames];
+  return [...references.traitNames, references.parentClassName];
 }
 
 function markDeclaredClassesVisited(
