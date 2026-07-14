@@ -31,7 +31,7 @@ export function usePhpLaravelMorphMapResolver({
   >({});
   const frameworkProviderSignature =
     phpFrameworkRuntimeProviderSignature(frameworkRuntime);
-  const isLaravelFrameworkActive = frameworkRuntime.isLaravel;
+  const isLaravelFrameworkActive = frameworkRuntime.hasProvider("laravel");
 
   const resetPhpLaravelMorphMapModelTypeCache = useCallback((): void => {
     phpLaravelMorphMapModelTypeCacheRef.current = {};

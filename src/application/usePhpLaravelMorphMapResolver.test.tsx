@@ -39,6 +39,12 @@ const LARAVEL_WITH_NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [phpLaravelFrameworkProvider, phpNetteFrameworkProvider],
   }),
 );
+const STALE_LEGACY_LARAVEL_RUNTIME = {
+  ...LARAVEL_RUNTIME,
+  providers: [],
+  hasProvider: () => false,
+  isLaravel: true,
+};
 
 type HookApi = ReturnType<typeof usePhpLaravelMorphMapResolver>;
 type HookOptions = UsePhpLaravelMorphMapResolverOptions;
@@ -224,6 +230,25 @@ describe("usePhpLaravelMorphMapResolver", () => {
     };
     const options = makeOptions({
       frameworkRuntime: GENERIC_RUNTIME,
+      textSearch,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness.api().resolvePhpLaravelProjectMorphMapModelType(),
+    ).resolves.toBeNull();
+
+    expect(textSearch.searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not search morph maps for stale legacy Laravel state without a Laravel provider", async () => {
+    const textSearch = {
+      searchText: vi.fn(async () => [] as TextSearchResult[]),
+    };
+    const options = makeOptions({
+      frameworkRuntime: STALE_LEGACY_LARAVEL_RUNTIME,
       textSearch,
     });
     const harness = renderHook(options);

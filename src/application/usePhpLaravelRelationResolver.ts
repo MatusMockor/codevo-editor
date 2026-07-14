@@ -67,7 +67,7 @@ export function usePhpLaravelRelationResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelRelationResolverOptions) {
-  const isLaravelFrameworkActive = frameworkRuntime.isLaravel;
+  const isLaravelFrameworkActive = frameworkRuntime.hasProvider("laravel");
 
   const resolvePhpClassPropertyOrRelationType = useCallback(
     async (
