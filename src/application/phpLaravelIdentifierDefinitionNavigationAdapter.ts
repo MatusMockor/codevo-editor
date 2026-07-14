@@ -8,7 +8,6 @@ import type {
   PhpFrameworkIdentifierDefinitionHandler,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
 import type { PhpContextualFrameworkLiteralDefinitionRequest } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
-import type { PhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
 
 type PhpContextHandler<Kind extends PhpIdentifierContext["kind"]> = (
   context: Extract<PhpIdentifierContext, { kind: Kind }>,
@@ -95,12 +94,13 @@ const LARAVEL_CONFIG_DERIVED_IDENTIFIER_DEFINITIONS: readonly LaravelConfigDeriv
     },
   ];
 
-export interface PhpLaravelIdentifierDefinitionNavigationAdapterDependencies
-  extends PhpLaravelLiteralDefinitionNavigation {
+export interface PhpLaravelIdentifierDefinitionNavigationAdapterDependencies {
   activeDocument: EditorDocument | null;
   goToPhpFrameworkLiteralDefinition(
     request: PhpContextualFrameworkLiteralDefinitionRequest,
   ): Promise<boolean>;
+  goToPhpLaravelGateAbilityDefinition: PhpContextHandler<"laravelGateAbilityString">;
+  goToPhpLaravelMiddlewareAliasDefinition: PhpContextHandler<"laravelMiddlewareAliasString">;
   goToPhpLaravelRelationStringDefinition: PhpContextHandler<"laravelRelationString">;
   openDirectPhpMethodTarget(
     className: string,
