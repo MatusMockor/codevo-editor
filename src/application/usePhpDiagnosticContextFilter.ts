@@ -77,7 +77,12 @@ export interface PhpDiagnosticContextFilterDependencies {
   ): Promise<boolean>;
   readNavigationFileContent(path: string): Promise<string>;
   resolvePhpClassReference(source: string, className: string): string | null;
-  resolvePhpEloquentBuilderModelType(
+  resolvePhpFrameworkBuilderModelType?(
+    source: string,
+    position: PhpDiagnosticEditorPosition,
+    receiverExpression: string,
+  ): Promise<string | null>;
+  resolvePhpEloquentBuilderModelType?(
     source: string,
     position: PhpDiagnosticEditorPosition,
     receiverExpression: string,
@@ -110,9 +115,14 @@ export function usePhpDiagnosticContextFilter(
     phpTraitHostPropertyMethodExists,
     readNavigationFileContent,
     resolvePhpClassReference,
+    resolvePhpFrameworkBuilderModelType,
     resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
+  const resolvePhpBuilderModelType =
+    resolvePhpFrameworkBuilderModelType ??
+    resolvePhpEloquentBuilderModelType ??
+    (async () => null);
   const frameworkProviders = frameworkRuntime.providers;
   const diagnosticContextStrategy = useMemo(
     () =>
@@ -121,14 +131,18 @@ export function usePhpDiagnosticContextFilter(
         frameworkRuntime,
         phpClassHasDynamicBuilderFinder: phpClassHasLaravelDynamicWhere,
         phpClassHasNamedBuilderScope: phpClassHasLaravelLocalScope,
-        resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
+        resolvePhpFrameworkBuilderModelType: async (
+          source,
+          position,
+          expression,
+        ) => resolvePhpBuilderModelType(source, position, expression),
       }),
     [
       ensurePhpFrameworkSourceCollectionsLoaded,
       frameworkRuntime,
       phpClassHasLaravelDynamicWhere,
       phpClassHasLaravelLocalScope,
-      resolvePhpEloquentBuilderModelType,
+      resolvePhpBuilderModelType,
     ],
   );
 

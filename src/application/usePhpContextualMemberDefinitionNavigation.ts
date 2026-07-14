@@ -63,7 +63,12 @@ export interface PhpContextualMemberDefinitionNavigationDependencies {
   readNavigationFileContent(path: string): Promise<string>;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
-  resolvePhpEloquentBuilderModelType(
+  resolvePhpFrameworkBuilderModelType?(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+  ): Promise<string | null>;
+  resolvePhpEloquentBuilderModelType?(
     source: string,
     position: EditorPosition,
     expression: string,
@@ -73,7 +78,11 @@ export interface PhpContextualMemberDefinitionNavigationDependencies {
     position: EditorPosition,
     expression: string,
   ): Promise<string | null>;
-  resolvePhpLaravelRelationPathOwnerType(
+  resolvePhpFrameworkRelationPathOwnerType?(
+    ownerType: string,
+    relationPath: readonly string[],
+  ): Promise<string | null>;
+  resolvePhpLaravelRelationPathOwnerType?(
     ownerType: string,
     relationPath: readonly string[],
   ): Promise<string | null>;
@@ -108,13 +117,23 @@ export function usePhpContextualMemberDefinitionNavigation({
   readNavigationFileContent,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
+  resolvePhpFrameworkBuilderModelType,
   resolvePhpEloquentBuilderModelType,
   resolvePhpExpressionType,
+  resolvePhpFrameworkRelationPathOwnerType,
   resolvePhpLaravelRelationPathOwnerType,
   setMessage,
   workspaceDescriptor,
   workspaceRoot,
 }: PhpContextualMemberDefinitionNavigationDependencies): PhpContextualMemberDefinitionNavigation {
+  const resolvePhpBuilderModelType =
+    resolvePhpFrameworkBuilderModelType ??
+    resolvePhpEloquentBuilderModelType ??
+    (async () => null);
+  const resolvePhpRelationPathOwnerType =
+    resolvePhpFrameworkRelationPathOwnerType ??
+    resolvePhpLaravelRelationPathOwnerType ??
+    (async () => null);
   const navigationAdapter = useMemo(
     () =>
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
@@ -126,9 +145,17 @@ export function usePhpContextualMemberDefinitionNavigation({
               createPhpLaravelContextualMemberDefinitionNavigationAdapter({
                 openDirectPhpMethodTarget,
                 openPhpLaravelDynamicWhereTarget,
-                resolvePhpEloquentBuilderModelType,
+                resolvePhpEloquentBuilderModelType: async (
+                  source,
+                  position,
+                  expression,
+                ) =>
+                  resolvePhpBuilderModelType(source, position, expression),
                 resolvePhpExpressionType,
-                resolvePhpLaravelRelationPathOwnerType,
+                resolvePhpLaravelRelationPathOwnerType: async (
+                  ownerType,
+                  relationPath,
+                ) => resolvePhpRelationPathOwnerType(ownerType, relationPath),
               }),
           },
         ],
@@ -137,9 +164,9 @@ export function usePhpContextualMemberDefinitionNavigation({
       frameworkRuntime,
       openDirectPhpMethodTarget,
       openPhpLaravelDynamicWhereTarget,
-      resolvePhpEloquentBuilderModelType,
+      resolvePhpBuilderModelType,
       resolvePhpExpressionType,
-      resolvePhpLaravelRelationPathOwnerType,
+      resolvePhpRelationPathOwnerType,
     ],
   );
 
@@ -334,7 +361,7 @@ export function usePhpContextualMemberDefinitionNavigation({
       const builderModelType =
         builderReceiverExpression &&
         navigationAdapter.supportsBuilderModelNavigation()
-          ? await resolvePhpEloquentBuilderModelType(
+          ? await resolvePhpBuilderModelType(
               activeDocument.content,
               position,
               builderReceiverExpression,
@@ -396,7 +423,7 @@ export function usePhpContextualMemberDefinitionNavigation({
       navigationAdapter,
       openDirectPhpMethodTarget,
       openPhpMethodHintTarget,
-      resolvePhpEloquentBuilderModelType,
+      resolvePhpBuilderModelType,
       resolvePhpExpressionType,
       setMessage,
       workspaceRoot,

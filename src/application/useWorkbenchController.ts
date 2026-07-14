@@ -7401,9 +7401,9 @@ export function useWorkbenchController(
 
   const {
     resolvePhpClassPropertyOrRelationType,
-    resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType,
+    resolvePhpFrameworkRelationPathOwnerType,
     resolvePhpExpressionType,
-    resolvePhpLaravelRelationPathOwnerType,
   } = usePhpFrameworkModelSemantics({
     collectPhpMethodsForClass,
     currentWorkspaceRootRef,
@@ -7465,7 +7465,7 @@ export function useWorkbenchController(
     phpTraitHostPropertyMethodExists,
     readNavigationFileContent,
     resolvePhpClassReference,
-    resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,
   });
 
@@ -7479,7 +7479,7 @@ export function useWorkbenchController(
     frameworkRuntime: phpFrameworkRuntimeContext,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
-    resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,
   });
 
@@ -7527,10 +7527,9 @@ export function useWorkbenchController(
     ensurePhpFrameworkSourceCollectionsLoaded,
     frameworkRuntime: phpFrameworkRuntimeContext,
     resolvePhpClassReference,
-    resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,
-    resolvePhpFrameworkRelationPathOwnerType:
-      resolvePhpLaravelRelationPathOwnerType,
+    resolvePhpFrameworkRelationPathOwnerType,
     resolvePhpReceiverMethodCompletions,
     resolvePhpStaticMethodCompletions,
     workspaceRoot,
@@ -7737,9 +7736,9 @@ export function useWorkbenchController(
     readNavigationFileContent,
     resolvePhpClassReference,
     resolvePhpClassSourcePaths,
-    resolvePhpEloquentBuilderModelType: resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,
-    resolvePhpLaravelRelationPathOwnerType,
+    resolvePhpFrameworkRelationPathOwnerType,
     setMessage,
     workspaceDescriptor,
     workspaceRoot,

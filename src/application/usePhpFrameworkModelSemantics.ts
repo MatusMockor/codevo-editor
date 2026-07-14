@@ -27,6 +27,22 @@ export interface PhpFrameworkModelSemantics {
     propertyName: string,
     includeCollectionRelations?: boolean,
   ): Promise<string | null>;
+  resolvePhpFrameworkBuilderModelType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+    depth?: number,
+  ): Promise<string | null>;
+  resolvePhpFrameworkCollectionModelType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+    depth?: number,
+  ): Promise<string | null>;
+  resolvePhpFrameworkRelationPathOwnerType(
+    className: string,
+    previousRelationNames?: readonly string[],
+  ): Promise<string | null>;
   resolvePhpEloquentBuilderModelType(
     source: string,
     position: EditorPosition,
@@ -34,6 +50,12 @@ export interface PhpFrameworkModelSemantics {
     depth?: number,
   ): Promise<string | null>;
   resolvePhpExpressionType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+    depth?: number,
+  ): Promise<string | null>;
+  resolvePhpLaravelCollectionModelType(
     source: string,
     position: EditorPosition,
     expression: string,
@@ -236,8 +258,14 @@ export function usePhpFrameworkModelSemantics({
 
   return {
     resolvePhpClassPropertyOrRelationType,
+    resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
+    resolvePhpFrameworkCollectionModelType:
+      resolvePhpLaravelCollectionModelType,
+    resolvePhpFrameworkRelationPathOwnerType:
+      resolvePhpLaravelRelationPathOwnerType,
     resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
+    resolvePhpLaravelCollectionModelType,
     resolvePhpLaravelRelationPathOwnerType,
   };
 }
