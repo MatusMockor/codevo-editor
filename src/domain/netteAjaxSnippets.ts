@@ -75,6 +75,42 @@ export function detectNetteRedrawControlAt(
   );
 }
 
+export function detectNetteRedrawControlCompletionAt(
+  source: string,
+  offset: number,
+): NetteSnippetCompletionContext | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  const pattern = /\$this\s*->\s*redrawControl\s*\(\s*(["'])/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(source)) !== null) {
+    const quote = match[1] as "'" | "\"";
+    const replaceStart = match.index + match[0].length;
+    const replaceEnd = phpStringLiteralValueEnd(source, replaceStart, quote);
+
+    if (offset < replaceStart || offset > replaceEnd) {
+      continue;
+    }
+
+    const prefix = source.slice(replaceStart, offset);
+    const value = source.slice(replaceStart, replaceEnd);
+
+    if (
+      !SNIPPET_NAME_PREFIX_PATTERN.test(prefix) ||
+      !SNIPPET_NAME_PREFIX_PATTERN.test(value)
+    ) {
+      return null;
+    }
+
+    return { prefix, replaceEnd, replaceStart };
+  }
+
+  return null;
+}
+
 export function findNetteRedrawControlCall(
   source: string,
   snippetName: string,
@@ -372,6 +408,31 @@ function latteAttributeValueEnd(
 
     if (character === "\n" || character === "\r" || character === ">") {
       return index;
+    }
+
+    if (character === quote) {
+      return index;
+    }
+  }
+
+  return source.length;
+}
+
+function phpStringLiteralValueEnd(
+  source: string,
+  valueStart: number,
+  quote: "'" | "\"",
+): number {
+  for (let index = valueStart; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (character === "\n" || character === "\r") {
+      return index;
+    }
+
+    if (character === "\\") {
+      index += 1;
+      continue;
     }
 
     if (character === quote) {

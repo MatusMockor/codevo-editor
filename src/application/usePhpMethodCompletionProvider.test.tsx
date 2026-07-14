@@ -3,7 +3,10 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -29,6 +32,13 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     matchedProviderIds: [],
     profile: "generic",
     providers: [],
+  }),
+);
+const NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["nette"],
+    profile: "nette",
+    providers: [phpNetteFrameworkProvider],
   }),
 );
 
@@ -101,6 +111,7 @@ function makeDeps(
     collectPasswordBrokerTargets: vi.fn(async () => []),
     collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
+    collectNetteRedrawControlSnippetTargets: vi.fn(async () => []),
     collectQueueConnectionTargets: vi.fn(async () => []),
     collectRedisConnectionTargets: vi.fn(async () => []),
     collectStorageDiskTargets: vi.fn(async () => []),
@@ -397,6 +408,107 @@ Comment::with('par')->first();
     expect(ensurePhpFrameworkSourceCollectionsLoaded).toHaveBeenCalledWith(
       ROOT,
     );
+
+    harness.unmount();
+  });
+
+  it("provides Nette redrawControl snippet completions from colocated templates", async () => {
+    const source = "<?php\n$this->redrawControl('mail');";
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+      {
+        name: "sidebar",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const deps = makeDeps({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "MailLogs.php",
+        path: `${ROOT}/app/modules/mailerModule/Components/MailLogs/MailLogs.php`,
+        savedContent: source,
+      },
+      collectNetteRedrawControlSnippetTargets,
+      frameworkRuntime: NETTE_RUNTIME,
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "ma"));
+
+    expect(completions).toEqual([
+      {
+        declaringClassName:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        insertText: "mailLogslisting",
+        kind: "nette.ajax-snippet",
+        name: "mailLogslisting",
+        parameters: "",
+        replaceEnd: source.indexOf("'", source.indexOf("mail")),
+        replaceStart: source.indexOf("mail"),
+        returnType: null,
+      },
+    ]);
+    expect(collectNetteRedrawControlSnippetTargets).toHaveBeenCalledWith(
+      `${ROOT}/app/modules/mailerModule/Components/MailLogs/MailLogs.php`,
+    );
+
+    harness.unmount();
+  });
+
+  it("does not collect Nette snippets for dynamic redrawControl arguments", async () => {
+    const source = "<?php\n$this->redrawControl($name);";
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const deps = makeDeps({
+      collectNetteRedrawControlSnippetTargets,
+      frameworkRuntime: NETTE_RUNTIME,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .providePhpMethodCompletions(source, positionAfter(source, "name")),
+    ).resolves.toEqual([]);
+    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not collect Nette snippets when Nette is inactive", async () => {
+    const source = "<?php\n$this->redrawControl('mai');";
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const deps = makeDeps({
+      collectNetteRedrawControlSnippetTargets,
+      frameworkRuntime: GENERIC_RUNTIME,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .providePhpMethodCompletions(source, positionAfter(source, "mai")),
+    ).resolves.toEqual([]);
+    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
 
     harness.unmount();
   });

@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { latteNetteSnippetNameCompletions } from "./netteAjaxSnippetCompletions";
+import { describe, expect, it, vi } from "vitest";
+import {
+  collectNetteRedrawControlSnippetCompletionTargets,
+  latteNetteSnippetNameCompletions,
+} from "./netteAjaxSnippetCompletions";
+
+const ROOT = "/ws";
 
 describe("latteNetteSnippetNameCompletions", () => {
   it("offers matching snippet names from the current Latte template", () => {
@@ -59,5 +64,67 @@ describe("latteNetteSnippetNameCompletions", () => {
       ) ?? [];
 
     expect(labels).toEqual(["listing", "lis"]);
+  });
+});
+
+describe("collectNetteRedrawControlSnippetCompletionTargets", () => {
+  it("collects static snippet names from colocated component template candidates", async () => {
+    const template = [
+      "{snippet mailLogslisting}",
+      "{/snippet}",
+      '<div n:snippet="mailSidebar"></div>',
+      "{snippet $dynamic}",
+    ].join("\n");
+
+    await expect(
+      collectNetteRedrawControlSnippetCompletionTargets({
+        currentPhpRelativePath:
+          "app/modules/mailerModule/Components/MailLogs/MailLogs.php",
+        deps: {
+          joinPath: (root, relativePath) => `${root}/${relativePath}`,
+          readFileContent: vi.fn(async (path: string) => {
+            if (
+              path ===
+              `${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`
+            ) {
+              return template;
+            }
+
+            throw new Error(`Missing file: ${path}`);
+          }),
+        },
+        isRequestedRootActive: () => true,
+        requestedRoot: ROOT,
+      }),
+    ).resolves.toEqual([
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+      {
+        name: "mailSidebar",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+  });
+
+  it("does not read templates for non-colocated component paths", async () => {
+    const readFileContent = vi.fn(async () => "");
+
+    await expect(
+      collectNetteRedrawControlSnippetCompletionTargets({
+        currentPhpRelativePath:
+          "app/modules/mailerModule/presenters/MailPresenter.php",
+        deps: {
+          joinPath: (root, relativePath) => `${root}/${relativePath}`,
+          readFileContent,
+        },
+        isRequestedRootActive: () => true,
+        requestedRoot: ROOT,
+      }),
+    ).resolves.toEqual([]);
+    expect(readFileContent).not.toHaveBeenCalled();
   });
 });

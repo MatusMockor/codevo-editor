@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectNetteLatteSnippetCompletionAt,
   detectNetteRedrawControlAt,
+  detectNetteRedrawControlCompletionAt,
   detectNetteLatteSnippetAt,
   findNetteLatteSnippetReference,
   findNetteRedrawControlCall,
@@ -84,6 +85,34 @@ describe("detectNetteRedrawControlAt", () => {
     const source = "<?php $this->redrawControl($name);";
 
     expect(detectNetteRedrawControlAt(source, source.indexOf("name"))).toBeNull();
+  });
+});
+
+describe("detectNetteRedrawControlCompletionAt", () => {
+  it("detects completion inside a static redrawControl string", () => {
+    const source = "<?php $this->redrawControl('mai');";
+    const offset = source.indexOf("mai") + "mai".length;
+
+    expect(detectNetteRedrawControlCompletionAt(source, offset)).toEqual({
+      prefix: "mai",
+      replaceEnd: source.indexOf("'", source.indexOf("mai")),
+      replaceStart: source.indexOf("mai"),
+    });
+  });
+
+  it("ignores dynamic or non-name redrawControl arguments", () => {
+    const dynamic = "<?php $this->redrawControl($name);";
+    const invalidStatic = "<?php $this->redrawControl('foo bar');";
+
+    expect(
+      detectNetteRedrawControlCompletionAt(dynamic, dynamic.indexOf("name")),
+    ).toBeNull();
+    expect(
+      detectNetteRedrawControlCompletionAt(
+        invalidStatic,
+        invalidStatic.indexOf("foo") + "foo".length,
+      ),
+    ).toBeNull();
   });
 });
 

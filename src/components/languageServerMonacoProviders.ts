@@ -3923,6 +3923,7 @@ async function provideCompletionItems(
   const methodSuggestions = await phpMethodSuggestions(
     monaco,
     context,
+    model,
     source,
     position,
     range,
@@ -4238,6 +4239,7 @@ function contextUserSnippets(
 async function phpMethodSuggestions(
   monaco: MonacoApi,
   context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
   source: string,
   position: MonacoPosition,
   range: ReturnType<typeof completionRange>,
@@ -4267,6 +4269,7 @@ async function phpMethodSuggestions(
         item.kind !== "relation" &&
         item.kind !== "route" &&
         item.kind !== "view" &&
+        item.kind !== "nette.ajax-snippet" &&
         phpMethodParameters(item.parameters).length
           ? {
               id: "editor.action.triggerParameterHints",
@@ -4280,7 +4283,7 @@ async function phpMethodSuggestions(
         monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
       kind: phpMethodCompletionKind(monaco, item),
       label: phpMethodCompletionLabel(item),
-      range,
+      range: phpMethodCompletionRange(monaco, model, item, range),
       sortText: `0_${String(index).padStart(4, "0")}`,
     }));
   } catch (error) {
@@ -4289,6 +4292,27 @@ async function phpMethodSuggestions(
     }
     return [];
   }
+}
+
+function phpMethodCompletionRange(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  item: PhpMethodCompletion,
+  fallbackRange: ReturnType<typeof completionRange>,
+): ReturnType<typeof completionRange> | Monaco.Range {
+  if (item.replaceStart == null || item.replaceEnd == null) {
+    return fallbackRange;
+  }
+
+  const start = model.getPositionAt(item.replaceStart);
+  const end = model.getPositionAt(item.replaceEnd);
+
+  return new monaco.Range(
+    start.lineNumber,
+    start.column,
+    end.lineNumber,
+    end.column,
+  );
 }
 
 const invalidPhpMemberCompletionNames = new Set([
@@ -4587,6 +4611,10 @@ function phpMethodCompletionKind(
     return monaco.languages.CompletionItemKind.File;
   }
 
+  if (item.kind === "nette.ajax-snippet") {
+    return monaco.languages.CompletionItemKind.Value;
+  }
+
   if (item.kind === "property") {
     return monaco.languages.CompletionItemKind.Property;
   }
@@ -4641,6 +4669,10 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
     return `Laravel view - ${item.declaringClassName}`;
   }
 
+  if (item.kind === "nette.ajax-snippet") {
+    return `Nette AJAX snippet - ${item.declaringClassName}`;
+  }
+
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -4674,6 +4706,10 @@ function phpMethodDocumentation(item: PhpMethodCompletion): string {
 
   if (item.kind === "view") {
     return `Laravel view\n\n${item.name}`;
+  }
+
+  if (item.kind === "nette.ajax-snippet") {
+    return `Nette AJAX snippet\n\n${item.name}`;
   }
 
   const parameters = phpMethodParameters(item.parameters);
@@ -4728,6 +4764,10 @@ function phpMethodCompletionLabelDescription(item: PhpMethodCompletion): string 
     return `view - ${item.declaringClassName}`;
   }
 
+  if (item.kind === "nette.ajax-snippet") {
+    return `snippet - ${item.declaringClassName}`;
+  }
+
   if (item.kind === "property") {
     return `${visibilityPrefix}property - ${item.declaringClassName}`;
   }
@@ -4750,7 +4790,8 @@ function phpMethodCompletionLabelDetail(item: PhpMethodCompletion): string {
     item.kind === "translation" ||
     item.kind === "relation" ||
     item.kind === "route" ||
-    item.kind === "view"
+    item.kind === "view" ||
+    item.kind === "nette.ajax-snippet"
   ) {
     return "";
   }
@@ -4785,7 +4826,8 @@ function phpMethodSnippet(item: PhpMethodCompletion): string {
     item.kind === "translation" ||
     item.kind === "relation" ||
     item.kind === "route" ||
-    item.kind === "view"
+    item.kind === "view" ||
+    item.kind === "nette.ajax-snippet"
   ) {
     return item.name;
   }

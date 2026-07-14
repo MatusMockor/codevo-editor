@@ -1,5 +1,6 @@
 import { useCallback, useMemo, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { detectNetteRedrawControlCompletionAt } from "../domain/netteAjaxSnippets";
 import {
   phpMemberAccessCompletionContextAt,
   phpStaticAccessCompletionContextAt,
@@ -21,6 +22,10 @@ import {
   resolvePhpFrameworkScopedCompletions,
   type PhpFrameworkScopedCompletionDependencies,
 } from "./phpFrameworkScopedCompletions";
+import {
+  phpNetteRedrawControlSnippetNameCompletions,
+  type NetteSnippetCompletionTarget,
+} from "./netteAjaxSnippetCompletions";
 import { phpTraitThisCompletionContextAt } from "./phpTraitThisCompletionContext";
 
 export interface PhpMethodCompletionProviderDependencies
@@ -34,6 +39,9 @@ export interface PhpMethodCompletionProviderDependencies
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
+  collectNetteRedrawControlSnippetTargets(
+    currentPhpPath: string,
+  ): Promise<readonly NetteSnippetCompletionTarget[]>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
   frameworkRuntime: PhpFrameworkRuntimeContext;
@@ -88,6 +96,7 @@ export function usePhpMethodCompletionProvider({
   collectPasswordBrokerTargets,
   collectPhpFrameworkRelationCompletionsForClass,
   collectPhpMethodsForClass,
+  collectNetteRedrawControlSnippetTargets,
   collectQueueConnectionTargets,
   collectRedisConnectionTargets,
   collectStorageDiskTargets,
@@ -140,6 +149,28 @@ export function usePhpMethodCompletionProvider({
 
       if (!requestedRoot) {
         return [];
+      }
+
+      const offset = offsetAtPosition(source, position);
+
+      if (
+        frameworkRuntime.isNette &&
+        activeDocument &&
+        detectNetteRedrawControlCompletionAt(source, offset)
+      ) {
+        const targets = await collectNetteRedrawControlSnippetTargets(
+          activeDocument.path,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        return phpNetteRedrawControlSnippetNameCompletions(
+          source,
+          offset,
+          targets,
+        ) ?? [];
       }
 
       const literalCompletions = await resolvePhpFrameworkLiteralCompletions(
@@ -311,6 +342,7 @@ export function usePhpMethodCompletionProvider({
       collectPasswordBrokerTargets,
       collectPhpFrameworkRelationCompletionsForClass,
       collectPhpMethodsForClass,
+      collectNetteRedrawControlSnippetTargets,
       collectQueueConnectionTargets,
       collectRedisConnectionTargets,
       collectStorageDiskTargets,
@@ -372,4 +404,25 @@ function phpMethodCompletionWithStableMetadata(
   });
 
   return stableCompletion;
+}
+
+function offsetAtPosition(source: string, position: EditorPosition): number {
+  let line = 1;
+  let column = 1;
+
+  for (let index = 0; index < source.length; index += 1) {
+    if (line === position.lineNumber && column === position.column) {
+      return index;
+    }
+
+    if (source[index] === "\n") {
+      line += 1;
+      column = 1;
+      continue;
+    }
+
+    column += 1;
+  }
+
+  return source.length;
 }

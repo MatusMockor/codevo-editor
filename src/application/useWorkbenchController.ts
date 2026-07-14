@@ -171,6 +171,9 @@ import {
   terminalDirectoryForEntry,
   workspaceRelativePath as contextMenuRelativePath,
 } from "../domain/pathDerivation";
+import {
+  collectNetteRedrawControlSnippetCompletionTargets,
+} from "./netteAjaxSnippetCompletions";
 
 export type {
   PhpCodeActionDescriptor,
@@ -7469,6 +7472,37 @@ export function useWorkbenchController(
     resolvePhpExpressionType,
   });
 
+  const collectNetteRedrawControlSnippetTargets = useCallback(
+    async (currentPhpPath: string) => {
+      const requestedRoot = workspaceRoot;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !phpFrameworkRuntimeContext.isNette) {
+        return [];
+      }
+
+      return collectNetteRedrawControlSnippetCompletionTargets({
+        currentPhpRelativePath: relativeWorkspacePath(
+          requestedRoot,
+          currentPhpPath,
+        ),
+        deps: {
+          joinPath: joinWorkspacePath,
+          readFileContent: readNavigationFileContent,
+        },
+        isRequestedRootActive,
+        requestedRoot,
+      });
+    },
+    [
+      currentWorkspaceRootRef,
+      phpFrameworkRuntimeContext.isNette,
+      readNavigationFileContent,
+      workspaceRoot,
+    ],
+  );
+
   const { providePhpMethodCompletions } = usePhpMethodCompletionProvider({
     activeDocument,
     collectAuthGuardTargets,
@@ -7485,6 +7519,7 @@ export function useWorkbenchController(
     collectPasswordBrokerTargets,
     collectPhpFrameworkRelationCompletionsForClass,
     collectPhpMethodsForClass,
+    collectNetteRedrawControlSnippetTargets,
     collectQueueConnectionTargets,
     collectRedisConnectionTargets,
     collectStorageDiskTargets,

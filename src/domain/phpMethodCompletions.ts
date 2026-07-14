@@ -36,6 +36,7 @@ export interface PhpMethodCompletion {
     | "config"
     | "env"
     | "magic-where"
+    | "nette.ajax-snippet"
     | "property"
     | "relation"
     | "resource"
@@ -45,6 +46,8 @@ export interface PhpMethodCompletion {
     | "view";
   name: string;
   parameters: string;
+  replaceEnd?: number;
+  replaceStart?: number;
   returnType: string | null;
   visibility?: PhpMemberVisibility;
 }
@@ -233,6 +236,7 @@ const phpMemberCompletionCategoryRanks: Record<
   route: 2,
   translation: 2,
   view: 2,
+  "nette.ajax-snippet": 2,
   scope: 3,
   "magic-where": 4,
 };
