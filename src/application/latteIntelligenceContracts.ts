@@ -111,8 +111,6 @@ export interface LatteIntelligence {
     source: string,
     currentTemplateRelativePath: string,
   ): Promise<LanguageServerDiagnostic[]>;
-  /** @deprecated Use provideLatteDefinitionOutcome in navigation flows. */
-  shouldBlockLatteDefinitionFallback(source: string, offset: number): boolean;
   providePhpPresenterLinkDefinition(
     source: string,
     offset: number,

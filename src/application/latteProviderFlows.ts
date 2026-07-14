@@ -9,7 +9,6 @@ import {
 import {
   type LatteCompletionItem,
 } from "./latteCompletionItems";
-import { isLatteMemberReferenceAt } from "./latteExpressionDetection";
 import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import { type LatteViewDataCache } from "./latteExpressionIntelligence";
 import type { LatteFilterCache } from "./latteFilterDiscovery";
@@ -155,7 +154,6 @@ export function createLatteIntelligence(
         path,
       );
     },
-    shouldBlockLatteDefinitionFallback: isLatteMemberReferenceAt,
   };
 }
 
