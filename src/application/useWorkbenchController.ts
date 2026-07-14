@@ -72,10 +72,9 @@ import {
   workspaceSessionsEqual,
 } from "./documentSessionState";
 import {
-  buildEditorSurfaceSnapshot,
-  selectEditorSurfaceRestore,
-  type EditorSurfaceSnapshot,
-} from "../domain/workspaceSessionSnapshot";
+  useWorkspaceStateCache,
+  type CachedWorkspaceWorkbenchState,
+} from "./useWorkspaceStateCache";
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
@@ -203,11 +202,7 @@ import type { BottomPanelView } from "../domain/bottomPanel";
 import type { ArtisanControllerAction } from "../domain/artisanRoutes";
 import type { PhpTestCase } from "../domain/phpTestResults";
 import { phpTestCaseNavigationTarget } from "../domain/phpTestResults";
-import type {
-  IndexHealthLogEntry,
-  IndexProgressGateway,
-  IndexProgressState,
-} from "../domain/indexProgress";
+import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
   languageServerDiagnosticNoticeGroup,
   languageServerDiagnosticNoticeMessage,
@@ -295,7 +290,6 @@ import {
   workspaceDisplayName,
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
-import type { NavigationHistory } from "../domain/navigation";
 import {
   type PhpFileOutline,
   type PhpFileOutlineGateway,
@@ -350,10 +344,7 @@ import {
 } from "../domain/packageScripts";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
-import {
-  recentFilesForSwitcher,
-  type RecentFileEntry,
-} from "../domain/recentFiles";
+import { recentFilesForSwitcher } from "../domain/recentFiles";
 import { type TabDropPosition } from "../domain/tabOrdering";
 import { editorGroupIdsInLayout } from "../domain/editorLayout";
 import {
@@ -371,7 +362,6 @@ import {
   type EditorGroupsState,
   type EditorSplitDirection,
 } from "../domain/editorGroups";
-import { type RecentLocation } from "../domain/recentLocations";
 import {
   sortBookmarks,
   type Bookmark,
@@ -450,23 +440,6 @@ interface InFlightDirectoryLoad {
   promise: Promise<FileEntry[]>;
   requestId: symbol;
   rootPath: string | null;
-}
-
-interface CachedWorkspaceWorkbenchState {
-  bookmarks: Bookmark[];
-  bottomPanelView: BottomPanelView;
-  bottomPanelVisible: boolean;
-  editorSurface: EditorSurfaceSnapshot;
-  entriesByDirectory: Record<string, FileEntry[]>;
-  expandedDirectories: Set<string>;
-  indexHealthLogs: IndexHealthLogEntry[];
-  indexProgress: IndexProgressState;
-  manuallyCollapsedDirectories: Set<string>;
-  navigationHistory: NavigationHistory;
-  recentFiles: RecentFileEntry[];
-  recentLocations: RecentLocation[];
-  sidebarView: SidebarView;
-  workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
 }
 
 function languageServerDiagnosticsEqual(
@@ -1101,9 +1074,6 @@ export function useWorkbenchController(
   // The active terminal session tracking and staged-command refs used by
   // "run in terminal" / "run PHP test" now live inside `useTerminalTestRunner`
   // (they are exclusively consumed there).
-  const workspaceStateCacheRef = useRef<
-    Record<string, CachedWorkspaceWorkbenchState>
-  >({});
   const workspaceIdentityByRootRef = useRef<
     Record<string, WorkspaceIdentityDescriptor>
   >({});
@@ -1712,56 +1682,51 @@ export function useWorkbenchController(
     ],
   );
 
-  const cacheCurrentWorkspaceState = useCallback(
-    (rootPath: string) => {
-      workspaceStateCacheRef.current[rootPath] = {
-        bookmarks,
-        bottomPanelView,
-        bottomPanelVisible,
-        editorSurface: buildEditorSurfaceSnapshot({
-          activePath,
-          documents,
-          editorGroups,
-          imageTabs,
-          markdownPreviewTabs,
-          openPaths,
-          previewPath,
-        }),
-        entriesByDirectory,
-        expandedDirectories: new Set(expandedDirectories),
-        indexHealthLogs,
-        indexProgress,
-        manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
-        navigationHistory,
-        recentFiles,
-        recentLocations,
-        sidebarView,
-        workspaceIdentityDescriptor,
-      };
-    },
-    [
-      activePath,
-      bookmarks,
-      bottomPanelView,
-      bottomPanelVisible,
-      documents,
-      entriesByDirectory,
-      editorGroups,
-      manuallyCollapsedDirectories,
-      expandedDirectories,
-      imageTabs,
-      markdownPreviewTabs,
-      indexHealthLogs,
-      indexProgress,
-      navigationHistory,
-      openPaths,
-      previewPath,
-      recentFiles,
-      recentLocations,
-      sidebarView,
-      workspaceIdentityDescriptor,
-    ],
-  );
+  const {
+    workspaceStateCacheRef,
+    cacheCurrentWorkspaceState,
+    restoreCachedWorkspaceState,
+    clearWorkspaceStateCache,
+  } = useWorkspaceStateCache({
+    activePath,
+    bookmarks,
+    bottomPanelView,
+    bottomPanelVisible,
+    documents,
+    editorGroups,
+    entriesByDirectory,
+    expandedDirectories,
+    imageTabs,
+    imageTabsRef,
+    indexHealthLogs,
+    indexProgress,
+    manuallyCollapsedDirectories,
+    markdownPreviewTabs,
+    markdownPreviewTabsRef,
+    navigationHistory,
+    openPaths,
+    previewPath,
+    recentFiles,
+    recentLocations,
+    restoreCachedIndexState,
+    restoreHistory,
+    setBookmarks,
+    setBottomPanelView,
+    setBottomPanelVisible,
+    setDocuments,
+    setEntriesByDirectory,
+    setExpandedDirectories,
+    setImageTabs,
+    setManuallyCollapsedDirectories,
+    setMarkdownPreviewTabs,
+    setRecentFiles,
+    setRecentLocations,
+    setSidebarView,
+    setWorkspaceIdentityDescriptor,
+    sidebarView,
+    updateEditorGroups,
+    workspaceIdentityDescriptor,
+  });
 
   const persistCurrentWorkspaceSession = useCallback(
     async (rootPath: string) => {
@@ -1794,34 +1759,6 @@ export function useWorkbenchController(
       persistWorkspaceSettings,
       sidebarView,
     ],
-  );
-
-  const restoreCachedWorkspaceState = useCallback(
-    (cached: CachedWorkspaceWorkbenchState) => {
-      const editorSurface = selectEditorSurfaceRestore(cached.editorSurface);
-
-      setEntriesByDirectory(cached.entriesByDirectory);
-      setExpandedDirectories(new Set(cached.expandedDirectories));
-      restoreCachedIndexState(cached.indexProgress, cached.indexHealthLogs);
-      setManuallyCollapsedDirectories(
-        new Set(cached.manuallyCollapsedDirectories),
-      );
-      setDocuments(editorSurface.documents);
-      imageTabsRef.current = editorSurface.imageTabs;
-      setImageTabs(editorSurface.imageTabs);
-      markdownPreviewTabsRef.current = editorSurface.markdownPreviewTabs;
-      setMarkdownPreviewTabs(editorSurface.markdownPreviewTabs);
-      updateEditorGroups(() => editorSurface.editorGroups);
-      setRecentFiles(cached.recentFiles);
-      setRecentLocations(cached.recentLocations);
-      setBookmarks(cached.bookmarks);
-      setWorkspaceIdentityDescriptor(cached.workspaceIdentityDescriptor);
-      restoreHistory(cached.navigationHistory);
-      setSidebarView(cached.sidebarView);
-      setBottomPanelView(cached.bottomPanelView);
-      setBottomPanelVisible(cached.bottomPanelVisible);
-    },
-    [restoreCachedIndexState, restoreHistory, updateEditorGroups],
   );
 
   const {
@@ -2617,7 +2554,7 @@ export function useWorkbenchController(
     workspaceSessionRestoredRef.current = false;
     workspaceEditorViewStatesRef.current = {};
     currentWorkspaceRootRef.current = null;
-    workspaceStateCacheRef.current = {};
+    clearWorkspaceStateCache();
     workspaceIdentityByRootRef.current = {};
     workspaceRuntimeRootByTabRef.current = {};
     editorConfigCacheRef.current = {};
@@ -2716,6 +2653,7 @@ export function useWorkbenchController(
     clearLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
     clearPhpstanDiagnosticsForRoot,
+    clearWorkspaceStateCache,
     resetActiveEditorPosition,
     resetFilePrefetchState,
     resetEditorSurfaceState,
