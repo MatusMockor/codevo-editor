@@ -4,17 +4,8 @@ import {
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelModelAccessorTargetFromSource,
   phpLaravelModelAttributeTargetFromSource,
-  phpLaravelModelSourcesForTableName,
 } from "../domain/phpFrameworkLaravel";
-import {
-  phpFrameworkModelNamespacePrefixes,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
-import {
-  type ProjectSymbolSearchGateway,
-} from "../domain/projectSymbols";
 import type { WorkspaceDescriptor } from "../domain/workspace";
-import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
@@ -31,8 +22,6 @@ export interface PhpLaravelModelNavigationTargetsDependencies {
     label: string,
     options?: OpenNavigationOptions,
   ): Promise<boolean>;
-  projectSymbolSearch: ProjectSymbolSearchGateway;
-  providers: readonly PhpFrameworkProvider[];
   readNavigationFileContent(path: string): Promise<string>;
   resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -40,9 +29,6 @@ export interface PhpLaravelModelNavigationTargetsDependencies {
 }
 
 export interface PhpLaravelModelNavigationTargets {
-  findPhpLaravelValidationRuleModelTargets(
-    tableName: string,
-  ): Promise<readonly PhpLaravelValidationRuleModelTarget[]>;
   openPhpLaravelDynamicWhereTarget(
     className: string,
     methodName: string,
@@ -53,18 +39,10 @@ export interface PhpLaravelModelNavigationTargets {
   ): Promise<boolean>;
 }
 
-export interface PhpLaravelValidationRuleModelTarget {
-  label: string;
-  path: string;
-  position: EditorPosition;
-}
-
 export function usePhpLaravelModelNavigationTargets({
   currentWorkspaceRootRef,
   frameworkRuntime,
   openNavigationTarget,
-  projectSymbolSearch,
-  providers,
   readNavigationFileContent,
   resolvePhpClassSourcePaths,
   workspaceDescriptor,
@@ -72,33 +50,6 @@ export function usePhpLaravelModelNavigationTargets({
 }: PhpLaravelModelNavigationTargetsDependencies): PhpLaravelModelNavigationTargets {
   const canOpenLaravelModelSourceTargets =
     frameworkRuntime.hasProvider("laravel");
-
-  const findPhpLaravelValidationRuleModelTargets = useCallback(
-    async (
-      tableName: string,
-    ): Promise<readonly PhpLaravelValidationRuleModelTarget[]> =>
-      findLaravelValidationRuleModelTargets({
-        canOpenLaravelModelSourceTargets,
-        currentWorkspaceRootRef,
-        projectSymbolSearch,
-        providers,
-        readNavigationFileContent,
-        resolvePhpClassSourcePaths,
-        tableName,
-        workspaceDescriptor,
-        workspaceRoot,
-      }),
-    [
-      canOpenLaravelModelSourceTargets,
-      currentWorkspaceRootRef,
-      projectSymbolSearch,
-      providers,
-      readNavigationFileContent,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
-  );
 
   const openPhpLaravelDynamicWhereTarget = useCallback(
     async (className: string, methodName: string): Promise<boolean> =>
@@ -152,145 +103,9 @@ export function usePhpLaravelModelNavigationTargets({
   );
 
   return {
-    findPhpLaravelValidationRuleModelTargets,
     openPhpLaravelDynamicWhereTarget,
     openPhpLaravelModelAttributeTarget,
   };
-}
-
-interface FindLaravelValidationRuleModelTargetsInput {
-  canOpenLaravelModelSourceTargets: boolean;
-  currentWorkspaceRootRef: MutableRefObject<string | null>;
-  projectSymbolSearch: ProjectSymbolSearchGateway;
-  providers: readonly PhpFrameworkProvider[];
-  readNavigationFileContent(path: string): Promise<string>;
-  resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
-  tableName: string;
-  workspaceDescriptor: WorkspaceDescriptor | null;
-  workspaceRoot: string | null;
-}
-
-async function findLaravelValidationRuleModelTargets({
-  canOpenLaravelModelSourceTargets,
-  currentWorkspaceRootRef,
-  projectSymbolSearch,
-  providers,
-  readNavigationFileContent,
-  resolvePhpClassSourcePaths,
-  tableName,
-  workspaceDescriptor,
-  workspaceRoot,
-}: FindLaravelValidationRuleModelTargetsInput): Promise<
-  readonly PhpLaravelValidationRuleModelTarget[]
-> {
-  const requestedRoot = workspaceRoot;
-  const requestedDescriptor = workspaceDescriptor;
-  const isRequestedRootActive = () =>
-    workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-  if (
-    !canOpenLaravelModelSourceTargets ||
-    !requestedRoot ||
-    !requestedDescriptor?.php ||
-    !tableName.trim()
-  ) {
-    return [];
-  }
-
-  let symbols;
-
-  try {
-    symbols = await projectSymbolSearch.searchProjectSymbols(
-      requestedRoot,
-      "",
-      2000,
-    );
-  } catch {
-    return [];
-  }
-
-  if (!isRequestedRootActive()) {
-    return [];
-  }
-
-  const namespacePrefixes = phpFrameworkModelNamespacePrefixes(
-    requestedDescriptor.php,
-    providers,
-  ).map((prefix) => prefix.toLowerCase());
-  const modelSymbols = symbols.filter(
-    (symbol) =>
-      symbol.kind === "class" &&
-      namespacePrefixes.some((prefix) =>
-        symbol.fullyQualifiedName.toLowerCase().startsWith(prefix),
-      ) &&
-      workspaceRelativePath(requestedRoot, symbol.path) !== null,
-  );
-  const candidates: Array<{
-    className: string;
-    path: string;
-    position: EditorPosition;
-    source: string;
-  }> = [];
-  const seen = new Set<string>();
-
-  for (const symbol of modelSymbols) {
-    let paths: readonly string[];
-
-    try {
-      paths = await resolvePhpClassSourcePaths(symbol.fullyQualifiedName);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return [];
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return [];
-    }
-
-    for (const path of paths) {
-      if (
-        workspaceRelativePath(requestedRoot, path) === null ||
-        seen.has(`${symbol.fullyQualifiedName.toLowerCase()}\0${path}`)
-      ) {
-        continue;
-      }
-
-      seen.add(`${symbol.fullyQualifiedName.toLowerCase()}\0${path}`);
-
-      try {
-        const source = await readNavigationFileContent(path);
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        candidates.push({
-          className: symbol.fullyQualifiedName,
-          path,
-          position:
-            path === symbol.path
-              ? { column: symbol.column, lineNumber: symbol.lineNumber }
-              : { column: 1, lineNumber: 1 },
-          source,
-        });
-      } catch {
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-      }
-    }
-  }
-
-  return phpLaravelModelSourcesForTableName(tableName, candidates).map(
-    (candidate) => ({
-      label: candidate.className,
-      path: candidate.path,
-      position: candidate.position,
-    }),
-  );
 }
 
 interface LaravelModelSourceTarget {

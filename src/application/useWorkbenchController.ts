@@ -63,6 +63,7 @@ import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpLaravelEnvTargetResolver } from "./usePhpLaravelEnvTargetResolver";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
+import { usePhpFrameworkModelNavigationTargets } from "./usePhpFrameworkModelNavigationTargets";
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
 import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMemberDefinitionNavigation";
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
@@ -7677,16 +7678,25 @@ export function useWorkbenchController(
       workspaceRoot,
     });
 
+  const { findValidationRuleModelTargets } =
+    usePhpFrameworkModelNavigationTargets({
+      currentWorkspaceRootRef,
+      frameworkRuntime: phpFrameworkRuntimeContext,
+      projectSymbolSearch,
+      providers: activePhpFrameworkProviders,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    });
+
   const {
-    findPhpLaravelValidationRuleModelTargets: findValidationRuleModelTargets,
     openPhpLaravelDynamicWhereTarget,
     openPhpLaravelModelAttributeTarget,
   } = usePhpLaravelModelNavigationTargets({
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
     openNavigationTarget,
-    projectSymbolSearch,
-    providers: activePhpFrameworkProviders,
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
     workspaceDescriptor,
