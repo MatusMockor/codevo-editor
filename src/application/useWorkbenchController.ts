@@ -66,13 +66,16 @@ import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroup
 import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
 import {
   currentWorkspaceSessionForEditorGroups,
-  isPersistableEditorDocumentPath,
   isSessionPathInWorkspace,
   restoreWorkspaceSession as restorePersistedWorkspaceSession,
-  restoredActivePath,
   restoredBottomPanelView,
   workspaceSessionsEqual,
 } from "./documentSessionState";
+import {
+  buildEditorSurfaceSnapshot,
+  selectEditorSurfaceRestore,
+  type EditorSurfaceSnapshot,
+} from "../domain/workspaceSessionSnapshot";
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
@@ -356,7 +359,6 @@ import {
   activateEditorGroupPath,
   createEditorGroup,
   createInitialEditorGroupsState,
-  editorGroupVisiblePaths,
   editorGroupsReducer,
   editorGroupsUniquePaths,
   openEditorGroupPath,
@@ -449,22 +451,16 @@ interface InFlightDirectoryLoad {
 }
 
 interface CachedWorkspaceWorkbenchState {
-  activePath: string | null;
   bookmarks: Bookmark[];
   bottomPanelView: BottomPanelView;
   bottomPanelVisible: boolean;
-  documents: Record<string, EditorDocument>;
+  editorSurface: EditorSurfaceSnapshot;
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
-  imageTabs: Record<string, ImageTab>;
-  markdownPreviewTabs: Record<string, MarkdownPreviewTab>;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   manuallyCollapsedDirectories: Set<string>;
   navigationHistory: NavigationHistory;
-  editorGroups?: EditorGroupsState;
-  openPaths: string[];
-  previewPath: string | null;
   recentFiles: RecentFileEntry[];
   recentLocations: RecentLocation[];
   sidebarView: SidebarView;
@@ -1708,49 +1704,25 @@ export function useWorkbenchController(
 
   const cacheCurrentWorkspaceState = useCallback(
     (rootPath: string) => {
-      const cacheableDocuments = Object.fromEntries(
-        Object.entries(documents).filter(([path]) =>
-          isPersistableEditorDocumentPath(path),
-        ),
-      );
-      const cacheableOpenPaths = openPaths.filter(
-        (path) =>
-          (isPersistableEditorDocumentPath(path) && Boolean(documents[path])) ||
-          Boolean(imageTabs[path]) ||
-          Boolean(markdownPreviewTabs[path]),
-      );
-      const cacheablePreviewPath =
-        previewPath &&
-        ((isPersistableEditorDocumentPath(previewPath) && documents[previewPath]) ||
-          imageTabs[previewPath] ||
-          markdownPreviewTabs[previewPath])
-          ? previewPath
-          : null;
-      const cacheableActivePath =
-        activePath &&
-        ((isPersistableEditorDocumentPath(activePath) && documents[activePath]) ||
-          imageTabs[activePath] ||
-          markdownPreviewTabs[activePath])
-          ? activePath
-          : null;
-
       workspaceStateCacheRef.current[rootPath] = {
-        activePath: cacheableActivePath,
         bookmarks,
         bottomPanelView,
         bottomPanelVisible,
-        documents: cacheableDocuments,
+        editorSurface: buildEditorSurfaceSnapshot({
+          activePath,
+          documents,
+          editorGroups,
+          imageTabs,
+          markdownPreviewTabs,
+          openPaths,
+          previewPath,
+        }),
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
-        imageTabs,
-        markdownPreviewTabs,
         indexHealthLogs,
         indexProgress,
         manuallyCollapsedDirectories: new Set(manuallyCollapsedDirectories),
         navigationHistory,
-        editorGroups,
-        openPaths: cacheableOpenPaths,
-        previewPath: cacheablePreviewPath,
         recentFiles,
         recentLocations,
         sidebarView,
@@ -1816,39 +1788,7 @@ export function useWorkbenchController(
 
   const restoreCachedWorkspaceState = useCallback(
     (cached: CachedWorkspaceWorkbenchState) => {
-      const restoredDocuments = Object.fromEntries(
-        Object.entries(cached.documents).filter(([path]) =>
-          isPersistableEditorDocumentPath(path),
-        ),
-      );
-      const restoredImageTabs = cached.imageTabs;
-      const restoredMarkdownPreviewTabs = cached.markdownPreviewTabs ?? {};
-      const restoredOpenPaths = cached.openPaths.filter(
-        (path) =>
-          Boolean(
-            restoredDocuments[path] ||
-              restoredImageTabs[path] ||
-              restoredMarkdownPreviewTabs[path],
-          ),
-      );
-      const restoredPreviewPath =
-        cached.previewPath &&
-        (restoredDocuments[cached.previewPath] ||
-          restoredImageTabs[cached.previewPath] ||
-          restoredMarkdownPreviewTabs[cached.previewPath])
-          ? cached.previewPath
-          : null;
-      const cacheableActivePath =
-        cached.activePath &&
-        (restoredDocuments[cached.activePath] ||
-          restoredImageTabs[cached.activePath] ||
-          restoredMarkdownPreviewTabs[cached.activePath])
-          ? cached.activePath
-          : null;
-      const nextActivePath = restoredActivePath(
-        cacheableActivePath,
-        visibleEditorPaths(restoredOpenPaths, restoredPreviewPath),
-      );
+      const editorSurface = selectEditorSurfaceRestore(cached.editorSurface);
 
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
@@ -1856,40 +1796,12 @@ export function useWorkbenchController(
       setManuallyCollapsedDirectories(
         new Set(cached.manuallyCollapsedDirectories),
       );
-      setDocuments(restoredDocuments);
-      imageTabsRef.current = restoredImageTabs;
-      setImageTabs(restoredImageTabs);
-      markdownPreviewTabsRef.current = restoredMarkdownPreviewTabs;
-      setMarkdownPreviewTabs(restoredMarkdownPreviewTabs);
-      const cachedEditorGroups = cached.editorGroups ??
-        createInitialEditorGroupsState("editor-main", {
-          activePath: nextActivePath,
-          openPaths: restoredOpenPaths,
-          previewPath: restoredPreviewPath,
-        });
-      const availablePaths = new Set([
-        ...Object.keys(restoredDocuments),
-        ...Object.keys(restoredImageTabs),
-        ...Object.keys(restoredMarkdownPreviewTabs),
-      ]);
-      updateEditorGroups(() => {
-        const groups = Object.fromEntries(
-          Object.entries(cachedEditorGroups.groups).map(([groupId, group]) => {
-            const visiblePaths = editorGroupVisiblePaths(group).filter((path) =>
-              availablePaths.has(path),
-            );
-            const previewPath = group.previewPath && availablePaths.has(group.previewPath)
-              ? group.previewPath
-              : null;
-            return [groupId, {
-              activePath: restoredActivePath(group.activePath, visiblePaths),
-              openPaths: visiblePaths.filter((path) => path !== previewPath),
-              previewPath,
-            }];
-          }),
-        );
-        return { ...cachedEditorGroups, groups };
-      });
+      setDocuments(editorSurface.documents);
+      imageTabsRef.current = editorSurface.imageTabs;
+      setImageTabs(editorSurface.imageTabs);
+      markdownPreviewTabsRef.current = editorSurface.markdownPreviewTabs;
+      setMarkdownPreviewTabs(editorSurface.markdownPreviewTabs);
+      updateEditorGroups(() => editorSurface.editorGroups);
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);

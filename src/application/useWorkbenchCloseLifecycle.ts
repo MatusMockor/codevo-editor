@@ -21,7 +21,9 @@ import { CloseCoordinator } from "./closeCoordinator";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
 interface CachedWorkspaceDirtyState {
-  documents: Record<string, EditorDocument>;
+  editorSurface: {
+    documents: Record<string, EditorDocument>;
+  };
 }
 
 interface OpenWorkspacePathOptions {
@@ -422,7 +424,7 @@ export function useWorkbenchCloseLifecycle(
 function cachedWorkspaceHasDirtyDocuments(
   cached: CachedWorkspaceDirtyState,
 ): boolean {
-  return Object.values(cached.documents).some(isDirty);
+  return Object.values(cached.editorSurface.documents).some(isDirty);
 }
 
 function workspaceTabsWithoutPath(tabs: string[], path: string): string[] {

@@ -13,6 +13,12 @@ import {
   DEFAULT_WORKSPACE_EDITOR_GROUP_ID,
   WORKSPACE_SESSION_VERSION,
 } from "../domain/settings";
+import {
+  isPersistableEditorDocumentPath,
+  restoredActivePath,
+} from "../domain/workspaceSessionSnapshot";
+
+export { isPersistableEditorDocumentPath, restoredActivePath };
 
 export interface DocumentSessionDocument {
   content: string;
@@ -24,25 +30,6 @@ export interface DocumentSessionPathTransition {
   nextActivePath: string;
   nextOpenPaths: string[];
   nextPreviewPath: string | null;
-}
-
-export function restoredActivePath(
-  activePath: string | null,
-  restoredPaths: string[],
-): string | null {
-  if (activePath && restoredPaths.includes(activePath)) {
-    return activePath;
-  }
-
-  return restoredPaths[0] || null;
-}
-
-export function isPersistableEditorDocumentPath(path: string): boolean {
-  return (
-    !path.startsWith("mockor-git-diff:") &&
-    !path.startsWith("mockor-git-history-diff:") &&
-    !path.startsWith("mockor-markdown-preview:")
-  );
 }
 
 export function pinDocumentSessionPath(

@@ -264,7 +264,9 @@ describe("useWorkbenchCloseLifecycle", () => {
       unregisterWorkspace,
       workspaceIdentityByRootRef: { current: identities },
     });
-    harness.workspaceStateCacheRef.current[WORKSPACE_A] = { documents: {} };
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: { documents: {} },
+    };
 
     await act(async () => {
       await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
@@ -281,7 +283,9 @@ describe("useWorkbenchCloseLifecycle", () => {
     const harness = renderLifecycle({
       workspaceHasExternalFileConflicts: vi.fn((root) => root === WORKSPACE_A),
     });
-    harness.workspaceStateCacheRef.current[WORKSPACE_A] = { documents: {} };
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: { documents: {} },
+    };
     harness.prompter.confirm.mockReturnValueOnce(false);
 
     await act(async () => {
@@ -297,10 +301,12 @@ describe("useWorkbenchCloseLifecycle", () => {
   it("keeps an inactive dirty workspace tab when discard is declined", async () => {
     const harness = renderLifecycle();
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
-      documents: {
-        [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
-          `${WORKSPACE_A}/src/Dirty.php`,
-        ),
+      editorSurface: {
+        documents: {
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
+            `${WORKSPACE_A}/src/Dirty.php`,
+          ),
+        },
       },
     };
     harness.prompter.confirm.mockReturnValueOnce(false);
