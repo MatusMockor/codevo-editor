@@ -1,7 +1,8 @@
 /**
  * Pure Nette COMPONENT + presenter-lifecycle primitives (spec §9 / Fáza 2a) - the
- * bridge between a Latte `{control name}` / `<form n:name="name">` / `$this['name']`
- * usage and the presenter/control factory method that backs it
+ * bridge between a Latte `{control name}` / `{form name}` /
+ * `<form n:name="name">` / `$this['name']` usage and the presenter/control
+ * factory method that backs it
  * (`createComponentName`), plus a structural classification of presenter
  * lifecycle methods for completion / navigation / outline integrations.
  *
@@ -59,6 +60,37 @@ export interface LatteControlDetection {
   part?: string;
 }
 
+/** A detected static `{form name}` macro at a cursor. */
+export interface LatteFormMacroDetection {
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
+/** A detected static `{input name}` / `{label name}` / `{inputError name}` macro. */
+export interface LatteFormFieldMacroDetection {
+  formName: string;
+  formNameEnd: number;
+  formNameStart: number;
+  macro: LatteFormFieldMacroName;
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
+/** Completion cursor inside a static `{form ...}` macro name. */
+export interface LatteFormMacroCompletionDetection {
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
+/** Completion cursor inside a static form field macro name. */
+export interface LatteFormFieldMacroCompletionDetection
+  extends LatteFormMacroCompletionDetection {
+  formName: string;
+}
+
 /**
  * A detected `n:name="..."` attribute value at a cursor. `elementTag` is the
  * lowercased HTML tag that bears the attribute when it can be determined by a
@@ -92,6 +124,8 @@ export interface LatteActiveFormComponent {
   nameStart: number;
 }
 
+export type LatteFormFieldMacroName = "input" | "inputError" | "label";
+
 /** The reverse of a `createComponent<Name>` factory: the backing component. */
 export interface NetteCreateComponentDetection {
   componentName: string;
@@ -121,7 +155,11 @@ export interface NetteCreateComponentFactoryContext
 }
 
 /** The kind of a component usage found in a Latte template. */
-export type NetteComponentUsageKind = "control" | "n:name" | "arrayAccess";
+export type NetteComponentUsageKind =
+  | "arrayAccess"
+  | "control"
+  | "form"
+  | "n:name";
 
 /** One usage of a component name in a Latte template, with its name span. */
 export interface NetteComponentUsage {
@@ -247,6 +285,105 @@ export function detectLatteControlAt(
   }
 
   return detection;
+}
+
+/**
+ * Returns the static `{form name}` macro at `offset`, or `null` for dynamic
+ * form variables, masked regions, the tag keyword, and non-name arguments.
+ */
+export function detectLatteFormMacroAt(
+  source: string,
+  offset: number,
+): LatteFormMacroDetection | null {
+  const argument = detectLatteStaticMacroArgumentAt(source, offset, "form");
+
+  if (!argument) {
+    return null;
+  }
+
+  return {
+    name: argument.name,
+    nameEnd: argument.nameEnd,
+    nameStart: argument.nameStart,
+  };
+}
+
+/**
+ * Returns the static field macro at `offset` when it is enclosed by a static
+ * Latte form (`{form name}...{/form}` or `<form n:name="name">...</form>`).
+ */
+export function detectLatteFormFieldMacroAt(
+  source: string,
+  offset: number,
+): LatteFormFieldMacroDetection | null {
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (!span || !isLatteFormFieldMacroName(span.tagName)) {
+    return null;
+  }
+
+  const argument = staticMacroArgumentAt(source, offset, span.expressionStart, span.contentEnd);
+
+  if (!argument) {
+    return null;
+  }
+
+  const activeForm = latteActiveFormComponentAt(source, offset);
+
+  if (!activeForm) {
+    return null;
+  }
+
+  return {
+    formName: activeForm.name,
+    formNameEnd: activeForm.nameEnd,
+    formNameStart: activeForm.nameStart,
+    macro: span.tagName,
+    name: argument.name,
+    nameEnd: argument.nameEnd,
+    nameStart: argument.nameStart,
+  };
+}
+
+/**
+ * Returns the completion span for a static `{form ...}` macro name.
+ */
+export function detectLatteFormMacroCompletionAt(
+  source: string,
+  offset: number,
+): LatteFormMacroCompletionDetection | null {
+  return staticMacroCompletionAt(source, offset, "form");
+}
+
+/**
+ * Returns the completion span for a static field macro inside an active form.
+ */
+export function detectLatteFormFieldMacroCompletionAt(
+  source: string,
+  offset: number,
+): LatteFormFieldMacroCompletionDetection | null {
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (!span || !isLatteFormFieldMacroName(span.tagName)) {
+    return null;
+  }
+
+  const completion = staticMacroCompletionAt(source, offset, span.tagName);
+
+  if (!completion) {
+    return null;
+  }
+
+  const activeForm = latteActiveFormComponentAt(source, offset);
+
+  if (!activeForm) {
+    return null;
+  }
+
+  return {
+    ...completion,
+    formName: activeForm.name,
+  };
 }
 
 /**
@@ -390,6 +527,16 @@ export function latteActiveFormComponentAt(
     };
   }
 
+  const macroActive = latteActiveFormMacroAt(source, offset, masks);
+
+  if (!macroActive) {
+    return active;
+  }
+
+  if (!active || macroActive.nameStart > active.nameStart) {
+    return macroActive;
+  }
+
   return active;
 }
 
@@ -427,7 +574,8 @@ export function detectNetteCreateComponentAt(
 
 /**
  * Returns every usage of `componentName` in a Latte template - `{control name}`,
- * `<... n:name="name">`, and `$this['name']` - with the name span of each.
+ * `{form name}`, `<... n:name="name">`, and `$this['name']` - with the name span
+ * of each.
  * Usages inside `{* comment *}` / `{syntax off}` regions are skipped. Matching
  * is exact and CASE-SENSITIVE by design: Nette resolves `createComponent<Name>`
  * by an exact PascalCase suffix, so `{control ContactForm}` names a DIFFERENT
@@ -447,6 +595,7 @@ export function netteComponentUsagesInLatte(
   const usages: NetteComponentUsage[] = [];
 
   collectControlUsages(source, componentName, masks, usages);
+  collectFormMacroUsages(source, componentName, masks, usages);
   collectNNameUsages(source, componentName, masks, usages);
   collectArrayAccessUsages(source, componentName, masks, usages);
 
@@ -770,6 +919,149 @@ function readControlPart(
   return { end: index, text };
 }
 
+// --- Latte form macro parsing ----------------------------------------------
+
+interface StaticMacroArgument {
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
+function detectLatteStaticMacroArgumentAt(
+  source: string,
+  offset: number,
+  tagName: string,
+): StaticMacroArgument | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (!span || span.tagName !== tagName) {
+    return null;
+  }
+
+  return staticMacroArgumentAt(source, offset, span.expressionStart, span.contentEnd);
+}
+
+function staticMacroArgumentAt(
+  source: string,
+  offset: number,
+  from: number,
+  limit: number,
+): StaticMacroArgument | null {
+  const argument = readStaticMacroArgument(source, from, limit);
+
+  if (!argument) {
+    return null;
+  }
+
+  if (offset < argument.nameStart || offset > argument.nameEnd) {
+    return null;
+  }
+
+  return argument;
+}
+
+function readStaticMacroArgument(
+  source: string,
+  from: number,
+  limit: number,
+): StaticMacroArgument | null {
+  const index = skipInlineSpaces(source, from, limit);
+  const quotedName = readQuotedIdentifier(source, index, limit);
+
+  if (quotedName) {
+    if (!staticMacroArgumentHasCleanTail(source, quotedName.end, limit)) {
+      return null;
+    }
+
+    return {
+      name: quotedName.name,
+      nameEnd: quotedName.nameEnd,
+      nameStart: quotedName.nameStart,
+    };
+  }
+
+  if (!IDENTIFIER_HEAD.test(source[index] ?? "")) {
+    return null;
+  }
+
+  let end = index + 1;
+
+  while (end < limit && IDENTIFIER_TAIL.test(source[end] ?? "")) {
+    end += 1;
+  }
+
+  if (!staticMacroArgumentHasCleanTail(source, end, limit)) {
+    return null;
+  }
+
+  return {
+    name: source.slice(index, end),
+    nameEnd: end,
+    nameStart: index,
+  };
+}
+
+function staticMacroArgumentHasCleanTail(
+  source: string,
+  from: number,
+  limit: number,
+): boolean {
+  const tailStart = skipInlineSpaces(source, from, limit);
+
+  return tailStart >= limit;
+}
+
+function staticMacroCompletionAt(
+  source: string,
+  offset: number,
+  tagName: string,
+): LatteFormMacroCompletionDetection | null {
+  if (offset < 0 || offset > source.length) {
+    return null;
+  }
+
+  const span = innermostLatteExpressionSpanAt(source, offset);
+
+  if (!span || span.tagName !== tagName || offset < span.expressionStart) {
+    return null;
+  }
+
+  const argumentStart = skipInlineSpaces(source, span.expressionStart, span.contentEnd);
+
+  if (offset < argumentStart) {
+    return null;
+  }
+
+  const prefix = source.slice(argumentStart, offset);
+  const suffix = source.slice(offset, span.contentEnd);
+
+  if (!isIdentifierPrefix(prefix)) {
+    return null;
+  }
+
+  if (!/^[A-Za-z0-9_]*\s*$/.test(suffix)) {
+    return null;
+  }
+
+  const trailingIdentifier = suffix.match(/^[A-Za-z0-9_]*/)?.[0] ?? "";
+
+  return {
+    prefix,
+    replaceEnd: offset + trailingIdentifier.length,
+    replaceStart: argumentStart,
+  };
+}
+
+function isLatteFormFieldMacroName(
+  tagName: string | null,
+): tagName is LatteFormFieldMacroName {
+  return tagName === "input" || tagName === "inputError" || tagName === "label";
+}
+
 // --- n:name parsing ---------------------------------------------------------
 
 interface NNameAttribute {
@@ -922,6 +1214,76 @@ function closingFormStart(source: string, from: number): number | null {
   const match = /<\/\s*form\s*>/gi.exec(source.slice(from));
 
   return match ? from + match.index : null;
+}
+
+function latteActiveFormMacroAt(
+  source: string,
+  offset: number,
+  masks: LatteMaskedRegion[],
+): LatteActiveFormComponent | null {
+  const stack: LatteActiveFormComponent[] = [];
+  const pattern = /\{/g;
+
+  forEachMatch(source, pattern, (match) => {
+    if (match.index > offset || isOffsetMasked(match.index, masks)) {
+      return;
+    }
+
+    const span = innermostLatteExpressionSpanAt(source, match.index + 1);
+
+    if (span) {
+      if (span.openBrace !== match.index || span.tagName !== "form") {
+        return;
+      }
+
+      const argument = readStaticMacroArgument(
+        source,
+        span.expressionStart,
+        span.contentEnd,
+      );
+
+      if (!argument) {
+        stack.length = 0;
+        return;
+      }
+
+      stack.push({
+        name: argument.name,
+        nameEnd: argument.nameEnd,
+        nameStart: argument.nameStart,
+      });
+      return;
+    }
+
+    if (!isLatteClosingFormMacroAt(source, match.index)) {
+      return;
+    }
+
+    if (stack.length > 0) {
+      stack.pop();
+    }
+  });
+
+  return stack[stack.length - 1] ?? null;
+}
+
+function isLatteClosingFormMacroAt(source: string, openBrace: number): boolean {
+  let index = openBrace + 1;
+
+  if (source[index] !== "/") {
+    return false;
+  }
+
+  index = skipInlineSpaces(source, index + 1, source.length);
+
+  if (source.slice(index, index + "form".length) !== "form") {
+    return false;
+  }
+
+  index += "form".length;
+  index = skipInlineSpaces(source, index, source.length);
+
+  return source[index] === "}";
 }
 
 // --- form factory field scanning -------------------------------------------
@@ -1113,6 +1475,39 @@ function collectControlUsages(
     }
 
     pushUsage(usages, masks, "control", span[0], span[1]);
+  });
+}
+
+function collectFormMacroUsages(
+  source: string,
+  componentName: string,
+  masks: LatteMaskedRegion[],
+  usages: NetteComponentUsage[],
+): void {
+  const pattern = /\{/g;
+
+  forEachMatch(source, pattern, (match) => {
+    if (isOffsetMasked(match.index, masks)) {
+      return;
+    }
+
+    const span = innermostLatteExpressionSpanAt(source, match.index + 1);
+
+    if (!span || span.openBrace !== match.index || span.tagName !== "form") {
+      return;
+    }
+
+    const argument = readStaticMacroArgument(
+      source,
+      span.expressionStart,
+      span.contentEnd,
+    );
+
+    if (!argument || argument.name !== componentName) {
+      return;
+    }
+
+    pushUsage(usages, masks, "form", argument.nameStart, argument.nameEnd);
   });
 }
 

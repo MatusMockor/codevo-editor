@@ -1,5 +1,8 @@
 import {
   detectLatteControlAt,
+  detectLatteFormFieldMacroAt,
+  detectLatteFormFieldMacroCompletionAt,
+  detectLatteFormMacroAt,
   detectLatteFormNameAt,
   detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
@@ -64,6 +67,18 @@ export function netteControlReferenceAt(
     return control.part
       ? { name: control.name, part: control.part }
       : { name: control.name };
+  }
+
+  const formMacro = detectLatteFormMacroAt(source, offset);
+
+  if (formMacro) {
+    return { name: formMacro.name };
+  }
+
+  const fieldMacro = detectLatteFormFieldMacroAt(source, offset);
+
+  if (fieldMacro) {
+    return { fieldName: fieldMacro.name, name: fieldMacro.formName };
   }
 
   const formName = detectLatteFormNameAt(source, offset);
@@ -170,7 +185,11 @@ export function latteControlCompletionAt(
 ): LatteControlCompletion | null {
   const span = innermostLatteExpressionSpanAt(source, offset);
 
-  if (!span || span.tagName !== "control" || offset < span.expressionStart) {
+  if (
+    !span ||
+    (span.tagName !== "control" && span.tagName !== "form") ||
+    offset < span.expressionStart
+  ) {
     return null;
   }
 
@@ -181,6 +200,38 @@ export function latteControlCompletionAt(
   }
 
   return { prefix: typed, replaceEnd: offset, replaceStart: span.expressionStart };
+}
+
+export function latteFormFieldMacroCompletionAt(
+  source: string,
+  offset: number,
+): LatteControlCompletion | null {
+  const completion = detectLatteFormFieldMacroCompletionAt(source, offset);
+
+  if (!completion) {
+    return null;
+  }
+
+  return {
+    prefix: completion.prefix,
+    replaceEnd: completion.replaceEnd,
+    replaceStart: completion.replaceStart,
+  };
+}
+
+export async function latteFormFieldMacroCompletions(
+  context: NetteControlCompletionContext,
+  source: string,
+  offset: number,
+  completion: LatteControlCompletion,
+): Promise<NetteControlCompletionItem[]> {
+  const detected = detectLatteFormFieldMacroCompletionAt(source, offset);
+
+  if (!detected) {
+    return [];
+  }
+
+  return latteFormFieldCompletions(context, detected.formName, completion);
 }
 
 export function latteFormNameCompletionAt(
@@ -322,10 +373,27 @@ async function loadNetteFormFieldDefinitions(
       return [];
     }
 
-    return netteFormFieldDefinitionsInCreateComponent(content, componentName);
+    const fields = netteFormFieldDefinitionsInCreateComponent(content, componentName);
+
+    if (fields.length > 0) {
+      return fields;
+    }
+
+    if (netteCreateComponentFactoryExists(content, componentName)) {
+      return [];
+    }
   }
 
   return [];
+}
+
+function netteCreateComponentFactoryExists(
+  source: string,
+  componentName: string,
+): boolean {
+  return netteCreateComponentFactoryContexts(source).some(
+    (context) => context.componentName === componentName,
+  );
 }
 
 export async function resolveNetteCreateComponentReverse(

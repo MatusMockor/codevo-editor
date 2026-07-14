@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   detectLatteControlAt,
+  detectLatteFormFieldMacroAt,
+  detectLatteFormFieldMacroCompletionAt,
+  detectLatteFormMacroAt,
+  detectLatteFormMacroCompletionAt,
   detectLatteFormNameAt,
   detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
@@ -220,6 +224,58 @@ describe("detectLatteFormNameCompletionAt", () => {
   });
 });
 
+describe("detectLatteFormMacroAt", () => {
+  it("detects a static {form contactForm} macro on the name", () => {
+    const source = "{form contactForm}{/form}";
+    const offset = offsetOf(source, "contactForm", 3);
+
+    expect(detectLatteFormMacroAt(source, offset)).toEqual({
+      name: "contactForm",
+      nameStart: source.indexOf("contactForm"),
+      nameEnd: source.indexOf("contactForm") + "contactForm".length,
+    });
+  });
+
+  it("rejects dynamic and masked form macros", () => {
+    const dynamic = "{form $form}{/form}";
+    const masked = "{* {form contactForm} *}";
+
+    expect(detectLatteFormMacroAt(dynamic, offsetOf(dynamic, "$form", 2)))
+      .toBeNull();
+    expect(detectLatteFormMacroAt(masked, offsetOf(masked, "contactForm", 2)))
+      .toBeNull();
+  });
+
+  it("rejects callable-looking form macro arguments", () => {
+    const source = "{form contactForm()}";
+
+    expect(
+      detectLatteFormMacroAt(source, offsetOf(source, "contactForm", 2)),
+    ).toBeNull();
+  });
+});
+
+describe("detectLatteFormMacroCompletionAt", () => {
+  it("returns a completion span inside a form macro", () => {
+    const source = "{form co}";
+    const offset = offsetOf(source, "co", 2);
+
+    expect(detectLatteFormMacroCompletionAt(source, offset)).toEqual({
+      prefix: "co",
+      replaceStart: source.indexOf("co"),
+      replaceEnd: source.indexOf("co") + "co".length,
+    });
+  });
+
+  it("does not complete a dynamic form macro", () => {
+    const source = "{form $form}";
+
+    expect(
+      detectLatteFormMacroCompletionAt(source, offsetOf(source, "$form", 2)),
+    ).toBeNull();
+  });
+});
+
 describe("latteActiveFormComponentAt", () => {
   it("returns the enclosing static form component for a field n:name", () => {
     const source = '<form n:name="contactForm"><input n:name="email"></form>';
@@ -244,6 +300,98 @@ describe("latteActiveFormComponentAt", () => {
     const offset = offsetOf(source, "email", 2);
 
     expect(latteActiveFormComponentAt(source, offset)).toBeNull();
+  });
+
+  it("returns the enclosing static {form} macro component", () => {
+    const source = "{form contactForm}\n{input email}\n{/form}";
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toEqual({
+      name: "contactForm",
+      nameStart: source.indexOf("contactForm"),
+      nameEnd: source.indexOf("contactForm") + "contactForm".length,
+    });
+  });
+
+  it("returns null after a {/form} macro", () => {
+    const source = "{form contactForm}{/form}\n{input email}";
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toBeNull();
+  });
+
+  it("ignores form-looking text inside another Latte expression", () => {
+    const source = `{var $template = "{form contactForm}"}\n{input email}`;
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toBeNull();
+  });
+
+  it("restores the outer form after a nested form closes", () => {
+    const source = "{form outer}{form inner}{/form}{input email}{/form}";
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toEqual({
+      name: "outer",
+      nameStart: source.indexOf("outer"),
+      nameEnd: source.indexOf("outer") + "outer".length,
+    });
+  });
+});
+
+describe("detectLatteFormFieldMacroAt", () => {
+  it.each(["input", "label", "inputError"] as const)(
+    "detects a static {%s email} macro inside an active form",
+    (macro) => {
+      const source = `{form contactForm}{${macro} email}{/form}`;
+      const offset = offsetOf(source, "email", 2);
+
+      expect(detectLatteFormFieldMacroAt(source, offset)).toMatchObject({
+        formName: "contactForm",
+        macro,
+        name: "email",
+        nameStart: source.indexOf("email"),
+        nameEnd: source.indexOf("email") + "email".length,
+      });
+    },
+  );
+
+  it("rejects dynamic field names and fields outside a static form", () => {
+    const dynamic = "{form contactForm}{input $field}{/form}";
+    const standalone = "{input email}";
+    const callable = "{form contactForm}{input email()}{/form}";
+
+    expect(
+      detectLatteFormFieldMacroAt(dynamic, offsetOf(dynamic, "$field", 2)),
+    ).toBeNull();
+    expect(
+      detectLatteFormFieldMacroAt(standalone, offsetOf(standalone, "email", 2)),
+    ).toBeNull();
+    expect(
+      detectLatteFormFieldMacroAt(callable, offsetOf(callable, "email", 2)),
+    ).toBeNull();
+  });
+});
+
+describe("detectLatteFormFieldMacroCompletionAt", () => {
+  it("returns a field completion span inside an active form macro", () => {
+    const source = "{form contactForm}{input em}{/form}";
+    const offset = offsetOf(source, "em", 2);
+
+    expect(detectLatteFormFieldMacroCompletionAt(source, offset)).toEqual({
+      formName: "contactForm",
+      prefix: "em",
+      replaceStart: source.indexOf("em"),
+      replaceEnd: source.indexOf("em") + "em".length,
+    });
+  });
+
+  it("does not complete dynamic field macros", () => {
+    const source = "{form contactForm}{input $field}{/form}";
+
+    expect(
+      detectLatteFormFieldMacroCompletionAt(source, offsetOf(source, "$field", 2)),
+    ).toBeNull();
   });
 });
 
@@ -355,6 +503,7 @@ describe("netteComponentUsagesInLatte", () => {
   it("finds control, n:name and $this[] usages of a component", () => {
     const source = [
       "{control contactForm}",
+      "{form contactForm}{/form}",
       "<form n:name=\"contactForm\"></form>",
       "{if $this['contactForm']}yes{/if}",
     ].join("\n");
@@ -362,7 +511,7 @@ describe("netteComponentUsagesInLatte", () => {
     const usages = netteComponentUsagesInLatte(source, "contactForm");
     const kinds = usages.map((usage) => usage.kind).sort();
 
-    expect(kinds).toEqual(["arrayAccess", "control", "n:name"]);
+    expect(kinds).toEqual(["arrayAccess", "control", "form", "n:name"]);
     for (const usage of usages) {
       expect(source.slice(usage.start, usage.end)).toBe("contactForm");
     }
@@ -392,6 +541,12 @@ describe("netteComponentUsagesInLatte", () => {
 
   it("returns an empty list when the component is not used", () => {
     const source = "{control other}<form n:name=\"another\"></form>";
+
+    expect(netteComponentUsagesInLatte(source, "contactForm")).toEqual([]);
+  });
+
+  it("ignores callable-looking form macro usages", () => {
+    const source = "{form contactForm()}{/form}";
 
     expect(netteComponentUsagesInLatte(source, "contactForm")).toEqual([]);
   });

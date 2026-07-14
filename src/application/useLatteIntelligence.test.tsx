@@ -3830,6 +3830,30 @@ class AccessTokenControl extends Control
     );
   });
 
+  it("navigates a {form contactForm} macro the same way", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{form contactForm}{/form}";
+    const offset = source.indexOf("contactForm") + 2;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Home/HomePresenter.php",
+      expect.objectContaining({ lineNumber: 14 }),
+      "contactForm",
+    );
+  });
+
   it("does not treat an input field's n:name as a component", async () => {
     const { readFileContent } = buildContentWorkspace({
       "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
@@ -3873,6 +3897,33 @@ class AccessTokenControl extends Control
       "email",
     );
   });
+
+  it.each(["input", "label", "inputError"] as const)(
+    "navigates a {%s email} macro to a field inside the active form component",
+    async (macro) => {
+      const { readFileContent } = buildContentWorkspace({
+        "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+      });
+      const openTarget = vi.fn(async () => true);
+      const deps = makeDeps({
+        getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+        openTarget,
+        readFileContent,
+      });
+      const latte = createLatteIntelligence(() => deps);
+      const source = `{form contactForm}{${macro} email}{/form}`;
+      const offset = source.indexOf("email") + 1;
+
+      await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+        true,
+      );
+      expect(openTarget).toHaveBeenCalledWith(
+        "/ws/app/UI/Home/HomePresenter.php",
+        expect.objectContaining({ lineNumber: 17 }),
+        "email",
+      );
+    },
+  );
 
   it("does not resolve a field n:name when the active form is dynamic", async () => {
     const { readFileContent } = buildContentWorkspace({
@@ -4190,6 +4241,33 @@ class AccessTokenControl extends Control
     );
   });
 
+  it("offers component names in a form macro", async () => {
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{form cont}";
+    const offset = source.indexOf("cont") + "cont".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({
+        insertText: "contactForm",
+        kind: "component",
+        label: "contactForm",
+        replaceEnd: source.indexOf("cont") + "cont".length,
+        replaceStart: source.indexOf("cont"),
+      }),
+    );
+  });
+
   it("offers field names for input/select/textarea/button n:name inside the active form", async () => {
     const { readFileContent } = buildContentWorkspace({
       "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
@@ -4239,6 +4317,32 @@ class AccessTokenControl extends Control
       ),
     ).resolves.toContainEqual(expect.objectContaining({ label: "send" }));
   });
+
+  it.each(["input", "label", "inputError"] as const)(
+    "offers field names for {%s} macros inside the active form",
+    async (macro) => {
+      const { readFileContent } = buildContentWorkspace({
+        "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
+      });
+      const deps = makeDeps({
+        getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+        readFileContent,
+      });
+      const latte = createLatteIntelligence(() => deps);
+      const source = `{form contactForm}{${macro} em}{/form}`;
+      const offset = source.indexOf("em") + "em".length;
+
+      await expect(
+        latte.provideLatteCompletions(source, positionAtOffset(source, offset)),
+      ).resolves.toContainEqual(
+        expect.objectContaining({
+          detail: "Nette form field",
+          insertText: "email",
+          label: "email",
+        }),
+      );
+    },
+  );
 
   it("does not offer field completions for standalone, data-n:name, or dynamic form cases", async () => {
     const { readFileContent } = buildContentWorkspace({

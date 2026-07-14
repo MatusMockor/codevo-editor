@@ -17,6 +17,8 @@ import {
 import {
   latteControlCompletionAt,
   latteControlCompletions,
+  latteFormFieldMacroCompletionAt,
+  latteFormFieldMacroCompletions,
   latteFormNameCompletionAt,
   latteFormNameCompletions,
 } from "./netteControlComponents";
@@ -98,6 +100,17 @@ export async function provideLatteCompletions(
     return latteControlCompletions(
       netteControlCompletionContext(options, request),
       controlCompletion,
+    );
+  }
+
+  const formFieldMacroCompletion = latteFormFieldMacroCompletionAt(source, offset);
+
+  if (formFieldMacroCompletion) {
+    return latteFormFieldMacroCompletions(
+      netteControlCompletionContext(options, request),
+      source,
+      offset,
+      formFieldMacroCompletion,
     );
   }
 
