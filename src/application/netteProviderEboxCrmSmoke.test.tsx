@@ -3,9 +3,15 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
-import type { FileEntry } from "../domain/workspace";
+import type {
+  FileEntry,
+  TextSearchResult,
+  WorkspaceDescriptor,
+} from "../domain/workspace";
 import { createLatteIntelligence } from "./useLatteIntelligence";
 import type {
   LatteDirectoryEntry,
@@ -22,6 +28,12 @@ import {
   createPhpNetteTranslationTargetResolver,
 } from "./phpNetteFrameworkTargetAdapter";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
+import {
+  usePhpSemanticResolver,
+  type UsePhpSemanticResolverOptions,
+} from "./usePhpSemanticResolver";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const EBOX_CRM_ROOT =
   "/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm";
@@ -33,6 +45,8 @@ const NETTE_FRAMEWORK = createPhpFrameworkIntelligence({
   profile: "nette",
   providers: [phpNetteFrameworkProvider],
 });
+
+type Resolver = ReturnType<typeof usePhpSemanticResolver>;
 
 function joinPath(root: string, relativePath: string): string {
   return path.join(root, relativePath);
@@ -228,7 +242,139 @@ function makeNeonDeps(
   };
 }
 
+function eboxPhpDescriptor(): WorkspaceDescriptor {
+  return {
+    javaScriptTypeScript: null,
+    php: {
+      classmapRoots: [{ dev: false, paths: ["app"] }],
+      hasComposer: true,
+      packageName: null,
+      packages: [],
+      phpPlatformVersion: null,
+      phpVersionConstraint: null,
+      psr4Roots: [],
+    },
+    rootPath: EBOX_CRM_ROOT,
+  };
+}
+
+function makePhpResolverOptions(
+  frameworkSources: readonly string[],
+  classSourcePaths: ReadonlyMap<string, string>,
+): UsePhpSemanticResolverOptions {
+  return {
+    activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+    currentPhpFrameworkSourceContext: () => ({
+      signature: `ebox:${frameworkSources.length}`,
+      workspaceSources: frameworkSources,
+    }),
+    currentWorkspaceRootRef: { current: EBOX_CRM_ROOT },
+    fileSearch: {
+      searchFiles: vi.fn(async (_root, query) => {
+        const path = classSourcePaths.get(query);
+
+        return path
+          ? [
+              {
+                name: query,
+                path,
+                relativePath: toRelativePath(EBOX_CRM_ROOT, path),
+              },
+            ]
+          : [];
+      }),
+    },
+    intelligenceMode: "basic",
+    phpClassSourcePathCacheRef: { current: {} },
+    phpFrameworkBindingCacheRef: { current: {} },
+    projectSymbolSearch: { searchProjectSymbols: vi.fn(async () => []) },
+    readNavigationFileContent: readFileContent,
+    textSearch: {
+      replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+      searchText: vi.fn(async (): Promise<TextSearchResult[]> => []),
+    },
+    workspaceDescriptor: eboxPhpDescriptor(),
+    workspaceRoot: EBOX_CRM_ROOT,
+  };
+}
+
+function renderPhpResolver(initialOptions: UsePhpSemanticResolverOptions) {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const captured: { api: Resolver | null } = { api: null };
+
+  function Harness({ options }: { options: UsePhpSemanticResolverOptions }) {
+    captured.api = usePhpSemanticResolver(options);
+    return null;
+  }
+
+  act(() => {
+    root.render(<Harness options={initialOptions} />);
+  });
+
+  return {
+    api: () => {
+      if (!captured.api) {
+        throw new Error("resolver hook not mounted");
+      }
+
+      return captured.api;
+    },
+    unmount: () => act(() => root.unmount()),
+  };
+}
+
 describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
+  it("resolves real getByType IRecencyStorage autowiring to RedisRecencyStorage", async () => {
+    const profileSelectPath = "tests/Api/Pack1/ProfileSelectApiCest.php";
+    const configPath = "app/modules/baseModule/config.neon";
+    const redisStoragePath =
+      "app/modules/baseModule/model/Recency/Storage/RedisRecencyStorage.php";
+    const interfacePath =
+      "app/modules/baseModule/model/Recency/Storage/IRecencyStorage.php";
+    const [profileSelect, config, redisStorage, interfaceSource] =
+      await Promise.all([
+        readFileContent(joinPath(EBOX_CRM_ROOT, profileSelectPath)),
+        readFileContent(joinPath(EBOX_CRM_ROOT, configPath)),
+        readFileContent(joinPath(EBOX_CRM_ROOT, redisStoragePath)),
+        readFileContent(joinPath(EBOX_CRM_ROOT, interfacePath)),
+      ]);
+    const harness = renderPhpResolver(
+      makePhpResolverOptions(
+        [config, redisStorage, interfaceSource, profileSelect],
+        new Map([
+          [
+            "RedisRecencyStorage.php",
+            joinPath(EBOX_CRM_ROOT, redisStoragePath),
+          ],
+          ["IRecencyStorage.php", joinPath(EBOX_CRM_ROOT, interfacePath)],
+        ]),
+      ),
+    );
+
+    expect(profileSelect).toContain("getByType(IRecencyStorage::class)");
+    expect(config).toContain(
+      "Efabrica\\Crm\\BaseModule\\RecencyStore\\Storage\\RedisRecencyStorage",
+    );
+    expect(redisStorage).toContain("implements IRecencyStorage");
+    expect(interfaceSource).toContain("interface IRecencyStorage");
+
+    const requestedClassName = harness
+      .api()
+      .resolvePhpClassReference(profileSelect, "IRecencyStorage");
+
+    expect(requestedClassName).toBe(
+      "Efabrica\\Crm\\BaseModule\\RecencyStore\\Storage\\IRecencyStorage",
+    );
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(requestedClassName ?? ""),
+    ).resolves.toBe(
+      "Efabrica\\Crm\\BaseModule\\RecencyStore\\Storage\\RedisRecencyStorage",
+    );
+
+    harness.unmount();
+  });
+
   it("covers presenter link definition, include paths, controls, and presenter link completion over real Latte files", async () => {
     const usersShowPath =
       "app/modules/usersModule/templates/UsersAdmin/show.latte";
