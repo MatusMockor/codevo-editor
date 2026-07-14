@@ -234,6 +234,218 @@ final class DatabaseReportRepository implements ReportRepository
     harness.unmount();
   });
 
+  it("resolves Nette autowired services through an abstract parent implementing the requested interface", async () => {
+    const concretePath = `${ROOT}/app/Repository/ConcreteChild.php`;
+    const abstractPath = `${ROOT}/app/Repository/AbstractRepo.php`;
+    const searchText = vi.fn(async () => []);
+    const sources = new Map([
+      [
+        concretePath,
+        `<?php
+namespace App\\Repository;
+
+final class ConcreteChild extends AbstractRepo
+{
+}
+`,
+      ],
+      [
+        abstractPath,
+        `<?php
+namespace App\\Repository;
+
+abstract class AbstractRepo implements \\App\\Contracts\\ReportRepository
+{
+}
+`,
+      ],
+    ]);
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      const source = sources.get(path);
+
+      if (!source) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return source;
+    });
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:1",
+          workspaceSources: [
+            [
+              "services:",
+              "    reportRepository: App\\Repository\\ConcreteChild",
+            ].join("\n"),
+          ],
+        }),
+        readNavigationFileContent,
+        textSearch: {
+          replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+          searchText,
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\ReportRepository",
+      ),
+    ).resolves.toBe("App\\Repository\\ConcreteChild");
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("resolves Nette autowired services through interface inheritance", async () => {
+    const concretePath = `${ROOT}/app/Service/ConcreteGateway.php`;
+    const childInterfacePath = `${ROOT}/app/Contracts/ChildGateway.php`;
+    const searchText = vi.fn(async () => []);
+    const sources = new Map([
+      [
+        concretePath,
+        `<?php
+namespace App\\Service;
+
+use App\\Contracts\\ChildGateway;
+
+final class ConcreteGateway implements ChildGateway
+{
+}
+`,
+      ],
+      [
+        childInterfacePath,
+        `<?php
+namespace App\\Contracts;
+
+interface ChildGateway extends ParentGateway
+{
+}
+`,
+      ],
+    ]);
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      const source = sources.get(path);
+
+      if (!source) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return source;
+    });
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:1",
+          workspaceSources: [
+            [
+              "services:",
+              "    gateway: App\\Service\\ConcreteGateway",
+            ].join("\n"),
+          ],
+        }),
+        readNavigationFileContent,
+        textSearch: {
+          replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+          searchText,
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\ParentGateway",
+      ),
+    ).resolves.toBe("App\\Service\\ConcreteGateway");
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("stops cyclic Nette autowire hierarchy lookups without guessing", async () => {
+    const concretePath = `${ROOT}/app/Service/ConcreteGateway.php`;
+    const firstInterfacePath = `${ROOT}/app/Contracts/FirstGateway.php`;
+    const secondInterfacePath = `${ROOT}/app/Contracts/SecondGateway.php`;
+    const searchText = vi.fn(async () => []);
+    const sources = new Map([
+      [
+        concretePath,
+        `<?php
+namespace App\\Service;
+
+use App\\Contracts\\FirstGateway;
+
+final class ConcreteGateway implements FirstGateway
+{
+}
+`,
+      ],
+      [
+        firstInterfacePath,
+        `<?php
+namespace App\\Contracts;
+
+interface FirstGateway extends SecondGateway
+{
+}
+`,
+      ],
+      [
+        secondInterfacePath,
+        `<?php
+namespace App\\Contracts;
+
+interface SecondGateway extends FirstGateway
+{
+}
+`,
+      ],
+    ]);
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      const source = sources.get(path);
+
+      if (!source) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return source;
+    });
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:1",
+          workspaceSources: [
+            ["services:", "    gateway: App\\Service\\ConcreteGateway"].join(
+              "\n",
+            ),
+          ],
+        }),
+        readNavigationFileContent,
+        textSearch: {
+          replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+          searchText,
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\MissingGateway",
+      ),
+    ).resolves.toBeNull();
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("does not cache transient Nette autowire read failures", async () => {
     const concretePath = `${ROOT}/app/Repository/DatabaseReportRepository.php`;
     const searchText = vi.fn(async () => []);

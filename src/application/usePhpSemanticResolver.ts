@@ -3,6 +3,7 @@ import { shouldIndexWorkspace } from "../domain/intelligence";
 import {
   phpClassPathCandidates,
   phpExtendsClassName,
+  phpSuperTypeReferences,
   resolvePhpClassName,
 } from "../domain/phpNavigation";
 import {
@@ -47,6 +48,12 @@ export interface UsePhpSemanticResolverOptions {
 type PhpFrameworkAutowireLookupResult =
   | { className: string; status: "resolved" }
   | { status: "inactive" | "miss" | "read-failed" };
+type PhpFrameworkAutowireMatchResult =
+  | { status: "matched" }
+  | { status: "inactive" | "miss" | "read-failed" };
+
+const PHP_FRAMEWORK_AUTOWIRE_MAX_DEPTH = 12;
+const PHP_FRAMEWORK_AUTOWIRE_MAX_VISITED_TYPES = 64;
 
 export function usePhpSemanticResolver({
   activePhpFrameworkProviders,
@@ -477,14 +484,26 @@ export function usePhpSemanticResolver({
             return { status: "inactive" };
           }
 
-          if (
-            !phpSourceClassDirectlyImplements(
+          const match = await phpSourceClassTransitivelyImplements(
+            {
               content,
               concreteClassName,
-              requestedClassName,
+              depth: 0,
+              isRequestedRootActive,
               resolvePhpClassReference,
-            )
-          ) {
+              resolvePhpClassSourcePaths: (className) =>
+                resolvePhpClassSourcePathsRef.current(className),
+              readNavigationFileContent,
+              requestedClassName,
+              visitedTypeNames: new Set<string>(),
+            },
+          );
+
+          if (match.status === "inactive" || match.status === "read-failed") {
+            return match;
+          }
+
+          if (match.status !== "matched") {
             continue;
           }
 
@@ -824,44 +843,182 @@ function phpFrameworkConcreteClassNamesFromSources(
   return classNames;
 }
 
-function phpSourceClassDirectlyImplements(
-  source: string,
-  className: string,
-  interfaceName: string,
-  resolveClassName: (source: string, className: string) => string | null,
-): boolean {
+async function phpSourceClassTransitivelyImplements({
+  concreteClassName,
+  content,
+  depth,
+  isRequestedRootActive,
+  readNavigationFileContent,
+  requestedClassName,
+  resolvePhpClassReference,
+  resolvePhpClassSourcePaths,
+  visitedTypeNames,
+}: {
+  concreteClassName: string;
+  content: string;
+  depth: number;
+  isRequestedRootActive: () => boolean;
+  readNavigationFileContent: (path: string) => Promise<string>;
+  requestedClassName: string;
+  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
+  visitedTypeNames: Set<string>;
+}): Promise<PhpFrameworkAutowireMatchResult> {
   if (
-    phpCurrentClassName(source)?.toLowerCase() !==
-    normalizePhpFrameworkBindingClassName(className)
+    phpCurrentClassName(content)?.toLowerCase() !==
+    normalizePhpFrameworkBindingClassName(concreteClassName)
   ) {
-    return false;
+    return { status: "miss" };
   }
 
-  return phpSourceDirectInterfaceNames(source, resolveClassName).some(
-    (implementedName) =>
-      normalizePhpFrameworkBindingClassName(implementedName) ===
-      normalizePhpFrameworkBindingClassName(interfaceName),
-  );
+  return phpSourceTransitivelyReferencesType({
+    content,
+    depth,
+    isRequestedRootActive,
+    readNavigationFileContent,
+    requestedClassName,
+    resolvePhpClassReference,
+    resolvePhpClassSourcePaths,
+    visitedTypeNames,
+  });
 }
 
-function phpSourceDirectInterfaceNames(
-  source: string,
-  resolveClassName: (source: string, className: string) => string | null,
-): string[] {
-  const match = /^\s*(?:abstract\s+|final\s+|readonly\s+)*class\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+extends\s+[^\s{]+)?\s+implements\s+([^{]+)/m.exec(
-    source,
-  );
-  const rawInterfaces = match?.[1] ?? "";
-
-  if (!rawInterfaces) {
-    return [];
+async function phpSourceTransitivelyReferencesType({
+  content,
+  depth,
+  isRequestedRootActive,
+  readNavigationFileContent,
+  requestedClassName,
+  resolvePhpClassReference,
+  resolvePhpClassSourcePaths,
+  visitedTypeNames,
+}: {
+  content: string;
+  depth: number;
+  isRequestedRootActive: () => boolean;
+  readNavigationFileContent: (path: string) => Promise<string>;
+  requestedClassName: string;
+  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
+  visitedTypeNames: Set<string>;
+}): Promise<PhpFrameworkAutowireMatchResult> {
+  if (
+    depth > PHP_FRAMEWORK_AUTOWIRE_MAX_DEPTH ||
+    visitedTypeNames.size > PHP_FRAMEWORK_AUTOWIRE_MAX_VISITED_TYPES
+  ) {
+    return { status: "miss" };
   }
 
-  return rawInterfaces
-    .split(",")
-    .map((part) => part.trim().replace(/<[\s\S]*$/, ""))
-    .map((part) => resolveClassName(source, part))
-    .filter((part): part is string => Boolean(part));
+  for (const superTypeName of phpSuperTypeReferences(content)) {
+    if (!isRequestedRootActive()) {
+      return { status: "inactive" };
+    }
+
+    const resolvedSuperTypeName = resolvePhpClassReference(
+      content,
+      superTypeName,
+    );
+
+    if (!resolvedSuperTypeName) {
+      continue;
+    }
+
+    const normalizedSuperTypeName =
+      normalizePhpFrameworkBindingClassName(resolvedSuperTypeName);
+
+    if (
+      normalizedSuperTypeName ===
+      normalizePhpFrameworkBindingClassName(requestedClassName)
+    ) {
+      return { status: "matched" };
+    }
+
+    if (visitedTypeNames.has(normalizedSuperTypeName)) {
+      continue;
+    }
+
+    visitedTypeNames.add(normalizedSuperTypeName);
+
+    const nested = await phpTypeTransitivelyReferencesType({
+      className: resolvedSuperTypeName,
+      depth: depth + 1,
+      isRequestedRootActive,
+      readNavigationFileContent,
+      requestedClassName,
+      resolvePhpClassReference,
+      resolvePhpClassSourcePaths,
+      visitedTypeNames,
+    });
+
+    if (nested.status !== "miss") {
+      return nested;
+    }
+  }
+
+  return { status: "miss" };
+}
+
+async function phpTypeTransitivelyReferencesType({
+  className,
+  depth,
+  isRequestedRootActive,
+  readNavigationFileContent,
+  requestedClassName,
+  resolvePhpClassReference,
+  resolvePhpClassSourcePaths,
+  visitedTypeNames,
+}: {
+  className: string;
+  depth: number;
+  isRequestedRootActive: () => boolean;
+  readNavigationFileContent: (path: string) => Promise<string>;
+  requestedClassName: string;
+  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
+  visitedTypeNames: Set<string>;
+}): Promise<PhpFrameworkAutowireMatchResult> {
+  if (!isRequestedRootActive()) {
+    return { status: "inactive" };
+  }
+
+  const paths = await resolvePhpClassSourcePaths(className);
+
+  if (!isRequestedRootActive()) {
+    return { status: "inactive" };
+  }
+
+  for (const path of paths) {
+    try {
+      const content = await readNavigationFileContent(path);
+
+      if (!isRequestedRootActive()) {
+        return { status: "inactive" };
+      }
+
+      const result = await phpSourceTransitivelyReferencesType({
+        content,
+        depth,
+        isRequestedRootActive,
+        readNavigationFileContent,
+        requestedClassName,
+        resolvePhpClassReference,
+        resolvePhpClassSourcePaths,
+        visitedTypeNames,
+      });
+
+      if (result.status !== "miss") {
+        return result;
+      }
+    } catch {
+      if (!isRequestedRootActive()) {
+        return { status: "inactive" };
+      }
+
+      return { status: "read-failed" };
+    }
+  }
+
+  return { status: "miss" };
 }
 
 function normalizePhpFrameworkBindingClassName(className: string): string {
