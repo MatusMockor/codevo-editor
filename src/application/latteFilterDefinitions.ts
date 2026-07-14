@@ -5,6 +5,10 @@ import {
 } from "./latteExpressionDetection";
 import type { LatteFilterRegistrationTarget } from "./latteFilterDiscovery";
 import { neonServiceTypeInSource } from "./netteNeonConfigFacts";
+import {
+  resolveNeonServiceTypeFromMaps,
+  type NeonProjectConfig,
+} from "./neonProjectConfigDiscovery";
 
 export interface LatteFilterDefinitionDependencies {
   openPhpMethodTarget(
@@ -23,6 +27,9 @@ export interface LatteFilterDefinitionContext {
   deps: LatteFilterDefinitionDependencies;
   isRequestedRootActive(): boolean;
   loadFilterRegistrations(): Promise<LatteFilterRegistrationTarget[]>;
+  loadProjectConfig?(): Promise<
+    Pick<NeonProjectConfig, "serviceAliases" | "serviceNameTypes">
+  >;
 }
 
 export async function resolveLatteFilterDefinition(
@@ -105,7 +112,11 @@ async function openLatteNeonCallableMethodTarget(
   const serviceType = serviceClassName
     ? serviceClassName
     : serviceName
-      ? neonServiceTypeInSource(targetSource, serviceName)
+      ? await resolveLatteNeonCallableServiceType(
+          context,
+          targetSource,
+          serviceName,
+        )
       : null;
 
   if (!serviceType) {
@@ -113,6 +124,34 @@ async function openLatteNeonCallableMethodTarget(
   }
 
   return context.deps.openPhpMethodTarget(serviceType, methodName);
+}
+
+async function resolveLatteNeonCallableServiceType(
+  context: LatteFilterDefinitionContext,
+  targetSource: string,
+  serviceName: string,
+): Promise<string | null> {
+  const sameFileType = neonServiceTypeInSource(targetSource, serviceName);
+
+  if (sameFileType) {
+    return sameFileType;
+  }
+
+  if (!context.loadProjectConfig) {
+    return null;
+  }
+
+  const config = await context.loadProjectConfig();
+
+  if (!context.isRequestedRootActive()) {
+    return null;
+  }
+
+  return resolveNeonServiceTypeFromMaps(
+    serviceName,
+    config.serviceNameTypes,
+    config.serviceAliases,
+  );
 }
 
 function editorPositionAtOffset(source: string, offset: number): EditorPosition {

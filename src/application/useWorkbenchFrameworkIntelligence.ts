@@ -21,6 +21,13 @@ export function useWorkbenchFrameworkIntelligence(
   const blade = useBladeIntelligence(dependencies.blade);
   const latte = useLatteIntelligence(dependencies.latte);
   const neon = useNeonIntelligence(dependencies.neon);
+  const invalidateNeonConfigForPath = useCallback(
+    (rootPath: string, path: string) => {
+      latte.invalidateNeonConfigForPath(rootPath, path);
+      neon.invalidateNeonConfigForPath(rootPath, path);
+    },
+    [latte.invalidateNeonConfigForPath, neon.invalidateNeonConfigForPath],
+  );
 
   const isPhpFrameworkStringCompletionContext = useCallback(
     (source: string, position: EditorPosition): boolean =>
@@ -36,6 +43,7 @@ export function useWorkbenchFrameworkIntelligence(
     ...blade,
     ...latte,
     ...neon,
+    invalidateNeonConfigForPath,
     isPhpFrameworkStringCompletionContext,
   };
 }

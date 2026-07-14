@@ -15,6 +15,11 @@ const CALLABLE_CONFIG_SOURCE = `services:
     setup:
       - addFilter('UserDate', [@userDateFilter, format])
 `;
+const CROSS_FILE_CALLABLE_CONFIG_SOURCE = `services:
+  filterLoader:
+    setup:
+      - addFilter('UserDate', [@userDateFilter, format])
+`;
 const EXTENSION_SOURCE = `<?php
 final class AppLatteExtension extends Latte\\Extension
 {
@@ -114,6 +119,154 @@ describe("resolveLatteFilterDefinition", () => {
       "App\\Filters\\UserDateFilter",
       "format",
     );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("opens a cross-file NEON filter callable service method from project config", async () => {
+    const context = makeContext({
+      configSource: CROSS_FILE_CALLABLE_CONFIG_SOURCE,
+    });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        methodName: "format",
+        name: "UserDate",
+        offset: CROSS_FILE_CALLABLE_CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/filters.neon",
+        serviceName: "userDateFilter",
+      },
+    ]);
+    context.loadProjectConfig = vi.fn(async () => ({
+      serviceAliases: new Map(),
+      serviceNameTypes: new Map([
+        ["userDateFilter", "App\\Filters\\UserDateFilter"],
+      ]),
+    }));
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.loadProjectConfig).toHaveBeenCalled();
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("opens a cross-file NEON filter callable service method through an alias", async () => {
+    const context = makeContext({
+      configSource: CROSS_FILE_CALLABLE_CONFIG_SOURCE,
+    });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        methodName: "format",
+        name: "UserDate",
+        offset: CROSS_FILE_CALLABLE_CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/filters.neon",
+        serviceName: "userDateFilter",
+      },
+    ]);
+    context.loadProjectConfig = vi.fn(async () => ({
+      serviceAliases: new Map([["userDateFilter", "realUserDateFilter"]]),
+      serviceNameTypes: new Map([
+        ["realUserDateFilter", "App\\Filters\\UserDateFilter"],
+      ]),
+    }));
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the NEON registration when project config has no service type", async () => {
+    const context = makeContext({
+      configSource: CROSS_FILE_CALLABLE_CONFIG_SOURCE,
+    });
+    context.deps.openPhpMethodTarget = vi.fn(async () => false);
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        methodName: "format",
+        name: "UserDate",
+        offset: CROSS_FILE_CALLABLE_CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/filters.neon",
+        serviceName: "userDateFilter",
+      },
+    ]);
+    context.loadProjectConfig = vi.fn(async () => ({
+      serviceAliases: new Map(),
+      serviceNameTypes: new Map(),
+    }));
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/config/filters.neon",
+      { column: 20, lineNumber: 4 },
+      "UserDate",
+    );
+  });
+
+  it("drops stale-root project config resolution without opening the fallback", async () => {
+    let active = true;
+    const context = makeContext({
+      active: () => active,
+      configSource: CROSS_FILE_CALLABLE_CONFIG_SOURCE,
+    });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        methodName: "format",
+        name: "UserDate",
+        offset: CROSS_FILE_CALLABLE_CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/filters.neon",
+        serviceName: "userDateFilter",
+      },
+    ]);
+    context.loadProjectConfig = vi.fn(async () => {
+      active = false;
+
+      return {
+        serviceAliases: new Map(),
+        serviceNameTypes: new Map([
+          ["userDateFilter", "App\\Filters\\UserDateFilter"],
+        ]),
+      };
+    });
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(false);
+
+    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
     expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 

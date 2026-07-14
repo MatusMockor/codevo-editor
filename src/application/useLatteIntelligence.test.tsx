@@ -332,6 +332,141 @@ describe("createLatteIntelligence definition", () => {
     expect(openTarget).not.toHaveBeenCalled();
   });
 
+  it("navigates a NEON filter callable to a service defined in another config file", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/config/filters.neon": [
+        "services:",
+        "    filterLoader:",
+        "        setup:",
+        "            - addFilter('UserDate', [@userDateFilter, format])",
+        "",
+      ].join("\n"),
+      "config/services.neon": [
+        "services:",
+        "    userDateFilter:",
+        "        class: App\\Filters\\UserDateFilter",
+        "",
+      ].join("\n"),
+    });
+    const openPhpMethodTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      listDirectory,
+      openPhpMethodTarget,
+      openTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      latte.provideLatteDefinition(source, source.indexOf("UserDate")),
+    ).resolves.toBe(true);
+
+    expect(openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
+  it("does not scan the active template directory as NEON project config for filters", async () => {
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Home/default.latte": "{$createdAt|UserDate}",
+      "app/UI/Home/services.neon": [
+        "services:",
+        "    userDateFilter:",
+        "        class: App\\Filters\\WrongTemplateLocalFilter",
+        "",
+      ].join("\n"),
+      "app/config/filters.neon": [
+        "services:",
+        "    filterLoader:",
+        "        setup:",
+        "            - addFilter('UserDate', [@userDateFilter, format])",
+        "",
+      ].join("\n"),
+      "config/services.neon": [
+        "services:",
+        "    userDateFilter:",
+        "        class: App\\Filters\\UserDateFilter",
+        "",
+      ].join("\n"),
+    });
+    const openPhpMethodTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      listDirectory,
+      openPhpMethodTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      latte.provideLatteDefinition(source, source.indexOf("UserDate")),
+    ).resolves.toBe(true);
+
+    expect(openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+  });
+
+  it("invalidates Latte-owned NEON project config cache after a config change", async () => {
+    let serviceClassName = "App\\Filters\\OldUserDateFilter";
+    const workspace = buildContentWorkspace({
+      "app/config/filters.neon": [
+        "services:",
+        "    filterLoader:",
+        "        setup:",
+        "            - addFilter('UserDate', [@userDateFilter, format])",
+        "",
+      ].join("\n"),
+      "config/services.neon": "",
+    });
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${ROOT}/config/services.neon`) {
+        return [
+          "services:",
+          "    userDateFilter:",
+          `        class: ${serviceClassName}`,
+          "",
+        ].join("\n");
+      }
+
+      return workspace.readFileContent(path);
+    });
+    const openPhpMethodTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      listDirectory: workspace.listDirectory,
+      openPhpMethodTarget,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      latte.provideLatteDefinition(source, source.indexOf("UserDate")),
+    ).resolves.toBe(true);
+    serviceClassName = "App\\Filters\\NewUserDateFilter";
+    latte.invalidateNeonConfigForPath(ROOT, `${ROOT}/config/services.neon`);
+    await expect(
+      latte.provideLatteDefinition(source, source.indexOf("UserDate")),
+    ).resolves.toBe(true);
+
+    expect(openPhpMethodTarget).toHaveBeenNthCalledWith(
+      1,
+      "App\\Filters\\OldUserDateFilter",
+      "format",
+    );
+    expect(openPhpMethodTarget).toHaveBeenNthCalledWith(
+      2,
+      "App\\Filters\\NewUserDateFilter",
+      "format",
+    );
+  });
+
   it("navigates a bare {layout} to the auto-looked-up @layout.latte", async () => {
     const { readFileContent } = buildWorkspace(["app/UI/@layout.latte"]);
     const openTarget = vi.fn(async () => true);

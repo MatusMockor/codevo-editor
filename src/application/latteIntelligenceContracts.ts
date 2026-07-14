@@ -84,6 +84,7 @@ export interface LatteDefinitionOutcome {
 export interface LatteIntelligence {
   collectCompleteLatteTemplateRelativePaths(): Promise<readonly string[]>;
   collectLatteTemplateRelativePaths(): Promise<readonly string[]>;
+  invalidateNeonConfigForPath(rootPath: string, path: string): void;
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,

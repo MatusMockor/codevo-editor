@@ -21,6 +21,7 @@ import {
   MAX_LATTE_SCAN_DEPTH,
   MAX_LATTE_TEMPLATE_FILES,
 } from "./latteProviderFlowContext";
+import { loadNeonProjectConfig } from "./neonProjectConfigDiscovery";
 import type {
   LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
@@ -51,11 +52,28 @@ export function latteFilterDefinitionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ) {
+  const { neonConfigCache, neonConfigInFlight } = options;
+
   return {
     deps: request.deps,
     isRequestedRootActive: request.isRequestedRootActive,
     loadFilterRegistrations: () =>
       loadLatteFilterRegistrations(latteFilterDiscoveryContext(options, request)),
+    ...(neonConfigCache && neonConfigInFlight
+      ? {
+          loadProjectConfig: () =>
+            loadNeonProjectConfig({
+              configCache: neonConfigCache,
+              configInFlight: neonConfigInFlight,
+              deps: {
+                ...request.deps,
+                getActiveDocument: () => null,
+              },
+              isRequestedRootActive: request.isRequestedRootActive,
+              requestedRoot: request.requestedRoot,
+            }),
+        }
+      : {}),
   };
 }
 

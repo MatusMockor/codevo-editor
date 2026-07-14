@@ -6,6 +6,7 @@ import {
   evictLatteProviderCaches,
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
+import { evictOtherRootConfigCacheEntries } from "./neonProjectConfigDiscovery";
 import type {
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
@@ -23,6 +24,10 @@ export function latteProviderRequestContext(
 ): LatteProviderRequestContext | null {
   const deps = options.getDependencies();
   evictLatteProviderCaches(options.caches, deps.workspaceRoot);
+
+  if (options.neonConfigCache) {
+    evictOtherRootConfigCacheEntries(options.neonConfigCache, deps.workspaceRoot);
+  }
 
   const workspaceContext = activeLatteWorkspaceContext(
     deps,

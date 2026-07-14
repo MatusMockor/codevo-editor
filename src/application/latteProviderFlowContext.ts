@@ -21,6 +21,10 @@ import type {
   LatteTemplateTypeCache,
   LatteTemplateTypeInFlight,
 } from "./netteTemplateTypes";
+import type {
+  NeonConfigCache,
+  NeonConfigInFlight,
+} from "./neonProjectConfigDiscovery";
 
 export const LATTE_TEMPLATE_SCAN_DIRECTORIES: readonly string[] = [
   "app",
@@ -56,6 +60,8 @@ export interface LatteProviderFlowFactoryOptions {
   frameworkCapabilities: LatteFrameworkCapabilities;
   getDependencies(): LatteIntelligenceDependencies;
   inFlight: LatteProviderFlowInFlight;
+  neonConfigCache?: NeonConfigCache;
+  neonConfigInFlight?: NeonConfigInFlight;
 }
 
 export function evictLatteProviderCaches(

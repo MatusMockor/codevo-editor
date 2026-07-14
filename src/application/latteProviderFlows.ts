@@ -22,6 +22,11 @@ import type {
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
 import type { NavigationRequest } from "./navigationRequest";
 import { type LatteProviderFlowFactoryOptions } from "./latteProviderFlowContext";
+import type {
+  NeonConfigCache,
+  NeonConfigInFlight,
+} from "./neonProjectConfigDiscovery";
+import { invalidateNeonConfigCacheForPath } from "./neonProjectConfigDiscovery";
 import {
   provideLatteDefinition as provideLatteDefinitionFlow,
   provideLatteDefinitionOutcome as provideLatteDefinitionOutcomeFlow,
@@ -117,6 +122,8 @@ export function createLatteIntelligence(
   frameworkCapabilities: LatteFrameworkCapabilities = netteLatteFrameworkCapabilities,
   filterCache: LatteFilterCache = {},
 ): LatteIntelligence {
+  const neonConfigCache: NeonConfigCache = {};
+  const neonConfigInFlight: NeonConfigInFlight = new Map();
   const flows = createLatteProviderFlows({
     caches: {
       componentCache,
@@ -134,10 +141,20 @@ export function createLatteIntelligence(
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
     },
+    neonConfigCache,
+    neonConfigInFlight,
   });
 
   return {
     ...flows,
+    invalidateNeonConfigForPath: (rootPath, path) => {
+      invalidateNeonConfigCacheForPath(
+        neonConfigCache,
+        neonConfigInFlight,
+        rootPath,
+        path,
+      );
+    },
     shouldBlockLatteDefinitionFallback: isLatteMemberReferenceAt,
   };
 }
