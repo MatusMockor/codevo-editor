@@ -7,6 +7,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+import { resolvePhpClassName } from "../domain/phpNavigation";
 import type {
   FileEntry,
   TextSearchResult,
@@ -23,6 +24,7 @@ import type {
   NeonIntelligenceDependencies,
 } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { findNetteRedrawControlSnippetDefinitionTarget } from "./netteAjaxSnippetDefinitions";
 import {
   createPhpNetteTranslationTargetResolver,
@@ -32,6 +34,10 @@ import {
   usePhpSemanticResolver,
   type UsePhpSemanticResolverOptions,
 } from "./usePhpSemanticResolver";
+import {
+  usePhpClassMemberCollectors,
+  type PhpClassMemberCollectors,
+} from "./usePhpClassMemberCollectors";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -47,6 +53,9 @@ const NETTE_FRAMEWORK = createPhpFrameworkIntelligence({
 });
 
 type Resolver = ReturnType<typeof usePhpSemanticResolver>;
+type ClassMemberCollectorOptions = Parameters<
+  typeof usePhpClassMemberCollectors
+>[0];
 
 function joinPath(root: string, relativePath: string): string {
   return path.join(root, relativePath);
@@ -324,6 +333,66 @@ function renderPhpResolver(initialOptions: UsePhpSemanticResolverOptions) {
   };
 }
 
+function renderPhpClassMemberCollectors(options: ClassMemberCollectorOptions) {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const captured: { api: PhpClassMemberCollectors | null } = { api: null };
+
+  function Harness({ hookOptions }: { hookOptions: ClassMemberCollectorOptions }) {
+    captured.api = usePhpClassMemberCollectors(hookOptions);
+    return null;
+  }
+
+  act(() => {
+    root.render(<Harness hookOptions={options} />);
+  });
+
+  return {
+    api: () => {
+      if (!captured.api) {
+        throw new Error("class member collector hook not mounted");
+      }
+
+      return captured.api;
+    },
+    unmount: () => act(() => root.unmount()),
+  };
+}
+
+function makePhpClassMemberCollectorOptions(
+  frameworkSources: readonly string[],
+  classSourcePaths: ReadonlyMap<string, string>,
+  resolvePhpFrameworkBoundConcrete: (
+    className: string,
+  ) => Promise<string | null>,
+): ClassMemberCollectorOptions {
+  const currentWorkspaceRootRef = { current: EBOX_CRM_ROOT };
+
+  return {
+    currentPhpFrameworkSourceContext: () => ({
+      signature: `ebox:${frameworkSources.length}`,
+      workspaceSources: frameworkSources,
+    }),
+    currentWorkspaceRootRef,
+    frameworkRuntime: createPhpFrameworkRuntimeContext(NETTE_FRAMEWORK),
+    readNavigationFileContent: readFileContent,
+    resolvePhpClassReference: (source, className) =>
+      resolvePhpClassName(source, className),
+    resolvePhpClassSourcePaths: vi.fn(async (className: string) => {
+      const filePath = classSourcePaths.get(
+        className.trim().replace(/^\\+/, ""),
+      );
+
+      return filePath ? [filePath] : [];
+    }),
+    resolvePhpDeclaredType: (source, typeName) =>
+      typeName ? resolvePhpClassName(source, typeName) : null,
+    resolvePhpFrameworkBoundConcrete,
+    workspaceDescriptor: eboxPhpDescriptor(),
+    workspaceRoot: EBOX_CRM_ROOT,
+  };
+}
+
 describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
   it("resolves real getByType IRecencyStorage autowiring to RedisRecencyStorage", async () => {
     const profileSelectPath = "tests/Api/Pack1/ProfileSelectApiCest.php";
@@ -373,6 +442,107 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
 
     harness.unmount();
+  });
+
+  it("expands real ebox Nette interface receivers with autowired concrete repository members", async () => {
+    const configPath = "app/modules/paymentsModule/config/config.neon";
+    const interfacePath =
+      "app/modules/paymentsModule/Models/VariableSymbolInterface.php";
+    const concretePath =
+      "app/modules/paymentsModule/Models/Repositories/VariableSymbol.php";
+    const consumerPath =
+      "app/modules/paymentsModule/Models/Repositories/PaymentsRepository.php";
+    const baseRepositoryPath =
+      "app/modules/applicationModule/Models/Repository/Repository.php";
+    const [
+      config,
+      interfaceSource,
+      concreteSource,
+      consumerSource,
+      baseRepositorySource,
+    ] = await Promise.all([
+      readFileContent(joinPath(EBOX_CRM_ROOT, configPath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, interfacePath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, concretePath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, consumerPath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, baseRepositoryPath)),
+    ]);
+    const interfaceClassName = "Crm\\PaymentsModule\\VariableSymbolInterface";
+    const concreteClassName = "Crm\\PaymentsModule\\Repository\\VariableSymbol";
+    const classSourcePaths = new Map([
+      [interfaceClassName, joinPath(EBOX_CRM_ROOT, interfacePath)],
+      [concreteClassName, joinPath(EBOX_CRM_ROOT, concretePath)],
+      [
+        "Crm\\ApplicationModule\\Repository",
+        joinPath(EBOX_CRM_ROOT, baseRepositoryPath),
+      ],
+      [
+        "Crm\\PaymentsModule\\Repository\\PaymentsRepository",
+        joinPath(EBOX_CRM_ROOT, consumerPath),
+      ],
+      ["VariableSymbolInterface.php", joinPath(EBOX_CRM_ROOT, interfacePath)],
+      ["VariableSymbol.php", joinPath(EBOX_CRM_ROOT, concretePath)],
+      ["Repository.php", joinPath(EBOX_CRM_ROOT, baseRepositoryPath)],
+      ["PaymentsRepository.php", joinPath(EBOX_CRM_ROOT, consumerPath)],
+    ]);
+    const frameworkSources = [
+      config,
+      interfaceSource,
+      concreteSource,
+      consumerSource,
+      baseRepositorySource,
+    ];
+    const resolver = renderPhpResolver(
+      makePhpResolverOptions(frameworkSources, classSourcePaths),
+    );
+    const collectors = renderPhpClassMemberCollectors(
+      makePhpClassMemberCollectorOptions(
+        frameworkSources,
+        classSourcePaths,
+        resolver.api().resolvePhpFrameworkBoundConcrete,
+      ),
+    );
+
+    expect(config).toContain("factory: Crm\\PaymentsModule\\Repository\\VariableSymbol");
+    expect(concreteSource).toContain(
+      "class VariableSymbol extends Repository implements VariableSymbolInterface",
+    );
+    expect(consumerSource).toContain(
+      "private VariableSymbolInterface $variableSymbol",
+    );
+    expect(consumerSource).toContain(
+      "$this->variableSymbol = $variableSymbol",
+    );
+
+    await expect(
+      resolver.api().resolvePhpFrameworkBoundConcrete(interfaceClassName),
+    ).resolves.toBe(concreteClassName);
+
+    const members = await collectors
+      .api()
+      .collectPhpMethodsForClass(interfaceClassName);
+    const memberNames = members.map((member) => member.name);
+
+    expect(memberNames).toEqual(
+      expect.arrayContaining(["getNew", "getTable", "findBy"]),
+    );
+    expect(members).toContainEqual(
+      expect.objectContaining({
+        declaringClassName: interfaceClassName,
+        name: "getNew",
+      }),
+    );
+    expect(members).toContainEqual(
+      expect.objectContaining({
+        declaringClassName: "Crm\\ApplicationModule\\Repository",
+        name: "getTable",
+      }),
+    );
+    expect(memberNames).not.toContain("available");
+    expect(memberNames).not.toContain("generateRandom");
+
+    collectors.unmount();
+    resolver.unmount();
   });
 
   it("covers presenter link definition, include paths, controls, and presenter link completion over real Latte files", async () => {
