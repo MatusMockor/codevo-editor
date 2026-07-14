@@ -12,6 +12,7 @@ import {
   phpExtendsClassName,
   phpImplementationDeclarationContextAt,
   phpLaravelRelationStringCompletionContextAt,
+  phpLaravelRouteActionIdentifierContextAt,
   phpLaravelRouteActionMethodCompletionContextAt,
   phpLaravelRequestMethodDefinition,
   phpMethodPosition,
@@ -1513,6 +1514,131 @@ Route::get(uri: '/named-dashboard', action: DashboardController::class);
       className: "DashboardController",
       kind: "laravelRouteActionMethod",
       methodName: "__invoke",
+    });
+  });
+
+  it("detects Laravel string @ route actions as controller methods", () => {
+    const routeSource = `<?php
+Route::get('/users', 'App\\Http\\Controllers\\UserController@index');
+Route::post(uri: '/users', action: 'UserController@store');
+Route::put('/admin', '\\App\\Http\\Controllers\\AdminController@update');
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "Controllers\\UserController"),
+      ),
+    ).toEqual({
+      className: "App\\Http\\Controllers\\UserController",
+      kind: "laravelRouteActionMethod",
+      methodName: "index",
+    });
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "UserController@index"),
+      ),
+    ).toEqual({
+      className: "App\\Http\\Controllers\\UserController",
+      kind: "laravelRouteActionMethod",
+      methodName: "index",
+    });
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "'App\\Http"),
+      ),
+    ).toEqual({
+      className: "App\\Http\\Controllers\\UserController",
+      kind: "laravelRouteActionMethod",
+      methodName: "index",
+    });
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "UserController@store"),
+      ),
+    ).toEqual({
+      className: "UserController",
+      kind: "laravelRouteActionMethod",
+      methodName: "store",
+    });
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "AdminController@update"),
+      ),
+    ).toEqual({
+      className: "\\App\\Http\\Controllers\\AdminController",
+      kind: "laravelRouteActionMethod",
+      methodName: "update",
+    });
+  });
+
+  it("keeps non-action strings and commented routes out of @ route action contexts", () => {
+    const routeSource = `<?php
+Route::get('/users-list', 'App\\Http\\Controllers\\UserController@index');
+// Route::get('/legacy', 'App\\Http\\Controllers\\LegacyController@index');
+logger('App\\Http\\Controllers\\AuditController@log');
+Route::get('/plain', 'plain_action');
+`;
+
+    expect(
+      phpLaravelRouteActionIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "'/users"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRouteActionIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "LegacyController"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRouteActionIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "AuditController"),
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps closure-nested @ strings out of route action contexts", () => {
+    const routeSource = `<?php
+Route::get('/contact', function () {
+    return Redirect::to('Admin@dashboard');
+});
+`;
+
+    expect(
+      phpLaravelRouteActionIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "'Admin"),
+      ),
+    ).toBeNull();
+    expect(
+      phpLaravelRouteActionIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "Admin@dashboard"),
+      ),
+    ).toBeNull();
+  });
+
+  it("detects @ route actions on lines containing PHP attributes", () => {
+    const routeSource = `<?php
+#[Middleware('web')] Route::get('/users', 'App\\Http\\Controllers\\UserController@index');
+`;
+
+    expect(
+      phpIdentifierContextAt(
+        routeSource,
+        positionAfter(routeSource, "UserController@index"),
+      ),
+    ).toEqual({
+      className: "App\\Http\\Controllers\\UserController",
+      kind: "laravelRouteActionMethod",
+      methodName: "index",
     });
   });
 

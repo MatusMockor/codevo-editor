@@ -204,6 +204,24 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
     expect(openPhpClassTarget).not.toHaveBeenCalled();
   });
 
+  it("opens fully qualified string @ route action methods without a matching import", async () => {
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const context: PhpIdentifierContext = {
+      className: "\\App\\Http\\Controllers\\ReportController",
+      kind: "laravelRouteActionMethod",
+      methodName: "export",
+    };
+    const adapter = createPhpLaravelIdentifierDefinitionNavigationAdapter(
+      makeDeps({ openDirectPhpMethodTarget }),
+    );
+
+    await expect(adapter.goToDefinition(context)).resolves.toBe(true);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Http\\Controllers\\ReportController",
+      "export",
+    );
+  });
+
   it("falls back to the route action class when a class target opener is provided", async () => {
     const openDirectPhpMethodTarget = vi.fn(async () => false);
     const openPhpClassTarget = vi.fn(async () => true);

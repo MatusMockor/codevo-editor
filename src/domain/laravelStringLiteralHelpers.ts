@@ -394,7 +394,7 @@ function hasPhpVariableInterpolation(value: string): boolean {
  * Returns true when `offset` is in plain PHP code — not inside a string literal,
  * line comment, or block comment.
  */
-function isPhpCodeOffset(source: string, offset: number): boolean {
+export function isPhpCodeOffset(source: string, offset: number): boolean {
   let quote: "'" | "\"" | null = null;
   let lineComment = false;
   let blockComment = false;

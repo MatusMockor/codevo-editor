@@ -1,4 +1,5 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import { isPhpCodeOffset } from "./laravelStringLiteralHelpers";
 import { resolvePhpClassName } from "./phpClassNameResolution";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
@@ -1165,6 +1166,12 @@ function laravelRouteActionContextAt(
     return null;
   }
 
+  const stringRouteAction = laravelRouteActionStringContextAt(source, literal);
+
+  if (stringRouteAction) {
+    return stringRouteAction;
+  }
+
   if (literal.value !== identifier.name) {
     return null;
   }
@@ -1226,6 +1233,36 @@ export function phpLaravelRouteActionIdentifierContextAt(
   }
 
   return laravelRouteActionContextAt(source, identifier);
+}
+
+const laravelRouteActionStringPattern =
+  /^(\\{0,2}[A-Za-z_][A-Za-z0-9_]*(?:\\{1,2}[A-Za-z_][A-Za-z0-9_]*)*)@([A-Za-z_][A-Za-z0-9_]*)$/;
+
+function laravelRouteActionStringContextAt(
+  source: string,
+  literal: StringLiteralRange & { value: string },
+): PhpIdentifierContext | null {
+  const actionMatch = laravelRouteActionStringPattern.exec(literal.value);
+  const className = actionMatch?.[1];
+  const methodName = actionMatch?.[2];
+
+  if (!className || !methodName) {
+    return null;
+  }
+
+  if (!isPhpCodeOffset(source, literal.quoteStart)) {
+    return null;
+  }
+
+  if (!laravelControllerGroupRouteCallForAction(source, literal)) {
+    return null;
+  }
+
+  return {
+    className: className.replace(/\\+/g, "\\"),
+    kind: "laravelRouteActionMethod",
+    methodName,
+  };
 }
 
 function laravelInvokableRouteActionContextAt(
@@ -1382,6 +1419,10 @@ function laravelControllerGroupRouteCallForAction(
       literal.quoteStart <= openParen ||
       literal.quoteEnd >= closeParen
     ) {
+      continue;
+    }
+
+    if (!isTopLevelBetween(source, openParen + 1, literal.quoteStart)) {
       continue;
     }
 
