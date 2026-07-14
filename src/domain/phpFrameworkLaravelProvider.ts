@@ -1,3 +1,13 @@
+import {
+  BLADE_DIRECTIVES,
+  bladeComponentNavigationCandidateRelativePaths,
+  bladeReferenceCandidateWorkspacePaths,
+  detectBladeComponentAttributeCompletionAt,
+  detectBladeComponentCompletionAt,
+  detectBladeDirectiveCompletionAt,
+  detectBladeReferenceAt,
+  isInsideBladeComment,
+} from "./bladeNavigation";
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import { detectLaravelStringLiteralHelper } from "./laravelStringLiteralHelpers";
 import { missingLaravelViewReferenceAt } from "./laravelDiagnostics";
@@ -431,6 +441,21 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   },
   livewire: {
     resolveLiteralTarget: ({ literal }) => resolveLaravelLivewireTarget(literal),
+  },
+  blade: {
+    componentAttributeCompletionAt: ({ offset, source }) =>
+      detectBladeComponentAttributeCompletionAt(source, offset),
+    componentCompletionAt: ({ offset, source }) =>
+      detectBladeComponentCompletionAt(source, offset),
+    componentNavigationCandidateRelativePaths: ({ name }) =>
+      bladeComponentNavigationCandidateRelativePaths(name),
+    directiveCompletionAt: ({ offset, source }) =>
+      detectBladeDirectiveCompletionAt(source, offset),
+    directiveNames: BLADE_DIRECTIVES,
+    isInsideComment: ({ offset, source }) => isInsideBladeComment(source, offset),
+    referenceAt: ({ offset, source }) => detectBladeReferenceAt(source, offset),
+    referenceCandidateWorkspacePaths: ({ reference, workspaceRoot }) =>
+      bladeReferenceCandidateWorkspacePaths(workspaceRoot, reference),
   },
   viewData: {
     entryFromSource: ({ source }) => bladeViewDataEntryFromSource(source),

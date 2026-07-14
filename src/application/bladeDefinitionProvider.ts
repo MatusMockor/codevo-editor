@@ -1,9 +1,3 @@
-import {
-  bladeComponentNavigationCandidateRelativePaths,
-  bladeReferenceCandidateWorkspacePaths,
-  detectBladeReferenceAt,
-  isInsideBladeComment,
-} from "../domain/bladeNavigation";
 import { bladeFrameworkStringLiteralHelperAt } from "../domain/bladeFrameworkHelperCompletions";
 import {
   phpFrameworkTemplateNameFromRelativePath,
@@ -12,7 +6,11 @@ import {
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
 import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type { BladeIntelligenceDependencies } from "./bladeIntelligenceContracts";
+import { createBladeFrameworkCapabilities } from "./bladeFrameworkCapabilities";
+import type {
+  BladeFrameworkCapabilities,
+  BladeIntelligenceDependencies,
+} from "./bladeIntelligenceContracts";
 import { editorPositionAtOffset } from "./bladePhpCompletionContext";
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
@@ -62,6 +60,9 @@ export async function provideBladeDefinition(
     resolveBladeViewVariableTypeForView,
     workspaceRoot,
   } = dependencies;
+  const bladeCapabilities = createBladeFrameworkCapabilities(
+    () => frameworkRuntime.providers,
+  );
   const requestedRoot = workspaceRoot;
   const isRequestedRootActive = () =>
     workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
@@ -71,7 +72,7 @@ export async function provideBladeDefinition(
     return false;
   }
 
-  if (isInsideBladeComment(source, offset)) {
+  if (bladeCapabilities.isInsideComment(source, offset)) {
     return false;
   }
 
@@ -128,6 +129,7 @@ export async function provideBladeDefinition(
   }
 
   return openBladeReferenceDefinition(source, offset, {
+    bladeCapabilities,
     findViewTarget,
     isRequestedRootActive,
     openNavigationTarget: guardedOpenNavigationTarget(
@@ -328,6 +330,7 @@ async function openBladeViewDataMemberDefinition(
 }
 
 interface BladeReferenceDefinitionDependencies extends RequestedRootState {
+  bladeCapabilities: BladeFrameworkCapabilities;
   findViewTarget: BladeIntelligenceDependencies["findViewTarget"];
   openNavigationTarget: BladeIntelligenceDependencies["openNavigationTarget"];
   readNavigationFileContent: BladeIntelligenceDependencies["readNavigationFileContent"];
@@ -339,7 +342,7 @@ async function openBladeReferenceDefinition(
   offset: number,
   dependencies: BladeReferenceDefinitionDependencies,
 ): Promise<boolean> {
-  const reference = detectBladeReferenceAt(source, offset);
+  const reference = dependencies.bladeCapabilities.referenceAt(source, offset);
 
   if (!reference) {
     return false;
@@ -363,11 +366,12 @@ async function openBladeReferenceDefinition(
 
   const candidateRelativePaths =
     reference.kind === "component"
-      ? bladeComponentNavigationCandidateRelativePaths(reference.name)
-      : bladeReferenceCandidateWorkspacePaths(
-          dependencies.requestedRoot,
-          reference,
-        ).map((target) => target.relativePath);
+      ? dependencies.bladeCapabilities.componentNavigationCandidateRelativePaths(
+          reference.name,
+        )
+      : dependencies.bladeCapabilities
+          .referenceCandidateWorkspacePaths(dependencies.requestedRoot, reference)
+          .map((target) => target.relativePath);
 
   if (candidateRelativePaths.length === 0) {
     return false;

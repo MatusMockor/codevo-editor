@@ -1,9 +1,3 @@
-import {
-  detectBladeComponentAttributeCompletionAt,
-  detectBladeComponentCompletionAt,
-  detectBladeDirectiveCompletionAt,
-  detectBladeReferenceAt,
-} from "../domain/bladeNavigation";
 import { bladeFrameworkHelperCompletionContextAt } from "../domain/bladeFrameworkHelperCompletions";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { phpFrameworkTemplateNameFromRelativePath } from "../domain/phpFrameworkProviders";
@@ -15,6 +9,7 @@ import type {
   BladeViewVariable,
 } from "./bladeIntelligenceContracts";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { createBladeFrameworkCapabilities } from "./bladeFrameworkCapabilities";
 import {
   bladeFrameworkHelperNameCompletions,
   bladeFrameworkLiteralCompletionItems,
@@ -96,6 +91,9 @@ export async function provideBladeCompletions(
     resolvePhpReceiverMethodCompletions,
     workspaceRoot,
   } = dependencies;
+  const bladeCapabilities = createBladeFrameworkCapabilities(
+    () => frameworkRuntime.providers,
+  );
   const supportsStringLiterals = frameworkRuntime.supports("stringLiterals");
   const supportsViews = frameworkRuntime.supports("views");
   const supportsViewData = frameworkRuntime.supports("viewData");
@@ -108,15 +106,22 @@ export async function provideBladeCompletions(
   }
 
   const offset = bladeOffsetAtEditorPosition(source, position);
-  const directiveCompletion = detectBladeDirectiveCompletionAt(source, offset);
+  const directiveCompletion = bladeCapabilities.directiveCompletionAt(
+    source,
+    offset,
+  );
   const memberCompletion = bladePhpMemberAccessCompletionAt(source, offset);
   const phpLikeCompletion = bladePhpLikeCompletionAt(source, offset);
 
   if (directiveCompletion) {
-    return bladeDirectiveCompletionItems(directiveCompletion.directivePrefix, {
-      replaceEnd: offset,
-      replaceStart: directiveCompletion.start + 1,
-    });
+    return bladeDirectiveCompletionItems(
+      directiveCompletion.directivePrefix,
+      {
+        replaceEnd: offset,
+        replaceStart: directiveCompletion.start + 1,
+      },
+      bladeCapabilities.directiveNames,
+    );
   }
 
   if (memberCompletion) {
@@ -276,7 +281,7 @@ export async function provideBladeCompletions(
     }
   }
 
-  const reference = detectBladeReferenceAt(source, offset);
+  const reference = bladeCapabilities.referenceAt(source, offset);
 
   if (reference?.kind === "view") {
     if (!supportsViews) {
@@ -304,7 +309,7 @@ export async function provideBladeCompletions(
       }));
   }
 
-  const attributeCompletion = detectBladeComponentAttributeCompletionAt(
+  const attributeCompletion = bladeCapabilities.componentAttributeCompletionAt(
     source,
     offset,
   );
@@ -324,7 +329,10 @@ export async function provideBladeCompletions(
     );
   }
 
-  const componentCompletion = detectBladeComponentCompletionAt(source, offset);
+  const componentCompletion = bladeCapabilities.componentCompletionAt(
+    source,
+    offset,
+  );
 
   if (componentCompletion) {
     const componentNames = await collectBladeComponentNames();

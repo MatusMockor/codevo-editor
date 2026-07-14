@@ -661,6 +661,58 @@ export interface PhpFrameworkPresenterSourcePathContext {
   path: string;
 }
 
+export interface PhpFrameworkBladeSourceContext {
+  offset: number;
+  source: string;
+}
+
+export type PhpFrameworkBladeReferenceKind =
+  | "view"
+  | "component"
+  | "livewire"
+  | "section"
+  | "stack";
+
+export interface PhpFrameworkBladeReference {
+  kind: PhpFrameworkBladeReferenceKind;
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
+export interface PhpFrameworkBladeDirectiveCompletion {
+  directivePrefix: string;
+  start: number;
+}
+
+export interface PhpFrameworkBladeComponentCompletion {
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
+export interface PhpFrameworkBladeComponentAttributeCompletion {
+  componentName: string;
+  existingAttributeNames: string[];
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
+export interface PhpFrameworkBladeComponentNameContext {
+  name: string;
+}
+
+export interface PhpFrameworkBladeReferenceCandidatesContext {
+  reference: Pick<PhpFrameworkBladeReference, "kind" | "name">;
+  workspaceRoot: string;
+}
+
+export interface PhpFrameworkBladeFileTarget {
+  path: string;
+  relativePath: string;
+}
+
 export type PhpFrameworkMissingTemplateReferenceDetector = (
   source: string,
   offset: number,
@@ -1002,6 +1054,28 @@ export interface PhpFrameworkProvider {
      * on a hardcoded `isNette` branch.
      */
     supportsConfigIntelligence: true;
+  };
+  blade?: {
+    componentAttributeCompletionAt?: (
+      context: PhpFrameworkBladeSourceContext,
+    ) => PhpFrameworkBladeComponentAttributeCompletion | null;
+    componentCompletionAt?: (
+      context: PhpFrameworkBladeSourceContext,
+    ) => PhpFrameworkBladeComponentCompletion | null;
+    componentNavigationCandidateRelativePaths?: (
+      context: PhpFrameworkBladeComponentNameContext,
+    ) => string[];
+    directiveCompletionAt?: (
+      context: PhpFrameworkBladeSourceContext,
+    ) => PhpFrameworkBladeDirectiveCompletion | null;
+    directiveNames?: readonly string[];
+    isInsideComment?: (context: PhpFrameworkBladeSourceContext) => boolean;
+    referenceAt?: (
+      context: PhpFrameworkBladeSourceContext,
+    ) => PhpFrameworkBladeReference | null;
+    referenceCandidateWorkspacePaths?: (
+      context: PhpFrameworkBladeReferenceCandidatesContext,
+    ) => PhpFrameworkBladeFileTarget[];
   };
   latte?: {
     /**

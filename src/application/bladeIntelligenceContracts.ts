@@ -1,3 +1,9 @@
+import type {
+  BladeComponentAttributeCompletion,
+  BladeComponentCompletion,
+  BladeDirectiveCompletion,
+  BladeReference,
+} from "../domain/bladeNavigation";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type {
   FileEntry,
@@ -29,6 +35,34 @@ export interface BladeCompletionItem {
 }
 
 export type BladeViewVariable = PhpLaravelViewVariable;
+
+export interface BladeReferenceFileTarget {
+  path: string;
+  relativePath: string;
+}
+
+export interface BladeFrameworkCapabilities {
+  componentAttributeCompletionAt: (
+    source: string,
+    offset: number,
+  ) => BladeComponentAttributeCompletion | null;
+  componentCompletionAt: (
+    source: string,
+    offset: number,
+  ) => BladeComponentCompletion | null;
+  componentNavigationCandidateRelativePaths: (name: string) => string[];
+  directiveCompletionAt: (
+    source: string,
+    offset: number,
+  ) => BladeDirectiveCompletion | null;
+  readonly directiveNames: readonly string[];
+  isInsideComment: (source: string, offset: number) => boolean;
+  referenceAt: (source: string, offset: number) => BladeReference | null;
+  referenceCandidateWorkspacePaths: (
+    workspaceRoot: string,
+    reference: Pick<BladeReference, "kind" | "name">,
+  ) => BladeReferenceFileTarget[];
+}
 
 /**
  * Collaborators the Blade intelligence needs from the workbench shell. The heavy

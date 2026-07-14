@@ -4,10 +4,11 @@ import type { BladeCompletionItem } from "./bladeIntelligenceContracts";
 export function bladeDirectiveCompletionItems(
   directivePrefix: string,
   range: { replaceEnd: number; replaceStart: number },
+  directiveNames: readonly string[] = BLADE_DIRECTIVES,
 ): BladeCompletionItem[] {
   const normalizedPrefix = directivePrefix.toLowerCase();
 
-  return BLADE_DIRECTIVES.filter((directive) =>
+  return directiveNames.filter((directive) =>
     directive.toLowerCase().startsWith(normalizedPrefix),
   )
     .slice(0, 100)

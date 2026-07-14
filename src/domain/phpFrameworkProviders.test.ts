@@ -129,6 +129,16 @@ import { phpLaravelMiddlewareAliasDefinitions } from "./phpLaravelMiddleware";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 import { bladeViewDataEntryFromSource } from "./bladeViewVariables";
 import {
+  BLADE_DIRECTIVES,
+  bladeComponentNavigationCandidateRelativePaths,
+  bladeReferenceCandidateWorkspacePaths,
+  detectBladeComponentAttributeCompletionAt,
+  detectBladeComponentCompletionAt,
+  detectBladeDirectiveCompletionAt,
+  detectBladeReferenceAt,
+  isInsideBladeComment,
+} from "./bladeNavigation";
+import {
   phpLaravelValidationRuleCompletions,
   phpLaravelValidationRuleStringContextAt,
 } from "./phpLaravelValidation";
@@ -2698,6 +2708,82 @@ class EventServiceProvider
           [],
         ),
       ).toBeNull();
+    });
+  });
+
+  describe("blade capability", () => {
+    it("dispatches Blade grammar detection 1:1 through the Laravel provider", () => {
+      const blade = phpLaravelFrameworkProvider.blade;
+
+      expect(blade).toBeDefined();
+      expect(
+        blade?.directiveCompletionAt?.({ offset: 3, source: "@if" }),
+      ).toEqual(detectBladeDirectiveCompletionAt("@if", 3));
+
+      const includeSource = "@include('partials.alert')";
+      const includeOffset = includeSource.indexOf("partials.alert") + 3;
+      expect(
+        blade?.referenceAt?.({ offset: includeOffset, source: includeSource }),
+      ).toEqual(detectBladeReferenceAt(includeSource, includeOffset));
+
+      const componentSource = "<x-al";
+      expect(
+        blade?.componentCompletionAt?.({
+          offset: componentSource.length,
+          source: componentSource,
+        }),
+      ).toEqual(
+        detectBladeComponentCompletionAt(componentSource, componentSource.length),
+      );
+
+      const attributeSource = "<x-alert ty";
+      expect(
+        blade?.componentAttributeCompletionAt?.({
+          offset: attributeSource.length,
+          source: attributeSource,
+        }),
+      ).toEqual(
+        detectBladeComponentAttributeCompletionAt(
+          attributeSource,
+          attributeSource.length,
+        ),
+      );
+
+      const commentSource = "{{-- @if --}}";
+      expect(
+        blade?.isInsideComment?.({
+          offset: commentSource.indexOf("@if"),
+          source: commentSource,
+        }),
+      ).toBe(isInsideBladeComment(commentSource, commentSource.indexOf("@if")));
+    });
+
+    it("ships Laravel Blade directive names and navigation candidates on the provider", () => {
+      const blade = phpLaravelFrameworkProvider.blade;
+
+      expect(blade?.directiveNames).toEqual(BLADE_DIRECTIVES);
+      expect(
+        blade?.componentNavigationCandidateRelativePaths?.({
+          name: "forms.text-input",
+        }),
+      ).toEqual(
+        bladeComponentNavigationCandidateRelativePaths("forms.text-input"),
+      );
+      expect(
+        blade?.referenceCandidateWorkspacePaths?.({
+          reference: { kind: "view", name: "users.index" },
+          workspaceRoot: "/ws",
+        }),
+      ).toEqual(
+        bladeReferenceCandidateWorkspacePaths("/ws", {
+          kind: "view",
+          name: "users.index",
+        }),
+      );
+    });
+
+    it("stays undeclared on providers without Blade templating", () => {
+      expect(phpNetteFrameworkProvider.blade).toBeUndefined();
     });
   });
 

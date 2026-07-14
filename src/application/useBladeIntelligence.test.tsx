@@ -3,7 +3,10 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";
@@ -454,6 +457,79 @@ describe("useBladeIntelligence component completions", () => {
 
     await harness.api().provideBladeCompletions(source, position);
     expect(readDirectory.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+});
+
+describe("useBladeIntelligence provider-sourced blade grammar", () => {
+  const customBladeProvider: PhpFrameworkProvider = {
+    id: "custom-blade",
+    blade: {
+      directiveCompletionAt: ({ offset, source }) => ({
+        directivePrefix: source.slice(1, offset),
+        start: 0,
+      }),
+      directiveNames: ["customdirective"],
+    },
+  };
+  const customBladeRuntime = createPhpFrameworkRuntimeContext(
+    createPhpFrameworkIntelligence({
+      matchedProviderIds: ["custom-blade"],
+      profile: "generic",
+      providers: [customBladeProvider],
+    }),
+  );
+
+  it("sources directive completions from the active provider's blade capability", async () => {
+    const harness = renderHook(
+      makeDeps({ frameworkRuntime: customBladeRuntime }),
+    );
+    const source = "@cu";
+
+    const completions = await harness.api().provideBladeCompletions(
+      source,
+      positionAtOffset(source, source.length),
+    );
+
+    expect(completions).toEqual([
+      expect.objectContaining({ kind: "directive", label: "@customdirective" }),
+    ]);
+  });
+
+  it("keeps the built-in Blade grammar on roots without a blade-capable provider", async () => {
+    const harness = renderHook(makeDeps({ frameworkRuntime: GENERIC_RUNTIME }));
+    const source = "@if";
+
+    const completions = await harness.api().provideBladeCompletions(
+      source,
+      positionAtOffset(source, source.length),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "directive", label: "@if" }),
+    );
+  });
+
+  it("reads the provider registry at call time, not capture time", async () => {
+    const providers: PhpFrameworkProvider[] = [];
+    const frameworkRuntime = {
+      ...GENERIC_RUNTIME,
+      get providers(): readonly PhpFrameworkProvider[] {
+        return providers;
+      },
+    };
+    const harness = renderHook(makeDeps({ frameworkRuntime }));
+    const source = "@cu";
+    const position = positionAtOffset(source, source.length);
+
+    const before = await harness.api().provideBladeCompletions(source, position);
+    expect(before).toEqual([]);
+
+    providers.push(customBladeProvider);
+
+    const after = await harness.api().provideBladeCompletions(source, position);
+    expect(after).toEqual([
+      expect.objectContaining({ kind: "directive", label: "@customdirective" }),
+    ]);
   });
 });
 
