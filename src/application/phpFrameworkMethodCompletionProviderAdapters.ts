@@ -1,20 +1,26 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import { activePhpFrameworkMethodCompletionAdapter } from "./phpFrameworkMethodCompletionAdapterRegistry";
 import {
-  genericPhpFrameworkMethodCompletionProviderAdapter,
+  composePhpFrameworkMethodCompletionProviderAdapters,
   type PhpFrameworkMethodCompletionProviderAdapter,
 } from "./phpFrameworkMethodCompletionProviderAdapter";
 import {
   createPhpLaravelMethodCompletionProviderAdapter,
 } from "./phpLaravelMethodCompletionProviderAdapter";
+import {
+  createPhpNetteMethodCompletionProviderAdapter,
+} from "./phpNetteMethodCompletionProviderAdapter";
+import type { NetteSnippetCompletionTarget } from "./netteAjaxSnippetCompletions";
 
 export interface PhpFrameworkMethodCompletionProviderAdapterDependencies {
   collectPhpFrameworkRelationCompletionsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
+  collectNetteRedrawControlSnippetTargets(
+    currentPhpPath: string,
+  ): Promise<readonly NetteSnippetCompletionTarget[]>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
   resolvePhpClassReference(source: string, className: string): string | null;
@@ -37,6 +43,7 @@ export interface PhpFrameworkMethodCompletionProviderAdapterDependencies {
 export function createPhpFrameworkMethodCompletionProviderAdapters({
   collectPhpFrameworkRelationCompletionsForClass,
   collectPhpMethodsForClass,
+  collectNetteRedrawControlSnippetTargets,
   ensurePhpFrameworkSourceCollectionsLoaded,
   frameworkRuntime,
   resolvePhpClassReference,
@@ -44,14 +51,10 @@ export function createPhpFrameworkMethodCompletionProviderAdapters({
   resolvePhpExpressionType,
   resolvePhpFrameworkRelationPathOwnerType,
 }: PhpFrameworkMethodCompletionProviderAdapterDependencies): PhpFrameworkMethodCompletionProviderAdapter {
-  return activePhpFrameworkMethodCompletionAdapter(
-    frameworkRuntime,
-    genericPhpFrameworkMethodCompletionProviderAdapter,
+  return composePhpFrameworkMethodCompletionProviderAdapters(
     [
-      {
-        providerId: "laravel",
-        createAdapter: () =>
-          createPhpLaravelMethodCompletionProviderAdapter({
+      frameworkRuntime.hasProvider("laravel")
+        ? createPhpLaravelMethodCompletionProviderAdapter({
             collectPhpFrameworkRelationCompletionsForClass,
             collectPhpMethodsForClass,
             ensurePhpFrameworkSourceCollectionsLoaded,
@@ -61,8 +64,18 @@ export function createPhpFrameworkMethodCompletionProviderAdapters({
             resolvePhpExpressionType,
             resolvePhpLaravelRelationPathOwnerType:
               resolvePhpFrameworkRelationPathOwnerType,
-          }),
-      },
-    ],
+          })
+        : null,
+      frameworkRuntime.hasProvider("nette")
+        ? createPhpNetteMethodCompletionProviderAdapter({
+            collectNetteRedrawControlSnippetTargets,
+          })
+        : null,
+    ].filter(
+      (
+        adapter,
+      ): adapter is PhpFrameworkMethodCompletionProviderAdapter =>
+        adapter !== null,
+    ),
   );
 }

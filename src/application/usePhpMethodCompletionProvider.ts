@@ -1,6 +1,5 @@
 import { useCallback, useMemo, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { detectNetteRedrawControlCompletionAt } from "../domain/netteAjaxSnippets";
 import {
   phpMemberAccessCompletionContextAt,
   phpStaticAccessCompletionContextAt,
@@ -22,10 +21,7 @@ import {
   resolvePhpFrameworkScopedCompletions,
   type PhpFrameworkScopedCompletionDependencies,
 } from "./phpFrameworkScopedCompletions";
-import {
-  phpNetteRedrawControlSnippetNameCompletions,
-  type NetteSnippetCompletionTarget,
-} from "./netteAjaxSnippetCompletions";
+import type { NetteSnippetCompletionTarget } from "./netteAjaxSnippetCompletions";
 import { phpTraitThisCompletionContextAt } from "./phpTraitThisCompletionContext";
 
 export interface PhpMethodCompletionProviderDependencies
@@ -119,6 +115,7 @@ export function usePhpMethodCompletionProvider({
       createPhpFrameworkMethodCompletionProviderAdapters({
         collectPhpFrameworkRelationCompletionsForClass,
         collectPhpMethodsForClass,
+        collectNetteRedrawControlSnippetTargets,
         ensurePhpFrameworkSourceCollectionsLoaded,
         frameworkRuntime,
         resolvePhpClassReference,
@@ -129,6 +126,7 @@ export function usePhpMethodCompletionProvider({
     [
       collectPhpFrameworkRelationCompletionsForClass,
       collectPhpMethodsForClass,
+      collectNetteRedrawControlSnippetTargets,
       ensurePhpFrameworkSourceCollectionsLoaded,
       frameworkRuntime,
       resolvePhpClassReference,
@@ -151,26 +149,16 @@ export function usePhpMethodCompletionProvider({
         return [];
       }
 
-      const offset = offsetAtPosition(source, position);
-
-      if (
-        frameworkRuntime.hasProvider("nette") &&
-        activeDocument &&
-        detectNetteRedrawControlCompletionAt(source, offset)
-      ) {
-        const targets = await collectNetteRedrawControlSnippetTargets(
-          activeDocument.path,
-        );
-
-        if (!isRequestedRootActive()) {
-          return [];
-        }
-
-        return phpNetteRedrawControlSnippetNameCompletions(
+      const literalStringAdapterCompletions =
+        await methodCompletionAdapter.literalStringCompletions({
+          activeDocumentPath: activeDocument?.path ?? null,
+          isRequestStillCurrent: isRequestedRootActive,
+          position,
           source,
-          offset,
-          targets,
-        ) ?? [];
+        });
+
+      if (literalStringAdapterCompletions !== null) {
+        return literalStringAdapterCompletions;
       }
 
       const literalCompletions = await resolvePhpFrameworkLiteralCompletions(
@@ -404,25 +392,4 @@ function phpMethodCompletionWithStableMetadata(
   });
 
   return stableCompletion;
-}
-
-function offsetAtPosition(source: string, position: EditorPosition): number {
-  let line = 1;
-  let column = 1;
-
-  for (let index = 0; index < source.length; index += 1) {
-    if (line === position.lineNumber && column === position.column) {
-      return index;
-    }
-
-    if (source[index] === "\n") {
-      line += 1;
-      column = 1;
-      continue;
-    }
-
-    column += 1;
-  }
-
-  return source.length;
 }

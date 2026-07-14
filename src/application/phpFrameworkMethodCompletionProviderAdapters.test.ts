@@ -1,8 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
+import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
   createPhpFrameworkMethodCompletionProviderAdapters,
   type PhpFrameworkMethodCompletionProviderAdapterDependencies,
 } from "./phpFrameworkMethodCompletionProviderAdapters";
+
+function method(
+  name: string,
+  overrides: Partial<PhpMethodCompletion> = {},
+): PhpMethodCompletion {
+  return {
+    declaringClassName: "App\\Http\\Controllers\\PostController",
+    name,
+    parameters: "",
+    returnType: "void",
+    visibility: "public",
+    ...overrides,
+  };
+}
 
 function makeDeps(
   overrides: Partial<PhpFrameworkMethodCompletionProviderAdapterDependencies> = {},
@@ -10,6 +25,7 @@ function makeDeps(
   return {
     collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
+    collectNetteRedrawControlSnippetTargets: vi.fn(async () => []),
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     frameworkRuntime: { hasProvider: () => true },
     resolvePhpClassReference: vi.fn(() => null),
@@ -20,10 +36,25 @@ function makeDeps(
   };
 }
 
+function positionAfter(source: string, needle: string) {
+  const offset = source.indexOf(needle);
+
+  if (offset < 0) {
+    throw new Error(`Missing test needle: ${needle}`);
+  }
+
+  const prefixSource = source.slice(0, offset + needle.length);
+  const prefixLines = prefixSource.split("\n");
+
+  return {
+    column: (prefixLines[prefixLines.length - 1]?.length ?? 0) + 1,
+    lineNumber: prefixLines.length,
+  };
+}
+
 describe("phpFrameworkMethodCompletionProviderAdapters", () => {
   it.each([
     { activeProviderId: null, label: "generic" },
-    { activeProviderId: "nette", label: "Nette" },
     { activeProviderId: "custom", label: "custom" },
   ])("keeps $label providers inert", async ({ activeProviderId }) => {
     const ensurePhpFrameworkSourceCollectionsLoaded = vi.fn(
@@ -47,6 +78,12 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       source: "<?php",
     };
 
+    await expect(
+      adapter.literalStringCompletions({
+        ...request,
+        activeDocumentPath: "/workspace/routes/web.php",
+      }),
+    ).resolves.toBeNull();
     await expect(adapter.routeActionCompletions(request)).resolves.toBeNull();
     await expect(adapter.relationStringCompletions(request)).resolves.toBeNull();
     adapter.ensureSourceCollectionsLoadedForAccess({
@@ -86,5 +123,100 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       }),
     ).resolves.toEqual([]);
     expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+  });
+
+  it("keeps Laravel and Nette method completion adapters active for mixed providers", async () => {
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const collectPhpMethodsForClass = vi.fn(async () => [
+      method("index"),
+      method("show"),
+    ]);
+    const frameworkRuntime = {
+      hasProvider: vi.fn(
+        (providerId: string) =>
+          providerId === "laravel" || providerId === "nette",
+      ),
+    };
+    const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
+      makeDeps({
+        collectNetteRedrawControlSnippetTargets,
+        collectPhpMethodsForClass,
+        frameworkRuntime,
+        resolvePhpClassReference: vi.fn(
+          () => "App\\Http\\Controllers\\PostController",
+        ),
+      }),
+    );
+    const redrawSource = "<?php\n$this->redrawControl('mai');";
+    const routeSource =
+      "<?php\nRoute::get('/posts', [PostController::class, 'in']);";
+
+    const redrawCompletions = await adapter.literalStringCompletions({
+      activeDocumentPath: "/workspace/app/Presenters/MailerPresenter.php",
+      isRequestStillCurrent: () => true,
+      position: positionAfter(redrawSource, "mai"),
+      source: redrawSource,
+    });
+    const routeCompletions = await adapter.routeActionCompletions({
+      isRequestStillCurrent: () => true,
+      position: positionAfter(routeSource, "'in"),
+      source: routeSource,
+    });
+
+    expect(redrawCompletions?.map(({ name }) => name)).toEqual([
+      "mailLogslisting",
+    ]);
+    expect(routeCompletions?.map(({ name }) => name)).toEqual(["index"]);
+    expect(collectNetteRedrawControlSnippetTargets).toHaveBeenCalledWith(
+      "/workspace/app/Presenters/MailerPresenter.php",
+    );
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
+      "App\\Http\\Controllers\\PostController",
+    );
+    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("nette");
+  });
+
+  it("does not activate Nette literal completions for a non-Nette provider", async () => {
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const frameworkRuntime = {
+      hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
+    };
+    const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
+      makeDeps({
+        collectNetteRedrawControlSnippetTargets,
+        frameworkRuntime,
+      }),
+    );
+    const source = "<?php\n$this->redrawControl('mai');";
+    const prefixSource = source.slice(0, source.indexOf("mai") + "mai".length);
+    const prefixLines = prefixSource.split("\n");
+
+    await expect(
+      adapter.literalStringCompletions({
+        activeDocumentPath: "/workspace/app/Presenters/MailerPresenter.php",
+        isRequestStillCurrent: () => true,
+        position: {
+          column: (prefixLines[prefixLines.length - 1]?.length ?? 0) + 1,
+          lineNumber: prefixLines.length,
+        },
+        source,
+      }),
+    ).resolves.toBeNull();
+
+    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
   });
 });

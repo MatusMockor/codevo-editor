@@ -54,6 +54,7 @@ export function createPhpLaravelMethodCompletionProviderAdapter({
       // already cached.
       void ensurePhpFrameworkSourceCollectionsLoaded(rootPath);
     },
+    literalStringCompletions: async () => null,
     relationStringCompletions: async ({
       isRequestStillCurrent,
       position,
