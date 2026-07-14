@@ -79,6 +79,13 @@ function dirtyDocument(path: string): EditorDocument {
   };
 }
 
+function cleanDocument(path: string): EditorDocument {
+  return {
+    ...dirtyDocument(path),
+    savedContent: "edited",
+  };
+}
+
 interface Harness {
   appSettingsRef: { current: AppSettings };
   closeSyncedJavaScriptTypeScriptDocumentsForRoot: ReturnType<typeof vi.fn>;
@@ -430,6 +437,198 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.unmount();
   });
 
+  it("blocks a keyboard quit when active dirty changes are not confirmed", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      dirtyCount: 1,
+      persistWorkspaceSession,
+      prompter: { confirm: vi.fn(() => false), prompt: vi.fn(() => null) },
+    });
+
+    await act(async () => {
+      harness.lifecycle().quitApplication();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Quit and discard unsaved changes?",
+    );
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(tauriMocks.invoke).not.toHaveBeenCalledWith("quit_application");
+    harness.unmount();
+  });
+
+  it("persists and quits when active dirty changes are confirmed", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      dirtyCount: 1,
+      persistWorkspaceSession,
+    });
+
+    await act(async () => {
+      harness.lifecycle().quitApplication();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("quit_application");
+    harness.unmount();
+  });
+
+  it("blocks shutdown for dirty documents in an inactive cached workspace", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({ persistWorkspaceSession });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: {
+        documents: {
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
+            `${WORKSPACE_A}/src/Dirty.php`,
+          ),
+        },
+      },
+    };
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      requestNativeClose("quit");
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(nativeShutdownInvocationCount()).toBe(0);
+    harness.unmount();
+  });
+
+  it("blocks shutdown for conflicts in an inactive cached workspace", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      persistWorkspaceSession,
+      workspaceHasExternalFileConflicts: vi.fn(
+        (root) => root === WORKSPACE_A,
+      ),
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: { documents: {} },
+    };
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      harness.lifecycle().closeApplicationWindow();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(nativeShutdownInvocationCount()).toBe(0);
+    harness.unmount();
+  });
+
+  it("does not treat an active workspace cache alias as inactive", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const workspaceHasExternalFileConflicts = vi.fn(() => false);
+    const harness = renderLifecycle({
+      persistWorkspaceSession,
+      workspaceHasExternalFileConflicts,
+    });
+    harness.workspaceStateCacheRef.current[`${WORKSPACE_B}/`] = {
+      editorSurface: {
+        documents: {
+          [`${WORKSPACE_B}/src/Stale.php`]: dirtyDocument(
+            `${WORKSPACE_B}/src/Stale.php`,
+          ),
+        },
+      },
+    };
+
+    await act(async () => {
+      requestNativeClose();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.prompter.confirm).not.toHaveBeenCalled();
+    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledTimes(1);
+    expect(nativeShutdownInvocationCount()).toBe(1);
+    harness.unmount();
+  });
+
+  it("merges inactive cache aliases and checks every exact conflict key", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const workspaceHasExternalFileConflicts = vi.fn(() => false);
+    const harness = renderLifecycle({
+      persistWorkspaceSession,
+      workspaceHasExternalFileConflicts,
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: { documents: {} },
+    };
+    harness.workspaceStateCacheRef.current[`${WORKSPACE_A}/`] = {
+      editorSurface: {
+        documents: {
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
+            `${WORKSPACE_A}/src/Dirty.php`,
+          ),
+        },
+      },
+    };
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      requestNativeClose();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledTimes(3);
+    expect(workspaceHasExternalFileConflicts).toHaveBeenNthCalledWith(
+      2,
+      WORKSPACE_A,
+    );
+    expect(workspaceHasExternalFileConflicts).toHaveBeenNthCalledWith(
+      3,
+      `${WORKSPACE_A}/`,
+    );
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("blocks shutdown for a conflict on an alternate clean cache alias", async () => {
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const alternateRoot = `${WORKSPACE_A}/`;
+    const workspaceHasExternalFileConflicts = vi.fn(
+      (root) => root === alternateRoot,
+    );
+    const harness = renderLifecycle({
+      persistWorkspaceSession,
+      workspaceHasExternalFileConflicts,
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: {
+        documents: {
+          [`${WORKSPACE_A}/src/Clean.php`]: cleanDocument(
+            `${WORKSPACE_A}/src/Clean.php`,
+          ),
+        },
+      },
+    };
+    harness.workspaceStateCacheRef.current[alternateRoot] = {
+      editorSurface: { documents: {} },
+    };
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      requestNativeClose();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledWith(
+      alternateRoot,
+    );
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(nativeShutdownInvocationCount()).toBe(0);
+    harness.unmount();
+  });
+
   it("blocks a native close when dirty changes are not confirmed", async () => {
     const persistWorkspaceSession = vi.fn(async () => undefined);
     const harness = renderLifecycle({
@@ -513,6 +712,31 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(tauriMocks.invoke).toHaveBeenCalledWith("confirm_native_shutdown", {
       kind: "quit",
     });
+    harness.unmount();
+  });
+
+  it("coalesces keyboard and native requests while shutdown is in flight", async () => {
+    const persistence = createDeferred<void>();
+    const persistWorkspaceSession = vi.fn(() => persistence.promise);
+    const harness = renderLifecycle({ dirtyCount: 1, persistWorkspaceSession });
+
+    await act(async () => {
+      harness.lifecycle().quitApplication();
+      requestNativeClose("quit");
+      harness.lifecycle().closeApplicationWindow();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledTimes(1);
+    expect(persistWorkspaceSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      persistence.resolve();
+      await persistence.promise;
+      await Promise.resolve();
+    });
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("quit_application");
+    expect(nativeShutdownInvocationCount()).toBe(0);
     harness.unmount();
   });
 });

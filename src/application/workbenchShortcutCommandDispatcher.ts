@@ -1,45 +1,47 @@
 import {
+  keymapCommands,
   matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
   type KeymapSettings,
 } from "../domain/keymap";
-import type { CommandContext, CommandRegistry } from "./commandRegistry";
+import {
+  executeCommand,
+  type CommandLookup,
+  type CommandContext,
+} from "./commandRegistry";
 
 interface DispatchWorkbenchShortcutCommandOptions {
   commandContext: CommandContext;
-  commandIds: readonly KeymapCommandId[];
-  commandRegistry: Pick<CommandRegistry, "get">;
+  commandIds?: readonly KeymapCommandId[];
+  commandRegistry: CommandLookup;
   event: KeyboardEvent;
   keymap: KeymapSettings;
 }
 
-const WORKSPACE_TAB_SHORTCUT_COMMAND_IDS = [
-  "workspace.nextTab",
-  "workspace.previousTab",
-] as const satisfies readonly KeymapCommandId[];
+const KEYMAP_COMMAND_IDS = keymapCommands.map((command) => command.id);
 
 export function dispatchWorkbenchShortcutCommand({
   commandContext,
-  commandIds,
+  commandIds = KEYMAP_COMMAND_IDS,
   commandRegistry,
   event,
   keymap,
 }: DispatchWorkbenchShortcutCommandOptions): boolean {
-  for (const commandId of [
-    ...commandIds,
-    ...WORKSPACE_TAB_SHORTCUT_COMMAND_IDS,
-  ]) {
+  for (const commandId of commandIds) {
+    if (!commandRegistry.get(commandId)) {
+      continue;
+    }
+
     if (!matchesShortcut(event, shortcutForCommand(keymap, commandId))) {
       continue;
     }
 
     event.preventDefault();
 
-    const command = commandRegistry.get(commandId);
-
-    if (command?.isEnabled(commandContext)) {
-      void command.run();
+    const outcome = executeCommand(commandRegistry, commandId, commandContext);
+    if (outcome === "missing") {
+      continue;
     }
 
     return true;

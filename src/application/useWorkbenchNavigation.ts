@@ -26,11 +26,13 @@ import type { RecentFileEntry } from "../domain/recentFiles";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 interface OpenFileOptions {
   readOnly?: boolean;
   recordNavigation?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 export interface WorkbenchNavigationDependencies {
@@ -228,7 +230,13 @@ export function useWorkbenchNavigation(
           name: getFileName(path),
           path,
         },
-        { readOnly, recordNavigation: false },
+        {
+          readOnly,
+          recordNavigation: false,
+          ...(options.shouldCommit
+            ? { shouldCommit: options.shouldCommit }
+            : {}),
+        },
       );
 
       if (!opened) {

@@ -20,6 +20,10 @@ import type {
   EditorChangeHunk,
   EditorChangeKind,
 } from "../domain/editorChangeMarkers";
+import type {
+  CommandContext,
+  CommandExecutionRunner,
+} from "../application/commandRegistry";
 import type { NavigationRequest } from "../application/navigationRequest";
 import {
   nextEditorSelectionExpansionRange,
@@ -122,7 +126,7 @@ import {
   phpMemberAccessCompletionContextAt,
   phpStaticAccessCompletionContextAt,
 } from "../domain/phpMethodCompletions";
-import type { EditorDocument } from "../domain/workspace";
+import { isDirty, type EditorDocument } from "../domain/workspace";
 import {
   editorConfigEol,
   editorConfigFormattingOptions,
@@ -268,6 +272,7 @@ export interface EditorSurfaceProps {
   largeSmartDocumentPolicy?: LargeSmartDocumentPolicy;
   keymap: KeymapSettings;
   monacoTheme: MonacoAppTheme;
+  runCommand?: CommandExecutionRunner;
   navigationHistoryPaths?: readonly string[];
   openDocumentPaths?: readonly string[];
   runtimeMembership?: EditorRuntimeMembershipInput;
@@ -457,6 +462,7 @@ function EditorSurfaceComponent({
   javaScriptTypeScriptValidationEnabled = true,
   keymap,
   monacoTheme,
+  runCommand,
   navigationHistoryPaths = EMPTY_PATHS,
   openDocumentPaths = EMPTY_PATHS,
   runtimeMembership,
@@ -529,6 +535,9 @@ function EditorSurfaceComponent({
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
+  const commandExecutionRunnerRef = useRef<CommandExecutionRunner | undefined>(
+    undefined,
+  );
   const onEditorFocusedRef = useRef(onEditorFocused);
   const editorActionCommandPortRef = useRef<EditorActionCommandPort>({
     closeActiveTab: onCloseActiveTab,
@@ -544,6 +553,16 @@ function EditorSurfaceComponent({
   });
   const editorInteractionActivationPendingRef = useRef(false);
   onEditorFocusedRef.current = onEditorFocused;
+  const surfaceCommandContext: CommandContext = {
+    hasWorkspace: Boolean(workspaceRoot),
+    hasActiveDocument: Boolean(activeDocument),
+    activeDocumentDirty: Boolean(
+      activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
+    ),
+  };
+  commandExecutionRunnerRef.current = runCommand
+    ? (commandId) => runCommand(commandId, surfaceCommandContext)
+    : undefined;
   useLayoutEffect(() => {
     editorActionCommandPortRef.current = {
       closeActiveTab: onCloseActiveTab,
@@ -1862,9 +1881,12 @@ function EditorSurfaceComponent({
         id: "mockor.goToDefinition",
         label: "Go to Definition",
         keybindings: keybinding("editor.goToDefinition"),
-        run: () => {
-          editorActionCommandPortRef.current.goToDefinition();
-        },
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.goToDefinition",
+            () => editorActionCommandPortRef.current.goToDefinition(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.quickDefinition",
@@ -1878,74 +1900,119 @@ function EditorSurfaceComponent({
         label: "Go to Implementation",
         keybindings: keybinding("editor.goToImplementation"),
         run: () => {
-          const position = editorApi.getPosition();
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.goToImplementation",
+            () => {
+              const position = editorApi.getPosition();
 
-          if (!position) {
-            return;
-          }
+              if (!position) {
+                return;
+              }
 
-          editorActionCommandPortRef.current.goToImplementationAt(position);
+              editorActionCommandPortRef.current.goToImplementationAt(position);
+            },
+          );
         },
       }),
       editorApi.addAction({
         id: "mockor.goToSuperMethod",
         label: "Go to Super Method",
         keybindings: keybinding("editor.goToSuperMethod"),
-        run: () => {
-          editorActionCommandPortRef.current.goToSuperMethod();
-        },
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.goToSuperMethod",
+            () => editorActionCommandPortRef.current.goToSuperMethod(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.openClass",
         label: "Open Class",
         keybindings: keybinding("class.quickOpen"),
-        run: () => editorActionCommandPortRef.current.openClass(),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "class.quickOpen",
+            () => editorActionCommandPortRef.current.openClass(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.openFile",
         label: "Open File",
         keybindings: keybinding("file.quickOpen"),
-        run: () => editorActionCommandPortRef.current.openFile(),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "file.quickOpen",
+            () => editorActionCommandPortRef.current.openFile(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.fileStructure",
         label: "File Structure",
         keybindings: keybinding("editor.fileStructure"),
-        run: () => editorActionCommandPortRef.current.openFileStructure(),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.fileStructure",
+            () => editorActionCommandPortRef.current.openFileStructure(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.gotoLine",
         label: "Go to Line/Column",
         keybindings: keybinding("editor.gotoLine"),
-        run: () => triggerEditorSurfaceCommand(editorApi, "editor.gotoLine"),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.gotoLine",
+            () => triggerEditorSurfaceCommand(editorApi, "editor.gotoLine"),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.rename",
         label: "Rename Symbol",
         keybindings: keybinding("editor.rename"),
-        run: () => triggerEditorSurfaceCommand(editorApi, "editor.rename"),
+        run: () =>
+          runRegisteredCommand(commandExecutionRunnerRef, "editor.rename", () =>
+            triggerEditorSurfaceCommand(editorApi, "editor.rename"),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.toggleGitBlame",
         label: "Annotate with Git Blame",
         keybindings: keybinding("editor.toggleGitBlame"),
-        run: () => {
-          editorActionCommandPortRef.current.toggleGitBlame?.();
-        },
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.toggleGitBlame",
+            () => editorActionCommandPortRef.current.toggleGitBlame?.(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.formatDocument",
         label: "Format Document",
         keybindings: keybinding("editor.formatDocument"),
         run: () =>
-          triggerEditorSurfaceCommand(editorApi, "editor.formatDocument"),
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.formatDocument",
+            () =>
+              triggerEditorSurfaceCommand(editorApi, "editor.formatDocument"),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.formatSelection",
         label: "Format Selection",
         keybindings: keybinding("editor.formatSelection"),
         run: () =>
-          triggerEditorSurfaceCommand(editorApi, "editor.formatSelection"),
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.formatSelection",
+            () =>
+              triggerEditorSurfaceCommand(editorApi, "editor.formatSelection"),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.quickFix",
@@ -1954,7 +2021,12 @@ function EditorSurfaceComponent({
           ...keybinding("editor.quickFix"),
           monacoApi.KeyMod.CtrlCmd | monacoApi.KeyCode.Period,
         ],
-        run: () => triggerEditorSurfaceCommand(editorApi, "editor.quickFix"),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.quickFix",
+            () => triggerEditorSurfaceCommand(editorApi, "editor.quickFix"),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.extendSelection",
@@ -2175,19 +2247,34 @@ function EditorSurfaceComponent({
         id: "mockor.closeTab",
         label: "Close Tab",
         keybindings: keybinding("editor.closeTab"),
-        run: () => editorActionCommandPortRef.current.closeActiveTab(),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.closeTab",
+            () => editorActionCommandPortRef.current.closeActiveTab(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.goBack",
         label: "Go Back",
         keybindings: keybinding("navigation.back"),
-        run: () => editorActionCommandPortRef.current.goBack(),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "navigation.back",
+            () => editorActionCommandPortRef.current.goBack(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.goForward",
         label: "Go Forward",
         keybindings: keybinding("navigation.forward"),
-        run: () => editorActionCommandPortRef.current.goForward(),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "navigation.forward",
+            () => editorActionCommandPortRef.current.goForward(),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.nextChange",
@@ -2366,7 +2453,11 @@ function EditorSurfaceComponent({
         event.event.preventDefault();
         event.event.stopPropagation();
         editorApi.setPosition(contentPosition);
-        onGoToDefinition();
+        runRegisteredCommand(
+          commandExecutionRunnerRef,
+          "editor.goToDefinition",
+          onGoToDefinition,
+        );
         return;
       }
 
@@ -4608,6 +4699,25 @@ function triggerEditorSurfaceCommand(
   }
 
   editor.trigger("keyboard", editorActionForSurfaceCommand(commandId), {});
+}
+
+function runRegisteredCommand(
+  runnerRef: MutableRefObject<CommandExecutionRunner | undefined>,
+  commandId: string,
+  fallback: () => void,
+): void {
+  const runner = runnerRef.current;
+
+  if (!runner) {
+    fallback();
+    return;
+  }
+
+  if (runner(commandId) !== "missing") {
+    return;
+  }
+
+  fallback();
 }
 
 function dismissTransientEditorWidgets(

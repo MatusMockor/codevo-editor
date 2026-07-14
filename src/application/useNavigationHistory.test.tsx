@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useState } from "react";
+import { act, startTransition, Suspense, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { useNavigationHistoryLifecycle } from "./useNavigationHistoryLifecycle";
@@ -52,6 +52,7 @@ interface Harness {
   setActiveDocument: (document: EditorDocument | null) => void;
   setWorkspaceRoot: (root: string | null) => void;
   resetNavigationHistory: () => void;
+  interruptNavigationHistoryReset: () => void;
   openQuickOpenClassAndWorkspaceSymbols: () => void;
   unmount: () => void;
 }
@@ -119,6 +120,8 @@ function renderNavigationHistory(
   let setWorkspaceRootState: (rootPath: string | null) => void = () => {};
   let triggerOpenOverlays: () => void = () => {};
   let resetNavigationHistoryState: () => void = () => {};
+  let suspendOnEmptyNavigationHistory = false;
+  const suspendedRender = new Promise<void>(() => {});
 
   function HarnessComponent() {
     const [recentFiles, setRecentFiles] = useState<RecentFileEntry[]>([]);
@@ -197,11 +200,23 @@ function renderNavigationHistory(
     });
     captured.navigation = navigation;
 
+    if (
+      suspendOnEmptyNavigationHistory &&
+      navigationHistory.backStack.length === 0 &&
+      navigationHistory.forwardStack.length === 0
+    ) {
+      throw suspendedRender;
+    }
+
     return null;
   }
 
   act(() => {
-    root.render(<HarnessComponent />);
+    root.render(
+      <Suspense fallback={null}>
+        <HarnessComponent />
+      </Suspense>,
+    );
   });
 
   return {
@@ -221,6 +236,14 @@ function renderNavigationHistory(
     openQuickOpenClassAndWorkspaceSymbols: () => {
       act(() => {
         triggerOpenOverlays();
+      });
+    },
+    interruptNavigationHistoryReset: () => {
+      suspendOnEmptyNavigationHistory = true;
+      act(() => {
+        startTransition(() => {
+          resetNavigationHistoryState();
+        });
       });
     },
     quickOpenOpen: () => captured.quickOpenOpen,
@@ -586,7 +609,7 @@ describe("useNavigationHistory", () => {
 
     expect(harness.openPathForNavigation).toHaveBeenCalledWith(
       `${ROOT}/a.ts`,
-      { readOnly: false },
+      expect.objectContaining({ readOnly: false }),
     );
     expect(harness.editorRevealTarget()).toEqual({
       path: `${ROOT}/a.ts`,
@@ -596,6 +619,262 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory().forwardStack).toEqual([
       { path: `${ROOT}/b.ts`, position: { column: 2, lineNumber: 5 } },
     ]);
+
+    harness.unmount();
+  });
+
+  it("preserves backward history when the target fails to open", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(`${ROOT}/b.ts`));
+    harness.activeEditorPositionRef.current = { column: 2, lineNumber: 5 };
+    harness.openPathForNavigation.mockResolvedValueOnce(false);
+
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [previousLocation],
+      forwardStack: [],
+    });
+    expect(harness.editorRevealTarget()).toBeNull();
+
+    harness.unmount();
+  });
+
+  it("preserves backward history when the workspace switches during the open", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    let resolveOpen: (value: boolean) => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(`${ROOT}/b.ts`));
+    harness.activeEditorPositionRef.current = { column: 2, lineNumber: 5 };
+    harness.openPathForNavigation.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    const pending = act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    harness.setWorkspaceRoot("/other-workspace");
+    resolveOpen(true);
+    await pending;
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [previousLocation],
+      forwardStack: [],
+    });
+    expect(harness.editorRevealTarget()).toBeNull();
+
+    harness.unmount();
+  });
+
+  it("preserves a newer location recorded while backward navigation is pending", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const newerLocation: NavigationLocation = {
+      path: `${ROOT}/c.ts`,
+      position: { column: 3, lineNumber: 8 },
+    };
+    let resolveOpen: (value: boolean) => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(`${ROOT}/b.ts`));
+    harness.activeEditorPositionRef.current = { column: 2, lineNumber: 5 };
+    harness.openPathForNavigation.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    const pending = harness.navigation().navigateBackward();
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(newerLocation);
+    });
+    resolveOpen(true);
+    await act(async () => {
+      await pending;
+    });
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [previousLocation, newerLocation],
+      forwardStack: [],
+    });
+    expect(harness.editorRevealTarget()).toBeNull();
+
+    harness.unmount();
+  });
+
+  it("does not reveal a stale backward target when newer history is recorded in the same tick", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const newerLocation: NavigationLocation = {
+      path: `${ROOT}/c.ts`,
+      position: { column: 3, lineNumber: 8 },
+    };
+    let resolveOpen: (value: boolean) => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(`${ROOT}/b.ts`));
+    harness.activeEditorPositionRef.current = { column: 2, lineNumber: 5 };
+    harness.openPathForNavigation.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    const pending = harness.navigation().navigateBackward();
+
+    await act(async () => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(newerLocation);
+      resolveOpen(true);
+      await pending;
+    });
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [previousLocation, newerLocation],
+      forwardStack: [],
+    });
+    expect(harness.editorRevealTarget()).toBeNull();
+
+    harness.unmount();
+  });
+
+  it("does not activate a stale backward target after history changes during the open", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const newerLocation: NavigationLocation = {
+      path: `${ROOT}/c.ts`,
+      position: { column: 3, lineNumber: 8 },
+    };
+    let activePath = `${ROOT}/b.ts`;
+    let resolveOpen: () => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(activePath));
+    harness.openPathForNavigation.mockImplementationOnce(
+      async (path, options) => {
+        await new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        });
+
+        if (options?.shouldCommit?.() === false) {
+          return false;
+        }
+
+        activePath = path;
+        return true;
+      },
+    );
+
+    const pending = harness.navigation().navigateBackward();
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(newerLocation);
+    });
+    resolveOpen();
+    await act(async () => {
+      await pending;
+    });
+
+    expect(activePath).toBe(`${ROOT}/b.ts`);
+    expect(harness.editorRevealTarget()).toBeNull();
+
+    harness.unmount();
+  });
+
+  it("ignores history from an interrupted concurrent render", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    let activePath = `${ROOT}/b.ts`;
+    let resolveOpen: () => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(activePath));
+    harness.openPathForNavigation.mockImplementationOnce(
+      async (path, options) => {
+        await new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        });
+
+        if (options?.shouldCommit?.() === false) {
+          return false;
+        }
+
+        activePath = path;
+        return true;
+      },
+    );
+
+    const pending = harness.navigation().navigateBackward();
+
+    harness.interruptNavigationHistoryReset();
+    resolveOpen();
+    await act(async () => {
+      await pending;
+    });
+
+    expect(activePath).toBe(previousLocation.path);
+    expect(harness.editorRevealTarget()).toEqual(previousLocation);
 
     harness.unmount();
   });
@@ -625,13 +904,158 @@ describe("useNavigationHistory", () => {
 
     expect(harness.openPathForNavigation).toHaveBeenLastCalledWith(
       `${ROOT}/b.ts`,
-      { readOnly: false },
+      expect.objectContaining({ readOnly: false }),
     );
     expect(harness.editorRevealTarget()).toEqual({
       path: `${ROOT}/b.ts`,
       position: { column: 2, lineNumber: 5 },
     });
     expect(harness.navigationHistory().forwardStack).toEqual([]);
+
+    harness.unmount();
+  });
+
+  it("preserves forward history when the target fails to open", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const currentLocation: NavigationLocation = {
+      path: `${ROOT}/b.ts`,
+      position: { column: 2, lineNumber: 5 },
+    };
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(currentLocation.path));
+    harness.activeEditorPositionRef.current = currentLocation.position;
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    harness.setActiveDocument(editorDocument(previousLocation.path));
+    harness.activeEditorPositionRef.current = previousLocation.position;
+    harness.openPathForNavigation.mockResolvedValueOnce(false);
+
+    await act(async () => {
+      await harness.navigation().navigateForwardInHistory();
+    });
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [],
+      forwardStack: [currentLocation],
+    });
+    expect(harness.editorRevealTarget()).toEqual(previousLocation);
+
+    harness.unmount();
+  });
+
+  it("preserves forward history when the workspace switches during the open", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const currentLocation: NavigationLocation = {
+      path: `${ROOT}/b.ts`,
+      position: { column: 2, lineNumber: 5 },
+    };
+    let resolveOpen: (value: boolean) => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(currentLocation.path));
+    harness.activeEditorPositionRef.current = currentLocation.position;
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    harness.setActiveDocument(editorDocument(previousLocation.path));
+    harness.activeEditorPositionRef.current = previousLocation.position;
+    harness.openPathForNavigation.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    const pending = act(async () => {
+      await harness.navigation().navigateForwardInHistory();
+    });
+
+    harness.setWorkspaceRoot("/other-workspace");
+    resolveOpen(true);
+    await pending;
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [],
+      forwardStack: [currentLocation],
+    });
+    expect(harness.editorRevealTarget()).toEqual(previousLocation);
+
+    harness.unmount();
+  });
+
+  it("preserves a newer location recorded while forward navigation is pending", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const currentLocation: NavigationLocation = {
+      path: `${ROOT}/b.ts`,
+      position: { column: 2, lineNumber: 5 },
+    };
+    const newerLocation: NavigationLocation = {
+      path: `${ROOT}/c.ts`,
+      position: { column: 3, lineNumber: 8 },
+    };
+    let resolveOpen: (value: boolean) => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(currentLocation.path));
+    harness.activeEditorPositionRef.current = currentLocation.position;
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    harness.setActiveDocument(editorDocument(previousLocation.path));
+    harness.activeEditorPositionRef.current = previousLocation.position;
+    harness.openPathForNavigation.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    const pending = harness.navigation().navigateForwardInHistory();
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(newerLocation);
+    });
+    resolveOpen(true);
+    await act(async () => {
+      await pending;
+    });
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [newerLocation],
+      forwardStack: [],
+    });
+    expect(harness.editorRevealTarget()).toEqual(previousLocation);
 
     harness.unmount();
   });

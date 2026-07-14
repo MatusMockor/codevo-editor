@@ -17,6 +17,55 @@ const commandContext: CommandContext = {
 };
 
 describe("useWorkbenchKeyboardShortcuts", () => {
+  it.each([
+    {
+      commandId: "editor.splitRight",
+      event: { key: "\\", metaKey: true },
+      shortcut: "Cmd+\\",
+    },
+    {
+      commandId: "editor.reopenClosedTab",
+      event: { altKey: true, key: "t", metaKey: true, shiftKey: true },
+      shortcut: "Cmd+Alt+Shift+T",
+    },
+    {
+      commandId: "editor.splitDown",
+      event: { altKey: true, key: "2", metaKey: true },
+      shortcut: "Cmd+Alt+2",
+    },
+  ] as const)(
+    "dispatches registered keymap command $commandId without an allowlist entry",
+    ({ commandId, event: eventInit, shortcut }) => {
+      const run = vi.fn();
+      const registry = new CommandRegistry();
+      registry.register({
+        category: "Test",
+        id: commandId,
+        isEnabled: () => true,
+        run,
+        title: commandId,
+      });
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: {
+            ...appSettings.keymap,
+            [commandId]: shortcut,
+          },
+        },
+        commandRegistry: registry,
+      });
+
+      const event = dispatchKeyboardEvent(eventInit);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(run).toHaveBeenCalledTimes(1);
+
+      harness.unmount();
+    },
+  );
+
   it("dispatches registry shortcuts through the command registry", () => {
     const run = vi.fn();
     const registry = new CommandRegistry();

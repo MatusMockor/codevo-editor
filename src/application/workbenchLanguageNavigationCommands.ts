@@ -17,7 +17,6 @@ interface WorkbenchLanguageNavigationCommandsOptions {
 
 export function workbenchLanguageNavigationCommands({
   shortcut,
-  activeDocument,
   goToDefinition,
   goToSourceDefinition,
   goToDeclaration,
@@ -25,7 +24,8 @@ export function workbenchLanguageNavigationCommands({
   goToImplementation,
   goToSuperMethod,
 }: WorkbenchLanguageNavigationCommandsOptions): Command[] {
-  const canAttemptNavigation = () => Boolean(activeDocument);
+  const canAttemptNavigation: Command["isEnabled"] = (context) =>
+    context.hasActiveDocument;
 
   return [
     {

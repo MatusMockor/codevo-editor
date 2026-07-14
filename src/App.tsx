@@ -1095,6 +1095,7 @@ function App() {
           largeSmartDocumentPolicy={workbench.workspaceSettings.largeFileMode}
           keymap={workbench.appSettings.keymap}
           monacoTheme={monacoTheme}
+          runCommand={workbench.runCommand}
           navigationHistoryPaths={navigationHistoryPaths}
           openDocumentPaths={openDocumentPaths}
           restoredViewStates={

@@ -1,5 +1,9 @@
 import type { KeymapCommandId } from "../domain/keymap";
-import type { CommandContext, CommandRegistry } from "./commandRegistry";
+import {
+  executeCommand,
+  type CommandLookup,
+  type CommandContext,
+} from "./commandRegistry";
 
 const NATIVE_MENU_COMMAND_IDS = {
   "mockor-close-active-tab": "editor.closeTab",
@@ -18,7 +22,7 @@ export const NATIVE_MENU_EVENT_NAMES = Object.keys(
 
 interface DispatchNativeMenuCommandOptions {
   commandContext: CommandContext;
-  commandRegistry: Pick<CommandRegistry, "get">;
+  commandRegistry: CommandLookup;
   eventName: string;
 }
 
@@ -33,14 +37,9 @@ export function dispatchNativeMenuCommand({
     return false;
   }
 
-  const command = commandRegistry.get(commandId);
-
-  if (!command?.isEnabled(commandContext)) {
-    return false;
-  }
-
-  void command.run();
-  return true;
+  return (
+    executeCommand(commandRegistry, commandId, commandContext) === "executed"
+  );
 }
 
 function nativeMenuCommandId(eventName: string): KeymapCommandId | undefined {

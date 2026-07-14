@@ -124,6 +124,23 @@ describe("useWorkbenchNavigation PHP read-only boundary", () => {
     harness.root.unmount();
   });
 
+  it("passes navigation transaction validity to the file commit guard", async () => {
+    const harness = renderNavigation();
+    const path = `${ROOT}/app/Services/Service.php`;
+    const shouldCommit = vi.fn(() => true);
+
+    await act(async () => {
+      await harness.api().openPathForNavigation(path, { shouldCommit });
+    });
+
+    expect(harness.openFile).toHaveBeenCalledWith(
+      { kind: "file", name: "Service.php", path },
+      { readOnly: undefined, recordNavigation: false, shouldCommit },
+    );
+
+    harness.root.unmount();
+  });
+
   it("keeps explicit quick-open and explorer-style vendor opens editable", async () => {
     const harness = renderNavigation();
     const entry: FileEntry = {

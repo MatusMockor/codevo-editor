@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { KeymapCommandId } from "../domain/keymap";
-import type { Command, CommandContext } from "./commandRegistry";
+import {
+  CommandRegistry,
+  executeCommand,
+  type Command,
+  type CommandContext,
+} from "./commandRegistry";
 import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigationCommands";
 
 describe("workbenchLanguageNavigationCommands", () => {
@@ -68,8 +73,12 @@ describe("workbenchLanguageNavigationCommands", () => {
   });
 
   it("enables go to definition for any active document", () => {
-    expect(command("editor.goToDefinition", commandsFor()).isEnabled(context))
-      .toBe(false);
+    expect(
+      command("editor.goToDefinition", commandsFor()).isEnabled({
+        ...context,
+        hasActiveDocument: false,
+      }),
+    ).toBe(false);
     expect(
       command(
         "editor.goToDefinition",
@@ -82,6 +91,23 @@ describe("workbenchLanguageNavigationCommands", () => {
         commandsFor({ activeDocument: plainDocument }),
       ).isEnabled(context),
     ).toBe(true);
+  });
+
+  it("uses the registry execution context when the captured document is null", () => {
+    const registry = new CommandRegistry();
+    const goToDefinition = vi.fn();
+
+    commandsFor({ activeDocument: null, goToDefinition }).forEach((command) =>
+      registry.register(command),
+    );
+
+    expect(
+      executeCommand(registry, "editor.goToDefinition", {
+        ...context,
+        hasActiveDocument: true,
+      }),
+    ).toBe("executed");
+    expect(goToDefinition).toHaveBeenCalledOnce();
   });
 
   it("keeps JavaScript and TypeScript navigation enabled so runtime fallbacks can decide", () => {

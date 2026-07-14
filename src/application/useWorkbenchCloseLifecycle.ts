@@ -143,31 +143,101 @@ export function useWorkbenchCloseLifecycle(
     [persistCurrentWorkspaceSession],
   );
 
+  const applicationNeedsAttention = useCallback(() => {
+    if (dirtyCount > 0) {
+      return true;
+    }
+
+    if (
+      workspaceRoot &&
+      workspaceHasExternalFileConflicts(workspaceRoot)
+    ) {
+      return true;
+    }
+
+    const inactiveCachedRoots: Array<{
+      hasDirtyDocuments: boolean;
+      roots: string[];
+    }> = [];
+    for (const [cachedRoot, cachedState] of Object.entries(
+      workspaceStateCacheRef.current,
+    )) {
+      if (workspaceRootKeysEqual(cachedRoot, workspaceRoot)) {
+        continue;
+      }
+
+      const existingRoot = inactiveCachedRoots.find(({ roots }) =>
+        workspaceRootKeysEqual(roots[0], cachedRoot),
+      );
+      if (existingRoot) {
+        existingRoot.hasDirtyDocuments ||=
+          cachedWorkspaceHasDirtyDocuments(cachedState);
+        existingRoot.roots.push(cachedRoot);
+        continue;
+      }
+
+      inactiveCachedRoots.push({
+        hasDirtyDocuments: cachedWorkspaceHasDirtyDocuments(cachedState),
+        roots: [cachedRoot],
+      });
+    }
+
+    for (const cachedRoot of inactiveCachedRoots) {
+      if (
+        documentNeedsAttention(
+          cachedRoot.hasDirtyDocuments,
+          cachedRoot.roots.some((root) =>
+            workspaceHasExternalFileConflicts(root),
+          ),
+        )
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [
+    dirtyCount,
+    workspaceHasExternalFileConflicts,
+    workspaceRoot,
+    workspaceStateCacheRef,
+  ]);
+
+  const requestApplicationShutdown = useCallback(
+    (shutdown: () => Promise<void>, errorSource: string) => {
+      if (nativeCloseInFlightRef.current) {
+        return;
+      }
+
+      nativeCloseInFlightRef.current = true;
+      if (
+        applicationNeedsAttention() &&
+        !prompter.confirm("Quit and discard unsaved changes?")
+      ) {
+        queueMicrotask(() => {
+          nativeCloseInFlightRef.current = false;
+        });
+        return;
+      }
+
+      void shutdown().catch((error) => {
+        nativeCloseInFlightRef.current = false;
+        reportError(errorSource, error);
+      });
+    },
+    [applicationNeedsAttention, prompter, reportError],
+  );
+
   nativeCloseRequestRef.current = (payload) => {
     if (!isNativeCloseKind(payload)) {
       reportError("Application", new Error("Invalid native close request"));
       return;
     }
 
-    if (nativeCloseInFlightRef.current) {
-      return;
-    }
-
-    nativeCloseInFlightRef.current = true;
-    if (
-      dirtyCount > 0 &&
-      !prompter.confirm("Quit and discard unsaved changes?")
-    ) {
-      queueMicrotask(() => {
-        nativeCloseInFlightRef.current = false;
-      });
-      return;
-    }
-
-    void confirmNativeShutdown(payload).catch((error) => {
-      nativeCloseInFlightRef.current = false;
-      reportError("Application", error);
-    });
+    requestApplicationShutdown(
+      () => confirmNativeShutdown(payload),
+      "Application",
+    );
   };
 
   useEffect(() => {
@@ -398,21 +468,22 @@ export function useWorkbenchCloseLifecycle(
       return;
     }
 
-    void (async () => {
+    requestApplicationShutdown(async () => {
       await persistCurrentWorkspaceSession();
       await invoke("quit_application");
-    })().catch((error) => reportError("Application", error));
-  }, [persistCurrentWorkspaceSession, reportError]);
+    }, "Application");
+  }, [persistCurrentWorkspaceSession, requestApplicationShutdown]);
 
   const closeApplicationWindow = useCallback(() => {
     if (!isTauri()) {
       return;
     }
 
-    void (async () => {
-      await confirmNativeShutdown("close");
-    })().catch((error) => reportError("Window", error));
-  }, [confirmNativeShutdown, reportError]);
+    requestApplicationShutdown(
+      () => confirmNativeShutdown("close"),
+      "Window",
+    );
+  }, [confirmNativeShutdown, requestApplicationShutdown]);
 
   return {
     closeApplicationWindow,

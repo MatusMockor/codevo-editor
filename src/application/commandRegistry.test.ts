@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { CommandRegistry, type CommandContext } from "./commandRegistry";
+import { describe, expect, it, vi } from "vitest";
+import {
+  CommandRegistry,
+  executeCommand,
+  type CommandContext,
+} from "./commandRegistry";
 
 const context: CommandContext = {
   activeDocumentDirty: false,
@@ -100,5 +104,70 @@ describe("CommandRegistry", () => {
         hasActiveDocument: true,
       }),
     ).toBe(true);
+  });
+
+  it("returns explicit outcomes for missing, disabled, and executed commands", () => {
+    const registry = new CommandRegistry();
+    const run = vi.fn();
+    registry.register({
+      id: "editor.save",
+      title: "Save File",
+      category: "Editor",
+      isEnabled: (currentContext) => currentContext.hasActiveDocument,
+      run,
+    });
+
+    expect(executeCommand(registry, "editor.missing", context)).toBe("missing");
+    expect(executeCommand(registry, "editor.save", context)).toBe("disabled");
+    expect(
+      executeCommand(registry, "editor.save", {
+        ...context,
+        hasActiveDocument: true,
+      }),
+    ).toBe("executed");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts asynchronous commands without waiting for completion", () => {
+    const registry = new CommandRegistry();
+    let resolveRun: (() => void) | undefined;
+    const run = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRun = resolve;
+        }),
+    );
+    registry.register({
+      id: "workspace.refresh",
+      title: "Refresh Workspace",
+      category: "Workspace",
+      isEnabled: () => true,
+      run,
+    });
+
+    expect(executeCommand(registry, "workspace.refresh", context)).toBe(
+      "executed",
+    );
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(resolveRun).toBeTypeOf("function");
+
+    resolveRun?.();
+  });
+
+  it("does not swallow synchronous command errors", () => {
+    const registry = new CommandRegistry();
+    registry.register({
+      id: "workspace.fail",
+      title: "Fail",
+      category: "Workspace",
+      isEnabled: () => true,
+      run: () => {
+        throw new Error("command failed");
+      },
+    });
+
+    expect(() => executeCommand(registry, "workspace.fail", context)).toThrow(
+      "command failed",
+    );
   });
 });

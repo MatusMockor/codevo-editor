@@ -6,9 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type Dispatch,
-  type SetStateAction,
 } from "react";
+import { useEditorSessionState } from "./useEditorSessionState";
 import type { EditorGroupFocusRunner } from "./editorGroupFocusPort";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
@@ -27,6 +26,7 @@ import {
   type EditorSurfaceEslintDisableRunner,
 } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
+import { executeCommand, type CommandExecutionRunner } from "./commandRegistry";
 import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 import {
   NATIVE_MENU_EVENT_NAMES,
@@ -348,18 +348,12 @@ import { recentFilesForSwitcher } from "../domain/recentFiles";
 import { type TabDropPosition } from "../domain/tabOrdering";
 import { editorGroupIdsInLayout } from "../domain/editorLayout";
 import {
-  activateEditorGroupPath,
-  createEditorGroup,
-  createInitialEditorGroupsState,
   editorGroupsReducer,
   editorGroupsUniquePaths,
   openEditorGroupPath,
   reorderEditorGroupTabs,
   transferEditorGroupTab,
-  updateEditorGroupOpenPaths,
-  updateEditorGroupPreviewPath,
   type EditorGroupId,
-  type EditorGroupsState,
   type EditorSplitDirection,
 } from "../domain/editorGroups";
 import {
@@ -383,7 +377,6 @@ import {
   visibleEditorPaths,
   type EditorDocument,
   type FileEntry,
-  type ImageTab,
   type FileSearchGateway,
   type IntelligenceMode,
   type ManagedPhpactorInstallCompletionEvent,
@@ -646,88 +639,35 @@ export function useWorkbenchController(
   const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(
     new Set(),
   );
-  const [documents, setDocuments] = useState<Record<string, EditorDocument>>(
-    {},
-  );
-  const [imageTabs, setImageTabs] = useState<Record<string, ImageTab>>({});
-  const [markdownPreviewTabs, setMarkdownPreviewTabs] = useState<
-    Record<string, MarkdownPreviewTab>
-  >({});
-  const [editorGroups, setEditorGroupsState] = useState<EditorGroupsState>(() =>
-    createInitialEditorGroupsState("editor-main"),
-  );
-  const editorGroupsRef = useRef(editorGroups);
-  const nextEditorGroupIdRef = useRef(1);
-  const updateEditorGroups = useCallback(
-    (update: (current: EditorGroupsState) => EditorGroupsState) => {
-      setEditorGroupsState((current) => {
-        const next = update(current);
-        editorGroupsRef.current = next;
-        return next;
-      });
-    },
-    [],
-  );
-  const activeGroupId = editorGroups.activeGroupId;
-  const activeGroup = editorGroups.groups[activeGroupId] ?? createEditorGroup();
-  const { activePath, openPaths, previewPath } = activeGroup;
-  const setActivePath = useCallback<Dispatch<SetStateAction<string | null>>>(
-    (update) => {
-      updateEditorGroups((current) => {
-        const group = current.groups[current.activeGroupId];
-        if (!group) {
-          return current;
-        }
-        return {
-          ...current,
-          groups: {
-            ...current.groups,
-            [current.activeGroupId]: activateEditorGroupPath(
-              group,
-              resolveStateUpdate(group.activePath, update),
-            ),
-          },
-        };
-      });
-    },
-    [updateEditorGroups],
-  );
-  const setOpenPaths = useCallback<Dispatch<SetStateAction<string[]>>>(
-    (update) => {
-      updateEditorGroups((current) => {
-        const group = current.groups[current.activeGroupId];
-        if (!group) {
-          return current;
-        }
-        return {
-          ...current,
-          groups: {
-            ...current.groups,
-            [current.activeGroupId]: updateEditorGroupOpenPaths(group, update),
-          },
-        };
-      });
-    },
-    [updateEditorGroups],
-  );
-  const setPreviewPath = useCallback<Dispatch<SetStateAction<string | null>>>(
-    (update) => {
-      updateEditorGroups((current) => {
-        const group = current.groups[current.activeGroupId];
-        if (!group) {
-          return current;
-        }
-        return {
-          ...current,
-          groups: {
-            ...current.groups,
-            [current.activeGroupId]: updateEditorGroupPreviewPath(group, update),
-          },
-        };
-      });
-    },
-    [updateEditorGroups],
-  );
+  const {
+    activeDocument,
+    activeDocumentRef,
+    activeGroupId,
+    activeImage,
+    activeMarkdownPreview,
+    activePath,
+    documents,
+    documentsRef,
+    editorGroups,
+    editorGroupsRef,
+    imageTabs,
+    imageTabsRef,
+    markdownPreviewTabs,
+    markdownPreviewTabsRef,
+    nextEditorGroupIdRef,
+    openPaths,
+    openPathsRef,
+    previewPath,
+    previewPathRef,
+    resetEditorSurfaceState,
+    setActivePath,
+    setDocuments,
+    setImageTabs,
+    setMarkdownPreviewTabs,
+    setOpenPaths,
+    setPreviewPath,
+    updateEditorGroups,
+  } = useEditorSessionState();
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [artisanMakePaletteRoot, setArtisanMakePaletteRoot] = useState<
@@ -961,16 +901,10 @@ export function useWorkbenchController(
     useRef<string | null>(null);
   const phpClassSourcePathCacheRef = useRef<Record<string, string[]>>({});
   const phpFrameworkBindingCacheRef = useRef<Record<string, string | null>>({});
-  const activeDocumentRef = useRef<EditorDocument | null>(null);
-  const documentsRef = useRef<Record<string, EditorDocument>>({});
-  const imageTabsRef = useRef<Record<string, ImageTab>>({});
-  const markdownPreviewTabsRef = useRef<Record<string, MarkdownPreviewTab>>({});
   const phpLocalDiagnosticValidationGenerationRef = useRef(0);
   const phpLocalDiagnosticRetryTimersRef = useRef<
     ReturnType<typeof setTimeout>[]
   >([]);
-  const openPathsRef = useRef<string[]>([]);
-  const previewPathRef = useRef<string | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
   const resetIndexedWorkspaceViewsRef = useRef<() => void>(() => {});
   const resetIndexedWorkspaceViews = useCallback(() => {
@@ -1002,23 +936,6 @@ export function useWorkbenchController(
     setNotices,
     workspaceRoot,
   });
-  const resetEditorGroups = useCallback(() => {
-    const next = createInitialEditorGroupsState("editor-main");
-    editorGroupsRef.current = next;
-    nextEditorGroupIdRef.current = 1;
-    openPathsRef.current = [];
-    previewPathRef.current = null;
-    activeDocumentRef.current = null;
-    setEditorGroupsState(next);
-  }, []);
-  const resetEditorSurfaceState = useCallback(() => {
-    setDocuments({});
-    imageTabsRef.current = {};
-    setImageTabs({});
-    markdownPreviewTabsRef.current = {};
-    setMarkdownPreviewTabs({});
-    resetEditorGroups();
-  }, [resetEditorGroups]);
   const artisanMakePaletteOpen = Boolean(
     workspaceRoot &&
       artisanMakePaletteRoot &&
@@ -1107,11 +1024,6 @@ export function useWorkbenchController(
     ): Promise<LanguageServerDiagnostic[]> => diagnostics,
   );
 
-  const activeDocument = activePath ? documents[activePath] || null : null;
-  const activeImage = activePath ? imageTabs[activePath] || null : null;
-  const activeMarkdownPreview = activePath
-    ? markdownPreviewTabs[activePath] || null
-    : null;
   const {
     activeEditorPosition,
     activeEditorPositionRef,
@@ -1265,30 +1177,6 @@ export function useWorkbenchController(
     lastPhpIdeReadinessSignatureRef.current = phpIdeReadinessSignature;
     setPhpIdeReadinessVersion((current) => current + 1);
   }, [phpIdeReadinessSignature]);
-
-  useEffect(() => {
-    activeDocumentRef.current = activeDocument;
-  }, [activeDocument]);
-
-  useEffect(() => {
-    documentsRef.current = documents;
-  }, [documents]);
-
-  useEffect(() => {
-    imageTabsRef.current = imageTabs;
-  }, [imageTabs]);
-
-  useEffect(() => {
-    markdownPreviewTabsRef.current = markdownPreviewTabs;
-  }, [markdownPreviewTabs]);
-
-  useEffect(() => {
-    openPathsRef.current = openPaths;
-  }, [openPaths]);
-
-  useEffect(() => {
-    previewPathRef.current = previewPath;
-  }, [previewPath]);
 
   useEffect(
     () => () => {
@@ -1807,6 +1695,7 @@ export function useWorkbenchController(
     currentWorkspaceRootRef,
     activeDocumentRef,
     documentsRef,
+    editorGroupsRef,
     openPathsRef,
     previewPathRef,
     setDocuments,
@@ -7287,6 +7176,12 @@ export function useWorkbenchController(
     [activeDocument, workspaceRoot],
   );
 
+  const runCommand = useCallback<CommandExecutionRunner>(
+    (commandId, context = commandContext) =>
+      executeCommand(commandRegistry, commandId, context),
+    [commandContext, commandRegistry],
+  );
+
   const nativeMenuCommandDispatchRef = useRef({
     commandContext,
     commandRegistry,
@@ -8125,6 +8020,7 @@ export function useWorkbenchController(
     commitGitChanges,
     commandContext,
     commands: commandRegistry.list(),
+    runCommand,
     diagnosticsSummary,
     dirtyCount,
     externalFileConflictCount: externalFileConflicts.conflictCount,
@@ -8749,17 +8645,6 @@ function workspaceTabPathForPath(
   path: string | null | undefined,
 ): string | null {
   return tabs.find((tabPath) => workspaceRootKeysEqual(tabPath, path)) ?? null;
-}
-
-function resolveStateUpdate<Value>(
-  current: Value,
-  update: SetStateAction<Value>,
-): Value {
-  if (typeof update === "function") {
-    return (update as (value: Value) => Value)(current);
-  }
-
-  return update;
 }
 
 function isRunningLanguageServerForWorkspace(

@@ -13,6 +13,17 @@ export interface Command {
   run(): void | Promise<void>;
 }
 
+export type CommandExecutionOutcome = "missing" | "disabled" | "executed";
+
+export type CommandExecutionRunner = (
+  id: string,
+  context?: CommandContext,
+) => CommandExecutionOutcome;
+
+export interface CommandLookup {
+  get(id: string): Command | undefined;
+}
+
 export class CommandRegistry {
   private readonly commands = new Map<string, Command>();
   private cachedList: Command[] | null = null;
@@ -41,4 +52,23 @@ export class CommandRegistry {
   get(id: string): Command | undefined {
     return this.commands.get(id);
   }
+}
+
+export function executeCommand(
+  commandLookup: CommandLookup,
+  id: string,
+  context: CommandContext,
+): CommandExecutionOutcome {
+  const command = commandLookup.get(id);
+
+  if (!command) {
+    return "missing";
+  }
+
+  if (!command.isEnabled(context)) {
+    return "disabled";
+  }
+
+  void command.run();
+  return "executed";
 }

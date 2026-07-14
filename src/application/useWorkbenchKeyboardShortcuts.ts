@@ -1,5 +1,5 @@
 import { useEffect, type MutableRefObject } from "react";
-import type { KeymapCommandId, KeymapSettings } from "../domain/keymap";
+import type { KeymapSettings } from "../domain/keymap";
 import {
   collectBareKeyShortcutKeys,
   eventCanMatchKeymapShortcut,
@@ -8,64 +8,6 @@ import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import type { AppSettings } from "../domain/settings";
 import type { CommandContext, CommandRegistry } from "./commandRegistry";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
-
-const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
-  "app.quit",
-  "editor.save",
-  "editor.closeTab",
-  "editor.rename",
-  "editor.quickFix",
-  "editor.formatDocument",
-  "editor.formatSelection",
-  "editor.gotoLine",
-  "workbench.openSettings",
-  "workbench.openAppearanceSettings",
-  "panel.toggle",
-  "panel.toggleTodo",
-  "terminal.show",
-  "runtime.show",
-  "editor.fontZoomIn",
-  "editor.fontZoomOut",
-  "editor.fontZoomReset",
-  "editor.toggleFontLigatures",
-  "editor.nextProblem",
-  "editor.previousProblem",
-  "navigation.back",
-  "navigation.forward",
-  "workbench.searchEverywhere",
-  "commands.show",
-  "class.quickOpen",
-  "file.quickOpen",
-  "editor.recentFiles",
-  "editor.recentLocations",
-  "markdown.openPreview",
-  "git.stashChanges",
-  "git.showStashes",
-  "git.switchBranch",
-  "git.newBranch",
-  "git.commit",
-  "bookmark.toggle",
-  "bookmark.showPanel",
-  "bookmark.next",
-  "bookmark.previous",
-  "editor.toggleGitBlame",
-  "editor.showFileHistory",
-  "editor.showLocalHistory",
-  "editor.fileStructure",
-  "editor.goToDefinition",
-  "editor.goToSourceDefinition",
-  "editor.goToDeclaration",
-  "editor.goToTypeDefinition",
-  "editor.goToImplementation",
-  "editor.goToSuperMethod",
-  "editor.findReferences",
-  "editor.findFileReferences",
-  "editor.goToSymbol",
-  "php.goToTest",
-  "php.runTest",
-  "php.runTestFile",
-  "search.text",
-];
 
 interface BareKeyShortcutCache {
   keymap: KeymapSettings | null;
@@ -138,7 +80,7 @@ export function useWorkbenchKeyboardShortcuts({
 
       // Keydown hot path: a held bare key (ArrowUp/ArrowDown, plain letters)
       // fires ~30 auto-repeat events/sec and can never match a keymap shortcut,
-      // so skip the ~35-iteration matching loop below for such events. The
+      // so skip configured shortcut matching below for such events. The
       // double-Shift detector and the explicit Escape/F12 handlers above
       // already ran, so this only short-circuits the per-command matching.
       const bareKeyCache = bareKeyShortcutsRef.current;
@@ -154,7 +96,6 @@ export function useWorkbenchKeyboardShortcuts({
       if (
         dispatchWorkbenchShortcutCommand({
           commandContext,
-          commandIds: REGISTRY_SHORTCUT_COMMAND_IDS,
           commandRegistry,
           event,
           keymap,

@@ -425,6 +425,10 @@ export function useWorkbenchDocumentTabs(
         documentsRef.current[entry.path] ?? documents[entry.path];
 
       if (existingDocument) {
+        if (options.shouldCommit?.() === false) {
+          return false;
+        }
+
         const openedDocument = existingDocument;
         const hasEmptySavedContentWithoutUnsavedEdits =
           openedDocument.savedContent === "" && openedDocument.content === "";
@@ -440,7 +444,8 @@ export function useWorkbenchDocumentTabs(
               workspaceRootKeysEqual(
                 currentWorkspaceRootRef.current,
                 requestedRoot,
-              ));
+              )) &&
+            options.shouldCommit?.() !== false;
 
           if (!requestStillActive) {
             return false;

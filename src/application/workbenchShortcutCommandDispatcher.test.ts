@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { defaultKeymapSettings } from "../domain/keymap";
-import type { Command, CommandContext } from "./commandRegistry";
+import {
+  CommandRegistry,
+  type Command,
+  type CommandContext,
+} from "./commandRegistry";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 
 const commandContext: CommandContext = {
@@ -80,19 +84,18 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("still consumes a known shortcut when the command is absent", () => {
-    const event = keyboardEvent({ key: ",", metaKey: true });
+  it("leaves an unregistered Monaco-only keymap shortcut untouched", () => {
+    const event = keyboardEvent({ altKey: true, key: "F5" });
 
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
-      commandIds: ["workbench.openSettings"],
       commandRegistry: registry({}),
       event,
       keymap: defaultKeymapSettings("mac"),
     });
 
-    expect(handled).toBe(true);
-    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(handled).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -105,14 +108,13 @@ describe("dispatchWorkbenchShortcutCommand", () => {
       event: { altKey: true, key: "ArrowLeft", metaKey: true },
     },
   ])(
-    "routes $commandId without requiring it in the caller command list",
+    "routes registered $commandId from the canonical keymap",
     ({ commandId, event: eventOptions }) => {
       const run = vi.fn();
       const event = keyboardEvent(eventOptions);
 
       const handled = dispatchWorkbenchShortcutCommand({
         commandContext,
-        commandIds: [],
         commandRegistry: registry({
           [commandId]: command({ id: commandId, run }),
         }),
@@ -146,9 +148,11 @@ function command({
 }
 
 function registry(commands: Record<string, Command>) {
-  return {
-    get: (id: string) => commands[id],
-  };
+  const commandRegistry = new CommandRegistry();
+  Object.values(commands).forEach((registeredCommand) => {
+    commandRegistry.register(registeredCommand);
+  });
+  return commandRegistry;
 }
 
 function keyboardEvent({

@@ -1,5 +1,7 @@
 import {
   useCallback,
+  useLayoutEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -179,10 +181,11 @@ export function useRecentNavigation(
   const recordNavigationLocationSnapshot = useCallback((
     location: NavigationLocation | null,
   ) => {
-    setNavigationHistory((current) =>
-      recordNavigationLocation(current, location),
+    writeNavigationHistory(
+      setNavigationHistory,
+      (current) => recordNavigationLocation(current, location),
     );
-  }, []);
+  }, [setNavigationHistory]);
 
   // Records a visited/edited POSITION in the per-workspace Recent Locations
   // history. Reads documents + workspace root from refs (so it stays stable on
@@ -264,7 +267,7 @@ export interface NavigationHistoryDependencies {
   forgetRecentLocationsForPath: (path: string) => void;
   openPathForNavigation: (
     path: string,
-    options?: { readOnly?: boolean },
+    options?: { readOnly?: boolean; shouldCommit?: () => boolean },
   ) => Promise<boolean>;
   shouldOpenNavigationTargetReadOnly: (
     rootPath: string,
@@ -276,6 +279,48 @@ export interface NavigationHistoryPlayback {
   navigateBackward: () => Promise<void>;
   navigateForwardInHistory: () => Promise<void>;
   openRecentLocation: (location: RecentLocation) => Promise<void>;
+}
+
+type NavigationHistorySetter = Dispatch<SetStateAction<NavigationHistory>>;
+
+interface NavigationHistoryTransaction {
+  current: NavigationHistory | null;
+}
+
+const navigationHistoryTransactions = new WeakMap<
+  NavigationHistorySetter,
+  NavigationHistoryTransaction
+>();
+
+function writeNavigationHistory(
+  setNavigationHistory: NavigationHistorySetter,
+  update: (current: NavigationHistory) => NavigationHistory,
+): void {
+  const transaction = navigationHistoryTransactions.get(setNavigationHistory);
+
+  if (!transaction?.current) {
+    setNavigationHistory(update);
+    return;
+  }
+
+  const next = update(transaction.current);
+  transaction.current = next;
+  setNavigationHistory(next);
+}
+
+function compareAndSetNavigationHistory(
+  transaction: NavigationHistoryTransaction,
+  setNavigationHistory: NavigationHistorySetter,
+  requestedHistory: NavigationHistory,
+  nextHistory: NavigationHistory,
+): boolean {
+  if (transaction.current !== requestedHistory) {
+    return false;
+  }
+
+  transaction.current = nextHistory;
+  setNavigationHistory(nextHistory);
+  return true;
 }
 
 /**
@@ -290,7 +335,6 @@ export function useNavigationHistory(
 ): NavigationHistoryPlayback {
   const {
     currentWorkspaceRootRef,
-    workspaceRoot,
     navigationHistory,
     setNavigationHistory,
     setRecentLocationsPanelOpen,
@@ -301,45 +345,147 @@ export function useNavigationHistory(
     openPathForNavigation,
     shouldOpenNavigationTargetReadOnly,
   } = dependencies;
+  const navigationHistoryTransaction = useRef<NavigationHistory | null>(null);
 
-  const applyNavigationLocation = useCallback(
-    async (location: NavigationLocation) => {
-      const opened = await openPathForNavigation(location.path, {
-        readOnly: workspaceRoot
-          ? shouldOpenNavigationTargetReadOnly(workspaceRoot, location.path)
-          : false,
-      });
+  useLayoutEffect(() => {
+    navigationHistoryTransaction.current = navigationHistory;
+    navigationHistoryTransactions.set(
+      setNavigationHistory,
+      navigationHistoryTransaction,
+    );
 
-      if (!opened) {
+    return () => {
+      if (
+        navigationHistoryTransactions.get(setNavigationHistory) !==
+        navigationHistoryTransaction
+      ) {
         return;
       }
 
-      setEditorRevealTarget(location);
+      navigationHistoryTransactions.delete(setNavigationHistory);
+    };
+  }, [navigationHistory, setNavigationHistory]);
+
+  const applyNavigationLocation = useCallback(
+    async (
+      location: NavigationLocation,
+      requestedRoot: string,
+      shouldCommit: () => boolean,
+    ) => {
+      const opened = await openPathForNavigation(location.path, {
+        readOnly: shouldOpenNavigationTargetReadOnly(
+          requestedRoot,
+          location.path,
+        ),
+        shouldCommit,
+      });
+
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return false;
+      }
+
+      if (!opened) {
+        return false;
+      }
+
+      return true;
     },
-    [openPathForNavigation, shouldOpenNavigationTargetReadOnly, workspaceRoot],
+    [openPathForNavigation, shouldOpenNavigationTargetReadOnly],
+  );
+
+  const commitNavigation = useCallback(
+    (
+      requestedHistory: NavigationHistory,
+      nextHistory: NavigationHistory,
+      target: NavigationLocation,
+    ) => {
+      const committed = compareAndSetNavigationHistory(
+        navigationHistoryTransaction,
+        setNavigationHistory,
+        requestedHistory,
+        nextHistory,
+      );
+
+      if (!committed) {
+        return;
+      }
+
+      setEditorRevealTarget(target);
+    },
+    [navigationHistoryTransaction, setNavigationHistory],
   );
 
   const navigateBackward = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current;
+    const requestedHistory = navigationHistory;
+
+    if (!requestedRoot) {
+      return;
+    }
+
     const next = navigateBack(navigationHistory, currentNavigationLocation());
 
     if (!next.target) {
       return;
     }
 
-    setNavigationHistory(next.history);
-    await applyNavigationLocation(next.target);
-  }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
+    const shouldCommit = () =>
+      navigationHistoryTransaction.current === requestedHistory &&
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+    const applied = await applyNavigationLocation(
+      next.target,
+      requestedRoot,
+      shouldCommit,
+    );
+
+    if (!applied) {
+      return;
+    }
+
+    commitNavigation(requestedHistory, next.history, next.target);
+  }, [
+    applyNavigationLocation,
+    commitNavigation,
+    currentNavigationLocation,
+    navigationHistory,
+  ]);
 
   const navigateForwardInHistory = useCallback(async () => {
+    const requestedRoot = currentWorkspaceRootRef.current;
+    const requestedHistory = navigationHistory;
+
+    if (!requestedRoot) {
+      return;
+    }
+
     const next = navigateForward(navigationHistory, currentNavigationLocation());
 
     if (!next.target) {
       return;
     }
 
-    setNavigationHistory(next.history);
-    await applyNavigationLocation(next.target);
-  }, [applyNavigationLocation, currentNavigationLocation, navigationHistory]);
+    const shouldCommit = () =>
+      navigationHistoryTransaction.current === requestedHistory &&
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+    const applied = await applyNavigationLocation(
+      next.target,
+      requestedRoot,
+      shouldCommit,
+    );
+
+    if (!applied) {
+      return;
+    }
+
+    commitNavigation(requestedHistory, next.history, next.target);
+  }, [
+    applyNavigationLocation,
+    commitNavigation,
+    currentNavigationLocation,
+    navigationHistory,
+  ]);
 
   // Jumps to a recent location from the panel. Mirrors the navigation flow:
   // snapshot where we were (so Back works and the spot stays in history), then
