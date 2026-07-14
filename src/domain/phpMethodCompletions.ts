@@ -30,6 +30,8 @@ export type PhpMemberVisibility = "public" | "protected" | "private";
 export interface PhpMethodCompletion {
   classStringTemplate?: string;
   declaringClassName: string;
+  detail?: string;
+  documentation?: string;
   insertText?: string;
   isStatic?: boolean;
   kind?:

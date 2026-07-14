@@ -4635,6 +4635,10 @@ function phpMethodCompletionKind(
 }
 
 function phpMethodDetail(item: PhpMethodCompletion): string {
+  if (item.detail != null) {
+    return item.detail;
+  }
+
   const visibilityPrefix = item.visibility ? `${item.visibility} ` : "";
 
   if (item.kind === "relation") {
@@ -4669,10 +4673,6 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
     return `Laravel view - ${item.declaringClassName}`;
   }
 
-  if (item.kind === "nette.ajax-snippet") {
-    return `Nette AJAX snippet - ${item.declaringClassName}`;
-  }
-
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -4680,6 +4680,10 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
 }
 
 function phpMethodDocumentation(item: PhpMethodCompletion): string {
+  if (item.documentation != null) {
+    return item.documentation;
+  }
+
   if (item.kind === "relation") {
     return `Laravel relation\n\n${item.declaringClassName}::${item.name}()`;
   }
@@ -4706,10 +4710,6 @@ function phpMethodDocumentation(item: PhpMethodCompletion): string {
 
   if (item.kind === "view") {
     return `Laravel view\n\n${item.name}`;
-  }
-
-  if (item.kind === "nette.ajax-snippet") {
-    return `Nette AJAX snippet\n\n${item.name}`;
   }
 
   const parameters = phpMethodParameters(item.parameters);

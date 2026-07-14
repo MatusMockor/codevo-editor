@@ -3,6 +3,7 @@ import {
   collectNetteRedrawControlSnippetCompletionTargets,
   createNetteRedrawControlSnippetTargetCollector,
   latteNetteSnippetNameCompletions,
+  phpNetteRedrawControlSnippetNameCompletions,
 } from "./netteAjaxSnippetCompletions";
 
 const ROOT = "/ws";
@@ -81,6 +82,38 @@ describe("latteNetteSnippetNameCompletions", () => {
       ) ?? [];
 
     expect(labels).toEqual(["listing", "lis"]);
+  });
+});
+
+describe("phpNetteRedrawControlSnippetNameCompletions", () => {
+  it("carries presentation metadata on redrawControl snippet completions", () => {
+    const source = "<?php\n$this->redrawControl('mai');";
+    const offset = source.indexOf("mai") + "mai".length;
+
+    expect(
+      phpNetteRedrawControlSnippetNameCompletions(source, offset, [
+        {
+          name: "mailLogslisting",
+          relativePath:
+            "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        },
+      ]),
+    ).toEqual([
+      {
+        declaringClassName:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        detail:
+          "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        documentation: "Nette AJAX snippet\n\nmailLogslisting",
+        insertText: "mailLogslisting",
+        kind: "nette.ajax-snippet",
+        name: "mailLogslisting",
+        parameters: "",
+        replaceEnd: source.indexOf("'", source.indexOf("mai")),
+        replaceStart: source.indexOf("mai"),
+        returnType: null,
+      },
+    ]);
   });
 });
 

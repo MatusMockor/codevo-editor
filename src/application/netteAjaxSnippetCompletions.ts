@@ -77,6 +77,8 @@ export function phpNetteRedrawControlSnippetNameCompletions(
 
   return snippetNameCompletions(targets, completion).map((target) => ({
     declaringClassName: target.relativePath,
+    detail: `Nette AJAX snippet - ${target.relativePath}`,
+    documentation: `Nette AJAX snippet\n\n${target.name}`,
     insertText: target.name,
     kind: "nette.ajax-snippet",
     name: target.name,

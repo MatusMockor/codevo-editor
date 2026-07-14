@@ -1497,6 +1497,70 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("uses provider presentation metadata for Nette redrawControl snippet completions", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        detail:
+          "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        documentation: "Nette AJAX snippet\n\nmailLogslisting",
+        insertText: "mailLogslisting",
+        kind: "nette.ajax-snippet" as const,
+        name: "mailLogslisting",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\n$this->redrawControl('mai');\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "$this->redrawControl('mai');",
+        word: {
+          endColumn: 27,
+          startColumn: 24,
+        },
+      }),
+      {
+        column: 27,
+        lineNumber: 2,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        detail:
+          "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        documentation: "Nette AJAX snippet\n\nmailLogslisting",
+        insertText: "mailLogslisting",
+        insertTextRules: 4,
+        kind: 12,
+        label: {
+          description:
+            "snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+          detail: "",
+          label: "mailLogslisting",
+        },
+      }),
+    ]);
+  });
+
   it("inserts Laravel database connection completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({

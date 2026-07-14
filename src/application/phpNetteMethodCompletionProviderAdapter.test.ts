@@ -48,6 +48,9 @@ describe("phpNetteMethodCompletionProviderAdapter", () => {
       {
         declaringClassName:
           "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        detail:
+          "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        documentation: "Nette AJAX snippet\n\nmailLogslisting",
         insertText: "mailLogslisting",
         kind: "nette.ajax-snippet",
         name: "mailLogslisting",
