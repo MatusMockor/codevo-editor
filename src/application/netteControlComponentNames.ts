@@ -1,4 +1,7 @@
-import { nettePresenterLifecycleInfo } from "../domain/netteComponents";
+import {
+  netteAddComponentRegistrations,
+  nettePresenterLifecycleInfo,
+} from "../domain/netteComponents";
 import type { NetteControlCompletionContext } from "./netteControlContracts";
 import {
   componentOwnerCandidatePathsForTemplate,
@@ -88,6 +91,10 @@ function netteComponentNamesFromPresenter(source: string): string[] {
     if (entry.kind === "createComponent" && entry.name) {
       names.push(entry.name);
     }
+  }
+
+  for (const registration of netteAddComponentRegistrations(source)) {
+    names.push(registration.name);
   }
 
   return Array.from(new Set(names)).sort((left, right) =>

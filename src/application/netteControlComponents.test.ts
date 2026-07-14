@@ -89,6 +89,44 @@ describe("latteControlCompletions", () => {
     ]);
   });
 
+  it("offers literal addComponent names from the template owner", async () => {
+    const cache: NetteControlCache = {};
+
+    await expect(
+      latteControlCompletions(
+        {
+          componentCache: cache,
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => `<?php
+class PaymentLogsAdminPresenter
+{
+    public function renderDefault(): void
+    {
+        $vp = new VisualPaginator();
+        $this->addComponent($vp, 'vp');
+    }
+}
+`),
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath:
+            "app/modules/efabricaPaymentsModule/templates/PaymentLogsAdmin/default.latte",
+          ttlMs: 5000,
+        },
+        { prefix: "v", replaceEnd: 10, replaceStart: 9 },
+      ),
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        insertText: "vp",
+        kind: "component",
+        label: "vp",
+      }),
+    );
+  });
+
   it("detects the completion span inside a control macro", () => {
     const source = "{control pro}";
 
@@ -659,6 +697,81 @@ describe("resolveNetteControlDefinition", () => {
       `${ROOT}/app/UI/Home/HomePresenter.php`,
       expect.objectContaining({ lineNumber: 4 }),
       "productList",
+    );
+  });
+
+  it("opens literal addComponent registrations when no createComponent factory exists", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+class PaymentLogsAdminPresenter
+{
+    public function renderDefault(): void
+    {
+        $vp = new VisualPaginator();
+        $this->addComponent($vp, 'vp');
+    }
+}
+`;
+    const source = "{control vp}";
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+        },
+        ROOT,
+        () => true,
+        netteControlReferenceAt(source, source.indexOf("vp") + 1),
+        "app/modules/efabricaPaymentsModule/templates/PaymentLogsAdmin/default.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/modules/efabricaPaymentsModule/Presenters/PaymentLogsAdminPresenter.php`,
+      expect.objectContaining({ lineNumber: 7 }),
+      "vp",
+    );
+  });
+
+  it("keeps createComponent definitions ahead of literal addComponent registrations", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+class HomePresenter
+{
+    protected function createComponentVp(): VisualPaginator
+    {
+        return new VisualPaginator();
+    }
+
+    public function renderDefault(): void
+    {
+        $vp = new VisualPaginator();
+        $this->addComponent($vp, 'vp');
+    }
+}
+`;
+    const source = "{control vp}";
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+        },
+        ROOT,
+        () => true,
+        netteControlReferenceAt(source, source.indexOf("vp") + 1),
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/UI/Home/HomePresenter.php`,
+      expect.objectContaining({ lineNumber: 4 }),
+      "vp",
     );
   });
 

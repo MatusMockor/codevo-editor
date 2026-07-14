@@ -7,6 +7,7 @@ import {
   detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
   latteActiveFormComponentAt,
+  netteAddComponentRegistrations,
   netteComponentUsagesInLatte,
   netteCreateComponentFactoryContexts,
   netteCreateComponentMethodName,
@@ -182,24 +183,36 @@ export async function resolveNetteControlDefinition(
 
     const position = phpMethodPositionInSource(content, [methodName]);
 
-    if (!position) {
+    if (position) {
+      if (part) {
+        const partHandled = await resolveNetteControlRenderPartDefinition(
+          deps,
+          content,
+          componentName,
+          part,
+        );
+
+        if (partHandled) {
+          return true;
+        }
+      }
+
+      return deps.openTarget(path, position, componentName);
+    }
+
+    const registration = netteAddComponentRegistrations(content).find(
+      (candidate) => candidate.name === componentName,
+    );
+
+    if (!registration) {
       continue;
     }
 
-    if (part) {
-      const partHandled = await resolveNetteControlRenderPartDefinition(
-        deps,
-        content,
-        componentName,
-        part,
-      );
-
-      if (partHandled) {
-        return true;
-      }
-    }
-
-    return deps.openTarget(path, position, componentName);
+    return deps.openTarget(
+      path,
+      editorPositionAtOffset(content, registration.nameStart),
+      componentName,
+    );
   }
 
   return false;

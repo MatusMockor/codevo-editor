@@ -364,6 +364,68 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
   });
 
+  it("covers literal addComponent controls over real ebox presenter/template pairs", async () => {
+    const cases = [
+      {
+        componentName: "vp",
+        presenterPath:
+          "app/modules/efabricaPaymentsModule/Presenters/PaymentLogsAdminPresenter.php",
+        registrationNeedle: "$this->addComponent($vp, 'vp')",
+        templatePath:
+          "app/modules/efabricaPaymentsModule/templates/PaymentLogsAdmin/default.latte",
+      },
+      {
+        componentName: "paginator",
+        presenterPath:
+          "app/modules/paymentsModule/Presenters/PaymentsRecurrentAdminPresenter.php",
+        registrationNeedle: "$this->addComponent($pnp, 'paginator')",
+        templatePath:
+          "app/modules/paymentsModule/templates/PaymentsRecurrentAdmin/default.latte",
+      },
+    ];
+
+    for (const fixture of cases) {
+      const source = await readFileContent(
+        joinPath(EBOX_CRM_ROOT, fixture.templatePath),
+      );
+      const presenter = await readFileContent(
+        joinPath(EBOX_CRM_ROOT, fixture.presenterPath),
+      );
+      const deps = makeLatteDeps(fixture.templatePath);
+      const latte = createLatteIntelligence(() => deps);
+
+      await expect(
+        latte.provideLatteDefinition(
+          source,
+          source.indexOf(`{control ${fixture.componentName}`) +
+            "{control ".length +
+            Math.max(1, Math.floor(fixture.componentName.length / 2)),
+        ),
+      ).resolves.toBe(true);
+      expect(deps.openTarget).toHaveBeenLastCalledWith(
+        joinPath(EBOX_CRM_ROOT, fixture.presenterPath),
+        positionAtOffset(
+          presenter,
+          presenter.indexOf(fixture.registrationNeedle) +
+            fixture.registrationNeedle.lastIndexOf(fixture.componentName),
+        ),
+        fixture.componentName,
+      );
+
+      const completionSource = `{control ${fixture.componentName.slice(0, 1)}}`;
+      const completions = await latte.provideLatteCompletions(
+        completionSource,
+        positionAtOffset(
+          completionSource,
+          completionSource.indexOf(fixture.componentName.slice(0, 1)) + 1,
+        ),
+      );
+      expect(completions.map((item) => item.label)).toContain(
+        fixture.componentName,
+      );
+    }
+  });
+
   it("covers Nette AJAX snippet navigation from redrawControl to colocated Latte over real component files", async () => {
     const templatePath =
       "app/modules/mailerModule/Components/MailLogs/mail_logs.latte";

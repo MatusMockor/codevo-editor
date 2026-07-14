@@ -9,6 +9,7 @@ import {
   detectLatteFormNameCompletionAt,
   detectNetteCreateComponentAt,
   latteActiveFormComponentAt,
+  netteAddComponentRegistrations,
   netteComponentClassFromCreateMethod,
   netteDelegatedFormFactoryInCreateComponent,
   netteCreateComponentFactoryContextAt,
@@ -941,6 +942,105 @@ describe("detectNetteCreateComponentAt", () => {
     const offset = offsetOf(source, "renderDefault", 2);
 
     expect(detectNetteCreateComponentAt(source, offset)).toBeNull();
+  });
+});
+
+describe("netteAddComponentRegistrations", () => {
+  it("finds literal $this->addComponent registrations and their name offsets", () => {
+    const source = `<?php
+class PaymentLogsAdminPresenter
+{
+    public function renderDefault(): void
+    {
+        $vp = new VisualPaginator();
+        $this->addComponent($vp, 'vp');
+    }
+}
+`;
+
+    expect(netteAddComponentRegistrations(source)).toEqual([
+      {
+        className: "VisualPaginator",
+        name: "vp",
+        nameEnd: source.indexOf("'vp'") + 3,
+        nameStart: source.indexOf("'vp'") + 1,
+        offset: source.indexOf("addComponent"),
+      },
+    ]);
+  });
+
+  it("ignores dynamic addComponent names", () => {
+    const source = `<?php
+class HomePresenter
+{
+    public function renderDefault(): void
+    {
+        $name = 'vp';
+        $vp = new VisualPaginator();
+        $this->addComponent($vp, $name);
+    }
+}
+`;
+
+    expect(netteAddComponentRegistrations(source)).toEqual([]);
+  });
+
+  it("ignores addComponent text in comments and strings", () => {
+    const source = `<?php
+class HomePresenter
+{
+    public function renderDefault(): void
+    {
+        // $this->addComponent($vp, 'commented');
+        $debug = "$this->addComponent($vp, 'string')";
+    }
+}
+`;
+
+    expect(netteAddComponentRegistrations(source)).toEqual([]);
+  });
+
+  it("ignores fake method bodies inside comments and strings", () => {
+    const source = `<?php
+class HomePresenter
+{
+    /*
+    public function fakeComment(): void
+    {
+        $vp = new VisualPaginator();
+        $this->addComponent($vp, 'commented');
+    }
+    */
+
+    private string $debug = "public function fakeString(): void { $this->addComponent($vp, 'string'); }";
+}
+`;
+
+    expect(netteAddComponentRegistrations(source)).toEqual([]);
+  });
+
+  it("ignores fake method bodies and calls inside heredoc strings", () => {
+    const source = `<?php
+class HomePresenter
+{
+    private string $template = <<<LATTE
+    public function fakeHeredoc(): void
+    {
+        $vp = new VisualPaginator();
+        $this->addComponent($vp, 'heredocMethod');
+    }
+    LATTE;
+
+    public function renderDefault(): void
+    {
+        $debug = <<<PHP
+        $this->addComponent($vp, 'heredocCall');
+        PHP;
+    }
+}
+`;
+
+    expect(netteAddComponentRegistrations(source)).toEqual([]);
   });
 });
 

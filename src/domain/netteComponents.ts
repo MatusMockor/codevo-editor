@@ -175,6 +175,18 @@ export interface NetteCreateComponentFactoryContext
   controlClass: string | null;
 }
 
+/** One static `$this->addComponent($component, 'name')` registration. */
+export interface NetteAddComponentRegistration {
+  /** The component class from a preceding `$component = new Foo()` when known. */
+  className: string | null;
+  /** The literal component name registered with Nette. */
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+  /** The offset of the `addComponent` method call. */
+  offset: number;
+}
+
 /** The kind of a component usage found in a Latte template. */
 export type NetteComponentUsageKind =
   | "arrayAccess"
@@ -723,6 +735,38 @@ export function netteCreateComponentFactoryContextAt(
   }
 
   return null;
+}
+
+/**
+ * Returns literal `$this->addComponent($component, 'name')` registrations.
+ * Dynamic component names are intentionally ignored; this models only the
+ * static Nette shape that can be completed and navigated without guessing.
+ */
+export function netteAddComponentRegistrations(
+  phpSource: string,
+): NetteAddComponentRegistration[] {
+  const registrations: NetteAddComponentRegistration[] = [];
+
+  for (const method of phpMethodDefinitions(phpSource)) {
+    if (isPhpOffsetIgnored(phpSource, method.signatureStart)) {
+      continue;
+    }
+
+    const body = phpMethodBodyRange(phpSource, method);
+
+    if (!body) {
+      continue;
+    }
+
+    collectAddComponentRegistrationsInBody(
+      phpSource,
+      body.start,
+      body.end,
+      registrations,
+    );
+  }
+
+  return registrations;
 }
 
 /**
@@ -1655,6 +1699,331 @@ function readThisFactoryCreateExpression(
     propertyNameEnd: property.end,
     propertyNameStart: property.start,
   };
+}
+
+// --- literal addComponent registrations ------------------------------------
+
+function collectAddComponentRegistrationsInBody(
+  source: string,
+  from: number,
+  limit: number,
+  registrations: NetteAddComponentRegistration[],
+): void {
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    if (source[index] !== "$") {
+      continue;
+    }
+
+    const registration = readThisAddComponentRegistration(source, index, limit);
+
+    if (!registration) {
+      continue;
+    }
+
+    const { afterCall, variableName, ...publicRegistration } = registration;
+
+    registrations.push({
+      ...publicRegistration,
+      className: variableName
+        ? localNewClassBeforeOffset(
+            source,
+            from,
+            index,
+            variableName,
+          )
+        : null,
+    });
+    index = afterCall - 1;
+  }
+}
+
+function isPhpOffsetIgnored(source: string, offset: number): boolean {
+  for (let index = 0; index < offset; index += 1) {
+    const skipped = skipPhpIgnored(source, index, offset + 1);
+
+    if (skipped === index) {
+      continue;
+    }
+
+    if (offset < skipped) {
+      return true;
+    }
+
+    index = skipped - 1;
+  }
+
+  return false;
+}
+
+interface ParsedAddComponentRegistration extends NetteAddComponentRegistration {
+  afterCall: number;
+  variableName: string | null;
+}
+
+function readThisAddComponentRegistration(
+  source: string,
+  from: number,
+  limit: number,
+): ParsedAddComponentRegistration | null {
+  const thisVariable = readVariableName(source, from, limit);
+
+  if (!thisVariable || thisVariable.name !== "this") {
+    return null;
+  }
+
+  let index = skipWhitespace(source, thisVariable.next);
+
+  if (source.slice(index, index + 2) !== "->") {
+    return null;
+  }
+
+  index = skipWhitespace(source, index + 2);
+  const method = readIdentifierToken(source, index, limit);
+
+  if (!method || method.name !== "addComponent") {
+    return null;
+  }
+
+  index = skipWhitespace(source, method.next);
+
+  if (source[index] !== "(") {
+    return null;
+  }
+
+  const closeParen = matchingParenClose(source, index);
+
+  if (closeParen === null || closeParen > limit) {
+    return null;
+  }
+
+  const args = argumentSpans(source, index + 1, closeParen - 1);
+  const componentArg = args[0];
+  const nameArg = args[1];
+
+  if (!componentArg || !nameArg) {
+    return null;
+  }
+
+  const name = staticStringIdentifierArgument(source, nameArg.start, nameArg.end);
+
+  if (!name) {
+    return null;
+  }
+
+  const variable = staticVariableArgument(
+    source,
+    componentArg.start,
+    componentArg.end,
+  );
+
+  return {
+    afterCall: closeParen,
+    className: null,
+    name: name.name,
+    nameEnd: name.nameEnd,
+    nameStart: name.nameStart,
+    offset: method.start,
+    variableName: variable,
+  };
+}
+
+function argumentSpans(
+  source: string,
+  from: number,
+  limit: number,
+): Array<{ end: number; start: number }> {
+  const spans: Array<{ end: number; start: number }> = [];
+  let start = from;
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = from; index < limit; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== "," || depth !== 0) {
+      continue;
+    }
+
+    spans.push({ end: index, start });
+    start = index + 1;
+  }
+
+  spans.push({ end: limit, start });
+
+  return spans;
+}
+
+function staticStringIdentifierArgument(
+  source: string,
+  from: number,
+  limit: number,
+): { name: string; nameEnd: number; nameStart: number } | null {
+  const start = skipWhitespace(source, from);
+  const quote = source[start];
+
+  if (quote !== "'" && quote !== '"') {
+    return null;
+  }
+
+  const nameStart = start + 1;
+  let index = nameStart;
+
+  while (index < limit) {
+    const character = source[index];
+
+    if (character === "\\" || character === "\n" || character === "\r") {
+      return null;
+    }
+
+    if (character !== quote) {
+      index += 1;
+      continue;
+    }
+
+    const afterQuote = skipWhitespace(source, index + 1);
+    const name = source.slice(nameStart, index);
+
+    if (afterQuote < limit || !isIdentifier(name)) {
+      return null;
+    }
+
+    return { name, nameEnd: index, nameStart };
+  }
+
+  return null;
+}
+
+function staticVariableArgument(
+  source: string,
+  from: number,
+  limit: number,
+): string | null {
+  const start = skipWhitespace(source, from);
+  const variable = readVariableName(source, start, limit);
+
+  if (!variable) {
+    return null;
+  }
+
+  const end = skipWhitespace(source, variable.next);
+
+  return end >= limit ? variable.name : null;
+}
+
+function localNewClassBeforeOffset(
+  source: string,
+  from: number,
+  limit: number,
+  variableName: string,
+): string | null {
+  let resolved: string | null = null;
+
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    if (source[index] !== "$") {
+      continue;
+    }
+
+    const className = readLocalNewAssignment(
+      source,
+      index,
+      limit,
+      variableName,
+    );
+
+    if (className) {
+      resolved = className;
+    }
+  }
+
+  return resolved;
+}
+
+function readLocalNewAssignment(
+  source: string,
+  from: number,
+  limit: number,
+  variableName: string,
+): string | null {
+  const variable = readVariableName(source, from, limit);
+
+  if (!variable || variable.name !== variableName) {
+    return null;
+  }
+
+  let index = skipWhitespace(source, variable.next);
+
+  if (source[index] !== "=") {
+    return null;
+  }
+
+  index = skipWhitespace(source, index + 1);
+
+  if (!keywordAt(source, index, "new")) {
+    return null;
+  }
+
+  const className = readClassNameToken(
+    source,
+    skipWhitespace(source, index + "new".length),
+    limit,
+  );
+
+  if (!className) {
+    return null;
+  }
+
+  return NON_CLASS_NEW_TARGETS.has(className.replace(/^\\/, "").toLowerCase())
+    ? null
+    : className;
 }
 
 function constructorInjectedPropertyByName(
@@ -2792,6 +3161,10 @@ function skipPhpIgnored(source: string, from: number, limit: number): number {
     return skipQuotedPhpString(source, from, limit);
   }
 
+  if (character === "<" && next === "<" && source[from + 2] === "<") {
+    return skipPhpHeredocString(source, from, limit);
+  }
+
   if (character === "/" && next === "/") {
     return skipLineComment(source, from + 2, limit);
   }
@@ -2805,6 +3178,32 @@ function skipPhpIgnored(source: string, from: number, limit: number): number {
   }
 
   return from;
+}
+
+function skipPhpHeredocString(source: string, from: number, limit: number): number {
+  const header = /^<<<[ \t]*(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))[^\r\n]*(?:\r\n|\n|\r)/.exec(
+    source.slice(from, limit),
+  );
+
+  if (!header) {
+    return from;
+  }
+
+  const label = header[1] ?? header[2] ?? header[3];
+  const bodyStart = from + header[0].length;
+  const terminator = new RegExp(
+    `(?:^|\\r?\\n)[ \\t]*${escapeRegExp(label)}[ \\t]*;?[ \\t]*(?:\\r?\\n|$)`,
+    "g",
+  );
+  terminator.lastIndex = bodyStart;
+
+  const match = terminator.exec(source);
+
+  if (!match) {
+    return limit;
+  }
+
+  return terminator.lastIndex;
 }
 
 function skipQuotedPhpString(source: string, from: number, limit: number): number {
