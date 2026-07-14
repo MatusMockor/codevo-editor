@@ -33,7 +33,7 @@ export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
           createPhpLaravelMethodReturnTypeStrategyAdapter({
             resolvePhpEloquentBuilderModelType:
               resolvePhpFrameworkBuilderModelType,
-            resolvePhpLaravelProjectMorphMapModelType:
+            resolvePhpFrameworkProjectMorphMapModelType:
               resolvePhpFrameworkProjectMorphMapModelType,
           }),
       },

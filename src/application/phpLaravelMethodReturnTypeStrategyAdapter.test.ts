@@ -11,7 +11,7 @@ function makeAdapter(
     resolvePhpEloquentBuilderModelType: vi.fn(
       async () => null as string | null,
     ),
-    resolvePhpLaravelProjectMorphMapModelType: vi.fn(
+    resolvePhpFrameworkProjectMorphMapModelType: vi.fn(
       async () => null as string | null,
     ),
     ...overrides,
@@ -29,10 +29,10 @@ describe("phpLaravelMethodReturnTypeStrategyAdapter", () => {
   });
 
   it("uses the project morph map for declared MorphTo methods returning morphTo", async () => {
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
-    const adapter = makeAdapter({ resolvePhpLaravelProjectMorphMapModelType });
+    const adapter = makeAdapter({ resolvePhpFrameworkProjectMorphMapModelType });
 
     await expect(
       adapter.declaredReturnTypeOverride({
@@ -42,14 +42,14 @@ describe("phpLaravelMethodReturnTypeStrategyAdapter", () => {
     ).resolves.toBe(
       "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Post>",
     );
-    expect(resolvePhpLaravelProjectMorphMapModelType).toHaveBeenCalledTimes(1);
+    expect(resolvePhpFrameworkProjectMorphMapModelType).toHaveBeenCalledTimes(1);
   });
 
   it("uses the project morph map for morphTo method-call expressions", async () => {
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Video",
     );
-    const adapter = makeAdapter({ resolvePhpLaravelProjectMorphMapModelType });
+    const adapter = makeAdapter({ resolvePhpFrameworkProjectMorphMapModelType });
 
     await expect(
       adapter.methodCallReturnType({
@@ -61,7 +61,7 @@ describe("phpLaravelMethodReturnTypeStrategyAdapter", () => {
     ).resolves.toBe(
       "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Video>",
     );
-    expect(resolvePhpLaravelProjectMorphMapModelType).toHaveBeenCalledTimes(1);
+    expect(resolvePhpFrameworkProjectMorphMapModelType).toHaveBeenCalledTimes(1);
   });
 
   it("resolves Eloquent builder terminal methods through the builder model resolver", async () => {

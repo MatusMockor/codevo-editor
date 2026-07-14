@@ -126,7 +126,7 @@ function makeOptions(
       async (_source, _className, inheritedTemplateTypes) =>
         inheritedTemplateTypes ?? new Map<string, string>(),
     ),
-    resolvePhpLaravelProjectMorphMapModelType: vi.fn(async () => null),
+    resolvePhpFrameworkProjectMorphMapModelType: vi.fn(async () => null),
     resolvePhpMethodDeclaredReturnType: (
       _source,
       typeName,
@@ -277,7 +277,7 @@ class Cache
   });
 
   it("uses the project morph map for declared MorphTo methods returning morphTo", async () => {
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
@@ -306,7 +306,7 @@ class Comment
         },
         {
           frameworkRuntime: LARAVEL_RUNTIME,
-          resolvePhpLaravelProjectMorphMapModelType,
+          resolvePhpFrameworkProjectMorphMapModelType,
         },
       ),
     );
@@ -318,7 +318,7 @@ class Comment
     ).resolves.toBe(
       "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Post>",
     );
-    expect(resolvePhpLaravelProjectMorphMapModelType).toHaveBeenCalledTimes(1);
+    expect(resolvePhpFrameworkProjectMorphMapModelType).toHaveBeenCalledTimes(1);
 
     harness.unmount();
   });

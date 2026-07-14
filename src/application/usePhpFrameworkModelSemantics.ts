@@ -146,8 +146,7 @@ export function usePhpFrameworkModelSemantics({
     resolvePhpFrameworkReturnTypeReference,
     resolvePhpGenericTemplateTypesForInheritedClass,
     resolvePhpGenericTemplateTypesForMixinClass,
-    resolvePhpLaravelProjectMorphMapModelType:
-      resolvePhpFrameworkProjectMorphMapModelType,
+    resolvePhpFrameworkProjectMorphMapModelType,
     resolvePhpMethodDeclaredReturnType,
     workspaceDescriptor,
     workspaceRoot,

@@ -10,12 +10,12 @@ export interface PhpLaravelMethodReturnTypeStrategyAdapterDependencies {
     position: EditorPosition,
     expression: string,
   ): Promise<string | null>;
-  resolvePhpLaravelProjectMorphMapModelType(): Promise<string | null>;
+  resolvePhpFrameworkProjectMorphMapModelType(): Promise<string | null>;
 }
 
 export function createPhpLaravelMethodReturnTypeStrategyAdapter({
   resolvePhpEloquentBuilderModelType,
-  resolvePhpLaravelProjectMorphMapModelType,
+  resolvePhpFrameworkProjectMorphMapModelType,
 }: PhpLaravelMethodReturnTypeStrategyAdapterDependencies): PhpMethodReturnTypeStrategy {
   return {
     async declaredReturnTypeOverride({ methodReturnExpressions, returnType }) {
@@ -27,7 +27,7 @@ export function createPhpLaravelMethodReturnTypeStrategyAdapter({
       }
 
       return laravelMorphToReturnType(
-        await resolvePhpLaravelProjectMorphMapModelType(),
+        await resolvePhpFrameworkProjectMorphMapModelType(),
       );
     },
     facadeTargetClassName: laravelFacadeTargetClassName,
@@ -39,7 +39,7 @@ export function createPhpLaravelMethodReturnTypeStrategyAdapter({
     }) {
       if (methodName.toLowerCase() === "morphto" && receiverType) {
         return laravelMorphToReturnType(
-          await resolvePhpLaravelProjectMorphMapModelType(),
+          await resolvePhpFrameworkProjectMorphMapModelType(),
         );
       }
 

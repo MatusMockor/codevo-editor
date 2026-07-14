@@ -68,7 +68,7 @@ export interface UsePhpMethodReturnTypeResolverOptions {
     mixinClassName: string,
     inheritedTemplateTypes?: ReadonlyMap<string, string>,
   ) => Promise<ReadonlyMap<string, string>>;
-  resolvePhpLaravelProjectMorphMapModelType: () => Promise<string | null>;
+  resolvePhpFrameworkProjectMorphMapModelType: () => Promise<string | null>;
   resolvePhpMethodDeclaredReturnType: (
     source: string,
     typeName: string | null,
@@ -90,7 +90,7 @@ export function usePhpMethodReturnTypeResolver({
   resolvePhpFrameworkReturnTypeReference,
   resolvePhpGenericTemplateTypesForInheritedClass,
   resolvePhpGenericTemplateTypesForMixinClass,
-  resolvePhpLaravelProjectMorphMapModelType,
+  resolvePhpFrameworkProjectMorphMapModelType,
   resolvePhpMethodDeclaredReturnType,
   workspaceDescriptor,
   workspaceRoot,
@@ -107,12 +107,12 @@ export function usePhpMethodReturnTypeResolver({
             expression,
           ),
         resolvePhpFrameworkProjectMorphMapModelType:
-          resolvePhpLaravelProjectMorphMapModelType,
+          resolvePhpFrameworkProjectMorphMapModelType,
       }),
     [
       frameworkRuntime,
       resolvePhpEloquentBuilderModelTypeRef,
-      resolvePhpLaravelProjectMorphMapModelType,
+      resolvePhpFrameworkProjectMorphMapModelType,
     ],
   );
 
