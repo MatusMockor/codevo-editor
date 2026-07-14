@@ -3,6 +3,7 @@ import { bladeLaravelReferenceDiagnostics } from "../domain/laravelDiagnostics";
 import { netteLatteReferenceDiagnostics } from "../domain/netteTemplateDiagnostics";
 import type { PhpFrameworkActiveDocumentDiagnosticsDescriptor } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
+import { collectActiveContributions } from "./phpFrameworkContributionRegistry";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
@@ -29,11 +30,13 @@ export function activePhpFrameworkDocumentDiagnosticsProvider({
   document: EditorDocument;
   workspaceRoot: string;
 }): PhpFrameworkActiveDocumentDiagnosticsProvider | null {
-  const descriptors = frameworkRuntime.providers.flatMap((provider) =>
-    (provider.activeDocumentDiagnostics ?? []).filter(
-      (descriptor) => descriptor.language === document.language,
-    ),
-  );
+  const descriptors = collectActiveContributions({
+    frameworkRuntime,
+    select: (provider) =>
+      provider.activeDocumentDiagnostics?.filter(
+        (descriptor) => descriptor.language === document.language,
+      ),
+  });
 
   if (descriptors.length === 0) {
     return null;

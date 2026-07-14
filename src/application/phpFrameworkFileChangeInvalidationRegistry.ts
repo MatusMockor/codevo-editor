@@ -1,4 +1,5 @@
 import type { PhpFrameworkFileChangeInvalidationDescriptor } from "../domain/phpFrameworkProviders";
+import { collectActiveContributions } from "./phpFrameworkContributionRegistry";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface PhpFrameworkFileChangeInvalidationDependencies {
@@ -13,9 +14,10 @@ export function createPhpFrameworkFileChangeInvalidator({
 }: PhpFrameworkFileChangeInvalidationDependencies & {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "providers">;
 }): (rootPath: string, path: string) => void {
-  const descriptors = frameworkRuntime.providers.flatMap(
-    (provider) => provider.fileChangeInvalidations ?? [],
-  );
+  const descriptors = collectActiveContributions({
+    frameworkRuntime,
+    select: (provider) => provider.fileChangeInvalidations,
+  });
 
   return (rootPath, path) => {
     for (const descriptor of descriptors) {

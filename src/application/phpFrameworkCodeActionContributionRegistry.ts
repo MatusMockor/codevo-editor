@@ -3,6 +3,7 @@ import {
   type CreateMissingViewFileCodeAction,
 } from "./phpBladeViewCodeActions";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import { collectActiveContributions } from "./phpFrameworkContributionRegistry";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
 import { phpNettePresenterLinkCodeActions } from "./phpNettePresenterLinkCodeActions";
@@ -32,12 +33,12 @@ export function activePhpFrameworkCodeActions({
 }: PhpFrameworkCodeActionContributionDependencies & {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "providers" | "supports">;
 }): ActivePhpFrameworkCodeActions {
-  const providers = frameworkRuntime.supports("codeActions")
-    ? frameworkRuntime.providers
-    : [];
-  const activeContributions = providers.flatMap((provider) =>
-    phpFrameworkCodeActionContributionsForProvider(provider, dependencies),
-  );
+  const activeContributions = collectActiveContributions({
+    capability: "codeActions",
+    frameworkRuntime,
+    select: (provider) =>
+      phpFrameworkCodeActionContributionsForProvider(provider, dependencies),
+  });
 
   return {
     contributions: activeContributions.map(
