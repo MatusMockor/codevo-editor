@@ -596,11 +596,6 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
     const subscriptionDeps = makeLatteDeps(subscriptionTemplatePath);
     const subscriptionLatte = createLatteIntelligence(() => subscriptionDeps);
-    const integrationConfigPath =
-      "app/modules/integrationModule/config/config.neon";
-    const integrationConfig = await readFileContent(
-      joinPath(EBOX_CRM_ROOT, integrationConfigPath),
-    );
 
     await expect(
       subscriptionLatte.provideLatteDefinition(
@@ -608,13 +603,9 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         offsetInside(subscriptionSource, "formatContentGroups"),
       ),
     ).resolves.toBe(true);
-    expect(subscriptionDeps.openTarget).toHaveBeenLastCalledWith(
-      joinPath(EBOX_CRM_ROOT, integrationConfigPath),
-      positionAtOffset(
-        integrationConfig,
-        integrationConfig.indexOf("formatContentGroups"),
-      ),
-      "formatContentGroups",
+    expect(subscriptionDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
+      "Crm\\IntegrationModule\\Helper\\ContentGroupHelper",
+      "getFormattedContentGroupData",
     );
 
     const apiTokensTemplatePath =
@@ -624,22 +615,15 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
     const apiTokensDeps = makeLatteDeps(apiTokensTemplatePath);
     const apiTokensLatte = createLatteIntelligence(() => apiTokensDeps);
-    const applicationConfigPath =
-      "app/modules/applicationModule/config/config.neon";
-    const applicationConfig = await readFileContent(
-      joinPath(EBOX_CRM_ROOT, applicationConfigPath),
-    );
-
     await expect(
       apiTokensLatte.provideLatteDefinition(
         apiTokensSource,
         offsetInside(apiTokensSource, "userDate"),
       ),
     ).resolves.toBe(true);
-    expect(apiTokensDeps.openTarget).toHaveBeenLastCalledWith(
-      joinPath(EBOX_CRM_ROOT, applicationConfigPath),
-      positionAtOffset(applicationConfig, applicationConfig.indexOf("userDate")),
-      "userDate",
+    expect(apiTokensDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
+      "Crm\\ApplicationModule\\Helpers\\UserDateHelper",
+      "process",
     );
   });
 

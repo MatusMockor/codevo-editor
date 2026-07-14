@@ -80,6 +80,19 @@ function filterLoaderConfig(...names: string[]): string {
   ].join("\n");
 }
 
+function neonFilterCallable(source: string, filterName: string) {
+  return {
+    callable: {
+      methodName: "process",
+      methodOffset: source.indexOf("process", source.indexOf(filterName)),
+      serviceName: "helper",
+      serviceOffset: source.indexOf("helper", source.indexOf(filterName)),
+    },
+    methodName: "process",
+    serviceName: "helper",
+  };
+}
+
 function latteExtensionSource(...names: string[]): string {
   return [
     "<?php",
@@ -144,16 +157,19 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
+        ...neonFilterCallable(appConfig, "gravatar"),
         name: "gravatar",
         offset: appConfig.indexOf("gravatar"),
         path: `${ROOT}/app/modules/applicationModule/config/config.neon`,
       },
       {
+        ...neonFilterCallable(appConfig, "userDate"),
         name: "userDate",
         offset: appConfig.indexOf("userDate"),
         path: `${ROOT}/app/modules/applicationModule/config/config.neon`,
       },
       {
+        ...neonFilterCallable(usersConfig, "userLabel"),
         name: "userLabel",
         offset: usersConfig.indexOf("userLabel"),
         path: `${ROOT}/app/modules/usersModule/config/config.neon`,
@@ -281,6 +297,7 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
+        ...neonFilterCallable(configSource, "money"),
         name: "money",
         offset: configSource.indexOf("money"),
         path: `${ROOT}/app/config/config.neon`,
@@ -349,6 +366,7 @@ describe("loadLatteFilterRegistrations", () => {
         path: `${ROOT}/app/a/FirstExtension.php`,
       },
       {
+        ...neonFilterCallable(configSource, "neonFilter"),
         name: "neonFilter",
         offset: configSource.indexOf("neonFilter"),
         path: `${ROOT}/app/c/config.neon`,
@@ -371,6 +389,7 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
+        ...neonFilterCallable(firstConfigSource, "firstNeonFilter"),
         name: "firstNeonFilter",
         offset: firstConfigSource.indexOf("firstNeonFilter"),
         path: `${ROOT}/app/a/config.neon`,

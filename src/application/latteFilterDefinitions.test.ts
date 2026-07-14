@@ -9,6 +9,12 @@ const CONFIG_SOURCE = `services:
     setup:
       - addFilter('UserDate', [@self, format])
 `;
+const CALLABLE_CONFIG_SOURCE = `services:
+  userDateFilter:
+    class: App\\Filters\\UserDateFilter
+    setup:
+      - addFilter('UserDate', [@userDateFilter, format])
+`;
 const EXTENSION_SOURCE = `<?php
 final class AppLatteExtension extends Latte\\Extension
 {
@@ -47,6 +53,7 @@ function makeContext({
 
   return {
     deps: {
+      openPhpMethodTarget: vi.fn(async () => true),
       openTarget: vi.fn(async () => true),
       readFileContent: vi.fn(async () => configSource),
     },
@@ -74,6 +81,96 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/config/common.neon",
+      { column: 20, lineNumber: 4 },
+      "UserDate",
+    );
+    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+  });
+
+  it("opens a same-file NEON filter callable service method when metadata is available", async () => {
+    const context = makeContext({ configSource: CALLABLE_CONFIG_SOURCE });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        methodName: "format",
+        name: "UserDate",
+        offset: CALLABLE_CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/common.neon",
+        serviceName: "userDateFilter",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("opens an @self NEON filter callable using the owning service class", async () => {
+    const context = makeContext();
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callable: {
+          methodName: "format",
+          serviceClassName: "App\\Filters\\UserDateFilter",
+          serviceName: "self",
+        },
+        name: "UserDate",
+        offset: CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/common.neon",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the registration target when a NEON callable method cannot be opened", async () => {
+    const context = makeContext();
+    context.deps.openPhpMethodTarget = vi.fn(async () => false);
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        methodName: "format",
+        name: "UserDate",
+        offset: CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/common.neon",
+        serviceName: "missingFilter",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
     expect(context.deps.openTarget).toHaveBeenCalledWith(
       "/ws/app/config/common.neon",
       { column: 20, lineNumber: 4 },

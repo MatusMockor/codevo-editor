@@ -4,8 +4,13 @@ import {
   type LatteFilterReference,
 } from "./latteExpressionDetection";
 import type { LatteFilterRegistrationTarget } from "./latteFilterDiscovery";
+import { neonServiceTypeInSource } from "./netteNeonConfigFacts";
 
 export interface LatteFilterDefinitionDependencies {
+  openPhpMethodTarget(
+    className: string,
+    methodName: string,
+  ): Promise<boolean>;
   openTarget(
     path: string,
     position: EditorPosition,
@@ -60,6 +65,20 @@ export async function resolveLatteFilterDefinition(
     return false;
   }
 
+  const methodTargetOpened = await openLatteNeonCallableMethodTarget(
+    context,
+    target,
+    targetSource,
+  );
+
+  if (methodTargetOpened) {
+    return true;
+  }
+
+  if (!context.isRequestedRootActive()) {
+    return false;
+  }
+
   const targetOffset = target.callableOffset ?? target.offset;
 
   return context.deps.openTarget(
@@ -67,6 +86,33 @@ export async function resolveLatteFilterDefinition(
     editorPositionAtOffset(targetSource, targetOffset),
     target.name,
   );
+}
+
+async function openLatteNeonCallableMethodTarget(
+  context: LatteFilterDefinitionContext,
+  target: LatteFilterRegistrationTarget,
+  targetSource: string,
+): Promise<boolean> {
+  const methodName = target.methodName ?? target.callable?.methodName;
+  const serviceClassName =
+    target.serviceClassName ?? target.callable?.serviceClassName;
+  const serviceName = target.serviceName ?? target.callable?.serviceName;
+
+  if (!methodName) {
+    return false;
+  }
+
+  const serviceType = serviceClassName
+    ? serviceClassName
+    : serviceName
+      ? neonServiceTypeInSource(targetSource, serviceName)
+      : null;
+
+  if (!serviceType) {
+    return false;
+  }
+
+  return context.deps.openPhpMethodTarget(serviceType, methodName);
 }
 
 function editorPositionAtOffset(source: string, offset: number): EditorPosition {

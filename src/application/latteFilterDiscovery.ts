@@ -14,9 +14,19 @@ export interface LatteFilterDiscoveryDependencies {
 
 export interface LatteFilterRegistrationTarget {
   callableOffset?: number;
+  callable?: LatteFilterRegistrationCallableTarget;
+  methodName?: string;
   name: string;
   offset: number;
   path: string;
+  serviceClassName?: string;
+  serviceName?: string;
+}
+
+export interface LatteFilterRegistrationCallableTarget {
+  methodName: string;
+  serviceClassName?: string;
+  serviceName: string;
 }
 
 export interface LatteFilterCacheEntry {
@@ -154,7 +164,10 @@ async function scanLatteFilterRegistrations(
         continue;
       }
 
-      registrationsByName.set(registration.name, { ...registration, path });
+      registrationsByName.set(
+        registration.name,
+        latteFilterRegistrationTarget(registration, path),
+      );
     }
   }
 
@@ -184,7 +197,10 @@ async function scanLatteFilterRegistrations(
         continue;
       }
 
-      registrationsByName.set(registration.name, { ...registration, path });
+      registrationsByName.set(
+        registration.name,
+        latteFilterRegistrationTarget(registration, path),
+      );
     }
   }
 
@@ -201,6 +217,32 @@ async function scanLatteFilterRegistrations(
   };
 
   return registrations;
+}
+
+function latteFilterRegistrationTarget(
+  registration: {
+    callable?: LatteFilterRegistrationCallableTarget;
+    callableOffset?: number;
+    methodName?: string;
+    name: string;
+    offset: number;
+    serviceClassName?: string;
+    serviceName?: string;
+  },
+  path: string,
+): LatteFilterRegistrationTarget {
+  const methodName = registration.methodName ?? registration.callable?.methodName;
+  const serviceClassName =
+    registration.serviceClassName ?? registration.callable?.serviceClassName;
+  const serviceName = registration.serviceName ?? registration.callable?.serviceName;
+
+  return {
+    ...registration,
+    path,
+    ...(methodName === undefined ? {} : { methodName }),
+    ...(serviceClassName === undefined ? {} : { serviceClassName }),
+    ...(serviceName === undefined ? {} : { serviceName }),
+  };
 }
 
 async function collectLatteFilterSourcePaths(
