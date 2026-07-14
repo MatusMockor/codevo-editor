@@ -152,6 +152,40 @@ $probe;
 `;
 const POSITION = positionAfter(SOURCE, "$probe");
 
+function netteRecencyPresenterSource(propertySetup: string): string {
+  return `<?php
+namespace App\\Presenters;
+
+use App\\Storage\\IRecencyStorage;
+
+final class DashboardPresenter
+{
+${propertySetup}
+
+    public function show(): void
+    {
+        $this->recencyStorage->latest();
+    }
+}
+`;
+}
+
+function netteResolverOptions(
+  overrides: Partial<HookOptions> = {},
+): HookOptions {
+  return makeOptions({
+    frameworkRuntime: NETTE_RUNTIME,
+    resolvePhpSemanticTypeReference: (_source, typeName) => {
+      if (typeName === "IRecencyStorage") {
+        return "App\\Storage\\IRecencyStorage";
+      }
+
+      return resolveClassReference(_source, typeName);
+    },
+    ...overrides,
+  });
+}
+
 describe("usePhpExpressionTypeResolver", () => {
   it("resolves model factories and builder fluent methods to Builder", async () => {
     const calls: Array<[string, string, number | undefined]> = [];
@@ -994,65 +1028,29 @@ $reporter->table('events');
   it.each([
     [
       "typed property",
-      `<?php
-namespace App\\Presenters;
-
-use App\\Storage\\IRecencyStorage;
-
-final class DashboardPresenter
-{
+      netteRecencyPresenterSource(`
     private IRecencyStorage $recencyStorage;
-
-    public function show(): void
-    {
-        $this->recencyStorage->latest();
-    }
-}
-`,
+`),
     ],
     [
       "promoted constructor property",
-      `<?php
-namespace App\\Presenters;
-
-use App\\Storage\\IRecencyStorage;
-
-final class DashboardPresenter
-{
+      netteRecencyPresenterSource(`
     public function __construct(
         private IRecencyStorage $recencyStorage,
     ) {
     }
-
-    public function show(): void
-    {
-        $this->recencyStorage->latest();
-    }
-}
-`,
+`),
     ],
     [
       "constructor-assigned property",
-      `<?php
-namespace App\\Presenters;
-
-use App\\Storage\\IRecencyStorage;
-
-final class DashboardPresenter
-{
+      netteRecencyPresenterSource(`
     private $recencyStorage;
 
     public function __construct(IRecencyStorage $recencyStorage)
     {
         $this->recencyStorage = $recencyStorage;
     }
-
-    public function show(): void
-    {
-        $this->recencyStorage->latest();
-    }
-}
-`,
+`),
     ],
   ])(
     "uses a Nette-bound concrete service for a %s interface method return",
@@ -1070,17 +1068,9 @@ final class DashboardPresenter
           : null,
       );
       const harness = renderHook(
-        makeOptions({
-          frameworkRuntime: NETTE_RUNTIME,
+        netteResolverOptions({
           resolvePhpFrameworkBoundConcrete,
           resolvePhpMethodReturnType,
-          resolvePhpSemanticTypeReference: (_source, typeName) => {
-            if (typeName === "IRecencyStorage") {
-              return "App\\Storage\\IRecencyStorage";
-            }
-
-            return resolveClassReference(_source, typeName);
-          },
         }),
       );
 
@@ -1114,24 +1104,12 @@ final class DashboardPresenter
   );
 
   it("keeps a Nette interface receiver when no concrete binding is resolved", async () => {
-    const source = `<?php
-namespace App\\Presenters;
-
-use App\\Storage\\IRecencyStorage;
-
-final class DashboardPresenter
-{
+    const source = netteRecencyPresenterSource(`
     public function __construct(
         private IRecencyStorage $recencyStorage,
     ) {
     }
-
-    public function show(): void
-    {
-        $this->recencyStorage->latest();
-    }
-}
-`;
+`);
     const position = positionAfter(source, "$this->recencyStorage->");
     const resolvePhpFrameworkBoundConcrete = vi.fn(async () => null);
     const resolvePhpMethodReturnType = vi.fn(async (className: string) =>
@@ -1140,17 +1118,9 @@ final class DashboardPresenter
         : null,
     );
     const harness = renderHook(
-      makeOptions({
-        frameworkRuntime: NETTE_RUNTIME,
+      netteResolverOptions({
         resolvePhpFrameworkBoundConcrete,
         resolvePhpMethodReturnType,
-        resolvePhpSemanticTypeReference: (_source, typeName) => {
-          if (typeName === "IRecencyStorage") {
-            return "App\\Storage\\IRecencyStorage";
-          }
-
-          return resolveClassReference(_source, typeName);
-        },
       }),
     );
 
@@ -1179,24 +1149,12 @@ final class DashboardPresenter
   });
 
   it("falls back to the interface return when a Nette-bound concrete has no method type", async () => {
-    const source = `<?php
-namespace App\\Presenters;
-
-use App\\Storage\\IRecencyStorage;
-
-final class DashboardPresenter
-{
+    const source = netteRecencyPresenterSource(`
     public function __construct(
         private IRecencyStorage $recencyStorage,
     ) {
     }
-
-    public function show(): void
-    {
-        $this->recencyStorage->latest();
-    }
-}
-`;
+`);
     const position = positionAfter(source, "$this->recencyStorage->");
     const resolvePhpFrameworkBoundConcrete = vi.fn(
       async () => "App\\Storage\\RedisRecencyStorage",
@@ -1207,17 +1165,9 @@ final class DashboardPresenter
         : null,
     );
     const harness = renderHook(
-      makeOptions({
-        frameworkRuntime: NETTE_RUNTIME,
+      netteResolverOptions({
         resolvePhpFrameworkBoundConcrete,
         resolvePhpMethodReturnType,
-        resolvePhpSemanticTypeReference: (_source, typeName) => {
-          if (typeName === "IRecencyStorage") {
-            return "App\\Storage\\IRecencyStorage";
-          }
-
-          return resolveClassReference(_source, typeName);
-        },
       }),
     );
 
