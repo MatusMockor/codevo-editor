@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   type IntelligenceMode,
   type WorkspaceDescriptor,
@@ -8,12 +9,17 @@ import {
   type UsePhpCodeActionsResult,
 } from "./usePhpCodeActions";
 import { usePhpInheritedMemberCollector } from "./usePhpInheritedMemberCollector";
-import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
+import {
+  activePhpFrameworkCodeActions,
+  type ActivePhpFrameworkCodeActions,
+} from "./phpFrameworkCodeActionContributionRegistry";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 interface UsePhpCodeActionProviderOptions {
   activeDocumentPath: string | null;
+  collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
   currentWorkspaceRootRef: { readonly current: string | null };
-  frameworkCodeActionContributions: readonly PhpFrameworkCodeActionContribution[];
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "providers" | "supports">;
   getPhpDocumentSyncVersion: (rootPath: string, path: string) => number | null;
   intelligenceMode: IntelligenceMode;
   projectSymbolSearch: ProjectSymbolSearchGateway;
@@ -25,10 +31,16 @@ interface UsePhpCodeActionProviderOptions {
   workspaceRoot: string | null;
 }
 
+export interface UsePhpCodeActionProviderResult
+  extends UsePhpCodeActionsResult {
+  createMissingBladeViewCodeAction: ActivePhpFrameworkCodeActions["createMissingBladeViewCodeAction"];
+}
+
 export function usePhpCodeActionProvider({
   activeDocumentPath,
+  collectViewTargets,
   currentWorkspaceRootRef,
-  frameworkCodeActionContributions,
+  frameworkRuntime,
   getPhpDocumentSyncVersion,
   intelligenceMode,
   projectSymbolSearch,
@@ -38,7 +50,7 @@ export function usePhpCodeActionProvider({
   resolvePhpClassSourcePaths,
   workspaceDescriptor,
   workspaceRoot,
-}: UsePhpCodeActionProviderOptions): UsePhpCodeActionsResult {
+}: UsePhpCodeActionProviderOptions): UsePhpCodeActionProviderResult {
   const {
     collectPhpAbstractMembersToImplement,
     collectPhpOverridableParentMethods,
@@ -46,7 +58,20 @@ export function usePhpCodeActionProvider({
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
   });
-  return usePhpCodeActions({
+  const {
+    contributions: frameworkCodeActionContributions,
+    createMissingBladeViewCodeAction,
+  } = useMemo(
+    () =>
+      activePhpFrameworkCodeActions({
+        collectViewTargets,
+        frameworkRuntime,
+        readTestFileIfExists,
+        workspaceRoot,
+      }),
+    [collectViewTargets, frameworkRuntime, readTestFileIfExists, workspaceRoot],
+  );
+  const { providePhpCodeActions } = usePhpCodeActions({
     activeDocumentPath,
     collectPhpAbstractMembersToImplement,
     collectPhpOverridableParentMethods,
@@ -61,4 +86,6 @@ export function usePhpCodeActionProvider({
     workspaceDescriptor,
     workspaceRoot,
   });
+
+  return { createMissingBladeViewCodeAction, providePhpCodeActions };
 }

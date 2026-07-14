@@ -158,7 +158,6 @@ export type {
   PhpCodeActionNewFile,
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
-import { activePhpFrameworkCodeActions } from "./phpFrameworkCodeActionContributionRegistry";
 import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
 import {
   shouldApplyClassEditAfterWrite,
@@ -6513,24 +6512,6 @@ export function useWorkbenchController(
       workspaceRoot,
     });
 
-  const {
-    contributions: phpFrameworkCodeActionContributions,
-    createMissingBladeViewCodeAction,
-  } = useMemo(
-    () =>
-      activePhpFrameworkCodeActions({
-        collectViewTargets: collectViewTargets,
-        frameworkRuntime: phpFrameworkRuntimeContext,
-        readTestFileIfExists,
-        workspaceRoot,
-      }),
-    [
-      collectViewTargets,
-      phpFrameworkRuntimeContext,
-      readTestFileIfExists,
-      workspaceRoot,
-    ],
-  );
   const getPhpDocumentSyncVersion = useCallback(
     (rootPath: string, path: string): number | null =>
       documentVersionsRef.current[
@@ -6543,20 +6524,22 @@ export function useWorkbenchController(
       documentsRef.current[path]?.content ?? null,
     [],
   );
-  const { providePhpCodeActions } = usePhpCodeActionProvider({
-    activeDocumentPath: activeDocument?.path ?? null,
-    currentWorkspaceRootRef,
-    frameworkCodeActionContributions: phpFrameworkCodeActionContributions,
-    getPhpDocumentSyncVersion,
-    intelligenceMode,
-    projectSymbolSearch,
-    readNavigationFileContent,
-    readOpenDocumentContent,
-    readTestFileIfExists,
-    resolvePhpClassSourcePaths,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
+  const { createMissingBladeViewCodeAction, providePhpCodeActions } =
+    usePhpCodeActionProvider({
+      activeDocumentPath: activeDocument?.path ?? null,
+      collectViewTargets,
+      currentWorkspaceRootRef,
+      frameworkRuntime: phpFrameworkRuntimeContext,
+      getPhpDocumentSyncVersion,
+      intelligenceMode,
+      projectSymbolSearch,
+      readNavigationFileContent,
+      readOpenDocumentContent,
+      readTestFileIfExists,
+      resolvePhpClassSourcePaths,
+      workspaceDescriptor,
+      workspaceRoot,
+    });
 
   const { openPhpClassTarget } = usePhpClassTargetNavigation({
     activeDocument,

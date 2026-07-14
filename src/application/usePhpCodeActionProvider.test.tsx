@@ -4,11 +4,12 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
-import { activePhpFrameworkCodeActions } from "./phpFrameworkCodeActionContributionRegistry";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import type { UsePhpCodeActionsResult } from "./usePhpCodeActions";
-import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
+import {
+  usePhpCodeActionProvider,
+  type UsePhpCodeActionProviderResult,
+} from "./usePhpCodeActionProvider";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -25,8 +26,9 @@ type HookOptions = Parameters<typeof usePhpCodeActionProvider>[0];
 function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
   return {
     activeDocumentPath: `${ROOT}/app/Http/Controllers/OrderController.php`,
+    collectViewTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
-    frameworkCodeActionContributions: [],
+    frameworkRuntime: LARAVEL_RUNTIME,
     getPhpDocumentSyncVersion: vi.fn(() => null),
     intelligenceMode: "fullSmart",
     projectSymbolSearch: {
@@ -45,7 +47,7 @@ function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
 function renderHook(options: HookOptions) {
   const container = document.createElement("div");
   const root = createRoot(container);
-  const captured: { api: UsePhpCodeActionsResult | null } = {
+  const captured: { api: UsePhpCodeActionProviderResult | null } = {
     api: null,
   };
 
@@ -58,7 +60,7 @@ function renderHook(options: HookOptions) {
     root.render(<Harness dependencies={options} />);
   });
 
-  const api = (): UsePhpCodeActionsResult => {
+  const api = (): UsePhpCodeActionProviderResult => {
     if (!captured.api) {
       throw new Error("hook not mounted");
     }
@@ -187,14 +189,10 @@ class OrderController
 }
 `;
     const start = source.indexOf("orders.show");
-    const { contributions } = activePhpFrameworkCodeActions({
-      collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
-      frameworkRuntime: LARAVEL_RUNTIME,
-      readTestFileIfExists: vi.fn(async () => null),
-      workspaceRoot: ROOT,
-    });
     const harness = renderHook(
-      makeOptions({ frameworkCodeActionContributions: contributions }),
+      makeOptions({
+        collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
+      }),
     );
 
     try {
