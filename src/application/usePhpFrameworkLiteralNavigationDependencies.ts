@@ -1,13 +1,15 @@
-import { useCallback, useMemo } from "react";
-import type { FileEntry } from "../domain/workspace";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { findInertiaComponentTarget as findLaravelInertiaComponentTarget } from "./inertiaComponentTarget";
-import { findNetteRedrawControlSnippetDefinitionTarget } from "./netteAjaxSnippetDefinitions";
+import { useMemo } from "react";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLiteralNavigation";
+import {
+  phpFrameworkLiteralNavigationDependencyExtrasForProviders,
+  usePhpFrameworkLiteralNavigationDependencyAdapterResults,
+  type PhpFrameworkLiteralNavigationDependencyAdapterHookDependencies,
+} from "./phpFrameworkLiteralNavigationDependencyAdapters";
 
-export interface PhpFrameworkLiteralNavigationDependencyHookDependencies {
+export interface PhpFrameworkLiteralNavigationDependencyHookDependencies
+  extends PhpFrameworkLiteralNavigationDependencyAdapterHookDependencies {
   collectNamedRouteTargets: PhpFrameworkLiteralNavigationDependencies["collectNamedRouteTargets"];
-  currentWorkspaceRootRef: { readonly current: string | null };
   findAuthGuardTarget: NonNullable<
     PhpFrameworkLiteralNavigationDependencies["findAuthGuardTarget"]
   >;
@@ -42,11 +44,7 @@ export interface PhpFrameworkLiteralNavigationDependencyHookDependencies {
   >;
   findTranslationTarget: PhpFrameworkLiteralNavigationDependencies["findTranslationTarget"];
   findViewTarget: PhpFrameworkLiteralNavigationDependencies["findViewTarget"];
-  joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
-  readNavigationFileContent: (path: string) => Promise<string>;
-  readWorkspaceDirectory: (path: string) => Promise<FileEntry[]>;
-  relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
-  workspaceRoot: string | null;
+  providers: readonly PhpFrameworkProvider[];
 }
 
 export function usePhpFrameworkLiteralNavigationDependencies({
@@ -67,59 +65,27 @@ export function usePhpFrameworkLiteralNavigationDependencies({
   findTranslationTarget,
   findViewTarget,
   joinWorkspacePath,
+  providers,
   readNavigationFileContent,
   readWorkspaceDirectory,
   relativeWorkspacePath,
   workspaceRoot,
 }: PhpFrameworkLiteralNavigationDependencyHookDependencies): PhpFrameworkLiteralNavigationDependencies {
-  const findInertiaComponentTarget = useCallback(
-    (componentName: string) =>
-      findLaravelInertiaComponentTarget(componentName, {
-        currentWorkspaceRootRef,
-        readDirectory: readWorkspaceDirectory,
-      }),
-    [currentWorkspaceRootRef, readWorkspaceDirectory],
-  );
-
-  const findNetteRedrawControlSnippetTarget = useCallback(
-    async (currentPath: string, snippetName: string) => {
-      const requestedRoot = workspaceRoot;
-
-      if (
-        !requestedRoot ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
-        return null;
-      }
-
-      return findNetteRedrawControlSnippetDefinitionTarget(
-        {
-          currentPhpRelativePath: relativeWorkspacePath(
-            requestedRoot,
-            currentPath,
-          ),
-          deps: {
-            joinPath: joinWorkspacePath,
-            readFileContent: readNavigationFileContent,
-          },
-          isRequestedRootActive: () =>
-            workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            ),
-          requestedRoot,
-        },
-        snippetName,
-      );
-    },
-    [
+  const adapterResults = usePhpFrameworkLiteralNavigationDependencyAdapterResults(
+    {
       currentWorkspaceRootRef,
       joinWorkspacePath,
       readNavigationFileContent,
+      readWorkspaceDirectory,
       relativeWorkspacePath,
       workspaceRoot,
-    ],
+    },
   );
+  const providerSpecificDependencies =
+    phpFrameworkLiteralNavigationDependencyExtrasForProviders(
+      providers,
+      adapterResults,
+    );
 
   return useMemo(
     () => ({
@@ -130,16 +96,15 @@ export function usePhpFrameworkLiteralNavigationDependencies({
       findConfigTarget,
       findDatabaseConnectionTarget,
       findEnvTarget,
-      findInertiaComponentTarget,
       findLogChannelTarget,
       findMailMailerTarget,
-      findNetteRedrawControlSnippetTarget,
       findPasswordBrokerTarget,
       findQueueConnectionTarget,
       findRedisConnectionTarget,
       findStorageDiskTarget,
       findTranslationTarget,
       findViewTarget,
+      ...providerSpecificDependencies,
     }),
     [
       collectNamedRouteTargets,
@@ -149,11 +114,10 @@ export function usePhpFrameworkLiteralNavigationDependencies({
       findConfigTarget,
       findDatabaseConnectionTarget,
       findEnvTarget,
-      findInertiaComponentTarget,
       findLogChannelTarget,
       findMailMailerTarget,
-      findNetteRedrawControlSnippetTarget,
       findPasswordBrokerTarget,
+      providerSpecificDependencies,
       findQueueConnectionTarget,
       findRedisConnectionTarget,
       findStorageDiskTarget,

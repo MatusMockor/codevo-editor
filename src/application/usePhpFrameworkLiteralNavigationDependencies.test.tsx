@@ -3,6 +3,10 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { FileEntry } from "../domain/workspace";
 import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLiteralNavigation";
 import {
@@ -58,6 +62,7 @@ function makeDeps(
     findTranslationTarget: vi.fn(async () => null),
     findViewTarget: vi.fn(async () => null),
     joinWorkspacePath,
+    providers: [],
     readNavigationFileContent: vi.fn(async () => ""),
     readWorkspaceDirectory: vi.fn(async () => []),
     relativeWorkspacePath,
@@ -107,18 +112,19 @@ function renderHook(
 }
 
 describe("usePhpFrameworkLiteralNavigationDependencies", () => {
-  it("wires Laravel literal dependencies and resolves Inertia component files", async () => {
-    const componentPath = `${ROOT}/resources/js/Pages/Users/Index.vue`;
-    const readWorkspaceDirectory = vi.fn(async (path: string) =>
-      path === `${ROOT}/resources/js/Pages/Users` ? [fileEntry(componentPath)] : [],
-    );
-    const deps = makeDeps({ readWorkspaceDirectory });
+  it("forwards common literal dependencies without provider-specific extras", () => {
+    const deps = makeDeps();
     const harness = renderHook(deps);
 
     expect(harness.api().collectNamedRouteTargets).toBe(
       deps.collectNamedRouteTargets,
     );
     expect(harness.api().findConfigTarget).toBe(deps.findConfigTarget);
+    expect(harness.api().findEnvTarget).toBe(deps.findEnvTarget);
+    expect(harness.api().findTranslationTarget).toBe(
+      deps.findTranslationTarget,
+    );
+    expect(harness.api().findViewTarget).toBe(deps.findViewTarget);
     expect(harness.api().findAuthGuardTarget).toBe(
       deps.findAuthGuardTarget,
     );
@@ -149,6 +155,28 @@ describe("usePhpFrameworkLiteralNavigationDependencies", () => {
     expect(harness.api().findStorageDiskTarget).toBe(
       deps.findStorageDiskTarget,
     );
+    expect(harness.api().findInertiaComponentTarget).toBeUndefined();
+    expect(
+      harness.api().findNetteRedrawControlSnippetTarget,
+    ).toBeUndefined();
+
+    harness.unmount();
+  });
+
+  it("wires Laravel Inertia dependencies without Nette redraw extras", async () => {
+    const componentPath = `${ROOT}/resources/js/Pages/Users/Index.vue`;
+    const readWorkspaceDirectory = vi.fn(async (path: string) =>
+      path === `${ROOT}/resources/js/Pages/Users` ? [fileEntry(componentPath)] : [],
+    );
+    const deps = makeDeps({
+      providers: [phpLaravelFrameworkProvider],
+      readWorkspaceDirectory,
+    });
+    const harness = renderHook(deps);
+
+    expect(
+      harness.api().findNetteRedrawControlSnippetTarget,
+    ).toBeUndefined();
     await expect(
       harness.api().findInertiaComponentTarget?.("Users/Index"),
     ).resolves.toEqual({
@@ -174,10 +202,12 @@ describe("usePhpFrameworkLiteralNavigationDependencies", () => {
     });
     const harness = renderHook(
       makeDeps({
+        providers: [phpNetteFrameworkProvider],
         readNavigationFileContent,
       }),
     );
 
+    expect(harness.api().findInertiaComponentTarget).toBeUndefined();
     await expect(
       harness.api().findNetteRedrawControlSnippetTarget?.(
         `${ROOT}/app/modules/mailerModule/Components/MailLogs/MailLogs.php`,
@@ -199,6 +229,7 @@ describe("usePhpFrameworkLiteralNavigationDependencies", () => {
     const harness = renderHook(
       makeDeps({
         currentWorkspaceRootRef: { current: OTHER_ROOT },
+        providers: [phpNetteFrameworkProvider],
         readNavigationFileContent,
       }),
     );

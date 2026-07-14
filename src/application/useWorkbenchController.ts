@@ -7610,6 +7610,7 @@ export function useWorkbenchController(
       findTranslationTarget,
       findViewTarget,
       joinWorkspacePath,
+      providers: activePhpFrameworkProviders,
       readNavigationFileContent,
       readWorkspaceDirectory,
       relativeWorkspacePath,
