@@ -179,18 +179,13 @@ describe("collectNetteRedrawControlSnippetCompletionTargets", () => {
 });
 
 describe("createNetteRedrawControlSnippetTargetCollector", () => {
-  it("does not read templates when legacy Nette state is stale without a provider", async () => {
+  it("does not read templates when the requested root is stale", async () => {
     const readNavigationFileContent = vi.fn(
       async () => "{snippet mailLogslisting}",
     );
-    const staleLegacyRuntime = {
-      isNette: true,
-      hasProvider: vi.fn(() => true),
-    };
 
     const collectTargets = createNetteRedrawControlSnippetTargetCollector({
-      currentWorkspaceRootRef: { current: ROOT },
-      frameworkRuntime: staleLegacyRuntime,
+      currentWorkspaceRootRef: { current: "/other" },
       joinWorkspacePath,
       readNavigationFileContent,
       relativeWorkspacePath,
@@ -198,11 +193,10 @@ describe("createNetteRedrawControlSnippetTargetCollector", () => {
     });
 
     await expect(collectTargets(CURRENT_PHP_PATH)).resolves.toEqual([]);
-    expect(staleLegacyRuntime.hasProvider).not.toHaveBeenCalled();
     expect(readNavigationFileContent).not.toHaveBeenCalled();
   });
 
-  it("reads colocated Latte templates when the Nette provider is active", async () => {
+  it("reads colocated Latte templates for the active requested root", async () => {
     const readNavigationFileContent = vi.fn(async (path: string) => {
       if (path === COLOCATED_TEMPLATE_PATH) {
         return "{snippet mailLogslisting}";
@@ -213,11 +207,6 @@ describe("createNetteRedrawControlSnippetTargetCollector", () => {
 
     const collectTargets = createNetteRedrawControlSnippetTargetCollector({
       currentWorkspaceRootRef: { current: ROOT },
-      frameworkRuntime: {
-        hasProvider: (providerId) => providerId === "nette",
-        supports: (capability) =>
-          capability === "netteRedrawControlSnippetCompletions",
-      },
       joinWorkspacePath,
       readNavigationFileContent,
       relativeWorkspacePath,

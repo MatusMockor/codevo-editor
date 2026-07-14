@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type MutableRefObject } from "react";
+import { useCallback, useMemo } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpMemberAccessCompletionContextAt,
@@ -12,6 +12,11 @@ import {
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpFrameworkMethodCompletionProviderAdapters } from "./phpFrameworkMethodCompletionProviderAdapters";
+import {
+  phpFrameworkMethodCompletionProviderDependencyExtrasForRuntime,
+  usePhpFrameworkMethodCompletionProviderDependencyAdapterResults,
+  type PhpFrameworkMethodCompletionProviderDependencyAdapterHookDependencies,
+} from "./phpFrameworkMethodCompletionProviderDependencyAdapters";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   resolvePhpFrameworkLiteralCompletions,
@@ -21,7 +26,6 @@ import {
   resolvePhpFrameworkScopedCompletions,
   type PhpFrameworkScopedCompletionDependencies,
 } from "./phpFrameworkScopedCompletions";
-import type { NetteSnippetCompletionTarget } from "./netteAjaxSnippetCompletions";
 import { phpTraitThisCompletionContextAt } from "./phpTraitThisCompletionContext";
 
 export interface PhpMethodCompletionProviderDependencies
@@ -29,16 +33,13 @@ export interface PhpMethodCompletionProviderDependencies
       PhpFrameworkLiteralCompletionDependencies,
       "isRequestStillCurrent"
     >,
-    Omit<PhpFrameworkScopedCompletionDependencies, "isRequestStillCurrent"> {
+    Omit<PhpFrameworkScopedCompletionDependencies, "isRequestStillCurrent">,
+    PhpFrameworkMethodCompletionProviderDependencyAdapterHookDependencies {
   activeDocument: EditorDocument | null;
   collectPhpFrameworkRelationCompletionsForClass(
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
-  collectNetteRedrawControlSnippetTargets(
-    currentPhpPath: string,
-  ): Promise<readonly NetteSnippetCompletionTarget[]>;
-  currentWorkspaceRootRef: MutableRefObject<string | null>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
   frameworkRuntime: PhpFrameworkRuntimeContext;
   resolvePhpClassReference(source: string, className: string): string | null;
@@ -92,7 +93,6 @@ export function usePhpMethodCompletionProvider({
   collectPasswordBrokerTargets,
   collectPhpFrameworkRelationCompletionsForClass,
   collectPhpMethodsForClass,
-  collectNetteRedrawControlSnippetTargets,
   collectQueueConnectionTargets,
   collectRedisConnectionTargets,
   collectStorageDiskTargets,
@@ -101,6 +101,9 @@ export function usePhpMethodCompletionProvider({
   currentWorkspaceRootRef,
   ensurePhpFrameworkSourceCollectionsLoaded,
   frameworkRuntime,
+  joinWorkspacePath,
+  readNavigationFileContent,
+  relativeWorkspacePath,
   resolvePhpClassReference,
   resolvePhpFrameworkBuilderModelType,
   resolvePhpExpressionType,
@@ -110,14 +113,27 @@ export function usePhpMethodCompletionProvider({
   workspaceRoot,
 }: PhpMethodCompletionProviderDependencies): PhpMethodCompletionProvider {
   const frameworkProviders = frameworkRuntime.providers;
+  const methodDependencyAdapterResults =
+    usePhpFrameworkMethodCompletionProviderDependencyAdapterResults({
+      currentWorkspaceRootRef,
+      joinWorkspacePath,
+      readNavigationFileContent,
+      relativeWorkspacePath,
+      workspaceRoot,
+    });
+  const methodDependencyExtras =
+    phpFrameworkMethodCompletionProviderDependencyExtrasForRuntime(
+      frameworkRuntime,
+      methodDependencyAdapterResults,
+    );
   const methodCompletionAdapter = useMemo(
     () =>
       createPhpFrameworkMethodCompletionProviderAdapters({
         collectPhpFrameworkRelationCompletionsForClass,
         collectPhpMethodsForClass,
-        collectNetteRedrawControlSnippetTargets,
         ensurePhpFrameworkSourceCollectionsLoaded,
         frameworkRuntime,
+        ...methodDependencyExtras,
         resolvePhpClassReference,
         resolvePhpFrameworkBuilderModelType,
         resolvePhpExpressionType,
@@ -126,9 +142,9 @@ export function usePhpMethodCompletionProvider({
     [
       collectPhpFrameworkRelationCompletionsForClass,
       collectPhpMethodsForClass,
-      collectNetteRedrawControlSnippetTargets,
       ensurePhpFrameworkSourceCollectionsLoaded,
       frameworkRuntime,
+      methodDependencyExtras,
       resolvePhpClassReference,
       resolvePhpFrameworkBuilderModelType,
       resolvePhpExpressionType,
@@ -330,7 +346,6 @@ export function usePhpMethodCompletionProvider({
       collectPasswordBrokerTargets,
       collectPhpFrameworkRelationCompletionsForClass,
       collectPhpMethodsForClass,
-      collectNetteRedrawControlSnippetTargets,
       collectQueueConnectionTargets,
       collectRedisConnectionTargets,
       collectStorageDiskTargets,

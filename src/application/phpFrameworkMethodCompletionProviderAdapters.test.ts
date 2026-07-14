@@ -252,6 +252,37 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
     expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
   });
 
+  it("skips Nette method completions safely when capability extras are absent", async () => {
+    const frameworkRuntime = {
+      hasProvider: vi.fn((providerId: string) => providerId === "nette"),
+      supports: vi.fn(
+        (capability: string) =>
+          capability === "netteRedrawControlSnippetCompletions",
+      ),
+    };
+    const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
+      makeDeps({
+        collectNetteRedrawControlSnippetTargets: undefined,
+        frameworkRuntime,
+      }),
+    );
+    const source = "<?php\n$this->redrawControl('mai');";
+
+    await expect(
+      adapter.literalStringCompletions({
+        activeDocumentPath: "/workspace/app/Presenters/MailerPresenter.php",
+        isRequestStillCurrent: () => true,
+        position: positionAfter(source, "mai"),
+        source,
+      }),
+    ).resolves.toBeNull();
+
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "netteRedrawControlSnippetCompletions",
+    );
+  });
+
   it("keeps stale Nette provider-id runtimes inert without the redraw capability", async () => {
     const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
       {

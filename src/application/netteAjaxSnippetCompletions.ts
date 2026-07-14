@@ -6,7 +6,6 @@ import {
 } from "../domain/netteAjaxSnippets";
 import { componentTemplateCandidatePathsForClass } from "../domain/nettePathResolution";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 
@@ -31,8 +30,6 @@ export interface NetteRedrawControlSnippetTargetCollectorWorkbenchDependencies {
   currentWorkspaceRootRef: {
     readonly current: string | null;
   };
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider"> &
-    Partial<Pick<PhpFrameworkRuntimeContext, "supports">>;
   joinWorkspacePath(rootPath: string, relativePath: string): string;
   readNavigationFileContent(path: string): Promise<string>;
   relativeWorkspacePath(workspaceRoot: string, path: string): string;
@@ -143,7 +140,6 @@ export async function collectNetteRedrawControlSnippetCompletionTargets({
 
 export function createNetteRedrawControlSnippetTargetCollector({
   currentWorkspaceRootRef,
-  frameworkRuntime,
   joinWorkspacePath,
   readNavigationFileContent,
   relativeWorkspacePath,
@@ -156,11 +152,7 @@ export function createNetteRedrawControlSnippetTargetCollector({
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-    if (
-      !requestedRoot ||
-      frameworkRuntime.supports?.("netteRedrawControlSnippetCompletions") !==
-        true
-    ) {
+    if (!requestedRoot || !isRequestedRootActive()) {
       return [];
     }
 

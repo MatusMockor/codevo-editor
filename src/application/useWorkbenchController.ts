@@ -172,9 +172,6 @@ import {
   terminalDirectoryForEntry,
   workspaceRelativePath as contextMenuRelativePath,
 } from "../domain/pathDerivation";
-import {
-  createNetteRedrawControlSnippetTargetCollector,
-} from "./netteAjaxSnippetCompletions";
 
 export type {
   PhpCodeActionDescriptor,
@@ -7476,24 +7473,6 @@ export function useWorkbenchController(
     resolvePhpExpressionType,
   });
 
-  const collectNetteRedrawControlSnippetTargets = useMemo(
-    () =>
-      createNetteRedrawControlSnippetTargetCollector({
-        currentWorkspaceRootRef,
-        frameworkRuntime: phpFrameworkRuntimeContext,
-        joinWorkspacePath,
-        readNavigationFileContent,
-        relativeWorkspacePath,
-        workspaceRoot,
-      }),
-    [
-      currentWorkspaceRootRef,
-      phpFrameworkRuntimeContext,
-      readNavigationFileContent,
-      workspaceRoot,
-    ],
-  );
-
   const { providePhpMethodCompletions } = usePhpMethodCompletionProvider({
     activeDocument,
     collectAuthGuardTargets,
@@ -7510,7 +7489,6 @@ export function useWorkbenchController(
     collectPasswordBrokerTargets,
     collectPhpFrameworkRelationCompletionsForClass,
     collectPhpMethodsForClass,
-    collectNetteRedrawControlSnippetTargets,
     collectQueueConnectionTargets,
     collectRedisConnectionTargets,
     collectStorageDiskTargets,
@@ -7519,6 +7497,9 @@ export function useWorkbenchController(
     currentWorkspaceRootRef,
     ensurePhpFrameworkSourceCollectionsLoaded,
     frameworkRuntime: phpFrameworkRuntimeContext,
+    joinWorkspacePath,
+    readNavigationFileContent,
+    relativeWorkspacePath,
     resolvePhpClassReference,
     resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,

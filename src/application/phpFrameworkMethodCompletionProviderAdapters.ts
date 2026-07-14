@@ -18,7 +18,7 @@ export interface PhpFrameworkMethodCompletionProviderAdapterDependencies {
     className: string,
   ): Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
-  collectNetteRedrawControlSnippetTargets(
+  collectNetteRedrawControlSnippetTargets?(
     currentPhpPath: string,
   ): Promise<readonly NetteSnippetCompletionTarget[]>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
@@ -68,7 +68,7 @@ export function createPhpFrameworkMethodCompletionProviderAdapters({
           })
         : null,
       frameworkRuntime.supports?.("netteRedrawControlSnippetCompletions") ===
-      true
+        true && collectNetteRedrawControlSnippetTargets
         ? createPhpNetteMethodCompletionProviderAdapter({
             collectNetteRedrawControlSnippetTargets,
           })

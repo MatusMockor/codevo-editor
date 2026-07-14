@@ -115,7 +115,6 @@ function makeDeps(
     collectPasswordBrokerTargets: vi.fn(async () => []),
     collectPhpFrameworkRelationCompletionsForClass: vi.fn(async () => []),
     collectPhpMethodsForClass: vi.fn(async () => []),
-    collectNetteRedrawControlSnippetTargets: vi.fn(async () => []),
     collectQueueConnectionTargets: vi.fn(async () => []),
     collectRedisConnectionTargets: vi.fn(async () => []),
     collectStorageDiskTargets: vi.fn(async () => []),
@@ -124,6 +123,13 @@ function makeDeps(
     currentWorkspaceRootRef: { current: ROOT },
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
     frameworkRuntime: LARAVEL_RUNTIME,
+    joinWorkspacePath: (rootPath, relativePath) =>
+      `${rootPath}/${relativePath}`,
+    readNavigationFileContent: vi.fn(async () => ""),
+    relativeWorkspacePath: (workspaceRoot, path) =>
+      path.startsWith(`${workspaceRoot}/`)
+        ? path.slice(workspaceRoot.length + 1)
+        : path,
     resolvePhpClassReference: vi.fn(
       (_source: string, className: string) => `App\\Http\\Controllers\\${className}`,
     ),
@@ -418,18 +424,13 @@ Comment::with('par')->first();
 
   it("provides Nette redrawControl snippet completions from colocated templates", async () => {
     const source = "<?php\n$this->redrawControl('mail');";
-    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
-      {
-        name: "mailLogslisting",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-      },
-      {
-        name: "sidebar",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-      },
-    ]);
+    const readNavigationFileContent = vi.fn(async () =>
+      [
+        "{snippet mailLogslisting}",
+        "{/snippet}",
+        "{snippet sidebar}",
+      ].join("\n"),
+    );
     const deps = makeDeps({
       activeDocument: {
         content: source,
@@ -438,8 +439,8 @@ Comment::with('par')->first();
         path: `${ROOT}/app/modules/mailerModule/Components/MailLogs/MailLogs.php`,
         savedContent: source,
       },
-      collectNetteRedrawControlSnippetTargets,
       frameworkRuntime: NETTE_RUNTIME,
+      readNavigationFileContent,
     });
     const harness = renderHook(deps);
 
@@ -460,8 +461,8 @@ Comment::with('par')->first();
         returnType: null,
       }),
     ]);
-    expect(collectNetteRedrawControlSnippetTargets).toHaveBeenCalledWith(
-      `${ROOT}/app/modules/mailerModule/Components/MailLogs/MailLogs.php`,
+    expect(readNavigationFileContent).toHaveBeenCalledWith(
+      `${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`,
     );
 
     harness.unmount();
@@ -469,16 +470,10 @@ Comment::with('par')->first();
 
   it("does not collect Nette snippets for dynamic redrawControl arguments", async () => {
     const source = "<?php\n$this->redrawControl($name);";
-    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
-      {
-        name: "mailLogslisting",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-      },
-    ]);
+    const readNavigationFileContent = vi.fn(async () => "");
     const deps = makeDeps({
-      collectNetteRedrawControlSnippetTargets,
       frameworkRuntime: NETTE_RUNTIME,
+      readNavigationFileContent,
     });
     const harness = renderHook(deps);
 
@@ -487,23 +482,17 @@ Comment::with('par')->first();
         .api()
         .providePhpMethodCompletions(source, positionAfter(source, "name")),
     ).resolves.toEqual([]);
-    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 
   it("does not collect Nette snippets when Nette is inactive", async () => {
     const source = "<?php\n$this->redrawControl('mai');";
-    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
-      {
-        name: "mailLogslisting",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-      },
-    ]);
+    const readNavigationFileContent = vi.fn(async () => "");
     const deps = makeDeps({
-      collectNetteRedrawControlSnippetTargets,
       frameworkRuntime: GENERIC_RUNTIME,
+      readNavigationFileContent,
     });
     const harness = renderHook(deps);
 
@@ -512,22 +501,15 @@ Comment::with('par')->first();
         .api()
         .providePhpMethodCompletions(source, positionAfter(source, "mai")),
     ).resolves.toEqual([]);
-    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 
   it("does not collect Nette snippets when the Nette profile lacks the provider boundary", async () => {
     const source = "<?php\n$this->redrawControl('mai');";
-    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
-      {
-        name: "mailLogslisting",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-      },
-    ]);
+    const readNavigationFileContent = vi.fn(async () => "");
     const deps = makeDeps({
-      collectNetteRedrawControlSnippetTargets,
       frameworkRuntime: {
         ...NETTE_RUNTIME,
         supports: (capability) =>
@@ -535,6 +517,7 @@ Comment::with('par')->first();
             ? false
             : NETTE_RUNTIME.supports(capability),
       },
+      readNavigationFileContent,
     });
     const harness = renderHook(deps);
 
@@ -543,23 +526,17 @@ Comment::with('par')->first();
         .api()
         .providePhpMethodCompletions(source, positionAfter(source, "mai")),
     ).resolves.toEqual([]);
-    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 
   it("does not collect Nette snippets for Laravel runtimes with redrawControl source", async () => {
     const source = "<?php\n$this->redrawControl('mai');";
-    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
-      {
-        name: "mailLogslisting",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
-      },
-    ]);
+    const readNavigationFileContent = vi.fn(async () => "");
     const deps = makeDeps({
-      collectNetteRedrawControlSnippetTargets,
       frameworkRuntime: LARAVEL_RUNTIME,
+      readNavigationFileContent,
     });
     const harness = renderHook(deps);
 
@@ -568,7 +545,7 @@ Comment::with('par')->first();
         .api()
         .providePhpMethodCompletions(source, positionAfter(source, "mai")),
     ).resolves.toEqual([]);
-    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
 
     harness.unmount();
   });
