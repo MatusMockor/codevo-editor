@@ -823,6 +823,16 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     const source = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
     const deps = makeLatteDeps(templatePath);
     const latte = createLatteIntelligence(() => deps);
+    const gatewayFactoryPath =
+      "app/modules/multiStepperModule/Forms/StepperGatewayFormFactory.php";
+    const gatewayFactory = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, gatewayFactoryPath),
+    );
+    const guardFactoryPath =
+      "app/modules/multiStepperModule/Forms/StepperGuardFormFactory.php";
+    const guardFactory = await readFileContent(
+      joinPath(EBOX_CRM_ROOT, guardFactoryPath),
+    );
 
     const gatewaySubscriptionTypeLinkCompletions =
       await latte.provideLatteCompletions(
@@ -838,6 +848,20 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         label: "subscription_type_link_id",
       }),
     );
+    await expect(
+      latte.provideLatteDefinition(
+        source,
+        offsetInside(source, 'n:name="subscription_type_link_id"'),
+      ),
+    ).resolves.toBe(true);
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, gatewayFactoryPath),
+      positionAtOffset(
+        gatewayFactory,
+        gatewayFactory.indexOf("subscription_type_link_id"),
+      ),
+      "subscription_type_link_id",
+    );
 
     const gatewayJsonCompletions = await latte.provideLatteCompletions(
       source,
@@ -848,6 +872,17 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         detail: "Nette form field",
         label: "gateways_json",
       }),
+    );
+    await expect(
+      latte.provideLatteDefinition(
+        source,
+        offsetInside(source, 'n:name="gateways_json"'),
+      ),
+    ).resolves.toBe(true);
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, gatewayFactoryPath),
+      positionAtOffset(gatewayFactory, gatewayFactory.indexOf("gateways_json")),
+      "gateways_json",
     );
 
     for (const fieldName of ["stepper_id", "guard_id", "type", "config"]) {
@@ -863,6 +898,75 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         }),
       );
     }
+
+    await expect(
+      latte.provideLatteDefinition(
+        source,
+        offsetAfter(source, 'n:name="ty'),
+      ),
+    ).resolves.toBe(true);
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, guardFactoryPath),
+      positionAtOffset(guardFactory, guardFactory.indexOf("'type'") + 1),
+      "type",
+    );
+  });
+
+  it("covers ebox Adyen n:name completion and definition over a public property form factory", async () => {
+    const templatePath =
+      "app/modules/adyenModule/presenters/templates/NotificationModifierAdmin/edit.latte";
+    const factoryPath =
+      "app/modules/adyenModule/Component/NotificationModifierForm/NotificationModifierFormFactory.php";
+    const [source, factory] = await Promise.all([
+      readFileContent(joinPath(EBOX_CRM_ROOT, templatePath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, factoryPath)),
+    ]);
+    const deps = makeLatteDeps(templatePath, {
+      readPhpClassSource: vi.fn(async (className: string) => {
+        const resolvedClassName = className.trim().replace(/^\\+/, "");
+
+        return resolvedClassName ===
+          "Efabrica\\Crm\\AdyenModule\\Component\\NotificationModifierForm\\NotificationModifierFormFactory" ||
+          resolvedClassName === "NotificationModifierFormFactory"
+          ? {
+              path: joinPath(EBOX_CRM_ROOT, factoryPath),
+              source: factory,
+            }
+          : null;
+      }),
+      resolveDeclaredType: (source, typeHint) =>
+        typeHint ? resolvePhpClassName(source, typeHint) : null,
+    });
+    const latte = createLatteIntelligence(() => deps);
+
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offsetAfter(source, 'n:name="where_')),
+    );
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "Nette form field",
+          label: "where_key",
+        }),
+        expect.objectContaining({
+          detail: "Nette form field",
+          label: "where_value",
+        }),
+      ]),
+    );
+
+    await expect(
+      latte.provideLatteDefinition(
+        source,
+        offsetAfter(source, 'n:name="sa'),
+      ),
+    ).resolves.toBe(true);
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, factoryPath),
+      positionAtOffset(factory, factory.indexOf("save")),
+      "save",
+    );
   });
 
   it("covers ebox Template::add() view-data feeding Latte variable and member completion", async () => {

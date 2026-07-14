@@ -1113,11 +1113,31 @@ function readStaticMacroArgument(
   from: number,
   limit: number,
 ): StaticMacroArgument | null {
+  return readStaticMacroArgumentWithTail(source, from, limit, true);
+}
+
+function readStaticMacroLeadingArgument(
+  source: string,
+  from: number,
+  limit: number,
+): StaticMacroArgument | null {
+  return readStaticMacroArgumentWithTail(source, from, limit, false);
+}
+
+function readStaticMacroArgumentWithTail(
+  source: string,
+  from: number,
+  limit: number,
+  requireCleanTail: boolean,
+): StaticMacroArgument | null {
   const index = skipInlineSpaces(source, from, limit);
   const quotedName = readQuotedIdentifier(source, index, limit);
 
   if (quotedName) {
-    if (!staticMacroArgumentHasCleanTail(source, quotedName.end, limit)) {
+    if (
+      requireCleanTail &&
+      !staticMacroArgumentHasCleanTail(source, quotedName.end, limit)
+    ) {
       return null;
     }
 
@@ -1138,7 +1158,7 @@ function readStaticMacroArgument(
     end += 1;
   }
 
-  if (!staticMacroArgumentHasCleanTail(source, end, limit)) {
+  if (requireCleanTail && !staticMacroArgumentHasCleanTail(source, end, limit)) {
     return null;
   }
 
@@ -1380,7 +1400,7 @@ function latteActiveFormMacroAt(
         return;
       }
 
-      const argument = readStaticMacroArgument(
+      const argument = readStaticMacroLeadingArgument(
         source,
         span.expressionStart,
         span.contentEnd,

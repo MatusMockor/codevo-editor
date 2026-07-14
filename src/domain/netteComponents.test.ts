@@ -316,6 +316,18 @@ describe("latteActiveFormComponentAt", () => {
     });
   });
 
+  it("returns the enclosing static {form} macro component with attributes", () => {
+    const source =
+      "{form contactForm class => 'form-horizontal'}\n{input email}\n{/form}";
+    const offset = offsetOf(source, "email", 2);
+
+    expect(latteActiveFormComponentAt(source, offset)).toEqual({
+      name: "contactForm",
+      nameStart: source.indexOf("contactForm"),
+      nameEnd: source.indexOf("contactForm") + "contactForm".length,
+    });
+  });
+
   it("returns null after a {/form} macro", () => {
     const source = "{form contactForm}{/form}\n{input email}";
     const offset = offsetOf(source, "email", 2);
