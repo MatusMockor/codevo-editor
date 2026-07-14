@@ -1,10 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   collectNetteRedrawControlSnippetCompletionTargets,
+  createNetteRedrawControlSnippetTargetCollector,
   latteNetteSnippetNameCompletions,
 } from "./netteAjaxSnippetCompletions";
 
 const ROOT = "/ws";
+const CURRENT_PHP_PATH =
+  "/ws/app/modules/mailerModule/Components/MailLogs/MailLogs.php";
+const CURRENT_PHP_RELATIVE_PATH =
+  "app/modules/mailerModule/Components/MailLogs/MailLogs.php";
+const COLOCATED_TEMPLATE_PATH =
+  "/ws/app/modules/mailerModule/Components/MailLogs/mail_logs.latte";
+const COLOCATED_TEMPLATE_RELATIVE_PATH =
+  "app/modules/mailerModule/Components/MailLogs/mail_logs.latte";
+
+function joinWorkspacePath(root: string, relativePath: string): string {
+  return `${root}/${relativePath}`;
+}
+
+function relativeWorkspacePath(root: string, path: string): string {
+  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+}
 
 describe("latteNetteSnippetNameCompletions", () => {
   it("offers matching snippet names from the current Latte template", () => {
@@ -78,15 +95,11 @@ describe("collectNetteRedrawControlSnippetCompletionTargets", () => {
 
     await expect(
       collectNetteRedrawControlSnippetCompletionTargets({
-        currentPhpRelativePath:
-          "app/modules/mailerModule/Components/MailLogs/MailLogs.php",
+        currentPhpRelativePath: CURRENT_PHP_RELATIVE_PATH,
         deps: {
-          joinPath: (root, relativePath) => `${root}/${relativePath}`,
+          joinPath: joinWorkspacePath,
           readFileContent: vi.fn(async (path: string) => {
-            if (
-              path ===
-              `${ROOT}/app/modules/mailerModule/Components/MailLogs/mail_logs.latte`
-            ) {
+            if (path === COLOCATED_TEMPLATE_PATH) {
               return template;
             }
 
@@ -99,13 +112,11 @@ describe("collectNetteRedrawControlSnippetCompletionTargets", () => {
     ).resolves.toEqual([
       {
         name: "mailLogslisting",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        relativePath: COLOCATED_TEMPLATE_RELATIVE_PATH,
       },
       {
         name: "mailSidebar",
-        relativePath:
-          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+        relativePath: COLOCATED_TEMPLATE_RELATIVE_PATH,
       },
     ]);
   });
@@ -118,7 +129,7 @@ describe("collectNetteRedrawControlSnippetCompletionTargets", () => {
         currentPhpRelativePath:
           "app/modules/mailerModule/presenters/MailPresenter.php",
         deps: {
-          joinPath: (root, relativePath) => `${root}/${relativePath}`,
+          joinPath: joinWorkspacePath,
           readFileContent,
         },
         isRequestedRootActive: () => true,
@@ -126,5 +137,59 @@ describe("collectNetteRedrawControlSnippetCompletionTargets", () => {
       }),
     ).resolves.toEqual([]);
     expect(readFileContent).not.toHaveBeenCalled();
+  });
+});
+
+describe("createNetteRedrawControlSnippetTargetCollector", () => {
+  it("does not read templates when legacy Nette state is stale without a provider", async () => {
+    const readNavigationFileContent = vi.fn(
+      async () => "{snippet mailLogslisting}",
+    );
+    const staleLegacyRuntime = {
+      isNette: true,
+      hasProvider: vi.fn(() => false),
+    };
+
+    const collectTargets = createNetteRedrawControlSnippetTargetCollector({
+      currentWorkspaceRootRef: { current: ROOT },
+      frameworkRuntime: staleLegacyRuntime,
+      joinWorkspacePath,
+      readNavigationFileContent,
+      relativeWorkspacePath,
+      workspaceRoot: ROOT,
+    });
+
+    await expect(collectTargets(CURRENT_PHP_PATH)).resolves.toEqual([]);
+    expect(staleLegacyRuntime.hasProvider).toHaveBeenCalledWith("nette");
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+  });
+
+  it("reads colocated Latte templates when the Nette provider is active", async () => {
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      if (path === COLOCATED_TEMPLATE_PATH) {
+        return "{snippet mailLogslisting}";
+      }
+
+      throw new Error(`Missing file: ${path}`);
+    });
+
+    const collectTargets = createNetteRedrawControlSnippetTargetCollector({
+      currentWorkspaceRootRef: { current: ROOT },
+      frameworkRuntime: { hasProvider: (providerId) => providerId === "nette" },
+      joinWorkspacePath,
+      readNavigationFileContent,
+      relativeWorkspacePath,
+      workspaceRoot: ROOT,
+    });
+
+    await expect(collectTargets(CURRENT_PHP_PATH)).resolves.toEqual([
+      {
+        name: "mailLogslisting",
+        relativePath: COLOCATED_TEMPLATE_RELATIVE_PATH,
+      },
+    ]);
+    expect(readNavigationFileContent).toHaveBeenCalledWith(
+      COLOCATED_TEMPLATE_PATH,
+    );
   });
 });

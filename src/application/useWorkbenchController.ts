@@ -172,7 +172,7 @@ import {
   workspaceRelativePath as contextMenuRelativePath,
 } from "../domain/pathDerivation";
 import {
-  collectNetteRedrawControlSnippetCompletionTargets,
+  createNetteRedrawControlSnippetTargetCollector,
 } from "./netteAjaxSnippetCompletions";
 
 export type {
@@ -7481,32 +7481,19 @@ export function useWorkbenchController(
     resolvePhpExpressionType,
   });
 
-  const collectNetteRedrawControlSnippetTargets = useCallback(
-    async (currentPhpPath: string) => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot || !phpFrameworkRuntimeContext.isNette) {
-        return [];
-      }
-
-      return collectNetteRedrawControlSnippetCompletionTargets({
-        currentPhpRelativePath: relativeWorkspacePath(
-          requestedRoot,
-          currentPhpPath,
-        ),
-        deps: {
-          joinPath: joinWorkspacePath,
-          readFileContent: readNavigationFileContent,
-        },
-        isRequestedRootActive,
-        requestedRoot,
-      });
-    },
+  const collectNetteRedrawControlSnippetTargets = useMemo(
+    () =>
+      createNetteRedrawControlSnippetTargetCollector({
+        currentWorkspaceRootRef,
+        frameworkRuntime: phpFrameworkRuntimeContext,
+        joinWorkspacePath,
+        readNavigationFileContent,
+        relativeWorkspacePath,
+        workspaceRoot,
+      }),
     [
       currentWorkspaceRootRef,
-      phpFrameworkRuntimeContext.isNette,
+      phpFrameworkRuntimeContext,
       readNavigationFileContent,
       workspaceRoot,
     ],

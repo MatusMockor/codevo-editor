@@ -5,6 +5,8 @@ import {
   type NetteSnippetCompletionContext,
 } from "../domain/netteAjaxSnippets";
 import { componentTemplateCandidatePathsForClass } from "../domain/nettePathResolution";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 
@@ -23,6 +25,17 @@ export interface NetteRedrawControlSnippetCompletionTargetCollectorContext {
   deps: NetteRedrawControlSnippetCompletionTargetCollectorDependencies;
   isRequestedRootActive(): boolean;
   requestedRoot: string;
+}
+
+export interface NetteRedrawControlSnippetTargetCollectorWorkbenchDependencies {
+  currentWorkspaceRootRef: {
+    readonly current: string | null;
+  };
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  joinWorkspacePath(rootPath: string, relativePath: string): string;
+  readNavigationFileContent(path: string): Promise<string>;
+  relativeWorkspacePath(workspaceRoot: string, path: string): string;
+  workspaceRoot: string | null;
 }
 
 export function latteNetteSnippetNameCompletions(
@@ -117,6 +130,40 @@ export async function collectNetteRedrawControlSnippetCompletionTargets({
   }
 
   return targets;
+}
+
+export function createNetteRedrawControlSnippetTargetCollector({
+  currentWorkspaceRootRef,
+  frameworkRuntime,
+  joinWorkspacePath,
+  readNavigationFileContent,
+  relativeWorkspacePath,
+  workspaceRoot,
+}: NetteRedrawControlSnippetTargetCollectorWorkbenchDependencies): (
+  currentPhpPath: string,
+) => Promise<NetteSnippetCompletionTarget[]> {
+  return async (currentPhpPath) => {
+    const requestedRoot = workspaceRoot;
+    const isRequestedRootActive = () =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+    if (!requestedRoot || !frameworkRuntime.hasProvider("nette")) {
+      return [];
+    }
+
+    return collectNetteRedrawControlSnippetCompletionTargets({
+      currentPhpRelativePath: relativeWorkspacePath(
+        requestedRoot,
+        currentPhpPath,
+      ),
+      deps: {
+        joinPath: joinWorkspacePath,
+        readFileContent: readNavigationFileContent,
+      },
+      isRequestedRootActive,
+      requestedRoot,
+    });
+  };
 }
 
 function snippetNameCompletions(
