@@ -57,10 +57,6 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
       "goToPhpLaravelBroadcastConnectionDefinition",
     ],
     [
-      { kind: "laravelCacheStoreString", storeName: "redis" },
-      "goToPhpLaravelCacheStoreDefinition",
-    ],
-    [
       { connectionName: "mysql", kind: "laravelDatabaseConnectionString" },
       "goToPhpLaravelDatabaseConnectionDefinition",
     ],
@@ -117,6 +113,13 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
   });
 
   it.each([
+    [
+      { kind: "laravelCacheStoreString", storeName: "redis" },
+      {
+        kind: "cacheStore",
+        storeName: "redis",
+      },
+    ],
     [
       { kind: "laravelConfigString", configKey: "app.name" },
       {

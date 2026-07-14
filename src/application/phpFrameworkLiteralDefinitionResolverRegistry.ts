@@ -22,6 +22,7 @@ export interface PhpFrameworkLiteralNavigationDocument {
 
 export interface PhpFrameworkLiteralNavigationTarget {
   kind:
+    | "cacheStore"
     | "config"
     | "env"
     | "inertia"
@@ -49,6 +50,11 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   findConfigTarget: (
     configKey: string,
   ) => Promise<{ key: string; path: string; position: EditorPosition } | null>;
+  findCacheStoreTarget?: (
+    storeName: string,
+  ) => Promise<
+    { storeName: string; path: string; position: EditorPosition } | null
+  >;
   findEnvTarget: (
     envName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
@@ -89,6 +95,10 @@ export type PhpContextualFrameworkLiteralDefinitionRequest =
   | {
       key: string;
       kind: "config";
+    }
+  | {
+      kind: "cacheStore";
+      storeName: string;
     }
   | {
       kind: "env";
@@ -397,6 +407,27 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
         }
 
         return resolveRouteTarget(request.name, activeDocument, dependencies);
+      },
+    },
+    {
+      id: "laravel.cache-store",
+      resolveContextual: async ({ request }, dependencies) => {
+        if (request.kind !== "cacheStore") {
+          return undefined;
+        }
+
+        const target = await dependencies.findCacheStoreTarget?.(
+          request.storeName,
+        );
+
+        return target
+          ? {
+              kind: "cacheStore",
+              label: target.storeName,
+              path: target.path,
+              position: target.position,
+            }
+          : null;
       },
     },
     {

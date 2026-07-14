@@ -8,6 +8,9 @@ import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLi
 export interface PhpFrameworkLiteralNavigationDependencyHookDependencies {
   collectNamedRouteTargets: PhpFrameworkLiteralNavigationDependencies["collectNamedRouteTargets"];
   currentWorkspaceRootRef: { readonly current: string | null };
+  findCacheStoreTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findCacheStoreTarget"]
+  >;
   findConfigTarget: PhpFrameworkLiteralNavigationDependencies["findConfigTarget"];
   findEnvTarget: PhpFrameworkLiteralNavigationDependencies["findEnvTarget"];
   findTranslationTarget: PhpFrameworkLiteralNavigationDependencies["findTranslationTarget"];
@@ -22,6 +25,7 @@ export interface PhpFrameworkLiteralNavigationDependencyHookDependencies {
 export function usePhpFrameworkLiteralNavigationDependencies({
   collectNamedRouteTargets,
   currentWorkspaceRootRef,
+  findCacheStoreTarget,
   findConfigTarget,
   findEnvTarget,
   findTranslationTarget,
@@ -84,6 +88,7 @@ export function usePhpFrameworkLiteralNavigationDependencies({
   return useMemo(
     () => ({
       collectNamedRouteTargets,
+      findCacheStoreTarget,
       findConfigTarget,
       findEnvTarget,
       findInertiaComponentTarget,
@@ -93,6 +98,7 @@ export function usePhpFrameworkLiteralNavigationDependencies({
     }),
     [
       collectNamedRouteTargets,
+      findCacheStoreTarget,
       findConfigTarget,
       findEnvTarget,
       findInertiaComponentTarget,

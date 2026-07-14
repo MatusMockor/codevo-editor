@@ -7602,6 +7602,7 @@ export function useWorkbenchController(
     usePhpFrameworkLiteralNavigationDependencies({
       collectNamedRouteTargets,
       currentWorkspaceRootRef,
+      findCacheStoreTarget,
       findConfigTarget,
       findEnvTarget: findPhpLaravelEnvTarget,
       findTranslationTarget,

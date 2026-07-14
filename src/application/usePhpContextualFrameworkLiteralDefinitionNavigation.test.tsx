@@ -33,6 +33,7 @@ function makeDeps(
     currentWorkspaceRootRef: { current: ROOT },
     frameworkLiteralNavigationDependencies: {
       collectNamedRouteTargets: vi.fn(async () => []),
+      findCacheStoreTarget: vi.fn(async () => null),
       findConfigTarget: vi.fn(async () => null),
       findEnvTarget: vi.fn(async () => null),
       findValidationRuleModelTargets: vi.fn(async () => []),
@@ -104,6 +105,21 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
   it("opens provider-backed framework literal targets from context", async () => {
     const cases = [
       {
+        expectedLabel: "redis",
+        expectedPath: `${ROOT}/config/cache.php`,
+        expectedResolver: "findCacheStoreTarget",
+        expectedValue: "redis",
+        request: {
+          kind: "cacheStore",
+          storeName: "redis",
+        },
+        target: {
+          storeName: "redis",
+          path: `${ROOT}/config/cache.php`,
+          position: POSITION,
+        },
+      },
+      {
         expectedLabel: "app.name",
         expectedPath: `${ROOT}/config/app.php`,
         expectedResolver: "findConfigTarget",
@@ -170,6 +186,11 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       const deps = makeDeps({
         frameworkLiteralNavigationDependencies: {
           collectNamedRouteTargets: vi.fn(async () => []),
+          findCacheStoreTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findCacheStoreTarget"
+              ? testCase.target
+              : null,
+          ),
           findConfigTarget: vi.fn(async () =>
             testCase.expectedResolver === "findConfigTarget"
               ? testCase.target
@@ -369,6 +390,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     const deps = makeDeps({
       frameworkLiteralNavigationDependencies: {
         collectNamedRouteTargets: vi.fn(async () => []),
+        findCacheStoreTarget: vi.fn(async () => null),
         findConfigTarget,
         findEnvTarget: vi.fn(async () => null),
         findTranslationTarget: vi.fn(async () => null),
@@ -402,6 +424,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     const deps = makeDeps({
       frameworkLiteralNavigationDependencies: {
         collectNamedRouteTargets: vi.fn(async () => []),
+        findCacheStoreTarget: vi.fn(async () => null),
         findConfigTarget,
         findEnvTarget: vi.fn(async () => null),
         findTranslationTarget: vi.fn(async () => null),
@@ -436,6 +459,14 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
           name: "missing.route",
         },
         source: "<?php route('missing.route');",
+      },
+      {
+        expectedMessage: "No Laravel cache store missing found.",
+        request: {
+          kind: "cacheStore",
+          storeName: "missing",
+        },
+        source: "<?php Cache::store('missing');",
       },
       {
         expectedMessage: "No Laravel config key app.missing found.",

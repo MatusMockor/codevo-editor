@@ -72,7 +72,10 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
         return dependencies.goToPhpLaravelMiddlewareAliasDefinition(context);
 
       case "laravelCacheStoreString":
-        return dependencies.goToPhpLaravelCacheStoreDefinition(context);
+        return dependencies.goToPhpFrameworkLiteralDefinition({
+          kind: "cacheStore",
+          storeName: context.storeName,
+        });
 
       case "laravelDatabaseConnectionString":
         return dependencies.goToPhpLaravelDatabaseConnectionDefinition(context);

@@ -141,6 +141,9 @@ function phpFrameworkMissingLiteralTargetMessage(
   providers: readonly PhpFrameworkProvider[],
 ): string | null {
   switch (request.kind) {
+    case "cacheStore":
+      return `No Laravel cache store ${request.storeName} found.`;
+
     case "config":
       return phpFrameworkConfigMissingTargetMessage(request.key, providers);
 

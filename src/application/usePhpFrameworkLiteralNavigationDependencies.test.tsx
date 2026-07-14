@@ -43,6 +43,7 @@ function makeDeps(
   return {
     collectNamedRouteTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
+    findCacheStoreTarget: vi.fn(async () => null),
     findConfigTarget: vi.fn(async () => null),
     findEnvTarget: vi.fn(async () => null),
     findTranslationTarget: vi.fn(async () => null),
@@ -109,6 +110,9 @@ describe("usePhpFrameworkLiteralNavigationDependencies", () => {
       deps.collectNamedRouteTargets,
     );
     expect(harness.api().findConfigTarget).toBe(deps.findConfigTarget);
+    expect(harness.api().findCacheStoreTarget).toBe(
+      deps.findCacheStoreTarget,
+    );
     await expect(
       harness.api().findInertiaComponentTarget?.("Users/Index"),
     ).resolves.toEqual({
