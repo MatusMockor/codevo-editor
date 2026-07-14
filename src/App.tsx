@@ -95,6 +95,10 @@ import {
   editorGroupVisiblePaths,
   type EditorGroupId,
 } from "./domain/editorGroups";
+import {
+  buildGitHistoryDiffDocumentPath,
+  isGitHistoryDiffDocumentPath,
+} from "./domain/editorDocumentSchemes";
 import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
 import { formatWindowTitle } from "./domain/windowTitle";
 import type { BottomPanelView } from "./domain/bottomPanel";
@@ -1005,7 +1009,7 @@ function App() {
       } else {
         workbench.closeDocument(path);
       }
-      if (membershipCount > 1 || !path.startsWith("mockor-git-history-diff:")) {
+      if (membershipCount > 1 || !isGitHistoryDiffDocumentPath(path)) {
         return;
       }
       const nextHistoryDiffs = { ...gitHistoryDiffsByDocumentPathRef.current };
@@ -1203,7 +1207,7 @@ function App() {
         ? gitDiffDocumentPath(workbench.selectedGitChange)
         : null;
       if (
-        path.startsWith("mockor-git-history-diff:") &&
+        isGitHistoryDiffDocumentPath(path) &&
         (historyDiffLoading || historyDiff)
       ) {
         return (
@@ -2318,8 +2322,7 @@ function gitHistoryDiffDocumentPathFor(
   path: string,
   oldPath: string | null,
 ): string {
-  const suffix = oldPath && oldPath !== path ? `${oldPath}->${path}` : path;
-  return `mockor-git-history-diff:${commitHash}:${suffix}`;
+  return buildGitHistoryDiffDocumentPath(commitHash, path, oldPath);
 }
 
 function fileNameForPath(path: string): string {

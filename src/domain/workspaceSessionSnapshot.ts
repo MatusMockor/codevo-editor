@@ -1,14 +1,18 @@
+import { isPersistableEditorDocumentPath } from "./editorDocumentSchemes";
 import {
   createInitialEditorGroupsState,
   editorGroupVisiblePaths,
   type EditorGroupsState,
 } from "./editorGroups";
+
 import type { MarkdownPreviewTab } from "./markdownPreview";
 import {
   visibleEditorPaths,
   type EditorDocument,
   type ImageTab,
 } from "./workspace";
+
+export { isPersistableEditorDocumentPath };
 
 export interface EditorSurfaceSnapshot {
   activePath: string | null;
@@ -38,14 +42,6 @@ export interface EditorSurfaceRestore {
   markdownPreviewTabs: Record<string, MarkdownPreviewTab>;
   openPaths: string[];
   previewPath: string | null;
-}
-
-export function isPersistableEditorDocumentPath(path: string): boolean {
-  return (
-    !path.startsWith("mockor-git-diff:") &&
-    !path.startsWith("mockor-git-history-diff:") &&
-    !path.startsWith("mockor-markdown-preview:")
-  );
 }
 
 export function restoredActivePath(

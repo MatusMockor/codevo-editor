@@ -7,9 +7,15 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
+import {
+  buildGitDiffDocumentPath,
+  isGitDiffDocumentPath,
+} from "../domain/editorDocumentSchemes";
 import type { GitChangedFile, GitFileDiff, GitGateway } from "../domain/git";
 import { getFileName, type EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+
+export { isGitDiffDocumentPath };
 
 export interface OpenGitChangeOptions {
   pin?: boolean;
@@ -297,11 +303,7 @@ export function useGitDiffWorkspace(
 
 export function gitDiffDocumentPath(change: GitChangedFile): string {
   const side = change.isStaged ? "staged" : "worktree";
-  return `mockor-git-diff:${side}:${change.path}`;
-}
-
-export function isGitDiffDocumentPath(path: string): boolean {
-  return path.startsWith("mockor-git-diff:");
+  return buildGitDiffDocumentPath(side, change.path);
 }
 
 export function gitChangesReferToSameDiff(

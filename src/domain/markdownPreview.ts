@@ -1,3 +1,4 @@
+import { buildMarkdownPreviewDocumentPath } from "./editorDocumentSchemes";
 import type { EditorDocument } from "./workspace";
 
 export interface MarkdownPreviewTab {
@@ -9,7 +10,7 @@ export interface MarkdownPreviewTab {
 }
 
 export function markdownPreviewPath(sourcePath: string): string {
-  return `mockor-markdown-preview:${sourcePath}`;
+  return buildMarkdownPreviewDocumentPath(sourcePath);
 }
 
 export function isMarkdownDocument(
