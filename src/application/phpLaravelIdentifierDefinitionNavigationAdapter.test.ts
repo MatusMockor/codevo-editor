@@ -49,44 +49,12 @@ function makeDeps(
 describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
   it.each([
     [
-      { guardName: "web", kind: "laravelAuthGuardString" },
-      "goToPhpLaravelAuthGuardDefinition",
-    ],
-    [
-      { connectionName: "reverb", kind: "laravelBroadcastConnectionString" },
-      "goToPhpLaravelBroadcastConnectionDefinition",
-    ],
-    [
-      { connectionName: "mysql", kind: "laravelDatabaseConnectionString" },
-      "goToPhpLaravelDatabaseConnectionDefinition",
-    ],
-    [
       { ability: "update-post", kind: "laravelGateAbilityString" },
       "goToPhpLaravelGateAbilityDefinition",
     ],
     [
-      { channelName: "stack", kind: "laravelLogChannelString" },
-      "goToPhpLaravelLogChannelDefinition",
-    ],
-    [
-      { kind: "laravelMailMailerString", mailerName: "smtp" },
-      "goToPhpLaravelMailMailerDefinition",
-    ],
-    [
       { alias: "auth", kind: "laravelMiddlewareAliasString" },
       "goToPhpLaravelMiddlewareAliasDefinition",
-    ],
-    [
-      { brokerName: "users", kind: "laravelPasswordBrokerString" },
-      "goToPhpLaravelPasswordBrokerDefinition",
-    ],
-    [
-      { connectionName: "redis", kind: "laravelQueueConnectionString" },
-      "goToPhpLaravelQueueConnectionDefinition",
-    ],
-    [
-      { connectionName: "cache", kind: "laravelRedisConnectionString" },
-      "goToPhpLaravelRedisConnectionDefinition",
     ],
     [
       {
@@ -97,10 +65,6 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
         relationName: "comments",
       },
       "goToPhpLaravelRelationStringDefinition",
-    ],
-    [
-      { diskName: "public", kind: "laravelStorageDiskString" },
-      "goToPhpLaravelStorageDiskDefinition",
     ],
   ] as const)("dispatches %s to %s", async (context, handlerName) => {
     const handler = vi.fn(async () => true);
@@ -114,10 +78,31 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
 
   it.each([
     [
+      { guardName: "web", kind: "laravelAuthGuardString" },
+      {
+        guardName: "web",
+        kind: "authGuard",
+      },
+    ],
+    [
+      { connectionName: "reverb", kind: "laravelBroadcastConnectionString" },
+      {
+        connectionName: "reverb",
+        kind: "broadcastConnection",
+      },
+    ],
+    [
       { kind: "laravelCacheStoreString", storeName: "redis" },
       {
         kind: "cacheStore",
         storeName: "redis",
+      },
+    ],
+    [
+      { connectionName: "mysql", kind: "laravelDatabaseConnectionString" },
+      {
+        connectionName: "mysql",
+        kind: "databaseConnection",
       },
     ],
     [
@@ -135,10 +120,45 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
       },
     ],
     [
+      { channelName: "stack", kind: "laravelLogChannelString" },
+      {
+        channelName: "stack",
+        kind: "logChannel",
+      },
+    ],
+    [
+      { kind: "laravelMailMailerString", mailerName: "smtp" },
+      {
+        kind: "mailMailer",
+        mailerName: "smtp",
+      },
+    ],
+    [
       { kind: "laravelNamedRouteString", routeName: "dashboard" },
       {
         kind: "route",
         name: "dashboard",
+      },
+    ],
+    [
+      { brokerName: "users", kind: "laravelPasswordBrokerString" },
+      {
+        brokerName: "users",
+        kind: "passwordBroker",
+      },
+    ],
+    [
+      { connectionName: "redis", kind: "laravelQueueConnectionString" },
+      {
+        connectionName: "redis",
+        kind: "queueConnection",
+      },
+    ],
+    [
+      { connectionName: "cache", kind: "laravelRedisConnectionString" },
+      {
+        connectionName: "cache",
+        kind: "redisConnection",
       },
     ],
     [
@@ -153,6 +173,13 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
       {
         kind: "view",
         name: "dashboard.index",
+      },
+    ],
+    [
+      { diskName: "public", kind: "laravelStorageDiskString" },
+      {
+        diskName: "public",
+        kind: "storageDisk",
       },
     ],
   ] as const)("maps %s to a generic literal request", async (context, request) => {

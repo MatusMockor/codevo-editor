@@ -22,12 +22,21 @@ export interface PhpFrameworkLiteralNavigationDocument {
 
 export interface PhpFrameworkLiteralNavigationTarget {
   kind:
+    | "authGuard"
+    | "broadcastConnection"
     | "cacheStore"
     | "config"
+    | "databaseConnection"
     | "env"
     | "inertia"
     | "nette.ajax-snippet"
+    | "logChannel"
+    | "mailMailer"
+    | "passwordBroker"
+    | "queueConnection"
+    | "redisConnection"
     | "route"
+    | "storageDisk"
     | "translation"
     | "validationTable"
     | "view";
@@ -50,10 +59,25 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   findConfigTarget: (
     configKey: string,
   ) => Promise<{ key: string; path: string; position: EditorPosition } | null>;
+  findAuthGuardTarget?: (
+    guardName: string,
+  ) => Promise<
+    { guardName: string; path: string; position: EditorPosition } | null
+  >;
+  findBroadcastConnectionTarget?: (
+    connectionName: string,
+  ) => Promise<
+    { connectionName: string; path: string; position: EditorPosition } | null
+  >;
   findCacheStoreTarget?: (
     storeName: string,
   ) => Promise<
     { storeName: string; path: string; position: EditorPosition } | null
+  >;
+  findDatabaseConnectionTarget?: (
+    connectionName: string,
+  ) => Promise<
+    { connectionName: string; path: string; position: EditorPosition } | null
   >;
   findEnvTarget: (
     envName: string,
@@ -61,10 +85,40 @@ export interface PhpFrameworkLiteralNavigationDependencies {
   findInertiaComponentTarget?: (
     componentName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
+  findLogChannelTarget?: (
+    channelName: string,
+  ) => Promise<
+    { channelName: string; path: string; position: EditorPosition } | null
+  >;
+  findMailMailerTarget?: (
+    mailerName: string,
+  ) => Promise<
+    { mailerName: string; path: string; position: EditorPosition } | null
+  >;
   findNetteRedrawControlSnippetTarget?: (
     currentPath: string,
     snippetName: string,
   ) => Promise<{ name: string; path: string; position: EditorPosition } | null>;
+  findPasswordBrokerTarget?: (
+    brokerName: string,
+  ) => Promise<
+    { brokerName: string; path: string; position: EditorPosition } | null
+  >;
+  findQueueConnectionTarget?: (
+    connectionName: string,
+  ) => Promise<
+    { connectionName: string; path: string; position: EditorPosition } | null
+  >;
+  findRedisConnectionTarget?: (
+    connectionName: string,
+  ) => Promise<
+    { connectionName: string; path: string; position: EditorPosition } | null
+  >;
+  findStorageDiskTarget?: (
+    diskName: string,
+  ) => Promise<
+    { diskName: string; path: string; position: EditorPosition } | null
+  >;
   findValidationRuleModelTargets?: (
     tableName: string,
   ) => Promise<
@@ -97,16 +151,52 @@ export type PhpContextualFrameworkLiteralDefinitionRequest =
       kind: "config";
     }
   | {
+      guardName: string;
+      kind: "authGuard";
+    }
+  | {
+      connectionName: string;
+      kind: "broadcastConnection";
+    }
+  | {
       kind: "cacheStore";
       storeName: string;
+    }
+  | {
+      connectionName: string;
+      kind: "databaseConnection";
     }
   | {
       kind: "env";
       name: string;
     }
   | {
+      channelName: string;
+      kind: "logChannel";
+    }
+  | {
+      kind: "mailMailer";
+      mailerName: string;
+    }
+  | {
+      brokerName: string;
+      kind: "passwordBroker";
+    }
+  | {
+      connectionName: string;
+      kind: "queueConnection";
+    }
+  | {
+      connectionName: string;
+      kind: "redisConnection";
+    }
+  | {
       key: string;
       kind: "translation";
+    }
+  | {
+      diskName: string;
+      kind: "storageDisk";
     }
   | {
       kind: "view";
@@ -149,6 +239,159 @@ interface PhpFrameworkLiteralDefinitionResolverContribution {
   readonly entries: readonly PhpFrameworkLiteralDefinitionResolverEntry[];
   readonly providerId: string;
 }
+
+type LaravelConfigDerivedLiteralTarget = {
+  brokerName?: string;
+  channelName?: string;
+  connectionName?: string;
+  diskName?: string;
+  guardName?: string;
+  mailerName?: string;
+  path: string;
+  position: EditorPosition;
+  storeName?: string;
+};
+
+type LaravelConfigDerivedLiteralRequestNameKey =
+  | "brokerName"
+  | "channelName"
+  | "connectionName"
+  | "diskName"
+  | "guardName"
+  | "mailerName"
+  | "storeName";
+
+type LaravelConfigDerivedLiteralFinderKey =
+  | "findAuthGuardTarget"
+  | "findBroadcastConnectionTarget"
+  | "findCacheStoreTarget"
+  | "findDatabaseConnectionTarget"
+  | "findLogChannelTarget"
+  | "findMailMailerTarget"
+  | "findPasswordBrokerTarget"
+  | "findQueueConnectionTarget"
+  | "findRedisConnectionTarget"
+  | "findStorageDiskTarget";
+
+type LaravelConfigDerivedLiteralFinder = (
+  name: string,
+) => Promise<LaravelConfigDerivedLiteralTarget | null>;
+
+interface LaravelConfigDerivedLiteralDefinition {
+  readonly finderKey: LaravelConfigDerivedLiteralFinderKey;
+  readonly id: string;
+  readonly nameKey: LaravelConfigDerivedLiteralRequestNameKey;
+  readonly requestKind: LaravelConfigDerivedLiteralRequest["kind"];
+}
+
+type LaravelConfigDerivedLiteralRequest = Extract<
+  PhpContextualFrameworkLiteralDefinitionRequest,
+  {
+    kind:
+      | "authGuard"
+      | "broadcastConnection"
+      | "cacheStore"
+      | "databaseConnection"
+      | "logChannel"
+      | "mailMailer"
+      | "passwordBroker"
+      | "queueConnection"
+      | "redisConnection"
+      | "storageDisk";
+  }
+>;
+
+const LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITIONS: readonly LaravelConfigDerivedLiteralDefinition[] =
+  [
+    {
+      finderKey: "findAuthGuardTarget",
+      id: "laravel.auth-guard",
+      nameKey: "guardName",
+      requestKind: "authGuard",
+    },
+    {
+      finderKey: "findBroadcastConnectionTarget",
+      id: "laravel.broadcast-connection",
+      nameKey: "connectionName",
+      requestKind: "broadcastConnection",
+    },
+    {
+      finderKey: "findCacheStoreTarget",
+      id: "laravel.cache-store",
+      nameKey: "storeName",
+      requestKind: "cacheStore",
+    },
+    {
+      finderKey: "findDatabaseConnectionTarget",
+      id: "laravel.database-connection",
+      nameKey: "connectionName",
+      requestKind: "databaseConnection",
+    },
+    {
+      finderKey: "findLogChannelTarget",
+      id: "laravel.log-channel",
+      nameKey: "channelName",
+      requestKind: "logChannel",
+    },
+    {
+      finderKey: "findMailMailerTarget",
+      id: "laravel.mail-mailer",
+      nameKey: "mailerName",
+      requestKind: "mailMailer",
+    },
+    {
+      finderKey: "findPasswordBrokerTarget",
+      id: "laravel.password-broker",
+      nameKey: "brokerName",
+      requestKind: "passwordBroker",
+    },
+    {
+      finderKey: "findQueueConnectionTarget",
+      id: "laravel.queue-connection",
+      nameKey: "connectionName",
+      requestKind: "queueConnection",
+    },
+    {
+      finderKey: "findRedisConnectionTarget",
+      id: "laravel.redis-connection",
+      nameKey: "connectionName",
+      requestKind: "redisConnection",
+    },
+    {
+      finderKey: "findStorageDiskTarget",
+      id: "laravel.storage-disk",
+      nameKey: "diskName",
+      requestKind: "storageDisk",
+    },
+  ];
+
+const LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefinitionResolverEntry[] =
+  LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITIONS.map((definition) => ({
+    id: definition.id,
+    resolveContextual: async ({ request }, dependencies) => {
+      if (request.kind !== definition.requestKind) {
+        return undefined;
+      }
+
+      const finder = dependencies[
+        definition.finderKey
+      ] as LaravelConfigDerivedLiteralFinder | undefined;
+      const literalRequest = request as LaravelConfigDerivedLiteralRequest &
+        Record<LaravelConfigDerivedLiteralRequestNameKey, string>;
+      const target = finder
+        ? await finder(literalRequest[definition.nameKey])
+        : null;
+
+      return target
+        ? {
+            kind: definition.requestKind,
+            label: target[definition.nameKey] ?? "",
+            path: target.path,
+            position: target.position,
+          }
+        : null;
+    },
+  }));
 
 const TRANSLATION_LITERAL_DEFINITION_RESOLVER: PhpFrameworkLiteralDefinitionResolverEntry =
   {
@@ -409,27 +652,7 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
         return resolveRouteTarget(request.name, activeDocument, dependencies);
       },
     },
-    {
-      id: "laravel.cache-store",
-      resolveContextual: async ({ request }, dependencies) => {
-        if (request.kind !== "cacheStore") {
-          return undefined;
-        }
-
-        const target = await dependencies.findCacheStoreTarget?.(
-          request.storeName,
-        );
-
-        return target
-          ? {
-              kind: "cacheStore",
-              label: target.storeName,
-              path: target.path,
-              position: target.position,
-            }
-          : null;
-      },
-    },
+    ...LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITION_RESOLVERS,
     {
       id: "laravel.validation-table",
       resolveContextual: async ({ request }, dependencies) => {

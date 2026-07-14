@@ -5,7 +5,10 @@ import {
   phpFrameworkProvidersForProject,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
-import { activePhpFrameworkLiteralDefinitionResolverEntries } from "./phpFrameworkLiteralDefinitionResolverRegistry";
+import {
+  activePhpFrameworkLiteralDefinitionResolverEntries,
+  resolvePhpFrameworkContextualLiteralDefinitionTarget,
+} from "./phpFrameworkLiteralDefinitionResolverRegistry";
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLiteralNavigation";
 import type { PhpProjectDescriptor } from "../domain/workspace";
@@ -41,6 +44,16 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
       "framework.translation",
       "laravel.env",
       "laravel.route",
+      "laravel.auth-guard",
+      "laravel.broadcast-connection",
+      "laravel.cache-store",
+      "laravel.database-connection",
+      "laravel.log-channel",
+      "laravel.mail-mailer",
+      "laravel.password-broker",
+      "laravel.queue-connection",
+      "laravel.redis-connection",
+      "laravel.storage-disk",
       "laravel.validation-table",
     ]);
     expect(
@@ -429,6 +442,126 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
       source,
       "/workspace/app/Http/Controllers/DashboardController.php",
     );
+  });
+
+  it("resolves Laravel config-derived literal families through contextual registry entries", async () => {
+    const cases = [
+      {
+        expectedResolver: "findAuthGuardTarget",
+        expectedValue: "web",
+        request: { guardName: "web", kind: "authGuard" },
+        target: { guardName: "web" },
+      },
+      {
+        expectedResolver: "findBroadcastConnectionTarget",
+        expectedValue: "pusher",
+        request: {
+          connectionName: "pusher",
+          kind: "broadcastConnection",
+        },
+        target: { connectionName: "pusher" },
+      },
+      {
+        expectedResolver: "findCacheStoreTarget",
+        expectedValue: "redis",
+        request: { kind: "cacheStore", storeName: "redis" },
+        target: { storeName: "redis" },
+      },
+      {
+        expectedResolver: "findDatabaseConnectionTarget",
+        expectedValue: "mysql",
+        request: {
+          connectionName: "mysql",
+          kind: "databaseConnection",
+        },
+        target: { connectionName: "mysql" },
+      },
+      {
+        expectedResolver: "findLogChannelTarget",
+        expectedValue: "stack",
+        request: { channelName: "stack", kind: "logChannel" },
+        target: { channelName: "stack" },
+      },
+      {
+        expectedResolver: "findMailMailerTarget",
+        expectedValue: "smtp",
+        request: { kind: "mailMailer", mailerName: "smtp" },
+        target: { mailerName: "smtp" },
+      },
+      {
+        expectedResolver: "findPasswordBrokerTarget",
+        expectedValue: "users",
+        request: { brokerName: "users", kind: "passwordBroker" },
+        target: { brokerName: "users" },
+      },
+      {
+        expectedResolver: "findQueueConnectionTarget",
+        expectedValue: "database",
+        request: {
+          connectionName: "database",
+          kind: "queueConnection",
+        },
+        target: { connectionName: "database" },
+      },
+      {
+        expectedResolver: "findRedisConnectionTarget",
+        expectedValue: "cache",
+        request: {
+          connectionName: "cache",
+          kind: "redisConnection",
+        },
+        target: { connectionName: "cache" },
+      },
+      {
+        expectedResolver: "findStorageDiskTarget",
+        expectedValue: "local",
+        request: { diskName: "local", kind: "storageDisk" },
+        target: { diskName: "local" },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const deps = dependencies({
+        [testCase.expectedResolver]: vi.fn(async (name: string) => ({
+          ...testCase.target,
+          path: `/workspace/config/${name}.php`,
+          position: targetPosition,
+        })),
+      });
+
+      await expect(
+        resolvePhpFrameworkContextualLiteralDefinitionTarget(
+          testCase.request,
+          {
+            content: "<?php",
+            path: "/workspace/app/Http/Controllers/DashboardController.php",
+          },
+          [phpLaravelFrameworkProvider],
+          deps,
+        ),
+      ).resolves.toEqual({
+        kind: testCase.request.kind,
+        label: testCase.expectedValue,
+        path: `/workspace/config/${testCase.expectedValue}.php`,
+        position: targetPosition,
+      });
+      expect(deps[testCase.expectedResolver]).toHaveBeenCalledWith(
+        testCase.expectedValue,
+      );
+
+      await expect(
+        resolvePhpFrameworkContextualLiteralDefinitionTarget(
+          testCase.request,
+          {
+            content: "<?php",
+            path: "/workspace/app/Http/Controllers/DashboardController.php",
+          },
+          [{ id: "custom" }],
+          deps,
+        ),
+      ).resolves.toBeUndefined();
+      expect(deps[testCase.expectedResolver]).toHaveBeenCalledTimes(1);
+    }
   });
 });
 

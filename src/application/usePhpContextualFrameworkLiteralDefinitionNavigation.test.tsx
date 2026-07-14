@@ -105,6 +105,36 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
   it("opens provider-backed framework literal targets from context", async () => {
     const cases = [
       {
+        expectedLabel: "web",
+        expectedPath: `${ROOT}/config/auth.php`,
+        expectedResolver: "findAuthGuardTarget",
+        expectedValue: "web",
+        request: {
+          guardName: "web",
+          kind: "authGuard",
+        },
+        target: {
+          guardName: "web",
+          path: `${ROOT}/config/auth.php`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "pusher",
+        expectedPath: `${ROOT}/config/broadcasting.php`,
+        expectedResolver: "findBroadcastConnectionTarget",
+        expectedValue: "pusher",
+        request: {
+          connectionName: "pusher",
+          kind: "broadcastConnection",
+        },
+        target: {
+          connectionName: "pusher",
+          path: `${ROOT}/config/broadcasting.php`,
+          position: POSITION,
+        },
+      },
+      {
         expectedLabel: "redis",
         expectedPath: `${ROOT}/config/cache.php`,
         expectedResolver: "findCacheStoreTarget",
@@ -116,6 +146,21 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         target: {
           storeName: "redis",
           path: `${ROOT}/config/cache.php`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "mysql",
+        expectedPath: `${ROOT}/config/database.php`,
+        expectedResolver: "findDatabaseConnectionTarget",
+        expectedValue: "mysql",
+        request: {
+          connectionName: "mysql",
+          kind: "databaseConnection",
+        },
+        target: {
+          connectionName: "mysql",
+          path: `${ROOT}/config/database.php`,
           position: POSITION,
         },
       },
@@ -146,6 +191,96 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         target: {
           name: "APP_URL",
           path: `${ROOT}/.env`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "stack",
+        expectedPath: `${ROOT}/config/logging.php`,
+        expectedResolver: "findLogChannelTarget",
+        expectedValue: "stack",
+        request: {
+          channelName: "stack",
+          kind: "logChannel",
+        },
+        target: {
+          channelName: "stack",
+          path: `${ROOT}/config/logging.php`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "smtp",
+        expectedPath: `${ROOT}/config/mail.php`,
+        expectedResolver: "findMailMailerTarget",
+        expectedValue: "smtp",
+        request: {
+          kind: "mailMailer",
+          mailerName: "smtp",
+        },
+        target: {
+          mailerName: "smtp",
+          path: `${ROOT}/config/mail.php`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "users",
+        expectedPath: `${ROOT}/config/auth.php`,
+        expectedResolver: "findPasswordBrokerTarget",
+        expectedValue: "users",
+        request: {
+          brokerName: "users",
+          kind: "passwordBroker",
+        },
+        target: {
+          brokerName: "users",
+          path: `${ROOT}/config/auth.php`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "database",
+        expectedPath: `${ROOT}/config/queue.php`,
+        expectedResolver: "findQueueConnectionTarget",
+        expectedValue: "database",
+        request: {
+          connectionName: "database",
+          kind: "queueConnection",
+        },
+        target: {
+          connectionName: "database",
+          path: `${ROOT}/config/queue.php`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "cache",
+        expectedPath: `${ROOT}/config/database.php`,
+        expectedResolver: "findRedisConnectionTarget",
+        expectedValue: "cache",
+        request: {
+          connectionName: "cache",
+          kind: "redisConnection",
+        },
+        target: {
+          connectionName: "cache",
+          path: `${ROOT}/config/database.php`,
+          position: POSITION,
+        },
+      },
+      {
+        expectedLabel: "local",
+        expectedPath: `${ROOT}/config/filesystems.php`,
+        expectedResolver: "findStorageDiskTarget",
+        expectedValue: "local",
+        request: {
+          diskName: "local",
+          kind: "storageDisk",
+        },
+        target: {
+          diskName: "local",
+          path: `${ROOT}/config/filesystems.php`,
           position: POSITION,
         },
       },
@@ -186,6 +321,16 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       const deps = makeDeps({
         frameworkLiteralNavigationDependencies: {
           collectNamedRouteTargets: vi.fn(async () => []),
+          findAuthGuardTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findAuthGuardTarget"
+              ? testCase.target
+              : null,
+          ),
+          findBroadcastConnectionTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findBroadcastConnectionTarget"
+              ? testCase.target
+              : null,
+          ),
           findCacheStoreTarget: vi.fn(async () =>
             testCase.expectedResolver === "findCacheStoreTarget"
               ? testCase.target
@@ -196,8 +341,43 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
               ? testCase.target
               : null,
           ),
+          findDatabaseConnectionTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findDatabaseConnectionTarget"
+              ? testCase.target
+              : null,
+          ),
           findEnvTarget: vi.fn(async () =>
             testCase.expectedResolver === "findEnvTarget"
+              ? testCase.target
+              : null,
+          ),
+          findLogChannelTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findLogChannelTarget"
+              ? testCase.target
+              : null,
+          ),
+          findMailMailerTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findMailMailerTarget"
+              ? testCase.target
+              : null,
+          ),
+          findPasswordBrokerTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findPasswordBrokerTarget"
+              ? testCase.target
+              : null,
+          ),
+          findQueueConnectionTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findQueueConnectionTarget"
+              ? testCase.target
+              : null,
+          ),
+          findRedisConnectionTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findRedisConnectionTarget"
+              ? testCase.target
+              : null,
+          ),
+          findStorageDiskTarget: vi.fn(async () =>
+            testCase.expectedResolver === "findStorageDiskTarget"
               ? testCase.target
               : null,
           ),
@@ -453,6 +633,22 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
   it("preserves missing Laravel literal messages", async () => {
     const cases = [
       {
+        expectedMessage: "No Laravel auth guard missing found.",
+        request: {
+          guardName: "missing",
+          kind: "authGuard",
+        },
+        source: "<?php Auth::guard('missing');",
+      },
+      {
+        expectedMessage: "No Laravel broadcast connection missing found.",
+        request: {
+          connectionName: "missing",
+          kind: "broadcastConnection",
+        },
+        source: "<?php Broadcast::connection('missing');",
+      },
+      {
         expectedMessage: "No Laravel route named missing.route found.",
         request: {
           kind: "route",
@@ -469,6 +665,14 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         source: "<?php Cache::store('missing');",
       },
       {
+        expectedMessage: "No Laravel database connection missing found.",
+        request: {
+          connectionName: "missing",
+          kind: "databaseConnection",
+        },
+        source: "<?php DB::connection('missing');",
+      },
+      {
         expectedMessage: "No Laravel config key app.missing found.",
         request: {
           key: "app.missing",
@@ -483,6 +687,54 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
           name: "APP_MISSING",
         },
         source: "<?php env('APP_MISSING');",
+      },
+      {
+        expectedMessage: "No Laravel log channel missing found.",
+        request: {
+          channelName: "missing",
+          kind: "logChannel",
+        },
+        source: "<?php Log::channel('missing');",
+      },
+      {
+        expectedMessage: "No Laravel mailer missing found.",
+        request: {
+          kind: "mailMailer",
+          mailerName: "missing",
+        },
+        source: "<?php Mail::mailer('missing');",
+      },
+      {
+        expectedMessage: "No Laravel password broker missing found.",
+        request: {
+          brokerName: "missing",
+          kind: "passwordBroker",
+        },
+        source: "<?php Password::broker('missing');",
+      },
+      {
+        expectedMessage: "No Laravel queue connection missing found.",
+        request: {
+          connectionName: "missing",
+          kind: "queueConnection",
+        },
+        source: "<?php Queue::connection('missing');",
+      },
+      {
+        expectedMessage: "No Laravel redis connection missing found.",
+        request: {
+          connectionName: "missing",
+          kind: "redisConnection",
+        },
+        source: "<?php Redis::connection('missing');",
+      },
+      {
+        expectedMessage: "No Laravel storage disk missing found.",
+        request: {
+          diskName: "missing",
+          kind: "storageDisk",
+        },
+        source: "<?php Storage::disk('missing');",
       },
       {
         expectedMessage: "No Laravel translation key messages.missing found.",

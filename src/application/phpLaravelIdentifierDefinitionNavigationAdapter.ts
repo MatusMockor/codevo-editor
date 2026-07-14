@@ -14,6 +14,87 @@ type PhpContextHandler<Kind extends PhpIdentifierContext["kind"]> = (
   context: Extract<PhpIdentifierContext, { kind: Kind }>,
 ) => Promise<boolean>;
 
+type LaravelConfigDerivedIdentifierKind =
+  | "laravelAuthGuardString"
+  | "laravelBroadcastConnectionString"
+  | "laravelCacheStoreString"
+  | "laravelDatabaseConnectionString"
+  | "laravelLogChannelString"
+  | "laravelMailMailerString"
+  | "laravelPasswordBrokerString"
+  | "laravelQueueConnectionString"
+  | "laravelRedisConnectionString"
+  | "laravelStorageDiskString";
+
+type LaravelConfigDerivedIdentifierValueKey =
+  | "brokerName"
+  | "channelName"
+  | "connectionName"
+  | "diskName"
+  | "guardName"
+  | "mailerName"
+  | "storeName";
+
+interface LaravelConfigDerivedIdentifierDefinition {
+  readonly contextKind: LaravelConfigDerivedIdentifierKind;
+  readonly requestKind: PhpContextualFrameworkLiteralDefinitionRequest["kind"];
+  readonly valueKey: LaravelConfigDerivedIdentifierValueKey;
+}
+
+const LARAVEL_CONFIG_DERIVED_IDENTIFIER_DEFINITIONS: readonly LaravelConfigDerivedIdentifierDefinition[] =
+  [
+    {
+      contextKind: "laravelAuthGuardString",
+      requestKind: "authGuard",
+      valueKey: "guardName",
+    },
+    {
+      contextKind: "laravelBroadcastConnectionString",
+      requestKind: "broadcastConnection",
+      valueKey: "connectionName",
+    },
+    {
+      contextKind: "laravelCacheStoreString",
+      requestKind: "cacheStore",
+      valueKey: "storeName",
+    },
+    {
+      contextKind: "laravelDatabaseConnectionString",
+      requestKind: "databaseConnection",
+      valueKey: "connectionName",
+    },
+    {
+      contextKind: "laravelLogChannelString",
+      requestKind: "logChannel",
+      valueKey: "channelName",
+    },
+    {
+      contextKind: "laravelMailMailerString",
+      requestKind: "mailMailer",
+      valueKey: "mailerName",
+    },
+    {
+      contextKind: "laravelPasswordBrokerString",
+      requestKind: "passwordBroker",
+      valueKey: "brokerName",
+    },
+    {
+      contextKind: "laravelQueueConnectionString",
+      requestKind: "queueConnection",
+      valueKey: "connectionName",
+    },
+    {
+      contextKind: "laravelRedisConnectionString",
+      requestKind: "redisConnection",
+      valueKey: "connectionName",
+    },
+    {
+      contextKind: "laravelStorageDiskString",
+      requestKind: "storageDisk",
+      valueKey: "diskName",
+    },
+  ];
+
 export interface PhpLaravelIdentifierDefinitionNavigationAdapterDependencies
   extends PhpLaravelLiteralDefinitionNavigation {
   activeDocument: EditorDocument | null;
@@ -34,6 +115,15 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
   const goToDefinition: PhpFrameworkIdentifierDefinitionHandler = async (
     context,
   ): Promise<boolean> => {
+    const configDerivedLiteralRequest =
+      phpLaravelConfigDerivedFrameworkLiteralRequest(context);
+
+    if (configDerivedLiteralRequest) {
+      return dependencies.goToPhpFrameworkLiteralDefinition(
+        configDerivedLiteralRequest,
+      );
+    }
+
     switch (context.kind) {
       case "laravelRelationString":
         return dependencies.goToPhpLaravelRelationStringDefinition(context);
@@ -62,44 +152,11 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
           kind: "config",
         });
 
-      case "laravelAuthGuardString":
-        return dependencies.goToPhpLaravelAuthGuardDefinition(context);
-
       case "laravelGateAbilityString":
         return dependencies.goToPhpLaravelGateAbilityDefinition(context);
 
       case "laravelMiddlewareAliasString":
         return dependencies.goToPhpLaravelMiddlewareAliasDefinition(context);
-
-      case "laravelCacheStoreString":
-        return dependencies.goToPhpFrameworkLiteralDefinition({
-          kind: "cacheStore",
-          storeName: context.storeName,
-        });
-
-      case "laravelDatabaseConnectionString":
-        return dependencies.goToPhpLaravelDatabaseConnectionDefinition(context);
-
-      case "laravelBroadcastConnectionString":
-        return dependencies.goToPhpLaravelBroadcastConnectionDefinition(context);
-
-      case "laravelQueueConnectionString":
-        return dependencies.goToPhpLaravelQueueConnectionDefinition(context);
-
-      case "laravelRedisConnectionString":
-        return dependencies.goToPhpLaravelRedisConnectionDefinition(context);
-
-      case "laravelMailMailerString":
-        return dependencies.goToPhpLaravelMailMailerDefinition(context);
-
-      case "laravelPasswordBrokerString":
-        return dependencies.goToPhpLaravelPasswordBrokerDefinition(context);
-
-      case "laravelLogChannelString":
-        return dependencies.goToPhpLaravelLogChannelDefinition(context);
-
-      case "laravelStorageDiskString":
-        return dependencies.goToPhpLaravelStorageDiskDefinition(context);
 
       case "laravelViewString":
         return dependencies.goToPhpFrameworkLiteralDefinition({
@@ -122,6 +179,31 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
   };
 
   return { goToDefinition };
+}
+
+function phpLaravelConfigDerivedFrameworkLiteralRequest(
+  context: PhpIdentifierContext,
+): PhpContextualFrameworkLiteralDefinitionRequest | null {
+  const definition = LARAVEL_CONFIG_DERIVED_IDENTIFIER_DEFINITIONS.find(
+    (candidate) => candidate.contextKind === context.kind,
+  );
+
+  if (!definition) {
+    return null;
+  }
+
+  const value = context[
+    definition.valueKey as keyof typeof context
+  ];
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  return {
+    kind: definition.requestKind,
+    [definition.valueKey]: value,
+  } as PhpContextualFrameworkLiteralDefinitionRequest;
 }
 
 async function goToRouteActionMethodDefinition(

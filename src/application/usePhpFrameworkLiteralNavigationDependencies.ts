@@ -8,11 +8,38 @@ import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLi
 export interface PhpFrameworkLiteralNavigationDependencyHookDependencies {
   collectNamedRouteTargets: PhpFrameworkLiteralNavigationDependencies["collectNamedRouteTargets"];
   currentWorkspaceRootRef: { readonly current: string | null };
+  findAuthGuardTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findAuthGuardTarget"]
+  >;
+  findBroadcastConnectionTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findBroadcastConnectionTarget"]
+  >;
   findCacheStoreTarget: NonNullable<
     PhpFrameworkLiteralNavigationDependencies["findCacheStoreTarget"]
   >;
   findConfigTarget: PhpFrameworkLiteralNavigationDependencies["findConfigTarget"];
+  findDatabaseConnectionTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findDatabaseConnectionTarget"]
+  >;
   findEnvTarget: PhpFrameworkLiteralNavigationDependencies["findEnvTarget"];
+  findLogChannelTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findLogChannelTarget"]
+  >;
+  findMailMailerTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findMailMailerTarget"]
+  >;
+  findPasswordBrokerTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findPasswordBrokerTarget"]
+  >;
+  findQueueConnectionTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findQueueConnectionTarget"]
+  >;
+  findRedisConnectionTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findRedisConnectionTarget"]
+  >;
+  findStorageDiskTarget: NonNullable<
+    PhpFrameworkLiteralNavigationDependencies["findStorageDiskTarget"]
+  >;
   findTranslationTarget: PhpFrameworkLiteralNavigationDependencies["findTranslationTarget"];
   findViewTarget: PhpFrameworkLiteralNavigationDependencies["findViewTarget"];
   joinWorkspacePath: (workspaceRoot: string, relativePath: string) => string;
@@ -25,9 +52,18 @@ export interface PhpFrameworkLiteralNavigationDependencyHookDependencies {
 export function usePhpFrameworkLiteralNavigationDependencies({
   collectNamedRouteTargets,
   currentWorkspaceRootRef,
+  findAuthGuardTarget,
+  findBroadcastConnectionTarget,
   findCacheStoreTarget,
   findConfigTarget,
+  findDatabaseConnectionTarget,
   findEnvTarget,
+  findLogChannelTarget,
+  findMailMailerTarget,
+  findPasswordBrokerTarget,
+  findQueueConnectionTarget,
+  findRedisConnectionTarget,
+  findStorageDiskTarget,
   findTranslationTarget,
   findViewTarget,
   joinWorkspacePath,
@@ -88,21 +124,39 @@ export function usePhpFrameworkLiteralNavigationDependencies({
   return useMemo(
     () => ({
       collectNamedRouteTargets,
+      findAuthGuardTarget,
+      findBroadcastConnectionTarget,
       findCacheStoreTarget,
       findConfigTarget,
+      findDatabaseConnectionTarget,
       findEnvTarget,
       findInertiaComponentTarget,
+      findLogChannelTarget,
+      findMailMailerTarget,
       findNetteRedrawControlSnippetTarget,
+      findPasswordBrokerTarget,
+      findQueueConnectionTarget,
+      findRedisConnectionTarget,
+      findStorageDiskTarget,
       findTranslationTarget,
       findViewTarget,
     }),
     [
       collectNamedRouteTargets,
+      findAuthGuardTarget,
+      findBroadcastConnectionTarget,
       findCacheStoreTarget,
       findConfigTarget,
+      findDatabaseConnectionTarget,
       findEnvTarget,
       findInertiaComponentTarget,
+      findLogChannelTarget,
+      findMailMailerTarget,
       findNetteRedrawControlSnippetTarget,
+      findPasswordBrokerTarget,
+      findQueueConnectionTarget,
+      findRedisConnectionTarget,
+      findStorageDiskTarget,
       findTranslationTarget,
       findViewTarget,
     ],

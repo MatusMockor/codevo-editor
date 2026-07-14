@@ -141,17 +141,44 @@ function phpFrameworkMissingLiteralTargetMessage(
   providers: readonly PhpFrameworkProvider[],
 ): string | null {
   switch (request.kind) {
+    case "authGuard":
+      return `No Laravel auth guard ${request.guardName} found.`;
+
+    case "broadcastConnection":
+      return `No Laravel broadcast connection ${request.connectionName} found.`;
+
     case "cacheStore":
       return `No Laravel cache store ${request.storeName} found.`;
 
     case "config":
       return phpFrameworkConfigMissingTargetMessage(request.key, providers);
 
+    case "databaseConnection":
+      return `No Laravel database connection ${request.connectionName} found.`;
+
     case "env":
       return phpFrameworkEnvMissingTargetMessage(request.name, providers);
 
+    case "logChannel":
+      return `No Laravel log channel ${request.channelName} found.`;
+
+    case "mailMailer":
+      return `No Laravel mailer ${request.mailerName} found.`;
+
+    case "passwordBroker":
+      return `No Laravel password broker ${request.brokerName} found.`;
+
+    case "queueConnection":
+      return `No Laravel queue connection ${request.connectionName} found.`;
+
+    case "redisConnection":
+      return `No Laravel redis connection ${request.connectionName} found.`;
+
     case "route":
       return phpFrameworkRouteMissingTargetMessage(request.name, providers);
+
+    case "storageDisk":
+      return `No Laravel storage disk ${request.diskName} found.`;
 
     case "translation":
       return phpFrameworkTranslationMissingTargetMessage(

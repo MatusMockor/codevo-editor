@@ -43,9 +43,18 @@ function makeDeps(
   return {
     collectNamedRouteTargets: vi.fn(async () => []),
     currentWorkspaceRootRef: { current: ROOT },
+    findAuthGuardTarget: vi.fn(async () => null),
+    findBroadcastConnectionTarget: vi.fn(async () => null),
     findCacheStoreTarget: vi.fn(async () => null),
     findConfigTarget: vi.fn(async () => null),
+    findDatabaseConnectionTarget: vi.fn(async () => null),
     findEnvTarget: vi.fn(async () => null),
+    findLogChannelTarget: vi.fn(async () => null),
+    findMailMailerTarget: vi.fn(async () => null),
+    findPasswordBrokerTarget: vi.fn(async () => null),
+    findQueueConnectionTarget: vi.fn(async () => null),
+    findRedisConnectionTarget: vi.fn(async () => null),
+    findStorageDiskTarget: vi.fn(async () => null),
     findTranslationTarget: vi.fn(async () => null),
     findViewTarget: vi.fn(async () => null),
     joinWorkspacePath,
@@ -110,8 +119,35 @@ describe("usePhpFrameworkLiteralNavigationDependencies", () => {
       deps.collectNamedRouteTargets,
     );
     expect(harness.api().findConfigTarget).toBe(deps.findConfigTarget);
+    expect(harness.api().findAuthGuardTarget).toBe(
+      deps.findAuthGuardTarget,
+    );
+    expect(harness.api().findBroadcastConnectionTarget).toBe(
+      deps.findBroadcastConnectionTarget,
+    );
     expect(harness.api().findCacheStoreTarget).toBe(
       deps.findCacheStoreTarget,
+    );
+    expect(harness.api().findDatabaseConnectionTarget).toBe(
+      deps.findDatabaseConnectionTarget,
+    );
+    expect(harness.api().findLogChannelTarget).toBe(
+      deps.findLogChannelTarget,
+    );
+    expect(harness.api().findMailMailerTarget).toBe(
+      deps.findMailMailerTarget,
+    );
+    expect(harness.api().findPasswordBrokerTarget).toBe(
+      deps.findPasswordBrokerTarget,
+    );
+    expect(harness.api().findQueueConnectionTarget).toBe(
+      deps.findQueueConnectionTarget,
+    );
+    expect(harness.api().findRedisConnectionTarget).toBe(
+      deps.findRedisConnectionTarget,
+    );
+    expect(harness.api().findStorageDiskTarget).toBe(
+      deps.findStorageDiskTarget,
     );
     await expect(
       harness.api().findInertiaComponentTarget?.("Users/Index"),
