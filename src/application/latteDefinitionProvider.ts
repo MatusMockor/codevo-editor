@@ -39,6 +39,7 @@ import {
 import {
   latteFilterDefinitionContext,
   latteExpressionResolutionContext,
+  netteControlCompletionContext,
   nettePresenterLinkDefinitionContext,
 } from "./netteLatteProviderOptions";
 import {
@@ -106,6 +107,7 @@ export async function provideLatteDefinitionOutcome(
     isRequestedRootActive,
     netteControlReferenceAt(source, offset),
     currentTemplateRelativePath,
+    netteControlCompletionContext(options, request),
   );
 
   if (controlHandled) {
@@ -180,6 +182,7 @@ export async function provideLatteDefinitionOutcome(
       isRequestedRootActive,
       { name: reference.name },
       currentTemplateRelativePath,
+      netteControlCompletionContext(options, request),
     );
 
     return latteDefinitionOutcome(handled, shouldBlockFallback);

@@ -10,6 +10,7 @@ import {
   netteComponentUsagesInLatte,
   netteCreateComponentFactoryContexts,
   netteCreateComponentMethodName,
+  netteDelegatedFormFactoryCreateInCreateComponent,
   netteDelegatedFormFactoryInCreateComponent,
   type NetteFormFieldDefinition,
   netteFormFieldDefinitionsInCreateComponent,
@@ -113,6 +114,7 @@ export async function resolveNetteControlDefinition(
   isRequestedRootActive: () => boolean,
   reference: NetteControlReference | null,
   currentRelativePath: string,
+  context?: NetteControlCompletionContext,
 ): Promise<boolean> {
   if (!reference) {
     return false;
@@ -148,8 +150,15 @@ export async function resolveNetteControlDefinition(
 
     if (fieldName) {
       const fields = await loadNetteFormFieldDefinitionsFromOwner({
-        deps,
-        isRequestedRootActive,
+        context: context ?? {
+          componentCache: {},
+          deps,
+          isRequestedRootActive,
+          maxCompletions: 0,
+          requestedRoot,
+          templateRelativePath: currentRelativePath,
+          ttlMs: 0,
+        },
         ownerPath: path,
         ownerSource: content,
         componentName,
@@ -391,8 +400,7 @@ async function loadNetteFormFieldDefinitions(
     }
 
     const fields = await loadNetteFormFieldDefinitionsFromOwner({
-      deps,
-      isRequestedRootActive,
+      context,
       ownerPath: path,
       ownerSource: content,
       componentName,
@@ -412,14 +420,12 @@ async function loadNetteFormFieldDefinitions(
 
 async function loadNetteFormFieldDefinitionsFromOwner({
   componentName,
-  deps,
-  isRequestedRootActive,
+  context,
   ownerPath,
   ownerSource,
 }: {
   componentName: string;
-  deps: NetteControlDependencies;
-  isRequestedRootActive: () => boolean;
+  context: NetteControlCompletionContext;
   ownerPath: string;
   ownerSource: string;
 }): Promise<LoadedNetteFormFieldDefinition[]> {
@@ -437,10 +443,9 @@ async function loadNetteFormFieldDefinitionsFromOwner({
   }
 
   return loadDelegatedNetteFormFactoryFields(
-    deps,
+    context,
     ownerSource,
     componentName,
-    isRequestedRootActive,
   );
 }
 
@@ -454,19 +459,27 @@ function netteCreateComponentFactoryExists(
 }
 
 async function loadDelegatedNetteFormFactoryFields(
-  deps: NetteControlDependencies,
+  context: NetteControlCompletionContext,
   ownerSource: string,
   componentName: string,
-  isRequestedRootActive: () => boolean,
 ): Promise<LoadedNetteFormFieldDefinition[]> {
+  const { deps, isRequestedRootActive } = context;
+
   if (!deps.readPhpClassSource) {
     return [];
   }
 
-  const factoryClassName = netteDelegatedFormFactoryInCreateComponent(
+  const typedFactory = netteDelegatedFormFactoryInCreateComponent(
     ownerSource,
     componentName,
-  )?.factoryClass;
+  );
+  const factoryClassName =
+    typedFactory?.factoryClass ??
+    (await delegatedFactoryClassFromProjectConfig(
+      context,
+      ownerSource,
+      componentName,
+    ));
 
   if (!factoryClassName) {
     return [];
@@ -488,6 +501,37 @@ async function loadDelegatedNetteFormFactoryFields(
     path: factorySource.path,
     source: factorySource.source,
   }));
+}
+
+async function delegatedFactoryClassFromProjectConfig(
+  context: NetteControlCompletionContext,
+  ownerSource: string,
+  componentName: string,
+): Promise<string | null> {
+  if (!context.loadProjectConfig) {
+    return null;
+  }
+
+  const delegatedCreate = netteDelegatedFormFactoryCreateInCreateComponent(
+    ownerSource,
+    componentName,
+  );
+
+  if (!delegatedCreate) {
+    return null;
+  }
+
+  const config = await context.loadProjectConfig();
+
+  if (!context.isRequestedRootActive()) {
+    return null;
+  }
+
+  const serviceName =
+    config.serviceAliases.get(delegatedCreate.propertyName) ??
+    delegatedCreate.propertyName;
+
+  return config.serviceNameTypes.get(serviceName) ?? null;
 }
 
 export async function resolveNetteCreateComponentReverse(

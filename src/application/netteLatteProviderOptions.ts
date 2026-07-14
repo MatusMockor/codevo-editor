@@ -152,10 +152,27 @@ export function netteControlCompletionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ): NetteControlCompletionContext {
+  const { neonConfigCache, neonConfigInFlight } = options;
+
   return {
     componentCache: options.caches.componentCache,
     deps: request.deps,
     isRequestedRootActive: request.isRequestedRootActive,
+    ...(neonConfigCache && neonConfigInFlight
+      ? {
+          loadProjectConfig: () =>
+            loadNeonProjectConfig({
+              configCache: neonConfigCache,
+              configInFlight: neonConfigInFlight,
+              deps: {
+                ...request.deps,
+                getActiveDocument: () => null,
+              },
+              isRequestedRootActive: request.isRequestedRootActive,
+              requestedRoot: request.requestedRoot,
+            }),
+        }
+      : {}),
     maxCompletions: LATTE_MAX_COMPLETIONS,
     requestedRoot: request.requestedRoot,
     templateRelativePath: request.currentTemplateRelativePath,

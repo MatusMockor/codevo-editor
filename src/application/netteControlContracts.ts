@@ -1,4 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { NeonProjectConfig } from "./neonProjectConfigDiscovery";
 
 export interface NetteControlDependencies {
   joinPath(rootPath: string, relativePath: string): string;
@@ -36,6 +37,9 @@ export interface NetteControlCompletionContext {
   componentCache: NetteControlCache;
   deps: NetteControlDependencies;
   isRequestedRootActive(): boolean;
+  loadProjectConfig?(): Promise<
+    Pick<NeonProjectConfig, "serviceAliases" | "serviceNameTypes">
+  >;
   maxCompletions: number;
   requestedRoot: string;
   templateRelativePath: string;

@@ -4102,6 +4102,64 @@ class GatewayFormFactory
     );
   });
 
+  it("navigates n:name to fields from NEON service-typed delegated form factories", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter
+{
+    private $gatewayFormFactory;
+
+    protected function createComponentGatewayForm()
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+class GatewayFormFactory
+{
+    public function create()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": presenter,
+      "config/services.neon":
+        "services:\n    gatewayFormFactory: App\\Forms\\GatewayFormFactory\n",
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      listDirectory,
+      openTarget,
+      readFileContent,
+      readPhpClassSource: vi.fn(async (className: string) =>
+        className === "App\\Forms\\GatewayFormFactory"
+          ? { path: `${ROOT}/app/Forms/GatewayFormFactory.php`, source: factory }
+          : null,
+      ),
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="gatewayForm"><input n:name="email"></form>';
+    const offset = source.indexOf("email") + 1;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/Forms/GatewayFormFactory.php",
+      expect.objectContaining({ lineNumber: 9 }),
+      "email",
+    );
+  });
+
   it.each(["input", "label", "inputError"] as const)(
     "navigates a {%s email} macro to a field inside the active form component",
     async (macro) => {
@@ -4609,6 +4667,69 @@ class GatewayFormFactory
           label: "password",
         }),
       ]),
+    );
+    expect(readPhpClassSource).toHaveBeenCalledWith(
+      "App\\Forms\\GatewayFormFactory",
+    );
+  });
+
+  it("offers n:name fields from NEON service-typed delegated form factories", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter
+{
+    private $gatewayFormFactory;
+
+    protected function createComponentGatewayForm()
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+class GatewayFormFactory
+{
+    public function create()
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const { listDirectory, readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": presenter,
+      "config/services.neon":
+        "services:\n    gatewayFormFactory: App\\Forms\\GatewayFormFactory\n",
+    });
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\Forms\\GatewayFormFactory"
+        ? { path: `${ROOT}/app/Forms/GatewayFormFactory.php`, source: factory }
+        : null,
+    );
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      listDirectory,
+      readFileContent,
+      readPhpClassSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="gatewayForm"><input n:name="em"></form>';
+    const offset = source.indexOf("em") + "em".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toContainEqual(
+      expect.objectContaining({
+        detail: "Nette form field",
+        insertText: "email",
+        label: "email",
+      }),
     );
     expect(readPhpClassSource).toHaveBeenCalledWith(
       "App\\Forms\\GatewayFormFactory",

@@ -153,6 +153,15 @@ export interface NetteDelegatedFormFactory {
   propertyNameStart: number;
 }
 
+/** A delegated `$this->property->create()` form factory before type resolution. */
+export interface NetteDelegatedFormFactoryCreate {
+  componentName: string;
+  methodName: string;
+  propertyName: string;
+  propertyNameEnd: number;
+  propertyNameStart: number;
+}
+
 /** Rich PhpStorm-like facts for one `createComponent<Name>()` factory. */
 export interface NetteCreateComponentFactoryContext
   extends NetteCreateComponentDetection {
@@ -777,6 +786,45 @@ export function netteDelegatedFormFactoryInCreateComponent(
   }
 
   return delegatedFormFactoryFromCreateComponentMethod(phpSource, method);
+}
+
+export function netteDelegatedFormFactoryCreateInCreateComponent(
+  phpSource: string,
+  componentName: string,
+): NetteDelegatedFormFactoryCreate | null {
+  const method = findPhpMethodByName(
+    phpSource,
+    netteCreateComponentMethodName(componentName),
+  );
+
+  if (!method) {
+    return null;
+  }
+
+  const suffix = createComponentSuffix(method.name);
+  const body = phpMethodBodyRange(phpSource, method);
+
+  if (suffix === null || !body) {
+    return null;
+  }
+
+  const delegatedCreate = delegatedFactoryCreateInBody(
+    phpSource,
+    body.start,
+    body.end,
+  );
+
+  if (!delegatedCreate) {
+    return null;
+  }
+
+  return {
+    componentName: lcfirst(suffix),
+    methodName: method.name,
+    propertyName: delegatedCreate.propertyName,
+    propertyNameEnd: delegatedCreate.propertyNameEnd,
+    propertyNameStart: delegatedCreate.propertyNameStart,
+  };
 }
 
 /**
