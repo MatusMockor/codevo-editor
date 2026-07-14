@@ -9,7 +9,10 @@ import {
 } from "../domain/phpFrameworkProviders";
 import type { TextSearchResult, WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import {
+  createPhpFrameworkRuntimeContext,
+  type PhpFrameworkRuntimeContext,
+} from "./phpFrameworkRuntimeContext";
 import {
   usePhpFrameworkMorphMapResolver,
   type UsePhpFrameworkMorphMapResolverOptions,
@@ -39,10 +42,11 @@ const LARAVEL_WITH_NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [phpLaravelFrameworkProvider, phpNetteFrameworkProvider],
   }),
 );
-const STALE_LEGACY_LARAVEL_RUNTIME = {
-  ...LARAVEL_RUNTIME,
-  providers: [],
-  hasProvider: () => false,
+const STALE_LEGACY_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...GENERIC_RUNTIME,
+  providers: [phpLaravelFrameworkProvider],
+  profile: "laravel",
+  hasProvider: (providerId) => providerId === "laravel",
   isLaravel: true,
 };
 
@@ -269,7 +273,7 @@ describe("usePhpFrameworkMorphMapResolver", () => {
     harness.unmount();
   });
 
-  it("does not search morph maps for stale legacy Laravel state without a Laravel provider", async () => {
+  it("does not search morph maps for stale legacy Laravel state without Eloquent capability", async () => {
     const textSearch = {
       searchText: vi.fn(async () => [] as TextSearchResult[]),
     };

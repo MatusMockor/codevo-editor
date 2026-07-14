@@ -32,7 +32,8 @@ const STALE_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
   ...GENERIC_RUNTIME,
   profile: "laravel",
   isLaravel: true,
-  hasProvider: () => false,
+  providers: [phpLaravelFrameworkProvider],
+  hasProvider: (providerId) => providerId === "laravel",
 };
 
 type HookOptions = Parameters<typeof usePhpLaravelRelationResolver>[0];
@@ -226,7 +227,59 @@ class User
     harness.unmount();
   });
 
-  it("uses runtime Laravel state for the Laravel gate", async () => {
+  it("infers Laravel relation method targets for active Eloquent runtime", async () => {
+    const harness = renderHook(
+      makeClassOptions({
+        "App\\Models\\User": {
+          members: [
+            methodMember(
+              "App\\Models\\User",
+              "profileByReturn",
+              "HasOne<Profile>",
+            ),
+            methodMember("App\\Models\\User", "profileByFactory"),
+          ],
+          source: `<?php
+namespace App\\Models;
+
+class User
+{
+    public function profileByReturn(): HasOne
+    {
+        return $this->hasOne(Profile::class);
+    }
+
+    public function profileByFactory()
+    {
+        return $this->hasOne(Profile::class);
+    }
+}
+`,
+        },
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpClassPropertyOrRelationType(
+          "App\\Models\\User",
+          "profileByReturn",
+        ),
+    ).resolves.toBe("App\\Models\\Profile");
+    await expect(
+      harness
+        .api()
+        .resolvePhpClassPropertyOrRelationType(
+          "App\\Models\\User",
+          "profileByFactory",
+        ),
+    ).resolves.toBe("App\\Models\\Profile");
+
+    harness.unmount();
+  });
+
+  it("uses Eloquent semantic capability for the relation gate", async () => {
     const resolvePhpClassSourcePaths = vi.fn(async () => ["/unused.php"]);
     const options = makeOptions({
       frameworkRuntime: GENERIC_RUNTIME,
@@ -247,7 +300,102 @@ class User
     harness.unmount();
   });
 
-  it("does not use the project morph map for stale Laravel runtimes without a provider", async () => {
+  it("does not infer Laravel relation method targets for stale runtimes without Eloquent capability", async () => {
+    const harness = renderHook(
+      makeClassOptions(
+        {
+          "App\\Models\\User": {
+            members: [
+              methodMember(
+                "App\\Models\\User",
+                "profileByReturn",
+                "HasOne<Profile>",
+              ),
+              methodMember("App\\Models\\User", "profileByFactory"),
+            ],
+            source: `<?php
+namespace App\\Models;
+
+class User
+{
+    public function profileByReturn(): HasOne
+    {
+        return $this->hasOne(Profile::class);
+    }
+
+    public function profileByFactory()
+    {
+        return $this->hasOne(Profile::class);
+    }
+}
+`,
+          },
+        },
+        { frameworkRuntime: STALE_LARAVEL_RUNTIME },
+      ),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpClassPropertyOrRelationType(
+          "App\\Models\\User",
+          "profileByReturn",
+        ),
+    ).resolves.toBeNull();
+    await expect(
+      harness
+        .api()
+        .resolvePhpClassPropertyOrRelationType(
+          "App\\Models\\User",
+          "profileByFactory",
+        ),
+    ).resolves.toBeNull();
+
+    harness.unmount();
+  });
+
+  it("keeps generic PHP property traversal available without Eloquent capability", async () => {
+    const harness = renderHook(
+      makeClassOptions(
+        {
+          "App\\Models\\User": {
+            members: [
+              {
+                ...methodMember(
+                  "App\\Models\\User",
+                  "profileProperty",
+                  "App\\Models\\Profile",
+                ),
+                kind: "property",
+              },
+            ],
+            source: `<?php
+namespace App\\Models;
+
+class User
+{
+}
+`,
+          },
+        },
+        { frameworkRuntime: STALE_LARAVEL_RUNTIME },
+      ),
+    );
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpClassPropertyOrRelationType(
+          "App\\Models\\User",
+          "profileProperty",
+        ),
+    ).resolves.toBe("App\\Models\\Profile");
+
+    harness.unmount();
+  });
+
+  it("does not use the project morph map for stale Laravel runtimes without Eloquent capability", async () => {
     const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
@@ -291,7 +439,7 @@ class Comment
     harness.unmount();
   });
 
-  it("does not resolve chained relation path owner types for stale Laravel runtimes without a provider", async () => {
+  it("does not resolve chained relation path owner types for stale Laravel runtimes without Eloquent capability", async () => {
     const resolvePhpClassSourcePaths = vi.fn(async (className: string) =>
       className === "App\\Models\\User" ? [classPath(className)] : [],
     );

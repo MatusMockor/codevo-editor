@@ -67,7 +67,9 @@ export function usePhpLaravelRelationResolver({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelRelationResolverOptions) {
-  const isLaravelFrameworkActive = frameworkRuntime.hasProvider("laravel");
+  const supportsEloquentModelSemantics = frameworkRuntime.supports(
+    "eloquentModelSemantics",
+  );
 
   const resolvePhpClassPropertyOrRelationType = useCallback(
     async (
@@ -141,13 +143,14 @@ export function usePhpLaravelRelationResolver({
             ? resolvePhpClassReference(content, collectionPropertyModelType)
             : null;
 
-          const relationType = relationMethod?.returnType
-            ? resolvePhpLaravelRelationModelType(
-                content,
-                relationMethod.returnType,
-                includeCollectionRelations,
-              )
-            : null;
+          const relationType =
+            supportsEloquentModelSemantics && relationMethod?.returnType
+              ? resolvePhpLaravelRelationModelType(
+                  content,
+                  relationMethod.returnType,
+                  includeCollectionRelations,
+                )
+              : null;
 
           if (relationType) {
             return relationType;
@@ -171,7 +174,7 @@ export function usePhpLaravelRelationResolver({
             return propertyType;
           }
 
-          if (relationMethod) {
+          if (relationMethod && supportsEloquentModelSemantics) {
             let hasMorphToReturnExpression = false;
 
             for (const expression of phpMethodReturnExpressions(
@@ -199,7 +202,7 @@ export function usePhpLaravelRelationResolver({
               }
             }
 
-            if (hasMorphToReturnExpression && isLaravelFrameworkActive) {
+            if (hasMorphToReturnExpression && supportsEloquentModelSemantics) {
               const morphMapModelType =
                 await resolvePhpFrameworkProjectMorphMapModelType();
 
@@ -318,7 +321,7 @@ export function usePhpLaravelRelationResolver({
     },
     [
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
+      supportsEloquentModelSemantics,
       readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
@@ -340,7 +343,7 @@ export function usePhpLaravelRelationResolver({
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!isLaravelFrameworkActive || !requestedRoot) {
+      if (!supportsEloquentModelSemantics || !requestedRoot) {
         return null;
       }
 
@@ -372,7 +375,7 @@ export function usePhpLaravelRelationResolver({
     },
     [
       currentWorkspaceRootRef,
-      isLaravelFrameworkActive,
+      supportsEloquentModelSemantics,
       resolvePhpClassPropertyOrRelationType,
       workspaceRoot,
     ],

@@ -31,7 +31,9 @@ export function usePhpFrameworkMorphMapResolver({
   >({});
   const frameworkProviderSignature =
     phpFrameworkRuntimeProviderSignature(frameworkRuntime);
-  const isLaravelFrameworkActive = frameworkRuntime.hasProvider("laravel");
+  const supportsEloquentModelSemantics = frameworkRuntime.supports(
+    "eloquentModelSemantics",
+  );
 
   const resetPhpFrameworkMorphMapModelTypeCache = useCallback((): void => {
     phpFrameworkMorphMapModelTypeCacheRef.current = {};
@@ -44,7 +46,7 @@ export function usePhpFrameworkMorphMapResolver({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !isLaravelFrameworkActive ||
+        !supportsEloquentModelSemantics ||
         !requestedRoot ||
         !workspaceDescriptor?.php ||
         !isRequestedRootActive()
@@ -119,7 +121,7 @@ export function usePhpFrameworkMorphMapResolver({
     }, [
       currentWorkspaceRootRef,
       frameworkProviderSignature,
-      isLaravelFrameworkActive,
+      supportsEloquentModelSemantics,
       readNavigationFileContent,
       textSearch,
       workspaceDescriptor,
