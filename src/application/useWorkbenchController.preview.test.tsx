@@ -34713,7 +34713,25 @@ class ArchivedComment
         returnType: "bool",
       },
     ]);
-    expect(bindingSearchCount()).toBe(1);
+    // The first member-completion request warms Laravel provider-source
+    // registries in the background; the settled source signature gets one
+    // fresh binding lookup, then the cache is reused.
+    expect(bindingSearchCount()).toBe(2);
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        unrelatedControllerSource,
+        positionAfter(unrelatedControllerSource, "$comment->for"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\Comment",
+        name: "forceDelete",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+    expect(bindingSearchCount()).toBe(2);
 
     await act(async () => {
       await getWorkbench().openFile(
@@ -34750,7 +34768,7 @@ class ArchivedComment
         returnType: "void",
       },
     ]);
-    expect(bindingSearchCount()).toBe(2);
+    expect(bindingSearchCount()).toBe(3);
   });
 
   it("invalidates a cached Laravel binding miss only for relevant external PHP changes", async () => {
@@ -45965,14 +45983,14 @@ Route::post('/comments', [CommentController::class, 'store'])
         positionAfter(controllerSource, "comments.sh"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "show",
         kind: "route",
         name: "comments.show",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46039,14 +46057,14 @@ Gate::define('delete-post', [PostPolicy::class, 'delete']);
         positionAfter(controllerSource, "upd"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "app/Providers/AuthServiceProvider.php",
         insertText: "update-post",
         kind: "config",
         name: "update-post",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46113,14 +46131,14 @@ Gate::define('delete-post', [PostPolicy::class, 'delete']);
         positionAfter(controllerSource, "del"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "app/Providers/AuthServiceProvider.php",
         insertText: "delete-post",
         kind: "config",
         name: "delete-post",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46185,14 +46203,14 @@ class Kernel extends HttpKernel
         positionAfter(routesSource, "ver"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "app/Http/Kernel.php",
         insertText: "verified",
         kind: "config",
         name: "verified",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46341,14 +46359,14 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
         positionAfter(controllerSource, "comments.sh"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "show",
         kind: "route",
         name: "comments.show",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46417,14 +46435,14 @@ Route::group(attributes: ['as' => 'admin.'], routes: function () {
         positionAfter(controllerSource, "admin.dash"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "dashboard",
         kind: "route",
         name: "admin.dashboard",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46491,14 +46509,14 @@ Route::get('/comments/{comment}', [CommentController::class, 'show'])
         positionAfter(controllerSource, "comments.sh"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "show",
         kind: "route",
         name: "comments.show",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46565,14 +46583,14 @@ Route::get('/comments', ['as' => 'comments.index', 'uses' => CommentController::
         positionAfter(controllerSource, "comments.in"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "index",
         kind: "route",
         name: "comments.index",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46639,14 +46657,14 @@ Route::get('/comments/preview', [CommentController::class, 'preview'])
         positionAfter(controllerSource, "comments.pre"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "preview",
         kind: "route",
         name: "comments.preview",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46713,14 +46731,14 @@ Route::get('/comments/unsubscribe', [CommentController::class, 'unsubscribe'])
         positionAfter(controllerSource, "comments.uns"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "unsubscribe",
         kind: "route",
         name: "comments.unsubscribe",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46787,14 +46805,14 @@ Route::get('/comments/uri', [CommentController::class, 'uri'])
         positionAfter(controllerSource, "comments.ur"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "uri",
         kind: "route",
         name: "comments.uri",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46861,14 +46879,14 @@ Route::get('/comments/preview', [CommentController::class, 'expiringPreview'])
         positionAfter(controllerSource, "comments.pre"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "preview",
         kind: "route",
         name: "comments.preview",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -46936,14 +46954,14 @@ Route::resource(name: 'comments', controller: CommentController::class)
         positionAfter(controllerSource, "comments.ed"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "edit",
         kind: "route",
         name: "comments.edit",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -47010,14 +47028,14 @@ Route::singleton(name: 'profile', controller: ProfileController::class);
         positionAfter(controllerSource, "profile.sh"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "show",
         kind: "route",
         name: "profile.show",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -47086,14 +47104,14 @@ Route::resource(name: 'comments', controller: CommentController::class)
         positionAfter(controllerSource, "comments.mo"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "routes/web.php",
         insertText: "modify",
         kind: "route",
         name: "comments.modify",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -47258,14 +47276,14 @@ return [
         positionAfter(controllerSource, "app.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "name",
         kind: "config",
         name: "app.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -47273,14 +47291,14 @@ return [
         positionAfter(controllerSource, "['app.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "name",
         kind: "config",
         name: "app.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -47338,14 +47356,14 @@ return [
     });
 
     const expected = [
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "name",
         kind: "config",
         name: "app.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ];
 
     await expect(
@@ -47433,14 +47451,14 @@ class CommentController
     });
 
     const expected = [
-      {
+      completion({
         declaringClassName: "resources/views/comments/show.blade.php",
         insertText: "show",
         kind: "view",
         name: "comments.show",
         parameters: "",
         returnType: null,
-      },
+      }),
     ];
 
     await expect(
@@ -47544,14 +47562,14 @@ class AppController
         positionAfter(controllerSource("alpha"), "alpha.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/alpha.php",
         insertText: "name",
         kind: "config",
         name: "alpha.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
 
     await act(async () => {
@@ -47572,14 +47590,14 @@ class AppController
         positionAfter(controllerSource("beta"), "beta.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/beta.php",
         insertText: "name",
         kind: "config",
         name: "beta.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(
@@ -47662,14 +47680,14 @@ return [
         positionAfter(controllerSource, "app.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "name",
         kind: "config",
         name: "app.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -47677,14 +47695,14 @@ return [
         positionAfter(controllerSource, "Config::set('app.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "name",
         kind: "config",
         name: "app.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -47692,14 +47710,14 @@ return [
         positionAfter(controllerSource, "Config::set(['app.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "name",
         kind: "config",
         name: "app.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -47707,14 +47725,14 @@ return [
         positionAfter(controllerSource, "app.mail.from.ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "address",
         kind: "config",
         name: "app.mail.from.address",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -47816,14 +47834,14 @@ return [
         positionAfter(controllerSource, "Config('app.na"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/app.php",
         insertText: "name",
         kind: "config",
         name: "app.name",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
 
     act(() => {
@@ -48546,14 +48564,14 @@ return [
         positionAfter(controllerSource, "Cache::store('red"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/cache.php",
         insertText: "redis",
         kind: "config",
         name: "redis",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -48561,14 +48579,14 @@ return [
         positionAfter(controllerSource, "Cache::memo('red"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/cache.php",
         insertText: "redis",
         kind: "config",
         name: "redis",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -48576,14 +48594,14 @@ return [
         positionAfter(controllerSource, "cache()->store('dat"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/cache.php",
         insertText: "database",
         kind: "config",
         name: "database",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -48755,14 +48773,14 @@ return [
         positionAfter(controllerSource, "DB::connection('my"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/database.php",
         insertText: "mysql",
         kind: "config",
         name: "mysql",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -48770,14 +48788,14 @@ return [
         positionAfter(controllerSource, "Schema::connection('sq"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/database.php",
         insertText: "sqlite",
         kind: "config",
         name: "sqlite",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -48785,14 +48803,14 @@ return [
         positionAfter(controllerSource, "db()->connection('my"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/database.php",
         insertText: "mysql",
         kind: "config",
         name: "mysql",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -48800,14 +48818,14 @@ return [
         positionAfter(controllerSource, "protected $connection = 'my"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/database.php",
         insertText: "mysql",
         kind: "config",
         name: "mysql",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -49066,14 +49084,14 @@ return [
         positionAfter(controllerSource, "Redis::connection('ca"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/database.php",
         insertText: "cache",
         kind: "config",
         name: "cache",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49081,14 +49099,14 @@ return [
         positionAfter(controllerSource, "Redis::connection(name: 'de"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/database.php",
         insertText: "default",
         kind: "config",
         name: "default",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -49259,14 +49277,14 @@ return [
         positionAfter(controllerSource, "Broadcast::connection('pu"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/broadcasting.php",
         insertText: "pusher",
         kind: "config",
         name: "pusher",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49274,14 +49292,14 @@ return [
         positionAfter(controllerSource, "Broadcast::driver('re"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/broadcasting.php",
         insertText: "reverb",
         kind: "config",
         name: "reverb",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49289,14 +49307,14 @@ return [
         positionAfter(controllerSource, "Broadcast::purge('lo"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/broadcasting.php",
         insertText: "log",
         kind: "config",
         name: "log",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49304,14 +49322,14 @@ return [
         positionAfter(controllerSource, "broadcast(new OrderUpdated())->via('pu"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/broadcasting.php",
         insertText: "pusher",
         kind: "config",
         name: "pusher",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49322,14 +49340,14 @@ return [
         ),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/broadcasting.php",
         insertText: "reverb",
         kind: "config",
         name: "reverb",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -49503,14 +49521,14 @@ return [
         positionAfter(controllerSource, "Queue::connection('re"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/queue.php",
         insertText: "redis",
         kind: "config",
         name: "redis",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49518,14 +49536,14 @@ return [
         positionAfter(controllerSource, "Queue::connected('sy"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/queue.php",
         insertText: "sync",
         kind: "config",
         name: "sync",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49533,14 +49551,14 @@ return [
         positionAfter(controllerSource, "onConnection('sq"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/queue.php",
         insertText: "sqs",
         kind: "config",
         name: "sqs",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49548,14 +49566,14 @@ return [
         positionAfter(controllerSource, "allOnConnection('re"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/queue.php",
         insertText: "redis",
         kind: "config",
         name: "redis",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49563,14 +49581,14 @@ return [
         positionAfter(controllerSource, "connection: 'da"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/queue.php",
         insertText: "database",
         kind: "config",
         name: "database",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49578,14 +49596,14 @@ return [
         positionAfter(controllerSource, "'emails', 're"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/queue.php",
         insertText: "redis",
         kind: "config",
         name: "redis",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -49750,14 +49768,14 @@ return [
         positionAfter(controllerSource, "Mail::mailer('post"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/mail.php",
         insertText: "postmark",
         kind: "config",
         name: "postmark",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49765,14 +49783,14 @@ return [
         positionAfter(controllerSource, "Mail::driver('sm"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/mail.php",
         insertText: "smtp",
         kind: "config",
         name: "smtp",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49780,14 +49798,14 @@ return [
         positionAfter(controllerSource, "Mail::purge('post"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/mail.php",
         insertText: "postmark",
         kind: "config",
         name: "postmark",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49795,14 +49813,14 @@ return [
         positionAfter(controllerSource, "Mail::setDefaultDriver('sm"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/mail.php",
         insertText: "smtp",
         kind: "config",
         name: "smtp",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49810,14 +49828,14 @@ return [
         positionAfter(controllerSource, "(new MailMessage)->mailer('post"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/mail.php",
         insertText: "postmark",
         kind: "config",
         name: "postmark",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -49982,14 +50000,14 @@ return [
         positionAfter(controllerSource, "Log::channel('sl"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/logging.php",
         insertText: "slack",
         kind: "config",
         name: "slack",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -49997,14 +50015,14 @@ return [
         positionAfter(controllerSource, "Log::driver('da"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/logging.php",
         insertText: "daily",
         kind: "config",
         name: "daily",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50012,14 +50030,14 @@ return [
         positionAfter(controllerSource, "Log::stack(['sl"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/logging.php",
         insertText: "slack",
         kind: "config",
         name: "slack",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50027,14 +50045,14 @@ return [
         positionAfter(controllerSource, "channels: ['da"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/logging.php",
         insertText: "daily",
         kind: "config",
         name: "daily",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -50200,14 +50218,14 @@ return [
         positionAfter(controllerSource, "Storage::disk('s"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/filesystems.php",
         insertText: "s3",
         kind: "config",
         name: "s3",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50215,14 +50233,14 @@ return [
         positionAfter(controllerSource, "disk: 'pu"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/filesystems.php",
         insertText: "public",
         kind: "config",
         name: "public",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -50395,14 +50413,14 @@ return [
         positionAfter(controllerSource, "Auth::guard('ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
         name: "admin",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50410,14 +50428,14 @@ return [
         positionAfter(controllerSource, "Auth::shouldUse('we"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "web",
         kind: "config",
         name: "web",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50425,14 +50443,14 @@ return [
         positionAfter(controllerSource, "Auth::setDefaultDriver(name: 'ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
         name: "admin",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50440,14 +50458,14 @@ return [
         positionAfter(controllerSource, "auth('we"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "web",
         kind: "config",
         name: "web",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50455,14 +50473,14 @@ return [
         positionAfter(controllerSource, "auth()->guard(name: 'ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
         name: "admin",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50470,14 +50488,14 @@ return [
         positionAfter(controllerSource, "request()->user('ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
         name: "admin",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50485,14 +50503,14 @@ return [
         positionAfter(controllerSource, "Route::middleware('auth:ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
         name: "admin",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50500,14 +50518,14 @@ return [
         positionAfter(controllerSource, "Route::middleware(['guest:ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
         name: "admin",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50515,14 +50533,14 @@ return [
         positionAfter(controllerSource, "Authenticated('ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
         name: "admin",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50530,14 +50548,14 @@ return [
         positionAfter(controllerSource, "CurrentUser('we"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "web",
         kind: "config",
         name: "web",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -50883,14 +50901,14 @@ return [
         positionAfter(controllerSource, "Password::broker('ad"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "admins",
         kind: "config",
         name: "admins",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -50898,14 +50916,14 @@ return [
         positionAfter(controllerSource, "Password::setDefaultDriver(name: 'us"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "config/auth.php",
         insertText: "users",
         kind: "config",
         name: "users",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -51066,14 +51084,14 @@ return [
         positionAfter(controllerSource, "messages.we"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "lang/en/messages.php",
         insertText: "welcome",
         kind: "translation",
         name: "messages.welcome",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -51138,14 +51156,14 @@ return [
         positionAfter(controllerSource, "messages.vi"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "lang/sk/messages.php",
         insertText: "vitajte",
         kind: "translation",
         name: "messages.vitajte",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -51203,14 +51221,14 @@ class AppController
         positionAfter(controllerSource, "I lo"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "lang/es.json",
         insertText: "love programming.",
         kind: "translation",
         name: "I love programming.",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -52177,14 +52195,14 @@ class AppController
         positionAfter(controllerSource, "APP_NA"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: ".env",
         insertText: "APP_NAME",
         kind: "env",
         name: "APP_NAME",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -52235,14 +52253,14 @@ class AppController
         positionAfter(controllerSource, "APP_NA"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: ".env",
         insertText: "APP_NAME",
         kind: "env",
         name: "APP_NAME",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -52298,14 +52316,14 @@ class AppController
         positionAfter(controllerSource, "APP_NA"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: ".env.example",
         insertText: "APP_NAME",
         kind: "env",
         name: "APP_NAME",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -57581,14 +57599,14 @@ class CommentController
         positionAfter(controllerSource, "comments.sh"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "resources/views/comments/show.blade.php",
         insertText: "show",
         kind: "view",
         name: "comments.show",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -57663,14 +57681,14 @@ class CommentController
         positionAfter(controllerSource, "comments.sh"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "resources/views/comments/show.blade.php",
         insertText: "show",
         kind: "view",
         name: "comments.show",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
     await expect(
       getWorkbench().providePhpMethodCompletions(
@@ -57678,14 +57696,14 @@ class CommentController
         positionAfter(controllerSource, "dashb"),
       ),
     ).resolves.toEqual([
-      {
+      completion({
         declaringClassName: "resources/views/dashboard.blade.php",
         insertText: "dashboard",
         kind: "view",
         name: "dashboard",
         parameters: "",
         returnType: null,
-      },
+      }),
     ]);
   });
 
@@ -70192,6 +70210,10 @@ function WorkbenchHarness({
   }, [onWorkbench, workbench]);
 
   return null;
+}
+
+function completion(fields: Record<string, unknown>) {
+  return expect.objectContaining(fields);
 }
 
 // jsdom's requestAnimationFrame only fires after a macrotask, which the

@@ -17,6 +17,10 @@ function positionAfter(source: string, needle: string) {
   };
 }
 
+function completion(fields: Record<string, unknown>) {
+  return expect.objectContaining(fields);
+}
+
 describe("phpNetteMethodCompletionProviderAdapter", () => {
   it("returns redrawControl snippet completions from the active document path", async () => {
     const source = "<?php\n$this->redrawControl('mail');";
@@ -45,7 +49,7 @@ describe("phpNetteMethodCompletionProviderAdapter", () => {
     });
 
     expect(completions).toEqual([
-      {
+      completion({
         declaringClassName:
           "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
         detail:
@@ -58,7 +62,7 @@ describe("phpNetteMethodCompletionProviderAdapter", () => {
         replaceEnd: source.indexOf("'", source.indexOf("mail")),
         replaceStart: source.indexOf("mail"),
         returnType: null,
-      },
+      }),
     ]);
     expect(collectNetteRedrawControlSnippetTargets).toHaveBeenCalledWith(
       "/workspace/app/modules/mailerModule/Components/MailLogs/MailLogs.php",

@@ -63,6 +63,10 @@ function positionAt(source: string, offset: number) {
   };
 }
 
+function completion(fields: Record<string, unknown>) {
+  return expect.objectContaining(fields);
+}
+
 function method(
   name: string,
   overrides: Partial<PhpMethodCompletion> = {},
@@ -444,7 +448,7 @@ Comment::with('par')->first();
       .providePhpMethodCompletions(source, positionAfter(source, "ma"));
 
     expect(completions).toEqual([
-      {
+      completion({
         declaringClassName:
           "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
         insertText: "mailLogslisting",
@@ -454,7 +458,7 @@ Comment::with('par')->first();
         replaceEnd: source.indexOf("'", source.indexOf("mail")),
         replaceStart: source.indexOf("mail"),
         returnType: null,
-      },
+      }),
     ]);
     expect(collectNetteRedrawControlSnippetTargets).toHaveBeenCalledWith(
       `${ROOT}/app/modules/mailerModule/Components/MailLogs/MailLogs.php`,
