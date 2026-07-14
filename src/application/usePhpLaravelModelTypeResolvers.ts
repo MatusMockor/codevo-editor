@@ -89,7 +89,9 @@ export function usePhpLaravelModelTypeResolvers({
   workspaceRoot,
 }: UsePhpLaravelModelTypeResolversOptions) {
   const frameworkProviders = frameworkRuntime.providers;
-  const isLaravelFrameworkActive = frameworkRuntime.hasProvider("laravel");
+  const supportsEloquentModelSemantics = frameworkRuntime.supports(
+    "eloquentModelSemantics",
+  );
 
   const resolvePhpEloquentBuilderModelType = useCallback(
     async (
@@ -98,7 +100,7 @@ export function usePhpLaravelModelTypeResolvers({
       expression: string,
       depth = 0,
     ): Promise<string | null> => {
-      if (!isLaravelFrameworkActive || depth > 5) {
+      if (!supportsEloquentModelSemantics || depth > 5) {
         return null;
       }
 
@@ -406,12 +408,12 @@ export function usePhpLaravelModelTypeResolvers({
       frameworkProviders,
       phpClassHasLaravelDynamicWhere,
       phpClassHasLaravelLocalScope,
-      isLaravelFrameworkActive,
       resolvePhpClassPropertyOrRelationType,
       resolvePhpClassReference,
       resolvePhpLaravelMethodGenericModelType,
       resolvePhpLaravelRelationPathOwnerType,
       resolvePhpMethodReturnType,
+      supportsEloquentModelSemantics,
     ],
   );
 
@@ -526,7 +528,7 @@ export function usePhpLaravelModelTypeResolvers({
       expression: string,
       depth = 0,
     ): Promise<string | null> => {
-      if (!isLaravelFrameworkActive || depth > 5) {
+      if (!supportsEloquentModelSemantics || depth > 5) {
         return null;
       }
 
@@ -670,11 +672,11 @@ export function usePhpLaravelModelTypeResolvers({
     },
     [
       frameworkProviders,
-      isLaravelFrameworkActive,
       resolvePhpClassReference,
       resolvePhpCollectionModelTypeFromClass,
       resolvePhpEloquentBuilderModelType,
       resolvePhpLaravelMethodGenericModelType,
+      supportsEloquentModelSemantics,
     ],
   );
 

@@ -35,7 +35,8 @@ const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
 const STALE_LEGACY_LARAVEL_RUNTIME = {
   ...LARAVEL_RUNTIME,
   providers: [],
-  hasProvider: () => false,
+  hasProvider: (providerId: string) => providerId === "laravel",
+  supports: () => false,
 };
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
@@ -207,7 +208,7 @@ class AlbumRepository
     harness.unmount();
   });
 
-  it("returns null for stale legacy Laravel profiles without provider authority", async () => {
+  it("returns null for stale provider-id-only Laravel profiles without Eloquent semantics", async () => {
     const options = makeOptions(
       {
         "App\\Repositories\\AlbumRepository": {

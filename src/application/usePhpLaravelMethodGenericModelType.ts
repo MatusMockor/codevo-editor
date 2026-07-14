@@ -61,7 +61,9 @@ export function usePhpLaravelMethodGenericModelType({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelMethodGenericModelTypeOptions) {
-  const hasLaravelProvider = frameworkRuntime.hasProvider("laravel");
+  const supportsEloquentModelSemantics = frameworkRuntime.supports(
+    "eloquentModelSemantics",
+  );
 
   const resolvePhpLaravelMethodGenericModelType = useCallback(
     async (
@@ -74,7 +76,7 @@ export function usePhpLaravelMethodGenericModelType({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !hasLaravelProvider ||
+        !supportsEloquentModelSemantics ||
         !requestedRoot ||
         !workspaceDescriptor?.php ||
         !isRequestedRootActive()
@@ -176,11 +178,11 @@ export function usePhpLaravelMethodGenericModelType({
     },
     [
       currentWorkspaceRootRef,
-      hasLaravelProvider,
       helpers,
       readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,
+      supportsEloquentModelSemantics,
       workspaceDescriptor,
       workspaceRoot,
     ],

@@ -29,10 +29,11 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   }),
 );
 const STALE_LEGACY_LARAVEL_RUNTIME = {
-  ...GENERIC_RUNTIME,
+  ...LARAVEL_RUNTIME,
   isLaravel: true,
   providers: [],
-  hasProvider: () => false,
+  hasProvider: (providerId: string) => providerId === "laravel",
+  supports: () => false,
 };
 
 type HookOptions = Parameters<typeof usePhpLaravelModelTypeResolvers>[0];

@@ -16,11 +16,13 @@ export function usePhpLaravelScopePredicates({
   collectPhpMethodsForClass,
   frameworkRuntime,
 }: UsePhpLaravelScopePredicatesOptions) {
-  const hasLaravelProvider = frameworkRuntime.hasProvider("laravel");
+  const supportsEloquentModelSemantics = frameworkRuntime.supports(
+    "eloquentModelSemantics",
+  );
 
   const phpClassHasLaravelDynamicWhere = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
-      if (!hasLaravelProvider) {
+      if (!supportsEloquentModelSemantics) {
         return false;
       }
 
@@ -32,12 +34,15 @@ export function usePhpLaravelScopePredicates({
         (method) => method.name.toLowerCase() === methodLookup,
       );
     },
-    [collectPhpFrameworkSyntheticMethodsForClass, hasLaravelProvider],
+    [
+      collectPhpFrameworkSyntheticMethodsForClass,
+      supportsEloquentModelSemantics,
+    ],
   );
 
   const phpClassHasLaravelLocalScope = useCallback(
     async (className: string, scopeName: string): Promise<boolean> => {
-      if (!hasLaravelProvider) {
+      if (!supportsEloquentModelSemantics) {
         return false;
       }
 
@@ -50,7 +55,7 @@ export function usePhpLaravelScopePredicates({
         (scope) => scope.name.toLowerCase() === scopeLookup,
       );
     },
-    [collectPhpMethodsForClass, hasLaravelProvider],
+    [collectPhpMethodsForClass, supportsEloquentModelSemantics],
   );
 
   return {

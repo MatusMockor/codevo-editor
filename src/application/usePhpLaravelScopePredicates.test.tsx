@@ -31,7 +31,8 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
 const STALE_LEGACY_LARAVEL_RUNTIME = {
   ...LARAVEL_RUNTIME,
   providers: [],
-  hasProvider: () => false,
+  hasProvider: (providerId: string) => providerId === "laravel",
+  supports: () => false,
   isLaravel: true,
 };
 
@@ -199,7 +200,7 @@ describe("usePhpLaravelScopePredicates", () => {
     harness.unmount();
   });
 
-  it("does not expose Laravel dynamic where or local scopes for a stale legacy Laravel runtime", async () => {
+  it("does not expose Laravel dynamic where or local scopes for a stale provider-id-only Laravel runtime", async () => {
     const options = makeOptions({
       collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
         methodCompletion("whereEmailAddress"),
