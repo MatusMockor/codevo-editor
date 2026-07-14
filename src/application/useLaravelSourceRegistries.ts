@@ -19,7 +19,7 @@ export interface PhpLaravelSourceContext {
 
 export interface UseLaravelSourceRegistriesDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  isLaravelFrameworkActive: boolean;
+  isActive: boolean;
   onSourcesLoaded(rootPath: string): void;
   workspaceFiles: Pick<WorkspaceFileGateway, "readDirectory" | "readTextFile">;
 }
@@ -38,7 +38,7 @@ export interface LaravelSourceRegistries {
 
 export function useLaravelSourceRegistries({
   currentWorkspaceRootRef,
-  isLaravelFrameworkActive,
+  isActive,
   onSourcesLoaded,
   workspaceFiles,
 }: UseLaravelSourceRegistriesDependencies): LaravelSourceRegistries {
@@ -50,7 +50,7 @@ export function useLaravelSourceRegistries({
     resetSourceCollectionRegistry: resetPhpLaravelMigrationSourceRegistry,
   } = usePhpSourceCollectionRegistry({
     currentWorkspaceRootRef,
-    isActive: isLaravelFrameworkActive,
+    isActive,
     isSourcePath: isPhpLaravelMigrationPath,
     loadSources: loadPhpLaravelMigrationSources,
     onSourcesLoaded,
@@ -65,7 +65,7 @@ export function useLaravelSourceRegistries({
     resetSourceCollectionRegistry: resetPhpLaravelProviderSourceRegistry,
   } = usePhpSourceCollectionRegistry({
     currentWorkspaceRootRef,
-    isActive: isLaravelFrameworkActive,
+    isActive,
     isSourcePath: isPhpLaravelProviderPath,
     loadSources: loadPhpLaravelProviderSources,
     onSourcesLoaded,

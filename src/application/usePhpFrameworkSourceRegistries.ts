@@ -1,12 +1,8 @@
-import {
-  phpLaravelFrameworkSourceRegistryAdapter,
-  phpLaravelFrameworkSourceRegistryProviderId,
-} from "./phpLaravelFrameworkSourceRegistryAdapter";
+import { usePhpLaravelFrameworkSourceRegistryContribution } from "./phpLaravelFrameworkSourceRegistryAdapter";
 import {
   activePhpFrameworkSourceRegistryProviders,
   type PhpFrameworkSourceRegistryAdapter,
 } from "./phpFrameworkSourceRegistryAdapters";
-import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
 import type { WorkspaceFileGateway } from "../domain/workspace";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { MutableRefObject } from "react";
@@ -42,14 +38,10 @@ export interface PhpFrameworkSourceRegistries {
 function usePhpFrameworkSourceRegistryAdapters(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
 ): readonly PhpFrameworkSourceRegistryAdapter[] {
-  const laravelSources = useLaravelSourceRegistries({
-    ...dependencies,
-    isLaravelFrameworkActive: dependencies.frameworkRuntime.hasProvider(
-      phpLaravelFrameworkSourceRegistryProviderId,
-    ),
-  });
+  const laravelContribution =
+    usePhpLaravelFrameworkSourceRegistryContribution(dependencies);
 
-  return [phpLaravelFrameworkSourceRegistryAdapter(laravelSources)];
+  return [laravelContribution];
 }
 
 export function usePhpFrameworkSourceRegistries(

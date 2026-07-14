@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkSourceRegistryProvider } from "./phpLaravelFrameworkSourceRegistryAdapter";
+import {
+  phpLaravelFrameworkSourceRegistryAdapter,
+  phpLaravelFrameworkSourceRegistryProvider,
+  phpLaravelFrameworkSourceRegistryProviderId,
+} from "./phpLaravelFrameworkSourceRegistryAdapter";
 import type { LaravelSourceRegistries } from "./useLaravelSourceRegistries";
 
 const ROOT = "/workspace";
@@ -26,6 +30,13 @@ function makeLaravelSources(): LaravelSourceRegistries {
 }
 
 describe("phpLaravelFrameworkSourceRegistryProvider", () => {
+  it("keeps the Laravel provider id at the adapter boundary", () => {
+    const laravelSources = makeLaravelSources();
+    const adapter = phpLaravelFrameworkSourceRegistryAdapter(laravelSources);
+
+    expect(adapter.providerId).toBe(phpLaravelFrameworkSourceRegistryProviderId);
+  });
+
   it("reads Laravel source context for the requested root", () => {
     const laravelSources = makeLaravelSources();
     const provider = phpLaravelFrameworkSourceRegistryProvider(laravelSources);

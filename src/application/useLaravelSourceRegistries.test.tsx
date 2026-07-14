@@ -69,7 +69,7 @@ function makeDeps(
 ): LaravelSourceRegistryTestDependencies {
   return {
     currentWorkspaceRootRef: { current: ROOT },
-    isLaravelFrameworkActive: true,
+    isActive: true,
     onSourcesLoaded: vi.fn(),
     workspaceFiles: makeWorkspaceFiles(),
     ...overrides,
