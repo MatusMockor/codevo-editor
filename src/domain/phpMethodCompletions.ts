@@ -29,6 +29,7 @@ export type PhpMemberVisibility = "public" | "protected" | "private";
 
 export interface PhpMethodCompletion {
   classStringTemplate?: string;
+  completionBehavior?: PhpMethodCompletionBehavior;
   declaringClassName: string;
   detail?: string;
   documentation?: string;
@@ -52,6 +53,11 @@ export interface PhpMethodCompletion {
   replaceStart?: number;
   returnType: string | null;
   visibility?: PhpMemberVisibility;
+}
+
+export interface PhpMethodCompletionBehavior {
+  insertTextMode?: "plain" | "snippet";
+  triggerParameterHints?: boolean;
 }
 
 export interface PhpMethodParameter {

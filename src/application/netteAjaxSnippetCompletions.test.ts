@@ -15,6 +15,10 @@ const COLOCATED_TEMPLATE_PATH =
   "/ws/app/modules/mailerModule/Components/MailLogs/mail_logs.latte";
 const COLOCATED_TEMPLATE_RELATIVE_PATH =
   "app/modules/mailerModule/Components/MailLogs/mail_logs.latte";
+const PLAIN_COMPLETION_BEHAVIOR = {
+  insertTextMode: "plain",
+  triggerParameterHints: false,
+} as const;
 
 function joinWorkspacePath(root: string, relativePath: string): string {
   return `${root}/${relativePath}`;
@@ -100,6 +104,7 @@ describe("phpNetteRedrawControlSnippetNameCompletions", () => {
       ]),
     ).toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName:
           "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
         detail:

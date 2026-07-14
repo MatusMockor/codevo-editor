@@ -8,6 +8,11 @@ import {
   type PhpFrameworkLiteralCompletionDependencies,
 } from "./phpFrameworkLiteralCompletions";
 
+const PLAIN_COMPLETION_BEHAVIOR = {
+  insertTextMode: "plain",
+  triggerParameterHints: false,
+} as const;
+
 function dependencies(
   overrides: Partial<PhpFrameworkLiteralCompletionDependencies> = {},
 ): PhpFrameworkLiteralCompletionDependencies {
@@ -172,6 +177,7 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "routes/web.php",
         detail: "Laravel route - routes/web.php",
         documentation: "Laravel named route\n\nAdmin.Dashboard",
@@ -215,6 +221,7 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "config/app.php",
         detail: "Laravel config - config/app.php",
         documentation: "Laravel config\n\napp.name",
@@ -253,6 +260,7 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "lang/en/messages.php",
         detail: "Laravel translation - lang/en/messages.php",
         documentation: "Laravel translation\n\nmessages.welcome",
@@ -291,6 +299,7 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: ".env",
         detail: "Laravel env - .env",
         documentation: "Laravel env\n\nAPP_NAME",
@@ -344,6 +353,7 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "resources/views/admin/dashboard.blade.php",
         detail: "Laravel view - resources/views/admin/dashboard.blade.php",
         documentation: "Laravel view\n\nadmin.dashboard",

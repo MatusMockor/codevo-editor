@@ -4261,26 +4261,16 @@ async function phpMethodSuggestions(
     // categories together. The sort is stable, so each collector's intended
     // ordering within a category is untouched.
     return orderPhpMemberCompletionsByCategory(methods).map((item, index) => ({
-      command:
-        item.kind !== "property" &&
-        item.kind !== "config" &&
-        item.kind !== "env" &&
-        item.kind !== "translation" &&
-        item.kind !== "relation" &&
-        item.kind !== "route" &&
-        item.kind !== "view" &&
-        item.kind !== "nette.ajax-snippet" &&
-        phpMethodParameters(item.parameters).length
-          ? {
-              id: "editor.action.triggerParameterHints",
-              title: "Trigger parameter hints",
+      command: phpMethodCompletionShouldTriggerParameterHints(item)
+        ? {
+            id: "editor.action.triggerParameterHints",
+            title: "Trigger parameter hints",
             }
           : undefined,
       detail: phpMethodDetail(item),
       documentation: phpMethodDocumentation(item),
-      insertText: phpMethodSnippet(item),
-      insertTextRules:
-        monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      insertText: phpMethodInsertText(item),
+      insertTextRules: phpMethodInsertTextRules(monaco, item),
       kind: phpMethodCompletionKind(monaco, item),
       label: phpMethodCompletionLabel(item),
       range: phpMethodCompletionRange(monaco, model, item, range),
@@ -4772,6 +4762,45 @@ function phpMethodSignatureLabel(item: PhpMethodCompletion): string {
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
   return `${item.name}${parameters}${returnType}`;
+}
+
+function phpMethodCompletionShouldTriggerParameterHints(
+  item: PhpMethodCompletion,
+): boolean {
+  if (item.completionBehavior?.triggerParameterHints != null) {
+    return item.completionBehavior.triggerParameterHints;
+  }
+
+  return (
+    item.kind !== "property" &&
+    item.kind !== "config" &&
+    item.kind !== "env" &&
+    item.kind !== "translation" &&
+    item.kind !== "relation" &&
+    item.kind !== "route" &&
+    item.kind !== "view" &&
+    item.kind !== "nette.ajax-snippet" &&
+    phpMethodParameters(item.parameters).length > 0
+  );
+}
+
+function phpMethodInsertText(item: PhpMethodCompletion): string {
+  if (item.completionBehavior?.insertTextMode === "plain") {
+    return item.insertText ?? item.name;
+  }
+
+  return phpMethodSnippet(item);
+}
+
+function phpMethodInsertTextRules(
+  monaco: MonacoApi,
+  item: PhpMethodCompletion,
+): Monaco.languages.CompletionItemInsertTextRule | undefined {
+  if (item.completionBehavior?.insertTextMode === "plain") {
+    return undefined;
+  }
+
+  return monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
 }
 
 function phpMethodSnippet(item: PhpMethodCompletion): string {

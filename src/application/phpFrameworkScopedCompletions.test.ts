@@ -39,6 +39,10 @@ const STALE_LARAVEL_PROFILE_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [],
   }),
 );
+const PLAIN_COMPLETION_BEHAVIOR = {
+  insertTextMode: "plain",
+  triggerParameterHints: false,
+} as const;
 
 function dependencies(
   overrides: Partial<PhpFrameworkScopedCompletionDependencies> = {},
@@ -292,6 +296,7 @@ describe("resolvePhpFrameworkScopedCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "Kernel.php",
         insertText: "verified",
         kind: "config",
@@ -358,6 +363,7 @@ describe("resolvePhpFrameworkScopedCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "config/auth.php",
         insertText: "admin",
         kind: "config",
@@ -389,6 +395,7 @@ describe("resolvePhpFrameworkScopedCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "config/cache.php",
         insertText: "redis",
         kind: "config",
@@ -427,6 +434,7 @@ describe("resolvePhpFrameworkScopedCompletions", () => {
       ),
     ).resolves.toEqual([
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "config/database.php",
         insertText: "mysql",
         kind: "config",

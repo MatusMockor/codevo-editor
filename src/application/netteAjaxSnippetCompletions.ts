@@ -38,6 +38,11 @@ export interface NetteRedrawControlSnippetTargetCollectorWorkbenchDependencies {
   workspaceRoot: string | null;
 }
 
+const PLAIN_SNIPPET_COMPLETION_BEHAVIOR = {
+  insertTextMode: "plain",
+  triggerParameterHints: false,
+} satisfies PhpMethodCompletion["completionBehavior"];
+
 export function latteNetteSnippetNameCompletions(
   source: string,
   offset: number,
@@ -76,6 +81,7 @@ export function phpNetteRedrawControlSnippetNameCompletions(
   }
 
   return snippetNameCompletions(targets, completion).map((target) => ({
+    completionBehavior: PLAIN_SNIPPET_COMPLETION_BEHAVIOR,
     declaringClassName: target.relativePath,
     detail: `Nette AJAX snippet - ${target.relativePath}`,
     documentation: `Nette AJAX snippet\n\n${target.name}`,

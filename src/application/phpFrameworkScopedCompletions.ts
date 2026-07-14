@@ -75,6 +75,11 @@ interface PhpFrameworkScopedCompletionHandlerContext {
   source: string;
 }
 
+const PLAIN_SCOPED_COMPLETION_BEHAVIOR = {
+  insertTextMode: "plain",
+  triggerParameterHints: false,
+} satisfies PhpMethodCompletion["completionBehavior"];
+
 export async function resolvePhpFrameworkScopedCompletions(
   request: PhpFrameworkScopedCompletionRequest,
   dependencies: PhpFrameworkScopedCompletionDependencies,
@@ -275,6 +280,7 @@ async function sourcePathDerivedCompletions<
       const { name } = target;
 
       return {
+        completionBehavior: PLAIN_SCOPED_COMPLETION_BEHAVIOR,
         declaringClassName: target.relativePath ?? getFileName(target.path),
         insertText: insertTextForName(name),
         kind: "config",
@@ -307,6 +313,7 @@ async function configDerivedCompletions<Target extends PhpFrameworkScopedConfigT
       const { name } = target;
 
       return {
+        completionBehavior: PLAIN_SCOPED_COMPLETION_BEHAVIOR,
         declaringClassName: target.relativePath,
         insertText: insertTextForName(name),
         kind: "config",

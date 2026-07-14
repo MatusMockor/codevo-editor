@@ -40,6 +40,11 @@ import {
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 
+const PLAIN_COMPLETION_BEHAVIOR = {
+  insertTextMode: "plain",
+  triggerParameterHints: false,
+} as const;
+
 describe("registerLanguageServerMonacoProviders", () => {
   it("registers php hover, completion, signature, code action, selection range, rename, reference, definition, declaration, implementation, type definition, document highlight, document symbol, workspace symbol, document link, code lens, inlay hint, folding range, formatting, range formatting, on type formatting, linked editing range and semantic token providers and disposes them", () => {
     const registered = createRegisteredProviders();
@@ -1320,6 +1325,63 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("lets provider behavior metadata choose plain insertion without parameter hints", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
+        declaringClassName: "ProviderLiteral",
+        insertText: "literalName",
+        kind: "scope" as const,
+        name: "literalName",
+        parameters: "string $value",
+        returnType: "mixed",
+        visibility: "public" as const,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\n$value->literal\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "$value->literal",
+        word: {
+          endColumn: 16,
+          startColumn: 9,
+        },
+      }),
+      {
+        column: 16,
+        lineNumber: 2,
+      },
+    );
+
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        command: undefined,
+        insertText: "literalName",
+        insertTextRules: undefined,
+        label: {
+          description: "scope - ProviderLiteral",
+          detail: "(): mixed",
+          label: "literalName",
+        },
+      }),
+    ]);
+  });
+
   it("inserts Laravel route name completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
@@ -1385,6 +1447,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName: "routes/web.php",
         detail: "Provider route detail",
         documentation: "Provider route documentation",
@@ -1430,6 +1493,7 @@ describe("registerLanguageServerMonacoProviders", () => {
         detail: "Provider route detail",
         documentation: "Provider route documentation",
         insertText: "show",
+        insertTextRules: undefined,
       }),
     );
   });
@@ -1560,6 +1624,7 @@ describe("registerLanguageServerMonacoProviders", () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
       {
+        completionBehavior: PLAIN_COMPLETION_BEHAVIOR,
         declaringClassName:
           "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
         detail:
@@ -1608,7 +1673,7 @@ describe("registerLanguageServerMonacoProviders", () => {
           "Nette AJAX snippet - app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
         documentation: "Nette AJAX snippet\n\nmailLogslisting",
         insertText: "mailLogslisting",
-        insertTextRules: 4,
+        insertTextRules: undefined,
         kind: 12,
         label: {
           description:

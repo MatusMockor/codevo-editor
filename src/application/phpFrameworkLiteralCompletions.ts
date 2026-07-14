@@ -68,6 +68,11 @@ export interface PhpFrameworkLiteralCompletionRequest {
   source: string;
 }
 
+const PLAIN_LITERAL_COMPLETION_BEHAVIOR = {
+  insertTextMode: "plain",
+  triggerParameterHints: false,
+} satisfies PhpMethodCompletion["completionBehavior"];
+
 export async function resolvePhpFrameworkLiteralCompletions(
   request: PhpFrameworkLiteralCompletionRequest,
   dependencies: PhpFrameworkLiteralCompletionDependencies,
@@ -105,6 +110,7 @@ export async function resolvePhpFrameworkLiteralCompletions(
 
         return {
           declaringClassName,
+          ...laravelLiteralCompletionBehavior(routeContext.provider),
           ...laravelLiteralCompletionMetadata(
             routeContext.provider,
             "route",
@@ -149,6 +155,7 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
+        ...laravelLiteralCompletionBehavior(translationContext.provider),
         ...laravelLiteralCompletionMetadata(
           translationContext.provider,
           "translation",
@@ -192,6 +199,7 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
+        ...laravelLiteralCompletionBehavior(envContext.provider),
         ...laravelLiteralCompletionMetadata(
           envContext.provider,
           "env",
@@ -234,6 +242,7 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
+        ...laravelLiteralCompletionBehavior(configContext.provider),
         ...laravelLiteralCompletionMetadata(
           configContext.provider,
           "config",
@@ -276,6 +285,7 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((view) => ({
         declaringClassName: view.relativePath,
+        ...laravelLiteralCompletionBehavior(viewContext.provider),
         ...laravelLiteralCompletionMetadata(
           viewContext.provider,
           "view",
@@ -294,6 +304,18 @@ export async function resolvePhpFrameworkLiteralCompletions(
   }
 
   return null;
+}
+
+function laravelLiteralCompletionBehavior(
+  provider: PhpFrameworkProvider,
+): Partial<Pick<PhpMethodCompletion, "completionBehavior">> {
+  if (provider.id !== "laravel") {
+    return {};
+  }
+
+  return {
+    completionBehavior: PLAIN_LITERAL_COMPLETION_BEHAVIOR,
+  };
 }
 
 function laravelLiteralCompletionMetadata(
