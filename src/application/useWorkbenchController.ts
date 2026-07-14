@@ -1036,6 +1036,14 @@ export function useWorkbenchController(
     activeDocumentRef.current = null;
     setEditorGroupsState(next);
   }, []);
+  const resetEditorSurfaceState = useCallback(() => {
+    setDocuments({});
+    imageTabsRef.current = {};
+    setImageTabs({});
+    markdownPreviewTabsRef.current = {};
+    setMarkdownPreviewTabs({});
+    resetEditorGroups();
+  }, [resetEditorGroups]);
   const artisanMakePaletteOpen = Boolean(
     workspaceRoot &&
       artisanMakePaletteRoot &&
@@ -2641,12 +2649,7 @@ export function useWorkbenchController(
     setLoadingDirectories(new Set());
     setExpandedDirectories(new Set());
     setManuallyCollapsedDirectories(new Set());
-    setDocuments({});
-    imageTabsRef.current = {};
-    setImageTabs({});
-    markdownPreviewTabsRef.current = {};
-    setMarkdownPreviewTabs({});
-    resetEditorGroups();
+    resetEditorSurfaceState();
     setArtisanMakePaletteRoot(null);
     setRecentFiles([]);
     setRecentLocations([]);
@@ -2713,7 +2716,7 @@ export function useWorkbenchController(
     clearPhpstanDiagnosticsForRoot,
     resetActiveEditorPosition,
     resetFilePrefetchState,
-    resetEditorGroups,
+    resetEditorSurfaceState,
     resetHistory,
     resetGitDiffWorkspaceState,
     resetGitStatusSurface,
@@ -3135,12 +3138,7 @@ export function useWorkbenchController(
         setEntriesByDirectory({});
         setExpandedDirectories(new Set([path]));
         setManuallyCollapsedDirectories(new Set());
-        setDocuments({});
-        imageTabsRef.current = {};
-        setImageTabs({});
-        markdownPreviewTabsRef.current = {};
-        setMarkdownPreviewTabs({});
-        resetEditorGroups();
+        resetEditorSurfaceState();
         setRecentFiles([]);
         setRecentLocations([]);
         setBookmarks([]);
@@ -3460,7 +3458,7 @@ export function useWorkbenchController(
       runGitRepositoryDiscovery,
       clearIndexWorkspaceState,
       resetActiveEditorPosition,
-      resetEditorGroups,
+      resetEditorSurfaceState,
       resetFilePrefetchState,
       resetGitDiffWorkspaceState,
       resetGitStatusSurface,
