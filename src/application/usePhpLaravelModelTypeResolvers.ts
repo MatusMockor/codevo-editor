@@ -89,7 +89,7 @@ export function usePhpLaravelModelTypeResolvers({
   workspaceRoot,
 }: UsePhpLaravelModelTypeResolversOptions) {
   const frameworkProviders = frameworkRuntime.providers;
-  const isLaravelFrameworkActive = frameworkRuntime.isLaravel;
+  const isLaravelFrameworkActive = frameworkRuntime.hasProvider("laravel");
 
   const resolvePhpEloquentBuilderModelType = useCallback(
     async (

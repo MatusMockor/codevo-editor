@@ -28,6 +28,12 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [],
   }),
 );
+const STALE_LEGACY_LARAVEL_RUNTIME = {
+  ...GENERIC_RUNTIME,
+  isLaravel: true,
+  providers: [],
+  hasProvider: () => false,
+};
 
 type HookOptions = Parameters<typeof usePhpLaravelModelTypeResolvers>[0];
 type HookApi = ReturnType<typeof usePhpLaravelModelTypeResolvers>;
@@ -178,6 +184,113 @@ $query->whereEmail('a@example.com');
     ).resolves.toBeNull();
 
     expect(phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("ignores stale legacy Laravel state for builder model resolution", async () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Models\\User;
+
+class UserController
+{
+    public function index(): void
+    {
+        $user = User::whereEmail('a@example.com')->first();
+    }
+}
+`;
+    const options = makeOptions(
+      {},
+      {
+        frameworkRuntime: STALE_LEGACY_LARAVEL_RUNTIME,
+        phpClassHasLaravelDynamicWhere: vi.fn(async () => true),
+        phpClassHasLaravelLocalScope: vi.fn(async () => true),
+        resolvePhpClassPropertyOrRelationType: vi.fn(async () => "App\\Models\\User"),
+        resolvePhpLaravelMethodGenericModelType: vi.fn(
+          async () => "App\\Models\\User",
+        ),
+        resolvePhpLaravelRelationPathOwnerType: vi.fn(
+          async () => "App\\Models\\User",
+        ),
+        resolvePhpMethodReturnType: vi.fn(async () => "App\\Models\\User"),
+      },
+    );
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpEloquentBuilderModelType(
+          source,
+          positionAfter(source, "User::whereEmail"),
+          "User::whereEmail('a@example.com')->first()",
+        ),
+    ).resolves.toBeNull();
+
+    expect(options.phpClassHasLaravelDynamicWhere).not.toHaveBeenCalled();
+    expect(options.phpClassHasLaravelLocalScope).not.toHaveBeenCalled();
+    expect(options.resolvePhpLaravelMethodGenericModelType).not.toHaveBeenCalled();
+    expect(options.resolvePhpClassPropertyOrRelationType).not.toHaveBeenCalled();
+    expect(options.resolvePhpLaravelRelationPathOwnerType).not.toHaveBeenCalled();
+    expect(options.resolvePhpMethodReturnType).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("ignores stale legacy Laravel state for collection model resolution", async () => {
+    const source = `<?php
+namespace App\\Http\\Controllers;
+
+use App\\Collections\\AlbumCollection;
+
+class AlbumController
+{
+    public function index(): void
+    {
+        /** @var AlbumCollection $albums */
+        $album = $albums->first();
+    }
+}
+`;
+    const options = makeOptions(
+      {
+        "App\\Collections\\AlbumCollection": `<?php
+namespace App\\Collections;
+
+use App\\Models\\Album;
+use Illuminate\\Database\\Eloquent\\Collection;
+
+/** @phpstan-extends Collection<int, Album> */
+class AlbumCollection extends Collection
+{
+}
+`,
+      },
+      {
+        frameworkRuntime: STALE_LEGACY_LARAVEL_RUNTIME,
+        resolvePhpLaravelMethodGenericModelType: vi.fn(
+          async () => "App\\Models\\Album",
+        ),
+      },
+    );
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpLaravelCollectionModelType(
+          source,
+          positionAfter(source, "$albums->first"),
+          "$albums",
+        ),
+    ).resolves.toBeNull();
+
+    expect(options.resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+    expect(options.readNavigationFileContent).not.toHaveBeenCalled();
+    expect(options.resolvePhpLaravelMethodGenericModelType).not.toHaveBeenCalled();
 
     harness.unmount();
   });
