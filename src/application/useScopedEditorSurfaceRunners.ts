@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type {
   EditorSurfaceBufferFixRunner,
   EditorSurfacePhpstanIgnoreRunner,
-} from "./useWorkbenchController";
+} from "./useWorkbenchCodeQualityDiagnostics";
 import type { EditorSurfaceEslintDisableRunner } from "./workbenchEslintDisableCommand";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";

@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo } from "react";
 import type {
   EditorSurfaceBufferFixRunner,
   EditorSurfacePhpstanIgnoreRunner,
-} from "../application/useWorkbenchController";
+} from "../application/useWorkbenchCodeQualityDiagnostics";
 import type { EditorSurfaceEslintDisableRunner } from "../application/workbenchEslintDisableCommand";
 import type { EditorGroup, EditorGroupId } from "../domain/editorGroups";
 import { editorGroupVisiblePaths } from "../domain/editorGroups";

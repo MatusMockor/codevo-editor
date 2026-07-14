@@ -61,6 +61,7 @@ import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
+import { createPhpFrameworkBindingFileChangeInvalidator } from "./phpFrameworkBindingInvalidation";
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
 import { usePhpFrameworkModelNavigationTargets } from "./usePhpFrameworkModelNavigationTargets";
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
@@ -146,6 +147,14 @@ import {
 import { useTerminalTestRunner } from "./useTerminalTestRunner";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
+import {
+  runEslintFixAllInActiveFile,
+  runEslintWorkspaceAnalysis,
+  runPhpstanIgnoreAtCursor,
+  runPhpstanWorkspaceAnalysis,
+  type EditorSurfaceBufferFixRunner,
+  type EditorSurfacePhpstanIgnoreRunner,
+} from "./useWorkbenchCodeQualityDiagnostics";
 import {
   createPhpFrameworkFileChangeInvalidator,
 } from "./phpFrameworkFileChangeInvalidationRegistry";
@@ -298,22 +307,15 @@ import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDi
 import { TauriPintGateway } from "../infrastructure/tauriPintGateway";
 import {
   clearEslintDiagnosticsForFile,
-  parseEslintDiagnostics,
   replaceEslintDiagnosticsForRoot,
   supportsEslintLineComment,
-  type EslintAnalysisResult,
   type EslintDiagnosticsByRoot,
-  type EslintDiagnosticsGateway,
   type EslintFix,
 } from "../domain/eslintDiagnostics";
 import {
   clearPhpstanDiagnosticsForFile,
-  parsePhpstanDiagnostics,
   replacePhpstanDiagnosticsForRoot,
-  type PhpstanAnalysisResult,
   type PhpstanDiagnosticsByRoot,
-  type RetainedPhpstanDiagnostic,
-  type PhpstanDiagnosticsGateway,
 } from "../domain/phpstanDiagnostics";
 import {
   isMarkdownDocument,
@@ -342,7 +344,6 @@ import {
   cachedLanguageServerRuntimeStatusForRoot,
 } from "../domain/languageServerRuntimeStatusCache";
 import {
-  type WorkspaceFileChangeEvent,
   type WorkspaceFileChangeGateway,
   type WorkspaceFileChangeUnsubscribeFn,
 } from "../domain/workspaceFileChange";
@@ -362,10 +363,7 @@ import {
   type PhpTree,
   type PhpTreeGateway,
 } from "../domain/phpTree";
-import {
-  isPhpFrameworkContainerBindingCandidatePath,
-  phpFrameworkContainerBindingsFromSource,
-} from "../domain/phpFrameworkProviders";
+import { phpFrameworkContainerBindingsFromSource } from "../domain/phpFrameworkProviders";
 import {
   resolvePhpClassName,
 } from "../domain/phpNavigation";
@@ -497,17 +495,6 @@ export interface WorkbenchControllerOptions {
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
 }
 
-export type EditorSurfaceBufferFixRunner = (
-  expectedContent: string,
-  fixes: EslintFix[],
-) => number | null;
-
-export type EditorSurfacePhpstanIgnoreRunner = (
-  expectedContent: string,
-  lineNumber: number,
-  identifiers: string[],
-) => number | null;
-
 interface OpenWorkspacePathOptions {
   adoptIdentity?: () => void;
   cachePreviousWorkspace?: boolean;
@@ -583,281 +570,6 @@ const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const eslintDiagnosticsGateway = new TauriEslintDiagnosticsGateway();
 const phpstanDiagnosticsGateway = new TauriPhpstanDiagnosticsGateway();
 const pintGateway = new TauriPintGateway();
-
-export interface RunEslintWorkspaceAnalysisOptions {
-  rootPath: string;
-  binaryPath: string | null;
-  currentWorkspaceRootRef: { current: string | null };
-  inFlightRef: { current: boolean };
-  gateway: EslintDiagnosticsGateway;
-  replaceEslintDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
-  replaceEslintFixes?(rootPath: string, result: EslintAnalysisResult): void;
-  replaceEslintRetainedDiagnostics?(
-    rootPath: string,
-    result: EslintAnalysisResult,
-  ): void;
-  showStartMessage?: boolean;
-  setMessage(message: string | null): void;
-  setRunning(running: boolean): void;
-  workspaceTrusted?: boolean;
-}
-
-export async function runEslintWorkspaceAnalysis({
-  rootPath,
-  binaryPath,
-  currentWorkspaceRootRef,
-  inFlightRef,
-  gateway,
-  replaceEslintDiagnostics,
-  replaceEslintFixes,
-  replaceEslintRetainedDiagnostics,
-  showStartMessage = true,
-  setMessage,
-  setRunning,
-  workspaceTrusted = true,
-}: RunEslintWorkspaceAnalysisOptions): Promise<void> {
-  if (!showStartMessage && !workspaceTrusted) {
-    return;
-  }
-
-  if (inFlightRef.current) {
-    return;
-  }
-
-  inFlightRef.current = true;
-  setRunning(true);
-  if (showStartMessage) {
-    setMessage("ESLint: Analysing workspace…");
-  }
-
-  try {
-    let result;
-
-    try {
-      result = await gateway.analyse(rootPath, binaryPath);
-    } catch (error) {
-      result = {
-        status: "error" as const,
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-      setMessage(null);
-      return;
-    }
-
-    replaceEslintFixes?.(rootPath, result);
-    replaceEslintRetainedDiagnostics?.(rootPath, result);
-    replaceEslintDiagnostics(rootPath, parseEslintDiagnostics(result, rootPath));
-
-    if (result.status === "ok") {
-      const problemCount = result.totals.errorCount + result.totals.warningCount;
-      setMessage(
-        `ESLint: ${problemCount} problems in ${result.totals.fileCount} files`,
-      );
-      return;
-    }
-
-    if (result.status === "unavailable") {
-      setMessage(`ESLint: ${result.message ?? "unavailable"}`);
-      return;
-    }
-
-    setMessage(`ESLint: ${result.message}`);
-  } finally {
-    inFlightRef.current = false;
-    setRunning(false);
-  }
-}
-
-export function runEslintFixAllInActiveFile({
-  currentRoot,
-  document,
-  fixes,
-  requestedRoot,
-  runner,
-  setMessage,
-  workspaceTrusted,
-}: {
-  currentRoot: string | null;
-  document: EditorDocument | null;
-  fixes: readonly EslintFix[];
-  requestedRoot: string | null;
-  runner: EditorSurfaceBufferFixRunner | null;
-  setMessage(message: string): void;
-  workspaceTrusted: boolean;
-}): number | null {
-  if (!requestedRoot || !document || document.readOnly) {
-    return null;
-  }
-
-  if (!workspaceTrusted) {
-    return null;
-  }
-
-  if (!workspaceRootKeysEqual(currentRoot, requestedRoot)) {
-    return null;
-  }
-
-  if (document.content !== document.savedContent || fixes.length === 0 || !runner) {
-    return null;
-  }
-
-  const appliedCount = runner(document.content, [...fixes]);
-
-  if (!appliedCount) {
-    return appliedCount;
-  }
-
-  const noun = appliedCount === 1 ? "fix" : "fixes";
-  setMessage(`ESLint: Applied ${appliedCount} ${noun}`);
-  return appliedCount;
-}
-
-export interface RunPhpstanWorkspaceAnalysisOptions {
-  rootPath: string;
-  binaryPath: string | null;
-  currentWorkspaceRootRef: { current: string | null };
-  inFlightRef: { current: boolean };
-  gateway: PhpstanDiagnosticsGateway;
-  replacePhpstanDiagnostics(rootPath: string, notices: WorkbenchNotice[]): void;
-  replacePhpstanRetainedDiagnostics?(
-    rootPath: string,
-    result: PhpstanAnalysisResult,
-  ): void;
-  showStartMessage?: boolean;
-  setMessage(message: string | null): void;
-  setRunning(running: boolean): void;
-  workspaceTrusted?: boolean;
-}
-
-export async function runPhpstanWorkspaceAnalysis({
-  rootPath,
-  binaryPath,
-  currentWorkspaceRootRef,
-  inFlightRef,
-  gateway,
-  replacePhpstanDiagnostics,
-  replacePhpstanRetainedDiagnostics,
-  showStartMessage = true,
-  setMessage,
-  setRunning,
-  workspaceTrusted = true,
-}: RunPhpstanWorkspaceAnalysisOptions): Promise<void> {
-  if (!showStartMessage && !workspaceTrusted) {
-    return;
-  }
-
-  if (inFlightRef.current) {
-    return;
-  }
-
-  inFlightRef.current = true;
-  setRunning(true);
-  if (showStartMessage) {
-    setMessage("PHPStan: Analysing workspace…");
-  }
-
-  try {
-    let result;
-
-    try {
-      result = await gateway.analyse(rootPath, binaryPath, null);
-    } catch (error) {
-      result = {
-        status: "error" as const,
-        message: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-      setMessage(null);
-      return;
-    }
-
-    replacePhpstanRetainedDiagnostics?.(rootPath, result);
-    replacePhpstanDiagnostics(
-      rootPath,
-      parsePhpstanDiagnostics(result, rootPath),
-    );
-
-    if (result.status === "ok") {
-      const problemCount =
-        result.totals.fileErrors + result.totals.generalErrors;
-      setMessage(
-        `PHPStan: ${problemCount} problems in ${result.totals.fileCount} files`,
-      );
-      return;
-    }
-
-    if (result.status === "unavailable") {
-      setMessage(`PHPStan: ${result.message ?? "unavailable"}`);
-      return;
-    }
-
-    setMessage(`PHPStan: ${result.message}`);
-  } finally {
-    inFlightRef.current = false;
-    setRunning(false);
-  }
-}
-
-export function runPhpstanIgnoreAtCursor({
-  currentRoot,
-  requestedRoot,
-  document,
-  lineNumber,
-  diagnostics,
-  runner,
-  setMessage,
-  workspaceTrusted,
-}: {
-  currentRoot: string | null;
-  requestedRoot: string | null;
-  document: EditorDocument | null;
-  lineNumber: number;
-  diagnostics: readonly RetainedPhpstanDiagnostic[];
-  runner: EditorSurfacePhpstanIgnoreRunner | null;
-  setMessage(message: string): void;
-  workspaceTrusted: boolean;
-}): number | null {
-  if (!requestedRoot || !document || document.readOnly || !workspaceTrusted) {
-    return null;
-  }
-
-  if (!workspaceRootKeysEqual(currentRoot, requestedRoot)) {
-    return null;
-  }
-
-  if (document.content !== document.savedContent || !runner) {
-    return null;
-  }
-
-  const identifiers = [
-    ...new Set(
-      diagnostics
-        .filter((diagnostic) => diagnostic.line === lineNumber)
-        .map((diagnostic) => diagnostic.identifier),
-    ),
-  ];
-
-  if (identifiers.length === 0) {
-    return null;
-  }
-
-  const appliedCount = runner(document.content, lineNumber, identifiers);
-
-  if (!appliedCount) {
-    return appliedCount;
-  }
-
-  const noun = appliedCount === 1 ? "issue" : "issues";
-  setMessage(
-    `PHPStan: Ignored ${appliedCount} ${noun} (${identifiers.join(", ")})`,
-  );
-  return appliedCount;
-}
 
 export type SidebarView = "files" | "git" | "php";
 
@@ -7056,97 +6768,19 @@ export function useWorkbenchController(
   invalidatePhpFrameworkBindingCacheRef.current =
     invalidatePhpFrameworkBindingCache;
 
-  const invalidatePhpFrameworkBindingsForFileChange = useCallback(
-    (event: WorkspaceFileChangeEvent): void => {
-      if (
-        !phpFrameworkRuntimeContext.supports("containerBindingsFromSource") ||
-        !workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          event.rootPath,
-        ) ||
-        event.fileKind === "directory"
-      ) {
-        return;
-      }
-
-      const eventPaths = [event.path, event.previousPath].filter(
-        (path): path is string => Boolean(path),
-      );
-      const knownCandidateChanged = eventPaths.some(
-        (path) =>
-          isPhpFrameworkBindingSearchCandidatePath(path) ||
-          isPhpFrameworkContainerBindingCandidatePath(
-            path,
-            activePhpFrameworkProviders,
-          ),
-      );
-
-      if (knownCandidateChanged) {
-        invalidatePhpFrameworkBindingCacheRef.current();
-        return;
-      }
-
-      if (
-        (event.kind !== "created" &&
-          event.kind !== "modified" &&
-          event.kind !== "renamed") ||
-        detectLanguage(event.path) !== "php"
-      ) {
-        return;
-      }
-
-      if (
-        phpFrameworkRuntimeContext.supports(
-          "containerConcreteClassNamesFromSource",
-        )
-      ) {
-        invalidatePhpFrameworkBindingCacheRef.current();
-        return;
-      }
-
-      const requestedRoot = event.rootPath;
-      const requestedGeneration =
-        currentPhpFrameworkBindingCacheGeneration();
-      const invalidateIfCurrent = (): void => {
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          currentPhpFrameworkBindingCacheGeneration() !== requestedGeneration
-        ) {
-          return;
-        }
-
-        invalidatePhpFrameworkBindingCacheRef.current();
-      };
-
-      void workspaceFiles
-        .readTextFile(event.path)
-        .then((source) => {
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            ) ||
-            currentPhpFrameworkBindingCacheGeneration() !== requestedGeneration
-          ) {
-            return;
-          }
-
-          if (
-            phpFrameworkContainerBindingsFromSource(
-              source,
-              activePhpFrameworkProviders,
-            ).length === 0
-          ) {
-            return;
-          }
-
-          invalidateIfCurrent();
-        })
-        .catch(() => invalidateIfCurrent());
-    },
+  const invalidatePhpFrameworkBindingsForFileChange = useMemo(
+    () =>
+      createPhpFrameworkBindingFileChangeInvalidator({
+        frameworkRuntime: phpFrameworkRuntimeContext,
+        frameworkProviders: activePhpFrameworkProviders,
+        currentRootPath: () => currentWorkspaceRootRef.current,
+        currentBindingCacheGeneration:
+          currentPhpFrameworkBindingCacheGeneration,
+        invalidateBindingCache: () =>
+          invalidatePhpFrameworkBindingCacheRef.current(),
+        isBindingSearchCandidatePath: isPhpFrameworkBindingSearchCandidatePath,
+        readTextFile: (path) => workspaceFiles.readTextFile(path),
+      }),
     [
       activePhpFrameworkProviders,
       currentPhpFrameworkBindingCacheGeneration,

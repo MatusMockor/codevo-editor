@@ -40,7 +40,7 @@ import {
 import type {
   EditorSurfaceBufferFixRunner,
   EditorSurfacePhpstanIgnoreRunner,
-} from "../application/useWorkbenchController";
+} from "../application/useWorkbenchCodeQualityDiagnostics";
 import type { EditorSurfaceEslintDisableRunner } from "../application/workbenchEslintDisableCommand";
 import type {
   EditorPosition,

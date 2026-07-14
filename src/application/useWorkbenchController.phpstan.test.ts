@@ -3,7 +3,7 @@ import {
   runPhpstanIgnoreAtCursor,
   runPhpstanWorkspaceAnalysis,
   type RunPhpstanWorkspaceAnalysisOptions,
-} from "./useWorkbenchController";
+} from "./useWorkbenchCodeQualityDiagnostics";
 import type { PhpstanAnalysisResult } from "../domain/phpstanDiagnostics";
 
 function deferred<T>() {

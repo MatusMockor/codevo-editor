@@ -4,7 +4,7 @@ import {
   runEslintFixAllInActiveFile,
   runEslintWorkspaceAnalysis,
   type RunEslintWorkspaceAnalysisOptions,
-} from "./useWorkbenchController";
+} from "./useWorkbenchCodeQualityDiagnostics";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
