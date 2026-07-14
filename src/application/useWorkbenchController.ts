@@ -68,7 +68,7 @@ import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMe
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
 import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
 import { usePhpContextualFrameworkLiteralDefinitionNavigation } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
-import { findNetteRedrawControlSnippetDefinitionTarget } from "./netteAjaxSnippetDefinitions";
+import { usePhpFrameworkLiteralNavigationDependencies } from "./usePhpFrameworkLiteralNavigationDependencies";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
@@ -372,9 +372,6 @@ import {
   phpTestClassPlan,
   renderPhpTestSkeleton,
 } from "../domain/phpTestGen";
-import {
-  findInertiaComponentTarget as findLaravelInertiaComponentTarget,
-} from "./inertiaComponentTarget";
 import {
   isPhpTestRelativePath,
   phpTestNavigationTargets,
@@ -7570,75 +7567,20 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const findInertiaComponentTarget = useCallback(
-    (componentName: string) =>
-      findLaravelInertiaComponentTarget(componentName, {
-        currentWorkspaceRootRef,
-        readDirectory: (path) => workspaceFiles.readDirectory(path),
-      }),
-    [currentWorkspaceRootRef, workspaceFiles],
-  );
-
-  const findNetteRedrawControlSnippetTarget = useCallback(
-    async (currentPath: string, snippetName: string) => {
-      const requestedRoot = workspaceRoot;
-
-      if (
-        !requestedRoot ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
-        return null;
-      }
-
-      return findNetteRedrawControlSnippetDefinitionTarget(
-        {
-          currentPhpRelativePath: relativeWorkspacePath(
-            requestedRoot,
-            currentPath,
-          ),
-          deps: {
-            joinPath: joinWorkspacePath,
-            readFileContent: readNavigationFileContent,
-          },
-          isRequestedRootActive: () =>
-            workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            ),
-          requestedRoot,
-        },
-        snippetName,
-      );
-    },
-    [
-      currentWorkspaceRootRef,
-      joinWorkspacePath,
-      readNavigationFileContent,
-      relativeWorkspacePath,
-      workspaceRoot,
-    ],
-  );
-
-  const phpFrameworkLiteralNavigationDependencies = useMemo(
-    () => ({
+  const phpFrameworkLiteralNavigationDependencies =
+    usePhpFrameworkLiteralNavigationDependencies({
       collectNamedRouteTargets,
+      currentWorkspaceRootRef,
       findConfigTarget,
       findEnvTarget: findPhpLaravelEnvTarget,
-      findInertiaComponentTarget,
-      findNetteRedrawControlSnippetTarget,
       findTranslationTarget,
       findViewTarget,
-    }),
-    [
-      collectNamedRouteTargets,
-      findConfigTarget,
-      findPhpLaravelEnvTarget,
-      findInertiaComponentTarget,
-      findNetteRedrawControlSnippetTarget,
-      findTranslationTarget,
-      findViewTarget,
-    ],
-  );
+      joinWorkspacePath,
+      readNavigationFileContent,
+      readWorkspaceDirectory,
+      relativeWorkspacePath,
+      workspaceRoot,
+    });
 
   const { providePhpFrameworkDefinition } = usePhpFrameworkDefinitionNavigation({
     activeDocument,
