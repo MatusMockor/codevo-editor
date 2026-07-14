@@ -885,4 +885,85 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
     expect(setupCompletions.map((item) => item.label)).toContain("addValidator");
   });
+
+  it("resolves the real payments gateway permission policy service to its concrete type handoffs", async () => {
+    const configPath = "app/modules/paymentsModule/config/config.neon";
+    const source = await readFileContent(joinPath(EBOX_CRM_ROOT, configPath));
+    const policyClass =
+      "Crm\\PaymentsModule\\Action\\PaymentGatewayPermissions\\Check\\DefaultGatewayPermissionCheckPolicy";
+    const openClassTarget = vi.fn(async () => true);
+    const openDirectPhpMethodTarget = vi.fn(async () => true);
+    const resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: policyClass,
+        insertText: "isEnabled()",
+        name: "isEnabled",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `<?php\n/** @var \\${typeName} $${variableName} */\n$${variableName}->`,
+      }),
+    );
+    const deps = makeNeonDeps(configPath, {
+      openClassTarget,
+      openDirectPhpMethodTarget,
+      resolvePhpReceiverCompletions,
+      synthesizeTypedReceiverSource,
+    });
+    const neon = createNeonIntelligence(() => deps);
+
+    await expect(
+      neon.provideNeonDefinition(source, offsetInside(source, policyClass)),
+    ).resolves.toBe(true);
+    expect(openClassTarget).toHaveBeenLastCalledWith(policyClass);
+
+    const serviceCompletionSource =
+      "services:\n    probe: @gatewayPermission";
+    const serviceCompletions = await neon.provideNeonCompletions(
+      serviceCompletionSource,
+      positionAtOffset(serviceCompletionSource, serviceCompletionSource.length),
+    );
+    expect(serviceCompletions.map((item) => item.label)).toContain(
+      "gatewayPermissionCheckPolicy",
+    );
+
+    const consumerSource =
+      "services:\n    probe: @gatewayPermissionCheckPolicy::isEnabled\n";
+    await expect(
+      neon.provideNeonDefinition(
+        consumerSource,
+        offsetInside(consumerSource, "isEnabled"),
+      ),
+    ).resolves.toBe(true);
+    expect(openDirectPhpMethodTarget).toHaveBeenLastCalledWith(
+      policyClass,
+      "isEnabled",
+    );
+
+    const setupSource = [
+      "services:",
+      "    probe:",
+      `        factory: ${policyClass}(true)`,
+      "        setup:",
+      "            - is",
+    ].join("\n");
+    const setupCompletions = await neon.provideNeonCompletions(
+      setupSource,
+      positionAtOffset(setupSource, setupSource.length),
+    );
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "service",
+      policyClass,
+    );
+    expect(setupCompletions).toContainEqual(
+      expect.objectContaining({
+        detail: `${policyClass}::isEnabled(): bool`,
+        label: "isEnabled",
+      }),
+    );
+  });
 });
