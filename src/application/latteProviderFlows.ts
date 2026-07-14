@@ -9,7 +9,7 @@ import {
 import {
   type LatteCompletionItem,
 } from "./latteCompletionItems";
-import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
+import { createLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import { type LatteViewDataCache } from "./latteExpressionIntelligence";
 import type { LatteFilterCache } from "./latteFilterDiscovery";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
@@ -118,7 +118,9 @@ export function createLatteIntelligence(
   presenterCache: NettePresenterCache = {},
   componentCache: NetteControlCache = {},
   templateTypeCache: LatteTemplateTypeCache = {},
-  frameworkCapabilities: LatteFrameworkCapabilities = netteLatteFrameworkCapabilities,
+  frameworkCapabilities: LatteFrameworkCapabilities = createLatteFrameworkCapabilities(
+    () => getDependencies().frameworkIntelligence.providers,
+  ),
   filterCache: LatteFilterCache = {},
 ): LatteIntelligence {
   const neonConfigCache: NeonConfigCache = {};

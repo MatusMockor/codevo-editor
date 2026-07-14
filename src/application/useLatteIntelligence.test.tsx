@@ -4,14 +4,18 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
+  nettePresenterActionMethodCandidates,
+  nettePresenterClassCandidatePathsForLink,
+  parseNetteLinkTarget,
+} from "../domain/latteLinkNavigation";
+import {
   phpNetteFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {
+  createLatteFrameworkCapabilities,
   createLatteIntelligence,
-  netteLatteFrameworkCapabilities,
   useLatteIntelligence,
-  type LatteFrameworkCapabilities,
   type LatteDirectoryEntry,
   type LatteIntelligence,
   type LatteIntelligenceDependencies,
@@ -83,6 +87,11 @@ const CUSTOM_LATTE_VIEW_DATA_FRAMEWORK = createPhpFrameworkIntelligence({
 const CUSTOM_LATTE_LINK_PROVIDER: PhpFrameworkProvider = {
   id: "custom-latte-link",
   latte: {
+    parsePresenterLinkTarget: ({ target }) => parseNetteLinkTarget(target),
+    presenterActionMethodCandidates: ({ action, isSignal }) =>
+      nettePresenterActionMethodCandidates(action, isSignal),
+    presenterClassCandidatePathsForLink: ({ currentRelativePath, target }) =>
+      nettePresenterClassCandidatePathsForLink(target, currentRelativePath),
     supportsPresenterLinkIntelligence: true,
     supportsTemplateIntelligence: true,
   },
@@ -2455,7 +2464,7 @@ class ProductPresenter extends BasePresenter
       {},
       {},
       {},
-      netteLatteFrameworkCapabilities,
+      createLatteFrameworkCapabilities(() => [phpNetteFrameworkProvider]),
       filterCache,
     );
     const source = "{$total|secret}";
@@ -2478,7 +2487,7 @@ class ProductPresenter extends BasePresenter
       {},
       {},
       {},
-      netteLatteFrameworkCapabilities,
+      createLatteFrameworkCapabilities(() => [phpNetteFrameworkProvider]),
       filterCache,
     );
 
@@ -3547,34 +3556,37 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     const { listDirectory, readFileContent } = buildContentWorkspace({
       "src/Screen.screen.php": "<?php\n// screen show\n",
     });
-    const deps = makeDeps({
-      frameworkIntelligence: CUSTOM_LATTE_LINK_FRAMEWORK,
-      listDirectory,
-      readFileContent,
-    });
     const source = "$this->jumpTo('Sc');";
     const replaceStart = source.indexOf("Sc");
     const replaceEnd = replaceStart + "Sc".length;
-    const presenterLinkTargetsFromSource = vi.fn((path: string, content: string) =>
-      path.endsWith("Screen.screen.php") && content.includes("screen show")
-        ? ["Screen.show"]
-        : [],
+    const presenterLinkTargetsFromSource = vi.fn(
+      ({ path, source: content }: { path: string; source: string }) =>
+        path.endsWith("Screen.screen.php") && content.includes("screen show")
+          ? ["Screen.show"]
+          : [],
     );
-    const capabilities: LatteFrameworkCapabilities = {
-      ...netteLatteFrameworkCapabilities,
-      isPresenterSourcePath: (path) => path.endsWith(".screen.php"),
-      presenterLinkTargetsFromSource,
-      presenterScanDirectories: ["src"],
+    const screenLinkProvider: PhpFrameworkProvider = {
+      ...CUSTOM_LATTE_LINK_PROVIDER,
+      id: "custom-screen-link",
+      latte: {
+        ...CUSTOM_LATTE_LINK_PROVIDER.latte,
+        isPresenterSourcePath: ({ path }) => path.endsWith(".screen.php"),
+        presenterLinkTargetsFromSource,
+        presenterScanDirectories: ["src"],
+        supportsPresenterLinkIntelligence: true,
+        supportsTemplateIntelligence: true,
+      },
     };
-    const latte = createLatteIntelligence(
-      () => deps,
-      {},
-      {},
-      {},
-      {},
-      {},
-      capabilities,
-    );
+    const deps = makeDeps({
+      frameworkIntelligence: createPhpFrameworkIntelligence({
+        matchedProviderIds: [screenLinkProvider.id],
+        profile: "generic",
+        providers: [screenLinkProvider],
+      }),
+      listDirectory,
+      readFileContent,
+    });
+    const latte = createLatteIntelligence(() => deps);
 
     const completions = await latte.provideNettePhpLinkCompletions(
       source,
@@ -3582,10 +3594,10 @@ class HomePresenter extends Nette\\Application\\UI\\Presenter
     );
 
     expect(listDirectory).toHaveBeenCalledWith(`${ROOT}/src`);
-    expect(presenterLinkTargetsFromSource).toHaveBeenCalledWith(
-      `${ROOT}/src/Screen.screen.php`,
-      expect.stringContaining("screen show"),
-    );
+    expect(presenterLinkTargetsFromSource).toHaveBeenCalledWith({
+      path: `${ROOT}/src/Screen.screen.php`,
+      source: expect.stringContaining("screen show"),
+    });
     expect(completions).toEqual([
       {
         detail: "Nette presenter action",

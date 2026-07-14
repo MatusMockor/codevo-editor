@@ -1,28 +1,39 @@
-import {
-  detectLatteLinkAt,
-  nettePresenterActionMethodCandidates,
-  nettePresenterClassCandidatePathsForLink,
-  nettePresenterLinkCompletionContextAt,
-  parseNetteLinkTarget,
-} from "../domain/latteLinkNavigation";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
 } from "../domain/phpFrameworkProviders";
-import { isNettePresenterDiscoverySourcePath } from "./nettePresenterLinkDiscovery";
-import { nettePresenterLinkTargetsFromSource } from "./nettePresenterLinkDiscovery";
 import type { LatteFrameworkCapabilities } from "./latteIntelligenceContracts";
 
-export const netteLatteFrameworkCapabilities: LatteFrameworkCapabilities = {
-  detectLattePresenterLinkAt: detectLatteLinkAt,
-  lattePresenterLinkCompletionContextAt: (source, offset) =>
-    nettePresenterLinkCompletionContextAt(source, offset, "latte"),
-  parsePresenterLinkTarget: parseNetteLinkTarget,
-  presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
-  presenterClassCandidatePathsForLink: nettePresenterClassCandidatePathsForLink,
-  presenterLinkTargetsFromSource: nettePresenterLinkTargetsFromSource,
-  presenterScanDirectories: ["app"],
-  isPresenterSourcePath: isNettePresenterDiscoverySourcePath,
-  viewDataEntryFromSource: phpFrameworkViewDataEntryFromSource,
-  viewDataSearchQueries: phpFrameworkViewDataSearchQueries,
-};
+export function createLatteFrameworkCapabilities(
+  getProviders: () => readonly PhpFrameworkProvider[],
+): LatteFrameworkCapabilities {
+  const activeLatte = () =>
+    getProviders().find((provider) => provider.latte !== undefined)?.latte;
+
+  return {
+    detectLattePresenterLinkAt: (source, offset) =>
+      activeLatte()?.presenterLinkAt?.({ offset, source }) ?? null,
+    lattePresenterLinkCompletionContextAt: (source, offset) =>
+      activeLatte()?.presenterLinkCompletionAt?.({ offset, source }) ?? null,
+    parsePresenterLinkTarget: (target) =>
+      activeLatte()?.parsePresenterLinkTarget?.({ target }) ?? null,
+    presenterActionMethodCandidates: (action, isSignal) =>
+      activeLatte()?.presenterActionMethodCandidates?.({ action, isSignal }) ??
+      [],
+    presenterClassCandidatePathsForLink: (target, currentRelativePath) =>
+      activeLatte()?.presenterClassCandidatePathsForLink?.({
+        currentRelativePath,
+        target,
+      }) ?? [],
+    presenterLinkTargetsFromSource: (path, source) =>
+      activeLatte()?.presenterLinkTargetsFromSource?.({ path, source }) ?? [],
+    get presenterScanDirectories() {
+      return activeLatte()?.presenterScanDirectories ?? [];
+    },
+    isPresenterSourcePath: (path) =>
+      activeLatte()?.isPresenterSourcePath?.({ path }) === true,
+    viewDataEntryFromSource: phpFrameworkViewDataEntryFromSource,
+    viewDataSearchQueries: phpFrameworkViewDataSearchQueries,
+  };
+}

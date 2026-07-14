@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
-import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
+import { createLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import {
   type LatteProviderFlowCaches,
   type LatteProviderFlowFactoryOptions,
@@ -121,7 +121,9 @@ function options(
 ): LatteProviderFlowFactoryOptions {
   return {
     caches,
-    frameworkCapabilities: netteLatteFrameworkCapabilities,
+    frameworkCapabilities: createLatteFrameworkCapabilities(
+      () => frameworkIntelligence.providers,
+    ),
     getDependencies: () => dependencies,
     inFlight: {
       filterInFlight: new Map(),

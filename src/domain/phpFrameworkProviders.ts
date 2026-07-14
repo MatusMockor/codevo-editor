@@ -603,6 +603,64 @@ export interface PhpFrameworkPhpPresenterLinkCompletion {
   replaceStart: number;
 }
 
+export interface PhpFrameworkLattePresenterLinkContext {
+  offset: number;
+  source: string;
+}
+
+/**
+ * A Latte presenter-link target detected in a template construct (Nette's
+ * `{link}`, `{plink}`, `n:href` today). Shape mirrors the Nette detector but
+ * keeps central Latte navigation code off Nette-specific imports.
+ */
+export interface PhpFrameworkLattePresenterLink {
+  target: string;
+  targetEnd: number;
+  targetStart: number;
+}
+
+/** Replace range for Latte presenter-link target completions. */
+export interface PhpFrameworkLattePresenterLinkCompletion {
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
+/**
+ * The structural decomposition of a presenter-link destination. Mirrors
+ * Nette's `NetteLinkTarget` so the provider seam stays framework-neutral.
+ */
+export interface PhpFrameworkPresenterLinkTarget {
+  absolute: boolean;
+  action: string;
+  isSignal: boolean;
+  module: string | null;
+  presenter: string | null;
+}
+
+export interface PhpFrameworkPresenterLinkTargetContext {
+  target: string;
+}
+
+export interface PhpFrameworkPresenterActionMethodsContext {
+  action: string;
+  isSignal: boolean;
+}
+
+export interface PhpFrameworkPresenterClassCandidatesContext {
+  currentRelativePath: string;
+  target: PhpFrameworkPresenterLinkTarget;
+}
+
+export interface PhpFrameworkPresenterLinkTargetsContext {
+  path: string;
+  source: string;
+}
+
+export interface PhpFrameworkPresenterSourcePathContext {
+  path: string;
+}
+
 export type PhpFrameworkMissingTemplateReferenceDetector = (
   source: string,
   offset: number,
@@ -961,6 +1019,28 @@ export interface PhpFrameworkProvider {
      * Nette presenter routing semantics.
      */
     supportsPresenterLinkIntelligence?: true;
+    isPresenterSourcePath?: (
+      context: PhpFrameworkPresenterSourcePathContext,
+    ) => boolean;
+    parsePresenterLinkTarget?: (
+      context: PhpFrameworkPresenterLinkTargetContext,
+    ) => PhpFrameworkPresenterLinkTarget | null;
+    presenterActionMethodCandidates?: (
+      context: PhpFrameworkPresenterActionMethodsContext,
+    ) => string[];
+    presenterClassCandidatePathsForLink?: (
+      context: PhpFrameworkPresenterClassCandidatesContext,
+    ) => string[];
+    presenterLinkAt?: (
+      context: PhpFrameworkLattePresenterLinkContext,
+    ) => PhpFrameworkLattePresenterLink | null;
+    presenterLinkCompletionAt?: (
+      context: PhpFrameworkLattePresenterLinkContext,
+    ) => PhpFrameworkLattePresenterLinkCompletion | null;
+    presenterLinkTargetsFromSource?: (
+      context: PhpFrameworkPresenterLinkTargetsContext,
+    ) => string[];
+    presenterScanDirectories?: readonly string[];
   };
   semantics?: {
     queryCallbackContextForVariable?: (

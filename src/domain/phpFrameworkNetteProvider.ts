@@ -1,6 +1,12 @@
 import {
+  detectLatteLinkAt,
   detectPhpPresenterLinkAt,
+  isNettePresenterDiscoverySourcePath,
+  nettePresenterActionMethodCandidates,
+  nettePresenterClassCandidatePathsForLink,
   nettePresenterLinkCompletionContextAt,
+  nettePresenterLinkTargetsFromSource,
+  parseNetteLinkTarget,
 } from "./latteLinkNavigation";
 import {
   isNetteComponentAccess,
@@ -180,6 +186,19 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   },
   stringLiterals: {},
   latte: {
+    isPresenterSourcePath: ({ path }) =>
+      isNettePresenterDiscoverySourcePath(path),
+    parsePresenterLinkTarget: ({ target }) => parseNetteLinkTarget(target),
+    presenterActionMethodCandidates: ({ action, isSignal }) =>
+      nettePresenterActionMethodCandidates(action, isSignal),
+    presenterClassCandidatePathsForLink: ({ currentRelativePath, target }) =>
+      nettePresenterClassCandidatePathsForLink(target, currentRelativePath),
+    presenterLinkAt: ({ offset, source }) => detectLatteLinkAt(source, offset),
+    presenterLinkCompletionAt: ({ offset, source }) =>
+      nettePresenterLinkCompletionContextAt(source, offset, "latte"),
+    presenterLinkTargetsFromSource: ({ path, source }) =>
+      nettePresenterLinkTargetsFromSource(path, source),
+    presenterScanDirectories: ["app"],
     supportsPresenterLinkIntelligence: true,
     supportsTemplateIntelligence: true,
   },

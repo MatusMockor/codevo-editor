@@ -1,6 +1,11 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
-import { netteRoutePresenterTargetsFromSource } from "../domain/latteLinkNavigation";
+
+export {
+  isNettePresenterDiscoverySourcePath,
+  nettePresenterLinkTargetsFromSource,
+  nettePresenterShortNameFromPath,
+} from "../domain/latteLinkNavigation";
 
 export interface NettePresenterLinkDependencies {
   getActiveDocument(): { path: string } | null;
@@ -53,11 +58,6 @@ interface PresenterScanState {
   presentersFound: number;
   visitedDirectories: Set<string>;
 }
-
-const PHP_EXTENSION = ".php";
-const PRESENTER_SUFFIX = "Presenter.php";
-const PRESENTER_LINK_METHOD =
-  /\bfunction\s+&?(action|render|handle)([A-Z][A-Za-z0-9_]*)\s*\(/g;
 
 export async function loadNettePresenterLinkTargets(
   context: NettePresenterDiscoveryContext,
@@ -166,59 +166,6 @@ export async function scanNettePresenterLinkTargets(
   };
 
   return sorted;
-}
-
-export function nettePresenterLinkTargetsFromSource(
-  presenterPath: string,
-  source: string,
-): string[] {
-  const shortName = nettePresenterShortNameFromPath(presenterPath);
-  const routeTargets = netteRoutePresenterTargetsFromSource(source).map(
-    (target) => target.target,
-  );
-
-  if (!shortName) {
-    return routeTargets;
-  }
-
-  const targets: string[] = [];
-
-  for (const match of source.matchAll(PRESENTER_LINK_METHOD)) {
-    const kind = match[1] ?? "";
-    const rest = match[2] ?? "";
-    const action = rest.charAt(0).toLowerCase() + rest.slice(1);
-
-    targets.push(
-      kind === "handle"
-        ? `${shortName}:${action}!`
-        : `${shortName}:${action}`,
-    );
-  }
-
-  return [...targets, ...routeTargets];
-}
-
-export function isNettePresenterDiscoverySourcePath(path: string): boolean {
-  const fileName = path.split("/").pop() ?? "";
-
-  return (
-    path.endsWith(PRESENTER_SUFFIX) ||
-    (/router/i.test(fileName) && fileName.endsWith(PHP_EXTENSION))
-  );
-}
-
-export function nettePresenterShortNameFromPath(
-  presenterPath: string,
-): string | null {
-  const fileName = presenterPath.split("/").pop() ?? "";
-
-  if (!fileName.endsWith(PRESENTER_SUFFIX)) {
-    return null;
-  }
-
-  const shortName = fileName.slice(0, -PRESENTER_SUFFIX.length);
-
-  return shortName.length > 0 ? shortName : null;
 }
 
 async function collectNettePresenterPaths(

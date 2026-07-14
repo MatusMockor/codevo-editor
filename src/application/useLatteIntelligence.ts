@@ -16,7 +16,7 @@ import {
 import {
   createLatteIntelligenceCaches,
 } from "./latteIntelligenceCaches";
-import { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
+import { createLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 
 export type {
   LatteFrameworkCapabilities,
@@ -30,7 +30,7 @@ export type {
 } from "./latteCompletionItems";
 export type { LatteDirectoryEntry, LatteTemplateCache } from "./netteTemplateDiscovery";
 export type { LatteViewDataCache } from "./latteExpressionIntelligence";
-export { netteLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
+export { createLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 export { createLatteIntelligence } from "./latteProviderFlows";
 
 export function useLatteIntelligence(
@@ -51,7 +51,9 @@ export function useLatteIntelligence(
       caches.presenterCache,
       caches.componentCache,
       caches.templateTypeCache,
-      netteLatteFrameworkCapabilities,
+      createLatteFrameworkCapabilities(
+        () => dependenciesRef.current.frameworkIntelligence.providers,
+      ),
       caches.filterCache,
     );
   }
