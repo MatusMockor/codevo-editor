@@ -603,6 +603,191 @@ class GatewayPresenter
       propertyName: "gatewayFormFactory",
     });
   });
+
+  it("returns a non-promoted constructor-injected factory assigned to the property", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $gatewayFormFactory)
+    {
+        $this->gatewayFormFactory = $gatewayFormFactory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const factoryTypeStart = source.indexOf(
+      "GatewayFormFactory $gatewayFormFactory",
+      source.indexOf("__construct"),
+    );
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toEqual({
+      componentName: "gatewayForm",
+      factoryClass: "GatewayFormFactory",
+      factoryClassStart: factoryTypeStart,
+      factoryClassEnd: factoryTypeStart + "GatewayFormFactory".length,
+      methodName: "createComponentGatewayForm",
+      propertyName: "gatewayFormFactory",
+      propertyNameStart: source.lastIndexOf("gatewayFormFactory"),
+      propertyNameEnd:
+        source.lastIndexOf("gatewayFormFactory") + "gatewayFormFactory".length,
+    });
+  });
+
+  it("returns an explicitly promoted constructor-injected factory", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    public function __construct(
+        private GatewayFormFactory $gatewayFormFactory,
+    ) {
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toMatchObject({
+      componentName: "gatewayForm",
+      factoryClass: "GatewayFormFactory",
+      factoryClassStart: source.indexOf("GatewayFormFactory"),
+      factoryClassEnd:
+        source.indexOf("GatewayFormFactory") + "GatewayFormFactory".length,
+      methodName: "createComponentGatewayForm",
+      propertyName: "gatewayFormFactory",
+    });
+  });
+
+  it("rejects constructor injection without a typed constructor parameter", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct($gatewayFormFactory)
+    {
+        $this->gatewayFormFactory = $gatewayFormFactory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toBeNull();
+  });
+
+  it("returns a constructor-injected factory assigned from a differently named typed parameter", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $factory)
+    {
+        $this->gatewayFormFactory = $factory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toMatchObject({
+      factoryClass: "GatewayFormFactory",
+      propertyName: "gatewayFormFactory",
+    });
+  });
+
+  it("rejects constructor injection when the assigned parameter is untyped", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct($factory)
+    {
+        $this->gatewayFormFactory = $factory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toBeNull();
+  });
+
+  it("rejects constructor injection when the property assignment is deferred in a closure", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $factory)
+    {
+        $later = function () use ($factory) {
+            $this->gatewayFormFactory = $factory;
+        };
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toBeNull();
+  });
+
+  it("rejects constructor injection when the property assignment is missing", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $gatewayFormFactory)
+    {
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toBeNull();
+  });
 });
 
 describe("netteFormFieldDefinitionsInFactoryCreateMethod", () => {

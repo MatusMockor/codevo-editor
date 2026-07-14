@@ -756,12 +756,12 @@ export function netteFormFieldDefinitionsInCreateComponent(
 }
 
 /**
- * Returns the typed factory property used by a one-hop delegated form component
+ * Returns the typed factory member used by a one-hop delegated form component
  * factory (`return $this->fooFactory->create();`, or a local assignment followed
- * immediately by `return $local;`). The property itself must be declared as a
- * typed class property on the same class. Constructor promotion / injection,
- * service lookup, dynamic property names and create arguments are intentionally
- * not followed here.
+ * immediately by `return $local;`). The member must be visible as a typed class
+ * property, promoted constructor property, or direct constructor assignment from
+ * a typed parameter on the same class. Service lookup and dynamic property names
+ * are intentionally not followed here.
  */
 export function netteDelegatedFormFactoryInCreateComponent(
   phpSource: string,
@@ -1356,6 +1356,11 @@ interface TypedPropertyDefinition {
   nameStart: number;
 }
 
+interface ConstructorParameterDefinition extends TypedPropertyDefinition {
+  isPromoted: boolean;
+  parameterName: string;
+}
+
 function delegatedFormFactoryFromCreateComponentMethod(
   source: string,
   method: PhpMethodDefinition,
@@ -1379,12 +1384,20 @@ function delegatedFormFactoryFromCreateComponentMethod(
   }
 
   const containingClass = phpClassContainingOffset(source, method.signatureStart);
-  const property = typedPropertyByName(
-    source,
-    delegatedCreate.propertyName,
-    containingClass ? containingClass.bodyStart : 0,
-    containingClass ? containingClass.bodyEnd : source.length,
-  );
+  const property =
+    typedPropertyByName(
+      source,
+      delegatedCreate.propertyName,
+      containingClass ? containingClass.bodyStart : 0,
+      containingClass ? containingClass.bodyEnd : source.length,
+    ) ??
+    (containingClass
+      ? constructorInjectedPropertyByName(
+          source,
+          delegatedCreate.propertyName,
+          containingClass,
+        )
+      : null);
 
   if (!property) {
     return null;
@@ -1594,6 +1607,295 @@ function readThisFactoryCreateExpression(
     propertyNameEnd: property.end,
     propertyNameStart: property.start,
   };
+}
+
+function constructorInjectedPropertyByName(
+  source: string,
+  propertyName: string,
+  classDefinition: PhpClassDefinition,
+): TypedPropertyDefinition | null {
+  const constructor = findPhpMethodByNameInRange(
+    source,
+    "__construct",
+    classDefinition.bodyStart + 1,
+    classDefinition.bodyEnd - 1,
+  );
+
+  if (!constructor) {
+    return null;
+  }
+
+  const parameters = constructorParameterDefinitions(source, constructor);
+  const promoted = parameters.find(
+    (parameter) => parameter.isPromoted && parameter.name === propertyName,
+  );
+
+  if (promoted) {
+    return promoted;
+  }
+
+  const body = phpMethodBodyRange(source, constructor);
+
+  if (!body) {
+    return null;
+  }
+
+  const assignedParameterName = constructorAssignedParameterName(
+    source,
+    body.start,
+    body.end,
+    propertyName,
+  );
+
+  if (!assignedParameterName) {
+    return null;
+  }
+
+  return (
+    parameters.find(
+      (parameter) => parameter.parameterName === assignedParameterName,
+    ) ?? null
+  );
+}
+
+function constructorParameterDefinitions(
+  source: string,
+  method: PhpMethodDefinition,
+): ConstructorParameterDefinition[] {
+  const closeParen = matchingParenClose(source, method.openParen);
+
+  if (closeParen === null) {
+    return [];
+  }
+
+  const parameters: ConstructorParameterDefinition[] = [];
+
+  for (const span of parameterSpans(source, method.openParen + 1, closeParen - 1)) {
+    const parameter = readConstructorParameterDefinition(
+      source,
+      span.start,
+      span.end,
+    );
+
+    if (parameter) {
+      parameters.push(parameter);
+    }
+  }
+
+  return parameters;
+}
+
+function parameterSpans(
+  source: string,
+  from: number,
+  limit: number,
+): Array<{ end: number; start: number }> {
+  const spans: Array<{ end: number; start: number }> = [];
+  let start = from;
+  let depth = 0;
+  let quote: string | null = null;
+
+  for (let index = from; index < limit; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character !== "," || depth !== 0) {
+      continue;
+    }
+
+    spans.push({ end: index, start });
+    start = index + 1;
+  }
+
+  spans.push({ end: limit, start });
+
+  return spans;
+}
+
+function readConstructorParameterDefinition(
+  source: string,
+  from: number,
+  limit: number,
+): ConstructorParameterDefinition | null {
+  let index = skipWhitespace(source, from);
+  let isPromoted = false;
+
+  for (;;) {
+    const modifier = readIdentifierToken(source, index, limit);
+
+    if (
+      !modifier ||
+      (modifier.name !== "public" &&
+        modifier.name !== "protected" &&
+        modifier.name !== "private" &&
+        modifier.name !== "readonly")
+    ) {
+      break;
+    }
+
+    if (
+      modifier.name === "public" ||
+      modifier.name === "protected" ||
+      modifier.name === "private"
+    ) {
+      isPromoted = true;
+    }
+
+    index = skipWhitespace(source, modifier.next);
+  }
+
+  if (source[index] === "?") {
+    index += 1;
+  }
+
+  const classNameStart = index;
+  const className = readClassNameToken(source, index, limit);
+
+  if (!className || !classTypeOrNull(className)) {
+    return null;
+  }
+
+  index = skipWhitespace(source, classNameStart + className.length);
+  const variable = readVariableName(source, index, limit);
+
+  if (!variable) {
+    return null;
+  }
+
+  return {
+    className,
+    classNameEnd: classNameStart + className.length,
+    classNameStart,
+    isPromoted,
+    name: variable.name,
+    nameEnd: variable.end,
+    nameStart: variable.start,
+    parameterName: variable.name,
+  };
+}
+
+function constructorAssignedParameterName(
+  source: string,
+  from: number,
+  limit: number,
+  propertyName: string,
+): string | null {
+  let depth = 0;
+
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    const character = source[index];
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (depth !== 0 || character !== "$") {
+      continue;
+    }
+
+    const parameterName = readConstructorPropertyAssignment(
+      source,
+      index,
+      limit,
+      propertyName,
+    );
+
+    if (parameterName) {
+      return parameterName;
+    }
+  }
+
+  return null;
+}
+
+function readConstructorPropertyAssignment(
+  source: string,
+  from: number,
+  limit: number,
+  propertyName: string,
+): string | null {
+  const thisVariable = readVariableName(source, from, limit);
+
+  if (!thisVariable || thisVariable.name !== "this") {
+    return null;
+  }
+
+  let index = skipWhitespace(source, thisVariable.next);
+
+  if (source.slice(index, index + 2) !== "->") {
+    return null;
+  }
+
+  index = skipWhitespace(source, index + 2);
+  const property = readIdentifierToken(source, index, limit);
+
+  if (!property || property.name !== propertyName) {
+    return null;
+  }
+
+  index = skipWhitespace(source, property.next);
+
+  if (source[index] !== "=") {
+    return null;
+  }
+
+  index = skipWhitespace(source, index + 1);
+  const parameter = readVariableName(source, index, limit);
+
+  if (!parameter) {
+    return null;
+  }
+
+  index = skipWhitespace(source, parameter.next);
+
+  return source[index] === ";" ? parameter.name : null;
 }
 
 const PHP_TYPED_PROPERTY =

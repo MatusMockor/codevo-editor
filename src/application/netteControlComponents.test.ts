@@ -388,6 +388,91 @@ class GatewayFormFactory
       ),
     ).resolves.toContainEqual(expect.objectContaining({ label: "email" }));
   });
+
+  it("offers n:name fields from delegated non-promoted constructor-injected form factories", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\Forms\\GatewayFormFactory;
+use Nette\\Application\\UI\\Form;
+
+class HomePresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $gatewayFormFactory)
+    {
+        $this->gatewayFormFactory = $gatewayFormFactory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+use Nette\\Application\\UI\\Form;
+
+class GatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        $form->addPassword('password', 'Password');
+        return $form;
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\Forms\\GatewayFormFactory"
+        ? { path: `${ROOT}/app/Forms/GatewayFormFactory.php`, source: factory }
+        : null,
+    );
+    const source = `<form n:name="gatewayForm"><input n:name="em"></form>`;
+    const offset = source.indexOf("em") + "em".length;
+    const completion = latteFormNameCompletionAt(source, offset);
+
+    await expect(
+      latteFormNameCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+            resolveDeclaredType: (_source, typeHint) =>
+              typeHint === "GatewayFormFactory"
+                ? "App\\Forms\\GatewayFormFactory"
+                : typeHint,
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        source,
+        offset,
+        completion!,
+      ),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "Nette form field",
+          insertText: "email",
+          label: "email",
+        }),
+      ]),
+    );
+
+    expect(readPhpClassSource).toHaveBeenCalledWith(
+      "App\\Forms\\GatewayFormFactory",
+    );
+  });
 });
 
 describe("resolveNetteControlDefinition", () => {
@@ -490,6 +575,76 @@ class GatewayFormFactory
     expect(openTarget).toHaveBeenCalledWith(
       `${ROOT}/app/Forms/GatewayFormFactory.php`,
       expect.objectContaining({ lineNumber: 9 }),
+      "email",
+    );
+  });
+
+  it("opens delegated non-promoted constructor-injected factory field definitions from n:name", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\Forms\\GatewayFormFactory;
+use Nette\\Application\\UI\\Form;
+
+class HomePresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $gatewayFormFactory)
+    {
+        $this->gatewayFormFactory = $gatewayFormFactory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+use Nette\\Application\\UI\\Form;
+
+class GatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const source = `<form n:name="gatewayForm"><input n:name="email"></form>`;
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource: vi.fn(async (className: string) =>
+            className === "App\\Forms\\GatewayFormFactory"
+              ? { path: `${ROOT}/app/Forms/GatewayFormFactory.php`, source: factory }
+              : null,
+          ),
+          resolveDeclaredType: (_source, typeHint) =>
+            typeHint === "GatewayFormFactory"
+              ? "App\\Forms\\GatewayFormFactory"
+              : typeHint,
+        },
+        ROOT,
+        () => true,
+        netteControlReferenceAt(source, source.indexOf("email") + 2),
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/Forms/GatewayFormFactory.php`,
+      expect.objectContaining({ lineNumber: 11 }),
       "email",
     );
   });

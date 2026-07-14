@@ -4033,6 +4033,75 @@ class AccessTokenControl extends Control
     );
   });
 
+  it("navigates n:name to fields from delegated non-promoted constructor-injected form factories", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\Forms\\GatewayFormFactory;
+use Nette\\Application\\UI\\Form;
+
+class HomePresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $gatewayFormFactory)
+    {
+        $this->gatewayFormFactory = $gatewayFormFactory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+use Nette\\Application\\UI\\Form;
+
+class GatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        return $form;
+    }
+}
+`;
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": presenter,
+    });
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      openTarget,
+      readFileContent,
+      readPhpClassSource: vi.fn(async (className: string) =>
+        className === "App\\Forms\\GatewayFormFactory"
+          ? { path: `${ROOT}/app/Forms/GatewayFormFactory.php`, source: factory }
+          : null,
+      ),
+      resolveDeclaredType: (_source, typeHint) =>
+        typeHint === "GatewayFormFactory"
+          ? "App\\Forms\\GatewayFormFactory"
+          : typeHint,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="gatewayForm"><input n:name="email"></form>';
+    const offset = source.indexOf("email") + 1;
+
+    await expect(latte.provideLatteDefinition(source, offset)).resolves.toBe(
+      true,
+    );
+    expect(openTarget).toHaveBeenCalledWith(
+      "/ws/app/Forms/GatewayFormFactory.php",
+      expect.objectContaining({ lineNumber: 11 }),
+      "email",
+    );
+  });
+
   it.each(["input", "label", "inputError"] as const)(
     "navigates a {%s email} macro to a field inside the active form component",
     async (macro) => {
@@ -4467,6 +4536,83 @@ class AccessTokenControl extends Control
         positionAtOffset(source, source.indexOf('"s"') + 2),
       ),
     ).resolves.toContainEqual(expect.objectContaining({ label: "send" }));
+  });
+
+  it("offers n:name fields from delegated non-promoted constructor-injected form factories", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\Forms\\GatewayFormFactory;
+use Nette\\Application\\UI\\Form;
+
+class HomePresenter
+{
+    private $gatewayFormFactory;
+
+    public function __construct(GatewayFormFactory $gatewayFormFactory)
+    {
+        $this->gatewayFormFactory = $gatewayFormFactory;
+    }
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+use Nette\\Application\\UI\\Form;
+
+class GatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('email', 'Email');
+        $form->addPassword('password', 'Password');
+        return $form;
+    }
+}
+`;
+    const { readFileContent } = buildContentWorkspace({
+      "app/UI/Home/HomePresenter.php": presenter,
+    });
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\Forms\\GatewayFormFactory"
+        ? { path: `${ROOT}/app/Forms/GatewayFormFactory.php`, source: factory }
+        : null,
+    );
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
+      readFileContent,
+      readPhpClassSource,
+      resolveDeclaredType: (_source, typeHint) =>
+        typeHint === "GatewayFormFactory"
+          ? "App\\Forms\\GatewayFormFactory"
+          : typeHint,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = '<form n:name="gatewayForm"><input n:name="pa"></form>';
+    const offset = source.indexOf("pa") + "pa".length;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offset),
+    );
+
+    expect(completions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "Nette form field",
+          insertText: "password",
+          label: "password",
+        }),
+      ]),
+    );
+    expect(readPhpClassSource).toHaveBeenCalledWith(
+      "App\\Forms\\GatewayFormFactory",
+    );
   });
 
   it.each(["input", "label", "inputError"] as const)(
