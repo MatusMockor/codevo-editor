@@ -1,4 +1,5 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import { resolvePhpClassName } from "./phpClassNameResolution";
 import { defaultPhpFrameworkProviders } from "./phpFrameworkProviderDefaults";
 import type {
   PhpFrameworkContainerBinding,
@@ -139,7 +140,13 @@ export function phpFrameworkContainerConcreteClassNameFromSource(
         [source, ...(sourceContext?.workspaceSources ?? [])],
         providers,
       ),
-    ) ?? abstractClassName
+    ) ??
+    phpFrameworkAutowiredConcreteClassNameFromSources(
+      abstractClassName,
+      [source, ...(sourceContext?.workspaceSources ?? [])],
+      providers,
+    ) ??
+    abstractClassName
   );
 }
 
@@ -150,6 +157,17 @@ export function phpFrameworkContainerBindingsFromSource(
   return providers.flatMap(
     (provider) =>
       provider.semantics?.containerBindingsFromSource?.({ source }) ?? [],
+  );
+}
+
+export function phpFrameworkContainerConcreteClassNamesFromSource(
+  source: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string[] {
+  return providers.flatMap(
+    (provider) =>
+      provider.semantics?.containerConcreteClassNamesFromSource?.({ source }) ??
+      [],
   );
 }
 
@@ -192,6 +210,117 @@ function phpFrameworkContainerBindingsFromSources(
   }
 
   return bindings;
+}
+
+function phpFrameworkAutowiredConcreteClassNameFromSources(
+  abstractClassName: string,
+  sources: readonly string[],
+  providers: readonly PhpFrameworkProvider[],
+): string | null {
+  const candidates = phpFrameworkContainerConcreteClassNamesFromSources(
+    sources,
+    providers,
+  );
+  const matches = candidates.filter((candidate) =>
+    phpFrameworkSourceDeclaresClassImplementing(
+      sources,
+      candidate,
+      abstractClassName,
+    ),
+  );
+
+  if (matches.length !== 1) {
+    return null;
+  }
+
+  return matches[0] ?? null;
+}
+
+function phpFrameworkContainerConcreteClassNamesFromSources(
+  sources: readonly string[],
+  providers: readonly PhpFrameworkProvider[],
+): string[] {
+  const classNames: string[] = [];
+
+  for (const source of sources) {
+    for (const className of phpFrameworkContainerConcreteClassNamesFromSource(
+      source,
+      providers,
+    )) {
+      const normalized = phpFrameworkNormalizedClassName(className);
+
+      if (classNames.some((seen) => phpFrameworkNormalizedClassName(seen) === normalized)) {
+        continue;
+      }
+
+      classNames.push(className);
+    }
+  }
+
+  return classNames;
+}
+
+function phpFrameworkSourceDeclaresClassImplementing(
+  sources: readonly string[],
+  className: string,
+  interfaceName: string,
+): boolean {
+  const normalizedClassName = phpFrameworkNormalizedClassName(className);
+
+  for (const source of sources) {
+    if (
+      phpFrameworkCurrentClassName(source)?.toLowerCase() !==
+      normalizedClassName
+    ) {
+      continue;
+    }
+
+    if (phpFrameworkDirectInterfaceNames(source).some(
+      (implementedName) =>
+        phpFrameworkNormalizedClassName(implementedName) ===
+        phpFrameworkNormalizedClassName(interfaceName),
+    )) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function phpFrameworkCurrentClassName(source: string): string | null {
+  const namespace = /^\s*namespace\s+([^;{]+)[;{]/m
+    .exec(source)?.[1]
+    ?.trim()
+    .replace(/^\\+/, "");
+  const match = /^\s*(?:abstract\s+|final\s+|readonly\s+)*(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/m.exec(
+    source,
+  );
+  const shortName = match?.[1] ?? null;
+
+  if (!shortName) {
+    return null;
+  }
+
+  return namespace ? `${namespace}\\${shortName}` : shortName;
+}
+
+function phpFrameworkDirectInterfaceNames(
+  source: string,
+): string[] {
+  const match = /^\s*(?:abstract\s+|final\s+|readonly\s+)*class\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+extends\s+[^\s{]+)?\s+implements\s+([^{]+)/m.exec(
+    source,
+  );
+  const implementsList = match?.[1] ?? "";
+
+  if (!implementsList) {
+    return [];
+  }
+
+  return implementsList
+    .split(",")
+    .map((part) => part.trim().replace(/<[\s\S]*$/, ""))
+    .map((part) => resolvePhpClassName(source, part))
+    .filter((part): part is string => Boolean(part));
 }
 
 function phpFrameworkConcreteClassNameFromBindings(

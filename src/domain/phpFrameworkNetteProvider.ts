@@ -14,6 +14,7 @@ import {
 import {
   isNetteContainerBindingCandidatePath,
   phpNetteContainerBindingsFromSource,
+  phpNetteContainerConcreteClassNamesFromSource,
   phpNetteContainerExpressionClassName,
 } from "./phpFrameworkNette";
 import {
@@ -190,6 +191,8 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       phpNetteContainerExpressionClassName(expression),
     containerBindingsFromSource: ({ source }) =>
       phpNetteContainerBindingsFromSource(source),
+    containerConcreteClassNamesFromSource: ({ source }) =>
+      phpNetteContainerConcreteClassNamesFromSource(source),
     isContainerBindingCandidatePath: ({ path }) =>
       isNetteContainerBindingCandidatePath(path),
   },

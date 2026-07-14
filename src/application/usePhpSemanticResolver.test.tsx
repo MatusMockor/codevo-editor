@@ -74,6 +74,22 @@ function makeOptions(
   };
 }
 
+function phpWorkspaceDescriptor(): UsePhpSemanticResolverOptions["workspaceDescriptor"] {
+  return {
+    javaScriptTypeScript: null,
+    php: {
+      classmapRoots: [],
+      hasComposer: true,
+      packageName: null,
+      packages: [],
+      phpPlatformVersion: null,
+      phpVersionConstraint: null,
+      psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app"] }],
+    },
+    rootPath: ROOT,
+  };
+}
+
 function renderResolver(initialOptions: UsePhpSemanticResolverOptions) {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -155,6 +171,185 @@ describe("usePhpSemanticResolver container binding scans", () => {
     await expect(
       harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
     ).resolves.toBe("App\\Services\\NetteGateway");
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("resolves Nette autowired services by reading registered concrete class sources", async () => {
+    const concretePath = `${ROOT}/app/Repository/DatabaseReportRepository.php`;
+    const searchText = vi.fn(async () => []);
+    const searchFiles = vi.fn(async () => [
+      {
+        name: "DatabaseReportRepository.php",
+        path: concretePath,
+        relativePath: "app/Repository/DatabaseReportRepository.php",
+      },
+    ]);
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      if (path !== concretePath) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return `<?php
+namespace App\\Repository;
+
+use App\\Contracts\\ReportRepository;
+
+final class DatabaseReportRepository implements ReportRepository
+{
+}
+`;
+    });
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:1",
+          workspaceSources: [
+            [
+              "services:",
+              "    reportRepository: App\\Repository\\DatabaseReportRepository",
+            ].join("\n"),
+          ],
+        }),
+        fileSearch: { searchFiles },
+        readNavigationFileContent,
+        textSearch: {
+          replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+          searchText,
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\ReportRepository",
+      ),
+    ).resolves.toBe("App\\Repository\\DatabaseReportRepository");
+    expect(readNavigationFileContent).toHaveBeenCalledWith(concretePath);
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not cache transient Nette autowire read failures", async () => {
+    const concretePath = `${ROOT}/app/Repository/DatabaseReportRepository.php`;
+    const searchText = vi.fn(async () => []);
+    const searchProjectSymbols = vi.fn(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Repository\\DatabaseReportRepository",
+        kind: "class" as const,
+        lineNumber: 7,
+        name: "DatabaseReportRepository",
+        path: concretePath,
+        relativePath: "app/Repository/DatabaseReportRepository.php",
+      },
+    ]);
+    const readNavigationFileContent = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("transient read failure"))
+      .mockResolvedValueOnce(`<?php
+namespace App\\Repository;
+
+use App\\Contracts\\ReportRepository;
+
+final class DatabaseReportRepository implements ReportRepository
+{
+}
+`);
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:1",
+          workspaceSources: [
+            [
+              "services:",
+              "    reportRepository: App\\Repository\\DatabaseReportRepository",
+            ].join("\n"),
+          ],
+        }),
+        intelligenceMode: "fullSmart",
+        projectSymbolSearch: { searchProjectSymbols },
+        readNavigationFileContent,
+        textSearch: {
+          replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+          searchText,
+        },
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\ReportRepository",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\ReportRepository",
+      ),
+    ).resolves.toBe("App\\Repository\\DatabaseReportRepository");
+    expect(readNavigationFileContent).toHaveBeenCalledWith(concretePath);
+    expect(searchProjectSymbols).toHaveBeenCalled();
+    expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("invalidates Nette autowire misses when PHP class resolution becomes available", async () => {
+    const concretePath = `${ROOT}/app/Repository/DatabaseReportRepository.php`;
+    const searchText = vi.fn(async () => []);
+    const readNavigationFileContent = vi.fn(async () => `<?php
+namespace App\\Repository;
+
+use App\\Contracts\\ReportRepository;
+
+final class DatabaseReportRepository implements ReportRepository
+{
+}
+`);
+    const baseOptions = makeOptions({
+      activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+      currentPhpFrameworkSourceContext: () => ({
+        signature: "neon:1",
+        workspaceSources: [
+          [
+            "services:",
+            "    reportRepository: App\\Repository\\DatabaseReportRepository",
+          ].join("\n"),
+        ],
+      }),
+      readNavigationFileContent,
+      textSearch: {
+        replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
+        searchText,
+      },
+      workspaceDescriptor: null,
+    });
+    const harness = renderResolver(baseOptions);
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\ReportRepository",
+      ),
+    ).resolves.toBeNull();
+
+    harness.rerender({
+      ...baseOptions,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "App\\Contracts\\ReportRepository",
+      ),
+    ).resolves.toBe("App\\Repository\\DatabaseReportRepository");
+    expect(readNavigationFileContent).toHaveBeenCalledWith(concretePath);
     expect(searchText).not.toHaveBeenCalled();
 
     harness.unmount();

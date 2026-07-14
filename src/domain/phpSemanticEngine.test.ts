@@ -4327,6 +4327,132 @@ services:
     ).toBe("App\\Contracts\\Repo");
   });
 
+  it("resolves Nette getByType interfaces to named autowired concrete services", () => {
+    const presenterSource = `<?php
+namespace App\\Presenters;
+
+class DashboardPresenter
+{
+    public function actionDefault(): void
+    {
+        $repo = $this->container->getByType(App\\Contracts\\ReportRepository::class);
+
+        $this->container->getByType(App\\Contracts\\ReportRepository::class)->findAll();
+        $repo->findAll();
+    }
+}
+`;
+    const neonSource = `
+services:
+    reportRepository: App\\Repository\\DatabaseReportRepository
+`;
+    const interfaceSource = `<?php
+namespace App\\Contracts;
+
+interface ReportRepository
+{
+}
+`;
+    const concreteSource = `<?php
+namespace App\\Repository;
+
+use App\\Contracts\\ReportRepository;
+
+final class DatabaseReportRepository implements ReportRepository
+{
+}
+`;
+    const options = {
+      ...netteOptions,
+      frameworkSourceContext: {
+        workspaceSources: [neonSource, interfaceSource, concreteSource],
+      },
+    };
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        presenterSource,
+        positionAfter(
+          presenterSource,
+          "$this->container->getByType(App\\Contracts\\ReportRepository::class)",
+        ),
+        "$this->container->getByType(App\\Contracts\\ReportRepository::class)",
+        options,
+      ),
+    ).toBe("App\\Repository\\DatabaseReportRepository");
+    expect(
+      phpVariableTypeInSource(
+        presenterSource,
+        positionAfter(presenterSource, "$repo->findAll"),
+        "repo",
+        options,
+      ),
+    ).toBe("App\\Repository\\DatabaseReportRepository");
+  });
+
+  it("resolves Nette getByType interfaces to anonymous autowired concrete services", () => {
+    const presenterSource = `<?php
+namespace App\\Presenters;
+
+class DashboardPresenter
+{
+    public function actionDefault(): void
+    {
+        $repo = $this->container->getByType(App\\Contracts\\ReportRepository::class);
+
+        $this->container->getByType(App\\Contracts\\ReportRepository::class)->findAll();
+        $repo->findAll();
+    }
+}
+`;
+    const neonSource = `
+services:
+    - App\\Repository\\FileReportRepository
+`;
+    const interfaceSource = `<?php
+namespace App\\Contracts;
+
+interface ReportRepository
+{
+}
+`;
+    const concreteSource = `<?php
+namespace App\\Repository;
+
+use App\\Contracts\\ReportRepository;
+
+final class FileReportRepository implements ReportRepository
+{
+}
+`;
+    const options = {
+      ...netteOptions,
+      frameworkSourceContext: {
+        workspaceSources: [neonSource, interfaceSource, concreteSource],
+      },
+    };
+
+    expect(
+      phpReceiverExpressionTypeInSource(
+        presenterSource,
+        positionAfter(
+          presenterSource,
+          "$this->container->getByType(App\\Contracts\\ReportRepository::class)",
+        ),
+        "$this->container->getByType(App\\Contracts\\ReportRepository::class)",
+        options,
+      ),
+    ).toBe("App\\Repository\\FileReportRepository");
+    expect(
+      phpVariableTypeInSource(
+        presenterSource,
+        positionAfter(presenterSource, "$repo->findAll"),
+        "repo",
+        options,
+      ),
+    ).toBe("App\\Repository\\FileReportRepository");
+  });
+
   it("resolves parenthesized new Laravel resource chains to JsonResponse", () => {
     const source = `<?php
 namespace App\\Http\\Resources;

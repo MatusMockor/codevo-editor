@@ -7095,6 +7095,15 @@ export function useWorkbenchController(
         return;
       }
 
+      if (
+        phpFrameworkRuntimeContext.supports(
+          "containerConcreteClassNamesFromSource",
+        )
+      ) {
+        invalidatePhpFrameworkBindingCacheRef.current();
+        return;
+      }
+
       const requestedRoot = event.rootPath;
       const requestedGeneration =
         currentPhpFrameworkBindingCacheGeneration();

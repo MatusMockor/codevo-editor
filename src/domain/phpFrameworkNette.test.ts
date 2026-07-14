@@ -126,4 +126,78 @@ services:
       ),
     ).toBe(true);
   });
+
+  it("resolves Nette autowired concrete services that implement getByType interfaces", () => {
+    const neonSource = `
+services:
+    reportRepository: App\\Repository\\DatabaseReportRepository
+    - App\\Repository\\FileReportRepository
+`;
+    const interfaceSource = `<?php
+namespace App\\Contracts;
+
+interface ReportRepository
+{
+}
+`;
+    const namedConcreteSource = `<?php
+namespace App\\Repository;
+
+use App\\Contracts\\ReportRepository;
+
+final class DatabaseReportRepository implements ReportRepository
+{
+}
+`;
+    const anonymousConcreteSource = `<?php
+namespace App\\Repository;
+
+use App\\Contracts\\ReportRepository;
+
+final class FileReportRepository implements ReportRepository
+{
+}
+`;
+    const namedSourceContext = {
+      workspaceSources: [interfaceSource, namedConcreteSource],
+    };
+    const anonymousSourceContext = {
+      workspaceSources: [interfaceSource, anonymousConcreteSource],
+    };
+    const ambiguousSourceContext = {
+      workspaceSources: [
+        interfaceSource,
+        namedConcreteSource,
+        anonymousConcreteSource,
+      ],
+    };
+
+    expect(
+      phpFrameworkContainerConcreteClassNameFromSource(
+        neonSource,
+        "$this->container->getByType(App\\Contracts\\ReportRepository::class)",
+        [phpNetteFrameworkProvider],
+        namedSourceContext,
+      ),
+    ).toBe("App\\Repository\\DatabaseReportRepository");
+    expect(
+      phpFrameworkContainerConcreteClassNameFromSource(
+        `
+services:
+    - App\\Repository\\FileReportRepository
+`,
+        "$this->container->getByType(App\\Contracts\\ReportRepository::class)",
+        [phpNetteFrameworkProvider],
+        anonymousSourceContext,
+      ),
+    ).toBe("App\\Repository\\FileReportRepository");
+    expect(
+      phpFrameworkContainerConcreteClassNameFromSource(
+        neonSource,
+        "$this->container->getByType(App\\Contracts\\ReportRepository::class)",
+        [phpNetteFrameworkProvider],
+        ambiguousSourceContext,
+      ),
+    ).toBe("App\\Contracts\\ReportRepository");
+  });
 });

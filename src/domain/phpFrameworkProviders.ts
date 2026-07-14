@@ -52,6 +52,7 @@ export {
 export {
   isPhpFrameworkContainerBindingCandidatePath,
   phpFrameworkContainerBindingsFromSource,
+  phpFrameworkContainerConcreteClassNamesFromSource,
   phpFrameworkContainerConcreteClassNameFromSource,
   phpFrameworkContainerExpressionClassName,
   phpFrameworkMethodCallReturnTypeFromSource,
@@ -139,6 +140,10 @@ export interface PhpFrameworkContainerBinding {
 }
 
 export interface PhpFrameworkContainerBindingsContext {
+  source: string;
+}
+
+export interface PhpFrameworkContainerConcreteClassNamesContext {
   source: string;
 }
 
@@ -934,6 +939,9 @@ export interface PhpFrameworkProvider {
     containerBindingsFromSource?: (
       context: PhpFrameworkContainerBindingsContext,
     ) => PhpFrameworkContainerBinding[];
+    containerConcreteClassNamesFromSource?: (
+      context: PhpFrameworkContainerConcreteClassNamesContext,
+    ) => string[];
     isContainerBindingCandidatePath?: (
       context: PhpFrameworkContainerBindingPathContext,
     ) => boolean;
@@ -960,6 +968,7 @@ export type PhpFrameworkProviderCapability =
   | "dispatch"
   | "env"
   | "inertia"
+  | "containerConcreteClassNamesFromSource"
   | "lattePresenterLinkIntelligence"
   | "latteTemplateIntelligence"
   | "middlewareAliases"
@@ -1871,6 +1880,12 @@ function phpFrameworkProvidersSupportCapability(
       return providers.some(
         (provider) =>
           provider.semantics?.containerBindingsFromSource !== undefined,
+      );
+    case "containerConcreteClassNamesFromSource":
+      return providers.some(
+        (provider) =>
+          provider.semantics?.containerConcreteClassNamesFromSource !==
+          undefined,
       );
     case "dispatch":
       return providers.some((provider) => provider.dispatch !== undefined);

@@ -11,6 +11,7 @@ import {
 import { phpDeclaredTypeCandidate } from "../domain/phpTypeAnalysis";
 import {
   phpFrameworkContainerBindingsFromSource,
+  phpFrameworkContainerConcreteClassNamesFromSource,
   phpFrameworkProviderSignature,
   phpFrameworkSupportsContainerBindingsFromSource,
   type PhpFrameworkProvider,
@@ -43,6 +44,10 @@ export interface UsePhpSemanticResolverOptions {
   workspaceRoot: string | null;
 }
 
+type PhpFrameworkAutowireLookupResult =
+  | { className: string; status: "resolved" }
+  | { status: "inactive" | "miss" | "read-failed" };
+
 export function usePhpSemanticResolver({
   activePhpFrameworkProviders,
   currentPhpFrameworkSourceContext,
@@ -62,17 +67,27 @@ export function usePhpSemanticResolver({
   >({});
   const phpFrameworkBindingSearchPathKeysRef = useRef<Set<string>>(new Set());
   const phpFrameworkBindingCacheGenerationRef = useRef(0);
+  const resolvePhpClassSourcePathsRef = useRef<
+    (className: string) => Promise<string[]>
+  >(async () => []);
   const providerSignature = phpFrameworkProviderSignature(
     activePhpFrameworkProviders,
   );
   const frameworkSourceSignature = currentPhpFrameworkSourceContext().signature;
+  const classResolutionSignature = phpFrameworkClassResolutionSignature(
+    intelligenceMode,
+    workspaceDescriptor,
+  );
   const phpFrameworkBindingCacheOwnerRef = useRef({
+    classResolutionSignature,
     frameworkSourceSignature,
     providerSignature,
     workspaceRoot,
   });
 
   if (
+    phpFrameworkBindingCacheOwnerRef.current.classResolutionSignature !==
+      classResolutionSignature ||
     phpFrameworkBindingCacheOwnerRef.current.frameworkSourceSignature !==
       frameworkSourceSignature ||
     phpFrameworkBindingCacheOwnerRef.current.providerSignature !==
@@ -83,6 +98,7 @@ export function usePhpSemanticResolver({
     )
   ) {
     phpFrameworkBindingCacheOwnerRef.current = {
+      classResolutionSignature,
       frameworkSourceSignature,
       providerSignature,
       workspaceRoot,
@@ -290,13 +306,27 @@ export function usePhpSemanticResolver({
           return sourceConcrete;
         }
 
+        const autowiredConcrete = await resolvePhpFrameworkAutowiredConcrete(
+          normalizedClassName,
+          sourceContext.workspaceSources,
+          isRequestedRootActive,
+        );
+
+        if (autowiredConcrete.status === "resolved") {
+          phpFrameworkBindingCacheRef.current[cacheKey] =
+            autowiredConcrete.className;
+          return autowiredConcrete.className;
+        }
+
         if (
           !activePhpFrameworkProviders.some(
             (provider) =>
               provider.semantics?.supportsContainerBindingTextSearch === true,
           )
         ) {
-          phpFrameworkBindingCacheRef.current[cacheKey] = null;
+          if (autowiredConcrete.status !== "read-failed") {
+            phpFrameworkBindingCacheRef.current[cacheKey] = null;
+          }
           return null;
         }
 
@@ -410,6 +440,74 @@ export function usePhpSemanticResolver({
       workspaceRoot,
     ],
   );
+
+  async function resolvePhpFrameworkAutowiredConcrete(
+    requestedClassName: string,
+    frameworkSources: readonly string[],
+    isRequestedRootActive: () => boolean,
+  ): Promise<PhpFrameworkAutowireLookupResult> {
+    const concreteClassNames = phpFrameworkConcreteClassNamesFromSources(
+      frameworkSources,
+      activePhpFrameworkProviders,
+      (source, className) => resolvePhpClassReference(source, className),
+    );
+    const matches: string[] = [];
+
+    for (const concreteClassName of concreteClassNames) {
+      if (!isRequestedRootActive()) {
+        return { status: "inactive" };
+      }
+
+      const paths =
+        await resolvePhpClassSourcePathsRef.current(concreteClassName);
+
+      if (!isRequestedRootActive()) {
+        return { status: "inactive" };
+      }
+
+      for (const path of paths) {
+        if (!isRequestedRootActive()) {
+          return { status: "inactive" };
+        }
+
+        try {
+          const content = await readNavigationFileContent(path);
+
+          if (!isRequestedRootActive()) {
+            return { status: "inactive" };
+          }
+
+          if (
+            !phpSourceClassDirectlyImplements(
+              content,
+              concreteClassName,
+              requestedClassName,
+              resolvePhpClassReference,
+            )
+          ) {
+            continue;
+          }
+
+          matches.push(concreteClassName);
+          break;
+        } catch {
+          if (!isRequestedRootActive()) {
+            return { status: "inactive" };
+          }
+
+          return { status: "read-failed" };
+        }
+      }
+    }
+
+    if (matches.length !== 1) {
+      return { status: "miss" };
+    }
+
+    const className = matches[0] ?? null;
+
+    return className ? { className, status: "resolved" } : { status: "miss" };
+  }
 
   const verifyPhpClassCandidatePaths = useCallback(
     async (
@@ -639,6 +737,7 @@ export function usePhpSemanticResolver({
       workspaceRoot,
     ],
   );
+  resolvePhpClassSourcePathsRef.current = resolvePhpClassSourcePaths;
 
   return {
     currentPhpFrameworkBindingCacheGeneration,
@@ -688,6 +787,83 @@ function phpFrameworkBoundConcreteFromSources(
   return null;
 }
 
+function phpFrameworkConcreteClassNamesFromSources(
+  sources: readonly string[],
+  providers: readonly PhpFrameworkProvider[],
+  resolveClassName: (source: string, className: string) => string | null,
+): string[] {
+  const classNames: string[] = [];
+
+  for (const source of sources) {
+    for (const className of phpFrameworkContainerConcreteClassNamesFromSource(
+      source,
+      providers,
+    )) {
+      const resolvedClassName = resolveClassName(source, className);
+
+      if (!resolvedClassName) {
+        continue;
+      }
+
+      const normalizedClassName =
+        normalizePhpFrameworkBindingClassName(resolvedClassName);
+
+      if (
+        classNames.some(
+          (seen) =>
+            normalizePhpFrameworkBindingClassName(seen) === normalizedClassName,
+        )
+      ) {
+        continue;
+      }
+
+      classNames.push(resolvedClassName);
+    }
+  }
+
+  return classNames;
+}
+
+function phpSourceClassDirectlyImplements(
+  source: string,
+  className: string,
+  interfaceName: string,
+  resolveClassName: (source: string, className: string) => string | null,
+): boolean {
+  if (
+    phpCurrentClassName(source)?.toLowerCase() !==
+    normalizePhpFrameworkBindingClassName(className)
+  ) {
+    return false;
+  }
+
+  return phpSourceDirectInterfaceNames(source, resolveClassName).some(
+    (implementedName) =>
+      normalizePhpFrameworkBindingClassName(implementedName) ===
+      normalizePhpFrameworkBindingClassName(interfaceName),
+  );
+}
+
+function phpSourceDirectInterfaceNames(
+  source: string,
+  resolveClassName: (source: string, className: string) => string | null,
+): string[] {
+  const match = /^\s*(?:abstract\s+|final\s+|readonly\s+)*class\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+extends\s+[^\s{]+)?\s+implements\s+([^{]+)/m.exec(
+    source,
+  );
+  const rawInterfaces = match?.[1] ?? "";
+
+  if (!rawInterfaces) {
+    return [];
+  }
+
+  return rawInterfaces
+    .split(",")
+    .map((part) => part.trim().replace(/<[\s\S]*$/, ""))
+    .map((part) => resolveClassName(source, part))
+    .filter((part): part is string => Boolean(part));
+}
+
 function normalizePhpFrameworkBindingClassName(className: string): string {
   return className.trim().replace(/^\\+/, "").toLowerCase();
 }
@@ -698,6 +874,31 @@ function isPhpPath(path: string): boolean {
 
 function phpFrameworkBindingPathKey(path: string): string {
   return path.split("\\").join("/").toLowerCase();
+}
+
+function phpFrameworkClassResolutionSignature(
+  intelligenceMode: IntelligenceMode,
+  workspaceDescriptor: WorkspaceDescriptor | null,
+): string {
+  const php = workspaceDescriptor?.php;
+
+  if (!php) {
+    return `${intelligenceMode}#`;
+  }
+
+  const roots = [
+    ...php.psr4Roots.map(
+      (root) => `${root.namespace}:${root.paths.join(",")}`,
+    ),
+    ...php.packages.flatMap((composerPackage) =>
+      composerPackage.psr4Roots.map(
+        (root) =>
+          `${composerPackage.name}:${root.namespace}:${root.paths.join(",")}`,
+      ),
+    ),
+  ];
+
+  return `${intelligenceMode}#${roots.join("|")}`;
 }
 
 function shortPhpName(className: string): string {

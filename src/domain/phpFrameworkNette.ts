@@ -46,6 +46,24 @@ export function phpNetteContainerBindingsFromSource(
   return bindings;
 }
 
+export function phpNetteContainerConcreteClassNamesFromSource(
+  source: string,
+): string[] {
+  const classNames: string[] = [];
+
+  for (const service of neonServicesFromSource(source)) {
+    const className = netteNeonServiceConcreteClassName(service);
+
+    if (!className || classNames.some((seen) => seen === className)) {
+      continue;
+    }
+
+    classNames.push(className);
+  }
+
+  return classNames;
+}
+
 export function isNetteContainerBindingCandidatePath(path: string): boolean {
   return path.toLowerCase().endsWith(".neon");
 }
