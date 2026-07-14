@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import { phpLaravelFrameworkTargetCollectorAdapter } from "./phpLaravelFrameworkTargetAdapter";
 import {
   activePhpFrameworkTargetCollectorAdapter,
@@ -13,6 +17,12 @@ describe("phpFrameworkTargetCollectorAdapters", () => {
     );
     expect(phpFrameworkTargetCollectorAdapters).toContain(
       phpNetteFrameworkTargetCollectorAdapter,
+    );
+    expect(phpLaravelFrameworkTargetCollectorAdapter.providerId).toBe(
+      phpLaravelFrameworkProvider.id,
+    );
+    expect(phpNetteFrameworkTargetCollectorAdapter.providerId).toBe(
+      phpNetteFrameworkProvider.id,
     );
   });
 

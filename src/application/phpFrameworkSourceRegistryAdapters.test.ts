@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   activePhpFrameworkSourceRegistryProviders,
+  phpFrameworkSourceRegistryContributionDescriptors,
   type PhpFrameworkSourceRegistryAdapter,
 } from "./phpFrameworkSourceRegistryAdapters";
+import { phpLaravelFrameworkSourceRegistryProviderId } from "./phpLaravelFrameworkSourceRegistryAdapter";
+import { phpNetteFrameworkSourceRegistryProviderId } from "./phpNetteFrameworkSourceRegistryAdapter";
 import type { PhpFrameworkSourceRegistryProvider } from "./usePhpFrameworkSourceRegistries";
 
 function provider(
@@ -30,6 +33,17 @@ function adapter(
 }
 
 describe("activePhpFrameworkSourceRegistryProviders", () => {
+  it("registers framework source registry contributions in stable provider order", () => {
+    expect(
+      phpFrameworkSourceRegistryContributionDescriptors.map(
+        (descriptor) => descriptor.providerId,
+      ),
+    ).toEqual([
+      phpLaravelFrameworkSourceRegistryProviderId,
+      phpNetteFrameworkSourceRegistryProviderId,
+    ]);
+  });
+
   it("selects Laravel by provider identity without consulting a profile", () => {
     const hasProvider = vi.fn((providerId: string) => providerId === "laravel");
 

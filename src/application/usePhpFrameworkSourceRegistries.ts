@@ -1,7 +1,6 @@
-import { usePhpLaravelFrameworkSourceRegistryContribution } from "./phpLaravelFrameworkSourceRegistryAdapter";
-import { usePhpNetteFrameworkSourceRegistryContribution } from "./phpNetteFrameworkSourceRegistryAdapter";
 import {
   activePhpFrameworkSourceRegistryProviders,
+  phpFrameworkSourceRegistryContributionDescriptors,
   type PhpFrameworkSourceRegistryAdapter,
 } from "./phpFrameworkSourceRegistryAdapters";
 import type { WorkspaceFileGateway } from "../domain/workspace";
@@ -39,12 +38,9 @@ export interface PhpFrameworkSourceRegistries {
 function usePhpFrameworkSourceRegistryAdapters(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,
 ): readonly PhpFrameworkSourceRegistryAdapter[] {
-  const laravelContribution =
-    usePhpLaravelFrameworkSourceRegistryContribution(dependencies);
-  const netteContribution =
-    usePhpNetteFrameworkSourceRegistryContribution(dependencies);
-
-  return [laravelContribution, netteContribution];
+  return phpFrameworkSourceRegistryContributionDescriptors.map((descriptor) =>
+    descriptor.useSourceRegistryAdapter(dependencies),
+  );
 }
 
 export function usePhpFrameworkSourceRegistries(

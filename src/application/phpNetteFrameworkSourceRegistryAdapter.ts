@@ -1,4 +1,7 @@
-import type { PhpFrameworkSourceRegistryAdapter } from "./phpFrameworkSourceRegistryAdapters";
+import type {
+  PhpFrameworkSourceRegistryAdapter,
+  PhpFrameworkSourceRegistryContributionDescriptor,
+} from "./phpFrameworkSourceRegistryAdapters";
 import type { NetteSourceRegistries } from "./useNetteSourceRegistries";
 import { useNetteSourceRegistries } from "./useNetteSourceRegistries";
 import type {
@@ -7,6 +10,12 @@ import type {
 } from "./usePhpFrameworkSourceRegistries";
 
 export const phpNetteFrameworkSourceRegistryProviderId = "nette";
+
+export const phpNetteFrameworkSourceRegistryContribution: PhpFrameworkSourceRegistryContributionDescriptor =
+  {
+    providerId: phpNetteFrameworkSourceRegistryProviderId,
+    useSourceRegistryAdapter: usePhpNetteFrameworkSourceRegistryContribution,
+  };
 
 export function usePhpNetteFrameworkSourceRegistryContribution(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,

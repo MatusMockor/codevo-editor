@@ -1,12 +1,12 @@
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import { phpLaravelFrameworkTargetCollectorAdapter } from "./phpLaravelFrameworkTargetAdapter";
-import { phpNetteFrameworkTargetCollectorAdapter } from "./phpNetteFrameworkTargetAdapter";
+import { phpLaravelFrameworkTargetCollectorAdapters } from "./phpLaravelFrameworkTargetAdapter";
+import { phpNetteFrameworkTargetCollectorAdapters } from "./phpNetteFrameworkTargetAdapter";
 import type { PhpFrameworkTargetCollectorAdapter } from "./usePhpFrameworkTargets";
 
 export const phpFrameworkTargetCollectorAdapters: readonly PhpFrameworkTargetCollectorAdapter[] =
   [
-    phpLaravelFrameworkTargetCollectorAdapter,
-    phpNetteFrameworkTargetCollectorAdapter,
+    ...phpLaravelFrameworkTargetCollectorAdapters,
+    ...phpNetteFrameworkTargetCollectorAdapters,
   ];
 
 export function activePhpFrameworkTargetCollectorAdapter<

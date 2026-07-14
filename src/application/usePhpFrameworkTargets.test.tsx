@@ -39,7 +39,14 @@ interface FrameworkHarness {
   searchText: ReturnType<typeof vi.fn>;
   readFileContent: ReturnType<typeof vi.fn>;
   readWorkspaceDirectory: ReturnType<typeof vi.fn>;
+  rerender: (overrides?: Partial<PhpFrameworkTargetsDependencies>) => void;
   unmount: () => void;
+}
+
+function fileEntry(path: string): FileEntry {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+
+  return { name, path, kind: "file" };
 }
 
 function relativeWorkspacePath(workspaceRoot: string, path: string): string {
@@ -72,7 +79,7 @@ function renderPhpFrameworkTargets(
   const readFileContent = vi.fn(async () => "");
   const readWorkspaceDirectory = vi.fn(async () => [] as FileEntry[]);
 
-  const deps: PhpFrameworkTargetsDependencies = {
+  let deps: PhpFrameworkTargetsDependencies = {
     currentWorkspaceRootRef: ref,
     workspaceRoot: ROOT,
     textSearch: { searchText } as never,
@@ -90,9 +97,13 @@ function renderPhpFrameworkTargets(
     return null;
   }
 
-  act(() => {
-    root.render(<HarnessComponent />);
-  });
+  const render = () => {
+    act(() => {
+      root.render(<HarnessComponent />);
+    });
+  };
+
+  render();
 
   return {
     hook: () => {
@@ -105,6 +116,13 @@ function renderPhpFrameworkTargets(
     searchText,
     readFileContent,
     readWorkspaceDirectory,
+    rerender: (nextOverrides = {}) => {
+      deps = {
+        ...deps,
+        ...nextOverrides,
+      };
+      render();
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -181,6 +199,48 @@ describe("usePhpFrameworkTargets", () => {
     expect(harness.searchText).not.toHaveBeenCalled();
     expect(harness.readFileContent).not.toHaveBeenCalled();
     expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("invalidates mounted Laravel target caches while the generic provider is active", async () => {
+    let viewFiles = [fileEntry(`${ROOT}/resources/views/stale.blade.php`)];
+    const readWorkspaceDirectory = vi.fn(async (path: string) => {
+      if (path === `${ROOT}/resources/views`) {
+        return viewFiles;
+      }
+
+      return [];
+    });
+    const harness = renderPhpFrameworkTargets({
+      readWorkspaceDirectory: readWorkspaceDirectory as never,
+    });
+
+    await expect(harness.hook().collectViewTargets()).resolves.toEqual([
+      {
+        name: "stale",
+        path: `${ROOT}/resources/views/stale.blade.php`,
+        relativePath: "resources/views/stale.blade.php",
+      },
+    ]);
+
+    viewFiles = [fileEntry(`${ROOT}/resources/views/fresh.blade.php`)];
+    harness.rerender({
+      frameworkIntelligence: GENERIC_FRAMEWORK_INTELLIGENCE,
+    });
+    harness.hook().invalidateTargetCache();
+    harness.rerender({
+      frameworkIntelligence: LARAVEL_FRAMEWORK_INTELLIGENCE,
+    });
+
+    await expect(harness.hook().collectViewTargets()).resolves.toEqual([
+      {
+        name: "fresh",
+        path: `${ROOT}/resources/views/fresh.blade.php`,
+        relativePath: "resources/views/fresh.blade.php",
+      },
+    ]);
+    expect(readWorkspaceDirectory).toHaveBeenCalledTimes(2);
 
     harness.unmount();
   });

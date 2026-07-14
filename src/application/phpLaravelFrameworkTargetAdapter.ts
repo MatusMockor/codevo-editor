@@ -2,6 +2,7 @@ import {
   useLaravelTargets,
   type LaravelTargets,
 } from "./useLaravelTargets";
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type {
   PhpFrameworkTargetCollectorAdapter,
@@ -73,6 +74,9 @@ function usePhpLaravelFrameworkTargetAdapter(
 
 export const phpLaravelFrameworkTargetCollectorAdapter: PhpFrameworkTargetCollectorAdapter =
   {
-    providerId: "laravel",
+    providerId: phpLaravelFrameworkProvider.id,
     useTargets: usePhpLaravelFrameworkTargetAdapter,
   };
+
+export const phpLaravelFrameworkTargetCollectorAdapters: readonly PhpFrameworkTargetCollectorAdapter[] =
+  [phpLaravelFrameworkTargetCollectorAdapter];

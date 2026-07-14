@@ -1,10 +1,19 @@
 import type { PhpFrameworkSourceRegistryProvider } from "./usePhpFrameworkSourceRegistries";
 import type { LaravelSourceRegistries } from "./useLaravelSourceRegistries";
 import { useLaravelSourceRegistries } from "./useLaravelSourceRegistries";
-import type { PhpFrameworkSourceRegistryAdapter } from "./phpFrameworkSourceRegistryAdapters";
+import type {
+  PhpFrameworkSourceRegistryAdapter,
+  PhpFrameworkSourceRegistryContributionDescriptor,
+} from "./phpFrameworkSourceRegistryAdapters";
 import type { UsePhpFrameworkSourceRegistriesDependencies } from "./usePhpFrameworkSourceRegistries";
 
 export const phpLaravelFrameworkSourceRegistryProviderId = "laravel";
+
+export const phpLaravelFrameworkSourceRegistryContribution: PhpFrameworkSourceRegistryContributionDescriptor =
+  {
+    providerId: phpLaravelFrameworkSourceRegistryProviderId,
+    useSourceRegistryAdapter: usePhpLaravelFrameworkSourceRegistryContribution,
+  };
 
 export function usePhpLaravelFrameworkSourceRegistryContribution(
   dependencies: UsePhpFrameworkSourceRegistriesDependencies,

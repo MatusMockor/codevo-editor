@@ -4,6 +4,7 @@ import {
   netteTranslationKeysFromSource,
   netteTranslationTargetFromSource,
 } from "../domain/netteTranslations";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { FileEntry } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -609,6 +610,9 @@ function usePhpNetteFrameworkTargetAdapter(
 
 export const phpNetteFrameworkTargetCollectorAdapter: PhpFrameworkTargetCollectorAdapter =
   {
-    providerId: "nette",
+    providerId: phpNetteFrameworkProvider.id,
     useTargets: usePhpNetteFrameworkTargetAdapter,
   };
+
+export const phpNetteFrameworkTargetCollectorAdapters: readonly PhpFrameworkTargetCollectorAdapter[] =
+  [phpNetteFrameworkTargetCollectorAdapter];
