@@ -42,7 +42,7 @@ const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
 );
 
 function createBundle(
-  frameworkRuntime: Pick<typeof GENERIC_RUNTIME, "hasProvider">,
+  frameworkRuntime: Pick<typeof GENERIC_RUNTIME, "hasProvider" | "supports">,
 ) {
   return createPhpExpressionTypeAdapterBundle({
     frameworkRuntime,
@@ -56,7 +56,20 @@ describe("phpExpressionTypeAdapterRegistry", () => {
   it.each([
     ["generic", GENERIC_RUNTIME],
     ["Nette", NETTE_RUNTIME],
-    ["custom", { hasProvider: (providerId: string) => providerId === "custom" }],
+    [
+      "custom",
+      {
+        hasProvider: (providerId: string) => providerId === "custom",
+        supports: () => false,
+      },
+    ],
+    [
+      "stale Laravel provider-id",
+      {
+        hasProvider: (providerId: string) => providerId === "laravel",
+        supports: () => false,
+      },
+    ],
   ])("returns the complete inert bundle for a %s runtime", (_name, runtime) => {
     const bundle = createBundle(runtime);
 
@@ -78,13 +91,26 @@ describe("phpExpressionTypeAdapterRegistry", () => {
     });
   });
 
-  it("activates the exact seven Laravel adapters through provider membership", async () => {
+  it.each([
+    ["Laravel", LARAVEL_RUNTIME],
+    [
+      "custom Eloquent provider",
+      {
+        hasProvider: (providerId: string) => providerId === "custom",
+        supports: (capability: string) =>
+          capability === "eloquentModelSemantics",
+      },
+    ],
+  ])("activates the exact seven Laravel adapters for a %s runtime", async (
+    _name,
+    frameworkRuntime,
+  ) => {
     const phpClassHasNamedBuilderScope = vi.fn(async () => true);
     const resolvePropertyOrRelationType = vi.fn(
       async () => "App\\Models\\Comment",
     );
     const bundle = createPhpExpressionTypeAdapterBundle({
-      frameworkRuntime: LARAVEL_RUNTIME,
+      frameworkRuntime,
       phpClassHasDynamicBuilderFinder: vi.fn(async () => false),
       phpClassHasNamedBuilderScope,
       resolvePropertyOrRelationType,
@@ -122,16 +148,19 @@ describe("phpExpressionTypeAdapterRegistry", () => {
     ).resolves.toBe("App\\Models\\Comment");
   });
 
-  it("queries registered provider contributions in deterministic order", () => {
-    const queriedProviderIds: string[] = [];
+  it("queries registered capability contributions in deterministic order", () => {
+    const queriedCapabilities: string[] = [];
 
     createBundle({
-      hasProvider: (providerId) => {
-        queriedProviderIds.push(providerId);
+      hasProvider: () => {
+        throw new Error("provider id should not be queried");
+      },
+      supports: (capability) => {
+        queriedCapabilities.push(capability);
         return false;
       },
     });
 
-    expect(queriedProviderIds).toEqual(["laravel"]);
+    expect(queriedCapabilities).toEqual(["eloquentModelSemantics"]);
   });
 });

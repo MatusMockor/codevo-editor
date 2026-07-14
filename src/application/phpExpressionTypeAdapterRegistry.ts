@@ -92,7 +92,7 @@ function phpExpressionTypeAdapterContributions(
 ): readonly PhpFrameworkSemanticAdapterContribution<PhpExpressionTypeAdapterBundle>[] {
   return [
     {
-      providerId: "laravel",
+      capability: "eloquentModelSemantics",
       createAdapter: () => ({
         builderMagicExpressionTypeAdapter:
           phpLaravelBuilderMagicExpressionTypeAdapter({
@@ -127,7 +127,7 @@ export function createPhpExpressionTypeAdapterBundle({
   frameworkRuntime,
   ...dependencies
 }: PhpExpressionTypeAdapterDependencies & {
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
 }): PhpExpressionTypeAdapterBundle {
   return activePhpFrameworkSemanticAdapter(
     frameworkRuntime,

@@ -24,7 +24,10 @@ function makeDeps(
 ): PhpFrameworkMethodCompletionSemanticsAdapterDependencies {
   return {
     collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
-    frameworkRuntime: { hasProvider: () => true },
+    frameworkRuntime: {
+      hasProvider: () => true,
+      supports: (capability) => capability === "eloquentModelSemantics",
+    },
     resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     ...overrides,
   };
@@ -35,6 +38,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
     { activeProviderId: null, label: "generic" },
     { activeProviderId: "nette", label: "Nette" },
     { activeProviderId: "custom", label: "custom" },
+    { activeProviderId: "laravel", label: "stale Laravel provider-id" },
   ])("keeps $label providers inert", async ({ activeProviderId }) => {
     const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
       method("whereEmail", { kind: "magic-where" }),
@@ -46,6 +50,7 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
       hasProvider: vi.fn(
         (providerId: string) => providerId === activeProviderId,
       ),
+      supports: vi.fn(() => false),
       isLaravel: true,
     };
     const adapter = createPhpFrameworkMethodCompletionSemanticsAdapters(
@@ -77,7 +82,10 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
       source: "<?php\nPost::",
     });
 
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
     expect(adapter.facadeTargetClassName("Illuminate\\Support\\Facades\\Cache")).toBeNull();
     expect(receiverGroups).toEqual({
       baseMethods: [
@@ -96,11 +104,28 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
     expect(collectPhpFrameworkSyntheticMethodsForClass).not.toHaveBeenCalled();
   });
 
-  it("returns Laravel method completion semantics when the Laravel provider is active", () => {
+  it.each([
+    {
+      label: "Laravel provider",
+      frameworkRuntime: {
+        hasProvider: (providerId: string) => providerId === "laravel",
+        supports: (capability: string) =>
+          capability === "eloquentModelSemantics",
+      },
+    },
+    {
+      label: "custom Eloquent provider",
+      frameworkRuntime: {
+        hasProvider: (providerId: string) => providerId === "custom",
+        supports: (capability: string) =>
+          capability === "eloquentModelSemantics",
+      },
+    },
+  ])("returns Laravel method completion semantics for $label", ({
+    frameworkRuntime,
+  }) => {
     const adapter = createPhpFrameworkMethodCompletionSemanticsAdapters(
-      makeDeps({
-        frameworkRuntime: { hasProvider: (providerId) => providerId === "laravel" },
-      }),
+      makeDeps({ frameworkRuntime }),
     );
 
     expect(

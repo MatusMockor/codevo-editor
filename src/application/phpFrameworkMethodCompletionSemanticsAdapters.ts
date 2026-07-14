@@ -15,7 +15,7 @@ export interface PhpFrameworkMethodCompletionSemanticsAdapterDependencies {
     className: string,
     options?: { isStatic?: boolean },
   ): Promise<PhpMethodCompletion[]>;
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
   resolvePhpFrameworkBuilderModelType(
     source: string,
     position: EditorPosition,
@@ -33,7 +33,7 @@ export function createPhpFrameworkMethodCompletionSemanticsAdapters({
     genericPhpMethodCompletionSemantics,
     [
       {
-        providerId: "laravel",
+        capability: "eloquentModelSemantics",
         createAdapter: () =>
           createPhpLaravelMethodCompletionSemanticsAdapter({
             collectPhpFrameworkSyntheticMethodsForClass,
