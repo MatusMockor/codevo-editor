@@ -660,12 +660,14 @@ export function useWorkbenchController(
     previewPath,
     previewPathRef,
     resetEditorSurfaceState,
+    restoreEditorSurface,
     setActivePath,
     setDocuments,
     setImageTabs,
     setMarkdownPreviewTabs,
     setOpenPaths,
     setPreviewPath,
+    snapshotEditorSurface,
     updateEditorGroups,
   } = useEditorSessionState();
   const [isOpeningFile, setIsOpeningFile] = useState(false);
@@ -1576,43 +1578,32 @@ export function useWorkbenchController(
     restoreCachedWorkspaceState,
     clearWorkspaceStateCache,
   } = useWorkspaceStateCache({
-    activePath,
     bookmarks,
     bottomPanelView,
     bottomPanelVisible,
-    documents,
-    editorGroups,
     entriesByDirectory,
     expandedDirectories,
-    imageTabs,
-    imageTabsRef,
     indexHealthLogs,
     indexProgress,
     manuallyCollapsedDirectories,
-    markdownPreviewTabs,
-    markdownPreviewTabsRef,
     navigationHistory,
-    openPaths,
-    previewPath,
     recentFiles,
     recentLocations,
     restoreCachedIndexState,
+    restoreEditorSurface,
     restoreHistory,
     setBookmarks,
     setBottomPanelView,
     setBottomPanelVisible,
-    setDocuments,
     setEntriesByDirectory,
     setExpandedDirectories,
-    setImageTabs,
     setManuallyCollapsedDirectories,
-    setMarkdownPreviewTabs,
     setRecentFiles,
     setRecentLocations,
     setSidebarView,
     setWorkspaceIdentityDescriptor,
     sidebarView,
-    updateEditorGroups,
+    snapshotEditorSurface,
     workspaceIdentityDescriptor,
   });
 
@@ -1622,13 +1613,18 @@ export function useWorkbenchController(
         return;
       }
 
+      const editorSurface = snapshotEditorSurface(rootPath);
+      if (!editorSurface.editorGroups) {
+        return;
+      }
+
       const session = currentWorkspaceSessionForEditorGroups(
         rootPath,
-        editorGroups,
+        editorSurface.editorGroups,
         sidebarView,
         bottomPanelView,
         workspaceEditorViewStatesRef.current[rootPath] ?? {},
-        new Set(Object.keys(documents)),
+        new Set(Object.keys(editorSurface.documents)),
       );
 
       if (workspaceSessionsEqual(workspaceSettingsRef.current.session, session)) {
@@ -1642,10 +1638,9 @@ export function useWorkbenchController(
     },
     [
       bottomPanelView,
-      documents,
-      editorGroups,
       persistWorkspaceSettings,
       sidebarView,
+      snapshotEditorSurface,
     ],
   );
 
@@ -2962,7 +2957,7 @@ export function useWorkbenchController(
       restoreJavaScriptTypeScriptDiagnosticsForRoot(path);
 
       if (cachedWorkspaceState) {
-        restoreCachedWorkspaceState(cachedWorkspaceState);
+        restoreCachedWorkspaceState(path, cachedWorkspaceState);
       } else {
         setEntriesByDirectory({});
         setExpandedDirectories(new Set([path]));

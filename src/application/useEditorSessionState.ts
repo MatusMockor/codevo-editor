@@ -10,13 +10,16 @@ import {
   activateEditorGroupPath,
   createEditorGroup,
   createInitialEditorGroupsState,
+  editorGroupVisiblePaths,
   updateEditorGroupOpenPaths,
   updateEditorGroupPreviewPath,
   type EditorGroupsState,
 } from "../domain/editorGroups";
+import { isPersistableEditorDocumentPath } from "../domain/editorDocumentSchemes";
 import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import {
   buildEditorSurfaceSnapshot,
+  restoredActivePath,
   selectEditorSurfaceRestore,
   type EditorSurfaceSnapshot,
 } from "../domain/workspaceSessionSnapshot";
@@ -24,6 +27,7 @@ import type {
   EditorDocument,
   ImageTab,
 } from "../domain/workspace";
+import { isSessionPathInWorkspace } from "./documentSessionState";
 
 type Documents = Record<string, EditorDocument>;
 type ImageTabs = Record<string, ImageTab>;
@@ -50,14 +54,17 @@ export interface EditorSessionState {
   previewPath: string | null;
   previewPathRef: MutableRefObject<string | null>;
   resetEditorSurfaceState: () => void;
-  restoreEditorSurface: (snapshot: EditorSurfaceSnapshot) => void;
+  restoreEditorSurface: (
+    rootPath: string,
+    snapshot: EditorSurfaceSnapshot,
+  ) => void;
   setActivePath: Dispatch<SetStateAction<string | null>>;
   setDocuments: Dispatch<SetStateAction<Documents>>;
   setImageTabs: Dispatch<SetStateAction<ImageTabs>>;
   setMarkdownPreviewTabs: Dispatch<SetStateAction<MarkdownPreviewTabs>>;
   setOpenPaths: Dispatch<SetStateAction<string[]>>;
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
-  snapshotEditorSurface: () => EditorSurfaceSnapshot;
+  snapshotEditorSurface: (rootPath: string) => EditorSurfaceSnapshot;
   updateEditorGroups: (
     update: (current: EditorGroupsState) => EditorGroupsState,
   ) => void;
@@ -213,26 +220,31 @@ export function useEditorSessionState(): EditorSessionState {
   }, [synchronizeActiveGroupRefs]);
 
   const snapshotEditorSurface = useCallback(
-    () => {
+    (rootPath: string) => {
       const current = editorGroupsRef.current;
       const group = current.groups[current.activeGroupId] ?? createEditorGroup();
 
-      return buildEditorSurfaceSnapshot({
-        activePath: group.activePath,
-        documents: documentsRef.current,
-        editorGroups: current,
-        imageTabs: imageTabsRef.current,
-        markdownPreviewTabs: markdownPreviewTabsRef.current,
-        openPaths: group.openPaths,
-        previewPath: group.previewPath,
-      });
+      return scopeEditorSurfaceSnapshot(
+        rootPath,
+        buildEditorSurfaceSnapshot({
+          activePath: group.activePath,
+          documents: documentsRef.current,
+          editorGroups: current,
+          imageTabs: imageTabsRef.current,
+          markdownPreviewTabs: markdownPreviewTabsRef.current,
+          openPaths: group.openPaths,
+          previewPath: group.previewPath,
+        }),
+      );
     },
     [],
   );
 
   const restoreEditorSurface = useCallback(
-    (snapshot: EditorSurfaceSnapshot) => {
-      const restored = selectEditorSurfaceRestore(snapshot);
+    (rootPath: string, snapshot: EditorSurfaceSnapshot) => {
+      const restored = selectEditorSurfaceRestore(
+        scopeEditorSurfaceSnapshot(rootPath, snapshot),
+      );
       setDocuments(restored.documents);
       setImageTabs(restored.imageTabs);
       setMarkdownPreviewTabs(restored.markdownPreviewTabs);
@@ -272,6 +284,95 @@ export function useEditorSessionState(): EditorSessionState {
     snapshotEditorSurface,
     updateEditorGroups,
   };
+}
+
+function scopeEditorSurfaceSnapshot(
+  rootPath: string,
+  snapshot: EditorSurfaceSnapshot,
+): EditorSurfaceSnapshot {
+  const documents = filterPathRecord(snapshot.documents, (path) =>
+    isPersistableWorkspacePath(rootPath, path),
+  );
+  const imageTabs = filterPathRecord(snapshot.imageTabs, (path) =>
+    isPersistableWorkspacePath(rootPath, path),
+  );
+  const markdownPreviewTabs = filterPathRecord(
+    snapshot.markdownPreviewTabs,
+    (_path, preview) =>
+      isPersistableWorkspacePath(rootPath, preview.sourcePath),
+  );
+  const availablePaths = new Set([
+    ...Object.keys(documents),
+    ...Object.keys(imageTabs),
+    ...Object.keys(markdownPreviewTabs),
+  ]);
+  const snapshotEditorGroups =
+    snapshot.editorGroups ??
+    createInitialEditorGroupsState("editor-main", {
+      activePath: snapshot.activePath,
+      openPaths: snapshot.openPaths,
+      previewPath: snapshot.previewPath,
+    });
+  const editorGroups = scopeEditorGroupsToAvailablePaths(
+    snapshotEditorGroups,
+    availablePaths,
+  );
+  const activeGroup =
+    editorGroups.groups[editorGroups.activeGroupId] ?? createEditorGroup();
+
+  return {
+    activePath: activeGroup.activePath,
+    documents,
+    editorGroups,
+    imageTabs,
+    markdownPreviewTabs,
+    openPaths: activeGroup.openPaths,
+    previewPath: activeGroup.previewPath,
+  };
+}
+
+function scopeEditorGroupsToAvailablePaths(
+  editorGroups: EditorGroupsState,
+  availablePaths: ReadonlySet<string>,
+): EditorGroupsState {
+  const groups = Object.fromEntries(
+    Object.entries(editorGroups.groups).map(([groupId, group]) => {
+      const visiblePaths = editorGroupVisiblePaths(group).filter((path) =>
+        availablePaths.has(path),
+      );
+      const previewPath =
+        group.previewPath && availablePaths.has(group.previewPath)
+          ? group.previewPath
+          : null;
+
+      return [
+        groupId,
+        {
+          activePath: restoredActivePath(group.activePath, visiblePaths),
+          openPaths: visiblePaths.filter((path) => path !== previewPath),
+          previewPath,
+        },
+      ];
+    }),
+  );
+
+  return { ...editorGroups, groups };
+}
+
+function filterPathRecord<Value>(
+  record: Record<string, Value>,
+  include: (path: string, value: Value) => boolean,
+): Record<string, Value> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([path, value]) => include(path, value)),
+  );
+}
+
+function isPersistableWorkspacePath(rootPath: string, path: string): boolean {
+  return (
+    isPersistableEditorDocumentPath(path) &&
+    isSessionPathInWorkspace(rootPath, path)
+  );
 }
 
 function resolveStateUpdate<Value>(

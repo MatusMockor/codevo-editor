@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, useCallback, useRef, useState } from "react";
+import { act, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vitest";
 import type { Bookmark } from "../domain/bookmarks";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import {
   createInitialEditorGroupsState,
-  type EditorGroupsState,
+  editorGroupsReducer,
 } from "../domain/editorGroups";
 import {
   initialIndexProgress,
@@ -29,6 +29,10 @@ import type {
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import type { SidebarView } from "./useWorkbenchController";
 import {
+  useEditorSessionState,
+  type EditorSessionState,
+} from "./useEditorSessionState";
+import {
   useWorkspaceStateCache,
   type WorkspaceStateCache,
 } from "./useWorkspaceStateCache";
@@ -49,8 +53,14 @@ function editorDocument(path: string): EditorDocument {
 }
 
 const DOC_A = editorDocument(`${ROOT_A}/src/a.ts`);
+const DOC_A_SECOND = editorDocument(`${ROOT_A}/src/second.ts`);
 const DOC_B = editorDocument(`${ROOT_B}/src/b.ts`);
 const GIT_DIFF_DOC = editorDocument(`mockor-git-diff:worktree:${ROOT_A}/src/a.ts`);
+
+const DIRTY_DOC_A: EditorDocument = {
+  ...DOC_A,
+  content: "const changedWithoutSaving = true;",
+};
 
 const BOOKMARK_A: Bookmark = {
   lineNumber: 3,
@@ -65,35 +75,43 @@ const IMAGE_TAB_A: ImageTab = {
   path: `${ROOT_A}/logo.png`,
 };
 
+const IMAGE_TAB_B: ImageTab = {
+  ...IMAGE_TAB_A,
+  name: "foreign.png",
+  path: `${ROOT_B}/foreign.png`,
+};
+
+const MARKDOWN_PREVIEW_A: MarkdownPreviewTab = {
+  content: "# Workspace A",
+  html: "<h1>Workspace A</h1>",
+  name: "README.md Preview",
+  path: `markdown-preview://${ROOT_A}/README.md`,
+  sourcePath: `${ROOT_A}/README.md`,
+};
+
+const MARKDOWN_PREVIEW_B: MarkdownPreviewTab = {
+  content: "# Workspace B",
+  html: "<h1>Workspace B</h1>",
+  name: "README.md Preview",
+  path: `markdown-preview://${ROOT_B}/README.md`,
+  sourcePath: `${ROOT_B}/README.md`,
+};
+
 interface HarnessStateView {
   bookmarks: Bookmark[];
   bottomPanelVisible: boolean;
-  documents: Record<string, EditorDocument>;
-  editorGroups: EditorGroupsState;
   expandedDirectories: Set<string>;
-  imageTabs: Record<string, ImageTab>;
   indexProgress: IndexProgressState;
-  markdownPreviewTabs: Record<string, MarkdownPreviewTab>;
   sidebarView: SidebarView;
   workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
 }
 
 interface HarnessSetters {
-  setActivePath: (path: string | null) => void;
   setBookmarks: (bookmarks: Bookmark[]) => void;
   setBottomPanelVisible: (visible: boolean) => void;
-  setDocuments: (documents: Record<string, EditorDocument>) => void;
-  setEditorGroups: (groups: EditorGroupsState) => void;
   setExpandedDirectories: (directories: Set<string>) => void;
-  setImageTabs: (imageTabs: Record<string, ImageTab>) => void;
   setIndexProgress: (progress: IndexProgressState) => void;
-  setOpenPaths: (paths: string[]) => void;
   setSidebarView: (view: SidebarView) => void;
-}
-
-interface HarnessRefs {
-  imageTabsRef: { current: Record<string, ImageTab> };
-  markdownPreviewTabsRef: { current: Record<string, MarkdownPreviewTab> };
 }
 
 function renderWorkspaceStateCacheHarness() {
@@ -101,31 +119,13 @@ function renderWorkspaceStateCacheHarness() {
   const root = createRoot(container);
   const captured: {
     api: WorkspaceStateCache | null;
-    refs: HarnessRefs | null;
+    session: EditorSessionState | null;
     setters: HarnessSetters | null;
     state: HarnessStateView | null;
-  } = { api: null, refs: null, setters: null, state: null };
+  } = { api: null, session: null, setters: null, state: null };
 
   function Harness() {
-    const [activePath, setActivePath] = useState<string | null>(null);
-    const [openPaths, setOpenPaths] = useState<string[]>([]);
-    const [previewPath] = useState<string | null>(null);
-    const [documents, setDocuments] = useState<Record<string, EditorDocument>>(
-      {},
-    );
-    const [imageTabs, setImageTabs] = useState<Record<string, ImageTab>>({});
-    const [markdownPreviewTabs, setMarkdownPreviewTabs] = useState<
-      Record<string, MarkdownPreviewTab>
-    >({});
-    const [editorGroups, setEditorGroups] = useState<EditorGroupsState>(() =>
-      createInitialEditorGroupsState("editor-main"),
-    );
-    const updateEditorGroups = useCallback(
-      (update: (current: EditorGroupsState) => EditorGroupsState) => {
-        setEditorGroups((current) => update(current));
-      },
-      [],
-    );
+    const editorSession = useEditorSessionState();
     const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
     const [bottomPanelView, setBottomPanelView] =
       useState<BottomPanelView>("problems");
@@ -164,73 +164,48 @@ function renderWorkspaceStateCacheHarness() {
     const [sidebarView, setSidebarView] = useState<SidebarView>("files");
     const [workspaceIdentityDescriptor, setWorkspaceIdentityDescriptor] =
       useState<WorkspaceIdentityDescriptor | null>(null);
-    const imageTabsRef = useRef<Record<string, ImageTab>>({});
-    const markdownPreviewTabsRef = useRef<Record<string, MarkdownPreviewTab>>(
-      {},
-    );
-
     captured.api = useWorkspaceStateCache({
-      activePath,
       bookmarks,
       bottomPanelView,
       bottomPanelVisible,
-      documents,
-      editorGroups,
       entriesByDirectory,
       expandedDirectories,
-      imageTabs,
-      imageTabsRef,
       indexHealthLogs,
       indexProgress,
       manuallyCollapsedDirectories,
-      markdownPreviewTabs,
-      markdownPreviewTabsRef,
       navigationHistory,
-      openPaths,
-      previewPath,
       recentFiles,
       recentLocations,
       restoreCachedIndexState,
+      restoreEditorSurface: editorSession.restoreEditorSurface,
       restoreHistory,
       setBookmarks,
       setBottomPanelView,
       setBottomPanelVisible,
-      setDocuments,
       setEntriesByDirectory,
       setExpandedDirectories,
-      setImageTabs,
       setManuallyCollapsedDirectories,
-      setMarkdownPreviewTabs,
       setRecentFiles,
       setRecentLocations,
       setSidebarView,
       setWorkspaceIdentityDescriptor,
       sidebarView,
-      updateEditorGroups,
+      snapshotEditorSurface: editorSession.snapshotEditorSurface,
       workspaceIdentityDescriptor,
     });
-    captured.refs = { imageTabsRef, markdownPreviewTabsRef };
+    captured.session = editorSession;
     captured.setters = {
-      setActivePath,
       setBookmarks,
       setBottomPanelVisible,
-      setDocuments,
-      setEditorGroups,
       setExpandedDirectories,
-      setImageTabs,
       setIndexProgress,
-      setOpenPaths,
       setSidebarView,
     };
     captured.state = {
       bookmarks,
       bottomPanelVisible,
-      documents,
-      editorGroups,
       expandedDirectories,
-      imageTabs,
       indexProgress,
-      markdownPreviewTabs,
       sidebarView,
       workspaceIdentityDescriptor,
     };
@@ -247,10 +222,10 @@ function renderWorkspaceStateCacheHarness() {
 
       return captured.api as WorkspaceStateCache;
     },
-    refs: () => {
-      expect(captured.refs).not.toBeNull();
+    session: () => {
+      expect(captured.session).not.toBeNull();
 
-      return captured.refs as HarnessRefs;
+      return captured.session as EditorSessionState;
     },
     setters: () => {
       expect(captured.setters).not.toBeNull();
@@ -272,11 +247,9 @@ function renderWorkspaceStateCacheHarness() {
 
 function seedWorkspaceA(harness: ReturnType<typeof renderWorkspaceStateCacheHarness>) {
   act(() => {
-    harness.setters().setDocuments({ [DOC_A.path]: DOC_A });
-    harness.setters().setOpenPaths([DOC_A.path]);
-    harness.setters().setActivePath(DOC_A.path);
-    harness.setters().setImageTabs({ [IMAGE_TAB_A.path]: IMAGE_TAB_A });
-    harness.setters().setEditorGroups(
+    harness.session().setDocuments({ [DOC_A.path]: DOC_A });
+    harness.session().setImageTabs({ [IMAGE_TAB_A.path]: IMAGE_TAB_A });
+    harness.session().updateEditorGroups(() =>
       createInitialEditorGroupsState("editor-main", {
         activePath: DOC_A.path,
         openPaths: [DOC_A.path, IMAGE_TAB_A.path],
@@ -297,11 +270,9 @@ function seedWorkspaceA(harness: ReturnType<typeof renderWorkspaceStateCacheHarn
 
 function seedWorkspaceB(harness: ReturnType<typeof renderWorkspaceStateCacheHarness>) {
   act(() => {
-    harness.setters().setDocuments({ [DOC_B.path]: DOC_B });
-    harness.setters().setOpenPaths([DOC_B.path]);
-    harness.setters().setActivePath(DOC_B.path);
-    harness.setters().setImageTabs({});
-    harness.setters().setEditorGroups(
+    harness.session().setDocuments({ [DOC_B.path]: DOC_B });
+    harness.session().setImageTabs({});
+    harness.session().updateEditorGroups(() =>
       createInitialEditorGroupsState("editor-main", {
         activePath: DOC_B.path,
         openPaths: [DOC_B.path],
@@ -334,14 +305,14 @@ describe("useWorkspaceStateCache", () => {
     expect(cachedA).toBeDefined();
 
     act(() => {
-      harness.api().restoreCachedWorkspaceState(cachedA);
+      harness.api().restoreCachedWorkspaceState(ROOT_A, cachedA);
     });
 
-    expect(Object.keys(harness.state().documents)).toEqual([DOC_A.path]);
-    expect(harness.state().imageTabs).toEqual({
+    expect(Object.keys(harness.session().documents)).toEqual([DOC_A.path]);
+    expect(harness.session().imageTabs).toEqual({
       [IMAGE_TAB_A.path]: IMAGE_TAB_A,
     });
-    expect(harness.refs().imageTabsRef.current).toEqual({
+    expect(harness.session().imageTabsRef.current).toEqual({
       [IMAGE_TAB_A.path]: IMAGE_TAB_A,
     });
     expect(harness.state().sidebarView).toBe("git");
@@ -353,10 +324,10 @@ describe("useWorkspaceStateCache", () => {
     expect(harness.state().indexProgress.rootPath).toBe(ROOT_A);
     expect(harness.state().indexProgress.status).toBe("completed");
     expect(
-      harness.state().editorGroups.groups["editor-main"].activePath,
+      harness.session().editorGroups.groups["editor-main"].activePath,
     ).toBe(DOC_A.path);
     expect(
-      harness.state().editorGroups.groups["editor-main"].openPaths,
+      harness.session().editorGroups.groups["editor-main"].openPaths,
     ).toEqual([DOC_A.path, IMAGE_TAB_A.path]);
 
     const cachedB = harness.api().workspaceStateCacheRef.current[ROOT_B];
@@ -379,23 +350,188 @@ describe("useWorkspaceStateCache", () => {
     harness.unmount();
   });
 
+  it("round-trips same-tick editor updates through the session snapshot ports", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    let groups = createInitialEditorGroupsState("editor-main", {
+      activePath: DOC_A_SECOND.path,
+      openPaths: [DOC_A_SECOND.path],
+      previewPath: null,
+    });
+    groups = editorGroupsReducer(groups, {
+      direction: "right",
+      newGroupId: "editor-1",
+      type: "split-group",
+    });
+    groups = {
+      ...groups,
+      groups: {
+        ...groups.groups,
+        "editor-1": {
+          activePath: DIRTY_DOC_A.path,
+          openPaths: [DIRTY_DOC_A.path, IMAGE_TAB_A.path],
+          previewPath: MARKDOWN_PREVIEW_A.path,
+        },
+      },
+    };
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DIRTY_DOC_A.path]: DIRTY_DOC_A,
+        [DOC_A_SECOND.path]: DOC_A_SECOND,
+      });
+      session.setImageTabs({ [IMAGE_TAB_A.path]: IMAGE_TAB_A });
+      session.setMarkdownPreviewTabs({
+        [MARKDOWN_PREVIEW_A.path]: MARKDOWN_PREVIEW_A,
+      });
+      session.updateEditorGroups(() => groups);
+      harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    });
+
+    const cached = harness.api().workspaceStateCacheRef.current[ROOT_A];
+    expect(cached.editorSurface.documents[DIRTY_DOC_A.path]).toEqual(
+      DIRTY_DOC_A,
+    );
+    expect(cached.editorSurface.editorGroups?.activeGroupId).toBe("editor-1");
+
+    act(() => {
+      const session = harness.session();
+      session.resetEditorSurfaceState();
+      harness.api().restoreCachedWorkspaceState(ROOT_A, cached);
+
+      expect(session.documentsRef.current[DIRTY_DOC_A.path]).toEqual(
+        DIRTY_DOC_A,
+      );
+      expect(session.imageTabsRef.current[IMAGE_TAB_A.path]).toEqual(
+        IMAGE_TAB_A,
+      );
+      expect(
+        session.markdownPreviewTabsRef.current[MARKDOWN_PREVIEW_A.path],
+      ).toEqual(MARKDOWN_PREVIEW_A);
+      expect(session.editorGroupsRef.current).toEqual(groups);
+      expect(session.openPathsRef.current).toEqual([
+        DIRTY_DOC_A.path,
+        IMAGE_TAB_A.path,
+      ]);
+      expect(session.previewPathRef.current).toBe(MARKDOWN_PREVIEW_A.path);
+      expect(session.activeDocumentRef.current).toEqual(DIRTY_DOC_A);
+    });
+
+    const restored = harness.session();
+    expect(restored.documents[DIRTY_DOC_A.path].content).not.toBe(
+      restored.documents[DIRTY_DOC_A.path].savedContent,
+    );
+    expect(restored.activeGroupId).toBe("editor-1");
+    expect(restored.activePath).toBe(DIRTY_DOC_A.path);
+    expect(restored.previewPath).toBe(MARKDOWN_PREVIEW_A.path);
+    expect(restored.markdownPreviewTabs[MARKDOWN_PREVIEW_A.path]).toEqual(
+      MARKDOWN_PREVIEW_A,
+    );
+    harness.unmount();
+  });
+
+  it("never caches or restores editor surface state from another root", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    let groups = createInitialEditorGroupsState("editor-main", {
+      activePath: DOC_B.path,
+      openPaths: [DOC_A.path, DOC_B.path, GIT_DIFF_DOC.path],
+      previewPath: MARKDOWN_PREVIEW_B.path,
+    });
+    groups = editorGroupsReducer(groups, {
+      direction: "right",
+      newGroupId: "editor-1",
+      type: "split-group",
+    });
+    groups = {
+      ...groups,
+      activeGroupId: "editor-1",
+      groups: {
+        ...groups.groups,
+        "editor-1": {
+          activePath: MARKDOWN_PREVIEW_A.path,
+          openPaths: [IMAGE_TAB_A.path, IMAGE_TAB_B.path],
+          previewPath: MARKDOWN_PREVIEW_A.path,
+        },
+      },
+    };
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DOC_A.path]: DOC_A,
+        [DOC_B.path]: DOC_B,
+        [GIT_DIFF_DOC.path]: GIT_DIFF_DOC,
+      });
+      session.setImageTabs({
+        [IMAGE_TAB_A.path]: IMAGE_TAB_A,
+        [IMAGE_TAB_B.path]: IMAGE_TAB_B,
+      });
+      session.setMarkdownPreviewTabs({
+        [MARKDOWN_PREVIEW_A.path]: MARKDOWN_PREVIEW_A,
+        [MARKDOWN_PREVIEW_B.path]: MARKDOWN_PREVIEW_B,
+      });
+      session.updateEditorGroups(() => groups);
+      harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    });
+
+    const cached = harness.api().workspaceStateCacheRef.current[ROOT_A];
+    expect(Object.keys(cached.editorSurface.documents)).toEqual([DOC_A.path]);
+    expect(cached.editorSurface.imageTabs).toEqual({
+      [IMAGE_TAB_A.path]: IMAGE_TAB_A,
+    });
+    expect(cached.editorSurface.markdownPreviewTabs).toEqual({
+      [MARKDOWN_PREVIEW_A.path]: MARKDOWN_PREVIEW_A,
+    });
+    expect(cached.editorSurface.editorGroups?.groups["editor-main"]).toEqual({
+      activePath: DOC_A.path,
+      openPaths: [DOC_A.path],
+      previewPath: null,
+    });
+    expect(cached.editorSurface.editorGroups?.groups["editor-1"]).toEqual({
+      activePath: MARKDOWN_PREVIEW_A.path,
+      openPaths: [IMAGE_TAB_A.path],
+      previewPath: MARKDOWN_PREVIEW_A.path,
+    });
+    expect(cached.editorSurface.activePath).toBe(MARKDOWN_PREVIEW_A.path);
+    expect(cached.editorSurface.openPaths).toEqual([IMAGE_TAB_A.path]);
+    expect(cached.editorSurface.previewPath).toBe(MARKDOWN_PREVIEW_A.path);
+
+    act(() => {
+      harness.session().resetEditorSurfaceState();
+      harness.api().restoreCachedWorkspaceState(ROOT_A, cached);
+    });
+
+    const restored = harness.session();
+    expect(Object.keys(restored.documents)).toEqual([DOC_A.path]);
+    expect(Object.keys(restored.imageTabs)).toEqual([IMAGE_TAB_A.path]);
+    expect(Object.keys(restored.markdownPreviewTabs)).toEqual([
+      MARKDOWN_PREVIEW_A.path,
+    ]);
+    expect(restored.editorGroups).toEqual(cached.editorSurface.editorGroups);
+    expect(restored.activeGroupId).toBe("editor-1");
+    expect(restored.activePath).toBe(MARKDOWN_PREVIEW_A.path);
+    expect(restored.openPaths).toEqual([IMAGE_TAB_A.path]);
+    expect(restored.previewPath).toBe(MARKDOWN_PREVIEW_A.path);
+    harness.unmount();
+  });
+
   it("drops non-persistable editor tabs from the cached snapshot", () => {
     const harness = renderWorkspaceStateCacheHarness();
 
     act(() => {
-      harness.setters().setDocuments({
+      harness.session().setDocuments({
         [DOC_A.path]: DOC_A,
         [GIT_DIFF_DOC.path]: GIT_DIFF_DOC,
       });
-      harness.setters().setOpenPaths([DOC_A.path, GIT_DIFF_DOC.path]);
-      harness.setters().setActivePath(GIT_DIFF_DOC.path);
+      harness.session().setOpenPaths([DOC_A.path, GIT_DIFF_DOC.path]);
+      harness.session().setActivePath(GIT_DIFF_DOC.path);
     });
     harness.api().cacheCurrentWorkspaceState(ROOT_A);
 
     const cached = harness.api().workspaceStateCacheRef.current[ROOT_A];
     expect(Object.keys(cached.editorSurface.documents)).toEqual([DOC_A.path]);
     expect(cached.editorSurface.openPaths).toEqual([DOC_A.path]);
-    expect(cached.editorSurface.activePath).toBeNull();
+    expect(cached.editorSurface.activePath).toBe(DOC_A.path);
     harness.unmount();
   });
 

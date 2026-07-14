@@ -7,25 +7,15 @@ import {
 } from "react";
 import type { Bookmark } from "../domain/bookmarks";
 import type { BottomPanelView } from "../domain/bottomPanel";
-import type { EditorGroupsState } from "../domain/editorGroups";
 import type {
   IndexHealthLogEntry,
   IndexProgressState,
 } from "../domain/indexProgress";
-import type { MarkdownPreviewTab } from "../domain/markdownPreview";
 import type { NavigationHistory } from "../domain/navigation";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
-import type {
-  EditorDocument,
-  FileEntry,
-  ImageTab,
-} from "../domain/workspace";
-import {
-  buildEditorSurfaceSnapshot,
-  selectEditorSurfaceRestore,
-  type EditorSurfaceSnapshot,
-} from "../domain/workspaceSessionSnapshot";
+import type { FileEntry } from "../domain/workspace";
+import type { EditorSurfaceSnapshot } from "../domain/workspaceSessionSnapshot";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import type { SidebarView } from "./useWorkbenchController";
 
@@ -47,24 +37,15 @@ export interface CachedWorkspaceWorkbenchState {
 }
 
 export interface WorkspaceStateCacheDependencies {
-  activePath: string | null;
   bookmarks: Bookmark[];
   bottomPanelView: BottomPanelView;
   bottomPanelVisible: boolean;
-  documents: Record<string, EditorDocument>;
-  editorGroups: EditorGroupsState;
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
-  imageTabs: Record<string, ImageTab>;
-  imageTabsRef: MutableRefObject<Record<string, ImageTab>>;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   manuallyCollapsedDirectories: Set<string>;
-  markdownPreviewTabs: Record<string, MarkdownPreviewTab>;
-  markdownPreviewTabsRef: MutableRefObject<Record<string, MarkdownPreviewTab>>;
   navigationHistory: NavigationHistory;
-  openPaths: string[];
-  previewPath: string | null;
   recentFiles: RecentFileEntry[];
   recentLocations: RecentLocation[];
   restoreCachedIndexState: (
@@ -72,19 +53,18 @@ export interface WorkspaceStateCacheDependencies {
     indexHealthLogs: IndexHealthLogEntry[],
   ) => void;
   restoreHistory: (history: NavigationHistory) => void;
+  restoreEditorSurface: (
+    rootPath: string,
+    snapshot: EditorSurfaceSnapshot,
+  ) => void;
   setBookmarks: Dispatch<SetStateAction<Bookmark[]>>;
   setBottomPanelView: Dispatch<SetStateAction<BottomPanelView>>;
   setBottomPanelVisible: Dispatch<SetStateAction<boolean>>;
-  setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
   setEntriesByDirectory: Dispatch<
     SetStateAction<Record<string, FileEntry[]>>
   >;
   setExpandedDirectories: Dispatch<SetStateAction<Set<string>>>;
-  setImageTabs: Dispatch<SetStateAction<Record<string, ImageTab>>>;
   setManuallyCollapsedDirectories: Dispatch<SetStateAction<Set<string>>>;
-  setMarkdownPreviewTabs: Dispatch<
-    SetStateAction<Record<string, MarkdownPreviewTab>>
-  >;
   setRecentFiles: Dispatch<SetStateAction<RecentFileEntry[]>>;
   setRecentLocations: Dispatch<SetStateAction<RecentLocation[]>>;
   setSidebarView: Dispatch<SetStateAction<SidebarView>>;
@@ -92,9 +72,7 @@ export interface WorkspaceStateCacheDependencies {
     SetStateAction<WorkspaceIdentityDescriptor | null>
   >;
   sidebarView: SidebarView;
-  updateEditorGroups: (
-    update: (current: EditorGroupsState) => EditorGroupsState,
-  ) => void;
+  snapshotEditorSurface: (rootPath: string) => EditorSurfaceSnapshot;
   workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
 }
 
@@ -103,7 +81,10 @@ export interface WorkspaceStateCache {
     Record<string, CachedWorkspaceWorkbenchState>
   >;
   cacheCurrentWorkspaceState: (rootPath: string) => void;
-  restoreCachedWorkspaceState: (cached: CachedWorkspaceWorkbenchState) => void;
+  restoreCachedWorkspaceState: (
+    rootPath: string,
+    cached: CachedWorkspaceWorkbenchState,
+  ) => void;
   clearWorkspaceStateCache: () => void;
 }
 
@@ -111,43 +92,32 @@ export function useWorkspaceStateCache(
   dependencies: WorkspaceStateCacheDependencies,
 ): WorkspaceStateCache {
   const {
-    activePath,
     bookmarks,
     bottomPanelView,
     bottomPanelVisible,
-    documents,
-    editorGroups,
     entriesByDirectory,
     expandedDirectories,
-    imageTabs,
-    imageTabsRef,
     indexHealthLogs,
     indexProgress,
     manuallyCollapsedDirectories,
-    markdownPreviewTabs,
-    markdownPreviewTabsRef,
     navigationHistory,
-    openPaths,
-    previewPath,
     recentFiles,
     recentLocations,
     restoreCachedIndexState,
+    restoreEditorSurface,
     restoreHistory,
     setBookmarks,
     setBottomPanelView,
     setBottomPanelVisible,
-    setDocuments,
     setEntriesByDirectory,
     setExpandedDirectories,
-    setImageTabs,
     setManuallyCollapsedDirectories,
-    setMarkdownPreviewTabs,
     setRecentFiles,
     setRecentLocations,
     setSidebarView,
     setWorkspaceIdentityDescriptor,
     sidebarView,
-    updateEditorGroups,
+    snapshotEditorSurface,
     workspaceIdentityDescriptor,
   } = dependencies;
 
@@ -161,15 +131,7 @@ export function useWorkspaceStateCache(
         bookmarks,
         bottomPanelView,
         bottomPanelVisible,
-        editorSurface: buildEditorSurfaceSnapshot({
-          activePath,
-          documents,
-          editorGroups,
-          imageTabs,
-          markdownPreviewTabs,
-          openPaths,
-          previewPath,
-        }),
+        editorSurface: snapshotEditorSurface(rootPath),
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
         indexHealthLogs,
@@ -183,45 +145,32 @@ export function useWorkspaceStateCache(
       };
     },
     [
-      activePath,
       bookmarks,
       bottomPanelView,
       bottomPanelVisible,
-      documents,
       entriesByDirectory,
-      editorGroups,
       manuallyCollapsedDirectories,
       expandedDirectories,
-      imageTabs,
-      markdownPreviewTabs,
       indexHealthLogs,
       indexProgress,
       navigationHistory,
-      openPaths,
-      previewPath,
       recentFiles,
       recentLocations,
       sidebarView,
+      snapshotEditorSurface,
       workspaceIdentityDescriptor,
     ],
   );
 
   const restoreCachedWorkspaceState = useCallback(
-    (cached: CachedWorkspaceWorkbenchState) => {
-      const editorSurface = selectEditorSurfaceRestore(cached.editorSurface);
-
+    (rootPath: string, cached: CachedWorkspaceWorkbenchState) => {
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
       restoreCachedIndexState(cached.indexProgress, cached.indexHealthLogs);
       setManuallyCollapsedDirectories(
         new Set(cached.manuallyCollapsedDirectories),
       );
-      setDocuments(editorSurface.documents);
-      imageTabsRef.current = editorSurface.imageTabs;
-      setImageTabs(editorSurface.imageTabs);
-      markdownPreviewTabsRef.current = editorSurface.markdownPreviewTabs;
-      setMarkdownPreviewTabs(editorSurface.markdownPreviewTabs);
-      updateEditorGroups(() => editorSurface.editorGroups);
+      restoreEditorSurface(rootPath, cached.editorSurface);
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
@@ -232,24 +181,19 @@ export function useWorkspaceStateCache(
       setBottomPanelVisible(cached.bottomPanelVisible);
     },
     [
-      imageTabsRef,
-      markdownPreviewTabsRef,
       restoreCachedIndexState,
+      restoreEditorSurface,
       restoreHistory,
       setBookmarks,
       setBottomPanelView,
       setBottomPanelVisible,
-      setDocuments,
       setEntriesByDirectory,
       setExpandedDirectories,
-      setImageTabs,
       setManuallyCollapsedDirectories,
-      setMarkdownPreviewTabs,
       setRecentFiles,
       setRecentLocations,
       setSidebarView,
       setWorkspaceIdentityDescriptor,
-      updateEditorGroups,
     ],
   );
 

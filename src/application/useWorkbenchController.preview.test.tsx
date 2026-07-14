@@ -12320,6 +12320,90 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveLength(1);
   });
 
+  it("preserves same-turn editor changes across a workspace switch and switch-back", async () => {
+    const firstRoot = "/workspace-a";
+    const secondRoot = "/workspace-b";
+    const pinnedFile = fileEntry(`${firstRoot}/src/Pinned.ts`, "Pinned.ts");
+    const previewFile = fileEntry(`${firstRoot}/src/Preview.ts`, "Preview.ts");
+    const otherFile = fileEntry(`${secondRoot}/src/Other.ts`, "Other.ts");
+    const dirtyContent = "export const pinned = 'dirty';\n";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: firstRoot,
+        workspaceTabs: [firstRoot, secondRoot],
+      },
+      readTextFile: vi.fn(async (path: string) => `// ${path}\n`),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(pinnedFile);
+    });
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+
+    await act(async () => {
+      getWorkbench().updateActiveDocument(dirtyContent);
+      await getWorkbench().previewFile(previewFile);
+      await getWorkbench().activateWorkspaceTab(secondRoot);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe(secondRoot);
+    expect(getWorkbench().openDocuments).toEqual([]);
+    expect(getWorkbench().activePath).toBeNull();
+    expect(getWorkbench().previewPath).toBeNull();
+    expect(getWorkbench().editorGroups.groups).toEqual({
+      "editor-main": {
+        activePath: null,
+        openPaths: [],
+        previewPath: null,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(otherFile);
+    });
+    expect(getWorkbench().activePath).toBe(otherFile.path);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(firstRoot);
+    });
+    await flushAsyncTurns(24);
+
+    const restoredGroups = Object.values(getWorkbench().editorGroups.groups);
+    expect(getWorkbench().workspaceRoot).toBe(firstRoot);
+    expect(getWorkbench().activePath).toBe(previewFile.path);
+    expect(getWorkbench().activeDocument?.path).toBe(previewFile.path);
+    expect(getWorkbench().previewPath).toBe(previewFile.path);
+    expect(getWorkbench().dirtyCount).toBe(1);
+    expect(getWorkbench().openDocuments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content: dirtyContent,
+          path: pinnedFile.path,
+          savedContent: `// ${pinnedFile.path}\n`,
+        }),
+        expect.objectContaining({ path: previewFile.path }),
+      ]),
+    );
+    expect(getWorkbench().openDocuments).toHaveLength(2);
+    expect(getWorkbench().openDocuments).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: otherFile.path })]),
+    );
+    expect(restoredGroups).toHaveLength(2);
+    expect(
+      restoredGroups.filter((group) => group.openPaths.includes(pinnedFile.path)),
+    ).toHaveLength(2);
+    expect(restoredGroups).toContainEqual(
+      expect.objectContaining({
+        activePath: previewFile.path,
+        openPaths: [pinnedFile.path],
+        previewPath: previewFile.path,
+      }),
+    );
+  });
+
   it("asks before closing an inactive project tab with cached dirty documents", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
