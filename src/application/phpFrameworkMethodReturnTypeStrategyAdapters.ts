@@ -10,7 +10,7 @@ import {
 } from "./phpLaravelMethodReturnTypeStrategyAdapter";
 
 export interface PhpFrameworkMethodReturnTypeStrategyAdapterDependencies {
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
   resolvePhpFrameworkBuilderModelType(
     source: string,
     position: EditorPosition,
@@ -28,7 +28,7 @@ export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
     frameworkRuntime,
     [
       {
-        providerId: "laravel",
+        capability: "eloquentModelSemantics",
         createAdapter: () =>
           createPhpLaravelMethodReturnTypeStrategyAdapter({
             resolvePhpEloquentBuilderModelType:

@@ -7,6 +7,7 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
   it("uses the generic adapter when the runtime lacks the Laravel provider", () => {
     const frameworkRuntime = {
       hasProvider: vi.fn(() => false),
+      supports: vi.fn(() => false),
     };
     const resolvePhpFrameworkDeclaredType = vi.fn(() => "App\\Models\\Post");
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
@@ -28,13 +29,19 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
         source: "<?php",
       }),
     ).toEqual([]);
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
     expect(resolvePhpFrameworkDeclaredType).not.toHaveBeenCalled();
   });
 
-  it("selects Laravel by provider id", () => {
+  it("selects Laravel by Eloquent model semantics", () => {
     const frameworkRuntime = {
       hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
+      supports: vi.fn((capability: string) =>
+        capability === "eloquentModelSemantics"
+      ),
     };
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
       frameworkRuntime,
@@ -42,13 +49,17 @@ describe("phpFrameworkClassMemberCollectionProviderAdapters", () => {
     });
 
     expect(adapter.canCollectSyntheticMembers).toBe(true);
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
   });
 
   it("uses the generic adapter for a non-Laravel framework runtime", () => {
     const adapter = createPhpFrameworkClassMemberCollectionProviderAdapters({
       frameworkRuntime: {
         hasProvider: (providerId: string) => providerId === "symfony",
+        supports: () => false,
       },
       resolvePhpFrameworkDeclaredType: vi.fn(() => null),
     });

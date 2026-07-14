@@ -8,7 +8,10 @@ function makeDeps(
   overrides: Partial<PhpFrameworkMethodReturnTypeStrategyAdapterDependencies> = {},
 ): PhpFrameworkMethodReturnTypeStrategyAdapterDependencies {
   return {
-    frameworkRuntime: { hasProvider: (providerId) => providerId === "laravel" },
+    frameworkRuntime: {
+      hasProvider: (providerId) => providerId === "laravel",
+      supports: (capability) => capability === "eloquentModelSemantics",
+    },
     resolvePhpFrameworkBuilderModelType: vi.fn(
       async () => null as string | null,
     ),
@@ -29,6 +32,7 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
     );
     const frameworkRuntime = {
       hasProvider: vi.fn((_providerId: string) => false),
+      supports: vi.fn((_capability: string) => false),
     };
     const adapter = createPhpFrameworkMethodReturnTypeStrategyAdapters(
       makeDeps({
@@ -38,7 +42,10 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
       }),
     );
 
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
     expect(
       adapter.facadeTargetClassName("Illuminate\\Support\\Facades\\Cache"),
     ).toBeNull();
@@ -72,6 +79,7 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
     );
     const frameworkRuntime = {
       hasProvider: vi.fn((_providerId: string) => false),
+      supports: vi.fn((_capability: string) => false),
       isLaravel: true,
       profile: "laravel" as const,
     };
@@ -91,7 +99,7 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
     expect(resolvePhpFrameworkProjectMorphMapModelType).not.toHaveBeenCalled();
   });
 
-  it("delegates to the Laravel strategy when the Laravel provider is active", async () => {
+  it("delegates to the Laravel strategy when Eloquent model semantics are active", async () => {
     const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
@@ -99,6 +107,7 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
       makeDeps({
         frameworkRuntime: {
           hasProvider: (providerId: string) => providerId === "laravel",
+          supports: (capability) => capability === "eloquentModelSemantics",
         },
         resolvePhpFrameworkProjectMorphMapModelType,
       }),

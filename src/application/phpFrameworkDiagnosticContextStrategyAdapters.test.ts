@@ -9,7 +9,10 @@ function makeDeps(
 ): PhpFrameworkDiagnosticContextStrategyAdapterDependencies {
   return {
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
-    frameworkRuntime: { hasProvider: vi.fn(() => true) },
+    frameworkRuntime: {
+      hasProvider: vi.fn(() => true),
+      supports: vi.fn(() => true),
+    },
     phpClassHasDynamicBuilderFinder: vi.fn(async () => false),
     phpClassHasNamedBuilderScope: vi.fn(async () => false),
     resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
@@ -29,6 +32,7 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
         hasProvider: vi.fn(
           (providerId: string) => providerId === activeProviderId,
         ),
+        supports: vi.fn((_capability: string) => false),
         isLaravel: true,
       };
       const deps = makeDeps({
@@ -58,7 +62,10 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
       expect(
         adapter.ensureFrameworkSourceCollectionsLoaded("/workspace"),
       ).toBeUndefined();
-      expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+      expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+        "eloquentModelSemantics",
+      );
+      expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
       expect(deps.resolvePhpFrameworkBuilderModelType).not.toHaveBeenCalled();
       expect(deps.phpClassHasNamedBuilderScope).not.toHaveBeenCalled();
       expect(deps.phpClassHasDynamicBuilderFinder).not.toHaveBeenCalled();
@@ -68,9 +75,12 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
     },
   );
 
-  it("activates Laravel diagnostic behavior from provider identity", async () => {
+  it("activates Laravel diagnostic behavior from Eloquent model semantics", async () => {
     const frameworkRuntime = {
       hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
+      supports: vi.fn((capability: string) =>
+        capability === "eloquentModelSemantics"
+      ),
       isLaravel: false,
       profile: "nette",
     };
@@ -116,7 +126,10 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
     expect(
       deps.ensurePhpFrameworkSourceCollectionsLoaded,
     ).toHaveBeenCalledWith("/workspace");
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
     expect(frameworkRuntime.profile).toBe("nette");
   });
 });

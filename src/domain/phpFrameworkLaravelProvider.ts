@@ -456,6 +456,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       phpLaravelScopedStringCompletionInsertText(kind, name),
   },
   semantics: {
+    supportsEloquentModelSemantics: true,
     suppressesSameSourceMethodReturnFallback: ({ methodName }) =>
       methodName === "findOrFail",
     queryCallbackContextForVariable: ({ position, source, variableName }) =>

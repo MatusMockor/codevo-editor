@@ -14,7 +14,7 @@ import {
 
 export interface PhpFrameworkDiagnosticContextStrategyAdapterDependencies {
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
   phpClassHasDynamicBuilderFinder(
     className: string,
     methodName: string,
@@ -40,7 +40,7 @@ export function createPhpFrameworkDiagnosticContextStrategyAdapters({
   const contributions: readonly PhpFrameworkSemanticAdapterContribution<PhpDiagnosticContextStrategy>[] =
     [
       {
-        providerId: "laravel",
+        capability: "eloquentModelSemantics",
         createAdapter: () =>
           createPhpLaravelDiagnosticContextStrategyAdapter({
             ensurePhpFrameworkSourceCollectionsLoaded,

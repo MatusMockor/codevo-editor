@@ -1,4 +1,5 @@
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { activePhpFrameworkSemanticAdapter } from "./phpFrameworkSemanticAdapterRegistry";
 import {
   genericPhpFrameworkClassMemberCollectionProviderAdapter,
   type PhpFrameworkClassMemberCollectionProviderAdapter,
@@ -8,7 +9,7 @@ import {
 } from "./phpLaravelClassMemberCollectionProviderAdapter";
 
 export interface PhpFrameworkClassMemberCollectionProviderAdapterDependencies {
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
   resolvePhpFrameworkDeclaredType(
     source: string,
     typeName: string | null,
@@ -19,11 +20,17 @@ export function createPhpFrameworkClassMemberCollectionProviderAdapters({
   frameworkRuntime,
   resolvePhpFrameworkDeclaredType,
 }: PhpFrameworkClassMemberCollectionProviderAdapterDependencies): PhpFrameworkClassMemberCollectionProviderAdapter {
-  if (!frameworkRuntime.hasProvider("laravel")) {
-    return genericPhpFrameworkClassMemberCollectionProviderAdapter;
-  }
-
-  return createPhpLaravelClassMemberCollectionProviderAdapter({
-    resolvePhpDeclaredType: resolvePhpFrameworkDeclaredType,
-  });
+  return activePhpFrameworkSemanticAdapter(
+    frameworkRuntime,
+    [
+      {
+        capability: "eloquentModelSemantics",
+        createAdapter: () =>
+          createPhpLaravelClassMemberCollectionProviderAdapter({
+            resolvePhpDeclaredType: resolvePhpFrameworkDeclaredType,
+          }),
+      },
+    ],
+    genericPhpFrameworkClassMemberCollectionProviderAdapter,
+  );
 }

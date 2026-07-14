@@ -981,6 +981,13 @@ export interface PhpFrameworkProvider {
       context: PhpFrameworkContainerBindingPathContext,
     ) => boolean;
     supportsContainerBindingTextSearch?: true;
+    /**
+     * Provider-owned opt-in for Eloquent-style model semantics: dynamic
+     * builders, local scopes, model properties/relations, and model-aware
+     * method return recovery. This activates Laravel-named adapters without
+     * tying dispatch to the Laravel provider id.
+     */
+    supportsEloquentModelSemantics?: true;
   };
 }
 
@@ -1001,6 +1008,7 @@ export type PhpFrameworkProviderCapability =
   | "containerBindingsFromSource"
   | "codeActions"
   | "dispatch"
+  | "eloquentModelSemantics"
   | "env"
   | "inertia"
   | "containerConcreteClassNamesFromSource"
@@ -1999,6 +2007,11 @@ function phpFrameworkProvidersSupportCapability(
       );
     case "dispatch":
       return providers.some((provider) => provider.dispatch !== undefined);
+    case "eloquentModelSemantics":
+      return providers.some(
+        (provider) =>
+          provider.semantics?.supportsEloquentModelSemantics === true,
+      );
     case "env":
       return providers.some((provider) => provider.env !== undefined);
     case "inertia":

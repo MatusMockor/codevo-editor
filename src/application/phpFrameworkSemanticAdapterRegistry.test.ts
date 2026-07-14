@@ -8,44 +8,75 @@ describe("phpFrameworkSemanticAdapterRegistry", () => {
     const createAdapter = vi.fn(() => inactiveAdapter);
     const frameworkRuntime = {
       hasProvider: vi.fn(() => false),
+      supports: vi.fn(() => false),
     };
 
     const adapter = activePhpFrameworkSemanticAdapter(
       frameworkRuntime,
-      [{ providerId: "laravel", createAdapter }],
+      [{ capability: "eloquentModelSemantics", createAdapter }],
       fallback,
     );
 
     expect(adapter).toBe(fallback);
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
     expect(createAdapter).not.toHaveBeenCalled();
   });
 
-  it("returns the first active provider contribution", () => {
+  it("returns the first active capability contribution", () => {
     const fallback = { name: "generic" };
     const laravelAdapter = { name: "laravel" };
     const netteAdapter = { name: "nette" };
     const createLaravelAdapter = vi.fn(() => laravelAdapter);
     const createNetteAdapter = vi.fn(() => netteAdapter);
-    const queriedProviderIds: string[] = [];
+    const queriedCapabilities: string[] = [];
 
     const adapter = activePhpFrameworkSemanticAdapter(
       {
-        hasProvider: (providerId) => {
-          queriedProviderIds.push(providerId);
-          return providerId === "laravel" || providerId === "nette";
+        hasProvider: () => false,
+        supports: (capability) => {
+          queriedCapabilities.push(capability);
+          return (
+            capability === "eloquentModelSemantics" ||
+            capability === "latteTemplateIntelligence"
+          );
         },
       },
       [
-        { providerId: "laravel", createAdapter: createLaravelAdapter },
-        { providerId: "nette", createAdapter: createNetteAdapter },
+        {
+          capability: "eloquentModelSemantics",
+          createAdapter: createLaravelAdapter,
+        },
+        {
+          capability: "latteTemplateIntelligence",
+          createAdapter: createNetteAdapter,
+        },
       ],
       fallback,
     );
 
     expect(adapter).toBe(laravelAdapter);
-    expect(queriedProviderIds).toEqual(["laravel"]);
+    expect(queriedCapabilities).toEqual(["eloquentModelSemantics"]);
     expect(createLaravelAdapter).toHaveBeenCalledOnce();
     expect(createNetteAdapter).not.toHaveBeenCalled();
+  });
+
+  it("keeps provider-id contributions available for existing registries", () => {
+    const fallback = { name: "generic" };
+    const adapter = { name: "provider" };
+    const createAdapter = vi.fn(() => adapter);
+
+    expect(
+      activePhpFrameworkSemanticAdapter(
+        {
+          hasProvider: (providerId) => providerId === "custom",
+        },
+        [{ providerId: "custom", createAdapter }],
+        fallback,
+      ),
+    ).toBe(adapter);
+    expect(createAdapter).toHaveBeenCalledOnce();
   });
 });

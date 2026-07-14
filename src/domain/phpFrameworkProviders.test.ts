@@ -1991,6 +1991,9 @@ Route::model('user', AdminUser::class);
       expect(laravelRegistry.supports("containerBindingsFromSource")).toBe(true);
       expect(netteRegistry.supports("containerBindingsFromSource")).toBe(true);
       expect(genericRegistry.supports("containerBindingsFromSource")).toBe(false);
+      expect(laravelRegistry.supports("eloquentModelSemantics")).toBe(true);
+      expect(netteRegistry.supports("eloquentModelSemantics")).toBe(false);
+      expect(genericRegistry.supports("eloquentModelSemantics")).toBe(false);
       expect(
         phpFrameworkSupportsContainerBindingsFromSource([
           phpLaravelFrameworkProvider,
