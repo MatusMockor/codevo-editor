@@ -57,10 +57,8 @@ import { usePhpImplementationNavigation } from "./usePhpImplementationNavigation
 import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
-import {
-  useDocumentLifecycle,
-  type DocumentCloseOptions,
-} from "./useDocumentLifecycle";
+import { useDocumentLifecycle } from "./useDocumentLifecycle";
+import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroupCloseLifecycle";
 import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
 import {
   currentWorkspaceSessionForEditorGroups,
@@ -255,14 +253,12 @@ import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiag
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
 import { TauriPintGateway } from "../infrastructure/tauriPintGateway";
 import {
-  clearEslintDiagnosticsForFile,
   replaceEslintDiagnosticsForRoot,
   supportsEslintLineComment,
   type EslintDiagnosticsByRoot,
   type EslintFix,
 } from "../domain/eslintDiagnostics";
 import {
-  clearPhpstanDiagnosticsForFile,
   replacePhpstanDiagnosticsForRoot,
   type PhpstanDiagnosticsByRoot,
 } from "../domain/phpstanDiagnostics";
@@ -360,9 +356,6 @@ import { type TabDropPosition } from "../domain/tabOrdering";
 import { editorGroupIdsInLayout } from "../domain/editorLayout";
 import {
   activateEditorGroupPath,
-  closeEditorGroup,
-  closeEditorGroupTab,
-  closeEditorGroupPath,
   createEditorGroup,
   createInitialEditorGroupsState,
   editorGroupVisiblePaths,
@@ -4690,59 +4683,31 @@ export function useWorkbenchController(
     onRecentlyClosedTabsChange,
   });
 
-  const closeDocument = useCallback(
-    (path: string, options: DocumentCloseOptions = {}) => {
-      const rootPath = currentWorkspaceRootRef.current;
-
-      if (rootPath) {
-        setEslintDiagnosticsByRoot((current) =>
-          clearEslintDiagnosticsForFile(current, rootPath, path),
-        );
-        setPhpstanDiagnosticsByRoot((current) =>
-          clearPhpstanDiagnosticsForFile(current, rootPath, path),
-        );
-      }
-
-      const markdownPreview = markdownPreviewTabsRef.current[path];
-
-      if (!imageTabsRef.current[path] && !markdownPreview) {
-        closeTextDocument(path, options);
-        return;
-      }
-      const nextMarkdownPreviews = { ...markdownPreviewTabsRef.current };
-      const nextImages = { ...imageTabsRef.current };
-      delete nextMarkdownPreviews[path];
-      delete nextImages[path];
-      const nextGroup = closeEditorGroupPath(
-        {
-          activePath,
-          openPaths: openPathsRef.current,
-          previewPath: previewPathRef.current,
-        },
-        path,
-      );
-      imageTabsRef.current = nextImages;
-      markdownPreviewTabsRef.current = nextMarkdownPreviews;
-      openPathsRef.current = nextGroup.openPaths;
-      previewPathRef.current = nextGroup.previewPath;
-      activeDocumentRef.current = nextGroup.activePath
-        ? documentsRef.current[nextGroup.activePath] ?? null
-        : null;
-      setImageTabs(nextImages);
-      setMarkdownPreviewTabs(nextMarkdownPreviews);
-      updateEditorGroups((current) => ({
-        ...current,
-        groups: {
-          ...current.groups,
-          [current.activeGroupId]: closeEditorGroupPath(
-            current.groups[current.activeGroupId],
-            path,
-          ),
-        },
-      }));
-    },
-    [activePath, closeTextDocument, updateEditorGroups],
-  );
+  const {
+    closeDocument,
+    closeDocumentInEditorGroup,
+    closeActiveEditorGroup,
+    closeActiveEditorGroupSurface,
+  } = useWorkbenchEditorGroupCloseLifecycle({
+    workspaceRoot,
+    currentWorkspaceRootRef,
+    editorGroupsRef,
+    openPathsRef,
+    previewPathRef,
+    activeDocumentRef,
+    documentsRef,
+    imageTabsRef,
+    markdownPreviewTabsRef,
+    setImageTabs,
+    setMarkdownPreviewTabs,
+    setEslintDiagnosticsByRoot,
+    setPhpstanDiagnosticsByRoot,
+    updateEditorGroups,
+    closeTextDocument,
+    closeTextSurface,
+    hasExternalFileConflict: externalFileConflicts.hasConflict,
+    prompter,
+  });
 
   const activateEditorGroup = useCallback((groupId: EditorGroupId) => {
     updateEditorGroups((current) =>
@@ -4783,79 +4748,6 @@ export function useWorkbenchController(
     },
     [updateEditorGroups],
   );
-
-  const closeDocumentInEditorGroup = useCallback(
-    (groupId: EditorGroupId, path: string, options: DocumentCloseOptions = {}) => {
-      const current = editorGroupsRef.current;
-      const result = closeEditorGroupTab(current, groupId, path);
-      if (!result.membershipRemoved) {
-        return;
-      }
-      if (!result.finalMembershipRemoved) {
-        updateEditorGroups(() => result.state);
-        return;
-      }
-
-      const target = current.groups[groupId];
-      if (!target) {
-        return;
-      }
-      const activated = {
-        ...current,
-        activeGroupId: groupId,
-        groups: {
-          ...current.groups,
-          [groupId]: activateEditorGroupPath(target, path),
-        },
-      };
-      editorGroupsRef.current = activated;
-      openPathsRef.current = target.openPaths;
-      previewPathRef.current = target.previewPath;
-      activeDocumentRef.current = documentsRef.current[path] ?? null;
-      updateEditorGroups(() => activated);
-      closeDocument(path, options);
-    },
-    [closeDocument, updateEditorGroups],
-  );
-
-  const closeActiveEditorGroup = useCallback(() => {
-    const current = editorGroupsRef.current;
-    const groupId = current.activeGroupId;
-    const group = current.groups[groupId];
-    if (!group) {
-      return;
-    }
-    const visiblePaths = editorGroupVisiblePaths(group);
-    const finalMembershipPaths = closeEditorGroup(
-      current,
-      groupId,
-    ).finalMembershipPaths;
-    const shouldAbort = finalMembershipPaths.some((path) => {
-      const document = documentsRef.current[path];
-      const hasConflict = externalFileConflicts.hasConflict(workspaceRoot, path);
-      if (!document || (!isDirty(document) && !hasConflict)) {
-        return false;
-      }
-      return !prompter.confirm(
-        hasConflict
-          ? "Close file with an unresolved external conflict?"
-          : "Discard changes?",
-      );
-    });
-    if (shouldAbort) {
-      return;
-    }
-    visiblePaths.forEach((path) => closeDocumentInEditorGroup(groupId, path, {
-      skipConfirmation: true,
-    }));
-    updateEditorGroups((state) => closeEditorGroup(state, groupId).state);
-  }, [
-    closeDocumentInEditorGroup,
-    externalFileConflicts,
-    prompter,
-    updateEditorGroups,
-    workspaceRoot,
-  ]);
 
   const focusAdjacentEditorGroup = useCallback((offset: -1 | 1) => {
     const current = editorGroupsRef.current;
@@ -4964,43 +4856,6 @@ export function useWorkbenchController(
     },
     [updateEditorGroups],
   );
-
-  const closeActiveSurface = useCallback(() => {
-    if (
-      activePath &&
-      (imageTabsRef.current[activePath] ||
-        markdownPreviewTabsRef.current[activePath])
-    ) {
-      closeDocument(activePath);
-      return;
-    }
-    const rootPath = currentWorkspaceRootRef.current;
-
-    if (rootPath && activePath) {
-      setEslintDiagnosticsByRoot((current) =>
-        clearEslintDiagnosticsForFile(current, rootPath, activePath),
-      );
-      setPhpstanDiagnosticsByRoot((current) =>
-        clearPhpstanDiagnosticsForFile(current, rootPath, activePath),
-      );
-    }
-
-    closeTextSurface();
-  }, [activePath, closeDocument, closeTextSurface]);
-
-  const closeActiveEditorGroupSurface = useCallback(() => {
-    const current = editorGroupsRef.current;
-    const group = current.groups[current.activeGroupId];
-    if (group?.activePath) {
-      closeDocumentInEditorGroup(current.activeGroupId, group.activePath);
-      return;
-    }
-    if (Object.keys(current.groups).length > 1) {
-      closeActiveEditorGroup();
-      return;
-    }
-    closeActiveSurface();
-  }, [closeActiveEditorGroup, closeActiveSurface, closeDocumentInEditorGroup]);
 
   const updateEditorViewState = useCallback(
     (path: string, viewState: WorkspaceSessionViewState) => {
