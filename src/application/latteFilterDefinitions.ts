@@ -60,9 +60,11 @@ export async function resolveLatteFilterDefinition(
     return false;
   }
 
+  const targetOffset = target.callableOffset ?? target.offset;
+
   return context.deps.openTarget(
     target.path,
-    editorPositionAtOffset(targetSource, target.offset),
+    editorPositionAtOffset(targetSource, targetOffset),
     target.name,
   );
 }

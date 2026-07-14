@@ -13,6 +13,7 @@ export interface LatteFilterDiscoveryDependencies {
 }
 
 export interface LatteFilterRegistrationTarget {
+  callableOffset?: number;
   name: string;
   offset: number;
   path: string;

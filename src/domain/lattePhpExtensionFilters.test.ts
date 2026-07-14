@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { lattePhpExtensionFiltersFromSource } from "./lattePhpExtensionFilters";
 
-function offsetOf(source: string, needle: string): number {
-  const index = source.indexOf(needle);
+function offsetOf(source: string, needle: string, start = 0): number {
+  const index = source.indexOf(needle, start);
 
   if (index < 0) {
     throw new Error(`needle not found in source: ${needle}`);
@@ -32,6 +32,143 @@ describe("lattePhpExtensionFiltersFromSource", () => {
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
       { name: "userDate", offset: offsetOf(source, "userDate") },
       { name: "money", offset: offsetOf(source, "money") },
+    ]);
+  });
+
+  it("only marks static same-extension callables when the method exists", () => {
+    const source = [
+      "<?php",
+      "",
+      "final class ProjectLatteExtension extends Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'inside' => [$this, 'formatInside'],",
+      "            'missing' => [$this, 'missingMethod'],",
+      "            'external' => [ExternalFilter::class, 'format'],",
+      "        ];",
+      "    }",
+      "",
+      "    public function formatInside(): string",
+      "    {",
+      "        return '';",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      {
+        callableOffset: offsetOf(
+          source,
+          "formatInside",
+          source.indexOf("function formatInside"),
+        ),
+        name: "inside",
+        offset: offsetOf(source, "inside"),
+      },
+      { name: "missing", offset: offsetOf(source, "missing") },
+      { name: "external", offset: offsetOf(source, "external") },
+    ]);
+  });
+
+  it("does not resolve a callable to a global function before the extension class", () => {
+    const source = [
+      "<?php",
+      "",
+      "function formatInside(): string",
+      "{",
+      "    return 'wrong';",
+      "}",
+      "",
+      "final class ProjectLatteExtension extends Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'inside' => [$this, 'formatInside'],",
+      "        ];",
+      "    }",
+      "",
+      "    public function formatInside(): string",
+      "    {",
+      "        return 'right';",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      {
+        callableOffset: offsetOf(
+          source,
+          "formatInside",
+          source.indexOf("function formatInside", source.indexOf("class ProjectLatteExtension")),
+        ),
+        name: "inside",
+        offset: offsetOf(source, "inside"),
+      },
+    ]);
+  });
+
+  it("does not resolve a callable to a nested function inside getFilters", () => {
+    const source = [
+      "<?php",
+      "",
+      "final class ProjectLatteExtension extends Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        function formatInside(): string",
+      "        {",
+      "            return 'nested';",
+      "        }",
+      "",
+      "        return [",
+      "            'inside' => [$this, 'formatInside'],",
+      "        ];",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      { name: "inside", offset: offsetOf(source, "inside") },
+    ]);
+  });
+
+  it("opens a callable method whose name appears inside the function keyword", () => {
+    const source = [
+      "<?php",
+      "",
+      "final class ProjectLatteExtension extends Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'short' => [$this, 'func'],",
+      "        ];",
+      "    }",
+      "",
+      "    public function func(): string",
+      "    {",
+      "        return '';",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      {
+        callableOffset: offsetOf(
+          source,
+          "func",
+          source.indexOf("function func") + "function ".length,
+        ),
+        name: "short",
+        offset: offsetOf(source, "short"),
+      },
     ]);
   });
 

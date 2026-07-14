@@ -9,6 +9,22 @@ const CONFIG_SOURCE = `services:
     setup:
       - addFilter('UserDate', [@self, format])
 `;
+const EXTENSION_SOURCE = `<?php
+final class AppLatteExtension extends Latte\\Extension
+{
+    public function getFilters(): array
+    {
+        return [
+            'UserDate' => [$this, 'formatUserDate'],
+        ];
+    }
+
+    public function formatUserDate(): string
+    {
+        return '';
+    }
+}
+`;
 
 function offsetAfter(source: string, needle: string): number {
   const index = source.indexOf(needle);
@@ -61,6 +77,33 @@ describe("resolveLatteFilterDefinition", () => {
     expect(context.deps.openTarget).toHaveBeenCalledWith(
       "/ws/app/config/common.neon",
       { column: 20, lineNumber: 4 },
+      "UserDate",
+    );
+  });
+
+  it("prefers a PHP extension filter callable method over the filter key", async () => {
+    const context = makeContext({ configSource: EXTENSION_SOURCE });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callableOffset: EXTENSION_SOURCE.indexOf("formatUserDate", EXTENSION_SOURCE.indexOf("function formatUserDate")),
+        name: "UserDate",
+        offset: EXTENSION_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/Latte/AppLatteExtension.php",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/Latte/AppLatteExtension.php",
+      { column: 21, lineNumber: 11 },
       "UserDate",
     );
   });

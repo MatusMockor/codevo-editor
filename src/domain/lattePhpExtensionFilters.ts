@@ -1,6 +1,11 @@
+import {
+  parsePhpClassStructure,
+  phpTopLevelTypeDeclarationNames,
+} from "./phpClassStructure";
 import { maskPhpSource } from "./phpSourceMask";
 
 export interface LattePhpExtensionFilter {
+  callableOffset?: number;
   name: string;
   offset: number;
 }
@@ -23,7 +28,7 @@ export function lattePhpExtensionFiltersFromSource(
     match;
     match = GET_FILTERS_METHOD_PATTERN.exec(masked)
   ) {
-    const methodBody = getFiltersMethodBody(masked, match.index);
+  const methodBody = getFiltersMethodBody(masked, match.index);
 
     if (!methodBody) {
       continue;
@@ -35,7 +40,14 @@ export function lattePhpExtensionFiltersFromSource(
       continue;
     }
 
-    filters.push(...stringKeyFiltersFromArray(source, masked, returnedArray));
+    filters.push(
+      ...stringKeyFiltersFromArray(
+        source,
+        masked,
+        returnedArray,
+        methodBody.start,
+      ),
+    );
   }
 
   return filters;
@@ -161,6 +173,7 @@ function stringKeyFiltersFromArray(
   source: string,
   masked: string,
   range: ArrayReturnRange,
+  getFiltersBodyStart: number,
 ): LattePhpExtensionFilter[] {
   const filters: LattePhpExtensionFilter[] = [];
   let squareDepth = 0;
@@ -228,11 +241,84 @@ function stringKeyFiltersFromArray(
       continue;
     }
 
-    filters.push({ name: literal.name, offset: index + 1 });
+    const callableOffset = staticThisCallableMethodOffset(
+      source,
+      arrowOffset + 2,
+      getFiltersBodyStart,
+    );
+
+    filters.push({
+      ...(callableOffset === undefined ? {} : { callableOffset }),
+      name: literal.name,
+      offset: index + 1,
+    });
     index = literal.end;
   }
 
   return filters;
+}
+
+function staticThisCallableMethodOffset(
+  source: string,
+  valueStart: number,
+  getFiltersBodyStart: number,
+): number | undefined {
+  const valueSource = source.slice(valueStart);
+  const callable = /^\s*\[\s*\$this\s*,\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]/.exec(
+    valueSource,
+  );
+  const methodName = callable?.[2];
+
+  if (!methodName) {
+    return undefined;
+  }
+
+  if (!isPhpIdentifier(methodName)) {
+    return undefined;
+  }
+
+  return phpMethodNameOffsetInContainingClass(source, methodName, getFiltersBodyStart);
+}
+
+function phpMethodNameOffsetInContainingClass(
+  source: string,
+  methodName: string,
+  getFiltersBodyStart: number,
+): number | undefined {
+  const type = phpClassStructureContainingOffset(source, getFiltersBodyStart);
+  const method = type.methods.find((candidate) => candidate.name === methodName);
+
+  return method ? phpMethodMemberNameOffset(source, method.declarationOffset) : undefined;
+}
+
+function phpMethodMemberNameOffset(
+  source: string,
+  declarationOffset: number,
+): number | undefined {
+  const declaration = /\bfunction\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(
+    source.slice(declarationOffset),
+  );
+
+  return declaration?.index === undefined || declaration.index < 0
+    ? undefined
+    : declarationOffset + declaration.index + declaration[0].lastIndexOf(declaration[1] ?? "");
+}
+
+function phpClassStructureContainingOffset(source: string, offset: number) {
+  for (const className of phpTopLevelTypeDeclarationNames(source)) {
+    const structure = parsePhpClassStructure(source, className);
+    const declaration = structure.typeDeclaration;
+
+    if (
+      declaration &&
+      offset > declaration.bodyStartOffset &&
+      offset < declaration.bodyEndOffset
+    ) {
+      return structure;
+    }
+  }
+
+  return parsePhpClassStructure(source);
 }
 
 function stringLiteralAt(
@@ -348,4 +434,8 @@ function skipInlineSpaces(source: string, start: number): number {
 
 function isIdentifierCharacter(character: string | undefined): boolean {
   return character !== undefined && /[A-Za-z0-9_]/.test(character);
+}
+
+function isPhpIdentifier(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }

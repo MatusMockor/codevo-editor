@@ -92,6 +92,14 @@ function latteExtensionSource(...names: string[]): string {
     ...names.map((name) => `            '${name}' => [$this, '${name}'],`),
     "        ];",
     "    }",
+    "",
+    ...names.flatMap((name) => [
+      `    public function ${name}(): string`,
+      "    {",
+      "        return '';",
+      "    }",
+      "",
+    ]),
     "}",
     "",
   ].join("\n");
@@ -249,11 +257,13 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
+        callableOffset: extensionSource.indexOf("money", extensionSource.indexOf("function money")),
         name: "money",
         offset: extensionSource.indexOf("money"),
         path: `${ROOT}/app/Latte/AppLatteExtension.php`,
       },
       {
+        callableOffset: extensionSource.indexOf("userLabel", extensionSource.indexOf("function userLabel")),
         name: "userLabel",
         offset: extensionSource.indexOf("userLabel"),
         path: `${ROOT}/app/Latte/AppLatteExtension.php`,
@@ -276,6 +286,10 @@ describe("loadLatteFilterRegistrations", () => {
         path: `${ROOT}/app/config/config.neon`,
       },
       {
+        callableOffset: extensionSource.indexOf(
+          "userLabel",
+          extensionSource.indexOf("function userLabel"),
+        ),
         name: "userLabel",
         offset: extensionSource.indexOf("userLabel"),
         path: `${ROOT}/app/Latte/AppLatteExtension.php`,
@@ -326,6 +340,10 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
+        callableOffset: firstPhpSource.indexOf(
+          "firstPhpFilter",
+          firstPhpSource.indexOf("function firstPhpFilter"),
+        ),
         name: "firstPhpFilter",
         offset: firstPhpSource.indexOf("firstPhpFilter"),
         path: `${ROOT}/app/a/FirstExtension.php`,
@@ -358,6 +376,10 @@ describe("loadLatteFilterRegistrations", () => {
         path: `${ROOT}/app/a/config.neon`,
       },
       {
+        callableOffset: phpSource.indexOf(
+          "phpFilter",
+          phpSource.indexOf("function phpFilter"),
+        ),
         name: "phpFilter",
         offset: phpSource.indexOf("phpFilter"),
         path: `${ROOT}/app/c/AppLatteExtension.php`,
