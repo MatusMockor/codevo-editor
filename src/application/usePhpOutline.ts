@@ -46,6 +46,7 @@ import {
   type PhpFileOutlineGateway,
   type PhpFileOutlineNode,
 } from "../domain/phpFileOutline";
+import { shallowPhpFileOutline } from "../domain/shallowPhpFileOutline";
 import {
   emptyPhpTree,
   type PhpTree,
@@ -265,7 +266,7 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
         }
 
         if (isLargeSmartDocumentContent(source, largeSmartDocumentPolicy)) {
-          return emptyPhpFileOutline();
+          return shallowPhpFileOutline(path, source);
         }
 
         return phpFileOutlineGateway.parsePhpFileOutline(path, source);
@@ -404,16 +405,15 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
               return;
             }
 
-            if (
-              isLargeSmartDocumentContent(parentSource, largeSmartDocumentPolicy)
-            ) {
-              continue;
-            }
-
-            const outline = await phpFileOutlineGateway.parsePhpFileOutline(
-              parentPath,
+            const outline = isLargeSmartDocumentContent(
               parentSource,
-            );
+              largeSmartDocumentPolicy,
+            )
+              ? shallowPhpFileOutline(parentPath, parentSource)
+              : await phpFileOutlineGateway.parsePhpFileOutline(
+                  parentPath,
+                  parentSource,
+                );
 
             if (!isRequestedRootActive()) {
               return;

@@ -441,6 +441,107 @@ describe("usePhpOutline", () => {
     harness.unmount();
   });
 
+  it("falls back to a shallow outline for huge active PHP files", async () => {
+    const path = `${ROOT}/vendor/nesbot/carbon/src/Carbon/CarbonInterface.php`;
+    const hugeSource = `<?php
+
+namespace Carbon;
+
+interface CarbonInterface
+{
+    public function addDays(int $value): static;
+
+    public function subDays(int $value): static;
+}
+
+// ${"x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1)}
+`;
+    const parsePhpFileOutline = vi.fn(async () => outline([outlineNode()]));
+    const harness = renderPhpOutline({
+      largeSmartDocumentPolicy: {
+        characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+        lineLimit: 5_000,
+      },
+      workspaceFiles: { readTextFile: async () => hugeSource },
+      phpFileOutlineGateway: createFakePhpFileOutlineGateway({
+        parsePhpFileOutline,
+      }),
+    });
+
+    await act(async () => {
+      await harness.outline().loadPhpFileOutline(path);
+    });
+
+    expect(parsePhpFileOutline).not.toHaveBeenCalled();
+
+    const stored = harness.state().phpFileOutlinesByPath[path];
+
+    expect(stored?.nodes).toHaveLength(1);
+    expect(stored?.nodes[0]?.kind).toBe("interface");
+    expect(stored?.nodes[0]?.label).toBe("CarbonInterface");
+    expect(stored?.nodes[0]?.path).toBe(path);
+    expect(stored?.nodes[0]?.children.map((child) => child.label)).toEqual([
+      "addDays",
+      "subDays",
+    ]);
+    expect(harness.state().loadingPhpFileOutlinePaths.has(path)).toBe(false);
+    harness.unmount();
+  });
+
+  it("falls back to a shallow inherited outline when the parent file is huge", async () => {
+    const childPath = `${ROOT}/app/Child.php`;
+    const parentPath = `${ROOT}/app/ParentClass.php`;
+    const childSource =
+      "<?php\nnamespace App;\nclass Child extends ParentClass {}\n";
+    const parentSource = `<?php
+
+namespace App;
+
+class ParentClass
+{
+    public function inheritedThing(): void
+    {
+    }
+}
+
+// ${"x".repeat(MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT + 1)}
+`;
+    const parsePhpFileOutline = vi.fn(async () => outline([outlineNode()]));
+    const harness = renderPhpOutline({
+      largeSmartDocumentPolicy: {
+        characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
+        lineLimit: 5_000,
+      },
+      workspaceDescriptor: phpDescriptor(),
+      workspaceFiles: {
+        readTextFile: async (p: string) =>
+          p === childPath ? childSource : parentSource,
+      },
+      phpFileOutlineGateway: createFakePhpFileOutlineGateway({
+        parsePhpFileOutline,
+      }),
+    });
+
+    await act(async () => {
+      await harness.outline().loadInheritedPhpFileOutline(childPath);
+    });
+
+    expect(parsePhpFileOutline).not.toHaveBeenCalled();
+
+    const stored = harness.state().phpInheritedFileOutlinesByPath[childPath];
+
+    expect(stored?.nodes).toHaveLength(1);
+    expect(stored?.nodes[0]?.label).toBe("ParentClass");
+    expect(stored?.nodes[0]?.path).toBe(parentPath);
+    expect(stored?.nodes[0]?.children.map((child) => child.label)).toEqual([
+      "inheritedThing",
+    ]);
+    expect(
+      harness.state().loadingInheritedPhpFileOutlinePaths.has(childPath),
+    ).toBe(false);
+    harness.unmount();
+  });
+
   it("uses the configured large document policy before live parsing PHP files", async () => {
     const path = `${ROOT}/app/Foo.php`;
     const parsePhpFileOutline = vi.fn(async () => outline([outlineNode()]));
