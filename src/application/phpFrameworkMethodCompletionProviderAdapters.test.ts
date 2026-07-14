@@ -27,7 +27,10 @@ function makeDeps(
     collectPhpMethodsForClass: vi.fn(async () => []),
     collectNetteRedrawControlSnippetTargets: vi.fn(async () => []),
     ensurePhpFrameworkSourceCollectionsLoaded: vi.fn(async () => undefined),
-    frameworkRuntime: { hasProvider: () => true },
+    frameworkRuntime: {
+      hasProvider: () => true,
+      supports: (capability) => capability === "eloquentModelSemantics",
+    },
     resolvePhpClassReference: vi.fn(() => null),
     resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     resolvePhpExpressionType: vi.fn(async () => null),
@@ -55,8 +58,10 @@ function positionAfter(source: string, needle: string) {
 describe("phpFrameworkMethodCompletionProviderAdapters", () => {
   it.each([
     { activeProviderId: null, label: "generic" },
-    { activeProviderId: "custom", label: "custom" },
-  ])("keeps $label providers inert", async ({ activeProviderId }) => {
+    { activeProviderId: "laravel", label: "stale Laravel provider-id" },
+  ])("keeps $label runtimes inert without Eloquent semantics", async ({
+    activeProviderId,
+  }) => {
     const ensurePhpFrameworkSourceCollectionsLoaded = vi.fn(
       async () => undefined,
     );
@@ -97,17 +102,22 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       staticAccessContext: null,
     });
 
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
     expect(frameworkRuntime.supports).toHaveBeenCalledWith(
       "netteRedrawControlSnippetCompletions",
     );
     expect(ensurePhpFrameworkSourceCollectionsLoaded).not.toHaveBeenCalled();
   });
 
-  it("selects the Laravel adapter by provider id", async () => {
+  it("selects the Laravel adapter by Eloquent model semantics capability", async () => {
     const frameworkRuntime = {
-      hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
-      supports: vi.fn(() => false),
+      hasProvider: vi.fn(() => false),
+      supports: vi.fn(
+        (capability: string) => capability === "eloquentModelSemantics",
+      ),
     };
     const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
       makeDeps({ frameworkRuntime }),
@@ -127,7 +137,10 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
         source,
       }),
     ).resolves.toEqual([]);
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
   });
 
   it("keeps Laravel and Nette method completion adapters active for mixed providers", async () => {
@@ -146,6 +159,7 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
       supports: vi.fn(
         (capability: string) =>
+          capability === "eloquentModelSemantics" ||
           capability === "netteRedrawControlSnippetCompletions",
       ),
     };
@@ -185,7 +199,10 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "App\\Http\\Controllers\\PostController",
     );
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
     expect(frameworkRuntime.supports).toHaveBeenCalledWith(
       "netteRedrawControlSnippetCompletions",
     );
@@ -225,7 +242,10 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "eloquentModelSemantics",
+    );
     expect(frameworkRuntime.supports).toHaveBeenCalledWith(
       "netteRedrawControlSnippetCompletions",
     );
@@ -260,7 +280,6 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
     expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
   });
 });

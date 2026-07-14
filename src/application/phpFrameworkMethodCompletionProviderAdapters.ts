@@ -54,7 +54,7 @@ export function createPhpFrameworkMethodCompletionProviderAdapters({
 }: PhpFrameworkMethodCompletionProviderAdapterDependencies): PhpFrameworkMethodCompletionProviderAdapter {
   return composePhpFrameworkMethodCompletionProviderAdapters(
     [
-      frameworkRuntime.hasProvider("laravel")
+      frameworkRuntime.supports?.("eloquentModelSemantics") === true
         ? createPhpLaravelMethodCompletionProviderAdapter({
             collectPhpFrameworkRelationCompletionsForClass,
             collectPhpMethodsForClass,
