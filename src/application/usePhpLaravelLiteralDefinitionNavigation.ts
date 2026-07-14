@@ -3,6 +3,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { usePhpLaravelGateMiddlewareDefinitionNavigation } from "./usePhpLaravelGateMiddlewareDefinitionNavigation";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
@@ -149,6 +150,19 @@ export function usePhpLaravelLiteralDefinitionNavigation({
   setMessage,
   workspaceRoot,
 }: PhpLaravelLiteralDefinitionNavigationDependencies): PhpLaravelLiteralDefinitionNavigation {
+  const {
+    goToPhpLaravelGateAbilityDefinition,
+    goToPhpLaravelMiddlewareAliasDefinition,
+  } = usePhpLaravelGateMiddlewareDefinitionNavigation({
+    activeDocument,
+    collectAuthorizationAbilityTargets,
+    collectMiddlewareAliasTargets,
+    currentWorkspaceRootRef,
+    frameworkRuntime,
+    openNavigationTarget,
+    setMessage,
+    workspaceRoot,
+  });
   const supportsLaravelOnlyTargets = frameworkRuntime.hasProvider("laravel");
   const openResolvedTarget = useCallback(
     async <Target extends NamedNavigationTarget>({
@@ -191,48 +205,6 @@ export function usePhpLaravelLiteralDefinitionNavigation({
       supportsLaravelOnlyTargets,
       workspaceRoot,
     ],
-  );
-
-  const goToPhpLaravelGateAbilityDefinition = useCallback(
-    async (context: LaravelGateAbilityContext): Promise<boolean> =>
-      openResolvedTarget({
-        label: (target) => target.name,
-        missingMessage: `No Laravel authorization ability ${context.ability} found.`,
-        resolve: async () => {
-          if (!activeDocument) {
-            return null;
-          }
-
-          const abilities = await collectAuthorizationAbilityTargets(
-            activeDocument.content,
-            activeDocument.path,
-          );
-
-          return abilities.find((ability) => ability.name === context.ability) ?? null;
-        },
-      }),
-    [activeDocument, collectAuthorizationAbilityTargets, openResolvedTarget],
-  );
-
-  const goToPhpLaravelMiddlewareAliasDefinition = useCallback(
-    async (context: LaravelMiddlewareAliasContext): Promise<boolean> =>
-      openResolvedTarget({
-        label: (target) => target.name,
-        missingMessage: `No Laravel middleware alias ${context.alias} found.`,
-        resolve: async () => {
-          if (!activeDocument) {
-            return null;
-          }
-
-          const aliases = await collectMiddlewareAliasTargets(
-            activeDocument.content,
-            activeDocument.path,
-          );
-
-          return aliases.find((alias) => alias.name === context.alias) ?? null;
-        },
-      }),
-    [activeDocument, collectMiddlewareAliasTargets, openResolvedTarget],
   );
 
   const goToPhpLaravelAuthGuardDefinition = useCallback(

@@ -66,7 +66,7 @@ import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinition
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
 import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMemberDefinitionNavigation";
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
-import { usePhpLaravelLiteralDefinitionNavigation } from "./usePhpLaravelLiteralDefinitionNavigation";
+import { usePhpLaravelGateMiddlewareDefinitionNavigation } from "./usePhpLaravelGateMiddlewareDefinitionNavigation";
 import { usePhpContextualFrameworkLiteralDefinitionNavigation } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
 import { usePhpFrameworkLiteralNavigationDependencies } from "./usePhpFrameworkLiteralNavigationDependencies";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
@@ -7886,21 +7886,11 @@ export function useWorkbenchController(
   const {
     goToPhpLaravelGateAbilityDefinition,
     goToPhpLaravelMiddlewareAliasDefinition,
-  } = usePhpLaravelLiteralDefinitionNavigation({
+  } = usePhpLaravelGateMiddlewareDefinitionNavigation({
     activeDocument,
     collectAuthorizationAbilityTargets,
     collectMiddlewareAliasTargets,
     currentWorkspaceRootRef,
-    findAuthGuardTarget,
-    findBroadcastConnectionTarget,
-    findCacheStoreTarget,
-    findDatabaseConnectionTarget,
-    findLogChannelTarget,
-    findMailMailerTarget,
-    findPasswordBrokerTarget,
-    findQueueConnectionTarget,
-    findRedisConnectionTarget,
-    findStorageDiskTarget,
     frameworkRuntime: phpFrameworkRuntimeContext,
     openNavigationTarget,
     setMessage,
