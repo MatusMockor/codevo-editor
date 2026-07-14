@@ -130,6 +130,32 @@ describe("javaScriptTypeScriptLanguageServerConfiguration", () => {
     });
   });
 
+  it("enables auto-import completions by default", () => {
+    const configuration = javaScriptTypeScriptLanguageServerConfiguration(
+      defaultWorkspaceSettings(),
+      {},
+      null,
+    );
+
+    expect(configuration).toEqual(
+      expect.objectContaining({
+        preferences: expect.objectContaining({
+          includeCompletionsForImportStatements: true,
+          includeCompletionsForModuleExports: true,
+          includePackageJsonAutoImports: "auto",
+        }),
+        suggest: expect.objectContaining({
+          autoImports: true,
+          includeCompletionsForImportStatements: true,
+          includeCompletionsForModuleExports: true,
+        }),
+        updateImportsOnFileMove: {
+          enabled: "always",
+        },
+      }),
+    );
+  });
+
   it("maps JavaScript and TypeScript settings into the configuration payload", () => {
     const configuration = javaScriptTypeScriptLanguageServerConfiguration(
       {
