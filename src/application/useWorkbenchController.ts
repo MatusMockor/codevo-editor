@@ -117,6 +117,7 @@ import {
   useRecentNavigation,
 } from "./useNavigationHistory";
 import { useTerminalTestRunner } from "./useTerminalTestRunner";
+import { useWorkbenchFrameworkIntelligenceDependencies } from "./useWorkbenchFrameworkIntelligenceDependencies";
 import { useWorkbenchFrameworkIntelligence } from "./useWorkbenchFrameworkIntelligence";
 import { useWorkbenchFrameworkProviderAdapter } from "./useWorkbenchFrameworkProviderAdapter";
 import {
@@ -335,7 +336,6 @@ import {
 import type {
   ProjectSymbolSearchGateway,
 } from "../domain/projectSymbols";
-import { isTypeProjectSymbol } from "../domain/projectSymbols";
 import { createDoubleShiftDetector } from "../domain/doubleShiftDetector";
 import { pushGitCommitMessageHistory } from "../domain/gitCommitMessageHistory";
 import {
@@ -7145,10 +7145,11 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
-  const workbenchFrameworkIntelligence = useWorkbenchFrameworkIntelligence({
-    activePhpFrameworkProviders,
-    blade: {
+  const workbenchFrameworkIntelligenceDependencies =
+    useWorkbenchFrameworkIntelligenceDependencies({
       activeDocument,
+      activeDocumentRef,
+      activePhpFrameworkProviders,
       collectConfigTargets,
       collectNamedRouteTargets,
       collectTranslationTargets,
@@ -7159,89 +7160,33 @@ export function useWorkbenchController(
       findConfigTarget,
       findTranslationTarget,
       findViewTarget,
-      frameworkRuntime: phpFrameworkRuntimeContext,
+      intelligenceMode,
+      joinWorkspacePath,
       openDirectPhpMethodTarget,
       openDirectPhpPropertyTarget,
       openNavigationTarget,
-      openPhpFrameworkModelAttributeTarget: openPhpLaravelModelAttributeTarget,
+      openPhpClassTarget,
+      openPhpLaravelModelAttributeTarget,
+      phpFrameworkIntelligence,
+      phpFrameworkRuntimeContext,
+      projectSymbolSearch,
       readNavigationFileContent,
       relativeWorkspacePath,
       resolvePhpClassPropertyOrRelationType,
+      resolvePhpClassSourcePaths,
       resolvePhpDeclaredType,
       resolvePhpExpressionType,
       resolvePhpReceiverMethodCompletions,
+      setImplementationChooser,
+      synthesizePhpTypedReceiverSource,
       textSearch,
       workspaceFiles,
       workspaceRoot,
-    },
+    });
 
-    latte: {
-      collectTranslationTargets,
-      currentWorkspaceRootRef,
-      findTranslationTarget,
-      frameworkIntelligence: phpFrameworkIntelligence,
-      getActiveDocument: () => activeDocumentRef.current,
-      isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
-      joinPath: joinWorkspacePath,
-      listDirectory: (path) => workspaceFiles.readDirectory(path),
-      openPhpMethodTarget: openDirectPhpMethodTarget,
-      openPhpPropertyTarget: openDirectPhpPropertyTarget,
-      openTarget: openNavigationTarget,
-      readFileContent: readNavigationFileContent,
-      readPhpClassSource: async (className) => {
-        for (const path of await resolvePhpClassSourcePaths(className)) {
-          try {
-            return {
-              path,
-              source: await readNavigationFileContent(path),
-            };
-          } catch {
-            continue;
-          }
-        }
-
-        return null;
-      },
-      resolveDeclaredType: resolvePhpDeclaredType,
-      resolveExpressionType: resolvePhpExpressionType,
-      resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
-      searchText: (root, query, maxResults) =>
-        textSearch.searchText(root, query, maxResults),
-      synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
-      toRelativePath: relativeWorkspacePath,
-      workspaceRoot,
-    },
-
-    neon: {
-      currentWorkspaceRootRef,
-      frameworkIntelligence: phpFrameworkIntelligence,
-      getActiveDocument: () => activeDocumentRef.current,
-      isSemanticIntelligenceActive: shouldStartLanguageServer(intelligenceMode),
-      joinPath: joinWorkspacePath,
-      listDirectory: (path) => workspaceFiles.readDirectory(path),
-      openClassTarget: (className) =>
-        openPhpClassTarget(className, className.split("\\").pop() ?? className),
-      openDirectPhpMethodTarget,
-      openTarget: openNavigationTarget,
-      readFileContent: readNavigationFileContent,
-      resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
-      searchClassNames: async (root, prefix, maxResults) => {
-        const symbols = await projectSymbolSearch.searchProjectSymbols(
-          root,
-          prefix,
-          maxResults,
-        );
-
-        return symbols
-          .filter(isTypeProjectSymbol)
-          .map((symbol) => symbol.fullyQualifiedName);
-      },
-      setImplementationChooser,
-      synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
-      toRelativePath: relativeWorkspacePath,
-      workspaceRoot,
-    },
-  });
+  const workbenchFrameworkIntelligence = useWorkbenchFrameworkIntelligence(
+    workbenchFrameworkIntelligenceDependencies,
+  );
   const {
     provideBladeDefinition,
     invalidateBladeComponentNamesForPath,
