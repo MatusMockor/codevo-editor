@@ -9,6 +9,9 @@ import {
   phpLaravelFrameworkProvider,
 } from "./phpFrameworkLaravelProvider";
 import {
+  defaultPhpFrameworkProviders,
+} from "./phpFrameworkProviderDefaults";
+import {
   isNettePhpProject,
   NETTE_MAGIC_DIAGNOSTIC_SOURCE,
   phpNetteFrameworkProvider,
@@ -16,6 +19,7 @@ import {
 import type { PhpProjectDescriptor } from "./workspace";
 
 export {
+  defaultPhpFrameworkProviders,
   isLaravelPhpProject,
   isNettePhpProject,
   NETTE_MAGIC_DIAGNOSTIC_SOURCE,
@@ -924,8 +928,6 @@ export interface PhpFrameworkProvider {
     ) => boolean;
   };
 }
-
-export const defaultPhpFrameworkProviders: readonly PhpFrameworkProvider[] = [];
 
 /**
  * Plugin registry of every known framework provider. Adding a framework means

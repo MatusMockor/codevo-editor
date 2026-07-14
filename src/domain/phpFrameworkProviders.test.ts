@@ -2041,6 +2041,21 @@ Route::model('user', AdminUser::class);
       expect(phpFrameworkRouteSearchQueries([])).toEqual([]);
     });
 
+    it("keeps omitted target-capability providers inert by default", () => {
+      expect(
+        phpFrameworkRouteReferenceAt(referenceSource, referencePosition),
+      ).toBeNull();
+      expect(phpFrameworkRouteDefinitionsFromSource(definitionSource)).toEqual(
+        [],
+      );
+      expect(phpFrameworkRouteSearchQueries()).toEqual([]);
+      expect(phpFrameworkSupportsRoutes()).toBe(false);
+      expect(phpFrameworkTargetSearchQueries("routes")).toEqual([]);
+      expect(phpFrameworkSupportsTargetCollection("routes")).toBe(false);
+      expect(phpFrameworkViewDataSearchQueries()).toEqual([]);
+      expect(phpFrameworkSupportsViewData()).toBe(false);
+    });
+
     it("supports generic target collection descriptors and legacy query fields", () => {
       const descriptorProvider: PhpFrameworkProvider = {
         id: "descriptor",
