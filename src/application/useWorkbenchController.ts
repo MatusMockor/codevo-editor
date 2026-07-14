@@ -121,7 +121,7 @@ import { usePhpClassHierarchyPredicates } from "./usePhpClassHierarchyPredicates
 import { usePhpClassMemberCollectors } from "./usePhpClassMemberCollectors";
 import { usePhpLaravelScopePredicates } from "./usePhpLaravelScopePredicates";
 import { usePhpSignatureHelpProvider } from "./usePhpSignatureHelpProvider";
-import { usePhpLaravelMorphMapResolver } from "./usePhpLaravelMorphMapResolver";
+import { usePhpFrameworkMorphMapResolver } from "./usePhpFrameworkMorphMapResolver";
 import { usePhpFrameworkModelSemantics } from "./usePhpFrameworkModelSemantics";
 import { usePhpSemanticResolver } from "./usePhpSemanticResolver";
 import {
@@ -951,7 +951,9 @@ export function useWorkbenchController(
   const resetPhpClassMemberCacheRef = useRef<() => void>(() => {});
   const resetPhpFrameworkCachesRef = useRef<() => void>(() => {});
   const invalidatePhpFrameworkBindingCacheRef = useRef<() => void>(() => {});
-  const resetPhpLaravelMorphMapModelTypeCacheRef = useRef<() => void>(() => {});
+  const resetPhpFrameworkMorphMapModelTypeCacheRef = useRef<() => void>(
+    () => {},
+  );
   const {
     activeFrameworkActivityLabel,
     activePhpFrameworkProviders,
@@ -5955,7 +5957,7 @@ export function useWorkbenchController(
         ) {
           invalidatePhpFrameworkBindingCacheRef.current();
         }
-        resetPhpLaravelMorphMapModelTypeCacheRef.current();
+        resetPhpFrameworkMorphMapModelTypeCacheRef.current();
         updateLocalPhpDiagnostics(
           activeDocument.path,
           localPhpDiagnosticsFromSource(content, []),
@@ -7159,9 +7161,9 @@ export function useWorkbenchController(
   );
 
   const {
-    resetPhpLaravelMorphMapModelTypeCache,
-    resolvePhpLaravelProjectMorphMapModelType,
-  } = usePhpLaravelMorphMapResolver({
+    resetPhpFrameworkMorphMapModelTypeCache,
+    resolvePhpFrameworkProjectMorphMapModelType,
+  } = usePhpFrameworkMorphMapResolver({
     currentWorkspaceRootRef,
     frameworkRuntime: phpFrameworkRuntimeContext,
     readNavigationFileContent,
@@ -7169,8 +7171,8 @@ export function useWorkbenchController(
     workspaceDescriptor,
     workspaceRoot,
   });
-  resetPhpLaravelMorphMapModelTypeCacheRef.current =
-    resetPhpLaravelMorphMapModelTypeCache;
+  resetPhpFrameworkMorphMapModelTypeCacheRef.current =
+    resetPhpFrameworkMorphMapModelTypeCache;
 
   const reclassifyPhpLanguageServerDiagnosticsForRoot = useCallback(
     (rootPath: string): void => {
@@ -7414,8 +7416,7 @@ export function useWorkbenchController(
     resolvePhpClassSourcePaths,
     resolvePhpDeclaredType,
     resolvePhpFrameworkBoundConcrete,
-    resolvePhpFrameworkProjectMorphMapModelType:
-      resolvePhpLaravelProjectMorphMapModelType,
+    resolvePhpFrameworkProjectMorphMapModelType,
     resolvePhpFrameworkReturnTypeReference,
     resolvePhpGenericTemplateTypesForInheritedClass,
     resolvePhpGenericTemplateTypesForMixinClass,
@@ -7884,7 +7885,7 @@ export function useWorkbenchController(
     phpClassSourcePathCacheRef.current = {};
     resetPhpClassMemberCacheRef.current();
     invalidatePhpFrameworkBindingCache();
-    resetPhpLaravelMorphMapModelTypeCache();
+    resetPhpFrameworkMorphMapModelTypeCache();
     invalidateFrameworkTargetCache();
     resetPhpFrameworkSourceRegistries();
     resetBladeIntelligenceCaches();
