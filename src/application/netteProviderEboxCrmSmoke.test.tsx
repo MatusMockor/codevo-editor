@@ -60,6 +60,44 @@ async function readFileContent(filePath: string): Promise<string> {
   return readFile(filePath, "utf8");
 }
 
+async function findLatteFileContaining(
+  relativeDirectory: string,
+  needle: string,
+): Promise<{ relativePath: string; source: string }> {
+  const directory = joinPath(EBOX_CRM_ROOT, relativeDirectory);
+  const entries = await readdir(directory, { withFileTypes: true });
+
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    const relativePath = [relativeDirectory, entry.name]
+      .filter(Boolean)
+      .join("/");
+
+    if (entry.isDirectory()) {
+      const match = await findLatteFileContaining(relativePath, needle);
+
+      if (match.source) {
+        return match;
+      }
+
+      continue;
+    }
+
+    if (!entry.name.endsWith(".latte")) {
+      continue;
+    }
+
+    const source = await readFileContent(joinPath(EBOX_CRM_ROOT, relativePath));
+
+    if (source.includes(needle)) {
+      return { relativePath, source };
+    }
+  }
+
+  return { relativePath: "", source: "" };
+}
+
 async function readPhpClassSource(
   className: string,
 ): Promise<{ path: string; source: string } | null> {
@@ -380,6 +418,25 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
       path: joinPath(EBOX_CRM_ROOT, templatePath),
       position: positionAtOffset(template, template.indexOf("mailLogslisting")),
     });
+  });
+
+  it("resolves the real ebox webalize Latte filter to the Nette Strings method", async () => {
+    const { relativePath: templatePath, source } = await findLatteFileContaining(
+      "app",
+      "|webalize",
+    );
+    expect(templatePath).not.toBe("");
+
+    const deps = makeLatteDeps(templatePath);
+    const latte = createLatteIntelligence(() => deps);
+
+    await expect(
+      latte.provideLatteDefinition(source, offsetInside(source, "webalize")),
+    ).resolves.toBe(true);
+    expect(deps.openPhpMethodTarget).toHaveBeenLastCalledWith(
+      "Nette\\Utils\\Strings",
+      "webalize",
+    );
   });
 
   it("covers delegated Nette form factory fields used by real ebox n:name attributes", async () => {

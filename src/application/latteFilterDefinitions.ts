@@ -4,6 +4,7 @@ import {
   type LatteFilterReference,
 } from "./latteExpressionDetection";
 import type { LatteFilterRegistrationTarget } from "./latteFilterDiscovery";
+import { latteCoreFilterMethodTarget } from "./latteCoreFilterTargets";
 import { neonServiceTypeInSource } from "./netteNeonConfigFacts";
 import {
   resolveNeonServiceTypeFromMaps,
@@ -53,7 +54,7 @@ export async function resolveLatteFilterDefinition(
   );
 
   if (!target) {
-    return false;
+    return openLatteCoreFilterMethodTarget(context, reference.name);
   }
 
   let targetSource: string;
@@ -96,6 +97,19 @@ export async function resolveLatteFilterDefinition(
     editorPositionAtOffset(targetSource, targetOffset),
     target.name,
   );
+}
+
+async function openLatteCoreFilterMethodTarget(
+  context: LatteFilterDefinitionContext,
+  filterName: string,
+): Promise<boolean> {
+  const target = latteCoreFilterMethodTarget(filterName);
+
+  if (!target) {
+    return false;
+  }
+
+  return context.deps.openPhpMethodTarget(target.className, target.methodName);
 }
 
 async function openLatteCallableMethodTarget(

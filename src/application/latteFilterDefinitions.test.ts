@@ -400,6 +400,60 @@ describe("resolveLatteFilterDefinition", () => {
     expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 
+  it("opens a known core Latte filter method when no project registration matches", async () => {
+    const context = makeContext();
+    context.loadFilterRegistrations = vi.fn(async () => []);
+    const source = "{$title|webalize}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "web"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "Nette\\Utils\\Strings",
+      "webalize",
+    );
+    expect(context.deps.readFileContent).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("keeps a project filter registration ahead of a same-name core filter", async () => {
+    const context = makeContext({
+      configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
+    });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        methodName: "format",
+        name: "webalize",
+        offset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/Latte/AppLatteExtension.php",
+        serviceClassName: "App\\Filters\\UserDateFilter",
+      },
+    ]);
+    const source = "{$title|webalize}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "web"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalledWith(
+      "Nette\\Utils\\Strings",
+      "webalize",
+    );
+  });
+
   it("falls back to a PHP extension filter key when the external callable method cannot be opened", async () => {
     const context = makeContext({
       configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
