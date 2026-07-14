@@ -332,7 +332,7 @@ describe("createLatteIntelligence definition", () => {
     expect(openTarget).not.toHaveBeenCalled();
   });
 
-  it("navigates a NEON filter callable to a service defined in another config file", async () => {
+  it("navigates a NEON filter to its registration even when its service is defined elsewhere", async () => {
     const { listDirectory, readFileContent } = buildContentWorkspace({
       "app/config/filters.neon": [
         "services:",
@@ -363,11 +363,12 @@ describe("createLatteIntelligence definition", () => {
       latte.provideLatteDefinition(source, source.indexOf("UserDate")),
     ).resolves.toBe(true);
 
-    expect(openPhpMethodTarget).toHaveBeenCalledWith(
-      "App\\Filters\\UserDateFilter",
-      "format",
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/config/filters.neon`,
+      expect.any(Object),
+      "UserDate",
     );
-    expect(openTarget).not.toHaveBeenCalled();
+    expect(openPhpMethodTarget).not.toHaveBeenCalled();
   });
 
   it("does not scan the active template directory as NEON project config for filters", async () => {
@@ -394,10 +395,12 @@ describe("createLatteIntelligence definition", () => {
       ].join("\n"),
     });
     const openPhpMethodTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
       getActiveDocument: () => ({ path: `${ROOT}/app/UI/Home/default.latte` }),
       listDirectory,
       openPhpMethodTarget,
+      openTarget,
       readFileContent,
     });
     const latte = createLatteIntelligence(() => deps);
@@ -407,13 +410,15 @@ describe("createLatteIntelligence definition", () => {
       latte.provideLatteDefinition(source, source.indexOf("UserDate")),
     ).resolves.toBe(true);
 
-    expect(openPhpMethodTarget).toHaveBeenCalledWith(
-      "App\\Filters\\UserDateFilter",
-      "format",
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/config/filters.neon`,
+      expect.any(Object),
+      "UserDate",
     );
+    expect(openPhpMethodTarget).not.toHaveBeenCalled();
   });
 
-  it("invalidates Latte-owned NEON project config cache after a config change", async () => {
+  it("keeps filter registration navigation stable after project config cache invalidation", async () => {
     let serviceClassName = "App\\Filters\\OldUserDateFilter";
     const workspace = buildContentWorkspace({
       "app/config/filters.neon": [
@@ -438,9 +443,11 @@ describe("createLatteIntelligence definition", () => {
       return workspace.readFileContent(path);
     });
     const openPhpMethodTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
     const deps = makeDeps({
       listDirectory: workspace.listDirectory,
       openPhpMethodTarget,
+      openTarget,
       readFileContent,
     });
     const latte = createLatteIntelligence(() => deps);
@@ -455,16 +462,19 @@ describe("createLatteIntelligence definition", () => {
       latte.provideLatteDefinition(source, source.indexOf("UserDate")),
     ).resolves.toBe(true);
 
-    expect(openPhpMethodTarget).toHaveBeenNthCalledWith(
+    expect(openTarget).toHaveBeenNthCalledWith(
       1,
-      "App\\Filters\\OldUserDateFilter",
-      "format",
+      `${ROOT}/app/config/filters.neon`,
+      expect.any(Object),
+      "UserDate",
     );
-    expect(openPhpMethodTarget).toHaveBeenNthCalledWith(
+    expect(openTarget).toHaveBeenNthCalledWith(
       2,
-      "App\\Filters\\NewUserDateFilter",
-      "format",
+      `${ROOT}/app/config/filters.neon`,
+      expect.any(Object),
+      "UserDate",
     );
+    expect(openPhpMethodTarget).not.toHaveBeenCalled();
   });
 
   it("navigates a bare {layout} to the auto-looked-up @layout.latte", async () => {

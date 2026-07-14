@@ -942,9 +942,10 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         offsetInside(subscriptionSource, "formatContentGroups"),
       ),
     ).resolves.toBe(true);
-    expect(subscriptionDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
-      "Crm\\IntegrationModule\\Helper\\ContentGroupHelper",
-      "getFormattedContentGroupData",
+    expect(subscriptionDeps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, "app/modules/integrationModule/config/config.neon"),
+      { column: 25, lineNumber: 31 },
+      "formatContentGroups",
     );
 
     const apiTokensTemplatePath =
@@ -960,9 +961,10 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         offsetInside(apiTokensSource, "userDate"),
       ),
     ).resolves.toBe(true);
-    expect(apiTokensDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
-      "Crm\\ApplicationModule\\Helpers\\UserDateHelper",
-      "process",
+    expect(apiTokensDeps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, "app/modules/applicationModule/config/config.neon"),
+      { column: 25, lineNumber: 35 },
+      "userDate",
     );
   });
 

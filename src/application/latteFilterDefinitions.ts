@@ -73,13 +73,18 @@ export async function resolveLatteFilterDefinition(
     return false;
   }
 
-  const methodTargetOpened = await openLatteCallableMethodTarget(
-    context,
-    target,
-    targetSource,
+  const targetOffset =
+    target.serviceClassName || target.callable?.serviceClassName
+      ? target.offset
+      : (target.callableOffset ?? target.offset);
+
+  const registrationTargetOpened = await context.deps.openTarget(
+    target.path,
+    editorPositionAtOffset(targetSource, targetOffset),
+    target.name,
   );
 
-  if (methodTargetOpened) {
+  if (registrationTargetOpened) {
     return true;
   }
 
@@ -87,16 +92,7 @@ export async function resolveLatteFilterDefinition(
     return false;
   }
 
-  const targetOffset =
-    target.serviceClassName || target.callable?.serviceClassName
-      ? target.offset
-      : (target.callableOffset ?? target.offset);
-
-  return context.deps.openTarget(
-    target.path,
-    editorPositionAtOffset(targetSource, targetOffset),
-    target.name,
-  );
+  return openLatteCallableMethodTarget(context, target, targetSource);
 }
 
 async function openLatteCoreFilterMethodTarget(
