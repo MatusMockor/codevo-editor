@@ -133,7 +133,6 @@ import { usePhpFrameworkResolution } from "./usePhpFrameworkResolution";
 import { usePhpFrameworkActiveDocumentDiagnostics } from "./usePhpFrameworkActiveDocumentDiagnostics";
 import { usePhpOutline } from "./usePhpOutline";
 import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptFileStructure";
-import type { PhpCodeActionNewFile } from "./usePhpCodeActions";
 import {
   synthesizePhpTypedReceiverSource,
 } from "./phpTypedReceiverSource";
@@ -159,10 +158,7 @@ export type {
   PhpCodeActionRange,
 } from "./usePhpCodeActions";
 import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
-import {
-  shouldApplyClassEditAfterWrite,
-  writeExtractedInterfaceFile,
-} from "./phpExtractInterfaceWrite";
+import { usePhpCodeActionNewFileApplication } from "./usePhpCodeActionNewFileApplication";
 import {
   capDiagnosticNotices,
   capWorkbenchNotices,
@@ -5370,118 +5366,17 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  // Persists a synthesized PHP code action's NEW file (currently "Extract
-  // interface", which writes a sibling `<Class>Interface.php`) to DISK and opens
-  // it in a tab. Extract Interface is atomic from the user's perspective: this
-  // resolves `true` ONLY when the interface file was freshly written, and the
-  // Monaco command applies the paired in-document `implements` edit only then -
-  // so a pre-existing target or a failed write leaves the class untouched (no
-  // class implementing an interface that was never created). The interface is
-  // always a sibling of the already-open class, so its directory exists and no
-  // `createDirectory` is attempted (a non-idempotent create on the existing
-  // sibling directory was the `File exists (os error 17)` that previously failed
-  // the write yet still applied the class edit). Conservative: an already-present
-  // sibling is NEVER overwritten - the class is left unchanged and a recoverable
-  // message is shown. Per the per-workspace isolation rule the requested root is
-  // captured up front and re-checked before each post-write UI mutation so a tab
-  // switch mid-write drops the (now stale) refresh while still completing the
-  // file + class edit.
-  const applyPhpCodeActionNewFile = useCallback(
-    async (newFile: PhpCodeActionNewFile): Promise<boolean> => {
-      const requestedRoot = workspaceRoot;
-      const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-
-      if (!requestedRoot) {
-        return false;
-      }
-
-      const targetPath = newFile.path;
-      const operationTitle = newFile.title ?? "Extract Interface";
-      const result = await writeExtractedInterfaceFile(
-        targetPath,
-        newFile.content,
-        {
-          fileExists: async (path) =>
-            (await readTestFileIfExists(path)) !== null,
-          writeFile: async (path, content) => {
-            await createWorkspaceTextFileWithContent(
-              workspaceFiles,
-              path,
-              content,
-            );
-          },
-        },
-      );
-
-      if (result.status === "target-exists") {
-        reportErrorForActiveWorkspaceRoot(
-          requestedRoot,
-          operationTitle,
-          new Error(
-            newFile.title
-              ? `${getFileName(targetPath)} already exists - no changes were applied.`
-              : `${getFileName(targetPath)} already exists - the class was left unchanged.`,
-          ),
-        );
-
-        if (isRequestedRootActive()) {
-          await openFile({
-            kind: "file",
-            name: getFileName(targetPath),
-            path: targetPath,
-          });
-        }
-
-        return false;
-      }
-
-      if (result.status === "write-failed") {
-        reportErrorForActiveWorkspaceRoot(
-          requestedRoot,
-          operationTitle,
-          result.error,
-        );
-
-        return false;
-      }
-
-      const parentPath = getParentPath(targetPath);
-
-      if (isRequestedRootActive()) {
-        await notifyJavaScriptTypeScriptWatchedFilesChanged([
-          {
-            changeType: "created",
-            path: targetPath,
-          },
-        ]);
-      }
-
-      if (isRequestedRootActive()) {
-        setExpandedDirectories((current) => new Set(current).add(parentPath));
-        await refreshDirectory(parentPath);
-      }
-
-      if (isRequestedRootActive()) {
-        await openFile({
-          kind: "file",
-          name: getFileName(targetPath),
-          path: targetPath,
-        });
-      }
-
-      return shouldApplyClassEditAfterWrite(result);
-    },
-    [
-      notifyJavaScriptTypeScriptWatchedFilesChanged,
-      openFile,
-      readTestFileIfExists,
-      refreshDirectory,
-      reportErrorForActiveWorkspaceRoot,
-      workspaceFiles,
-      workspaceRoot,
-    ],
-  );
+  const applyPhpCodeActionNewFile = usePhpCodeActionNewFileApplication({
+    workspaceRoot,
+    currentWorkspaceRootRef,
+    workspaceFiles,
+    setExpandedDirectories,
+    notifyJavaScriptTypeScriptWatchedFilesChanged,
+    openFile,
+    readTestFileIfExists,
+    refreshDirectory,
+    reportErrorForActiveWorkspaceRoot,
+  });
 
   // PhpStorm-style "Go to Test / Test Subject": from the active PHP file, decide
   // (via PSR-4) whether it is a TEST or a production SUBJECT and jump to its
