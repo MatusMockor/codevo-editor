@@ -10,6 +10,7 @@ import {
   detectNetteCreateComponentAt,
   latteActiveFormComponentAt,
   netteAddComponentRegistrations,
+  netteComponentAncestorReferences,
   netteComponentClassFromCreateMethod,
   netteDelegatedFormFactoryInCreateComponent,
   netteCreateComponentFactoryContextAt,
@@ -1463,6 +1464,120 @@ describe("netteCreateComponentFactoryContexts", () => {
       factoryCreatedControlClass: null,
       methodName: "createComponentPaginator",
       returnType: "PaginatorControl",
+    });
+  });
+});
+
+describe("netteComponentAncestorReferences", () => {
+  it("extracts the parent class from the extends clause", () => {
+    const source = [
+      "<?php",
+      "namespace App\\UI\\Home;",
+      "",
+      "use App\\UI\\BasePresenter;",
+      "",
+      "final class HomePresenter extends BasePresenter implements Renderable",
+      "{",
+      "}",
+    ].join("\n");
+
+    expect(netteComponentAncestorReferences(source)).toEqual({
+      parentClassName: "BasePresenter",
+      traitNames: [],
+    });
+  });
+
+  it("extracts a fully qualified parent class", () => {
+    const source =
+      "<?php\nclass HomePresenter extends \\App\\UI\\BasePresenter\n{\n}\n";
+
+    expect(netteComponentAncestorReferences(source).parentClassName).toBe(
+      "\\App\\UI\\BasePresenter",
+    );
+  });
+
+  it("returns no parent for a class without an extends clause", () => {
+    const source = "<?php\nclass HomePresenter implements Renderable\n{\n}\n";
+
+    expect(netteComponentAncestorReferences(source).parentClassName).toBeNull();
+  });
+
+  it("ignores class-like text in a docblock before the real declaration", () => {
+    const source = [
+      "<?php",
+      "namespace App\\UI\\Home;",
+      "",
+      "/**",
+      " * Usage example: class Example { render(); }",
+      " */",
+      "class HomePresenter extends BasePresenter",
+      "{",
+      "}",
+    ].join("\n");
+
+    expect(netteComponentAncestorReferences(source).parentClassName).toBe(
+      "BasePresenter",
+    );
+  });
+
+  it("ignores an extends clause mentioned in a comment before the class", () => {
+    const source = [
+      "<?php",
+      "// legacy: class HomePresenter extends OldBasePresenter",
+      "class HomePresenter",
+      "{",
+      "}",
+    ].join("\n");
+
+    expect(netteComponentAncestorReferences(source).parentClassName).toBeNull();
+  });
+
+  it("ignores an extends clause inside a string literal before the class", () => {
+    const source = [
+      "<?php",
+      "const SNIPPET = 'class HomePresenter extends OldBasePresenter {';",
+      "class HomePresenter",
+      "{",
+      "}",
+    ].join("\n");
+
+    expect(netteComponentAncestorReferences(source).parentClassName).toBeNull();
+  });
+
+  it("collects used trait names from the class body", () => {
+    const source = [
+      "<?php",
+      "class HomePresenter",
+      "{",
+      "    use GridTrait, FilterTrait;",
+      "",
+      "    public function renderDefault(): void",
+      "    {",
+      "    }",
+      "}",
+    ].join("\n");
+
+    expect(netteComponentAncestorReferences(source).traitNames).toEqual([
+      "GridTrait",
+      "FilterTrait",
+    ]);
+  });
+
+  it("returns nothing for a trait source without extends or use", () => {
+    const source = [
+      "<?php",
+      "trait GridTrait",
+      "{",
+      "    protected function createComponentTraitGrid(): GridControl",
+      "    {",
+      "        return new GridControl();",
+      "    }",
+      "}",
+    ].join("\n");
+
+    expect(netteComponentAncestorReferences(source)).toEqual({
+      parentClassName: null,
+      traitNames: [],
     });
   });
 });

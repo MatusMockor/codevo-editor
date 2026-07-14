@@ -127,6 +127,243 @@ class PaymentLogsAdminPresenter
     );
   });
 
+  it("offers createComponent names inherited from the parent presenter class", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\BasePresenter;
+
+class HomePresenter extends BasePresenter
+{
+    protected function createComponentLocalList(): LocalListControl
+    {
+        return new LocalListControl();
+    }
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI;
+
+class BasePresenter
+{
+    protected function createComponentInheritedGrid(): GridControl
+    {
+        return new GridControl();
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\UI\\BasePresenter"
+        ? { path: `${ROOT}/app/UI/BasePresenter.php`, source: basePresenter }
+        : null,
+    );
+
+    await expect(
+      latteControlCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+            resolveDeclaredType: (_source, typeHint) =>
+              typeHint === "BasePresenter" ? "App\\UI\\BasePresenter" : typeHint,
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        { prefix: "", replaceEnd: 9, replaceStart: 9 },
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({ label: "inheritedGrid" }),
+      expect.objectContaining({ label: "localList" }),
+    ]);
+
+    expect(readPhpClassSource).toHaveBeenCalledWith("App\\UI\\BasePresenter");
+  });
+
+  it("collects controls from used traits", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\Components\\GridTrait;
+
+class HomePresenter
+{
+    use GridTrait;
+}
+`;
+    const gridTrait = `<?php
+namespace App\\UI\\Components;
+
+trait GridTrait
+{
+    protected function createComponentTraitGrid(): GridControl
+    {
+        return new GridControl();
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\UI\\Components\\GridTrait"
+        ? { path: `${ROOT}/app/UI/Components/GridTrait.php`, source: gridTrait }
+        : null,
+    );
+
+    await expect(
+      latteControlCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+            resolveDeclaredType: (_source, typeHint) =>
+              typeHint === "GridTrait"
+                ? "App\\UI\\Components\\GridTrait"
+                : typeHint,
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        { prefix: "trait", replaceEnd: 14, replaceStart: 9 },
+      ),
+    ).resolves.toEqual([expect.objectContaining({ label: "traitGrid" })]);
+  });
+
+  it("does not hang on a cycle in the extends chain", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter extends LoopPresenter
+{
+    protected function createComponentLocalList(): LocalListControl
+    {
+        return new LocalListControl();
+    }
+}
+`;
+    const loopPresenter = `<?php
+namespace App\\UI\\Home;
+
+class LoopPresenter extends HomePresenter
+{
+    protected function createComponentLoopGrid(): GridControl
+    {
+        return new GridControl();
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) => {
+      if (className === "App\\UI\\Home\\LoopPresenter") {
+        return {
+          path: `${ROOT}/app/UI/Home/LoopPresenter.php`,
+          source: loopPresenter,
+        };
+      }
+
+      if (className === "App\\UI\\Home\\HomePresenter") {
+        return {
+          path: `${ROOT}/app/UI/Home/HomePresenter.php`,
+          source: presenter,
+        };
+      }
+
+      return null;
+    });
+
+    await expect(
+      latteControlCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+            resolveDeclaredType: (_source, typeHint) =>
+              typeHint ? `App\\UI\\Home\\${typeHint.replace(/^\\+/, "")}` : typeHint,
+          },
+          isRequestedRootActive: () => true,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        { prefix: "", replaceEnd: 9, replaceStart: 9 },
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({ label: "localList" }),
+      expect.objectContaining({ label: "loopGrid" }),
+    ]);
+
+    expect(readPhpClassSource.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it("drops inherited results when the requested root goes stale during the ancestor walk", async () => {
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter extends BasePresenter
+{
+    use GridTrait;
+
+    protected function createComponentLocalList(): LocalListControl
+    {
+        return new LocalListControl();
+    }
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI\\Home;
+
+class BasePresenter
+{
+    protected function createComponentInheritedGrid(): GridControl
+    {
+        return new GridControl();
+    }
+}
+`;
+    const cache: NetteControlCache = {};
+    let active = true;
+    const readPhpClassSource = vi.fn(async () => {
+      active = false;
+
+      return {
+        path: `${ROOT}/app/UI/Home/BasePresenter.php`,
+        source: basePresenter,
+      };
+    });
+
+    await expect(
+      latteControlCompletions(
+        {
+          componentCache: cache,
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource,
+          },
+          isRequestedRootActive: () => active,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/UI/Home/default.latte",
+          ttlMs: 5000,
+        },
+        { prefix: "", replaceEnd: 9, replaceStart: 9 },
+      ),
+    ).resolves.toEqual([]);
+
+    expect(readPhpClassSource).toHaveBeenCalledTimes(1);
+    expect(cache).toEqual({});
+  });
+
   it("detects the completion span inside a control macro", () => {
     const source = "{control pro}";
 
@@ -773,6 +1010,168 @@ class HomePresenter
       expect.objectContaining({ lineNumber: 4 }),
       "vp",
     );
+  });
+
+  it("navigates {control inheritedGrid} to createComponentInheritedGrid in the parent class file", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\BasePresenter;
+
+class HomePresenter extends BasePresenter
+{
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI;
+
+class BasePresenter
+{
+    protected function createComponentInheritedGrid(): GridControl
+    {
+        return new GridControl();
+    }
+}
+`;
+    const source = "{control inheritedGrid}";
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource: vi.fn(async (className: string) =>
+            className === "App\\UI\\BasePresenter"
+              ? { path: `${ROOT}/app/UI/BasePresenter.php`, source: basePresenter }
+              : null,
+          ),
+          resolveDeclaredType: (_source, typeHint) =>
+            typeHint === "BasePresenter" ? "App\\UI\\BasePresenter" : typeHint,
+        },
+        ROOT,
+        () => true,
+        netteControlReferenceAt(source, source.indexOf("inheritedGrid") + 2),
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/UI/BasePresenter.php`,
+      expect.objectContaining({ lineNumber: 6 }),
+      "inheritedGrid",
+    );
+  });
+
+  it("navigates {control traitGrid} to the addComponent registration in a used trait", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+use App\\UI\\Components\\GridTrait;
+
+class HomePresenter
+{
+    use GridTrait;
+}
+`;
+    const gridTrait = `<?php
+namespace App\\UI\\Components;
+
+trait GridTrait
+{
+    public function attachGrid(): void
+    {
+        $grid = new GridControl();
+        $this->addComponent($grid, 'traitGrid');
+    }
+}
+`;
+    const source = "{control traitGrid}";
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource: vi.fn(async (className: string) =>
+            className === "App\\UI\\Components\\GridTrait"
+              ? {
+                  path: `${ROOT}/app/UI/Components/GridTrait.php`,
+                  source: gridTrait,
+                }
+              : null,
+          ),
+          resolveDeclaredType: (_source, typeHint) =>
+            typeHint === "GridTrait"
+              ? "App\\UI\\Components\\GridTrait"
+              : typeHint,
+        },
+        ROOT,
+        () => true,
+        netteControlReferenceAt(source, source.indexOf("traitGrid") + 2),
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/UI/Components/GridTrait.php`,
+      expect.objectContaining({ lineNumber: 9 }),
+      "traitGrid",
+    );
+  });
+
+  it("does not navigate to ancestors when the requested root goes stale during the walk", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+namespace App\\UI\\Home;
+
+class HomePresenter extends BasePresenter
+{
+    use GridTrait;
+}
+`;
+    const basePresenter = `<?php
+namespace App\\UI\\Home;
+
+class BasePresenter
+{
+    protected function createComponentInheritedGrid(): GridControl
+    {
+        return new GridControl();
+    }
+}
+`;
+    let active = true;
+    const source = "{control inheritedGrid}";
+    const readPhpClassSource = vi.fn(async () => {
+      active = false;
+
+      return {
+        path: `${ROOT}/app/UI/Home/BasePresenter.php`,
+        source: basePresenter,
+      };
+    });
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource,
+        },
+        ROOT,
+        () => active,
+        netteControlReferenceAt(source, source.indexOf("inheritedGrid") + 2),
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(false);
+
+    expect(readPhpClassSource).toHaveBeenCalledTimes(1);
+    expect(openTarget).not.toHaveBeenCalled();
   });
 
   it("opens delegated factory field definitions from label n:name", async () => {

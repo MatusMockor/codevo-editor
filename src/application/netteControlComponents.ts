@@ -26,6 +26,7 @@ import {
 import {
   componentOwnerCandidatePathsForTemplate,
 } from "./netteTemplateOwnerCandidates";
+import { netteAncestorComponentSources } from "./netteComponentAncestry";
 import { loadNettePresenterComponentNames } from "./netteControlComponentNames";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 import type { EditorPosition } from "../domain/languageServerFeatures";
@@ -204,13 +205,88 @@ export async function resolveNetteControlDefinition(
       (candidate) => candidate.name === componentName,
     );
 
+    if (registration) {
+      return deps.openTarget(
+        path,
+        editorPositionAtOffset(content, registration.nameStart),
+        componentName,
+      );
+    }
+
+    const inheritedHandled = await resolveInheritedNetteControlDefinition(
+      deps,
+      isRequestedRootActive,
+      content,
+      componentName,
+      methodName,
+      part,
+    );
+
+    if (inheritedHandled) {
+      return true;
+    }
+
+    if (!isRequestedRootActive()) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+async function resolveInheritedNetteControlDefinition(
+  deps: NetteControlDependencies,
+  isRequestedRootActive: () => boolean,
+  ownerSource: string,
+  componentName: string,
+  methodName: string,
+  part: string | undefined,
+): Promise<boolean> {
+  const ancestors = await netteAncestorComponentSources(
+    deps,
+    isRequestedRootActive,
+    ownerSource,
+  );
+
+  if (!isRequestedRootActive()) {
+    return false;
+  }
+
+  for (const ancestor of ancestors) {
+    const position = phpMethodPositionInSource(ancestor.source, [methodName]);
+
+    if (position) {
+      if (part) {
+        const partHandled = await resolveNetteControlRenderPartDefinition(
+          deps,
+          ancestor.source,
+          componentName,
+          part,
+        );
+
+        if (partHandled) {
+          return true;
+        }
+
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+      }
+
+      return deps.openTarget(ancestor.path, position, componentName);
+    }
+
+    const registration = netteAddComponentRegistrations(ancestor.source).find(
+      (candidate) => candidate.name === componentName,
+    );
+
     if (!registration) {
       continue;
     }
 
     return deps.openTarget(
-      path,
-      editorPositionAtOffset(content, registration.nameStart),
+      ancestor.path,
+      editorPositionAtOffset(ancestor.source, registration.nameStart),
       componentName,
     );
   }

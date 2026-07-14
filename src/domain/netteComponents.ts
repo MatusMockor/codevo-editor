@@ -35,6 +35,8 @@ import {
   innermostLatteExpressionSpanAt,
 } from "./latteSyntax";
 import type { LatteMaskedRegion } from "./latteSyntax";
+import { phpTraitClassNames } from "./phpMethodCompletions";
+import { maskPhpStringsAndComments } from "./phpReceiverExpressions";
 
 const CREATE_COMPONENT_PREFIX = "createComponent";
 
@@ -579,6 +581,37 @@ export function latteActiveFormComponentAt(
  */
 export function netteCreateComponentMethodName(controlName: string): string {
   return `${CREATE_COMPONENT_PREFIX}${ucfirst(controlName)}`;
+}
+
+export interface NetteComponentAncestorReferences {
+  parentClassName: string | null;
+  traitNames: string[];
+}
+
+export function netteComponentAncestorReferences(
+  phpSource: string,
+): NetteComponentAncestorReferences {
+  return {
+    parentClassName: phpExtendedParentClassName(phpSource),
+    traitNames: phpTraitClassNames(phpSource),
+  };
+}
+
+function phpExtendedParentClassName(source: string): string | null {
+  const masked = maskPhpStringsAndComments(source);
+  const declaration =
+    /\b(?:abstract\s+|final\s+|readonly\s+)*class\s+[A-Za-z_][A-Za-z0-9_]*[\s\S]*?\{/.exec(
+      masked,
+    );
+
+  if (!declaration) {
+    return null;
+  }
+
+  const header = declaration[0].slice(0, -1);
+  const extendsMatch = /\bextends\s+(\\?[A-Za-z_][\\A-Za-z0-9_]*)/.exec(header);
+
+  return extendsMatch?.[1] ?? null;
 }
 
 /**

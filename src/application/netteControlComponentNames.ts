@@ -2,6 +2,7 @@ import {
   netteAddComponentRegistrations,
   nettePresenterLifecycleInfo,
 } from "../domain/netteComponents";
+import { netteAncestorComponentSources } from "./netteComponentAncestry";
 import type { NetteControlCompletionContext } from "./netteControlContracts";
 import {
   componentOwnerCandidatePathsForTemplate,
@@ -78,26 +79,39 @@ async function scanNettePresenterComponentNames(
       return [];
     }
 
-    return netteComponentNamesFromPresenter(content);
+    const ancestorSources = await netteAncestorComponentSources(
+      deps,
+      isRequestedRootActive,
+      content,
+    );
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return netteComponentNamesFromSources([
+      content,
+      ...ancestorSources.map((ancestor) => ancestor.source),
+    ]);
   }
 
   return [];
 }
 
-function netteComponentNamesFromPresenter(source: string): string[] {
-  const names: string[] = [];
+function netteComponentNamesFromSources(sources: readonly string[]): string[] {
+  const names = new Set<string>();
 
-  for (const entry of nettePresenterLifecycleInfo(source).lifecycle) {
-    if (entry.kind === "createComponent" && entry.name) {
-      names.push(entry.name);
+  for (const source of sources) {
+    for (const entry of nettePresenterLifecycleInfo(source).lifecycle) {
+      if (entry.kind === "createComponent" && entry.name) {
+        names.add(entry.name);
+      }
+    }
+
+    for (const registration of netteAddComponentRegistrations(source)) {
+      names.add(registration.name);
     }
   }
 
-  for (const registration of netteAddComponentRegistrations(source)) {
-    names.push(registration.name);
-  }
-
-  return Array.from(new Set(names)).sort((left, right) =>
-    left.localeCompare(right),
-  );
+  return Array.from(names).sort((left, right) => left.localeCompare(right));
 }
