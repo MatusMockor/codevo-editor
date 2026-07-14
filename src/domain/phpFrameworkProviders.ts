@@ -191,6 +191,10 @@ export interface PhpFrameworkRouteCompletionInsertTextContext {
   prefix: string;
 }
 
+export interface PhpFrameworkRouteMissingTargetMessageContext {
+  name: string;
+}
+
 /** A named authorization ability declared in framework configuration/source. */
 export interface PhpFrameworkAuthorizationAbilityDefinition {
   name: string;
@@ -292,6 +296,10 @@ export interface PhpFrameworkConfigCompletionInsertTextContext {
   prefix: string;
 }
 
+export interface PhpFrameworkConfigMissingTargetMessageContext {
+  key: string;
+}
+
 /**
  * An environment-variable reference detected at the cursor (e.g. the
  * `env('APP_...')` argument). Framework-agnostic mirror of Laravel's env
@@ -326,6 +334,10 @@ export interface PhpFrameworkEnvTargetContext {
 export interface PhpFrameworkEnvCompletionInsertTextContext {
   name: string;
   prefix: string;
+}
+
+export interface PhpFrameworkEnvMissingTargetMessageContext {
+  name: string;
 }
 
 export interface PhpFrameworkHelperNameCompletion {
@@ -384,6 +396,10 @@ export interface PhpFrameworkTranslationCompletionInsertTextContext {
   relativePath: string;
 }
 
+export interface PhpFrameworkTranslationMissingTargetMessageContext {
+  key: string;
+}
+
 /**
  * A view reference detected at the cursor (e.g. the `view('x')` argument).
  * Framework-agnostic mirror of the Laravel view reference so the controller's
@@ -404,6 +420,10 @@ export interface PhpFrameworkViewReferenceContext {
 export interface PhpFrameworkViewCompletionInsertTextContext {
   name: string;
   prefix: string;
+}
+
+export interface PhpFrameworkViewMissingTargetMessageContext {
+  name: string;
 }
 
 export interface PhpFrameworkTemplateNameFromRelativePathContext {
@@ -685,6 +705,9 @@ export interface PhpFrameworkProvider {
     completionInsertText?: (
       context: PhpFrameworkRouteCompletionInsertTextContext,
     ) => string;
+    missingTargetMessage?: (
+      context: PhpFrameworkRouteMissingTargetMessageContext,
+    ) => string;
     definitionsFromSource?: (
       context: PhpFrameworkRouteDefinitionsContext,
     ) => PhpFrameworkRouteDefinition[];
@@ -751,6 +774,9 @@ export interface PhpFrameworkProvider {
     completionInsertText?: (
       context: PhpFrameworkConfigCompletionInsertTextContext,
     ) => string;
+    missingTargetMessage?: (
+      context: PhpFrameworkConfigMissingTargetMessageContext,
+    ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
     ) => PhpFrameworkResolvedLiteralTarget | null;
@@ -767,6 +793,9 @@ export interface PhpFrameworkProvider {
     ) => PhpFrameworkEnvReference | null;
     completionInsertText?: (
       context: PhpFrameworkEnvCompletionInsertTextContext,
+    ) => string;
+    missingTargetMessage?: (
+      context: PhpFrameworkEnvMissingTargetMessageContext,
     ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
@@ -794,6 +823,9 @@ export interface PhpFrameworkProvider {
     completionInsertText?: (
       context: PhpFrameworkTranslationCompletionInsertTextContext,
     ) => string;
+    missingTargetMessage?: (
+      context: PhpFrameworkTranslationMissingTargetMessageContext,
+    ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
     ) => PhpFrameworkResolvedLiteralTarget | null;
@@ -816,6 +848,9 @@ export interface PhpFrameworkProvider {
     ) => PhpFrameworkViewReference | null;
     completionInsertText?: (
       context: PhpFrameworkViewCompletionInsertTextContext,
+    ) => string;
+    missingTargetMessage?: (
+      context: PhpFrameworkViewMissingTargetMessageContext,
     ) => string;
     resolveLiteralTarget?: (
       context: PhpFrameworkLiteralTargetContext,
@@ -1189,6 +1224,21 @@ export function phpFrameworkMemberPropertyMagicDiagnostic(
   return null;
 }
 
+export function phpFrameworkRouteMissingTargetMessage(
+  name: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const message = provider.routes?.missingTargetMessage?.({ name });
+
+    if (message) {
+      return message;
+    }
+  }
+
+  return null;
+}
+
 /**
  * First config reference detected at the cursor across the active providers.
  * Exclusive resolution keeps this to at most one provider today, so the first
@@ -1273,6 +1323,21 @@ export function phpFrameworkConfigLiteralTarget(
   return null;
 }
 
+export function phpFrameworkConfigMissingTargetMessage(
+  key: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const message = provider.config?.missingTargetMessage?.({ key });
+
+    if (message) {
+      return message;
+    }
+  }
+
+  return null;
+}
+
 export function phpFrameworkEnvReferenceAt(
   source: string,
   position: EditorPosition,
@@ -1332,6 +1397,21 @@ export function phpFrameworkEnvLiteralTarget(
 
     if (target) {
       return target;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkEnvMissingTargetMessage(
+  name: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const message = provider.env?.missingTargetMessage?.({ name });
+
+    if (message) {
+      return message;
     }
   }
 
@@ -1441,6 +1521,21 @@ export function phpFrameworkTranslationLiteralTarget(
   return null;
 }
 
+export function phpFrameworkTranslationMissingTargetMessage(
+  key: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const message = provider.translations?.missingTargetMessage?.({ key });
+
+    if (message) {
+      return message;
+    }
+  }
+
+  return null;
+}
+
 /**
  * Translation keys declared in a single JSON lang source, aggregated across the
  * active providers. Providers without a translations capability contribute
@@ -1529,6 +1624,21 @@ export function phpFrameworkViewLiteralTarget(
 
     if (target) {
       return target;
+    }
+  }
+
+  return null;
+}
+
+export function phpFrameworkViewMissingTargetMessage(
+  name: string,
+  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+): string | null {
+  for (const provider of providers) {
+    const message = provider.templating?.missingTargetMessage?.({ name });
+
+    if (message) {
+      return message;
     }
   }
 

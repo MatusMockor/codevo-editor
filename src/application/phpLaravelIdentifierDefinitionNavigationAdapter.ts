@@ -41,7 +41,6 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
       case "laravelNamedRouteString":
         return dependencies.goToPhpFrameworkLiteralDefinition({
           kind: "route",
-          missingMessage: `No Laravel route named ${context.routeName} found.`,
           name: context.routeName,
         });
 
@@ -49,13 +48,11 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
         return dependencies.goToPhpFrameworkLiteralDefinition({
           key: context.translationKey,
           kind: "translation",
-          missingMessage: `No Laravel translation key ${context.translationKey} found.`,
         });
 
       case "laravelEnvString":
         return dependencies.goToPhpFrameworkLiteralDefinition({
           kind: "env",
-          missingMessage: `No Laravel env key ${context.envName} found.`,
           name: context.envName,
         });
 
@@ -63,7 +60,6 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
         return dependencies.goToPhpFrameworkLiteralDefinition({
           key: context.configKey,
           kind: "config",
-          missingMessage: `No Laravel config key ${context.configKey} found.`,
         });
 
       case "laravelAuthGuardString":
@@ -105,7 +101,6 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
       case "laravelViewString":
         return dependencies.goToPhpFrameworkLiteralDefinition({
           kind: "view",
-          missingMessage: `No Laravel view named ${context.viewName} found.`,
           name: context.viewName,
         });
 

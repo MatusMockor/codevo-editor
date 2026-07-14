@@ -111,7 +111,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         request: {
           key: "app.name",
           kind: "config",
-          missingMessage: "No Laravel config key app.name found.",
         },
         target: {
           key: "app.name",
@@ -126,7 +125,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         expectedValue: "APP_URL",
         request: {
           kind: "env",
-          missingMessage: "No Laravel env key APP_URL found.",
           name: "APP_URL",
         },
         target: {
@@ -143,8 +141,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         request: {
           key: "messages.welcome",
           kind: "translation",
-          missingMessage:
-            "No Laravel translation key messages.welcome found.",
         },
         target: {
           key: "messages.welcome",
@@ -159,7 +155,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         expectedValue: "dashboard.index",
         request: {
           kind: "view",
-          missingMessage: "No Laravel view named dashboard.index found.",
           name: "dashboard.index",
         },
         target: {
@@ -251,7 +246,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
 
     const handled = await harness.api().goToPhpFrameworkLiteralDefinition({
       kind: "route",
-      missingMessage: "No Laravel route named Dashboard found.",
       name: "Dashboard",
     });
 
@@ -388,7 +382,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     const handled = await harness.api().goToPhpFrameworkLiteralDefinition({
       key: "app.name",
       kind: "config",
-      missingMessage: "No Laravel config key app.name found.",
     });
 
     expect(handled).toBe(false);
@@ -424,7 +417,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       harness.api().goToPhpFrameworkLiteralDefinition({
         key: "app.name",
         kind: "config",
-        missingMessage: "No Laravel config key app.name found.",
       }),
     ).resolves.toBe(false);
 
@@ -441,7 +433,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         expectedMessage: "No Laravel route named missing.route found.",
         request: {
           kind: "route",
-          missingMessage: "No Laravel route named missing.route found.",
           name: "missing.route",
         },
         source: "<?php route('missing.route');",
@@ -451,7 +442,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         request: {
           key: "app.missing",
           kind: "config",
-          missingMessage: "No Laravel config key app.missing found.",
         },
         source: "<?php config('app.missing');",
       },
@@ -459,7 +449,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         expectedMessage: "No Laravel env key APP_MISSING found.",
         request: {
           kind: "env",
-          missingMessage: "No Laravel env key APP_MISSING found.",
           name: "APP_MISSING",
         },
         source: "<?php env('APP_MISSING');",
@@ -469,8 +458,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         request: {
           key: "messages.missing",
           kind: "translation",
-          missingMessage:
-            "No Laravel translation key messages.missing found.",
         },
         source: "<?php __('messages.missing');",
       },
@@ -478,7 +465,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         expectedMessage: "No Laravel view named missing.view found.",
         request: {
           kind: "view",
-          missingMessage: "No Laravel view named missing.view found.",
           name: "missing.view",
         },
         source: "<?php view('missing.view');",
@@ -540,7 +526,6 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     const harness = renderHook(deps);
     const navigationPromise = harness.api().goToPhpFrameworkLiteralDefinition({
       kind: "route",
-      missingMessage: "No Laravel route named dashboard found.",
       name: "dashboard",
     });
 

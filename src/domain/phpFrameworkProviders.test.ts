@@ -30,9 +30,11 @@ import {
   phpFrameworkProvidersForProject,
   phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigReferenceAt,
+  phpFrameworkConfigMissingTargetMessage,
   phpFrameworkConfigTargetFromSource,
   phpFrameworkEnvEntriesFromSource,
   phpFrameworkEnvLiteralTarget,
+  phpFrameworkEnvMissingTargetMessage,
   phpFrameworkEnvReferenceAt,
   phpFrameworkEnvTargetFromSource,
   phpFrameworkPhpPresenterLinkAt,
@@ -41,6 +43,7 @@ import {
   phpFrameworkJsonTranslationKeysFromSource,
   phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkRouteDefinitionsFromSource,
+  phpFrameworkRouteMissingTargetMessage,
   phpFrameworkRouteModelBindingAt,
   phpFrameworkRouteReferenceAt,
   phpFrameworkRouteSearchQueries,
@@ -68,6 +71,7 @@ import {
   phpFrameworkTemplateNameFromRelativePath,
   phpFrameworkTargetSearchQueries,
   phpFrameworkTranslationLiteralTarget,
+  phpFrameworkTranslationMissingTargetMessage,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationReferenceAt,
   phpFrameworkTranslationTargetFromSource,
@@ -76,6 +80,7 @@ import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
   phpFrameworkViewLiteralTarget,
+  phpFrameworkViewMissingTargetMessage,
   phpFrameworkViewReferenceAt,
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
@@ -2850,6 +2855,35 @@ class EventServiceProvider
         ),
       ).toBeNull();
       expect(phpFrameworkEnvLiteralTarget("APP ENV", providers)).toBeNull();
+    });
+
+    it("gets Laravel missing literal target messages from the provider", () => {
+      const providers = [phpLaravelFrameworkProvider];
+
+      expect(
+        phpFrameworkRouteMissingTargetMessage("dashboard", providers),
+      ).toBe("No Laravel route named dashboard found.");
+      expect(
+        phpFrameworkConfigMissingTargetMessage("app.name", providers),
+      ).toBe("No Laravel config key app.name found.");
+      expect(phpFrameworkEnvMissingTargetMessage("APP_URL", providers)).toBe(
+        "No Laravel env key APP_URL found.",
+      );
+      expect(
+        phpFrameworkTranslationMissingTargetMessage(
+          "messages.welcome",
+          providers,
+        ),
+      ).toBe("No Laravel translation key messages.welcome found.");
+      expect(
+        phpFrameworkViewMissingTargetMessage("dashboard.index", providers),
+      ).toBe("No Laravel view named dashboard.index found.");
+
+      expect(
+        phpFrameworkRouteMissingTargetMessage("dashboard", [
+          phpNetteFrameworkProvider,
+        ]),
+      ).toBeNull();
     });
 
     it("reports string-literal support only for providers shipping the capability", () => {

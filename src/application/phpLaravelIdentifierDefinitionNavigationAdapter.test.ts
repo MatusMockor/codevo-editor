@@ -122,14 +122,12 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
       {
         key: "app.name",
         kind: "config",
-        missingMessage: "No Laravel config key app.name found.",
       },
     ],
     [
       { kind: "laravelEnvString", envName: "APP_URL" },
       {
         kind: "env",
-        missingMessage: "No Laravel env key APP_URL found.",
         name: "APP_URL",
       },
     ],
@@ -137,7 +135,6 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
       { kind: "laravelNamedRouteString", routeName: "dashboard" },
       {
         kind: "route",
-        missingMessage: "No Laravel route named dashboard found.",
         name: "dashboard",
       },
     ],
@@ -146,15 +143,12 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
       {
         key: "messages.welcome",
         kind: "translation",
-        missingMessage:
-          "No Laravel translation key messages.welcome found.",
       },
     ],
     [
       { kind: "laravelViewString", viewName: "dashboard.index" },
       {
         kind: "view",
-        missingMessage: "No Laravel view named dashboard.index found.",
         name: "dashboard.index",
       },
     ],

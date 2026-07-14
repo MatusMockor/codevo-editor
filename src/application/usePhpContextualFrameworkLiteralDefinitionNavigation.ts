@@ -1,6 +1,13 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpFrameworkConfigMissingTargetMessage,
+  phpFrameworkEnvMissingTargetMessage,
+  phpFrameworkRouteMissingTargetMessage,
+  phpFrameworkTranslationMissingTargetMessage,
+  phpFrameworkViewMissingTargetMessage,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -83,8 +90,13 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       }
 
       if (!target) {
-        if ("missingMessage" in request) {
-          setMessage(request.missingMessage);
+        const missingMessage = phpFrameworkMissingLiteralTargetMessage(
+          request,
+          providers,
+        );
+
+        if (missingMessage) {
+          setMessage(missingMessage);
         }
 
         return false;
@@ -122,4 +134,32 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
   );
 
   return { goToPhpFrameworkLiteralDefinition };
+}
+
+function phpFrameworkMissingLiteralTargetMessage(
+  request: PhpContextualFrameworkLiteralDefinitionRequest,
+  providers: readonly PhpFrameworkProvider[],
+): string | null {
+  switch (request.kind) {
+    case "config":
+      return phpFrameworkConfigMissingTargetMessage(request.key, providers);
+
+    case "env":
+      return phpFrameworkEnvMissingTargetMessage(request.name, providers);
+
+    case "route":
+      return phpFrameworkRouteMissingTargetMessage(request.name, providers);
+
+    case "translation":
+      return phpFrameworkTranslationMissingTargetMessage(
+        request.key,
+        providers,
+      );
+
+    case "view":
+      return phpFrameworkViewMissingTargetMessage(request.name, providers);
+
+    case "validationTable":
+      return null;
+  }
 }

@@ -320,6 +320,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   routes: {
     completionInsertText: ({ name, prefix }) =>
       phpLaravelNamedRouteCompletionInsertText(name, prefix),
+    missingTargetMessage: ({ name }) =>
+      `No Laravel route named ${name} found.`,
     definitionsFromSource: ({ source }) =>
       phpLaravelNamedRouteDefinitions(source),
     explicitModelBindingClassNameFromSource: ({ parameterName, source }) =>
@@ -376,6 +378,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   config: {
     completionInsertText: ({ key, prefix }) =>
       phpLaravelConfigCompletionInsertText(key, prefix),
+    missingTargetMessage: ({ key }) =>
+      `No Laravel config key ${key} found.`,
     referenceAt: ({ position, source }) =>
       phpLaravelConfigReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelConfigTarget(literal),
@@ -386,6 +390,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   },
   env: {
     completionInsertText: ({ name }) => phpLaravelEnvCompletionInsertText(name),
+    missingTargetMessage: ({ name }) =>
+      `No Laravel env key ${name} found.`,
     referenceAt: ({ position, source }) =>
       phpLaravelEnvReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelEnvTarget(literal),
@@ -398,6 +404,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       relativePath.endsWith(".json")
         ? phpLaravelJsonTranslationCompletionInsertText(key, prefix)
         : phpLaravelTranslationCompletionInsertText(key, prefix),
+    missingTargetMessage: ({ key }) =>
+      `No Laravel translation key ${key} found.`,
     referenceAt: ({ position, source }) =>
       phpLaravelTranslationReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelTransTarget(literal),
@@ -413,6 +421,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   templating: {
     completionInsertText: ({ name, prefix }) =>
       phpLaravelViewCompletionInsertText(name, prefix),
+    missingTargetMessage: ({ name }) =>
+      `No Laravel view named ${name} found.`,
     referenceAt: ({ position, source }) =>
       phpLaravelViewReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelViewTarget(literal),

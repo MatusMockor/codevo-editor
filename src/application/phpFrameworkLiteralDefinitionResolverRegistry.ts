@@ -84,27 +84,22 @@ export interface PhpFrameworkDirectLiteralDefinitionRequest {
 export type PhpContextualFrameworkLiteralDefinitionRequest =
   | {
       kind: "route";
-      missingMessage: string;
       name: string;
     }
   | {
       key: string;
       kind: "config";
-      missingMessage: string;
     }
   | {
       kind: "env";
-      missingMessage: string;
       name: string;
     }
   | {
       key: string;
       kind: "translation";
-      missingMessage: string;
     }
   | {
       kind: "view";
-      missingMessage: string;
       name: string;
     }
   | {
