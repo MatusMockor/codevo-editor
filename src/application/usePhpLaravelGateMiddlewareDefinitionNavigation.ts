@@ -1,6 +1,10 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpIdentifierContext } from "../domain/phpNavigation";
+import {
+  phpFrameworkSupportsAuthorizationAbilities,
+  phpFrameworkSupportsMiddlewareAliases,
+} from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -59,15 +63,19 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
   setMessage,
   workspaceRoot,
 }: PhpLaravelGateMiddlewareDefinitionNavigationDependencies): PhpLaravelGateMiddlewareDefinitionNavigation {
-  const supportsLaravelOnlyTargets = frameworkRuntime.hasProvider("laravel");
+  const supportsAuthorizationAbilityTargets =
+    phpFrameworkSupportsAuthorizationAbilities(frameworkRuntime.providers);
+  const supportsMiddlewareAliasTargets = phpFrameworkSupportsMiddlewareAliases(
+    frameworkRuntime.providers,
+  );
   const openResolvedTarget = useCallback(
     async <Target extends NamedNavigationTarget>({
-      gate = supportsLaravelOnlyTargets,
+      gate,
       label,
       missingMessage,
       resolve,
     }: {
-      gate?: boolean;
+      gate: boolean;
       label(target: Target): string;
       missingMessage: string;
       resolve(): Promise<Target | null>;
@@ -98,7 +106,6 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
       currentWorkspaceRootRef,
       openNavigationTarget,
       setMessage,
-      supportsLaravelOnlyTargets,
       workspaceRoot,
     ],
   );
@@ -106,6 +113,7 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
   const goToPhpLaravelGateAbilityDefinition = useCallback(
     async (context: LaravelGateAbilityContext): Promise<boolean> =>
       openResolvedTarget({
+        gate: supportsAuthorizationAbilityTargets,
         label: (target) => target.name,
         missingMessage: `No Laravel authorization ability ${context.ability} found.`,
         resolve: async () => {
@@ -121,12 +129,18 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
           return abilities.find((ability) => ability.name === context.ability) ?? null;
         },
       }),
-    [activeDocument, collectAuthorizationAbilityTargets, openResolvedTarget],
+    [
+      activeDocument,
+      collectAuthorizationAbilityTargets,
+      openResolvedTarget,
+      supportsAuthorizationAbilityTargets,
+    ],
   );
 
   const goToPhpLaravelMiddlewareAliasDefinition = useCallback(
     async (context: LaravelMiddlewareAliasContext): Promise<boolean> =>
       openResolvedTarget({
+        gate: supportsMiddlewareAliasTargets,
         label: (target) => target.name,
         missingMessage: `No Laravel middleware alias ${context.alias} found.`,
         resolve: async () => {
@@ -142,7 +156,12 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
           return aliases.find((alias) => alias.name === context.alias) ?? null;
         },
       }),
-    [activeDocument, collectMiddlewareAliasTargets, openResolvedTarget],
+    [
+      activeDocument,
+      collectMiddlewareAliasTargets,
+      openResolvedTarget,
+      supportsMiddlewareAliasTargets,
+    ],
   );
 
   return {

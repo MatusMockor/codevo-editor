@@ -213,7 +213,7 @@ describe("createPhpLaravelTextSearchTargetCollectors", () => {
     expect(readFileContent).toHaveBeenCalledWith(externalPath);
   });
 
-  it("gates routes by runtime capability and abilities by Laravel identity", async () => {
+  it("gates route and ability collectors by their runtime capabilities", async () => {
     const routeSource = "<?php\nRoute::get('/x')->name('x');\n";
     const gateSource = "<?php\nGate::define('update-post', fn () => true);\n";
     const { collectors, searchText } = createDeps({

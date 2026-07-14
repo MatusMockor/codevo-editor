@@ -4,7 +4,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
   createPhpFrameworkRuntimeContext,
@@ -28,10 +31,36 @@ const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [phpLaravelFrameworkProvider],
   }),
 );
-const LARAVEL_PROFILE_WITHOUT_PROVIDER_RUNTIME: PhpFrameworkRuntimeContext = {
+const STALE_LARAVEL_CAPABILITY_RUNTIME: PhpFrameworkRuntimeContext = {
   ...LARAVEL_RUNTIME,
   providers: [],
   hasProvider: () => false,
+};
+const AUTHORIZATION_ONLY_PROVIDER: PhpFrameworkProvider = {
+  id: "authorization-only",
+  authorizationAbilities: {},
+};
+const MIDDLEWARE_ONLY_PROVIDER: PhpFrameworkProvider = {
+  id: "middleware-only",
+  middlewareAliases: {},
+};
+const AUTHORIZATION_ONLY_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  providers: [AUTHORIZATION_ONLY_PROVIDER],
+  profile: "generic",
+  isLaravel: false,
+  hasProvider: (providerId) => providerId === AUTHORIZATION_ONLY_PROVIDER.id,
+  supports: (capability) => capability === "authorizationAbilities",
+  supportsTargetCollection: () => false,
+};
+const MIDDLEWARE_ONLY_RUNTIME: PhpFrameworkRuntimeContext = {
+  ...LARAVEL_RUNTIME,
+  providers: [MIDDLEWARE_ONLY_PROVIDER],
+  profile: "generic",
+  isLaravel: false,
+  hasProvider: (providerId) => providerId === MIDDLEWARE_ONLY_PROVIDER.id,
+  supports: (capability) => capability === "middlewareAliases",
+  supportsTargetCollection: () => false,
 };
 
 function namedTarget(name: string) {
@@ -170,7 +199,85 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     harness.unmount();
   });
 
-  it("does not resolve targets when only the legacy Laravel profile flag is active", async () => {
+  it("opens gate ability targets for a non-Laravel authorization provider", async () => {
+    const abilityTarget = namedTarget("publish-posts");
+    const collectAuthorizationAbilityTargets = vi.fn(async () => [
+      abilityTarget,
+    ]);
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      collectAuthorizationAbilityTargets,
+      frameworkRuntime: AUTHORIZATION_ONLY_RUNTIME,
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpLaravelGateAbilityDefinition({
+      ability: "publish-posts",
+      kind: "laravelGateAbilityString",
+    });
+
+    expect(handled).toBe(true);
+    expect(collectAuthorizationAbilityTargets).toHaveBeenCalledOnce();
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      abilityTarget.path,
+      abilityTarget.position,
+      abilityTarget.name,
+    );
+
+    harness.unmount();
+  });
+
+  it("opens middleware alias targets for a non-Laravel middleware provider", async () => {
+    const aliasTarget = namedTarget("auth");
+    const collectMiddlewareAliasTargets = vi.fn(async () => [aliasTarget]);
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      collectMiddlewareAliasTargets,
+      frameworkRuntime: MIDDLEWARE_ONLY_RUNTIME,
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpLaravelMiddlewareAliasDefinition({
+      alias: "auth",
+      kind: "laravelMiddlewareAliasString",
+    });
+
+    expect(handled).toBe(true);
+    expect(collectMiddlewareAliasTargets).toHaveBeenCalledOnce();
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      aliasTarget.path,
+      aliasTarget.position,
+      aliasTarget.name,
+    );
+
+    harness.unmount();
+  });
+
+  it("does not resolve middleware aliases for an authorization-only provider", async () => {
+    const collectMiddlewareAliasTargets = vi.fn(async () => [namedTarget("auth")]);
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      collectMiddlewareAliasTargets,
+      frameworkRuntime: AUTHORIZATION_ONLY_RUNTIME,
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpLaravelMiddlewareAliasDefinition({
+      alias: "auth",
+      kind: "laravelMiddlewareAliasString",
+    });
+
+    expect(handled).toBe(false);
+    expect(collectMiddlewareAliasTargets).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not resolve targets when only stale Laravel capability metadata is active", async () => {
     const collectAuthorizationAbilityTargets = vi.fn(async () => [
       namedTarget("publish-posts"),
     ]);
@@ -178,7 +285,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     const setMessage = vi.fn();
     const deps = makeDeps({
       collectAuthorizationAbilityTargets,
-      frameworkRuntime: LARAVEL_PROFILE_WITHOUT_PROVIDER_RUNTIME,
+      frameworkRuntime: STALE_LARAVEL_CAPABILITY_RUNTIME,
       openNavigationTarget,
       setMessage,
     });
