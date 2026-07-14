@@ -106,6 +106,59 @@ describe("editor surface framework provider resolution", () => {
     );
   });
 
+  it("resolves exactly the blade, latte, and neon template languages", () => {
+    const resolved = resolveEditorSurfaceFrameworkProviders({});
+
+    expect(Object.keys(resolved.templateLanguageProviders).sort()).toEqual([
+      "blade",
+      "latte",
+      "neon",
+    ]);
+  });
+
+  it("passes registered template language callbacks through unchanged", () => {
+    const providers = frameworkProviders({
+      provideBladeCodeActions: vi.fn(async () => []),
+      provideBladeCompletions: vi.fn(async () => []),
+      provideBladeDefinition: vi.fn(async () => true),
+      provideLatteCodeActions: vi.fn(async () => []),
+      provideLatteCompletions: vi.fn(async () => []),
+      provideLatteDefinition: vi.fn(async () => true),
+      provideNeonCompletions: vi.fn(async () => []),
+      provideNeonDefinition: vi.fn(async () => true),
+    });
+
+    const resolved = resolveEditorSurfaceFrameworkProviders({
+      frameworkIntelligenceProviders: providers,
+    });
+    const registry = resolved.templateLanguageProviders;
+
+    expect(registry.blade.provideCodeActions).toBe(
+      providers.provideBladeCodeActions,
+    );
+    expect(registry.blade.provideCompletions).toBe(
+      providers.provideBladeCompletions,
+    );
+    expect(registry.blade.provideDefinition).toBe(
+      providers.provideBladeDefinition,
+    );
+    expect(registry.latte.provideCodeActions).toBe(
+      providers.provideLatteCodeActions,
+    );
+    expect(registry.latte.provideCompletions).toBe(
+      providers.provideLatteCompletions,
+    );
+    expect(registry.latte.provideDefinition).toBe(
+      providers.provideLatteDefinition,
+    );
+    expect(registry.neon.provideCompletions).toBe(
+      providers.provideNeonCompletions,
+    );
+    expect(registry.neon.provideDefinition).toBe(
+      providers.provideNeonDefinition,
+    );
+  });
+
   it("preserves distinct callback identities for separate provider sets", () => {
     const firstProviders = frameworkProviders({
       provideBladeDefinition: vi.fn(async () => true),

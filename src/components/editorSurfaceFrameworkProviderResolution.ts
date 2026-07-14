@@ -106,38 +106,9 @@ export function resolveEditorSurfaceFrameworkProviders({
   return {
     providePhpFrameworkDefinition:
       providePhpFrameworkDefinition ?? noopPhpFrameworkDefinition,
-    templateLanguageProviders: {
-      blade: {
-        provideCodeActions:
-          frameworkIntelligenceProviders?.provideBladeCodeActions ??
-          noopPhpCodeActions,
-        provideCompletions:
-          frameworkIntelligenceProviders?.provideBladeCompletions ??
-          noopBladeCompletions,
-        provideDefinition:
-          frameworkIntelligenceProviders?.provideBladeDefinition ??
-          noopPhpFrameworkDefinition,
-      },
-      latte: {
-        provideCodeActions:
-          frameworkIntelligenceProviders?.provideLatteCodeActions ??
-          noopPhpCodeActions,
-        provideCompletions:
-          frameworkIntelligenceProviders?.provideLatteCompletions ??
-          noopLatteCompletions,
-        provideDefinition:
-          frameworkIntelligenceProviders?.provideLatteDefinition ??
-          noopPhpFrameworkDefinition,
-      },
-      neon: {
-        provideCompletions:
-          frameworkIntelligenceProviders?.provideNeonCompletions ??
-          noopNeonCompletions,
-        provideDefinition:
-          frameworkIntelligenceProviders?.provideNeonDefinition ??
-          noopPhpFrameworkDefinition,
-      },
-    },
+    templateLanguageProviders: resolveTemplateLanguageProviders(
+      frameworkIntelligenceProviders,
+    ),
     providePhpPresenterLinkDefinition:
       frameworkIntelligenceProviders?.providePhpPresenterLinkDefinition ??
       noopPhpFrameworkDefinition,
@@ -151,6 +122,65 @@ export function resolveEditorSurfaceFrameworkProviders({
       frameworkIntelligenceProviders?.isPhpFrameworkStringCompletionContext ??
       noopPhpFrameworkStringCompletionContext,
   };
+}
+
+type TemplateLanguageProviderResolvers = {
+  [Language in keyof TemplateLanguageProviderRegistry]: (
+    providers: EditorSurfaceFrameworkIntelligenceProviders | undefined,
+  ) => TemplateLanguageProviderRegistry[Language];
+};
+
+const TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS: TemplateLanguageProviderResolvers =
+  {
+    blade: (providers) => ({
+      provideCodeActions:
+        providers?.provideBladeCodeActions ?? noopPhpCodeActions,
+      provideCompletions:
+        providers?.provideBladeCompletions ?? noopBladeCompletions,
+      provideDefinition:
+        providers?.provideBladeDefinition ?? noopPhpFrameworkDefinition,
+    }),
+    latte: (providers) => ({
+      provideCodeActions:
+        providers?.provideLatteCodeActions ?? noopPhpCodeActions,
+      provideCompletions:
+        providers?.provideLatteCompletions ?? noopLatteCompletions,
+      provideDefinition:
+        providers?.provideLatteDefinition ?? noopPhpFrameworkDefinition,
+    }),
+    neon: (providers) => ({
+      provideCompletions:
+        providers?.provideNeonCompletions ?? noopNeonCompletions,
+      provideDefinition:
+        providers?.provideNeonDefinition ?? noopPhpFrameworkDefinition,
+    }),
+  };
+
+const TEMPLATE_LANGUAGE_IDS = Object.keys(
+  TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS,
+) as readonly (keyof TemplateLanguageProviderRegistry)[];
+
+function resolveTemplateLanguageProviders(
+  providers: EditorSurfaceFrameworkIntelligenceProviders | undefined,
+): TemplateLanguageProviderRegistry {
+  const registry = {} as TemplateLanguageProviderRegistry;
+  for (const language of TEMPLATE_LANGUAGE_IDS) {
+    assignTemplateLanguageProviders(registry, language, providers);
+  }
+
+  return registry;
+}
+
+function assignTemplateLanguageProviders<
+  Language extends keyof TemplateLanguageProviderRegistry,
+>(
+  registry: TemplateLanguageProviderRegistry,
+  language: Language,
+  providers: EditorSurfaceFrameworkIntelligenceProviders | undefined,
+): void {
+  registry[language] = TEMPLATE_LANGUAGE_PROVIDER_RESOLVERS[language](
+    providers,
+  );
 }
 
 const noopPhpFrameworkDefinition = async () => false;

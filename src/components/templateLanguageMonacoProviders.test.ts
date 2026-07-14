@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { registerTemplateLanguageMonacoProviders } from "./templateLanguageMonacoProviders";
+import { registerBladeTemplateMonacoProviders } from "./bladeTemplateMonacoProviders";
+import { registerLatteTemplateMonacoProviders } from "./latteTemplateMonacoProviders";
+import { registerNeonTemplateMonacoProviders } from "./neonTemplateMonacoProviders";
 
 const templateProviderCalls = vi.hoisted(() => ({
   order: [] as string[],
@@ -70,5 +73,29 @@ describe("template language Monaco providers", () => {
       "dispose:latte",
       "dispose:neon",
     ]);
+  });
+
+  it("forwards monaco, context, and handlers to every registration", () => {
+    templateProviderCalls.order = [];
+    const monaco = { marker: "monaco" } as never;
+    const context = { marker: "context" } as never;
+    const handlers = { marker: "handlers" } as never;
+
+    registerTemplateLanguageMonacoProviders(monaco, context, handlers);
+
+    expect(vi.mocked(registerBladeTemplateMonacoProviders)).toHaveBeenCalledWith(
+      monaco,
+      context,
+      handlers,
+    );
+    expect(vi.mocked(registerLatteTemplateMonacoProviders)).toHaveBeenCalledWith(
+      monaco,
+      context,
+      handlers,
+    );
+    expect(vi.mocked(registerNeonTemplateMonacoProviders)).toHaveBeenCalledWith(
+      monaco,
+      context,
+    );
   });
 });

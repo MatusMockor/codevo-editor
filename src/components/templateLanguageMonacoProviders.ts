@@ -2,6 +2,7 @@ import type * as Monaco from "monaco-editor";
 import type {
   TemplateLanguageMonacoProviderContext,
   TemplateLanguageMonacoProviderHandlers,
+  TemplateLanguageProviderRegistry,
 } from "./templateLanguageMonacoTypes";
 import { registerBladeTemplateMonacoProviders } from "./bladeTemplateMonacoProviders";
 import { registerLatteTemplateMonacoProviders } from "./latteTemplateMonacoProviders";
@@ -25,6 +26,23 @@ export { toMonacoBladeCompletion } from "./bladeTemplateMonacoProviders";
 export { toMonacoLatteCompletion } from "./latteTemplateMonacoProviders";
 export { toMonacoNeonCompletion } from "./neonTemplateMonacoProviders";
 
+type TemplateLanguageRegistrar = <
+  Context extends TemplateLanguageMonacoProviderContext,
+>(
+  monaco: MonacoApi,
+  context: Context,
+  handlers: TemplateLanguageMonacoProviderHandlers<Context>,
+) => Disposable;
+
+const TEMPLATE_LANGUAGE_REGISTRATIONS: Readonly<
+  Record<keyof TemplateLanguageProviderRegistry, TemplateLanguageRegistrar>
+> = {
+  blade: registerBladeTemplateMonacoProviders,
+  latte: registerLatteTemplateMonacoProviders,
+  neon: (monaco, context) =>
+    registerNeonTemplateMonacoProviders(monaco, context),
+};
+
 export function registerTemplateLanguageMonacoProviders<
   Context extends TemplateLanguageMonacoProviderContext,
 >(
@@ -32,15 +50,15 @@ export function registerTemplateLanguageMonacoProviders<
   context: Context,
   handlers: TemplateLanguageMonacoProviderHandlers<Context>,
 ): Disposable {
-  const blade = registerBladeTemplateMonacoProviders(monaco, context, handlers);
-  const latte = registerLatteTemplateMonacoProviders(monaco, context, handlers);
-  const neon = registerNeonTemplateMonacoProviders(monaco, context);
+  const registrations = Object.values(TEMPLATE_LANGUAGE_REGISTRATIONS).map(
+    (register) => register(monaco, context, handlers),
+  );
 
   return {
     dispose: () => {
-      blade.dispose();
-      latte.dispose();
-      neon.dispose();
+      for (const registration of registrations) {
+        registration.dispose();
+      }
     },
   };
 }
