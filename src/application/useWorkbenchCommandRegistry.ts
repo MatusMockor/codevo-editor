@@ -25,12 +25,14 @@ import type {
   WorkspaceDescriptor,
 } from "../domain/workspace";
 import type { EditorGroupsState, EditorSplitDirection } from "../domain/editorGroups";
+import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
 import { CommandRegistry, type Command } from "./commandRegistry";
 import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
+import { workbenchEditMenuCommands } from "./workbenchEditMenuCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
 import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
 import { workbenchEditorGroupCommands } from "./workbenchEditorGroupCommands";
@@ -90,6 +92,7 @@ interface UseWorkbenchCommandRegistryOptions {
   deleteActiveDocument: CommandRun;
   disableEslintRuleAtCursor: CommandRun;
   editorGroups: EditorGroupsState;
+  editorMenuCommandRunner?: EditorMenuCommandRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
   eslintAnalysisRunning: boolean;
   fixAllEslintInActiveFile: CommandRun;
@@ -230,6 +233,7 @@ export function useWorkbenchCommandRegistry(
     deleteActiveDocument,
     disableEslintRuleAtCursor,
     editorGroups,
+    editorMenuCommandRunner,
     editorSurfaceCommandRunner,
     eslintAnalysisRunning,
     fixAllEslintInActiveFile,
@@ -498,6 +502,10 @@ export function useWorkbenchCommandRegistry(
       editorSurfaceCommandRunner,
     }).forEach((command) => registry.register(command));
 
+    workbenchEditMenuCommands({
+      editorMenuCommandRunner,
+    }).forEach((command) => registry.register(command));
+
     workbenchEditorGroupCommands({
       canCloseGroup: Object.keys(editorGroups.groups).length > 1,
       canMoveBetweenGroups: Object.keys(editorGroups.groups).length > 1,
@@ -702,6 +710,7 @@ export function useWorkbenchCommandRegistry(
     openSettingsPanel,
     openWorkspaceSymbols,
     openSearchEverywhere,
+    editorMenuCommandRunner,
     editorSurfaceCommandRunner,
     navigationHistory,
     openWorkspace,

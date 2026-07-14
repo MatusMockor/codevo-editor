@@ -88,9 +88,6 @@ import {
   monacoThemeForAppTheme,
   terminalThemeForAppTheme,
 } from "./domain/settings";
-import type {
-  EditorMenuCommand,
-} from "./domain/editorMenuCommand";
 import { isDirty, javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace";
 import type { EditorDocument, ImageTab, IntelligenceMode } from "./domain/workspace";
 import {
@@ -316,6 +313,7 @@ function App() {
     settingsGateway,
     workbenchPrompter,
     {
+      editorMenuCommandRunner,
       editorSurfaceBufferFixRunner,
       editorSurfaceCommandRunner,
       editorSurfaceEslintDisableRunner,
@@ -802,12 +800,6 @@ function App() {
     },
     [bottomPanelHeight],
   );
-  const runEditMenuCommand = useCallback(
-    (command: EditorMenuCommand) => {
-      editorMenuCommandRunner?.(command);
-    },
-    [editorMenuCommandRunner],
-  );
   const showProblemsPanel = useCallback(() => {
     workbench.showBottomPanelView("problems");
   }, [workbench.showBottomPanelView]);
@@ -1285,7 +1277,6 @@ function App() {
         commandContext={editorMenuCommandContext}
         commands={workbench.commands}
         onCommandError={workbench.reportCommandError}
-        onEditCommand={runEditMenuCommand}
         onQuitApplication={workbench.quitApplication}
       />
 

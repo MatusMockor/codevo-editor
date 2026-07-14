@@ -75,7 +75,6 @@ describe("WindowChrome", () => {
           commandContext={commandContext}
           commands={[]}
           onCommandError={vi.fn()}
-          onEditCommand={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -115,7 +114,6 @@ describe("WindowChrome", () => {
           commandContext={commandContext}
           commands={commands}
           onCommandError={vi.fn()}
-          onEditCommand={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -165,7 +163,6 @@ describe("WindowChrome", () => {
           commandContext={commandContext}
           commands={commands}
           onCommandError={vi.fn()}
-          onEditCommand={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -209,7 +206,7 @@ describe("WindowChrome", () => {
     expect(openAppearanceSettings).toHaveBeenCalledOnce();
   });
 
-  it("routes Edit menu commands through the active editor callback", async () => {
+  it("runs enabled Edit menu commands from the registry", async () => {
     vi.stubGlobal("navigator", {
       platform: "Linux x86_64",
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
@@ -224,16 +221,20 @@ describe("WindowChrome", () => {
       configurable: true,
       value: execCommand,
     });
-    const editCommand = vi.fn();
+    const undo = vi.fn();
+    const selectAll = vi.fn();
+    const commands: Command[] = [
+      command("edit.undo", "Undo", undo),
+      command("edit.selectAll", "Select All", selectAll),
+    ];
 
     await act(async () => {
       root.render(
         <WindowChrome
           appTitle="Codevo Editor"
           commandContext={{ ...commandContext, hasActiveDocument: true }}
-          commands={[]}
+          commands={commands}
           onCommandError={vi.fn()}
-          onEditCommand={editCommand}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -245,26 +246,42 @@ describe("WindowChrome", () => {
     await act(async () => {
       buttonWithText(host, "Undo").click();
     });
+    await act(async () => {
+      buttonWithText(host, "Edit").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Select All").click();
+    });
 
-    expect(editCommand).toHaveBeenCalledWith("undo");
+    expect(undo).toHaveBeenCalledOnce();
+    expect(selectAll).toHaveBeenCalledOnce();
     expect(execCommand).not.toHaveBeenCalled();
   });
 
-  it("keeps Edit menu commands disabled when no editor target is available", async () => {
+  it("keeps Edit menu commands disabled when the registry disables them", async () => {
     vi.stubGlobal("navigator", {
       platform: "Linux x86_64",
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
     });
-    const editCommand = vi.fn();
+    const undoRun = vi.fn();
+    const commands: Command[] = [
+      {
+        category: "Editor",
+        id: "edit.undo",
+        isEnabled: () => false,
+        run: undoRun,
+        shortcut: "Ctrl+Z",
+        title: "Undo",
+      },
+    ];
 
     await act(async () => {
       root.render(
         <WindowChrome
           appTitle="Codevo Editor"
           commandContext={{ ...commandContext, hasActiveDocument: false }}
-          commands={[]}
+          commands={commands}
           onCommandError={vi.fn()}
-          onEditCommand={editCommand}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -274,14 +291,16 @@ describe("WindowChrome", () => {
       buttonWithText(host, "Edit").click();
     });
     const undo = buttonWithText(host, "Undo");
+    const paste = buttonWithText(host, "Paste");
 
     expect(undo.disabled).toBe(true);
+    expect(paste.disabled).toBe(true);
 
     await act(async () => {
       undo.click();
     });
 
-    expect(editCommand).not.toHaveBeenCalled();
+    expect(undoRun).not.toHaveBeenCalled();
   });
 
   it("runs the custom window control actions through Tauri", async () => {
@@ -297,7 +316,6 @@ describe("WindowChrome", () => {
           commandContext={commandContext}
           commands={[]}
           onCommandError={vi.fn()}
-          onEditCommand={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -337,7 +355,6 @@ describe("WindowChrome", () => {
           commandContext={commandContext}
           commands={[]}
           onCommandError={reportCommandError}
-          onEditCommand={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -364,7 +381,6 @@ describe("WindowChrome", () => {
           commandContext={{ ...commandContext, hasActiveDocument: true }}
           commands={[]}
           onCommandError={vi.fn()}
-          onEditCommand={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );
@@ -395,7 +411,6 @@ describe("WindowChrome", () => {
           commandContext={commandContext}
           commands={[]}
           onCommandError={vi.fn()}
-          onEditCommand={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );

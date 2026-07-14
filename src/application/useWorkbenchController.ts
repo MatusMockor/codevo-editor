@@ -146,6 +146,7 @@ import {
   synthesizePhpTypedReceiverSource,
 } from "./phpTypedReceiverSource";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
+import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type {
   WorkspaceIdentityDescriptor,
   WorkspaceIdentityGateway,
@@ -428,6 +429,7 @@ export interface WorkbenchControllerOptions {
   editorSurfaceEslintDisableRunner?: EditorSurfaceEslintDisableRunner | null;
   editorSurfacePhpstanIgnoreRunner?: EditorSurfacePhpstanIgnoreRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
+  editorMenuCommandRunner?: EditorMenuCommandRunner | null;
   editorGroupFocusRunner?: EditorGroupFocusRunner | null;
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
 }
@@ -7227,6 +7229,7 @@ export function useWorkbenchController(
     disableEslintRuleAtCursor,
     editorGroups,
     editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
+    editorMenuCommandRunner: options.editorMenuCommandRunner,
     eslintAnalysisRunning,
     fixAllEslintInActiveFile,
     focusAdjacentEditorGroup,

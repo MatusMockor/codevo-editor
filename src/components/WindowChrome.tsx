@@ -3,7 +3,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Command, CommandContext } from "../application/commandRegistry";
-import type { EditorMenuCommand } from "../domain/editorMenuCommand";
 import { detectKeymapPlatform } from "../domain/keymap";
 import type { KeymapPlatform } from "../domain/keymap";
 
@@ -12,7 +11,6 @@ interface WindowChromeProps {
   commands: Command[];
   commandContext: CommandContext;
   onCommandError(error: unknown): void;
-  onEditCommand(command: EditorMenuCommand): void;
   onQuitApplication(): void;
 }
 
@@ -26,31 +24,11 @@ interface WindowMenuItem {
   shortcut?: string;
 }
 
-const editorMenuItems: Array<{
-  command: EditorMenuCommand;
-  label: string;
-  separatorBefore?: boolean;
-  shortcut: string;
-}> = [
-  { command: "undo", label: "Undo", shortcut: "Ctrl+Z" },
-  { command: "redo", label: "Redo", shortcut: "Ctrl+Y" },
-  { command: "cut", label: "Cut", separatorBefore: true, shortcut: "Ctrl+X" },
-  { command: "copy", label: "Copy", shortcut: "Ctrl+C" },
-  { command: "paste", label: "Paste", shortcut: "Ctrl+V" },
-  {
-    command: "selectAll",
-    label: "Select All",
-    separatorBefore: true,
-    shortcut: "Ctrl+A",
-  },
-];
-
 export function WindowChrome({
   appTitle,
   commands,
   commandContext,
   onCommandError,
-  onEditCommand,
   onQuitApplication,
 }: WindowChromeProps) {
   const [openMenu, setOpenMenu] = useState<WindowMenuKey | null>(null);
@@ -62,7 +40,7 @@ export function WindowChrome({
   );
   const menus = useMemo(
     () => ({
-      edit: editMenuItems(commandContext, onEditCommand),
+      edit: editMenuItems(commandsById, commandContext),
       file: fileMenuItems(
         commandsById,
         commandContext,
@@ -71,7 +49,7 @@ export function WindowChrome({
       ),
       view: viewMenuItems(commandsById, commandContext),
     }),
-    [commandContext, commandsById, onEditCommand, onQuitApplication, platform],
+    [commandContext, commandsById, onQuitApplication, platform],
   );
   const showNativeControlSpace = platform === "mac";
   const showWindowControls = platform !== "mac";
@@ -310,16 +288,17 @@ function fileMenuItems(
 }
 
 function editMenuItems(
+  commandsById: Map<string, Command>,
   context: CommandContext,
-  onEditCommand: (command: EditorMenuCommand) => void,
 ): WindowMenuItem[] {
-  return editorMenuItems.map((item) => ({
-    disabled: !context.hasActiveDocument,
-    label: item.label,
-    onSelect: () => onEditCommand(item.command),
-    separatorBefore: item.separatorBefore,
-    shortcut: item.shortcut,
-  }));
+  return [
+    commandMenuItem(commandsById, context, "edit.undo", "Undo"),
+    commandMenuItem(commandsById, context, "edit.redo", "Redo"),
+    commandMenuItem(commandsById, context, "edit.cut", "Cut", true),
+    commandMenuItem(commandsById, context, "edit.copy", "Copy"),
+    commandMenuItem(commandsById, context, "edit.paste", "Paste"),
+    commandMenuItem(commandsById, context, "edit.selectAll", "Select All", true),
+  ];
 }
 
 function viewMenuItems(
