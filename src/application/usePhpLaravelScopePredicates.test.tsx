@@ -28,6 +28,12 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [],
   }),
 );
+const STALE_LEGACY_LARAVEL_RUNTIME = {
+  ...LARAVEL_RUNTIME,
+  providers: [],
+  hasProvider: () => false,
+  isLaravel: true,
+};
 
 function methodCompletion(
   name: string,
@@ -171,6 +177,37 @@ describe("usePhpLaravelScopePredicates", () => {
         methodCompletion("scopePublished"),
       ]),
       frameworkRuntime: GENERIC_RUNTIME,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .phpClassHasLaravelDynamicWhere("App\\Models\\User", "whereEmailAddress"),
+    ).resolves.toBe(false);
+    await expect(
+      harness
+        .api()
+        .phpClassHasLaravelLocalScope("App\\Models\\Post", "published"),
+    ).resolves.toBe(false);
+
+    expect(
+      options.collectPhpFrameworkSyntheticMethodsForClass,
+    ).not.toHaveBeenCalled();
+    expect(options.collectPhpMethodsForClass).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not expose Laravel dynamic where or local scopes for a stale legacy Laravel runtime", async () => {
+    const options = makeOptions({
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => [
+        methodCompletion("whereEmailAddress"),
+      ]),
+      collectPhpMethodsForClass: vi.fn(async () => [
+        methodCompletion("scopePublished"),
+      ]),
+      frameworkRuntime: STALE_LEGACY_LARAVEL_RUNTIME,
     });
     const harness = renderHook(options);
 

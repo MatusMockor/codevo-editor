@@ -61,6 +61,8 @@ export function usePhpLaravelMethodGenericModelType({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelMethodGenericModelTypeOptions) {
+  const hasLaravelProvider = frameworkRuntime.hasProvider("laravel");
+
   const resolvePhpLaravelMethodGenericModelType = useCallback(
     async (
       carrierKind: PhpLaravelCarrierKind,
@@ -72,7 +74,7 @@ export function usePhpLaravelMethodGenericModelType({
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (
-        !frameworkRuntime.isLaravel ||
+        !hasLaravelProvider ||
         !requestedRoot ||
         !workspaceDescriptor?.php ||
         !isRequestedRootActive()
@@ -174,7 +176,7 @@ export function usePhpLaravelMethodGenericModelType({
     },
     [
       currentWorkspaceRootRef,
-      frameworkRuntime.isLaravel,
+      hasLaravelProvider,
       helpers,
       readPhpClassMembersFromPath,
       resolvePhpClassReference,

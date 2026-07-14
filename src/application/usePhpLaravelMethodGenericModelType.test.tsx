@@ -32,6 +32,11 @@ const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [phpLaravelFrameworkProvider],
   }),
 );
+const STALE_LEGACY_LARAVEL_RUNTIME = {
+  ...LARAVEL_RUNTIME,
+  providers: [],
+  hasProvider: () => false,
+};
 const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
     matchedProviderIds: [],
@@ -183,6 +188,48 @@ class AlbumRepository
         },
       },
       { frameworkRuntime: GENERIC_RUNTIME },
+    );
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpLaravelMethodGenericModelType(
+          "builder",
+          "App\\Repositories\\AlbumRepository",
+          "query",
+        ),
+    ).resolves.toBeNull();
+
+    expect(options.resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+    expect(options.readPhpClassMembersFromPath).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("returns null for stale legacy Laravel profiles without provider authority", async () => {
+    const options = makeOptions(
+      {
+        "App\\Repositories\\AlbumRepository": {
+          members: [
+            methodMember(
+              "App\\Repositories\\AlbumRepository",
+              "query",
+              "Builder<App\\Models\\Album>",
+            ),
+          ],
+          source: `<?php
+namespace App\\Repositories;
+
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class AlbumRepository
+{
+}
+`,
+        },
+      },
+      { frameworkRuntime: STALE_LEGACY_LARAVEL_RUNTIME },
     );
     const harness = renderHook(options);
 
