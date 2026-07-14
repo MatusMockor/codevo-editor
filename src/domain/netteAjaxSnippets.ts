@@ -13,7 +13,14 @@ export interface NetteRedrawControlCall {
   nameStart: number;
 }
 
+export interface NetteSnippetCompletionContext {
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
 const SNIPPET_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+const SNIPPET_NAME_PREFIX_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_-]*)?$/;
 const LATTE_TAG_SCAN_LIMIT = 2_000;
 
 export function detectNetteLatteSnippetAt(
@@ -86,29 +93,35 @@ export function findNetteLatteSnippetReference(
     return null;
   }
 
+  return (
+    netteLatteSnippetReferences(source).find(
+      (reference) => reference.name === snippetName,
+    ) ?? null
+  );
+}
+
+export function netteLatteSnippetReferences(
+  source: string,
+): NetteLatteSnippetReference[] {
+  const references: NetteLatteSnippetReference[] = [];
   const tagPattern =
     /\{\s*snippet\s+([A-Za-z_][A-Za-z0-9_-]*)\s*\}/g;
   let tagMatch: RegExpExecArray | null;
 
   while ((tagMatch = tagPattern.exec(source)) !== null) {
     const name = tagMatch[1] ?? "";
-
-    if (name !== snippetName) {
-      continue;
-    }
-
     const nameStart = tagMatch.index + tagMatch[0].indexOf(name);
 
     if (isInsideLatteMask(source, nameStart)) {
       continue;
     }
 
-    return {
+    references.push({
       kind: "tag",
       name,
       nameEnd: nameStart + name.length,
       nameStart,
-    };
+    });
   }
 
   const attributePattern =
@@ -118,11 +131,6 @@ export function findNetteLatteSnippetReference(
   while ((attributeMatch = attributePattern.exec(source)) !== null) {
     const quote = attributeMatch[1] ?? "";
     const name = attributeMatch[2] ?? "";
-
-    if (name !== snippetName) {
-      continue;
-    }
-
     const nameStart =
       attributeMatch.index + attributeMatch[0].lastIndexOf(`${quote}${name}`) + 1;
 
@@ -130,15 +138,29 @@ export function findNetteLatteSnippetReference(
       continue;
     }
 
-    return {
+    references.push({
       kind: "attribute",
       name,
       nameEnd: nameStart + name.length,
       nameStart,
-    };
+    });
   }
 
-  return null;
+  return references.sort((left, right) => left.nameStart - right.nameStart);
+}
+
+export function detectNetteLatteSnippetCompletionAt(
+  source: string,
+  offset: number,
+): NetteSnippetCompletionContext | null {
+  if (offset < 0 || offset > source.length || isInsideLatteMask(source, offset)) {
+    return null;
+  }
+
+  return (
+    detectLatteSnippetTagCompletionAt(source, offset) ??
+    detectLatteSnippetAttributeCompletionAt(source, offset)
+  );
 }
 
 function detectLatteSnippetTagAt(
@@ -223,6 +245,95 @@ function detectLatteSnippetAttributeAt(
   return null;
 }
 
+function detectLatteSnippetTagCompletionAt(
+  source: string,
+  offset: number,
+): NetteSnippetCompletionContext | null {
+  const open = macroOpenBefore(source, offset);
+
+  if (open === null || source[open + 1] === "/") {
+    return null;
+  }
+
+  const close = source.indexOf("}", open + 1);
+
+  if (close < 0 || close - open > LATTE_TAG_SCAN_LIMIT || offset > close) {
+    return null;
+  }
+
+  let index = open + 1;
+
+  while (index < close && isWhitespace(source[index] ?? "")) {
+    index += 1;
+  }
+
+  const tagStart = index;
+
+  while (index < close && /[A-Za-z0-9_]/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  if (source.slice(tagStart, index) !== "snippet") {
+    return null;
+  }
+
+  while (index < close && isWhitespace(source[index] ?? "")) {
+    index += 1;
+  }
+
+  const replaceStart = index;
+
+  while (index < close && /[A-Za-z0-9_-]/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  if (offset < replaceStart || offset > index) {
+    return null;
+  }
+
+  const prefix = source.slice(replaceStart, offset);
+
+  if (!SNIPPET_NAME_PREFIX_PATTERN.test(prefix)) {
+    return null;
+  }
+
+  const rest = source.slice(index, close).trim();
+
+  if (rest.length > 0) {
+    return null;
+  }
+
+  return { prefix, replaceEnd: index, replaceStart };
+}
+
+function detectLatteSnippetAttributeCompletionAt(
+  source: string,
+  offset: number,
+): NetteSnippetCompletionContext | null {
+  const pattern = /\bn:snippet\s*=\s*(["'])/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(source)) !== null) {
+    const quote = match[1] as "'" | "\"";
+    const replaceStart = match.index + match[0].length;
+    const replaceEnd = latteAttributeValueEnd(source, replaceStart, quote);
+
+    if (offset < replaceStart || offset > replaceEnd) {
+      continue;
+    }
+
+    const prefix = source.slice(replaceStart, offset);
+
+    if (!SNIPPET_NAME_PREFIX_PATTERN.test(prefix)) {
+      return null;
+    }
+
+    return { prefix, replaceEnd, replaceStart };
+  }
+
+  return null;
+}
+
 function macroOpenBefore(source: string, offset: number): number | null {
   const min = Math.max(0, offset - LATTE_TAG_SCAN_LIMIT);
 
@@ -249,4 +360,24 @@ function isInsideLatteMask(source: string, offset: number): boolean {
 
 function isWhitespace(character: string): boolean {
   return character === " " || character === "\t" || character === "\r";
+}
+
+function latteAttributeValueEnd(
+  source: string,
+  valueStart: number,
+  quote: "'" | "\"",
+): number {
+  for (let index = valueStart; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (character === "\n" || character === "\r" || character === ">") {
+      return index;
+    }
+
+    if (character === quote) {
+      return index;
+    }
+  }
+
+  return source.length;
 }

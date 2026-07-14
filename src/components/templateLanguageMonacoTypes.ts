@@ -53,7 +53,8 @@ export type LatteCompletionKind =
   | "filter"
   | "link"
   | "component"
-  | "translation";
+  | "translation"
+  | "snippet";
 
 /**
  * A single Latte completion item produced by the controller. Like Blade, Latte

@@ -264,5 +264,9 @@ function monacoLatteCompletionKind(
     return monaco.languages.CompletionItemKind.Value;
   }
 
+  if (kind === "snippet") {
+    return monaco.languages.CompletionItemKind.Value;
+  }
+
   return monaco.languages.CompletionItemKind.Keyword;
 }

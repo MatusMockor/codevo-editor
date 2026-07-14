@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectNetteLatteSnippetCompletionAt,
   detectNetteRedrawControlAt,
   detectNetteLatteSnippetAt,
   findNetteLatteSnippetReference,
   findNetteRedrawControlCall,
   findNetteRedrawControlCalls,
+  netteLatteSnippetReferences,
 } from "./netteAjaxSnippets";
 
 describe("detectNetteLatteSnippetAt", () => {
@@ -107,5 +109,68 @@ describe("findNetteLatteSnippetReference", () => {
         "mailLogslisting",
       ),
     ).toBeNull();
+  });
+});
+
+describe("netteLatteSnippetReferences", () => {
+  it("collects static snippet tag and attribute references in source order", () => {
+    const source = `<div n:snippet="sidebar"></div>
+{snippet mailLogslisting}
+{/snippet}
+`;
+
+    expect(netteLatteSnippetReferences(source)).toEqual([
+      {
+        kind: "attribute",
+        name: "sidebar",
+        nameEnd: source.indexOf("sidebar") + "sidebar".length,
+        nameStart: source.indexOf("sidebar"),
+      },
+      {
+        kind: "tag",
+        name: "mailLogslisting",
+        nameEnd: source.indexOf("mailLogslisting") + "mailLogslisting".length,
+        nameStart: source.indexOf("mailLogslisting"),
+      },
+    ]);
+  });
+
+  it("skips dynamic and commented snippets", () => {
+    expect(
+      netteLatteSnippetReferences(
+        "{* {snippet ignored} *}\n{snippet $dynamic}\n{snippet visible}",
+      ).map((reference) => reference.name),
+    ).toEqual(["visible"]);
+  });
+});
+
+describe("detectNetteLatteSnippetCompletionAt", () => {
+  it("detects completion in a snippet tag name", () => {
+    const source = "{snippet mail}";
+    const offset = source.indexOf("mail") + "mail".length;
+
+    expect(detectNetteLatteSnippetCompletionAt(source, offset)).toEqual({
+      prefix: "mail",
+      replaceEnd: source.indexOf("}"),
+      replaceStart: source.indexOf("mail"),
+    });
+  });
+
+  it("detects completion in an n:snippet attribute value", () => {
+    const source = '<div n:snippet="side"></div>';
+    const offset = source.indexOf("side") + "side".length;
+
+    expect(detectNetteLatteSnippetCompletionAt(source, offset)).toEqual({
+      prefix: "side",
+      replaceEnd: source.indexOf('"', source.indexOf("side")),
+      replaceStart: source.indexOf("side"),
+    });
+  });
+
+  it("rejects dynamic or non-name snippet completion contexts", () => {
+    expect(detectNetteLatteSnippetCompletionAt("{snippet $name}", 11))
+      .toBeNull();
+    expect(detectNetteLatteSnippetCompletionAt("{snippet foo bar}", 12))
+      .toBeNull();
   });
 });

@@ -29,6 +29,9 @@ import {
   latteTemplateCompletions,
 } from "./netteTemplateCompletions";
 import {
+  latteNetteSnippetNameCompletions,
+} from "./netteAjaxSnippetCompletions";
+import {
   latteTranslationCompletionAt,
   latteTranslationCompletions,
 } from "./latteTranslationTargets";
@@ -129,6 +132,12 @@ export async function provideLatteCompletions(
 
   if (translationCompletion) {
     return latteTranslationCompletions(request, translationCompletion);
+  }
+
+  const snippetCompletions = latteNetteSnippetNameCompletions(source, offset);
+
+  if (snippetCompletions) {
+    return snippetCompletions;
   }
 
   return latteExpressionCompletions(
