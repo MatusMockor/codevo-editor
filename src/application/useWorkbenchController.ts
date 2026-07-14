@@ -80,6 +80,7 @@ import { useWorkbenchQuickOpen } from "./useWorkbenchQuickOpen";
 import { useWorkbenchSearchEverywhere } from "./useWorkbenchSearchEverywhere";
 import { useWorkbenchSymbolPanels } from "./useWorkbenchSymbolPanels";
 import { useWorkbenchTextSearch } from "./useWorkbenchTextSearch";
+import { useLanguageServerFeatureErrorReporting } from "./useLanguageServerFeatureErrorReporting";
 import { useWorkbenchWorkspaceSymbols } from "./useWorkbenchWorkspaceSymbols";
 import { usePhpDiagnosticContextFilter } from "./usePhpDiagnosticContextFilter";
 import { usePhpTraitHostPredicates } from "./usePhpTraitHostPredicates";
@@ -164,7 +165,6 @@ import {
   capDiagnosticNotices,
   capWorkbenchNotices,
   createWorkbenchNotice,
-  languageServerCrashNoticeGroupKey,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
@@ -220,7 +220,6 @@ import {
   fileUriFromPath,
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
-  languageServerDocumentSyncKey,
   type LanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import type {
@@ -229,7 +228,6 @@ import type {
 } from "../domain/languageServer";
 import {
   canUseLanguageServerFeature,
-  pathFromLanguageServerUri,
   type EditorPosition,
   type LanguageServerFeaturesGateway,
 } from "../domain/languageServerFeatures";
@@ -1393,88 +1391,17 @@ export function useWorkbenchController(
     setMessage,
   });
 
-  const isUnknownDocumentForUnsyncedPath = useCallback(
-    (rootPath: string | null | undefined, error: unknown): boolean => {
-      const message = String(error);
-
-      if (!message.includes("UnknownDocument")) {
-        return false;
-      }
-
-      const uri = /Unknown text document "([^"]+)"/.exec(message)?.[1];
-      const path = uri ? pathFromLanguageServerUri(uri) : null;
-
-      if (!path || !rootPath) {
-        return false;
-      }
-
-      const syncKey = languageServerDocumentSyncKey(rootPath, path);
-
-      // The document is genuinely unsynced only when neither language server
-      // (PHP nor JavaScript/TypeScript) still holds it open. An UnknownDocument
-      // error for a document that is still open on either server is a real
-      // desync, not the benign close race, so it must not be suppressed.
-      return (
-        !syncedDocumentPathsRef.current.has(syncKey) &&
-        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
-      );
-    },
-    [],
-  );
-
-  const reportLanguageServerError = useCallback(
-    (error: unknown) => {
-      // Monaco feature providers (hover/completion/definition/codeAction/
-      // rename/references) report their failures through this path. When a tab
-      // is closed (didClose) between flushing a document change and the server's
-      // reply, phpactor answers with UnknownDocument for a path that is no
-      // longer open. That is a benign desync, not a real failure, so suppress it
-      // before it surfaces a false error toast or status message. Legitimate
-      // errors, and UnknownDocument for a document that is still open, fall
-      // through unchanged.
-      if (
-        isBenignError(error) ||
-        isUnknownDocumentForUnsyncedPath(currentWorkspaceRootRef.current, error)
-      ) {
-        return;
-      }
-
-      const nextMessage = String(error);
-      setMessage(nextMessage);
-
-      if (lastLanguageServerCrashRef.current === nextMessage) {
-        return;
-      }
-
-      lastLanguageServerCrashRef.current = nextMessage;
-      setNotices((current) => [
-        createWorkbenchNotice(
-          "error",
-          "Language Server",
-          nextMessage,
-          languageServerCrashNoticeGroupKey(currentWorkspaceRootRef.current) ??
-            undefined,
-        ),
-        ...current,
-      ]);
-    },
-    [isUnknownDocumentForUnsyncedPath],
-  );
-
-  const reportLanguageServerErrorForActiveWorkspaceRoot = useCallback(
-    (rootPath: string | null | undefined, error: unknown) => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-        return;
-      }
-
-      if (isUnknownDocumentForUnsyncedPath(rootPath, error)) {
-        return;
-      }
-
-      reportLanguageServerError(error);
-    },
-    [isUnknownDocumentForUnsyncedPath, reportLanguageServerError],
-  );
+  const {
+    reportLanguageServerError,
+    reportLanguageServerErrorForActiveWorkspaceRoot,
+  } = useLanguageServerFeatureErrorReporting({
+    currentWorkspaceRootRef,
+    javaScriptTypeScriptSyncedDocumentPathsRef,
+    lastLanguageServerCrashRef,
+    setMessage,
+    setNotices,
+    syncedDocumentPathsRef,
+  });
   const reportJavaScriptTypeScriptLanguageServerError = useCallback(
     (error: unknown) => {
       reportError("JavaScript/TypeScript", error);
