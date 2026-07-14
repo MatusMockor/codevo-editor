@@ -5,6 +5,7 @@ import type {
   PhpCodeActionRange,
 } from "../application/phpCodeActionTypes";
 import type { NavigationRequest } from "../application/navigationRequest";
+import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
@@ -137,6 +138,7 @@ export interface TemplateLanguageProviderRegistry {
 
 export interface TemplateLanguageMonacoProviderContext {
   getActiveDocument(): EditorDocument | null;
+  getLargeSmartDocumentPolicy?(): LargeSmartDocumentPolicy;
   getTemplateLanguageProviders(): TemplateLanguageProviderRegistry;
   getUserSnippets?(): readonly UserSnippet[];
   getWorkspaceRoot?(): string | null;

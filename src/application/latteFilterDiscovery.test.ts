@@ -360,6 +360,18 @@ describe("loadLatteFilterRegistrations", () => {
     expect(workspace.readFileContent).toHaveBeenCalledTimes(1);
   });
 
+  it("skips oversized filter sources while keeping normal ones", async () => {
+    const oversizedConfig = `${filterLoaderConfig("hugeNeonFilter")}${"#".repeat(1024 * 1024)}`;
+    const oversizedExtension = `${latteExtensionSource("hugePhpFilter")}\n// ${"x".repeat(1024 * 1024)}`;
+    const { context } = makeContext({
+      "app/a/config.neon": oversizedConfig,
+      "app/b/HugeLatteExtension.php": oversizedExtension,
+      "app/c/config.neon": filterLoaderConfig("userDate"),
+    });
+
+    await expect(loadLatteFilterNames(context)).resolves.toEqual(["userDate"]);
+  });
+
   it("stops scanning once the config-file budget is reached", async () => {
     const { context, workspace } = makeContext(
       {

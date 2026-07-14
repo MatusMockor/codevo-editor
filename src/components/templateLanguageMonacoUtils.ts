@@ -4,6 +4,7 @@ import type {
   PhpCodeActionContext,
   PhpCodeActionRange,
 } from "../application/phpCodeActionTypes";
+import { isLargeSmartDocumentContent } from "../domain/largeDocumentPolicy";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { TemplateLanguageMonacoProviderContext } from "./templateLanguageMonacoTypes";
 import {
@@ -75,6 +76,16 @@ export function templateCodeActionContextFromMonaco(
       },
     })),
   };
+}
+
+export function isLargeTemplateSmartDocument(
+  context: TemplateLanguageMonacoProviderContext,
+  source: string,
+): boolean {
+  return isLargeSmartDocumentContent(
+    source,
+    context.getLargeSmartDocumentPolicy?.(),
+  );
 }
 
 export function isStoredWorkspaceRootActive(

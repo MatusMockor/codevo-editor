@@ -12,6 +12,7 @@ import type {
 import {
   activeTemplateDocumentContext,
   codeActionOffsetRange,
+  isLargeTemplateSmartDocument,
   isStoredWorkspaceRootActive,
   modelSource,
   offsetAtMonacoPosition,
@@ -112,6 +113,11 @@ async function provideBladeDefinition(
   }
 
   const source = modelSource(model, documentContext.activeDocument.content);
+
+  if (isLargeTemplateSmartDocument(context, source)) {
+    return null;
+  }
+
   const offset = offsetAtMonacoPosition(source, position);
   const request = templateDefinitionNavigationRequest(
     context,
@@ -146,6 +152,11 @@ async function provideBladeCompletionItems(
   }
 
   const source = modelSource(model, documentContext.activeDocument.content);
+
+  if (isLargeTemplateSmartDocument(context, source)) {
+    return { suggestions: [] };
+  }
+
   const word = model.getWordUntilPosition(position);
   const fallbackRange = templateCompletionFallbackRange(position, word);
   const snippetSuggestions = bladeSnippetSuggestions(

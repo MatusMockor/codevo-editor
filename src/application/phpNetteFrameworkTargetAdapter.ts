@@ -1,5 +1,8 @@
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import {
+  exceedsScannedFileContentLength,
+} from "../domain/fileScanPolicy";
+import {
   netteTranslationDomainFromPath,
   netteTranslationKeysFromSource,
   netteTranslationTargetFromSource,
@@ -446,6 +449,10 @@ async function collectPhpNetteTranslationTargets(
         return [];
       }
 
+      if (exceedsScannedFileContentLength(content)) {
+        continue;
+      }
+
       for (const target of netteTranslationKeysFromSource(
         content,
         file.relativePath,
@@ -522,6 +529,10 @@ async function findPhpNetteTranslationTarget(
 
       if (!isWorkspaceRootActive(deps, requestedRoot)) {
         return null;
+      }
+
+      if (exceedsScannedFileContentLength(content)) {
+        continue;
       }
 
       const target = netteTranslationTargetFromSource(

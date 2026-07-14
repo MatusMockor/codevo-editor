@@ -274,6 +274,78 @@ describe("createPhpNetteTranslationTargetResolver", () => {
     ]);
   });
 
+  it("skips oversized translation files while collecting targets from normal ones", async () => {
+    const rootLang = `${ROOT}/lang`;
+    const oversizedSource = `huge: Huge\n${"#".repeat(1024 * 1024)}`;
+    const harness = createHarness({
+      readWorkspaceDirectory: vi.fn(async (path: string) => {
+        if (path === rootLang) {
+          return [
+            fileEntry(`${rootLang}/huge.en.neon`),
+            fileEntry(`${rootLang}/users.en.neon`),
+          ];
+        }
+
+        return [];
+      }) as never,
+      readNavigationFileContent: vi.fn(async (path: string) => {
+        if (path === `${rootLang}/huge.en.neon`) {
+          return oversizedSource;
+        }
+
+        if (path === `${rootLang}/users.en.neon`) {
+          return `welcome: Welcome\n`;
+        }
+
+        throw new Error(`unexpected read ${path}`);
+      }) as never,
+    });
+
+    await expect(harness.resolver.collect()).resolves.toEqual([
+      {
+        key: "users.welcome",
+        path: `${rootLang}/users.en.neon`,
+        position: { column: 1, lineNumber: 1 },
+        relativePath: "lang/users.en.neon",
+      },
+    ]);
+  });
+
+  it("skips an oversized translation file when finding a target in its domain", async () => {
+    const rootLang = `${ROOT}/lang`;
+    const oversizedSource = `foo: Huge\n${"#".repeat(1024 * 1024)}`;
+    const harness = createHarness({
+      readWorkspaceDirectory: vi.fn(async (path: string) => {
+        if (path === rootLang) {
+          return [
+            fileEntry(`${rootLang}/users.cs.neon`),
+            fileEntry(`${rootLang}/users.en.neon`),
+          ];
+        }
+
+        return [];
+      }) as never,
+      readNavigationFileContent: vi.fn(async (path: string) => {
+        if (path === `${rootLang}/users.cs.neon`) {
+          return oversizedSource;
+        }
+
+        if (path === `${rootLang}/users.en.neon`) {
+          return `foo: Foo\n`;
+        }
+
+        throw new Error(`unexpected read ${path}`);
+      }) as never,
+    });
+
+    await expect(harness.resolver.find("users.foo")).resolves.toEqual({
+      key: "users.foo",
+      path: `${rootLang}/users.en.neon`,
+      position: { column: 1, lineNumber: 1 },
+      relativePath: "lang/users.en.neon",
+    });
+  });
+
   it("finds a translation target from the collection cache before scanning files", async () => {
     const cachedTarget = {
       key: "users.cached",

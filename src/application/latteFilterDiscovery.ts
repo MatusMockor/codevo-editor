@@ -1,4 +1,7 @@
 import {
+  exceedsScannedFileContentLength,
+} from "../domain/fileScanPolicy";
+import {
   latteFilterRegistrationsFromSource,
 } from "../domain/latteFilterRegistrations";
 import {
@@ -159,6 +162,10 @@ async function scanLatteFilterRegistrations(
       return [];
     }
 
+    if (exceedsScannedFileContentLength(content)) {
+      continue;
+    }
+
     for (const registration of latteFilterRegistrationsFromSource(content)) {
       if (registrationsByName.has(registration.name)) {
         continue;
@@ -190,6 +197,10 @@ async function scanLatteFilterRegistrations(
 
     if (!isRequestedRootActive()) {
       return [];
+    }
+
+    if (exceedsScannedFileContentLength(content)) {
+      continue;
     }
 
     for (const registration of lattePhpExtensionFiltersFromSource(content)) {
