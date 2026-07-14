@@ -1,5 +1,6 @@
 import {
   phpFrameworkTranslationLiteralTarget,
+  phpFrameworkTranslationMissingTargetMessage,
   phpFrameworkTranslationReferenceAt,
 } from "../domain/phpFrameworkProviders";
 import type { PhpFrameworkLiteralDefinitionResolverEntry } from "./phpFrameworkLiteralDefinitionResolverRegistry";
@@ -7,6 +8,13 @@ import type { PhpFrameworkLiteralDefinitionResolverEntry } from "./phpFrameworkL
 export const phpTranslationLiteralDefinitionResolver: PhpFrameworkLiteralDefinitionResolverEntry =
   {
     id: "framework.translation",
+    missingContextualMessage: ({ providers, request }) => {
+      if (request.kind !== "translation") {
+        return undefined;
+      }
+
+      return phpFrameworkTranslationMissingTargetMessage(request.key, providers);
+    },
     resolveDirect: async ({ position, providers, source }, dependencies) => {
       const reference = phpFrameworkTranslationReferenceAt(
         source,

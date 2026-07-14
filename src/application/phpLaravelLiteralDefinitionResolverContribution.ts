@@ -1,9 +1,13 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
+  phpFrameworkConfigMissingTargetMessage,
   phpFrameworkConfigLiteralTarget,
+  phpFrameworkEnvMissingTargetMessage,
   phpFrameworkEnvLiteralTarget,
   phpFrameworkInertiaLiteralTarget,
   phpFrameworkInertiaReferenceAt,
+  phpFrameworkRouteMissingTargetMessage,
+  phpFrameworkViewMissingTargetMessage,
   phpFrameworkViewLiteralTarget,
   phpFrameworkViewReferenceAt,
 } from "../domain/phpFrameworkProviders";
@@ -57,6 +61,10 @@ type LaravelConfigDerivedLiteralFinder = (
 interface LaravelConfigDerivedLiteralDefinition {
   readonly finderKey: LaravelConfigDerivedLiteralFinderKey;
   readonly id: string;
+  readonly missingMessage: (
+    request: LaravelConfigDerivedLiteralRequest &
+      Record<LaravelConfigDerivedLiteralRequestNameKey, string>,
+  ) => string;
   readonly nameKey: LaravelConfigDerivedLiteralRequestNameKey;
   readonly requestKind: LaravelConfigDerivedLiteralRequest["kind"];
 }
@@ -83,60 +91,80 @@ const LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITIONS: readonly LaravelConfigDerivedL
     {
       finderKey: "findAuthGuardTarget",
       id: "laravel.auth-guard",
+      missingMessage: (request) =>
+        `No Laravel auth guard ${request.guardName} found.`,
       nameKey: "guardName",
       requestKind: "authGuard",
     },
     {
       finderKey: "findBroadcastConnectionTarget",
       id: "laravel.broadcast-connection",
+      missingMessage: (request) =>
+        `No Laravel broadcast connection ${request.connectionName} found.`,
       nameKey: "connectionName",
       requestKind: "broadcastConnection",
     },
     {
       finderKey: "findCacheStoreTarget",
       id: "laravel.cache-store",
+      missingMessage: (request) =>
+        `No Laravel cache store ${request.storeName} found.`,
       nameKey: "storeName",
       requestKind: "cacheStore",
     },
     {
       finderKey: "findDatabaseConnectionTarget",
       id: "laravel.database-connection",
+      missingMessage: (request) =>
+        `No Laravel database connection ${request.connectionName} found.`,
       nameKey: "connectionName",
       requestKind: "databaseConnection",
     },
     {
       finderKey: "findLogChannelTarget",
       id: "laravel.log-channel",
+      missingMessage: (request) =>
+        `No Laravel log channel ${request.channelName} found.`,
       nameKey: "channelName",
       requestKind: "logChannel",
     },
     {
       finderKey: "findMailMailerTarget",
       id: "laravel.mail-mailer",
+      missingMessage: (request) =>
+        `No Laravel mailer ${request.mailerName} found.`,
       nameKey: "mailerName",
       requestKind: "mailMailer",
     },
     {
       finderKey: "findPasswordBrokerTarget",
       id: "laravel.password-broker",
+      missingMessage: (request) =>
+        `No Laravel password broker ${request.brokerName} found.`,
       nameKey: "brokerName",
       requestKind: "passwordBroker",
     },
     {
       finderKey: "findQueueConnectionTarget",
       id: "laravel.queue-connection",
+      missingMessage: (request) =>
+        `No Laravel queue connection ${request.connectionName} found.`,
       nameKey: "connectionName",
       requestKind: "queueConnection",
     },
     {
       finderKey: "findRedisConnectionTarget",
       id: "laravel.redis-connection",
+      missingMessage: (request) =>
+        `No Laravel redis connection ${request.connectionName} found.`,
       nameKey: "connectionName",
       requestKind: "redisConnection",
     },
     {
       finderKey: "findStorageDiskTarget",
       id: "laravel.storage-disk",
+      missingMessage: (request) =>
+        `No Laravel storage disk ${request.diskName} found.`,
       nameKey: "diskName",
       requestKind: "storageDisk",
     },
@@ -145,6 +173,16 @@ const LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITIONS: readonly LaravelConfigDerivedL
 const LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefinitionResolverEntry[] =
   LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITIONS.map((definition) => ({
     id: definition.id,
+    missingContextualMessage: ({ request }) => {
+      if (request.kind !== definition.requestKind) {
+        return undefined;
+      }
+
+      const literalRequest = request as LaravelConfigDerivedLiteralRequest &
+        Record<LaravelConfigDerivedLiteralRequestNameKey, string>;
+
+      return definition.missingMessage(literalRequest);
+    },
     resolveContextual: async ({ request }, dependencies) => {
       if (request.kind !== definition.requestKind) {
         return undefined;
@@ -230,6 +268,13 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
     },
     {
       id: "laravel.config",
+      missingContextualMessage: ({ providers, request }) => {
+        if (request.kind !== "config") {
+          return undefined;
+        }
+
+        return phpFrameworkConfigMissingTargetMessage(request.key, providers);
+      },
       resolveDirect: async ({ helperMatch, providers }, dependencies) => {
         const match = helperMatch();
 
@@ -271,6 +316,13 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
     },
     {
       id: "laravel.view",
+      missingContextualMessage: ({ providers, request }) => {
+        if (request.kind !== "view") {
+          return undefined;
+        }
+
+        return phpFrameworkViewMissingTargetMessage(request.name, providers);
+      },
       resolveDirect: async ({ helperMatch, providers }, dependencies) => {
         const match = helperMatch();
 
@@ -313,6 +365,13 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
     phpTranslationLiteralDefinitionResolver,
     {
       id: "laravel.env",
+      missingContextualMessage: ({ providers, request }) => {
+        if (request.kind !== "env") {
+          return undefined;
+        }
+
+        return phpFrameworkEnvMissingTargetMessage(request.name, providers);
+      },
       resolveDirect: async ({ helperMatch, providers }, dependencies) => {
         const match = helperMatch();
 
@@ -354,6 +413,13 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
     },
     {
       id: "laravel.route",
+      missingContextualMessage: ({ providers, request }) => {
+        if (request.kind !== "route") {
+          return undefined;
+        }
+
+        return phpFrameworkRouteMissingTargetMessage(request.name, providers);
+      },
       resolveDirect: async ({ activeDocument, helperMatch }, dependencies) => {
         const match = helperMatch();
 
@@ -385,6 +451,8 @@ const LARAVEL_LITERAL_DEFINITION_RESOLVERS: readonly PhpFrameworkLiteralDefiniti
     ...LARAVEL_CONFIG_DERIVED_LITERAL_DEFINITION_RESOLVERS,
     {
       id: "laravel.validation-table",
+      missingContextualMessage: ({ request }) =>
+        request.kind === "validationTable" ? null : undefined,
       resolveContextual: async ({ request }, dependencies) => {
         if (request.kind !== "validationTable") {
           return undefined;

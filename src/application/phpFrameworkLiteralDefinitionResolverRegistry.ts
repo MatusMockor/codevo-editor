@@ -217,6 +217,9 @@ export type PhpFrameworkLiteralDefinitionResolverResult =
 
 export interface PhpFrameworkLiteralDefinitionResolverEntry {
   readonly id: string;
+  missingContextualMessage?(
+    context: PhpFrameworkContextualLiteralDefinitionResolverContext,
+  ): string | null | undefined;
   resolveContextual?(
     context: PhpFrameworkContextualLiteralDefinitionResolverContext,
     dependencies: PhpFrameworkLiteralNavigationDependencies,
@@ -294,6 +297,30 @@ export async function resolvePhpFrameworkContextualLiteralDefinitionTarget(
 
     if (target !== undefined) {
       return target;
+    }
+  }
+
+  return undefined;
+}
+
+export function phpFrameworkContextualLiteralDefinitionMissingMessage(
+  request: PhpContextualFrameworkLiteralDefinitionRequest,
+  activeDocument: PhpFrameworkLiteralNavigationDocument,
+  providers: readonly PhpFrameworkProvider[],
+): string | null | undefined {
+  const context: PhpFrameworkContextualLiteralDefinitionResolverContext = {
+    activeDocument,
+    providers,
+    request,
+  };
+
+  for (const resolver of activePhpFrameworkLiteralDefinitionResolverEntries(
+    providers,
+  )) {
+    const message = resolver.missingContextualMessage?.(context);
+
+    if (message !== undefined) {
+      return message;
     }
   }
 

@@ -1,17 +1,11 @@
 import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpFrameworkConfigMissingTargetMessage,
-  phpFrameworkEnvMissingTargetMessage,
-  phpFrameworkRouteMissingTargetMessage,
-  phpFrameworkTranslationMissingTargetMessage,
-  phpFrameworkViewMissingTargetMessage,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
+  phpFrameworkContextualLiteralDefinitionMissingMessage,
   resolvePhpFrameworkContextualLiteralDefinitionTarget,
   type PhpContextualFrameworkLiteralDefinitionRequest,
   type PhpFrameworkLiteralNavigationDependencies,
@@ -90,10 +84,12 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
       }
 
       if (!target) {
-        const missingMessage = phpFrameworkMissingLiteralTargetMessage(
-          request,
-          providers,
-        );
+        const missingMessage =
+          phpFrameworkContextualLiteralDefinitionMissingMessage(
+            request,
+            activeDocument,
+            providers,
+          );
 
         if (missingMessage) {
           setMessage(missingMessage);
@@ -134,62 +130,4 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
   );
 
   return { goToPhpFrameworkLiteralDefinition };
-}
-
-function phpFrameworkMissingLiteralTargetMessage(
-  request: PhpContextualFrameworkLiteralDefinitionRequest,
-  providers: readonly PhpFrameworkProvider[],
-): string | null {
-  switch (request.kind) {
-    case "authGuard":
-      return `No Laravel auth guard ${request.guardName} found.`;
-
-    case "broadcastConnection":
-      return `No Laravel broadcast connection ${request.connectionName} found.`;
-
-    case "cacheStore":
-      return `No Laravel cache store ${request.storeName} found.`;
-
-    case "config":
-      return phpFrameworkConfigMissingTargetMessage(request.key, providers);
-
-    case "databaseConnection":
-      return `No Laravel database connection ${request.connectionName} found.`;
-
-    case "env":
-      return phpFrameworkEnvMissingTargetMessage(request.name, providers);
-
-    case "logChannel":
-      return `No Laravel log channel ${request.channelName} found.`;
-
-    case "mailMailer":
-      return `No Laravel mailer ${request.mailerName} found.`;
-
-    case "passwordBroker":
-      return `No Laravel password broker ${request.brokerName} found.`;
-
-    case "queueConnection":
-      return `No Laravel queue connection ${request.connectionName} found.`;
-
-    case "redisConnection":
-      return `No Laravel redis connection ${request.connectionName} found.`;
-
-    case "route":
-      return phpFrameworkRouteMissingTargetMessage(request.name, providers);
-
-    case "storageDisk":
-      return `No Laravel storage disk ${request.diskName} found.`;
-
-    case "translation":
-      return phpFrameworkTranslationMissingTargetMessage(
-        request.key,
-        providers,
-      );
-
-    case "view":
-      return phpFrameworkViewMissingTargetMessage(request.name, providers);
-
-    case "validationTable":
-      return null;
-  }
 }
