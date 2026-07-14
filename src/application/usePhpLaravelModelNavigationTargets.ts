@@ -49,7 +49,8 @@ export function usePhpLaravelModelNavigationTargets({
   workspaceRoot,
 }: PhpLaravelModelNavigationTargetsDependencies): PhpLaravelModelNavigationTargets {
   const canOpenLaravelModelSourceTargets =
-    frameworkRuntime.hasProvider("laravel");
+    frameworkRuntime.providers.length > 0 &&
+    frameworkRuntime.supports("eloquentModelSemantics");
 
   const openPhpLaravelDynamicWhereTarget = useCallback(
     async (className: string, methodName: string): Promise<boolean> =>
