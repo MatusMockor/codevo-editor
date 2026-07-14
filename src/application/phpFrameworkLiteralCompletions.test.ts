@@ -173,6 +173,8 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
     ).resolves.toEqual([
       {
         declaringClassName: "routes/web.php",
+        detail: "Laravel route - routes/web.php",
+        documentation: "Laravel named route\n\nAdmin.Dashboard",
         insertText: "Dashboard",
         kind: "route",
         name: "Admin.Dashboard",
@@ -214,6 +216,8 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
     ).resolves.toEqual([
       {
         declaringClassName: "config/app.php",
+        detail: "Laravel config - config/app.php",
+        documentation: "Laravel config\n\napp.name",
         insertText: "name",
         kind: "config",
         name: "app.name",
@@ -250,6 +254,8 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
     ).resolves.toEqual([
       {
         declaringClassName: "lang/en/messages.php",
+        detail: "Laravel translation - lang/en/messages.php",
+        documentation: "Laravel translation\n\nmessages.welcome",
         insertText: "welcome",
         kind: "translation",
         name: "messages.welcome",
@@ -286,6 +292,8 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
     ).resolves.toEqual([
       {
         declaringClassName: ".env",
+        detail: "Laravel env - .env",
+        documentation: "Laravel env\n\nAPP_NAME",
         insertText: "APP_NAME",
         kind: "env",
         name: "APP_NAME",
@@ -337,6 +345,8 @@ describe("resolvePhpFrameworkLiteralCompletions", () => {
     ).resolves.toEqual([
       {
         declaringClassName: "resources/views/admin/dashboard.blade.php",
+        detail: "Laravel view - resources/views/admin/dashboard.blade.php",
+        documentation: "Laravel view\n\nadmin.dashboard",
         insertText: "dashboard",
         kind: "view",
         name: "admin.dashboard",

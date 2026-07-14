@@ -100,17 +100,27 @@ export async function resolvePhpFrameworkLiteralCompletions(
     return routes
       .filter((route) => route.name.toLowerCase().startsWith(normalizedPrefix))
       .slice(0, 80)
-      .map((route) => ({
-        declaringClassName: route.relativePath ?? getFileName(route.path),
-        insertText: insertText({
+      .map((route) => {
+        const declaringClassName = route.relativePath ?? getFileName(route.path);
+
+        return {
+          declaringClassName,
+          ...laravelLiteralCompletionMetadata(
+            routeContext.provider,
+            "route",
+            declaringClassName,
+            route.name,
+          ),
+          insertText: insertText({
+            name: route.name,
+            prefix: routeContext.reference.prefix,
+          }),
+          kind: "route",
           name: route.name,
-          prefix: routeContext.reference.prefix,
-        }),
-        kind: "route",
-        name: route.name,
-        parameters: "",
-        returnType: null,
-      }));
+          parameters: "",
+          returnType: null,
+        };
+      });
   }
 
   const translationContext = phpFrameworkTranslationCompletionContextAt(
@@ -139,6 +149,12 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
+        ...laravelLiteralCompletionMetadata(
+          translationContext.provider,
+          "translation",
+          target.relativePath,
+          target.key,
+        ),
         insertText: insertText({
           key: target.key,
           prefix: translationContext.reference.prefix,
@@ -176,6 +192,12 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
+        ...laravelLiteralCompletionMetadata(
+          envContext.provider,
+          "env",
+          target.relativePath,
+          target.name,
+        ),
         insertText: insertText({
           name: target.name,
           prefix: envContext.reference.prefix,
@@ -212,6 +234,12 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((target) => ({
         declaringClassName: target.relativePath,
+        ...laravelLiteralCompletionMetadata(
+          configContext.provider,
+          "config",
+          target.relativePath,
+          target.key,
+        ),
         insertText: insertText({
           key: target.key,
           prefix: configContext.reference.prefix,
@@ -248,6 +276,12 @@ export async function resolvePhpFrameworkLiteralCompletions(
       .slice(0, 80)
       .map((view) => ({
         declaringClassName: view.relativePath,
+        ...laravelLiteralCompletionMetadata(
+          viewContext.provider,
+          "view",
+          view.relativePath,
+          view.name,
+        ),
         insertText: insertText({
           name: view.name,
           prefix: viewContext.reference.prefix,
@@ -260,4 +294,27 @@ export async function resolvePhpFrameworkLiteralCompletions(
   }
 
   return null;
+}
+
+function laravelLiteralCompletionMetadata(
+  provider: PhpFrameworkProvider,
+  kind: "config" | "env" | "route" | "translation" | "view",
+  declaringClassName: string,
+  name: string,
+): Partial<Pick<PhpMethodCompletion, "detail" | "documentation">> {
+  if (provider.id !== "laravel") {
+    return {};
+  }
+
+  if (kind === "route") {
+    return {
+      detail: `Laravel route - ${declaringClassName}`,
+      documentation: `Laravel named route\n\n${name}`,
+    };
+  }
+
+  return {
+    detail: `Laravel ${kind} - ${declaringClassName}`,
+    documentation: `Laravel ${kind}\n\n${name}`,
+  };
 }

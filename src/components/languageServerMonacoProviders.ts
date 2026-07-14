@@ -4653,26 +4653,6 @@ function phpMethodDetail(item: PhpMethodCompletion): string {
     return `${visibilityPrefix}${item.declaringClassName}::$${item.name}${returnType}`;
   }
 
-  if (item.kind === "route") {
-    return `Laravel route - ${item.declaringClassName}`;
-  }
-
-  if (item.kind === "config") {
-    return `Laravel config - ${item.declaringClassName}`;
-  }
-
-  if (item.kind === "env") {
-    return `Laravel env - ${item.declaringClassName}`;
-  }
-
-  if (item.kind === "translation") {
-    return `Laravel translation - ${item.declaringClassName}`;
-  }
-
-  if (item.kind === "view") {
-    return `Laravel view - ${item.declaringClassName}`;
-  }
-
   const parameters = item.parameters ? `(${item.parameters})` : "()";
   const returnType = item.returnType ? `: ${item.returnType}` : "";
 
@@ -4690,26 +4670,6 @@ function phpMethodDocumentation(item: PhpMethodCompletion): string {
 
   if (item.kind === "property") {
     return `Property\n\n${item.declaringClassName}::$${item.name}`;
-  }
-
-  if (item.kind === "route") {
-    return `Laravel named route\n\n${item.name}`;
-  }
-
-  if (item.kind === "config") {
-    return `Laravel config\n\n${item.name}`;
-  }
-
-  if (item.kind === "env") {
-    return `Laravel env\n\n${item.name}`;
-  }
-
-  if (item.kind === "translation") {
-    return `Laravel translation\n\n${item.name}`;
-  }
-
-  if (item.kind === "view") {
-    return `Laravel view\n\n${item.name}`;
   }
 
   const parameters = phpMethodParameters(item.parameters);

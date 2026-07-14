@@ -1325,6 +1325,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "routes/web.php",
+        detail: "Laravel route - routes/web.php",
+        documentation: "Laravel named route\n\ncomments.show",
         insertText: "show",
         kind: "route" as const,
         name: "comments.show",
@@ -1379,11 +1381,66 @@ describe("registerLanguageServerMonacoProviders", () => {
     ]);
   });
 
+  it("prefers provider presentation metadata for Laravel literal completions", async () => {
+    const registered = createRegisteredProviders();
+    const providePhpMethodCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "routes/web.php",
+        detail: "Provider route detail",
+        documentation: "Provider route documentation",
+        insertText: "show",
+        kind: "route" as const,
+        name: "comments.show",
+        parameters: "",
+        returnType: null,
+      },
+    ]);
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content:
+          "<?php\nfunction show(): string\n{\n    return route('comments.sh');\n}\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [],
+        },
+      }),
+      providePhpMethodCompletions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "    return route('comments.sh');",
+        word: {
+          endColumn: 32,
+          startColumn: 30,
+        },
+      }),
+      {
+        column: 32,
+        lineNumber: 4,
+      },
+    );
+
+    expect(result.suggestions[0]).toEqual(
+      expect.objectContaining({
+        detail: "Provider route detail",
+        documentation: "Provider route documentation",
+        insertText: "show",
+      }),
+    );
+  });
+
   it("inserts Laravel config key completions as plain string suffixes", async () => {
     const registered = createRegisteredProviders();
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "config/app.php",
+        detail: "Laravel config - config/app.php",
+        documentation: "Laravel config\n\napp.name",
         insertText: "name",
         kind: "config" as const,
         name: "app.name",
@@ -1443,6 +1500,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: ".env",
+        detail: "Laravel env - .env",
+        documentation: "Laravel env\n\nAPP_NAME",
         insertText: "APP_NAME",
         kind: "env" as const,
         name: "APP_NAME",
@@ -1580,6 +1639,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "config/database.php",
+        detail: "Laravel config - config/database.php",
+        documentation: "Laravel config\n\npgsql",
         insertText: "pgsql",
         kind: "config" as const,
         name: "pgsql",
@@ -1642,6 +1703,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "lang/en/messages.php",
+        detail: "Laravel translation - lang/en/messages.php",
+        documentation: "Laravel translation\n\nmessages.welcome",
         insertText: "welcome",
         kind: "translation" as const,
         name: "messages.welcome",
@@ -1701,6 +1764,8 @@ describe("registerLanguageServerMonacoProviders", () => {
     const providePhpMethodCompletions = vi.fn(async () => [
       {
         declaringClassName: "resources/views/comments/show.blade.php",
+        detail: "Laravel view - resources/views/comments/show.blade.php",
+        documentation: "Laravel view\n\ncomments.show",
         insertText: "show",
         kind: "view" as const,
         name: "comments.show",
