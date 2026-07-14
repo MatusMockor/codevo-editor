@@ -297,7 +297,7 @@ function scopeEditorSurfaceSnapshot(
     isPersistableWorkspacePath(rootPath, path),
   );
   const markdownPreviewTabs = filterPathRecord(
-    snapshot.markdownPreviewTabs,
+    snapshot.markdownPreviewTabs ?? {},
     (_path, preview) =>
       isPersistableWorkspacePath(rootPath, preview.sourcePath),
   );

@@ -356,4 +356,35 @@ describe("useEditorSessionState", () => {
     );
     harness.unmount();
   });
+
+  it("restores a legacy runtime snapshot without Markdown previews or groups", () => {
+    const harness = renderEditorSessionState();
+    const legacyRuntimeSnapshot = {
+      activePath: DOCUMENT_A.path,
+      documents: { [DOCUMENT_A.path]: DOCUMENT_A },
+      imageTabs: {},
+      openPaths: [DOCUMENT_A.path],
+      previewPath: null,
+    } as unknown as EditorSurfaceSnapshot;
+
+    expect(() => {
+      act(() => {
+        harness
+          .session()
+          .restoreEditorSurface("/workspace", legacyRuntimeSnapshot);
+      });
+    }).not.toThrow();
+
+    const restored = harness.session();
+    expect(restored.documents).toEqual({ [DOCUMENT_A.path]: DOCUMENT_A });
+    expect(restored.markdownPreviewTabs).toEqual({});
+    expect(restored.editorGroups.groups["editor-main"]).toEqual({
+      activePath: DOCUMENT_A.path,
+      openPaths: [DOCUMENT_A.path],
+      previewPath: null,
+    });
+    expect(restored.activeDocumentRef.current).toEqual(DOCUMENT_A);
+
+    harness.unmount();
+  });
 });
