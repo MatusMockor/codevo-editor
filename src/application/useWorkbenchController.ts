@@ -56,7 +56,7 @@ import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
 import { workbenchWorkspaceTabCommands } from "./workbenchWorkspaceTabCommands";
 import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
-import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
+import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
 import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
@@ -238,22 +238,10 @@ import type { BottomPanelView } from "../domain/bottomPanel";
 import type { ArtisanControllerAction } from "../domain/artisanRoutes";
 import type { PhpTestCase } from "../domain/phpTestResults";
 import { phpTestCaseNavigationTarget } from "../domain/phpTestResults";
-import {
-  applyIndexProgress,
-  applyMetadataScanCompletion,
-  createIndexHealthCompletionLog,
-  createIndexHealthLogEntry,
-  indexProgressCompletionMessage,
-  indexProgressNoticeSeverity,
-  initialIndexProgress,
-  prependIndexHealthLog,
-  startIndexProgress,
-  type IndexHealthLogEntry,
-  type IndexProgressEvent,
-  type IndexProgressGateway,
-  type IndexProgressState,
-  type MetadataScanCompletionEvent,
-  type UnsubscribeFn as IndexProgressUnsubscribeFn,
+import type {
+  IndexHealthLogEntry,
+  IndexProgressGateway,
+  IndexProgressState,
 } from "../domain/indexProgress";
 import {
   languageServerDiagnosticNoticeGroup,
@@ -708,12 +696,6 @@ export function useWorkbenchController(
     useState<Record<string, LanguageServerDiagnostic[]>>({});
   const [phpLocalDiagnosticsByPath, setPhpLocalDiagnosticsByPath] =
     useState<Record<string, LanguageServerDiagnostic[]>>({});
-  const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
-    initialIndexProgress,
-  );
-  const [indexHealthLogs, setIndexHealthLogs] = useState<
-    IndexHealthLogEntry[]
-  >([]);
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
   const [bottomPanelView, setBottomPanelView] =
     useState<BottomPanelView>("problems");
@@ -869,6 +851,18 @@ export function useWorkbenchController(
     useWorkbenchImplementationChooserState();
   const [message, setMessage] = useState<string | null>(null);
   const [notices, setNotices] = useState<WorkbenchNotice[]>([]);
+  const reportError = useCallback((source: string, error: unknown) => {
+    if (isBenignError(error)) {
+      return;
+    }
+
+    const nextMessage = String(error);
+    setMessage(nextMessage);
+    setNotices((current) => [
+      createWorkbenchNotice("error", source, nextMessage),
+      ...current,
+    ]);
+  }, []);
   const eslintAnalysisInFlightRef = useRef(false);
   const [eslintAnalysisRunning, setEslintAnalysisRunning] = useState(false);
   const [eslintFixesByRoot, setEslintFixesByRoot] = useState<
@@ -961,9 +955,6 @@ export function useWorkbenchController(
   const openingFileFlagOwnerTokenRef = useRef<number | null>(null);
   const emptyDocumentRefreshTimeoutsRef = useRef<Set<number>>(new Set());
   const editorGitBaselineRequestTokenRef = useRef(0);
-  const activeIndexRootRef = useRef<string | null>(null);
-  const pendingIndexRootRef = useRef<string | null>(null);
-  const pendingIndexScanRef = useRef(false);
   const autoStartedLanguageServerRootRef = useRef<string | null>(null);
   const phpLanguageServerAutostartAttemptsByRootRef = useRef<
     Record<string, number>
@@ -1111,6 +1102,36 @@ export function useWorkbenchController(
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const resetIndexedWorkspaceViewsRef = useRef<() => void>(() => {});
+  const resetIndexedWorkspaceViews = useCallback(() => {
+    resetIndexedWorkspaceViewsRef.current();
+  }, []);
+  const resetPhpFrameworkCaches = useCallback(() => {
+    resetPhpFrameworkCachesRef.current();
+  }, []);
+  const {
+    clearIndexWorkspaceState,
+    clearWorkspaceIndex,
+    indexHealthLogs,
+    indexProgress,
+    restoreCachedIndexState,
+    restoreIndexRoot,
+    startHardReindex,
+    startIndexScan,
+    startInitialIndexScan,
+    startPhpReindex,
+  } = useWorkbenchIndexLifecycle({
+    currentWorkspaceRootRef,
+    indexProgressGateway,
+    intelligenceMode,
+    intelligenceModeRef,
+    reportError,
+    resetIndexedWorkspaceViews,
+    resetPhpFrameworkCaches,
+    setMessage,
+    setNotices,
+    workspaceRoot,
+  });
   const resetEditorGroups = useCallback(() => {
     const next = createInitialEditorGroupsState("editor-main");
     editorGroupsRef.current = next;
@@ -1423,19 +1444,6 @@ export function useWorkbenchController(
   useEffect(() => {
     intelligenceModeRef.current = intelligenceMode;
   }, [intelligenceMode]);
-
-  const reportError = useCallback((source: string, error: unknown) => {
-    if (isBenignError(error)) {
-      return;
-    }
-
-    const nextMessage = String(error);
-    setMessage(nextMessage);
-    setNotices((current) => [
-      createWorkbenchNotice("error", source, nextMessage),
-      ...current,
-    ]);
-  }, []);
 
   const reportErrorForActiveWorkspaceRoot = useCallback(
     (rootPath: string | null | undefined, source: string, error: unknown) => {
@@ -2016,8 +2024,7 @@ export function useWorkbenchController(
 
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
-      setIndexHealthLogs(cached.indexHealthLogs);
-      setIndexProgress(cached.indexProgress);
+      restoreCachedIndexState(cached.indexProgress, cached.indexHealthLogs);
       setManuallyCollapsedDirectories(
         new Set(cached.manuallyCollapsedDirectories),
       );
@@ -2064,7 +2071,7 @@ export function useWorkbenchController(
       setBottomPanelView(cached.bottomPanelView);
       setBottomPanelVisible(cached.bottomPanelVisible);
     },
-    [restoreHistory, updateEditorGroups],
+    [restoreCachedIndexState, restoreHistory, updateEditorGroups],
   );
 
   const {
@@ -2477,164 +2484,8 @@ export function useWorkbenchController(
     phpstanWorkspaceTabsRef.current = currentTabs;
   }, [appSettings.workspaceTabs, clearPhpstanDiagnosticsForRoot]);
 
-  const handleMetadataScanCompletion = useCallback(
-    (event: MetadataScanCompletionEvent) => {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.rootPath)) {
-        return;
-      }
-
-      if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
-        const clearRoot = event.rootPath;
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
-        activeIndexRootRef.current = null;
-        indexProgressGateway
-          .clearWorkspaceIndex(clearRoot)
-          .catch((error) => {
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, clearRoot)) {
-              return;
-            }
-
-            reportError("Index", error);
-          });
-        return;
-      }
-
-      if (pendingIndexScanRef.current) {
-        if (!workspaceRootKeysEqual(pendingIndexRootRef.current, event.rootPath)) {
-          return;
-        }
-      } else {
-        if (!workspaceRootKeysEqual(activeIndexRootRef.current, event.rootPath)) {
-          return;
-        }
-      }
-
-      const message = indexProgressCompletionMessage(event);
-      const severity = indexProgressNoticeSeverity(event);
-      const groupKey = indexProgressNoticeGroup(event.rootPath);
-
-      pendingIndexScanRef.current = false;
-      pendingIndexRootRef.current = null;
-      activeIndexRootRef.current = event.rootPath;
-      resetPhpFrameworkCachesRef.current();
-      setIndexProgress((current) =>
-        applyMetadataScanCompletion(current, event),
-      );
-      setIndexHealthLogs((current) =>
-        prependIndexHealthLog(current, createIndexHealthCompletionLog(event)),
-      );
-      setMessage(message);
-      setNotices((current) =>
-        replaceWorkbenchNoticeGroup(
-          current,
-          groupKey,
-          severity
-            ? [createWorkbenchNotice(severity, "Index", message, groupKey)]
-            : [],
-        ),
-      );
-    },
-    [indexProgressGateway, reportError],
-  );
-
-  const handleIndexProgress = useCallback((event: IndexProgressEvent) => {
-    // Per-workspace isolation: drop progress for any root that is not the active workspace and the
-    // root the in-flight index was actually started for, so a stale background run can never paint
-    // the newly-active workspace's status bar. Progress is purely advisory - completion/failure are
-    // still owned by handleMetadataScanCompletion.
-    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, event.rootPath)) {
-      return;
-    }
-
-    const indexRoot = pendingIndexScanRef.current
-      ? pendingIndexRootRef.current
-      : activeIndexRootRef.current;
-
-    if (!workspaceRootKeysEqual(indexRoot, event.rootPath)) {
-      return;
-    }
-
-    setIndexProgress((current) => {
-      if (
-        current.rootPath &&
-        !workspaceRootKeysEqual(current.rootPath, event.rootPath)
-      ) {
-        return current;
-      }
-
-      return applyIndexProgress(current, event);
-    });
-  }, []);
-
-  const startInitialIndexScan = useCallback(
-    async (rootPath: string) => {
-      if (!shouldIndexWorkspace(intelligenceModeRef.current)) {
-        return;
-      }
-
-      pendingIndexScanRef.current = true;
-      pendingIndexRootRef.current = rootPath;
-
-      try {
-        const started = await indexProgressGateway.startInitialMetadataScan(
-          rootPath,
-        );
-
-        if (
-          !pendingIndexScanRef.current ||
-          !workspaceRootKeysEqual(pendingIndexRootRef.current, rootPath)
-        ) {
-          return;
-        }
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          pendingIndexScanRef.current = false;
-          pendingIndexRootRef.current = null;
-          return;
-        }
-
-        if (!workspaceRootKeysEqual(started.rootPath, rootPath)) {
-          pendingIndexScanRef.current = false;
-          pendingIndexRootRef.current = null;
-          return;
-        }
-
-        activeIndexRootRef.current = started.rootPath;
-        setIndexProgress(startIndexProgress(started));
-        setIndexHealthLogs((current) =>
-          prependIndexHealthLog(
-            current,
-            createIndexHealthLogEntry("info", rootPath, "Indexing workspace."),
-          ),
-        );
-        setMessage("Indexing workspace.");
-      } catch (error) {
-        if (!workspaceRootKeysEqual(pendingIndexRootRef.current, rootPath)) {
-          return;
-        }
-
-        pendingIndexScanRef.current = false;
-        pendingIndexRootRef.current = null;
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          return;
-        }
-
-        reportError("Index", error);
-      }
-    },
-    [indexProgressGateway, reportError],
-  );
-
-  const clearIndexWorkspaceState = useCallback(() => {
-    pendingIndexScanRef.current = false;
-    pendingIndexRootRef.current = null;
-    activeIndexRootRef.current = null;
+  resetIndexedWorkspaceViewsRef.current = () => {
     lastPhpFileOutlineRefreshKeyRef.current = null;
-    resetPhpFrameworkCachesRef.current();
-    setIndexProgress(initialIndexProgress());
-    setIndexHealthLogs([]);
     setPhpTree(emptyPhpTree());
     setPhpTreeExpandedNodeIds(new Set());
     setPhpTreeLoading(false);
@@ -2645,34 +2496,7 @@ export function useWorkbenchController(
     setLoadingInheritedPhpFileOutlinePaths(new Set());
     setPhpFileOutlineExpandedNodeIds(new Set());
     setClassOpenResults([]);
-    setNotices((current) =>
-      current.filter((notice) => !notice.groupKey?.startsWith("index-progress:")),
-    );
-  }, []);
-
-  const clearWorkspaceIndex = useCallback(
-    async (rootPath: string, message?: string) => {
-      clearIndexWorkspaceState();
-
-      try {
-        await indexProgressGateway.clearWorkspaceIndex(rootPath);
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          return;
-        }
-
-        if (message) {
-          setMessage(message);
-        }
-      } catch (error) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
-          return;
-        }
-
-        reportError("Index", error);
-      }
-    },
-    [clearIndexWorkspaceState, indexProgressGateway, reportError],
-  );
+  };
 
   const nextDocumentVersion = useCallback((rootPath: string, path: string): number => {
     const key = languageServerDocumentSyncKey(rootPath, path);
@@ -3719,8 +3543,7 @@ export function useWorkbenchController(
         setSidebarView("files");
         setBottomPanelView("problems");
         setBottomPanelVisible(false);
-        setIndexProgress(initialIndexProgress());
-        setIndexHealthLogs([]);
+        clearIndexWorkspaceState();
       }
 
       // The TODO panel is a transient, workspace-scoped overlay (not part of the
@@ -3799,8 +3622,7 @@ export function useWorkbenchController(
       lastPhpIdeReadinessSignatureRef.current = null;
       resetPhpFrameworkCachesRef.current();
       setPhpIdeReadinessVersion(0);
-      activeIndexRootRef.current = cachedWorkspaceState?.indexProgress.rootPath ?? null;
-      pendingIndexScanRef.current = false;
+      restoreIndexRoot(cachedWorkspaceState?.indexProgress.rootPath ?? null);
       autoStartedLanguageServerRootRef.current = null;
       phpLanguageServerAutostartAttemptsByRootRef.current = {};
       installingManagedPhpactorRootRef.current = null;
@@ -4034,6 +3856,7 @@ export function useWorkbenchController(
       restoreJavaScriptTypeScriptDiagnosticsForRoot,
       restoreWorkspaceSession,
       runGitRepositoryDiscovery,
+      clearIndexWorkspaceState,
       resetActiveEditorPosition,
       resetEditorGroups,
       resetFilePrefetchState,
@@ -4043,6 +3866,7 @@ export function useWorkbenchController(
       resetTextSearchState,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
+      restoreIndexRoot,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
       clearLanguageServerDiagnostics,
       clearPhpLocalDiagnostics,
@@ -8286,24 +8110,6 @@ export function useWorkbenchController(
   }, [refreshJavaScriptTypeScriptLanguageServerPlan, reportJavaScriptTypeScriptLanguageServerError]);
 
   const {
-    startHardReindex,
-    startIndexScan,
-    startPhpReindex,
-  } = useWorkbenchIndexCommands({
-    activeIndexRootRef,
-    currentWorkspaceRootRef,
-    indexProgressGateway,
-    intelligenceMode,
-    pendingIndexRootRef,
-    pendingIndexScanRef,
-    reportError,
-    setIndexHealthLogs,
-    setIndexProgress,
-    setMessage,
-    workspaceRoot,
-  });
-
-  const {
     formatActiveFile: formatActiveFileWithPint,
     formatChangedFiles: formatChangedFilesWithPint,
     isRunning: pintRunning,
@@ -9019,73 +8825,6 @@ export function useWorkbenchController(
     openWorkspacePath,
     reportError,
     settingsGateway,
-  ]);
-
-  useEffect(() => {
-    let active = true;
-    const subscriptionRoot = workspaceRoot;
-    let unsubscribe: IndexProgressUnsubscribeFn | null = null;
-    let unsubscribeProgress: IndexProgressUnsubscribeFn | null = null;
-
-    const reportSubscriptionError = (error: unknown) => {
-      if (
-        !active ||
-        !subscriptionRoot ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, subscriptionRoot)
-      ) {
-        return;
-      }
-
-      reportError("Index", error);
-    };
-
-    indexProgressGateway
-      .subscribeMetadataScanCompletion((event) => {
-        if (!active) {
-          return;
-        }
-
-        handleMetadataScanCompletion(event);
-      })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unsubscribe = dispose;
-      })
-      .catch(reportSubscriptionError);
-
-    indexProgressGateway
-      .subscribeIndexProgress((event) => {
-        if (!active) {
-          return;
-        }
-
-        handleIndexProgress(event);
-      })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unsubscribeProgress = dispose;
-      })
-      .catch(reportSubscriptionError);
-
-    return () => {
-      active = false;
-      unsubscribe?.();
-      unsubscribeProgress?.();
-    };
-  }, [
-    handleIndexProgress,
-    handleMetadataScanCompletion,
-    indexProgressGateway,
-    reportError,
-    workspaceRoot,
   ]);
 
   useEffect(() => {
@@ -10315,10 +10054,6 @@ function isBlockedByManuallyCollapsedDirectory(
   }
 
   return false;
-}
-
-function indexProgressNoticeGroup(rootPath: string): string {
-  return `index-progress:${rootPath}`;
 }
 
 function isJavaScriptTypeScriptDocumentSyncableForRoot(
