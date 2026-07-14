@@ -9,6 +9,7 @@ import {
 import { phpExtendsClassName, resolvePhpClassName } from "./phpNavigation";
 import { PHP_CLASS_NAME_CAPTURE_PATTERN } from "./phpReceiverExpressions";
 import { phpLaravelHigherOrderCollectionProxyElementType } from "./phpLaravelHigherOrderProxy";
+import { memoizePhpMask } from "./phpSourceMask";
 
 const laravelEloquentStaticBuilderMethods = new Set([
   "afterquery",
@@ -7827,7 +7828,11 @@ function matchingPairOffset(
   return null;
 }
 
-function maskPhpStringsAndComments(source: string): string {
+const maskPhpStringsAndComments: (source: string) => string = memoizePhpMask(
+  maskPhpStringsAndCommentsUncached,
+);
+
+function maskPhpStringsAndCommentsUncached(source: string): string {
   let output = "";
   let quote: string | null = null;
   let inLineComment = false;

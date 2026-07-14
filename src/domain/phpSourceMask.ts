@@ -1,9 +1,45 @@
+const MASK_MEMO_CAPACITY = 4;
+
+export function memoizePhpMask(
+  mask: (source: string) => string,
+  capacity: number = MASK_MEMO_CAPACITY,
+): (source: string) => string {
+  const memo = new Map<string, string>();
+
+  return (source: string): string => {
+    const cached = memo.get(source);
+
+    if (cached !== undefined) {
+      memo.delete(source);
+      memo.set(source, cached);
+      return cached;
+    }
+
+    const masked = mask(source);
+
+    if (memo.size >= capacity) {
+      const oldest = memo.keys().next().value;
+
+      if (oldest !== undefined) {
+        memo.delete(oldest);
+      }
+    }
+
+    memo.set(source, masked);
+    return masked;
+  };
+}
+
 /**
  * Masks PHP strings, comments, heredocs/nowdocs, and attributes while preserving
  * source length and newlines. Structural scanners can then reason about braces
  * and tokens without being confused by literal content.
  */
-export function maskPhpSource(source: string): string {
+export const maskPhpSource: (source: string) => string = memoizePhpMask(
+  maskPhpSourceUncached,
+);
+
+function maskPhpSourceUncached(source: string): string {
   let output = "";
   let quote: string | null = null;
   let attributeInBlockComment = false;
