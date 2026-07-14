@@ -2409,6 +2409,34 @@ class EventServiceProvider
       ).toEqual(directTarget);
     });
 
+    it("resolves env targets from provider entries when no target parser is supplied", () => {
+      const provider: PhpFrameworkProvider = {
+        id: "entries-only-env",
+        env: {
+          entriesFromSource: ({ source }) =>
+            source.split("\n").flatMap((line, lineIndex) =>
+              line.startsWith("entry:")
+                ? [
+                    {
+                      name: line.slice("entry:".length),
+                      position: { column: 7, lineNumber: lineIndex + 1 },
+                    },
+                  ]
+                : [],
+            ),
+        },
+      };
+
+      expect(
+        phpFrameworkEnvTargetFromSource("entry:APP_ENV\n", "APP_ENV", [
+          provider,
+        ]),
+      ).toEqual({
+        name: "APP_ENV",
+        position: { column: 7, lineNumber: 1 },
+      });
+    });
+
     it("reports env support only for providers shipping the capability", () => {
       expect(phpFrameworkSupportsEnv([phpLaravelFrameworkProvider])).toBe(true);
       expect(phpFrameworkSupportsEnv([phpNetteFrameworkProvider])).toBe(false);

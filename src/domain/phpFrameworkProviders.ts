@@ -1399,6 +1399,16 @@ export function phpFrameworkEnvTargetFromSource(
     if (target) {
       return target;
     }
+
+    if (!provider.env?.targetFromSource) {
+      const entry = provider.env?.entriesFromSource?.({ source }).find(
+        (candidate) => candidate.name === name,
+      );
+
+      if (entry) {
+        return entry;
+      }
+    }
   }
 
   return null;

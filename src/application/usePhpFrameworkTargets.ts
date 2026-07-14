@@ -148,6 +148,7 @@ export interface PhpFrameworkTargets {
     PhpFrameworkStorageDiskTarget
   >;
   findViewTarget: PhpFrameworkTargetFinder<PhpFrameworkViewNavigationTarget>;
+  findEnvironmentTarget: PhpFrameworkTargetFinder<PhpFrameworkEnvironmentTarget>;
   findConfigTarget: PhpFrameworkTargetFinder<PhpFrameworkConfigTarget>;
   findTranslationTarget: PhpFrameworkTargetFinder<PhpFrameworkTranslationTarget>;
   findAuthGuardTarget: PhpFrameworkTargetFinder<PhpFrameworkAuthGuardTarget>;
@@ -191,6 +192,7 @@ const inertPhpFrameworkTargets: PhpFrameworkTargets = {
   collectLogChannelTargets: async () => [],
   collectStorageDiskTargets: async () => [],
   findViewTarget: async () => null,
+  findEnvironmentTarget: async () => null,
   findConfigTarget: async () => null,
   findTranslationTarget: async () => null,
   findAuthGuardTarget: async () => null,

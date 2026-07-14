@@ -83,6 +83,7 @@ const inertPhpNetteFrameworkTargets: PhpFrameworkTargets = {
   collectLogChannelTargets: async () => [],
   collectStorageDiskTargets: async () => [],
   findViewTarget: async () => null,
+  findEnvironmentTarget: async () => null,
   findConfigTarget: async () => null,
   findTranslationTarget: async () => null,
   findAuthGuardTarget: async () => null,

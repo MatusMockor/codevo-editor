@@ -173,6 +173,7 @@ describe("usePhpFrameworkTargets", () => {
     expect(await harness.hook().collectViewTargets()).toEqual([]);
     expect(await harness.hook().collectConfigTargets()).toEqual([]);
     expect(await harness.hook().collectTranslationTargets()).toEqual([]);
+    expect(await harness.hook().findEnvironmentTarget("APP_URL")).toBeNull();
     expect(await harness.hook().findViewTarget("comments.show")).toBeNull();
     expect(await harness.hook().findConfigTarget("app.name")).toBeNull();
     expect(await harness.hook().findTranslationTarget("messages.welcome")).toBeNull();
@@ -200,11 +201,40 @@ describe("usePhpFrameworkTargets", () => {
     expect(await harness.hook().collectEnvironmentTargets()).toEqual([]);
     expect(await harness.hook().collectViewTargets()).toEqual([]);
     expect(await harness.hook().collectConfigTargets()).toEqual([]);
+    expect(await harness.hook().findEnvironmentTarget("APP_URL")).toBeNull();
     expect(await harness.hook().findViewTarget("comments.show")).toBeNull();
     expect(await harness.hook().findConfigTarget("app.name")).toBeNull();
     expect(harness.searchText).not.toHaveBeenCalled();
     expect(harness.readFileContent).not.toHaveBeenCalled();
     expect(harness.readWorkspaceDirectory).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("delegates env target lookup to the active Laravel adapter", async () => {
+    const readFileContent = vi.fn(async (path: string) => {
+      if (path === `${ROOT}/.env`) {
+        return "APP_NAME=Editor\n";
+      }
+
+      if (path === `${ROOT}/.env.example`) {
+        return "APP_URL=https://example.test\n";
+      }
+
+      throw new Error(`Unexpected read: ${path}`);
+    });
+    const harness = renderPhpFrameworkTargets({
+      readNavigationFileContent: readFileContent as never,
+    });
+
+    await expect(harness.hook().findEnvironmentTarget("APP_URL")).resolves.toEqual({
+      name: "APP_URL",
+      path: `${ROOT}/.env.example`,
+      position: { column: 1, lineNumber: 1 },
+      relativePath: ".env.example",
+    });
+    expect(readFileContent).toHaveBeenNthCalledWith(1, `${ROOT}/.env`);
+    expect(readFileContent).toHaveBeenNthCalledWith(2, `${ROOT}/.env.example`);
 
     harness.unmount();
   });

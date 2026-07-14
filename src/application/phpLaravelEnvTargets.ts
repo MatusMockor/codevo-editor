@@ -1,7 +1,9 @@
 import {
-  phpFrameworkEnvEntriesFromSource,
-} from "../domain/phpFrameworkProviders";
-import type { PhpLaravelEnvTarget } from "../domain/phpLaravelEnv";
+  phpLaravelEnvTargetFromSource,
+  type PhpLaravelEnvTarget,
+} from "../domain/phpLaravelEnv";
+import { phpFrameworkEnvEntriesFromSource } from "../domain/phpFrameworkProviders";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   createWorkspaceTargetCollector,
@@ -16,10 +18,14 @@ export interface PhpLaravelEnvTargetResolverDeps {
 
 export interface PhpLaravelEnvTargetResolver {
   collect: () => Promise<PhpLaravelEnvTarget[]>;
+  find: (envName: string) => Promise<PhpLaravelEnvTarget | null>;
 }
 
 function supportsEnv(deps: PhpLaravelEnvTargetResolverDeps): boolean {
-  return deps.frameworkRuntime.supports("env");
+  return (
+    deps.frameworkRuntime.hasProvider("laravel") &&
+    deps.frameworkRuntime.supports("env")
+  );
 }
 
 async function collectPhpLaravelEnvTargets(
@@ -46,10 +52,64 @@ async function collectPhpLaravelEnvTargets(
   return collect({ workspaceRoot: deps.workspaceRoot });
 }
 
+async function findPhpLaravelEnvTarget(
+  deps: PhpLaravelEnvTargetResolverDeps,
+  envName: string,
+): Promise<PhpLaravelEnvTarget | null> {
+  const requestedRoot = deps.workspaceRoot;
+  const isRequestedRootActive = () =>
+    workspaceRootKeysEqual(
+      deps.workspaceTargetCollectorDeps.currentWorkspaceRootRef.current,
+      requestedRoot,
+    );
+
+  if (!supportsEnv(deps) || !requestedRoot) {
+    return null;
+  }
+
+  for (const relativePath of [".env", ".env.example"]) {
+    if (!isRequestedRootActive()) {
+      return null;
+    }
+
+    const path = deps.workspaceTargetCollectorDeps.joinWorkspacePath(
+      requestedRoot,
+      relativePath,
+    );
+
+    try {
+      const content = await deps.workspaceTargetCollectorDeps.readFileContent(path);
+
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+
+      const target = phpLaravelEnvTargetFromSource(content, envName);
+
+      if (!target) {
+        continue;
+      }
+
+      return {
+        ...target,
+        path,
+        relativePath,
+      };
+    } catch {
+      if (!isRequestedRootActive()) {
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function createPhpLaravelEnvTargetResolver(
   deps: PhpLaravelEnvTargetResolverDeps,
 ): PhpLaravelEnvTargetResolver {
   return {
     collect: () => collectPhpLaravelEnvTargets(deps),
+    find: (envName) => findPhpLaravelEnvTarget(deps, envName),
   };
 }

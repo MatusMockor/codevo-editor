@@ -40,6 +40,7 @@ function phpFrameworkTargetsFromLaravelTargets(
     collectStorageDiskTargets:
       laravelTargets.collectPhpLaravelStorageDiskTargets,
     findViewTarget: laravelTargets.findPhpLaravelViewTarget,
+    findEnvironmentTarget: laravelTargets.findPhpLaravelEnvTarget,
     findConfigTarget: laravelTargets.findPhpLaravelConfigTarget,
     findTranslationTarget: laravelTargets.findPhpLaravelTranslationTarget,
     findAuthGuardTarget: laravelTargets.findPhpLaravelAuthGuardTarget,

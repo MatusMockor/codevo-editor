@@ -87,6 +87,9 @@ export interface LaravelTargets {
     currentPath: string,
   ) => Promise<PhpLaravelMiddlewareAliasTarget[]>;
   collectPhpLaravelEnvTargets: () => Promise<PhpLaravelEnvTarget[]>;
+  findPhpLaravelEnvTarget: (
+    envName: string,
+  ) => Promise<PhpLaravelEnvTarget | null>;
   collectPhpLaravelViewTargets: () => Promise<PhpLaravelViewTarget[]>;
   collectPhpLaravelConfigTargets: () => Promise<PhpLaravelConfigTarget[]>;
   collectPhpLaravelTranslationTargets: () => Promise<
@@ -321,6 +324,7 @@ function useLaravelFrameworkTargetAdapter(
     collectPhpLaravelMiddlewareAliasTargets:
       textSearchTargetCollectors.collectMiddlewareAliases,
     collectPhpLaravelEnvTargets: envTargetResolver.collect,
+    findPhpLaravelEnvTarget: envTargetResolver.find,
     collectPhpLaravelViewTargets: viewTargetResolver.collect,
     collectPhpLaravelConfigTargets: configTargetResolver.collect,
     collectPhpLaravelTranslationTargets: translationTargetResolver.collect,

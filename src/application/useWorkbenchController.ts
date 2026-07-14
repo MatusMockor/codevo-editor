@@ -60,7 +60,6 @@ import { useWorkbenchIndexCommands } from "./useWorkbenchIndexCommands";
 import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
-import { usePhpLaravelEnvTargetResolver } from "./usePhpLaravelEnvTargetResolver";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
 import { usePhpFrameworkModelNavigationTargets } from "./usePhpFrameworkModelNavigationTargets";
@@ -7355,6 +7354,7 @@ export function useWorkbenchController(
     findPasswordBrokerTarget,
     findLogChannelTarget,
     findStorageDiskTarget,
+    findEnvironmentTarget,
     invalidateTargetCache: invalidateFrameworkTargetCache,
   } = usePhpFrameworkTargets({
     currentWorkspaceRootRef,
@@ -7366,14 +7366,6 @@ export function useWorkbenchController(
     joinWorkspacePath,
     isPhpPath,
     frameworkIntelligence: phpFrameworkIntelligence,
-  });
-
-  const findPhpLaravelEnvTarget = usePhpLaravelEnvTargetResolver({
-    currentWorkspaceRootRef,
-    frameworkRuntime: phpFrameworkRuntimeContext,
-    joinWorkspacePath,
-    readNavigationFileContent,
-    workspaceRoot,
   });
 
   const {
@@ -7608,7 +7600,7 @@ export function useWorkbenchController(
       findCacheStoreTarget,
       findConfigTarget,
       findDatabaseConnectionTarget,
-      findEnvTarget: findPhpLaravelEnvTarget,
+      findEnvTarget: findEnvironmentTarget,
       findLogChannelTarget,
       findMailMailerTarget,
       findPasswordBrokerTarget,
