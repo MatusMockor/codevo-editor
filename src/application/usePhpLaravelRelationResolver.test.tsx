@@ -89,7 +89,7 @@ function makeOptions(overrides: Partial<HookOptions> = {}): HookOptions {
     resolvePhpDeclaredType: vi.fn(() => null),
     resolvePhpGenericTemplateTypesForInheritedClass: vi.fn(async () => new Map()),
     resolvePhpGenericTemplateTypesForMixinClass: vi.fn(async () => new Map()),
-    resolvePhpLaravelProjectMorphMapModelType: vi.fn(async () => null),
+    resolvePhpFrameworkProjectMorphMapModelType: vi.fn(async () => null),
     workspaceDescriptor: phpDescriptor(),
     workspaceRoot: ROOT,
     ...overrides,
@@ -157,7 +157,7 @@ function renderHook(options: HookOptions) {
 
 describe("usePhpLaravelRelationResolver", () => {
   it("uses the project morph map for active Laravel morphTo relations", async () => {
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
@@ -180,7 +180,7 @@ class Comment
 `,
           },
         },
-        { resolvePhpLaravelProjectMorphMapModelType },
+        { resolvePhpFrameworkProjectMorphMapModelType },
       ),
     );
 
@@ -192,7 +192,7 @@ class Comment
           "commentable",
         ),
     ).resolves.toBe("App\\Models\\Post");
-    expect(resolvePhpLaravelProjectMorphMapModelType).toHaveBeenCalledTimes(1);
+    expect(resolvePhpFrameworkProjectMorphMapModelType).toHaveBeenCalledTimes(1);
 
     harness.unmount();
   });
@@ -248,7 +248,7 @@ class User
   });
 
   it("does not use the project morph map for stale Laravel runtimes without a provider", async () => {
-    const resolvePhpLaravelProjectMorphMapModelType = vi.fn(
+    const resolvePhpFrameworkProjectMorphMapModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
     const harness = renderHook(
@@ -273,7 +273,7 @@ class Comment
         },
         {
           frameworkRuntime: STALE_LARAVEL_RUNTIME,
-          resolvePhpLaravelProjectMorphMapModelType,
+          resolvePhpFrameworkProjectMorphMapModelType,
         },
       ),
     );
@@ -286,7 +286,7 @@ class Comment
           "commentable",
         ),
     ).resolves.toBeNull();
-    expect(resolvePhpLaravelProjectMorphMapModelType).not.toHaveBeenCalled();
+    expect(resolvePhpFrameworkProjectMorphMapModelType).not.toHaveBeenCalled();
 
     harness.unmount();
   });

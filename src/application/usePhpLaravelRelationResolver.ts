@@ -49,7 +49,7 @@ export interface UsePhpLaravelRelationResolverOptions {
     mixinClassName: string,
     inheritedTemplateTypes?: ReadonlyMap<string, string>,
   ) => Promise<ReadonlyMap<string, string>>;
-  resolvePhpLaravelProjectMorphMapModelType: () => Promise<string | null>;
+  resolvePhpFrameworkProjectMorphMapModelType: () => Promise<string | null>;
   workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceRoot: string | null;
 }
@@ -63,7 +63,7 @@ export function usePhpLaravelRelationResolver({
   resolvePhpDeclaredType,
   resolvePhpGenericTemplateTypesForInheritedClass,
   resolvePhpGenericTemplateTypesForMixinClass,
-  resolvePhpLaravelProjectMorphMapModelType,
+  resolvePhpFrameworkProjectMorphMapModelType,
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpLaravelRelationResolverOptions) {
@@ -201,7 +201,7 @@ export function usePhpLaravelRelationResolver({
 
             if (hasMorphToReturnExpression && isLaravelFrameworkActive) {
               const morphMapModelType =
-                await resolvePhpLaravelProjectMorphMapModelType();
+                await resolvePhpFrameworkProjectMorphMapModelType();
 
               if (!isRequestedRootActive()) {
                 return null;
@@ -325,7 +325,7 @@ export function usePhpLaravelRelationResolver({
       resolvePhpDeclaredType,
       resolvePhpGenericTemplateTypesForInheritedClass,
       resolvePhpGenericTemplateTypesForMixinClass,
-      resolvePhpLaravelProjectMorphMapModelType,
+      resolvePhpFrameworkProjectMorphMapModelType,
       workspaceDescriptor,
       workspaceRoot,
     ],
