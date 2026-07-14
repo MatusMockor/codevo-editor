@@ -60,6 +60,31 @@ async function readFileContent(filePath: string): Promise<string> {
   return readFile(filePath, "utf8");
 }
 
+async function readPhpClassSource(
+  className: string,
+): Promise<{ path: string; source: string } | null> {
+  const shortName = className.split("\\").pop() ?? className;
+  const candidates = [
+    `app/modules/multiStepperModule/Forms/${shortName}.php`,
+    `${className.replace(/\\/g, "/")}.php`,
+  ];
+
+  for (const relativePath of candidates) {
+    const filePath = joinPath(EBOX_CRM_ROOT, relativePath);
+
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    return {
+      path: filePath,
+      source: await readFileContent(filePath),
+    };
+  }
+
+  return null;
+}
+
 function positionAtOffset(source: string, offset: number) {
   const before = source.slice(0, offset);
   const lineNumber = before.split("\n").length;
@@ -120,6 +145,7 @@ function makeLatteDeps(
     openPhpPropertyTarget: vi.fn(async () => true),
     openTarget: vi.fn(async () => true),
     readFileContent,
+    readPhpClassSource,
     resolveDeclaredType: (_source, typeHint) => typeHint,
     resolveExpressionType: vi.fn(async () => null),
     resolvePhpReceiverCompletions: vi.fn(async () => []),
@@ -354,6 +380,54 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
       path: joinPath(EBOX_CRM_ROOT, templatePath),
       position: positionAtOffset(template, template.indexOf("mailLogslisting")),
     });
+  });
+
+  it("covers delegated Nette form factory fields used by real ebox n:name attributes", async () => {
+    const templatePath =
+      "app/modules/multiStepperModule/templates/MultiSteppersAdmin/show.latte";
+    const source = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
+    const deps = makeLatteDeps(templatePath);
+    const latte = createLatteIntelligence(() => deps);
+
+    const gatewaySubscriptionTypeLinkCompletions =
+      await latte.provideLatteCompletions(
+        source,
+        positionAtOffset(
+          source,
+          offsetAfter(source, 'n:name="subscription_type_link_id'),
+        ),
+      );
+    expect(gatewaySubscriptionTypeLinkCompletions).toContainEqual(
+      expect.objectContaining({
+        detail: "Nette form field",
+        label: "subscription_type_link_id",
+      }),
+    );
+
+    const gatewayJsonCompletions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, offsetAfter(source, 'n:name="gateways_json')),
+    );
+    expect(gatewayJsonCompletions).toContainEqual(
+      expect.objectContaining({
+        detail: "Nette form field",
+        label: "gateways_json",
+      }),
+    );
+
+    for (const fieldName of ["stepper_id", "guard_id", "type", "config"]) {
+      const completions = await latte.provideLatteCompletions(
+        source,
+        positionAtOffset(source, offsetAfter(source, `n:name="${fieldName}`)),
+      );
+
+      expect(completions).toContainEqual(
+        expect.objectContaining({
+          detail: "Nette form field",
+          label: fieldName,
+        }),
+      );
+    }
   });
 
   it("covers ebox Template::add() view-data feeding Latte variable and member completion", async () => {

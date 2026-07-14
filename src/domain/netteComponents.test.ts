@@ -10,11 +10,13 @@ import {
   detectNetteCreateComponentAt,
   latteActiveFormComponentAt,
   netteComponentClassFromCreateMethod,
+  netteDelegatedFormFactoryInCreateComponent,
   netteCreateComponentFactoryContextAt,
   netteCreateComponentFactoryContexts,
   netteComponentUsagesInLatte,
   netteCreateComponentMethodName,
   netteFormFieldDefinitionsInCreateComponent,
+  netteFormFieldDefinitionsInFactoryCreateMethod,
   nettePresenterLifecycleInfo,
 } from "./netteComponents";
 
@@ -445,6 +447,264 @@ class HomePresenter
     expect(
       netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
     ).toEqual([]);
+  });
+
+  it("finds fields in a one-hop delegated typed form factory present in the same source", () => {
+    const source = `<?php
+use Nette\\Application\\UI\\Form;
+
+class GatewayPresenter
+{
+    private StepperGatewayFormFactory $gatewayFormFactory;
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+
+class StepperGatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form;
+        $form->addHidden('subscription_type_link_id');
+        $form->addText('email', 'Email');
+
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInCreateComponent(source, "gatewayForm"),
+    ).toEqual([
+      {
+        name: "subscription_type_link_id",
+        nameStart: source.indexOf("subscription_type_link_id"),
+        nameEnd:
+          source.indexOf("subscription_type_link_id") +
+          "subscription_type_link_id".length,
+      },
+      {
+        name: "email",
+        nameStart: source.indexOf("email"),
+        nameEnd: source.indexOf("email") + "email".length,
+      },
+    ]);
+  });
+
+  it("supports assigning the delegated factory result and immediately returning it", () => {
+    const source = `<?php
+use Nette\\Application\\UI\\Form;
+
+class GatewayPresenter
+{
+    private StepperGatewayFormFactory $gatewayFormFactory;
+
+    protected function createComponentGatewayForm(): Form
+    {
+        $form = $this->gatewayFormFactory->create();
+        return $form;
+    }
+}
+
+class StepperGatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addHidden('subscription_type_link_id');
+
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInCreateComponent(source, "gatewayForm"),
+    ).toEqual([
+      {
+        name: "subscription_type_link_id",
+        nameStart: source.indexOf("subscription_type_link_id"),
+        nameEnd:
+          source.indexOf("subscription_type_link_id") +
+          "subscription_type_link_id".length,
+      },
+    ]);
+  });
+});
+
+describe("netteDelegatedFormFactoryInCreateComponent", () => {
+  it("returns the typed factory property behind a delegated createComponent form", () => {
+    const source = `<?php
+class GatewayPresenter
+{
+    protected StepperGatewayFormFactory $gatewayFormFactory;
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
+    ).toEqual({
+      componentName: "gatewayForm",
+      factoryClass: "StepperGatewayFormFactory",
+      factoryClassStart: source.indexOf("StepperGatewayFormFactory"),
+      factoryClassEnd:
+        source.indexOf("StepperGatewayFormFactory") +
+        "StepperGatewayFormFactory".length,
+      methodName: "createComponentGatewayForm",
+      propertyName: "gatewayFormFactory",
+      propertyNameStart: source.lastIndexOf("gatewayFormFactory"),
+      propertyNameEnd:
+        source.lastIndexOf("gatewayFormFactory") + "gatewayFormFactory".length,
+    });
+  });
+
+  it("requires a typed property and allows explicit create arguments", () => {
+    const untyped = `<?php
+class GatewayPresenter
+{
+    private $gatewayFormFactory;
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create();
+    }
+}
+`;
+    const createWithArguments = `<?php
+class GatewayPresenter
+{
+    private StepperGatewayFormFactory $gatewayFormFactory;
+
+    protected function createComponentGatewayForm(): Form
+    {
+        return $this->gatewayFormFactory->create($this);
+    }
+}
+`;
+
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(untyped, "gatewayForm"),
+    ).toBeNull();
+    expect(
+      netteDelegatedFormFactoryInCreateComponent(
+        createWithArguments,
+        "gatewayForm",
+      ),
+    ).toMatchObject({
+      factoryClass: "StepperGatewayFormFactory",
+      propertyName: "gatewayFormFactory",
+    });
+  });
+});
+
+describe("netteFormFieldDefinitionsInFactoryCreateMethod", () => {
+  it("extracts direct static fields from a factory create method", () => {
+    const source = `<?php
+use Nette\\Application\\UI\\Form;
+
+class StepperGatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addHidden('subscription_type_link_id');
+        $form->addSubmit('send', 'Continue');
+        $form->addText($dynamic, 'Dynamic');
+        $form->addContainer('items');
+        $other->addText('not_form', 'Nope');
+
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInFactoryCreateMethod(
+        source,
+        "StepperGatewayFormFactory",
+      ),
+    ).toEqual([
+      {
+        name: "subscription_type_link_id",
+        nameStart: source.indexOf("subscription_type_link_id"),
+        nameEnd:
+          source.indexOf("subscription_type_link_id") +
+          "subscription_type_link_id".length,
+      },
+      {
+        name: "send",
+        nameStart: source.indexOf("send"),
+        nameEnd: source.indexOf("send") + "send".length,
+      },
+    ]);
+  });
+
+  it("does not follow nested factory delegation from create", () => {
+    const source = `<?php
+class StepperGatewayFormFactory
+{
+    public function create(): Form
+    {
+        return $this->innerFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInFactoryCreateMethod(
+        source,
+        "StepperGatewayFormFactory",
+      ),
+    ).toEqual([]);
+  });
+
+  it("uses the fully qualified class when duplicate short factory names exist", () => {
+    const source = `<?php
+namespace App\\Wrong;
+
+class GatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('wrong_field');
+        return $form;
+    }
+}
+
+namespace App\\Forms;
+
+class GatewayFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('right_field');
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInFactoryCreateMethod(
+        source,
+        "App\\Forms\\GatewayFormFactory",
+      ),
+    ).toEqual([
+      {
+        name: "right_field",
+        nameStart: source.indexOf("right_field"),
+        nameEnd: source.indexOf("right_field") + "right_field".length,
+      },
+    ]);
   });
 });
 

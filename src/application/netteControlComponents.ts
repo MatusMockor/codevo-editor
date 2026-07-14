@@ -10,7 +10,10 @@ import {
   netteComponentUsagesInLatte,
   netteCreateComponentFactoryContexts,
   netteCreateComponentMethodName,
+  netteDelegatedFormFactoryInCreateComponent,
+  type NetteFormFieldDefinition,
   netteFormFieldDefinitionsInCreateComponent,
+  netteFormFieldDefinitionsInFactoryCreateMethod,
   nettePresenterLifecycleInfo,
 } from "../domain/netteComponents";
 import { innermostLatteExpressionSpanAt } from "../domain/latteSyntax";
@@ -53,9 +56,15 @@ interface NetteControlReference {
 const FORM_FIELD_TAGS: ReadonlySet<string> = new Set([
   "button",
   "input",
+  "label",
   "select",
   "textarea",
 ]);
+
+interface LoadedNetteFormFieldDefinition extends NetteFormFieldDefinition {
+  path: string;
+  source: string;
+}
 
 export function netteControlReferenceAt(
   source: string,
@@ -138,18 +147,26 @@ export async function resolveNetteControlDefinition(
     }
 
     if (fieldName) {
-      const field = netteFormFieldDefinitionsInCreateComponent(
-        content,
+      const fields = await loadNetteFormFieldDefinitionsFromOwner({
+        deps,
+        isRequestedRootActive,
+        ownerPath: path,
+        ownerSource: content,
         componentName,
-      ).find((definition) => definition.name === fieldName);
+      });
+      const field = fields.find((definition) => definition.name === fieldName);
 
       if (!field) {
+        if (netteCreateComponentFactoryExists(content, componentName)) {
+          return false;
+        }
+
         continue;
       }
 
       return deps.openTarget(
-        path,
-        editorPositionAtOffset(content, field.nameStart),
+        field.path,
+        editorPositionAtOffset(field.source, field.nameStart),
         fieldName,
       );
     }
@@ -341,7 +358,7 @@ async function latteFormFieldCompletions(
 async function loadNetteFormFieldDefinitions(
   context: NetteControlCompletionContext,
   componentName: string,
-): Promise<ReturnType<typeof netteFormFieldDefinitionsInCreateComponent>> {
+): Promise<LoadedNetteFormFieldDefinition[]> {
   const {
     deps,
     isRequestedRootActive,
@@ -373,7 +390,13 @@ async function loadNetteFormFieldDefinitions(
       return [];
     }
 
-    const fields = netteFormFieldDefinitionsInCreateComponent(content, componentName);
+    const fields = await loadNetteFormFieldDefinitionsFromOwner({
+      deps,
+      isRequestedRootActive,
+      ownerPath: path,
+      ownerSource: content,
+      componentName,
+    });
 
     if (fields.length > 0) {
       return fields;
@@ -387,6 +410,40 @@ async function loadNetteFormFieldDefinitions(
   return [];
 }
 
+async function loadNetteFormFieldDefinitionsFromOwner({
+  componentName,
+  deps,
+  isRequestedRootActive,
+  ownerPath,
+  ownerSource,
+}: {
+  componentName: string;
+  deps: NetteControlDependencies;
+  isRequestedRootActive: () => boolean;
+  ownerPath: string;
+  ownerSource: string;
+}): Promise<LoadedNetteFormFieldDefinition[]> {
+  const directFields = netteFormFieldDefinitionsInCreateComponent(
+    ownerSource,
+    componentName,
+  ).map((field) => ({ ...field, path: ownerPath, source: ownerSource }));
+
+  if (directFields.length > 0) {
+    return directFields;
+  }
+
+  if (!netteCreateComponentFactoryExists(ownerSource, componentName)) {
+    return [];
+  }
+
+  return loadDelegatedNetteFormFactoryFields(
+    deps,
+    ownerSource,
+    componentName,
+    isRequestedRootActive,
+  );
+}
+
 function netteCreateComponentFactoryExists(
   source: string,
   componentName: string,
@@ -394,6 +451,43 @@ function netteCreateComponentFactoryExists(
   return netteCreateComponentFactoryContexts(source).some(
     (context) => context.componentName === componentName,
   );
+}
+
+async function loadDelegatedNetteFormFactoryFields(
+  deps: NetteControlDependencies,
+  ownerSource: string,
+  componentName: string,
+  isRequestedRootActive: () => boolean,
+): Promise<LoadedNetteFormFieldDefinition[]> {
+  if (!deps.readPhpClassSource) {
+    return [];
+  }
+
+  const factoryClassName = netteDelegatedFormFactoryInCreateComponent(
+    ownerSource,
+    componentName,
+  )?.factoryClass;
+
+  if (!factoryClassName) {
+    return [];
+  }
+
+  const factoryClass =
+    deps.resolveDeclaredType(ownerSource, factoryClassName) ?? factoryClassName;
+  const factorySource = await deps.readPhpClassSource(factoryClass);
+
+  if (!isRequestedRootActive() || !factorySource) {
+    return [];
+  }
+
+  return netteFormFieldDefinitionsInFactoryCreateMethod(
+    factorySource.source,
+    factoryClass,
+  ).map((field) => ({
+    ...field,
+    path: factorySource.path,
+    source: factorySource.source,
+  }));
 }
 
 export async function resolveNetteCreateComponentReverse(

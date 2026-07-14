@@ -4403,7 +4403,7 @@ class AccessTokenControl extends Control
     );
   });
 
-  it("offers field names for input/select/textarea/button n:name inside the active form", async () => {
+  it("offers field names for input/label/select/textarea/button n:name inside the active form", async () => {
     const { readFileContent } = buildContentWorkspace({
       "app/UI/Home/HomePresenter.php": COMPONENT_PRESENTER_SOURCE,
     });
@@ -4415,6 +4415,7 @@ class AccessTokenControl extends Control
     const source = [
       '<form n:name="contactForm">',
       '  <input n:name="e">',
+      '  <label n:name="e"></label>',
       '  <select n:name="r"></select>',
       '  <textarea n:name="m"></textarea>',
       '  <button n:name="s"></button>',
@@ -4425,6 +4426,21 @@ class AccessTokenControl extends Control
       latte.provideLatteCompletions(
         source,
         positionAtOffset(source, source.indexOf('"e"') + 2),
+      ),
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        detail: "Nette form field",
+        insertText: "email",
+        label: "email",
+      }),
+    );
+    await expect(
+      latte.provideLatteCompletions(
+        source,
+        positionAtOffset(
+          source,
+          source.indexOf('"e"', source.indexOf("<label")) + 2,
+        ),
       ),
     ).resolves.toContainEqual(
       expect.objectContaining({

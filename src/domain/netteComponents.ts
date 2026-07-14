@@ -141,6 +141,18 @@ export interface NetteFormFieldDefinition {
   nameStart: number;
 }
 
+/** A createComponent method that delegates to a typed `$this->factory->create()`. */
+export interface NetteDelegatedFormFactory {
+  componentName: string;
+  factoryClass: string;
+  factoryClassEnd: number;
+  factoryClassStart: number;
+  methodName: string;
+  propertyName: string;
+  propertyNameEnd: number;
+  propertyNameStart: number;
+}
+
 /** Rich PhpStorm-like facts for one `createComponent<Name>()` factory. */
 export interface NetteCreateComponentFactoryContext
   extends NetteCreateComponentDetection {
@@ -722,31 +734,71 @@ export function netteFormFieldDefinitionsInCreateComponent(
     return [];
   }
 
-  const afterParams = matchingParenClose(phpSource, method.openParen);
+  const directFields = formFieldDefinitionsInMethod(phpSource, method);
 
-  if (afterParams === null) {
-    return [];
+  if (directFields.length > 0) {
+    return directFields;
   }
 
-  const bodyStart = methodBodyStart(phpSource, afterParams);
-
-  if (bodyStart === null) {
-    return [];
-  }
-
-  const bodyEnd = matchingBraceClose(phpSource, bodyStart);
-  const formVariables = formVariablesInBody(phpSource, bodyStart + 1, bodyEnd);
-
-  if (formVariables.size === 0) {
-    return [];
-  }
-
-  return formFieldDefinitionsInBody(
+  const delegatedFactory = delegatedFormFactoryFromCreateComponentMethod(
     phpSource,
-    bodyStart + 1,
-    bodyEnd,
-    formVariables,
+    method,
   );
+
+  if (!delegatedFactory) {
+    return [];
+  }
+
+  return netteFormFieldDefinitionsInFactoryCreateMethod(
+    phpSource,
+    delegatedFactory.factoryClass,
+  );
+}
+
+/**
+ * Returns the typed factory property used by a one-hop delegated form component
+ * factory (`return $this->fooFactory->create();`, or a local assignment followed
+ * immediately by `return $local;`). The property itself must be declared as a
+ * typed class property on the same class. Constructor promotion / injection,
+ * service lookup, dynamic property names and create arguments are intentionally
+ * not followed here.
+ */
+export function netteDelegatedFormFactoryInCreateComponent(
+  phpSource: string,
+  componentName: string,
+): NetteDelegatedFormFactory | null {
+  const method = findPhpMethodByName(
+    phpSource,
+    netteCreateComponentMethodName(componentName),
+  );
+
+  if (!method) {
+    return null;
+  }
+
+  return delegatedFormFactoryFromCreateComponentMethod(phpSource, method);
+}
+
+/**
+ * Returns static field names declared by a form factory's `create()` method.
+ * Conservative: the `create()` method must visibly initialise a local variable
+ * with `new Form`, fields must be added directly to that variable, and field
+ * names must be literal identifiers. Containers and delegated factories are not
+ * followed.
+ */
+export function netteFormFieldDefinitionsInFactoryCreateMethod(
+  phpSource: string,
+  factoryClass?: string,
+): NetteFormFieldDefinition[] {
+  const method = factoryClass
+    ? findPhpMethodByNameInClass(phpSource, factoryClass, "create")
+    : findPhpMethodByName(phpSource, "create");
+
+  if (!method) {
+    return [];
+  }
+
+  return formFieldDefinitionsInMethod(phpSource, method);
 }
 
 function createComponentFactoryContextFromMethod(
@@ -1286,12 +1338,342 @@ function isLatteClosingFormMacroAt(source: string, openBrace: number): boolean {
   return source[index] === "}";
 }
 
+// --- delegated form factory scanning ---------------------------------------
+
+interface ThisFactoryCreateExpression {
+  next: number;
+  propertyName: string;
+  propertyNameEnd: number;
+  propertyNameStart: number;
+}
+
+interface TypedPropertyDefinition {
+  className: string;
+  classNameEnd: number;
+  classNameStart: number;
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
+function delegatedFormFactoryFromCreateComponentMethod(
+  source: string,
+  method: PhpMethodDefinition,
+): NetteDelegatedFormFactory | null {
+  const suffix = createComponentSuffix(method.name);
+
+  if (suffix === null) {
+    return null;
+  }
+
+  const body = phpMethodBodyRange(source, method);
+
+  if (!body) {
+    return null;
+  }
+
+  const delegatedCreate = delegatedFactoryCreateInBody(source, body.start, body.end);
+
+  if (!delegatedCreate) {
+    return null;
+  }
+
+  const containingClass = phpClassContainingOffset(source, method.signatureStart);
+  const property = typedPropertyByName(
+    source,
+    delegatedCreate.propertyName,
+    containingClass ? containingClass.bodyStart : 0,
+    containingClass ? containingClass.bodyEnd : source.length,
+  );
+
+  if (!property) {
+    return null;
+  }
+
+  return {
+    componentName: lcfirst(suffix),
+    factoryClass: property.className,
+    factoryClassEnd: property.classNameEnd,
+    factoryClassStart: property.classNameStart,
+    methodName: method.name,
+    propertyName: delegatedCreate.propertyName,
+    propertyNameEnd: delegatedCreate.propertyNameEnd,
+    propertyNameStart: delegatedCreate.propertyNameStart,
+  };
+}
+
+function delegatedFactoryCreateInBody(
+  source: string,
+  from: number,
+  limit: number,
+): ThisFactoryCreateExpression | null {
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    if (keywordAt(source, index, "return")) {
+      const direct = readReturnThisFactoryCreate(source, index, limit);
+
+      if (direct) {
+        return direct;
+      }
+    }
+
+    if (source[index] === "$") {
+      const assigned = readAssignedThisFactoryCreateReturn(source, index, limit);
+
+      if (assigned) {
+        return assigned;
+      }
+    }
+  }
+
+  return null;
+}
+
+function readReturnThisFactoryCreate(
+  source: string,
+  returnStart: number,
+  limit: number,
+): ThisFactoryCreateExpression | null {
+  const expression = readThisFactoryCreateExpression(
+    source,
+    returnStart + "return".length,
+    limit,
+  );
+
+  if (!expression) {
+    return null;
+  }
+
+  const afterExpression = skipWhitespace(source, expression.next);
+
+  return source[afterExpression] === ";" ? expression : null;
+}
+
+function readAssignedThisFactoryCreateReturn(
+  source: string,
+  assignmentStart: number,
+  limit: number,
+): ThisFactoryCreateExpression | null {
+  const variable = readVariableName(source, assignmentStart, limit);
+
+  if (!variable || variable.name === "this") {
+    return null;
+  }
+
+  let index = skipWhitespace(source, variable.next);
+
+  if (source[index] !== "=") {
+    return null;
+  }
+
+  const expression = readThisFactoryCreateExpression(source, index + 1, limit);
+
+  if (!expression) {
+    return null;
+  }
+
+  index = skipWhitespace(source, expression.next);
+
+  if (source[index] !== ";") {
+    return null;
+  }
+
+  return returnsAssignedVariableBeforeReassignment(
+    source,
+    index + 1,
+    limit,
+    variable.name,
+  )
+    ? expression
+    : null;
+}
+
+function returnsAssignedVariableBeforeReassignment(
+  source: string,
+  from: number,
+  limit: number,
+  variableName: string,
+): boolean {
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    if (source[index] !== "$") {
+      continue;
+    }
+
+    const variable = readVariableName(source, index, limit);
+
+    if (!variable || variable.name !== variableName) {
+      continue;
+    }
+
+    const afterVariable = skipWhitespace(source, variable.next);
+
+    if (source[afterVariable] === "=") {
+      return false;
+    }
+
+    const beforeVariable = source.slice(Math.max(from, index - 16), index);
+
+    if (!/\breturn\s*$/.test(beforeVariable)) {
+      continue;
+    }
+
+    const afterReturnVariable = skipWhitespace(source, variable.next);
+
+    return source[afterReturnVariable] === ";";
+  }
+
+  return false;
+}
+
+function readThisFactoryCreateExpression(
+  source: string,
+  from: number,
+  limit: number,
+): ThisFactoryCreateExpression | null {
+  let index = skipWhitespace(source, from);
+  const thisVariable = readVariableName(source, index, limit);
+
+  if (!thisVariable || thisVariable.name !== "this") {
+    return null;
+  }
+
+  index = skipWhitespace(source, thisVariable.next);
+
+  if (source.slice(index, index + 2) !== "->") {
+    return null;
+  }
+
+  index = skipWhitespace(source, index + 2);
+  const property = readIdentifierToken(source, index, limit);
+
+  if (!property) {
+    return null;
+  }
+
+  index = skipWhitespace(source, property.next);
+
+  if (source.slice(index, index + 2) !== "->") {
+    return null;
+  }
+
+  index = skipWhitespace(source, index + 2);
+  const method = readIdentifierToken(source, index, limit);
+
+  if (!method || method.name !== "create") {
+    return null;
+  }
+
+  index = skipWhitespace(source, method.next);
+
+  if (source[index] !== "(") {
+    return null;
+  }
+
+  const closeParen = matchingParenClose(source, index);
+
+  if (closeParen === null || closeParen > limit) {
+    return null;
+  }
+
+  return {
+    next: closeParen,
+    propertyName: property.name,
+    propertyNameEnd: property.end,
+    propertyNameStart: property.start,
+  };
+}
+
+const PHP_TYPED_PROPERTY =
+  /((?:(?:public|protected|private|static|readonly)\s+)*)\??(\\?[A-Za-z_][A-Za-z0-9_\\]*)\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/g;
+
+function typedPropertyByName(
+  source: string,
+  propertyName: string,
+  from: number,
+  limit: number,
+): TypedPropertyDefinition | null {
+  PHP_TYPED_PROPERTY.lastIndex = from;
+
+  for (
+    let match = PHP_TYPED_PROPERTY.exec(source);
+    match !== null && match.index < limit;
+    match = PHP_TYPED_PROPERTY.exec(source)
+  ) {
+    if (PHP_TYPED_PROPERTY.lastIndex <= match.index) {
+      PHP_TYPED_PROPERTY.lastIndex = match.index + 1;
+    }
+
+    const modifiers = match[1] ?? "";
+    const className = match[2] ?? "";
+    const name = match[3] ?? "";
+
+    if (
+      !/\b(?:public|protected|private)\b/.test(modifiers) ||
+      name !== propertyName ||
+      !classTypeOrNull(className)
+    ) {
+      continue;
+    }
+
+    const classNameStart = match.index + match[0].indexOf(className);
+    const propertyNameStart = match.index + match[0].lastIndexOf(`$${name}`) + 1;
+
+    return {
+      className,
+      classNameEnd: classNameStart + className.length,
+      classNameStart,
+      name,
+      nameEnd: propertyNameStart + name.length,
+      nameStart: propertyNameStart,
+    };
+  }
+
+  return null;
+}
+
 // --- form factory field scanning -------------------------------------------
 
 const FORM_NEW_ASSIGNMENT =
   /\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+\\?(?:Nette\\Application\\UI\\)?Form\b/g;
 const FORM_ADD_CALL =
-  /\$([A-Za-z_][A-Za-z0-9_]*)\s*->\s*add[A-Za-z_][A-Za-z0-9_]*\s*\(/g;
+  /\$([A-Za-z_][A-Za-z0-9_]*)\s*->\s*(add[A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+
+function formFieldDefinitionsInMethod(
+  source: string,
+  method: PhpMethodDefinition,
+): NetteFormFieldDefinition[] {
+  const body = phpMethodBodyRange(source, method);
+
+  if (!body) {
+    return [];
+  }
+
+  const formVariables = formVariablesInBody(source, body.start, body.end);
+
+  if (formVariables.size === 0) {
+    return [];
+  }
+
+  return formFieldDefinitionsInBody(
+    source,
+    body.start,
+    body.end,
+    formVariables,
+  );
+}
 
 function formVariablesInBody(
   source: string,
@@ -1322,8 +1704,13 @@ function formFieldDefinitionsInBody(
 
   forEachPhpBodyMatch(source, FORM_ADD_CALL, from, limit, (match) => {
     const variable = match[1];
+    const methodName = match[2];
 
     if (!variable || !formVariables.has(variable)) {
+      return;
+    }
+
+    if (methodName === "addContainer") {
       return;
     }
 
@@ -1577,8 +1964,20 @@ interface PhpMethodDefinition {
   visibility: "public" | "protected" | "private" | null;
 }
 
+interface PhpClassDefinition {
+  bodyEnd: number;
+  bodyStart: number;
+  fullyQualifiedName: string | null;
+  name: string;
+  nameEnd: number;
+  nameStart: number;
+}
+
 const PHP_METHOD_DEF =
   /((?:(?:public|protected|private|static|final|abstract)\s+)*)\bfunction\s*&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+const PHP_CLASS_DEF =
+  /(?:(?:abstract|final|readonly)\s+)*\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/g;
+const PHP_NAMESPACE_DEF = /\bnamespace\s+([A-Za-z_][A-Za-z0-9_\\]*)\s*[;{]/g;
 
 function phpMethodDefinitions(source: string): PhpMethodDefinition[] {
   const methods: PhpMethodDefinition[] = [];
@@ -1651,6 +2050,149 @@ function findPhpMethodByName(
   }
 
   return null;
+}
+
+function findPhpMethodByNameInClass(
+  source: string,
+  className: string,
+  methodName: string,
+): PhpMethodDefinition | null {
+  const classDefinition = findPhpClassByName(source, className);
+
+  if (!classDefinition) {
+    return null;
+  }
+
+  return findPhpMethodByNameInRange(
+    source,
+    methodName,
+    classDefinition.bodyStart + 1,
+    classDefinition.bodyEnd - 1,
+  );
+}
+
+function findPhpMethodByNameInRange(
+  source: string,
+  methodName: string,
+  from: number,
+  limit: number,
+): PhpMethodDefinition | null {
+  for (const method of phpMethodDefinitions(source)) {
+    if (
+      method.name === methodName &&
+      method.signatureStart >= from &&
+      method.signatureStart < limit
+    ) {
+      return method;
+    }
+  }
+
+  return null;
+}
+
+function findPhpClassByName(
+  source: string,
+  className: string,
+): PhpClassDefinition | null {
+  const expectedFullyQualifiedName = fullyQualifiedClassName(className);
+  const expectedName = shortClassName(className);
+
+  if (!isIdentifier(expectedName)) {
+    return null;
+  }
+
+  for (const classDefinition of phpClassDefinitions(source)) {
+    if (
+      expectedFullyQualifiedName &&
+      classDefinition.fullyQualifiedName === expectedFullyQualifiedName
+    ) {
+      return classDefinition;
+    }
+
+    if (!expectedFullyQualifiedName && classDefinition.name === expectedName) {
+      return classDefinition;
+    }
+  }
+
+  if (expectedFullyQualifiedName) {
+    const shortNameMatches = phpClassDefinitions(source).filter(
+      (classDefinition) => classDefinition.name === expectedName,
+    );
+
+    return shortNameMatches.length === 1 ? shortNameMatches[0] ?? null : null;
+  }
+
+  return null;
+}
+
+function phpClassContainingOffset(
+  source: string,
+  offset: number,
+): PhpClassDefinition | null {
+  for (const classDefinition of phpClassDefinitions(source)) {
+    if (offset > classDefinition.bodyStart && offset < classDefinition.bodyEnd) {
+      return classDefinition;
+    }
+  }
+
+  return null;
+}
+
+function phpClassDefinitions(source: string): PhpClassDefinition[] {
+  const classes: PhpClassDefinition[] = [];
+
+  PHP_CLASS_DEF.lastIndex = 0;
+
+  for (
+    let match = PHP_CLASS_DEF.exec(source);
+    match !== null;
+    match = PHP_CLASS_DEF.exec(source)
+  ) {
+    if (PHP_CLASS_DEF.lastIndex <= match.index) {
+      PHP_CLASS_DEF.lastIndex = match.index + 1;
+    }
+
+    const name = match[1] ?? "";
+    const bodyStart = methodBodyStart(source, match.index + match[0].length);
+
+    if (bodyStart === null) {
+      continue;
+    }
+
+    const nameStart = match.index + match[0].lastIndexOf(name);
+    const bodyEnd = matchingBraceClose(source, bodyStart);
+    const namespace = namespaceBeforeOffset(source, match.index);
+
+    classes.push({
+      bodyEnd,
+      bodyStart,
+      fullyQualifiedName: namespace ? `${namespace}\\${name}` : name,
+      name,
+      nameEnd: nameStart + name.length,
+      nameStart,
+    });
+  }
+
+  return classes;
+}
+
+function namespaceBeforeOffset(source: string, offset: number): string | null {
+  let namespace: string | null = null;
+  PHP_NAMESPACE_DEF.lastIndex = 0;
+
+  for (
+    let match = PHP_NAMESPACE_DEF.exec(source);
+    match !== null && match.index < offset;
+    match = PHP_NAMESPACE_DEF.exec(source)
+  ) {
+    if (PHP_NAMESPACE_DEF.lastIndex <= match.index) {
+      PHP_NAMESPACE_DEF.lastIndex = match.index + 1;
+    }
+
+    namespace = match[1] ?? null;
+  }
+
+  return namespace;
 }
 
 // --- lifecycle classification -----------------------------------------------
@@ -2000,6 +2542,81 @@ function tokenEnd(source: string, token: string, from: number): number {
   return index < 0 ? from : index + token.length;
 }
 
+interface IdentifierToken {
+  end: number;
+  name: string;
+  next: number;
+  start: number;
+}
+
+function readVariableName(
+  source: string,
+  from: number,
+  limit: number,
+): IdentifierToken | null {
+  if (source[from] !== "$") {
+    return null;
+  }
+
+  const token = readIdentifierToken(source, from + 1, limit);
+
+  if (!token) {
+    return null;
+  }
+
+  return {
+    end: token.end,
+    name: token.name,
+    next: token.next,
+    start: token.start,
+  };
+}
+
+function readIdentifierToken(
+  source: string,
+  from: number,
+  limit: number,
+): IdentifierToken | null {
+  if (!IDENTIFIER_HEAD.test(source[from] ?? "")) {
+    return null;
+  }
+
+  let index = from + 1;
+
+  while (index < limit && IDENTIFIER_TAIL.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  return {
+    end: index,
+    name: source.slice(from, index),
+    next: index,
+    start: from,
+  };
+}
+
+function phpMethodBodyRange(
+  source: string,
+  method: PhpMethodDefinition,
+): { end: number; start: number } | null {
+  const afterParams = matchingParenClose(source, method.openParen);
+
+  if (afterParams === null) {
+    return null;
+  }
+
+  const bodyStart = methodBodyStart(source, afterParams);
+
+  if (bodyStart === null) {
+    return null;
+  }
+
+  return {
+    end: matchingBraceClose(source, bodyStart),
+    start: bodyStart + 1,
+  };
+}
+
 function methodBodyStart(source: string, afterParams: number): number | null {
   for (let index = afterParams; index < source.length; index += 1) {
     const character = source[index];
@@ -2258,6 +2875,19 @@ function skipWhitespace(source: string, from: number): number {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function shortClassName(value: string): string {
+  const normalized = value.replace(/^\\/, "");
+  const separator = normalized.lastIndexOf("\\");
+
+  return separator < 0 ? normalized : normalized.slice(separator + 1);
+}
+
+function fullyQualifiedClassName(value: string): string | null {
+  const normalized = value.replace(/^\\/, "");
+
+  return normalized.includes("\\") ? normalized : null;
 }
 
 function ucfirst(value: string): string {

@@ -7771,6 +7771,20 @@ export function useWorkbenchController(
       openPhpPropertyTarget: openDirectPhpPropertyTarget,
       openTarget: openNavigationTarget,
       readFileContent: readNavigationFileContent,
+      readPhpClassSource: async (className) => {
+        for (const path of await resolvePhpClassSourcePaths(className)) {
+          try {
+            return {
+              path,
+              source: await readNavigationFileContent(path),
+            };
+          } catch {
+            continue;
+          }
+        }
+
+        return null;
+      },
       resolveDeclaredType: resolvePhpDeclaredType,
       resolveExpressionType: resolvePhpExpressionType,
       resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,

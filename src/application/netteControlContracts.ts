@@ -9,6 +9,9 @@ export interface NetteControlDependencies {
     label: string,
   ): Promise<boolean>;
   readFileContent(path: string): Promise<string>;
+  readPhpClassSource?(
+    className: string,
+  ): Promise<{ path: string; source: string } | null>;
   resolveDeclaredType(source: string, typeHint: string | null): string | null;
 }
 
