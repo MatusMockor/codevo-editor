@@ -40,8 +40,8 @@ function makeDeps(
   return {
     activeDocument,
     goToPhpFrameworkLiteralDefinition: falseHandler,
-    goToPhpLaravelGateAbilityDefinition: falseHandler,
-    goToPhpLaravelMiddlewareAliasDefinition: falseHandler,
+    goToPhpFrameworkAuthorizationAbilityDefinition: falseHandler,
+    goToPhpFrameworkMiddlewareAliasDefinition: falseHandler,
     goToPhpLaravelRelationStringDefinition: falseHandler,
     openDirectPhpMethodTarget: vi.fn(async () => false),
     ...overrides,

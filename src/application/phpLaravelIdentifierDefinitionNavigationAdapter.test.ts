@@ -28,8 +28,8 @@ function makeDeps(
   return {
     activeDocument,
     goToPhpFrameworkLiteralDefinition: falseHandler,
-    goToPhpLaravelGateAbilityDefinition: falseHandler,
-    goToPhpLaravelMiddlewareAliasDefinition: falseHandler,
+    goToPhpFrameworkAuthorizationAbilityDefinition: falseHandler,
+    goToPhpFrameworkMiddlewareAliasDefinition: falseHandler,
     goToPhpLaravelRelationStringDefinition: falseHandler,
     openDirectPhpMethodTarget: vi.fn(async () => false),
     ...overrides,
@@ -40,11 +40,11 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
   it.each([
     [
       { ability: "update-post", kind: "laravelGateAbilityString" },
-      "goToPhpLaravelGateAbilityDefinition",
+      "goToPhpFrameworkAuthorizationAbilityDefinition",
     ],
     [
       { alias: "auth", kind: "laravelMiddlewareAliasString" },
-      "goToPhpLaravelMiddlewareAliasDefinition",
+      "goToPhpFrameworkMiddlewareAliasDefinition",
     ],
     [
       {

@@ -99,8 +99,8 @@ export interface PhpLaravelIdentifierDefinitionNavigationAdapterDependencies {
   goToPhpFrameworkLiteralDefinition(
     request: PhpContextualFrameworkLiteralDefinitionRequest,
   ): Promise<boolean>;
-  goToPhpLaravelGateAbilityDefinition: PhpContextHandler<"laravelGateAbilityString">;
-  goToPhpLaravelMiddlewareAliasDefinition: PhpContextHandler<"laravelMiddlewareAliasString">;
+  goToPhpFrameworkAuthorizationAbilityDefinition: PhpContextHandler<"laravelGateAbilityString">;
+  goToPhpFrameworkMiddlewareAliasDefinition: PhpContextHandler<"laravelMiddlewareAliasString">;
   goToPhpLaravelRelationStringDefinition: PhpContextHandler<"laravelRelationString">;
   openDirectPhpMethodTarget(
     className: string,
@@ -153,10 +153,10 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
         });
 
       case "laravelGateAbilityString":
-        return dependencies.goToPhpLaravelGateAbilityDefinition(context);
+        return dependencies.goToPhpFrameworkAuthorizationAbilityDefinition(context);
 
       case "laravelMiddlewareAliasString":
-        return dependencies.goToPhpLaravelMiddlewareAliasDefinition(context);
+        return dependencies.goToPhpFrameworkMiddlewareAliasDefinition(context);
 
       case "laravelViewString":
         return dependencies.goToPhpFrameworkLiteralDefinition({

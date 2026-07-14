@@ -19,16 +19,16 @@ interface NamedNavigationTarget {
   position: EditorPosition;
 }
 
-type LaravelGateAbilityContext = Extract<
+type AuthorizationAbilityContext = Extract<
   PhpIdentifierContext,
   { kind: "laravelGateAbilityString" }
 >;
-type LaravelMiddlewareAliasContext = Extract<
+type MiddlewareAliasContext = Extract<
   PhpIdentifierContext,
   { kind: "laravelMiddlewareAliasString" }
 >;
 
-export interface PhpLaravelGateMiddlewareDefinitionNavigationDependencies {
+export interface PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
   collectAuthorizationAbilityTargets: PhpFrameworkTargets["collectAuthorizationAbilityTargets"];
   collectMiddlewareAliasTargets: PhpFrameworkTargets["collectMiddlewareAliasTargets"];
@@ -44,16 +44,16 @@ export interface PhpLaravelGateMiddlewareDefinitionNavigationDependencies {
   workspaceRoot: string | null;
 }
 
-export interface PhpLaravelGateMiddlewareDefinitionNavigation {
-  goToPhpLaravelGateAbilityDefinition(
-    context: LaravelGateAbilityContext,
+export interface PhpFrameworkAuthorizationMiddlewareDefinitionNavigation {
+  goToPhpFrameworkAuthorizationAbilityDefinition(
+    context: AuthorizationAbilityContext,
   ): Promise<boolean>;
-  goToPhpLaravelMiddlewareAliasDefinition(
-    context: LaravelMiddlewareAliasContext,
+  goToPhpFrameworkMiddlewareAliasDefinition(
+    context: MiddlewareAliasContext,
   ): Promise<boolean>;
 }
 
-export function usePhpLaravelGateMiddlewareDefinitionNavigation({
+export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
   activeDocument,
   collectAuthorizationAbilityTargets,
   collectMiddlewareAliasTargets,
@@ -62,7 +62,7 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
   openNavigationTarget,
   setMessage,
   workspaceRoot,
-}: PhpLaravelGateMiddlewareDefinitionNavigationDependencies): PhpLaravelGateMiddlewareDefinitionNavigation {
+}: PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies): PhpFrameworkAuthorizationMiddlewareDefinitionNavigation {
   const supportsAuthorizationAbilityTargets =
     phpFrameworkSupportsAuthorizationAbilities(frameworkRuntime.providers);
   const supportsMiddlewareAliasTargets = phpFrameworkSupportsMiddlewareAliases(
@@ -110,8 +110,8 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
     ],
   );
 
-  const goToPhpLaravelGateAbilityDefinition = useCallback(
-    async (context: LaravelGateAbilityContext): Promise<boolean> =>
+  const goToPhpFrameworkAuthorizationAbilityDefinition = useCallback(
+    async (context: AuthorizationAbilityContext): Promise<boolean> =>
       openResolvedTarget({
         gate: supportsAuthorizationAbilityTargets,
         label: (target) => target.name,
@@ -137,8 +137,8 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
     ],
   );
 
-  const goToPhpLaravelMiddlewareAliasDefinition = useCallback(
-    async (context: LaravelMiddlewareAliasContext): Promise<boolean> =>
+  const goToPhpFrameworkMiddlewareAliasDefinition = useCallback(
+    async (context: MiddlewareAliasContext): Promise<boolean> =>
       openResolvedTarget({
         gate: supportsMiddlewareAliasTargets,
         label: (target) => target.name,
@@ -165,7 +165,7 @@ export function usePhpLaravelGateMiddlewareDefinitionNavigation({
   );
 
   return {
-    goToPhpLaravelGateAbilityDefinition,
-    goToPhpLaravelMiddlewareAliasDefinition,
+    goToPhpFrameworkAuthorizationAbilityDefinition,
+    goToPhpFrameworkMiddlewareAliasDefinition,
   };
 }

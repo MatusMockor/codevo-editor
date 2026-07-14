@@ -66,7 +66,7 @@ import { usePhpFrameworkModelNavigationTargets } from "./usePhpFrameworkModelNav
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
 import { usePhpContextualMemberDefinitionNavigation } from "./usePhpContextualMemberDefinitionNavigation";
 import { usePhpMemberPropertyDefinitionNavigation } from "./usePhpMemberPropertyDefinitionNavigation";
-import { usePhpLaravelGateMiddlewareDefinitionNavigation } from "./usePhpLaravelGateMiddlewareDefinitionNavigation";
+import { usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation } from "./usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation";
 import { usePhpContextualFrameworkLiteralDefinitionNavigation } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
 import { usePhpFrameworkLiteralNavigationDependencies } from "./usePhpFrameworkLiteralNavigationDependencies";
 import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
@@ -7887,9 +7887,9 @@ export function useWorkbenchController(
   );
 
   const {
-    goToPhpLaravelGateAbilityDefinition,
-    goToPhpLaravelMiddlewareAliasDefinition,
-  } = usePhpLaravelGateMiddlewareDefinitionNavigation({
+    goToPhpFrameworkAuthorizationAbilityDefinition,
+    goToPhpFrameworkMiddlewareAliasDefinition,
+  } = usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
     activeDocument,
     collectAuthorizationAbilityTargets,
     collectMiddlewareAliasTargets,
@@ -7943,8 +7943,8 @@ export function useWorkbenchController(
           createPhpLaravelIdentifierNavigationActivationAdapter({
             activeDocument,
             goToPhpFrameworkLiteralDefinition,
-            goToPhpLaravelGateAbilityDefinition,
-            goToPhpLaravelMiddlewareAliasDefinition,
+            goToPhpFrameworkAuthorizationAbilityDefinition,
+            goToPhpFrameworkMiddlewareAliasDefinition,
             goToPhpLaravelRelationStringDefinition,
             openDirectPhpMethodTarget,
             openPhpClassTarget,
@@ -7960,8 +7960,8 @@ export function useWorkbenchController(
     [
       activeDocument,
       goToPhpFrameworkLiteralDefinition,
-      goToPhpLaravelGateAbilityDefinition,
-      goToPhpLaravelMiddlewareAliasDefinition,
+      goToPhpFrameworkAuthorizationAbilityDefinition,
+      goToPhpFrameworkMiddlewareAliasDefinition,
       goToPhpLaravelRelationStringDefinition,
       providePhpNetteInjectionDefinition,
       openDirectPhpMethodTarget,

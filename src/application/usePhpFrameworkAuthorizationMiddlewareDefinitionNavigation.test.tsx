@@ -14,10 +14,10 @@ import {
   type PhpFrameworkRuntimeContext,
 } from "./phpFrameworkRuntimeContext";
 import {
-  usePhpLaravelGateMiddlewareDefinitionNavigation,
-  type PhpLaravelGateMiddlewareDefinitionNavigation,
-  type PhpLaravelGateMiddlewareDefinitionNavigationDependencies,
-} from "./usePhpLaravelGateMiddlewareDefinitionNavigation";
+  usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation,
+  type PhpFrameworkAuthorizationMiddlewareDefinitionNavigation,
+  type PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies,
+} from "./usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -73,8 +73,8 @@ function namedTarget(name: string) {
 }
 
 function makeDeps(
-  overrides: Partial<PhpLaravelGateMiddlewareDefinitionNavigationDependencies> = {},
-): PhpLaravelGateMiddlewareDefinitionNavigationDependencies {
+  overrides: Partial<PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies> = {},
+): PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies {
   return {
     activeDocument: {
       content: "<?php Gate::allows('publish-posts');",
@@ -95,12 +95,12 @@ function makeDeps(
 }
 
 function renderHook(
-  deps: PhpLaravelGateMiddlewareDefinitionNavigationDependencies,
+  deps: PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies,
 ) {
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: {
-    api: PhpLaravelGateMiddlewareDefinitionNavigation | null;
+    api: PhpFrameworkAuthorizationMiddlewareDefinitionNavigation | null;
   } = {
     api: null,
   };
@@ -108,9 +108,9 @@ function renderHook(
   function Harness({
     dependencies,
   }: {
-    dependencies: PhpLaravelGateMiddlewareDefinitionNavigationDependencies;
+    dependencies: PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies;
   }) {
-    captured.api = usePhpLaravelGateMiddlewareDefinitionNavigation(dependencies);
+    captured.api = usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation(dependencies);
     return null;
   }
 
@@ -118,7 +118,7 @@ function renderHook(
     root.render(<Harness dependencies={deps} />);
   });
 
-  const api = (): PhpLaravelGateMiddlewareDefinitionNavigation => {
+  const api = (): PhpFrameworkAuthorizationMiddlewareDefinitionNavigation => {
     if (!captured.api) {
       throw new Error("hook not mounted");
     }
@@ -145,7 +145,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
+describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
   it("opens a matching Laravel gate ability target", async () => {
     const abilityTarget = namedTarget("publish-posts");
     const collectAuthorizationAbilityTargets = vi.fn(async () => [
@@ -159,7 +159,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpLaravelGateAbilityDefinition({
+    const handled = await harness.api().goToPhpFrameworkAuthorizationAbilityDefinition({
       ability: "publish-posts",
       kind: "laravelGateAbilityString",
     });
@@ -186,7 +186,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpLaravelMiddlewareAliasDefinition({
+    const handled = await harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
       alias: "verified",
       kind: "laravelMiddlewareAliasString",
     });
@@ -212,7 +212,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpLaravelGateAbilityDefinition({
+    const handled = await harness.api().goToPhpFrameworkAuthorizationAbilityDefinition({
       ability: "publish-posts",
       kind: "laravelGateAbilityString",
     });
@@ -239,7 +239,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpLaravelMiddlewareAliasDefinition({
+    const handled = await harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
       alias: "auth",
       kind: "laravelMiddlewareAliasString",
     });
@@ -265,7 +265,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpLaravelMiddlewareAliasDefinition({
+    const handled = await harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
       alias: "auth",
       kind: "laravelMiddlewareAliasString",
     });
@@ -291,7 +291,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpLaravelGateAbilityDefinition({
+    const handled = await harness.api().goToPhpFrameworkAuthorizationAbilityDefinition({
       ability: "publish-posts",
       kind: "laravelGateAbilityString",
     });
@@ -315,7 +315,7 @@ describe("usePhpLaravelGateMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
     const navigationPromise =
-      harness.api().goToPhpLaravelMiddlewareAliasDefinition({
+      harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
         alias: "auth",
         kind: "laravelMiddlewareAliasString",
       });
