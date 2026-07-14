@@ -287,6 +287,38 @@ describe("loadLatteFilterRegistrations", () => {
     ]);
   });
 
+  it("discovers external callable metadata from PHP Latte Extension getFilters()", async () => {
+    const extensionSource = [
+      "<?php",
+      "",
+      "final class AppLatteExtension extends Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'userDate' => [\\App\\Filters\\UserDateFilter::class, 'format'],",
+      "        ];",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const { context } = makeContext({
+      "app/Latte/AppLatteExtension.php": extensionSource,
+    });
+
+    await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
+      {
+        callableOffset: extensionSource.indexOf("format"),
+        className: "\\App\\Filters\\UserDateFilter",
+        methodName: "format",
+        name: "userDate",
+        offset: extensionSource.indexOf("userDate"),
+        path: `${ROOT}/app/Latte/AppLatteExtension.php`,
+        serviceClassName: "App\\Filters\\UserDateFilter",
+      },
+    ]);
+  });
+
   it("keeps NEON registrations ahead of PHP getFilters() duplicates", async () => {
     const configSource = filterLoaderConfig("money");
     const extensionSource = latteExtensionSource("money", "userLabel");

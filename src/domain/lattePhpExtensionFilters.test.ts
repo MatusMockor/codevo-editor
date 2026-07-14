@@ -31,7 +31,80 @@ describe("lattePhpExtensionFiltersFromSource", () => {
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
       { name: "userDate", offset: offsetOf(source, "userDate") },
-      { name: "money", offset: offsetOf(source, "money") },
+      {
+        callableOffset: offsetOf(
+          source,
+          "format",
+          offsetOf(source, "MoneyFilter"),
+        ),
+        className: "MoneyFilter",
+        methodName: "format",
+        name: "money",
+        offset: offsetOf(source, "money"),
+        serviceClassName: "MoneyFilter",
+      },
+    ]);
+  });
+
+  it("extracts external class callables from getFilters", () => {
+    const source = [
+      "<?php",
+      "",
+      "final class ProjectLatteExtension extends Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'userDate' => [\\App\\Filters\\UserDateFilter::class, 'format'],",
+      "            'shortDate' => [UserDateFilter::class, 'formatShort'],",
+      "        ];",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      {
+        callableOffset: offsetOf(source, "format"),
+        className: "\\App\\Filters\\UserDateFilter",
+        methodName: "format",
+        name: "userDate",
+        offset: offsetOf(source, "userDate"),
+        serviceClassName: "App\\Filters\\UserDateFilter",
+      },
+      {
+        callableOffset: offsetOf(source, "formatShort"),
+        className: "UserDateFilter",
+        methodName: "formatShort",
+        name: "shortDate",
+        offset: offsetOf(source, "shortDate"),
+        serviceClassName: "UserDateFilter",
+      },
+    ]);
+  });
+
+  it("keeps filter names without callable info for unclear external callables", () => {
+    const source = [
+      "<?php",
+      "",
+      "final class ProjectLatteExtension extends Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'dynamicClass' => [$filterClass, 'format'],",
+      "            'dynamicMethod' => [UserDateFilter::class, $method],",
+      "            'callableString' => 'UserDateFilter::format',",
+      "        ];",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      { name: "dynamicClass", offset: offsetOf(source, "dynamicClass") },
+      { name: "dynamicMethod", offset: offsetOf(source, "dynamicMethod") },
+      { name: "callableString", offset: offsetOf(source, "callableString") },
     ]);
   });
 
@@ -69,7 +142,18 @@ describe("lattePhpExtensionFiltersFromSource", () => {
         offset: offsetOf(source, "inside"),
       },
       { name: "missing", offset: offsetOf(source, "missing") },
-      { name: "external", offset: offsetOf(source, "external") },
+      {
+        callableOffset: offsetOf(
+          source,
+          "format",
+          offsetOf(source, "ExternalFilter"),
+        ),
+        className: "ExternalFilter",
+        methodName: "format",
+        name: "external",
+        offset: offsetOf(source, "external"),
+        serviceClassName: "ExternalFilter",
+      },
     ]);
   });
 
@@ -104,7 +188,10 @@ describe("lattePhpExtensionFiltersFromSource", () => {
         callableOffset: offsetOf(
           source,
           "formatInside",
-          source.indexOf("function formatInside", source.indexOf("class ProjectLatteExtension")),
+          source.indexOf(
+            "function formatInside",
+            source.indexOf("class ProjectLatteExtension"),
+          ),
         ),
         name: "inside",
         offset: offsetOf(source, "inside"),
@@ -198,7 +285,7 @@ describe("lattePhpExtensionFiltersFromSource", () => {
       "<?php",
       "",
       "// 'commentedOut' => [$this, 'format'],",
-      "$example = \"outside\";",
+      '$example = "outside";',
       "",
       "class Filters extends Latte\\Extension",
       "{",

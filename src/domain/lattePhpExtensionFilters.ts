@@ -6,8 +6,18 @@ import { maskPhpSource } from "./phpSourceMask";
 
 export interface LattePhpExtensionFilter {
   callableOffset?: number;
+  className?: string;
+  methodName?: string;
   name: string;
   offset: number;
+  serviceClassName?: string;
+}
+
+interface LattePhpExtensionFilterCallable {
+  callableOffset: number;
+  className?: string;
+  methodName?: string;
+  serviceClassName?: string;
 }
 
 interface ArrayReturnRange {
@@ -28,7 +38,7 @@ export function lattePhpExtensionFiltersFromSource(
     match;
     match = GET_FILTERS_METHOD_PATTERN.exec(masked)
   ) {
-  const methodBody = getFiltersMethodBody(masked, match.index);
+    const methodBody = getFiltersMethodBody(masked, match.index);
 
     if (!methodBody) {
       continue;
@@ -241,14 +251,14 @@ function stringKeyFiltersFromArray(
       continue;
     }
 
-    const callableOffset = staticThisCallableMethodOffset(
+    const callable = staticArrayCallable(
       source,
       arrowOffset + 2,
       getFiltersBodyStart,
     );
 
     filters.push({
-      ...(callableOffset === undefined ? {} : { callableOffset }),
+      ...(callable ?? {}),
       name: literal.name,
       offset: index + 1,
     });
@@ -258,18 +268,48 @@ function stringKeyFiltersFromArray(
   return filters;
 }
 
-function staticThisCallableMethodOffset(
+function staticArrayCallable(
   source: string,
   valueStart: number,
   getFiltersBodyStart: number,
-): number | undefined {
+): LattePhpExtensionFilterCallable | undefined {
   const valueSource = source.slice(valueStart);
-  const callable = /^\s*\[\s*\$this\s*,\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]/.exec(
-    valueSource,
-  );
-  const methodName = callable?.[2];
+  const thisCallable =
+    /^\s*\[\s*\$this\s*,\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]/.exec(
+      valueSource,
+    );
+  const thisMethodName = thisCallable?.[2];
 
-  if (!methodName) {
+  if (thisMethodName) {
+    if (!isPhpIdentifier(thisMethodName)) {
+      return undefined;
+    }
+
+    const callableOffset = phpMethodNameOffsetInContainingClass(
+      source,
+      thisMethodName,
+      getFiltersBodyStart,
+    );
+
+    return callableOffset === undefined ? undefined : { callableOffset };
+  }
+
+  return staticClassCallable(source, valueStart);
+}
+
+function staticClassCallable(
+  source: string,
+  valueStart: number,
+): LattePhpExtensionFilterCallable | undefined {
+  const valueSource = source.slice(valueStart);
+  const callable =
+    /^\s*\[\s*(\\?(?:[A-Za-z_][A-Za-z0-9_]*\\)*[A-Za-z_][A-Za-z0-9_]*)::class\s*,\s*(["'])([A-Za-z_][A-Za-z0-9_]*)\2\s*\]/.exec(
+      valueSource,
+    );
+  const className = callable?.[1];
+  const methodName = callable?.[3];
+
+  if (!className || !methodName) {
     return undefined;
   }
 
@@ -277,7 +317,20 @@ function staticThisCallableMethodOffset(
     return undefined;
   }
 
-  return phpMethodNameOffsetInContainingClass(source, methodName, getFiltersBodyStart);
+  const methodOffsetInMatch = callable[0].lastIndexOf(methodName);
+
+  if (methodOffsetInMatch < 0) {
+    return undefined;
+  }
+
+  const callableOffset = valueStart + methodOffsetInMatch;
+
+  return {
+    callableOffset,
+    className,
+    methodName,
+    serviceClassName: className.replace(/^\\+/, ""),
+  };
 }
 
 function phpMethodNameOffsetInContainingClass(
@@ -286,9 +339,13 @@ function phpMethodNameOffsetInContainingClass(
   getFiltersBodyStart: number,
 ): number | undefined {
   const type = phpClassStructureContainingOffset(source, getFiltersBodyStart);
-  const method = type.methods.find((candidate) => candidate.name === methodName);
+  const method = type.methods.find(
+    (candidate) => candidate.name === methodName,
+  );
 
-  return method ? phpMethodMemberNameOffset(source, method.declarationOffset) : undefined;
+  return method
+    ? phpMethodMemberNameOffset(source, method.declarationOffset)
+    : undefined;
 }
 
 function phpMethodMemberNameOffset(
@@ -301,7 +358,9 @@ function phpMethodMemberNameOffset(
 
   return declaration?.index === undefined || declaration.index < 0
     ? undefined
-    : declarationOffset + declaration.index + declaration[0].lastIndexOf(declaration[1] ?? "");
+    : declarationOffset +
+        declaration.index +
+        declaration[0].lastIndexOf(declaration[1] ?? "");
 }
 
 function phpClassStructureContainingOffset(source: string, offset: number) {

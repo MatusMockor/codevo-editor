@@ -26,7 +26,7 @@ export interface LatteFilterRegistrationTarget {
 export interface LatteFilterRegistrationCallableTarget {
   methodName: string;
   serviceClassName?: string;
-  serviceName: string;
+  serviceName?: string;
 }
 
 export interface LatteFilterCacheEntry {

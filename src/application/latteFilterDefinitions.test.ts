@@ -36,6 +36,17 @@ final class AppLatteExtension extends Latte\\Extension
     }
 }
 `;
+const EXTERNAL_CALLABLE_EXTENSION_SOURCE = `<?php
+final class AppLatteExtension extends Latte\\Extension
+{
+    public function getFilters(): array
+    {
+        return [
+            'UserDate' => [\\App\\Filters\\UserDateFilter::class, 'format'],
+        ];
+    }
+}
+`;
 
 function offsetAfter(source: string, needle: string): number {
   const index = source.indexOf(needle);
@@ -354,6 +365,73 @@ describe("resolveLatteFilterDefinition", () => {
     expect(context.deps.openTarget).toHaveBeenCalledWith(
       "/ws/app/Latte/AppLatteExtension.php",
       { column: 21, lineNumber: 11 },
+      "UserDate",
+    );
+  });
+
+  it("opens an external PHP extension filter callable method when metadata is available", async () => {
+    const context = makeContext({
+      configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
+    });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callableOffset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("format"),
+        methodName: "format",
+        name: "UserDate",
+        offset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/Latte/AppLatteExtension.php",
+        serviceClassName: "App\\Filters\\UserDateFilter",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a PHP extension filter key when the external callable method cannot be opened", async () => {
+    const context = makeContext({
+      configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
+    });
+    context.deps.openPhpMethodTarget = vi.fn(async () => false);
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callableOffset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("format"),
+        methodName: "format",
+        name: "UserDate",
+        offset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/Latte/AppLatteExtension.php",
+        serviceClassName: "App\\Filters\\UserDateFilter",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/Latte/AppLatteExtension.php",
+      { column: 14, lineNumber: 7 },
       "UserDate",
     );
   });

@@ -72,7 +72,7 @@ export async function resolveLatteFilterDefinition(
     return false;
   }
 
-  const methodTargetOpened = await openLatteNeonCallableMethodTarget(
+  const methodTargetOpened = await openLatteCallableMethodTarget(
     context,
     target,
     targetSource,
@@ -86,7 +86,10 @@ export async function resolveLatteFilterDefinition(
     return false;
   }
 
-  const targetOffset = target.callableOffset ?? target.offset;
+  const targetOffset =
+    target.serviceClassName || target.callable?.serviceClassName
+      ? target.offset
+      : (target.callableOffset ?? target.offset);
 
   return context.deps.openTarget(
     target.path,
@@ -95,7 +98,7 @@ export async function resolveLatteFilterDefinition(
   );
 }
 
-async function openLatteNeonCallableMethodTarget(
+async function openLatteCallableMethodTarget(
   context: LatteFilterDefinitionContext,
   target: LatteFilterRegistrationTarget,
   targetSource: string,
