@@ -1,5 +1,7 @@
 import {
   createWorkbenchNotice,
+  capDiagnosticNotices,
+  capWorkbenchNotices,
   type WorkbenchNotice,
   type WorkbenchNoticeNavigationTarget,
 } from "./workbenchNotice";
@@ -9,6 +11,10 @@ import {
   suspiciousPhpBareIdentifierDiagnostics,
 } from "../domain/phpSyntaxDiagnostics";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import {
+  languageServerDiagnosticNoticeMessage,
+  languageServerDiagnosticNoticeSeverity,
+} from "../domain/languageServerDiagnostics";
 import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import { pathFromLanguageServerUri } from "../domain/languageServerFeatures";
 
@@ -151,4 +157,114 @@ export function diagnosticNoticeNavigationTarget(
       },
     },
   };
+}
+
+export interface ActiveDiagnosticNoticeDocument {
+  language: string;
+  path: string;
+}
+
+export function activePhpLocalDiagnosticNotices(
+  document: ActiveDiagnosticNoticeDocument | null,
+  diagnosticsByPath: Record<string, LanguageServerDiagnostic[]>,
+): WorkbenchNotice[] {
+  if (!document || document.language !== "php") {
+    return [];
+  }
+
+  return activeLocalDiagnosticNotices(
+    document.path,
+    diagnosticsByPath[document.path] ?? [],
+    "PHP",
+  );
+}
+
+export function activeDotenvLocalDiagnosticNotices(
+  document: ActiveDiagnosticNoticeDocument | null,
+  diagnosticsByPath: Record<string, LanguageServerDiagnostic[]>,
+): WorkbenchNotice[] {
+  if (!document || document.language !== "dotenv") {
+    return [];
+  }
+
+  return activeLocalDiagnosticNotices(
+    document.path,
+    diagnosticsByPath[document.path] ?? [],
+    "dotenv",
+  );
+}
+
+export function composeEffectiveDiagnosticNotices({
+  activeDocument,
+  activeDotenvDiagnosticNotices,
+  activePhpLocalDiagnosticNotices,
+  notices,
+}: {
+  activeDocument: ActiveDiagnosticNoticeDocument | null;
+  activeDotenvDiagnosticNotices: WorkbenchNotice[];
+  activePhpLocalDiagnosticNotices: WorkbenchNotice[];
+  notices: WorkbenchNotice[];
+}): WorkbenchNotice[] {
+  if (!activeDocument) {
+    return notices;
+  }
+
+  const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
+  const withoutActiveLocalDiagnostics = notices.filter(
+    (notice) => notice.groupKey !== groupKey,
+  );
+
+  if (activeDocument.language === "dotenv") {
+    if (activeDotenvDiagnosticNotices.length === 0) {
+      return withoutActiveLocalDiagnostics;
+    }
+
+    return capWorkbenchNotices(
+      [...withoutActiveLocalDiagnostics, ...activeDotenvDiagnosticNotices],
+      GLOBAL_NOTICE_LIMIT,
+      isCappableDiagnosticNotice,
+    );
+  }
+
+  if (activeDocument.language !== "php") {
+    return notices;
+  }
+
+  if (activePhpLocalDiagnosticNotices.length === 0) {
+    return withoutActiveLocalDiagnostics;
+  }
+
+  return capWorkbenchNotices(
+    [...withoutActiveLocalDiagnostics, ...activePhpLocalDiagnosticNotices],
+    GLOBAL_NOTICE_LIMIT,
+    isCappableDiagnosticNotice,
+  );
+}
+
+function activeLocalDiagnosticNotices(
+  path: string,
+  diagnostics: LanguageServerDiagnostic[],
+  fallbackSource: string,
+): WorkbenchNotice[] {
+  if (diagnostics.length === 0) {
+    return [];
+  }
+
+  const uri = fileUriFromPath(path);
+  const groupKey = phpLocalDiagnosticNoticeGroup(path);
+
+  return capDiagnosticNotices(
+    diagnostics.map((diagnostic) =>
+      createWorkbenchNotice(
+        languageServerDiagnosticNoticeSeverity(diagnostic.severity),
+        diagnostic.source || fallbackSource,
+        languageServerDiagnosticNoticeMessage(diagnostic, uri),
+        groupKey,
+        diagnosticNoticeNavigationTarget(uri, diagnostic),
+      ),
+    ),
+    DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
+    (hiddenCount) =>
+      buildDiagnosticOverflowNotice(fallbackSource, groupKey, hiddenCount),
+  );
 }

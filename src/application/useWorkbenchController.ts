@@ -168,13 +168,15 @@ import {
   type WorkbenchNotice,
 } from "./workbenchNotice";
 import {
+  activeDotenvLocalDiagnosticNotices as buildActiveDotenvLocalDiagnosticNotices,
+  activePhpLocalDiagnosticNotices as buildActivePhpLocalDiagnosticNotices,
   buildDiagnosticOverflowNotice,
+  composeEffectiveDiagnosticNotices,
   DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
   diagnosticNoticeNavigationTarget,
   GLOBAL_NOTICE_LIMIT,
   isCappableDiagnosticNotice,
   localPhpDiagnosticsFromSource,
-  phpLocalDiagnosticNoticeGroup,
 } from "./diagnosticNotices";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import {
@@ -8405,33 +8407,9 @@ export function useWorkbenchController(
     phpLocalDiagnosticsByPath,
   ]);
   const activePhpLocalDiagnosticNotices = useMemo(() => {
-    if (!activeDocument || activeDocument.language !== "php") {
-      return [];
-    }
-
-    const diagnostics =
-      activePhpLocalDiagnosticsByPath[activeDocument.path] ?? [];
-
-    if (diagnostics.length === 0) {
-      return [];
-    }
-
-    const uri = fileUriFromPath(activeDocument.path);
-    const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
-
-    return capDiagnosticNotices(
-      diagnostics.map((diagnostic) =>
-        createWorkbenchNotice(
-          languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-          diagnostic.source || "PHP",
-          languageServerDiagnosticNoticeMessage(diagnostic, uri),
-          groupKey,
-          diagnosticNoticeNavigationTarget(uri, diagnostic),
-        ),
-      ),
-      DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-      (hiddenCount) =>
-        buildDiagnosticOverflowNotice("PHP", groupKey, hiddenCount),
+    return buildActivePhpLocalDiagnosticNotices(
+      activeDocument,
+      activePhpLocalDiagnosticsByPath,
     );
   }, [
     activeDocument?.language,
@@ -8439,32 +8417,9 @@ export function useWorkbenchController(
     activePhpLocalDiagnosticsByPath,
   ]);
   const activeDotenvDiagnosticNotices = useMemo(() => {
-    if (!activeDocument || activeDocument.language !== "dotenv") {
-      return [];
-    }
-
-    const diagnostics = activeDotenvDiagnosticsByPath[activeDocument.path] ?? [];
-
-    if (diagnostics.length === 0) {
-      return [];
-    }
-
-    const uri = fileUriFromPath(activeDocument.path);
-    const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
-
-    return capDiagnosticNotices(
-      diagnostics.map((diagnostic) =>
-        createWorkbenchNotice(
-          languageServerDiagnosticNoticeSeverity(diagnostic.severity),
-          diagnostic.source || "dotenv",
-          languageServerDiagnosticNoticeMessage(diagnostic, uri),
-          groupKey,
-          diagnosticNoticeNavigationTarget(uri, diagnostic),
-        ),
-      ),
-      DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-      (hiddenCount) =>
-        buildDiagnosticOverflowNotice("dotenv", groupKey, hiddenCount),
+    return buildActiveDotenvLocalDiagnosticNotices(
+      activeDocument,
+      activeDotenvDiagnosticsByPath,
     );
   }, [
     activeDocument?.language,
@@ -8472,40 +8427,12 @@ export function useWorkbenchController(
     activeDotenvDiagnosticsByPath,
   ]);
   const effectiveNotices = useMemo(() => {
-    if (!activeDocument) {
-      return notices;
-    }
-
-    const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
-    const withoutActiveLocalDiagnostics = notices.filter(
-      (notice) => notice.groupKey !== groupKey,
-    );
-
-    if (activeDocument.language === "dotenv") {
-      if (activeDotenvDiagnosticNotices.length === 0) {
-        return withoutActiveLocalDiagnostics;
-      }
-
-      return capWorkbenchNotices(
-        [...withoutActiveLocalDiagnostics, ...activeDotenvDiagnosticNotices],
-        GLOBAL_NOTICE_LIMIT,
-        isCappableDiagnosticNotice,
-      );
-    }
-
-    if (activeDocument.language !== "php") {
-      return notices;
-    }
-
-    if (activePhpLocalDiagnosticNotices.length === 0) {
-      return withoutActiveLocalDiagnostics;
-    }
-
-    return capWorkbenchNotices(
-      [...withoutActiveLocalDiagnostics, ...activePhpLocalDiagnosticNotices],
-      GLOBAL_NOTICE_LIMIT,
-      isCappableDiagnosticNotice,
-    );
+    return composeEffectiveDiagnosticNotices({
+      activeDocument,
+      activeDotenvDiagnosticNotices,
+      activePhpLocalDiagnosticNotices,
+      notices,
+    });
   }, [
     activeDocument?.language,
     activeDocument?.path,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeDotenvLocalDiagnosticNotices,
+  activePhpLocalDiagnosticNotices,
   buildDiagnosticOverflowNotice,
+  composeEffectiveDiagnosticNotices,
   DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
   diagnosticNoticeNavigationTarget,
   GLOBAL_NOTICE_LIMIT,
@@ -10,7 +13,10 @@ import {
   PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX,
   phpLocalDiagnosticNoticeGroup,
 } from "./diagnosticNotices";
-import { createWorkbenchNotice } from "./workbenchNotice";
+import {
+  createWorkbenchNotice,
+  GLOBAL_NOTICE_OVERFLOW_GROUP_KEY,
+} from "./workbenchNotice";
 import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 
@@ -260,5 +266,199 @@ describe("diagnosticNoticeNavigationTarget", () => {
         start: { column: 5, lineNumber: 2 },
       },
     });
+  });
+});
+
+describe("active local diagnostic notices", () => {
+  const path = "/project/app/Foo.php";
+  const dotenvPath = "/project/.env";
+
+  const diagnostic = (
+    overrides: Partial<LanguageServerDiagnostic> = {},
+  ): LanguageServerDiagnostic => {
+    const { source = null, ...rest } = overrides;
+
+    return {
+      character: 0,
+      endCharacter: 3,
+      endLine: 0,
+      line: 0,
+      message: "boom",
+      severity: "error",
+      ...rest,
+      source,
+    };
+  };
+
+  it("builds active PHP notices in the active-file local diagnostic group", () => {
+    const notices = activePhpLocalDiagnosticNotices(
+      { language: "php", path },
+      { [path]: [diagnostic()] },
+    );
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      groupKey: phpLocalDiagnosticNoticeGroup(path),
+      severity: "error",
+      source: "PHP",
+    });
+    expect(notices[0].message).toContain("boom");
+    expect(notices[0].navigationTarget).toEqual({
+      path,
+      range: {
+        end: { column: 4, lineNumber: 1 },
+        start: { column: 1, lineNumber: 1 },
+      },
+    });
+  });
+
+  it("builds active dotenv notices with the same active-file grouping behavior", () => {
+    const notices = activeDotenvLocalDiagnosticNotices(
+      { language: "dotenv", path: dotenvPath },
+      { [dotenvPath]: [diagnostic({ severity: "warning" })] },
+    );
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      groupKey: phpLocalDiagnosticNoticeGroup(dotenvPath),
+      severity: "warning",
+      source: "dotenv",
+    });
+    expect(notices[0].message).toContain("boom");
+  });
+
+  it("returns no active notices for non-matching document languages or empty diagnostics", () => {
+    expect(
+      activePhpLocalDiagnosticNotices(
+        { language: "txt", path },
+        { [path]: [diagnostic()] },
+      ),
+    ).toEqual([]);
+    expect(
+      activeDotenvLocalDiagnosticNotices(
+        { language: "dotenv", path: dotenvPath },
+        {},
+      ),
+    ).toEqual([]);
+  });
+
+  it("caps active local notices and appends a truthful overflow indicator", () => {
+    const diagnostics = Array.from(
+      { length: DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT + 2 },
+      (_unused, index) => diagnostic({ message: `boom ${index}` }),
+    );
+
+    const notices = activePhpLocalDiagnosticNotices(
+      { language: "php", path },
+      { [path]: diagnostics },
+    );
+
+    expect(notices).toHaveLength(DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT + 1);
+    expect(notices[notices.length - 1]).toMatchObject({
+      groupKey: phpLocalDiagnosticNoticeGroup(path),
+      kind: "overflow",
+      message: `Showing ${DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT} of ${
+        DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT + 2
+      } diagnostics — 2 more hidden. Open the file to see all markers.`,
+      source: "PHP",
+    });
+  });
+});
+
+describe("composeEffectiveDiagnosticNotices", () => {
+  const path = "/project/app/Foo.php";
+  const groupKey = phpLocalDiagnosticNoticeGroup(path);
+
+  it("leaves notices unchanged for non-PHP/non-dotenv active documents", () => {
+    const notices = [createWorkbenchNotice("warning", "runtime", "keep")];
+
+    expect(
+      composeEffectiveDiagnosticNotices({
+        activeDocument: { language: "txt", path },
+        activeDotenvDiagnosticNotices: [],
+        activePhpLocalDiagnosticNotices: [
+          createWorkbenchNotice("error", "PHP", "new", groupKey),
+        ],
+        notices,
+      }),
+    ).toBe(notices);
+  });
+
+  it("removes stale active local notices when active PHP diagnostics are empty", () => {
+    const stale = createWorkbenchNotice("error", "PHP", "stale", groupKey);
+    const other = createWorkbenchNotice(
+      "warning",
+      "phpactor",
+      "other",
+      "language-server-diagnostics:file:///other.php",
+    );
+
+    expect(
+      composeEffectiveDiagnosticNotices({
+        activeDocument: { language: "php", path },
+        activeDotenvDiagnosticNotices: [],
+        activePhpLocalDiagnosticNotices: [],
+        notices: [stale, other],
+      }),
+    ).toEqual([other]);
+  });
+
+  it("replaces stale active dotenv notices with active diagnostics", () => {
+    const stale = createWorkbenchNotice("error", "dotenv", "stale", groupKey);
+    const fresh = createWorkbenchNotice("warning", "dotenv", "fresh", groupKey);
+    const other = createWorkbenchNotice("info", "runtime", "keep");
+
+    expect(
+      composeEffectiveDiagnosticNotices({
+        activeDocument: { language: "dotenv", path },
+        activeDotenvDiagnosticNotices: [fresh],
+        activePhpLocalDiagnosticNotices: [],
+        notices: [stale, other],
+      }),
+    ).toEqual([other, fresh]);
+  });
+
+  it("applies the global diagnostic cap while keeping protected notices", () => {
+    const protectedNotice = createWorkbenchNotice(
+      "error",
+      "runtime",
+      "server crashed",
+      "php-setup",
+    );
+    const stale = createWorkbenchNotice("error", "PHP", "stale", groupKey);
+    const existingDiagnosticNotices = Array.from(
+      { length: GLOBAL_NOTICE_LIMIT - 1 },
+      (_unused, index) =>
+        createWorkbenchNotice(
+          "error",
+          "phpactor",
+          `diagnostic ${index}`,
+          `language-server-diagnostics:file-${index}`,
+        ),
+    );
+    const activeNotice = createWorkbenchNotice("error", "PHP", "active", groupKey);
+    const hiddenActiveNotice = createWorkbenchNotice(
+      "error",
+      "PHP",
+      "hidden active",
+      groupKey,
+    );
+
+    const effective = composeEffectiveDiagnosticNotices({
+      activeDocument: { language: "php", path },
+      activeDotenvDiagnosticNotices: [],
+      activePhpLocalDiagnosticNotices: [activeNotice, hiddenActiveNotice],
+      notices: [protectedNotice, stale, ...existingDiagnosticNotices],
+    });
+
+    expect(effective).toContain(protectedNotice);
+    expect(effective).toContain(activeNotice);
+    expect(effective).not.toContain(hiddenActiveNotice);
+    expect(effective).not.toContain(stale);
+    expect(
+      effective.filter(
+        (notice) => notice.groupKey === GLOBAL_NOTICE_OVERFLOW_GROUP_KEY,
+      ),
+    ).toHaveLength(1);
   });
 });
