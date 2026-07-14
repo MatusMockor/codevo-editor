@@ -9,7 +9,6 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { CommandRegistry } from "./commandRegistry";
 import type { EditorGroupFocusRunner } from "./editorGroupFocusPort";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
@@ -23,38 +22,11 @@ import {
   useGitDiffWorkspace,
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
-import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
-import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
-import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
-import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
-import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
-import { workbenchEditorGroupCommands } from "./workbenchEditorGroupCommands";
-import { workbenchEslintCommands } from "./workbenchEslintCommands";
 import {
   runEslintDisableAtCursor,
   type EditorSurfaceEslintDisableRunner,
 } from "./workbenchEslintDisableCommand";
-import {
-  workbenchFloatingSurfaceCommands,
-  workbenchRecentWorkspaceCommands,
-} from "./workbenchFloatingSurfaceCommands";
-import { workbenchGitSidebarCommands } from "./workbenchGitSidebarCommands";
-import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
-import { workbenchIndexCommands } from "./workbenchIndexCommands";
-import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigationCommands";
-import { workbenchLanguagePanelCommands } from "./workbenchLanguagePanelCommands";
-import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
-import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
-import { workbenchPanelCommands } from "./workbenchPanelCommands";
-import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
-import { workbenchPhpstanCommands } from "./workbenchPhpstanCommands";
-import { workbenchPintCommands } from "./workbenchPintCommands";
-import { workbenchScriptCommands } from "./workbenchScriptCommands";
-import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
-import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
-import { workbenchSmartCommands } from "./workbenchSmartCommands";
-import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
-import { workbenchWorkspaceTabCommands } from "./workbenchWorkspaceTabCommands";
+import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
 import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
@@ -311,10 +283,6 @@ import {
   renderMarkdownPreview,
   type MarkdownPreviewTab,
 } from "../domain/markdownPreview";
-import {
-  shortcutForCommand,
-  type KeymapCommandId,
-} from "../domain/keymap";
 import {
   summarizeDiagnosticsByPath,
   type DiagnosticsSummary,
@@ -8206,420 +8174,137 @@ export function useWorkbenchController(
     zoomEditorFontOut,
   ]);
 
-  const commandRegistry = useMemo(() => {
-    const registry = new CommandRegistry();
-    const shortcut = (commandId: KeymapCommandId) =>
-      shortcutForCommand(appSettings.keymap, commandId);
-    const activeDocumentLanguage = activeDocument
-      ? {
-          isJavaScriptTypeScriptLanguageServerDocument:
-            isJavaScriptTypeScriptLanguageServerDocument(activeDocument),
-          isLanguageServerDocument: isLanguageServerDocument(activeDocument),
-          language: activeDocument.language,
-        }
-      : null;
-    const appearanceCommands = workbenchAppearanceCommands({
-      shortcut,
-      zoomEditorFontIn,
-      zoomEditorFontOut,
-      resetEditorFontSize,
-      toggleEditorFontLigatures,
-      openSettingsPanel,
-      openAppearanceSettingsPanel,
-    });
-
-    workbenchWorkspaceFileCommands({
-      isWorkspaceTrusted: workspaceTrust?.trusted,
-      openWorkspace,
-      refreshWorkspace,
-      toggleWorkspaceTrust,
-      createFile,
-      createDirectory,
-      renameActiveDocument,
-      deleteActiveDocument,
-    }).forEach((command) => registry.register(command));
-
-    workbenchWorkspaceTabCommands({
-      activateWorkspaceTab,
-      activeWorkspaceRoot: workspaceRoot,
-      shortcut,
-      workspaceTabs: appSettings.workspaceTabs,
-    }).forEach((command) => registry.register(command));
-
-    workbenchRecentWorkspaceCommands({
-      recentWorkspacePaths: appSettings.recentWorkspacePaths ?? [],
-      workspaceTabs: appSettings.workspaceTabs,
-      openWorkspacePath,
-    }).forEach((command) => registry.register(command));
-
-    workbenchPhpTestCommands({
-      shortcut,
-      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
-      isActiveDocumentPhp: activeDocument?.language === "php",
-      isActiveDocumentPhpTest,
-      generateTestForActiveDocument,
-      goToTestForActiveDocument,
-      runTestForActiveDocument,
-      runAllTestsForActiveDocument,
-      openTestResultsPanel: openPhpTestResultsPanel,
-    }).forEach((command) => registry.register(command));
-
-    workbenchPhpstanCommands({
-      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
-      isRunning: phpstanAnalysisRunning,
-      runPhpstanAnalysis,
-      hasDiagnosticAtCursor: hasPhpstanDiagnosticAtCursor,
-      isActiveBufferClean: activePhpstanBufferClean,
-      isWorkspaceTrusted: workspaceTrust?.trusted === true,
-      ignoreIssueAtCursor: ignorePhpstanIssueAtCursor,
-    }).forEach((command) => registry.register(command));
-
-    workbenchPintCommands({
-      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
-      isRunning: pintRunning,
-      isWorkspaceTrusted: workspaceTrust?.trusted === true,
-      hasActivePhpDocument:
-        activeDocument?.language === "php" &&
-        activeDocument.path.endsWith(".php"),
-      formatChangedFiles: formatChangedFilesWithPint,
-      formatActiveFile: formatActiveFileWithPint,
-    }).forEach((command) => registry.register(command));
-
-    workbenchEslintCommands({
-      hasPackageJson:
-        workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson === true,
-      isRunning: eslintAnalysisRunning,
-      runEslintAnalysis,
-      hasFixesForActiveFile: activeEslintFixes.length > 0,
-      isActiveBufferClean: activeEslintBufferClean,
-      isWorkspaceTrusted: workspaceTrust?.trusted === true,
-      fixAllInActiveFile: fixAllEslintInActiveFile,
-      hasDiagnosticAtCursor: hasEslintDiagnosticAtCursor,
-      disableRuleAtCursor: disableEslintRuleAtCursor,
-    }).forEach((command) => registry.register(command));
-
-    workbenchScriptCommands({
-      composerScripts: activePackageScripts?.composerScripts ?? [],
-      npmScripts: activePackageScripts?.npmScripts ?? [],
-      runInActiveTerminal,
-    }).forEach((command) => registry.register(command));
-
-    workbenchArtisanCommands({
-      hasArtisan: activePackageScripts?.hasArtisan ?? false,
-      openArtisanMakePalette,
-      openRoutesPanel: openArtisanRoutesPanel,
-      runInActiveTerminal,
-    }).forEach((command) => registry.register(command));
-
-    workbenchFloatingSurfaceCommands({
-      shortcut,
-      canSearchWorkspaceSymbols: canSearchClassOpenSymbols,
-      openQuickOpenFile: () => {
-        setClassOpenOpen(false);
-        setWorkspaceSymbolsOpen(false);
-        setRecentFilesSwitcherOpen(false);
-        setQuickOpenOpen(true);
-        markFloatingSurfaceActivated();
-      },
-      openRecentFilesSwitcher,
-      openRecentLocationsPanel,
-      openClassOpen: () => {
-        setQuickOpenOpen(false);
-        setWorkspaceSymbolsOpen(false);
-        setRecentFilesSwitcherOpen(false);
-        setClassOpenOpen(true);
-        markFloatingSurfaceActivated();
-      },
-      openWorkspaceSymbols,
-      openSearchEverywhere,
-      openTextSearch: () => setTextSearchOpen(true),
-    }).forEach((command) => registry.register(command));
-
-    workbenchNavigationHistoryCommands({
-      shortcut,
-      canNavigateBackward: navigationHistory.backStack.length > 0,
-      canNavigateForward: navigationHistory.forwardStack.length > 0,
-      navigateBackward,
-      navigateForward: navigateForwardInHistory,
-    }).forEach((command) => registry.register(command));
-
-    workbenchEditorSurfaceCommands({
-      shortcut,
-      canCloseActiveSurface: Boolean(
-        activeDocument ||
-          activeImage ||
-          activeMarkdownPreview ||
-          selectedGitChange ||
-          gitDiffLoading ||
-          isTauri(),
-      ),
-      saveActiveDocument,
-      closeActiveSurface: closeActiveEditorGroupSurface,
-      canReopenClosedDocument,
-      reopenClosedDocument,
-      editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
-    }).forEach((command) => registry.register(command));
-
-    workbenchEditorGroupCommands({
-      canCloseGroup: Object.keys(editorGroups.groups).length > 1,
-      canMoveBetweenGroups: Object.keys(editorGroups.groups).length > 1,
-      closeActiveGroup: closeActiveEditorGroup,
-      focusNextGroup: () => focusAdjacentEditorGroup(1),
-      focusPreviousGroup: () => focusAdjacentEditorGroup(-1),
-      moveActiveTabToNextGroup: () => moveActiveTabToAdjacentGroup(1),
-      moveActiveTabToPreviousGroup: () => moveActiveTabToAdjacentGroup(-1),
-      shortcut,
-      splitDown: () => splitActiveEditorGroup("down"),
-      splitRight: () => splitActiveEditorGroup("right"),
-    }).forEach((command) => registry.register(command));
-
-    workbenchMarkdownCommands({
-      isActiveDocumentMarkdown: isMarkdownDocument(activeDocument),
-      openMarkdownPreview,
-      shortcut,
-    }).forEach((command) => registry.register(command));
-
-    workbenchLanguageNavigationCommands({
-      shortcut,
-      activeDocument: activeDocumentLanguage,
-      goToDefinition,
-      goToSourceDefinition,
-      goToDeclaration,
-      goToTypeDefinition,
-      goToImplementation,
-      goToSuperMethod,
-    }).forEach((command) => registry.register(command));
-
-    appearanceCommands.editorCommands.forEach((command) =>
-      registry.register(command),
-    );
-
-    workbenchLanguagePanelCommands({
-      shortcut,
-      activeDocument: activeDocumentLanguage,
-      languageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot,
-      javaScriptTypeScriptLanguageServerRuntimeStatus,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      workspaceRoot,
-      openFileStructure,
-      openCallHierarchy,
-      openTypeHierarchy,
-      openReferencesPanel,
-      openFileReferencesPanel,
-    }).forEach((command) => registry.register(command));
-
-    workbenchProblemNavigationCommands({
-      shortcut,
-      goToNextProblem,
-      goToPreviousProblem,
-    }).forEach((command) => registry.register(command));
-
-    workbenchEditorHistoryCommands({
-      shortcut,
-      toggleGitBlame,
-      openFileHistory,
-      openLocalHistory,
-    }).forEach((command) => registry.register(command));
-
-    workbenchGitWorkflowCommands({
-      shortcut,
-      openGitStashPanel,
-      openGitBranchPanel,
-      createGitBranch,
-      commitGitChanges,
-      revertSelectedGitCommit,
-      cherryPickSelectedGitCommit,
-      rewordSelectedGitCommit,
-      canRewordSelectedGitCommit,
-    }).forEach((command) => registry.register(command));
-
-    appearanceCommands.workbenchCommands.forEach((command) =>
-      registry.register(command),
-    );
-
-    workbenchPanelCommands({
-      shortcut,
-      openCommandsPalette: () => {
-        setClassOpenOpen(false);
-        setWorkspaceSymbolsOpen(false);
-        setRecentFilesSwitcherOpen(false);
-        setPaletteOpen(true);
-        markFloatingSurfaceActivated();
-      },
-      showBottomPanelView,
-      toggleBottomPanel,
-      toggleTodoPanel,
-      refreshWorkspaceTodos,
-    }).forEach((command) => registry.register(command));
-
-    workbenchBookmarkCommands({
-      shortcut,
-      toggleBookmarkAtCursor,
-      goToNextBookmark,
-      goToPreviousBookmark,
-      toggleBookmarksPanel,
-    }).forEach((command) => registry.register(command));
-
-    workbenchSmartCommands({
-      intelligenceMode,
-      languageServerPlan,
-      languageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot,
-      workspaceDescriptor,
-      workspaceRoot,
-      phpTools,
-      installingManagedPhpactor,
-      isLanguageServerActiveForWorkspace,
-      toggleSmartMode,
-      showPhpactorSetup: () => setLanguageServerSetupOpen(true),
-      installManagedPhpactor,
-      startLanguageServer,
-      stopLanguageServer,
-    }).forEach((command) => registry.register(command));
-
-    workbenchIndexCommands({
-      indexProgress,
-      intelligenceMode,
-      startHardReindex,
-      startIndexScan,
-      startPhpReindex,
-    }).forEach((command) => registry.register(command));
-
-    workbenchPhpTreeCommands({
-      intelligenceMode,
-      showPhpTree: () => setSidebarView("php"),
-      refreshPhpTree,
-    }).forEach((command) => registry.register(command));
-
-    workbenchGitSidebarCommands({
-      showGitSidebar: () => setSidebarView("git"),
-      refreshGitStatus,
-    }).forEach((command) => registry.register(command));
-
-    return registry;
-  }, [
+  const commandRegistry = useWorkbenchCommandRegistry({
     activeDocument,
+    activeEslintBufferClean,
+    activeEslintFixes,
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
-    openArtisanMakePalette,
-    openArtisanRoutesPanel,
-    openPhpTestResultsPanel,
+    activePhpstanBufferClean,
     activateWorkspaceTab,
-    appSettings.keymap,
-    appSettings.recentWorkspacePaths,
-    appSettings.workspaceTabs,
+    appSettings,
     canReopenClosedDocument,
+    canRewordSelectedGitCommit,
+    canSearchClassOpenSymbols,
+    cherryPickSelectedGitCommit,
     closeActiveEditorGroup,
     closeActiveEditorGroupSurface,
     closeDocument,
-    editorGroups,
-    focusAdjacentEditorGroup,
-    moveActiveTabToAdjacentGroup,
-    splitActiveEditorGroup,
+    commitGitChanges,
     createDirectory,
     createFile,
+    createGitBranch,
     deleteActiveDocument,
-    generateTestForActiveDocument,
-    goToTestForActiveDocument,
-    isActiveDocumentPhpTest,
-    runTestForActiveDocument,
-    runAllTestsForActiveDocument,
-    runPhpstanAnalysis,
-    phpstanAnalysisRunning,
-    activePhpstanBufferClean,
-    hasPhpstanDiagnosticAtCursor,
-    ignorePhpstanIssueAtCursor,
+    disableEslintRuleAtCursor,
+    editorGroups,
+    editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
+    eslintAnalysisRunning,
+    fixAllEslintInActiveFile,
+    focusAdjacentEditorGroup,
     formatActiveFileWithPint,
     formatChangedFilesWithPint,
-    pintRunning,
-    runEslintAnalysis,
-    eslintAnalysisRunning,
-    activeEslintBufferClean,
-    activeEslintFixes,
-    disableEslintRuleAtCursor,
-    fixAllEslintInActiveFile,
-    hasEslintDiagnosticAtCursor,
-    runInActiveTerminal,
+    generateTestForActiveDocument,
+    gitDiffLoading,
     goToDeclaration,
-    canSearchClassOpenSymbols,
-    markFloatingSurfaceActivated,
     goToDefinition,
     goToImplementation,
+    goToNextBookmark,
+    goToNextProblem,
+    goToPreviousBookmark,
+    goToPreviousProblem,
     goToSourceDefinition,
     goToSuperMethod,
+    goToTestForActiveDocument,
     goToTypeDefinition,
-    gitDiffLoading,
-    navigateBackward,
-    navigateForwardInHistory,
-    openCallHierarchy,
-    openAppearanceSettingsPanel,
-    openFileReferencesPanel,
-    openFileStructure,
-    openReferencesPanel,
-    openRecentFilesSwitcher,
-    openRecentLocationsPanel,
-    openTypeHierarchy,
-    openSettingsPanel,
-    openWorkspaceSymbols,
-    openSearchEverywhere,
-    options.editorSurfaceCommandRunner,
-    navigationHistory,
-    openWorkspace,
-    openWorkspacePath,
-    refreshWorkspace,
-    refreshGitStatus,
-    refreshPhpTree,
-    reopenClosedDocument,
-    renameActiveDocument,
-    saveActiveDocument,
-    showBottomPanelView,
-    startHardReindex,
-    startLanguageServer,
-    startIndexScan,
-    startPhpReindex,
-    installManagedPhpactor,
-    installingManagedPhpactor,
-    stopLanguageServer,
-    toggleBottomPanel,
-    toggleEditorFontLigatures,
-    toggleTodoPanel,
-    refreshWorkspaceTodos,
-    toggleGitBlame,
-    openFileHistory,
-    openLocalHistory,
-    openMarkdownPreview,
-    openGitStashPanel,
-    openGitBranchPanel,
-    createGitBranch,
-    commitGitChanges,
-    revertSelectedGitCommit,
-    cherryPickSelectedGitCommit,
-    rewordSelectedGitCommit,
-    canRewordSelectedGitCommit,
-    toggleBookmarkAtCursor,
-    goToNextBookmark,
-    goToPreviousBookmark,
-    toggleBookmarksPanel,
-    toggleSmartMode,
-    toggleWorkspaceTrust,
-    zoomEditorFontIn,
-    zoomEditorFontOut,
-    resetEditorFontSize,
+    hasEslintDiagnosticAtCursor,
+    hasPhpstanDiagnosticAtCursor,
+    ignorePhpstanIssueAtCursor,
     indexProgress,
+    installingManagedPhpactor,
+    installManagedPhpactor,
     intelligenceMode,
+    isActiveDocumentPhpTest,
+    isLanguageServerActiveForWorkspace,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     languageServerPlan,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
+    markFloatingSurfaceActivated,
+    moveActiveTabToAdjacentGroup,
+    navigateBackward,
+    navigateForwardInHistory,
+    navigationHistory,
+    openAppearanceSettingsPanel,
+    openArtisanMakePalette,
+    openArtisanRoutesPanel,
+    openCallHierarchy,
+    openFileHistory,
+    openFileReferencesPanel,
+    openFileStructure,
+    openGitBranchPanel,
+    openGitStashPanel,
+    openLocalHistory,
+    openMarkdownPreview,
+    openPhpTestResultsPanel,
+    openRecentFilesSwitcher,
+    openRecentLocationsPanel,
+    openReferencesPanel,
+    openSearchEverywhere,
+    openSettingsPanel,
+    openTypeHierarchy,
+    openWorkspace,
+    openWorkspacePath,
+    openWorkspaceSymbols,
+    phpstanAnalysisRunning,
+    phpTools,
+    pintRunning,
+    refreshGitStatus,
+    refreshPhpTree,
+    refreshWorkspace,
+    refreshWorkspaceTodos,
+    renameActiveDocument,
+    reopenClosedDocument,
+    resetEditorFontSize,
+    revertSelectedGitCommit,
+    rewordSelectedGitCommit,
+    runAllTestsForActiveDocument,
+    runEslintAnalysis,
+    runInActiveTerminal,
+    runPhpstanAnalysis,
+    runTestForActiveDocument,
+    saveActiveDocument,
     selectedGitChange,
+    setClassOpenOpen,
+    setLanguageServerSetupOpen,
+    setPaletteOpen,
+    setQuickOpenOpen,
+    setRecentFilesSwitcherOpen,
+    setSidebarView,
+    setTextSearchOpen,
+    setWorkspaceSymbolsOpen,
+    showBottomPanelView,
+    splitActiveEditorGroup,
+    startHardReindex,
+    startIndexScan,
+    startLanguageServer,
+    startPhpReindex,
+    stopLanguageServer,
+    toggleBookmarkAtCursor,
+    toggleBookmarksPanel,
+    toggleBottomPanel,
+    toggleEditorFontLigatures,
+    toggleGitBlame,
+    toggleSmartMode,
+    toggleTodoPanel,
+    toggleWorkspaceTrust,
     workspaceDescriptor,
     workspaceRoot,
-    phpTools,
     workspaceTrust,
-  ]);
+    zoomEditorFontIn,
+    zoomEditorFontOut,
+  });
 
   const commandContext = useMemo(
     () => ({
