@@ -156,6 +156,26 @@ class ProductPresenter
     });
   });
 
+  it("accepts component-relative signal links handled by the component class", async () => {
+    const diagnostics = await nettePresenterLinkDiagnostics(
+      context({
+        currentRelativePath:
+          "app/modules/apiModule/Components/api_listing.latte",
+        files: {
+          "app/modules/apiModule/Components/ApiListingControl.php": `<?php
+class ApiListingControl
+{
+    public function handleSelect($id): void {}
+}
+`,
+        },
+      }),
+      `{link Select! 1}`,
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
   it("skips dynamic links, this links, and unsafe current-presenter relative targets", async () => {
     const readFileContent = vi.fn(async () => {
       throw new Error("should not read");

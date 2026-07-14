@@ -5,6 +5,7 @@ import type {
   NetteLinkTarget,
 } from "../domain/latteLinkNavigation";
 import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
+import { componentClassCandidatePathsForTemplate } from "../domain/nettePathResolution";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 
 export interface NettePresenterLinkDiagnosticDependencies {
@@ -104,11 +105,11 @@ async function diagnosticForDetection(
     return null;
   }
 
-  const candidatePaths =
-    context.frameworkCapabilities.presenterClassCandidatePathsForLink(
-      parsed,
-      context.currentRelativePath,
-    );
+  const candidatePaths = linkOwnerCandidatePaths(
+    context,
+    parsed,
+    context.currentRelativePath,
+  );
 
   if (candidatePaths.length === 0) {
     return null;
@@ -158,6 +159,31 @@ async function diagnosticForDetection(
   }
 
   return null;
+}
+
+function linkOwnerCandidatePaths(
+  context: NettePresenterLinkDiagnosticContext,
+  parsed: NetteLinkTarget,
+  currentRelativePath: string,
+): string[] {
+  const presenterPaths =
+    context.frameworkCapabilities.presenterClassCandidatePathsForLink(
+      parsed,
+      currentRelativePath,
+    );
+
+  if (!parsed.isSignal || parsed.presenter !== null) {
+    return presenterPaths;
+  }
+
+  return dedupe([
+    ...componentClassCandidatePathsForTemplate(currentRelativePath),
+    ...presenterPaths,
+  ]);
+}
+
+function dedupe(paths: readonly string[]): string[] {
+  return Array.from(new Set(paths));
 }
 
 function missingPresenterMethodDiagnostic(
