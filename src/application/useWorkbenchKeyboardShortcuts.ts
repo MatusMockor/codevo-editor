@@ -3,7 +3,6 @@ import type { KeymapCommandId, KeymapSettings } from "../domain/keymap";
 import {
   collectBareKeyShortcutKeys,
   eventCanMatchKeymapShortcut,
-  matchesShortcut,
 } from "../domain/keymap";
 import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import type { AppSettings } from "../domain/settings";
@@ -11,6 +10,7 @@ import type { CommandContext, CommandRegistry } from "./commandRegistry";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 
 const REGISTRY_SHORTCUT_COMMAND_IDS: readonly KeymapCommandId[] = [
+  "app.quit",
   "editor.save",
   "editor.closeTab",
   "editor.rename",
@@ -74,9 +74,7 @@ interface BareKeyShortcutCache {
 
 interface WorkbenchKeyboardShortcutActions {
   closeFloatingSurface: () => boolean;
-  goToDefinition: () => unknown;
   openSearchEverywhere: () => unknown;
-  quitApplication: () => unknown;
 }
 
 interface UseWorkbenchKeyboardShortcutsOptions {
@@ -126,13 +124,13 @@ export function useWorkbenchKeyboardShortcuts({
         !event.shiftKey
       ) {
         event.preventDefault();
-        void actions.goToDefinition();
-        return;
-      }
 
-      if (matchesShortcut(event, "Cmd+Q")) {
-        event.preventDefault();
-        actions.quitApplication();
+        const command = commandRegistry.get("editor.goToDefinition");
+
+        if (command?.isEnabled(commandContext)) {
+          void command.run();
+        }
+
         return;
       }
 
@@ -141,7 +139,7 @@ export function useWorkbenchKeyboardShortcuts({
       // Keydown hot path: a held bare key (ArrowUp/ArrowDown, plain letters)
       // fires ~30 auto-repeat events/sec and can never match a keymap shortcut,
       // so skip the ~35-iteration matching loop below for such events. The
-      // double-Shift detector and the explicit Escape/F12/Cmd+Q handlers above
+      // double-Shift detector and the explicit Escape/F12 handlers above
       // already ran, so this only short-circuits the per-command matching.
       const bareKeyCache = bareKeyShortcutsRef.current;
       if (bareKeyCache.keymap !== keymap) {

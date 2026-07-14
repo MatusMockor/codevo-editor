@@ -1,5 +1,11 @@
 export const keymapCommands = [
   {
+    category: "Application",
+    defaultShortcut: "Cmd+Q",
+    id: "app.quit",
+    label: "Quit Application",
+  },
+  {
     category: "Editor",
     defaultShortcut: "Cmd+S",
     id: "editor.save",

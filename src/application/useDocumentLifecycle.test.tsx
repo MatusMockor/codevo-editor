@@ -132,7 +132,6 @@ interface Harness {
   setOpenPaths: ReturnType<typeof vi.fn>;
   setPreviewPath: ReturnType<typeof vi.fn>;
   setMessage: ReturnType<typeof vi.fn>;
-  reportError: ReturnType<typeof vi.fn>;
   reportErrorForActiveWorkspaceRoot: ReturnType<typeof vi.fn>;
   runEslintAnalysisOnSave: ReturnType<typeof vi.fn>;
   runPhpstanAnalysisOnSave: ReturnType<typeof vi.fn>;
@@ -251,7 +250,6 @@ function renderLifecycle(
   const setSelectedGitChange = vi.fn();
   const setGitDiffPreview = vi.fn();
   const setMessage = vi.fn();
-  const reportError = vi.fn();
   const reportErrorForActiveWorkspaceRoot = vi.fn();
   const runEslintAnalysisOnSave = vi.fn();
   const runPhpstanAnalysisOnSave = vi.fn();
@@ -307,7 +305,6 @@ function renderLifecycle(
     isGitDiffDocumentPath: (path: string) =>
       path.startsWith("mockor-git-diff:"),
     gitChangeForDiffDocumentPath: () => null,
-    reportError,
     reportErrorForActiveWorkspaceRoot,
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
@@ -361,7 +358,6 @@ function renderLifecycle(
     setOpenPaths,
     setPreviewPath,
     setMessage,
-    reportError,
     reportErrorForActiveWorkspaceRoot,
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,

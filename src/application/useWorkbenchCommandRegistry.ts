@@ -29,6 +29,7 @@ import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand"
 import { CommandRegistry, type Command } from "./commandRegistry";
 import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
+import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditorHistoryCommands } from "./workbenchEditorHistoryCommands";
 import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
@@ -155,6 +156,7 @@ interface UseWorkbenchCommandRegistryOptions {
   phpstanAnalysisRunning: boolean;
   phpTools: PhpToolAvailability | null;
   pintRunning: boolean;
+  quitApplication: CommandRun;
   refreshGitStatus: CommandRun;
   refreshPhpTree: CommandRun;
   refreshWorkspace: CommandRun;
@@ -290,6 +292,7 @@ export function useWorkbenchCommandRegistry(
     phpstanAnalysisRunning,
     phpTools,
     pintRunning,
+    quitApplication,
     refreshGitStatus,
     refreshPhpTree,
     refreshWorkspace,
@@ -357,6 +360,11 @@ export function useWorkbenchCommandRegistry(
       openSettingsPanel,
       openAppearanceSettingsPanel,
     });
+
+    workbenchAppLifecycleCommands({
+      shortcut,
+      quitApplication,
+    }).forEach((command) => registry.register(command));
 
     workbenchWorkspaceFileCommands({
       isWorkspaceTrusted: workspaceTrust?.trusted,
@@ -698,6 +706,7 @@ export function useWorkbenchCommandRegistry(
     navigationHistory,
     openWorkspace,
     openWorkspacePath,
+    quitApplication,
     refreshWorkspace,
     refreshGitStatus,
     refreshPhpTree,

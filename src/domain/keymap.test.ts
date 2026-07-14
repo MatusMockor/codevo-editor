@@ -49,6 +49,24 @@ describe("keymap", () => {
     });
   });
 
+  it("registers a Quit Application command bound to Cmd+Q", () => {
+    const quit = keymapCommands.find((command) => command.id === "app.quit");
+
+    expect(quit).toMatchObject({
+      category: "Application",
+      label: "Quit Application",
+      defaultShortcut: "Cmd+Q",
+    });
+    expect(defaultShortcutForCommand("app.quit", "mac")).toBe("Cmd+Q");
+    expect(defaultShortcutForCommand("app.quit", "linux")).toBe("Ctrl+Q");
+
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const keymap = defaultKeymapSettings(platform);
+
+      expect(findKeymapConflicts(keymap, "app.quit", platform)).toEqual([]);
+    }
+  });
+
   it("defaults Markdown preview to Cmd+Shift+V", () => {
     expect(defaultShortcutForCommand("markdown.openPreview", "mac")).toBe(
       "Cmd+Shift+V",

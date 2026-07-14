@@ -28,6 +28,10 @@ import {
 } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
+import {
+  NATIVE_MENU_EVENT_NAMES,
+  dispatchNativeMenuCommand,
+} from "./workbenchNativeMenuCommandDispatcher";
 import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
 import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
@@ -466,12 +470,6 @@ interface CachedWorkspaceWorkbenchState {
   sidebarView: SidebarView;
   workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
 }
-
-const FONT_ZOOM_IN_EVENT = "mockor-editor-font-zoom-in";
-const FONT_ZOOM_OUT_EVENT = "mockor-editor-font-zoom-out";
-const FONT_ZOOM_RESET_EVENT = "mockor-editor-font-zoom-reset";
-const OPEN_APPEARANCE_SETTINGS_EVENT = "mockor-open-appearance-settings";
-const TOGGLE_FONT_LIGATURES_EVENT = "mockor-toggle-font-ligatures";
 
 function languageServerDiagnosticsEqual(
   left: readonly LanguageServerDiagnostic[],
@@ -4441,7 +4439,6 @@ export function useWorkbenchController(
     closeEmptyWorkbenchSurface: closeApplicationWindow,
     isGitDiffDocumentPath,
     gitChangeForDiffDocumentPath,
-    reportError,
     reportErrorForActiveWorkspaceRoot,
     hasExternalFileConflict: externalFileConflicts.hasConflict,
     clearExternalFileConflict: externalFileConflicts.clearConflict,
@@ -7295,47 +7292,6 @@ export function useWorkbenchController(
     setSettingsInitialSection,
   });
 
-  useEffect(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    let active = true;
-    const unlisteners: TauriUnlistenFn[] = [];
-    const subscriptions: Array<[string, () => void]> = [
-      [FONT_ZOOM_IN_EVENT, zoomEditorFontIn],
-      [FONT_ZOOM_OUT_EVENT, zoomEditorFontOut],
-      [FONT_ZOOM_RESET_EVENT, resetEditorFontSize],
-      [OPEN_APPEARANCE_SETTINGS_EVENT, openAppearanceSettingsPanel],
-      [TOGGLE_FONT_LIGATURES_EVENT, toggleEditorFontLigatures],
-    ];
-
-    subscriptions.forEach(([eventName, handler]) => {
-      listen(eventName, handler)
-        .then((dispose) => {
-          if (!active) {
-            dispose();
-            return;
-          }
-
-          unlisteners.push(createSafeUnsubscribe(dispose));
-        })
-        .catch((error) => reportError("Shortcuts", error));
-    });
-
-    return () => {
-      active = false;
-      unlisteners.forEach((unlisten) => unlisten());
-    };
-  }, [
-    openAppearanceSettingsPanel,
-    reportError,
-    resetEditorFontSize,
-    toggleEditorFontLigatures,
-    zoomEditorFontIn,
-    zoomEditorFontOut,
-  ]);
-
   const commandRegistry = useWorkbenchCommandRegistry({
     activeDocument,
     activeEslintBufferClean,
@@ -7422,6 +7378,7 @@ export function useWorkbenchController(
     phpstanAnalysisRunning,
     phpTools,
     pintRunning,
+    quitApplication,
     refreshGitStatus,
     refreshPhpTree,
     refreshWorkspace,
@@ -7478,6 +7435,47 @@ export function useWorkbenchController(
     }),
     [activeDocument, workspaceRoot],
   );
+
+  const nativeMenuCommandDispatchRef = useRef({
+    commandContext,
+    commandRegistry,
+  });
+
+  useEffect(() => {
+    nativeMenuCommandDispatchRef.current = { commandContext, commandRegistry };
+  }, [commandContext, commandRegistry]);
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    let active = true;
+    const unlisteners: TauriUnlistenFn[] = [];
+
+    NATIVE_MENU_EVENT_NAMES.forEach((eventName) => {
+      listen(eventName, () => {
+        dispatchNativeMenuCommand({
+          ...nativeMenuCommandDispatchRef.current,
+          eventName,
+        });
+      })
+        .then((dispose) => {
+          if (!active) {
+            dispose();
+            return;
+          }
+
+          unlisteners.push(createSafeUnsubscribe(dispose));
+        })
+        .catch((error) => reportError("Shortcuts", error));
+    });
+
+    return () => {
+      active = false;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, [reportError]);
 
   const searchEverywhereModel = searchEverywhereModelFor(
     commandRegistry.list(),
@@ -7567,14 +7565,10 @@ export function useWorkbenchController(
 
   const keyboardShortcutActions = useMemo(() => ({
     closeFloatingSurface,
-    goToDefinition,
     openSearchEverywhere,
-    quitApplication,
   }), [
     closeFloatingSurface,
-    goToDefinition,
     openSearchEverywhere,
-    quitApplication,
   ]);
 
   useWorkbenchKeyboardShortcuts({

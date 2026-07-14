@@ -1,5 +1,3 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
 import {
   useCallback,
   useEffect,
@@ -35,11 +33,8 @@ import {
   workspaceRelativePath,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { planDocumentClose } from "./documentCloseLifecycle";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-
-const CLOSE_ACTIVE_TAB_EVENT = "mockor-close-active-tab";
 
 /**
  * Collaborators the save/close document lifecycle (region P of the workbench
@@ -146,7 +141,6 @@ export interface DocumentLifecycleDependencies {
   ) => GitChangedFile | null;
 
   // Error reporters (shell-owned, workspace-root isolated).
-  reportError: (source: string, error: unknown) => void;
   reportErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
     source: string,
@@ -266,7 +260,6 @@ export function useDocumentLifecycle(
     closeEmptyWorkbenchSurface,
     isGitDiffDocumentPath,
     gitChangeForDiffDocumentPath,
-    reportError,
     reportErrorForActiveWorkspaceRoot,
     hasExternalFileConflict = () => false,
     clearExternalFileConflict = () => {},
@@ -941,33 +934,6 @@ export function useDocumentLifecycle(
     recentlyClosedTabsRef,
     restoreRecentlyClosedDocumentViewState,
   ]);
-
-  useEffect(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    let active = true;
-    let unlisten: TauriUnlistenFn | null = null;
-
-    listen(CLOSE_ACTIVE_TAB_EVENT, () => {
-      closeActiveSurface();
-    })
-      .then((dispose) => {
-        if (!active) {
-          dispose();
-          return;
-        }
-
-        unlisten = createSafeUnsubscribe(dispose);
-      })
-      .catch((error) => reportError("Shortcuts", error));
-
-    return () => {
-      active = false;
-      unlisten?.();
-    };
-  }, [closeActiveSurface, reportError]);
 
   return {
     captureLocalHistorySnapshot,

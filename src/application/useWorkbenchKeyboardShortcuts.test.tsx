@@ -277,6 +277,81 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
+  it("runs the quit command through the registry on Cmd+Q", () => {
+    const actions = createActions();
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Application",
+      id: "app.quit",
+      isEnabled: () => true,
+      run,
+      title: "Quit Application",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "q", metaKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(actions.quitApplication).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("routes F12 to go to definition through the registry", () => {
+    const actions = createActions();
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.goToDefinition",
+      isEnabled: () => true,
+      run,
+      title: "Go to Definition",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "F12" });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(actions.goToDefinition).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("consumes F12 without running a disabled go to definition command", () => {
+    const actions = createActions();
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.goToDefinition",
+      isEnabled: () => false,
+      run,
+      title: "Go to Definition",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "F12" });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+    expect(actions.goToDefinition).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("handles Escape through the floating surface action", () => {
     const actions = createActions({
       closeFloatingSurface: vi.fn(() => true),
