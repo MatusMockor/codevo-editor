@@ -33,6 +33,12 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     providers: [],
   }),
 );
+const STALE_LEGACY_LARAVEL_RUNTIME = {
+  ...LARAVEL_RUNTIME,
+  providers: [],
+  hasProvider: () => false,
+  isLaravel: true,
+};
 
 function makeDescriptor(): WorkspaceDescriptor {
   return {
@@ -224,6 +230,39 @@ class User extends Model {}
     harness.unmount();
   });
 
+  it("skips validation rule model targets for a stale legacy Laravel runtime", async () => {
+    const searchProjectSymbols = vi.fn(async () => [
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "App\\Models\\Comment",
+        kind: "class" as const,
+        lineNumber: 3,
+        name: "Comment",
+        path: MODEL_PATH,
+        relativePath: "app/Models/Comment.php",
+      },
+    ]);
+    const resolvePhpClassSourcePaths = vi.fn(async () => [MODEL_PATH]);
+    const readNavigationFileContent = vi.fn(async () => modelSource());
+    const deps = makeDeps({
+      frameworkRuntime: STALE_LEGACY_LARAVEL_RUNTIME,
+      projectSymbolSearch: { searchProjectSymbols },
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().findPhpLaravelValidationRuleModelTargets("comments"),
+    ).resolves.toEqual([]);
+    expect(searchProjectSymbols).not.toHaveBeenCalled();
+    expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("opens dynamic where targets from model attributes", async () => {
     const openNavigationTarget = vi.fn(async () => true);
     const deps = makeDeps({ openNavigationTarget });
@@ -278,6 +317,35 @@ class User extends Model {}
       .openPhpLaravelModelAttributeTarget("App\\Models\\Comment", "full_name");
 
     expect(handled).toBe(false);
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("skips model source target navigation for a stale legacy Laravel runtime", async () => {
+    const openNavigationTarget = vi.fn(async () => true);
+    const resolvePhpClassSourcePaths = vi.fn(async () => [MODEL_PATH]);
+    const readNavigationFileContent = vi.fn(async () => modelSource());
+    const deps = makeDeps({
+      frameworkRuntime: STALE_LEGACY_LARAVEL_RUNTIME,
+      openNavigationTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .openPhpLaravelDynamicWhereTarget("App\\Models\\Comment", "whereContent"),
+    ).resolves.toBe(false);
+    await expect(
+      harness
+        .api()
+        .openPhpLaravelModelAttributeTarget("App\\Models\\Comment", "full_name"),
+    ).resolves.toBe(false);
+    expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
     expect(readNavigationFileContent).not.toHaveBeenCalled();
     expect(openNavigationTarget).not.toHaveBeenCalled();
 

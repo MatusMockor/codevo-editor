@@ -70,7 +70,8 @@ export function usePhpLaravelModelNavigationTargets({
   workspaceDescriptor,
   workspaceRoot,
 }: PhpLaravelModelNavigationTargetsDependencies): PhpLaravelModelNavigationTargets {
-  const canOpenLaravelModelSourceTargets = frameworkRuntime.isLaravel;
+  const canOpenLaravelModelSourceTargets =
+    frameworkRuntime.hasProvider("laravel");
 
   const findPhpLaravelValidationRuleModelTargets = useCallback(
     async (
