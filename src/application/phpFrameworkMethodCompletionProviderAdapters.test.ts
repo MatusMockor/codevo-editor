@@ -64,6 +64,7 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       hasProvider: vi.fn(
         (providerId: string) => providerId === activeProviderId,
       ),
+      supports: vi.fn(() => false),
       isLaravel: true,
     };
     const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
@@ -97,12 +98,16 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
     });
 
     expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "netteRedrawControlSnippetCompletions",
+    );
     expect(ensurePhpFrameworkSourceCollectionsLoaded).not.toHaveBeenCalled();
   });
 
   it("selects the Laravel adapter by provider id", async () => {
     const frameworkRuntime = {
       hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
+      supports: vi.fn(() => false),
     };
     const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
       makeDeps({ frameworkRuntime }),
@@ -138,9 +143,10 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       method("show"),
     ]);
     const frameworkRuntime = {
-      hasProvider: vi.fn(
-        (providerId: string) =>
-          providerId === "laravel" || providerId === "nette",
+      hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
+      supports: vi.fn(
+        (capability: string) =>
+          capability === "netteRedrawControlSnippetCompletions",
       ),
     };
     const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
@@ -180,7 +186,9 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
       "App\\Http\\Controllers\\PostController",
     );
     expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
-    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("nette");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "netteRedrawControlSnippetCompletions",
+    );
   });
 
   it("does not activate Nette literal completions for a non-Nette provider", async () => {
@@ -193,6 +201,7 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
     ]);
     const frameworkRuntime = {
       hasProvider: vi.fn((providerId: string) => providerId === "laravel"),
+      supports: vi.fn(() => false),
     };
     const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
       makeDeps({
@@ -212,6 +221,41 @@ describe("phpFrameworkMethodCompletionProviderAdapters", () => {
           column: (prefixLines[prefixLines.length - 1]?.length ?? 0) + 1,
           lineNumber: prefixLines.length,
         },
+        source,
+      }),
+    ).resolves.toBeNull();
+
+    expect(frameworkRuntime.hasProvider).toHaveBeenCalledWith("laravel");
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "netteRedrawControlSnippetCompletions",
+    );
+    expect(collectNetteRedrawControlSnippetTargets).not.toHaveBeenCalled();
+  });
+
+  it("keeps stale Nette provider-id runtimes inert without the redraw capability", async () => {
+    const collectNetteRedrawControlSnippetTargets = vi.fn(async () => [
+      {
+        name: "mailLogslisting",
+        relativePath:
+          "app/modules/mailerModule/Components/MailLogs/mail_logs.latte",
+      },
+    ]);
+    const frameworkRuntime = {
+      hasProvider: vi.fn((providerId: string) => providerId === "nette"),
+    };
+    const adapter = createPhpFrameworkMethodCompletionProviderAdapters(
+      makeDeps({
+        collectNetteRedrawControlSnippetTargets,
+        frameworkRuntime,
+      }),
+    );
+    const source = "<?php\n$this->redrawControl('mai');";
+
+    await expect(
+      adapter.literalStringCompletions({
+        activeDocumentPath: "/workspace/app/Presenters/MailerPresenter.php",
+        isRequestStillCurrent: () => true,
+        position: positionAfter(source, "mai"),
         source,
       }),
     ).resolves.toBeNull();

@@ -530,8 +530,10 @@ Comment::with('par')->first();
       collectNetteRedrawControlSnippetTargets,
       frameworkRuntime: {
         ...NETTE_RUNTIME,
-        hasProvider: (providerId: string) =>
-          providerId === "nette" ? false : NETTE_RUNTIME.hasProvider(providerId),
+        supports: (capability) =>
+          capability === "netteRedrawControlSnippetCompletions"
+            ? false
+            : NETTE_RUNTIME.supports(capability),
       },
     });
     const harness = renderHook(deps);

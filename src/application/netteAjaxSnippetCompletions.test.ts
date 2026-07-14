@@ -185,7 +185,7 @@ describe("createNetteRedrawControlSnippetTargetCollector", () => {
     );
     const staleLegacyRuntime = {
       isNette: true,
-      hasProvider: vi.fn(() => false),
+      hasProvider: vi.fn(() => true),
     };
 
     const collectTargets = createNetteRedrawControlSnippetTargetCollector({
@@ -198,7 +198,7 @@ describe("createNetteRedrawControlSnippetTargetCollector", () => {
     });
 
     await expect(collectTargets(CURRENT_PHP_PATH)).resolves.toEqual([]);
-    expect(staleLegacyRuntime.hasProvider).toHaveBeenCalledWith("nette");
+    expect(staleLegacyRuntime.hasProvider).not.toHaveBeenCalled();
     expect(readNavigationFileContent).not.toHaveBeenCalled();
   });
 
@@ -213,7 +213,11 @@ describe("createNetteRedrawControlSnippetTargetCollector", () => {
 
     const collectTargets = createNetteRedrawControlSnippetTargetCollector({
       currentWorkspaceRootRef: { current: ROOT },
-      frameworkRuntime: { hasProvider: (providerId) => providerId === "nette" },
+      frameworkRuntime: {
+        hasProvider: (providerId) => providerId === "nette",
+        supports: (capability) =>
+          capability === "netteRedrawControlSnippetCompletions",
+      },
       joinWorkspacePath,
       readNavigationFileContent,
       relativeWorkspacePath,

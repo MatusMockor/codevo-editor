@@ -1995,6 +1995,14 @@ Route::model('user', AdminUser::class);
       expect(netteRegistry.supports("eloquentModelSemantics")).toBe(false);
       expect(genericRegistry.supports("eloquentModelSemantics")).toBe(false);
       expect(
+        laravelRegistry.supports("netteRedrawControlSnippetCompletions"),
+      ).toBe(false);
+      expect(netteRegistry.supports("netteRedrawControlSnippetCompletions")).toBe(
+        true,
+      );
+      expect(genericRegistry.supports("netteRedrawControlSnippetCompletions"))
+        .toBe(false);
+      expect(
         phpFrameworkSupportsContainerBindingsFromSource([
           phpLaravelFrameworkProvider,
         ]),

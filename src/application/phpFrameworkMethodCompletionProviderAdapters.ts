@@ -22,7 +22,8 @@ export interface PhpFrameworkMethodCompletionProviderAdapterDependencies {
     currentPhpPath: string,
   ): Promise<readonly NetteSnippetCompletionTarget[]>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider"> &
+    Partial<Pick<PhpFrameworkRuntimeContext, "supports">>;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpFrameworkBuilderModelType(
     source: string,
@@ -66,7 +67,8 @@ export function createPhpFrameworkMethodCompletionProviderAdapters({
               resolvePhpFrameworkRelationPathOwnerType,
           })
         : null,
-      frameworkRuntime.hasProvider("nette")
+      frameworkRuntime.supports?.("netteRedrawControlSnippetCompletions") ===
+      true
         ? createPhpNetteMethodCompletionProviderAdapter({
             collectNetteRedrawControlSnippetTargets,
           })

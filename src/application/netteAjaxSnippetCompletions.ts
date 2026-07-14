@@ -31,7 +31,8 @@ export interface NetteRedrawControlSnippetTargetCollectorWorkbenchDependencies {
   currentWorkspaceRootRef: {
     readonly current: string | null;
   };
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider">;
+  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider"> &
+    Partial<Pick<PhpFrameworkRuntimeContext, "supports">>;
   joinWorkspacePath(rootPath: string, relativePath: string): string;
   readNavigationFileContent(path: string): Promise<string>;
   relativeWorkspacePath(workspaceRoot: string, path: string): string;
@@ -155,7 +156,11 @@ export function createNetteRedrawControlSnippetTargetCollector({
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-    if (!requestedRoot || !frameworkRuntime.hasProvider("nette")) {
+    if (
+      !requestedRoot ||
+      frameworkRuntime.supports?.("netteRedrawControlSnippetCompletions") !==
+        true
+    ) {
       return [];
     }
 

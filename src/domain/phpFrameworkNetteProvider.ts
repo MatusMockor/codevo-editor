@@ -93,6 +93,9 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   codeActions: {
     phpPresenterLinkMethod: true,
   },
+  completions: {
+    supportsNetteRedrawControlSnippetCompletions: true,
+  },
   targetCollections: [
     {
       kind: "viewData",

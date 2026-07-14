@@ -676,6 +676,13 @@ export interface PhpFrameworkProvider {
     memberCompletionsFromSource?: (
       context: PhpFrameworkMemberCompletionContext,
     ) => PhpMethodCompletion[];
+    /**
+     * Provider-owned opt-in for Nette UI redraw snippet completions inside
+     * `$this->redrawControl('...')` PHP method calls. Kept intentionally
+     * narrow so generic method completion routing does not inherit broader
+     * Nette/Latte semantics.
+     */
+    supportsNetteRedrawControlSnippetCompletions?: true;
   };
   diagnostics?: {
     isKnownMemberMethod?: (context: PhpFrameworkMemberMethodContext) => boolean;
@@ -1016,6 +1023,7 @@ export type PhpFrameworkProviderCapability =
   | "latteTemplateIntelligence"
   | "middlewareAliases"
   | "neonConfigIntelligence"
+  | "netteRedrawControlSnippetCompletions"
   | "newFiles"
   | "phpPresenterLinks"
   | "routes"
@@ -2032,6 +2040,12 @@ function phpFrameworkProvidersSupportCapability(
     case "neonConfigIntelligence":
       return providers.some(
         (provider) => provider.neon?.supportsConfigIntelligence === true,
+      );
+    case "netteRedrawControlSnippetCompletions":
+      return providers.some(
+        (provider) =>
+          provider.completions?.supportsNetteRedrawControlSnippetCompletions ===
+          true,
       );
     case "newFiles":
       return providers.some(
