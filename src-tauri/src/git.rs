@@ -2,11 +2,14 @@ use crate::ignore_matcher::is_default_ignored_name;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
-    fs, io,
+    fs,
+    io::{self, Read},
     path::{Component, Path, PathBuf},
-    process::Command,
+    process::{Child, Command, Stdio},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+const MAX_DIFF_SNAPSHOT_BYTES: u64 = 2_000_000;
 
 const UNTRUSTED_GIT_CONFIG: [&str; 7] = [
     "core.fsmonitor=false",
@@ -84,6 +87,14 @@ pub struct GitFileDiff {
     pub language: String,
     pub modified_content: String,
     pub original_content: String,
+    pub preview_unavailable_reason: Option<GitDiffPreviewUnavailableReason>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitDiffPreviewUnavailableReason {
+    Binary,
+    Large,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -446,10 +457,13 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         let relative = relative.to_string_lossy().to_string();
         let sha = safe_commit_sha(sha)?;
 
-        let original_content =
-            commit_blob_content(&root, &format!("{sha}^"), &relative, self.trusted)?;
-        let modified_content = commit_blob_content(&root, &sha, &relative, self.trusted)?;
-        let status = commit_file_change_status(&original_content, &modified_content);
+        let snapshot = load_diff_snapshot(
+            &root,
+            DiffContentSource::GitObject(format!("{sha}^:{relative}")),
+            DiffContentSource::GitObject(format!("{sha}:{relative}")),
+            self.trusted,
+        )?;
+        let status = commit_file_change_status(snapshot.original_exists, snapshot.modified_exists);
 
         Ok(GitFileDiff {
             change: GitChangedFile {
@@ -462,8 +476,9 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
                 status,
             },
             language: language_for_path(&relative),
-            modified_content,
-            original_content,
+            modified_content: snapshot.modified_content,
+            original_content: snapshot.original_content,
+            preview_unavailable_reason: snapshot.preview_unavailable_reason,
         })
     }
 
@@ -531,15 +546,16 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
     }
 
     fn diff(&self, root: &Path, change: &GitChangedFile) -> io::Result<GitFileDiff> {
-        let root = root.canonicalize()?;
-        let original_content = original_content(&root, change, self.trusted)?;
-        let modified_content = modified_content(&root, change)?;
+        let workspace_root = root.canonicalize()?;
+        let target = resolve_diff_target(&workspace_root, change, self.trusted)?;
+        let snapshot = diff_snapshot(&target.repository_root, &target.change, self.trusted)?;
 
         Ok(GitFileDiff {
             change: change.clone(),
-            language: language_for_path(&change.relative_path),
-            modified_content,
-            original_content,
+            language: language_for_path(&target.change.relative_path),
+            modified_content: snapshot.modified_content,
+            original_content: snapshot.original_content,
+            preview_unavailable_reason: snapshot.preview_unavailable_reason,
         })
     }
 
@@ -841,7 +857,7 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
             .arg("status")
             .arg("--porcelain=v1")
             .arg("-z")
-            .arg("--untracked-files=normal")
+            .arg("--untracked-files=all")
             .output()?;
 
         if !output.status.success() {
@@ -1709,39 +1725,27 @@ fn parse_porcelain_status(root: &Path, output: &[u8]) -> io::Result<Vec<GitChang
 
         let status_code = &entry[..2];
         let relative_path = entry[3..].to_string();
-        let status = git_change_status(status_code);
-        let is_staged = git_change_is_staged(status_code);
-        let is_unversioned = status == GitChangeStatus::Untracked;
-        let old_relative_path = match status {
-            GitChangeStatus::Renamed => {
-                let old = parts
-                    .get(index)
-                    .map(|part| String::from_utf8_lossy(part).to_string());
+        let has_rename = status_code.contains('R');
+        let old_relative_path = if has_rename {
+            let old = parts
+                .get(index)
+                .map(|part| String::from_utf8_lossy(part).to_string());
 
-                if old.is_some() {
-                    index += 1;
-                }
-
-                old
+            if old.is_some() {
+                index += 1;
             }
-            _ => None,
+
+            old
+        } else {
+            None
         };
 
-        let path = workspace_file_path(root, &relative_path)?;
-        let old_path = match old_relative_path.as_deref() {
-            Some(path) => Some(workspace_file_path(root, path)?),
-            None => None,
-        };
-
-        changes.push(GitChangedFile {
-            is_staged,
-            is_unversioned,
-            old_path,
-            old_relative_path,
-            path,
-            relative_path,
-            status,
-        });
+        changes.extend(git_changes_for_status(
+            root,
+            status_code,
+            &relative_path,
+            old_relative_path.as_deref(),
+        )?);
     }
 
     Ok(changes)
@@ -2122,70 +2126,104 @@ fn safe_commit_sha(sha: &str) -> io::Result<String> {
     Ok(trimmed.to_string())
 }
 
-/// Reads a file's blob at a given revision. A missing path at that revision
-/// (the file did not exist yet, e.g. the parent of its first commit) is not an
-/// error: it yields empty content so the diff renders as a pure addition.
-fn commit_blob_content(
+fn commit_file_change_status(original_exists: bool, modified_exists: bool) -> GitChangeStatus {
+    if !original_exists && modified_exists {
+        return GitChangeStatus::Added;
+    }
+
+    if original_exists && !modified_exists {
+        return GitChangeStatus::Deleted;
+    }
+
+    GitChangeStatus::Modified
+}
+
+fn git_changes_for_status(
     root: &Path,
-    revision: &str,
+    status_code: &str,
     relative_path: &str,
-    trusted: bool,
-) -> io::Result<String> {
-    let output = git_command(trusted)
-        .arg("-C")
-        .arg(root)
-        .arg("show")
-        .arg(format!("{revision}:{relative_path}"))
-        .output()?;
-
-    if !output.status.success() {
-        return Ok(String::new());
+    old_relative_path: Option<&str>,
+) -> io::Result<Vec<GitChangedFile>> {
+    if status_code == "??" {
+        return Ok(vec![git_changed_file(
+            root,
+            relative_path,
+            None,
+            GitChangeStatus::Untracked,
+            false,
+        )?]);
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    if status_code.contains('U') || matches!(status_code, "AA" | "DD") {
+        return Ok(vec![git_changed_file(
+            root,
+            relative_path,
+            old_relative_path,
+            GitChangeStatus::Conflicted,
+            false,
+        )?]);
+    }
+
+    let mut status = status_code.chars();
+    let index_status = status.next().unwrap_or(' ');
+    let worktree_status = status.next().unwrap_or(' ');
+    let mut changes = Vec::with_capacity(2);
+
+    if index_status != ' ' && index_status != '?' {
+        changes.push(git_changed_file(
+            root,
+            relative_path,
+            (index_status == 'R').then_some(old_relative_path).flatten(),
+            git_change_status_for_column(index_status),
+            true,
+        )?);
+    }
+
+    if worktree_status != ' ' && worktree_status != '?' {
+        changes.push(git_changed_file(
+            root,
+            relative_path,
+            (worktree_status == 'R')
+                .then_some(old_relative_path)
+                .flatten(),
+            git_change_status_for_column(worktree_status),
+            false,
+        )?);
+    }
+
+    Ok(changes)
 }
 
-fn commit_file_change_status(original: &str, modified: &str) -> GitChangeStatus {
-    if original.is_empty() && !modified.is_empty() {
-        return GitChangeStatus::Added;
+fn git_change_status_for_column(status: char) -> GitChangeStatus {
+    match status {
+        'A' => GitChangeStatus::Added,
+        'D' => GitChangeStatus::Deleted,
+        'R' => GitChangeStatus::Renamed,
+        _ => GitChangeStatus::Modified,
     }
-
-    if !original.is_empty() && modified.is_empty() {
-        return GitChangeStatus::Deleted;
-    }
-
-    GitChangeStatus::Modified
 }
 
-fn git_change_is_staged(status: &str) -> bool {
-    status
-        .chars()
-        .next()
-        .is_some_and(|value| value != ' ' && value != '?')
-}
+fn git_changed_file(
+    root: &Path,
+    relative_path: &str,
+    old_relative_path: Option<&str>,
+    status: GitChangeStatus,
+    is_staged: bool,
+) -> io::Result<GitChangedFile> {
+    let path = workspace_file_path(root, relative_path)?;
+    let old_path = old_relative_path
+        .map(|path| workspace_file_path(root, path))
+        .transpose()?;
 
-fn git_change_status(status: &str) -> GitChangeStatus {
-    if status == "??" {
-        return GitChangeStatus::Untracked;
-    }
-
-    if status.contains('U') || matches!(status, "AA" | "DD") {
-        return GitChangeStatus::Conflicted;
-    }
-
-    if status.contains('R') {
-        return GitChangeStatus::Renamed;
-    }
-
-    if status.contains('D') {
-        return GitChangeStatus::Deleted;
-    }
-
-    if status.contains('A') {
-        return GitChangeStatus::Added;
-    }
-
-    GitChangeStatus::Modified
+    Ok(GitChangedFile {
+        is_staged,
+        is_unversioned: status == GitChangeStatus::Untracked,
+        old_path,
+        old_relative_path: old_relative_path.map(ToOwned::to_owned),
+        path,
+        relative_path: relative_path.to_string(),
+        status,
+    })
 }
 
 fn unmerged_relative_paths(root: &Path, trusted: bool) -> io::Result<HashSet<String>> {
@@ -2822,39 +2860,355 @@ fn workspace_file_path(root: &Path, relative_path: &str) -> io::Result<String> {
         .to_string())
 }
 
-fn original_content(root: &Path, change: &GitChangedFile, trusted: bool) -> io::Result<String> {
-    if matches!(
-        change.status,
-        GitChangeStatus::Added | GitChangeStatus::Untracked
-    ) {
-        return Ok(String::new());
+struct GitDiffTarget {
+    change: GitChangedFile,
+    repository_root: PathBuf,
+}
+
+fn resolve_diff_target(
+    workspace_root: &Path,
+    change: &GitChangedFile,
+    trusted: bool,
+) -> io::Result<GitDiffTarget> {
+    let absolute_path = Path::new(&change.path);
+    if !absolute_path.is_absolute() || !absolute_path.starts_with(workspace_root) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git diff path is outside the workspace.",
+        ));
     }
 
-    let relative_path = change
+    let probe_directory = nearest_existing_directory(absolute_path, workspace_root)?;
+    let repository_root = git_output_vec(
+        &probe_directory,
+        vec!["rev-parse", "--show-toplevel"],
+        trusted,
+    )?;
+    let repository_root = PathBuf::from(repository_root.trim()).canonicalize()?;
+
+    if !repository_root.starts_with(workspace_root) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git repository is outside the workspace.",
+        ));
+    }
+
+    let relative_path = absolute_path
+        .strip_prefix(&repository_root)
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Git diff path is outside its repository.",
+            )
+        })?
+        .to_string_lossy()
+        .replace('\\', "/");
+    safe_relative_path(&relative_path)?;
+
+    let old_relative_path = change
+        .old_path
+        .as_deref()
+        .and_then(|path| Path::new(path).strip_prefix(&repository_root).ok())
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .or_else(|| change.old_relative_path.clone());
+    if let Some(path) = old_relative_path.as_deref() {
+        safe_relative_path(path)?;
+    }
+
+    Ok(GitDiffTarget {
+        change: GitChangedFile {
+            old_path: old_relative_path
+                .as_deref()
+                .map(|path| workspace_file_path(&repository_root, path))
+                .transpose()?,
+            old_relative_path,
+            path: workspace_file_path(&repository_root, &relative_path)?,
+            relative_path,
+            ..change.clone()
+        },
+        repository_root,
+    })
+}
+
+fn nearest_existing_directory(path: &Path, workspace_root: &Path) -> io::Result<PathBuf> {
+    let mut candidate = path.parent().unwrap_or(workspace_root).to_path_buf();
+
+    while !candidate.exists() {
+        if candidate == workspace_root || !candidate.pop() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Git diff path has no existing workspace parent.",
+            ));
+        }
+    }
+
+    if !candidate.starts_with(workspace_root) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git diff path is outside the workspace.",
+        ));
+    }
+
+    Ok(candidate)
+}
+
+enum DiffContentSource {
+    GitObject(String),
+    Missing,
+    Worktree(PathBuf),
+}
+
+struct DiffSnapshot {
+    modified_content: String,
+    modified_exists: bool,
+    original_content: String,
+    original_exists: bool,
+    preview_unavailable_reason: Option<GitDiffPreviewUnavailableReason>,
+}
+
+enum BoundedContent {
+    Bytes(Vec<u8>),
+    TooLarge,
+}
+
+fn diff_snapshot(
+    repository_root: &Path,
+    change: &GitChangedFile,
+    trusted: bool,
+) -> io::Result<DiffSnapshot> {
+    if change.is_staged {
+        let original_path = change
+            .old_relative_path
+            .as_deref()
+            .unwrap_or(change.relative_path.as_str());
+        safe_relative_path(original_path)?;
+        safe_relative_path(&change.relative_path)?;
+
+        return load_diff_snapshot(
+            repository_root,
+            DiffContentSource::GitObject(format!("HEAD:{original_path}")),
+            DiffContentSource::GitObject(format!(":./{}", change.relative_path)),
+            trusted,
+        );
+    }
+
+    let index_relative_path = change
         .old_relative_path
         .as_deref()
         .unwrap_or(change.relative_path.as_str());
+    safe_relative_path(index_relative_path)?;
+    let worktree_source = match change.status {
+        GitChangeStatus::Deleted => DiffContentSource::Missing,
+        _ => DiffContentSource::Worktree(
+            repository_root.join(safe_relative_path(&change.relative_path)?),
+        ),
+    };
+
+    load_diff_snapshot(
+        repository_root,
+        DiffContentSource::GitObject(format!(":./{index_relative_path}")),
+        worktree_source,
+        trusted,
+    )
+}
+
+fn load_diff_snapshot(
+    root: &Path,
+    original_source: DiffContentSource,
+    modified_source: DiffContentSource,
+    trusted: bool,
+) -> io::Result<DiffSnapshot> {
+    let original_size = diff_content_size(root, &original_source, trusted)?;
+    let modified_size = diff_content_size(root, &modified_source, trusted)?;
+    let combined_size = original_size
+        .unwrap_or_default()
+        .checked_add(modified_size.unwrap_or_default())
+        .unwrap_or(u64::MAX);
+
+    if combined_size > MAX_DIFF_SNAPSHOT_BYTES {
+        return Ok(unavailable_diff_snapshot(
+            original_size.is_some(),
+            modified_size.is_some(),
+            GitDiffPreviewUnavailableReason::Large,
+        ));
+    }
+
+    let original = read_diff_content(
+        root,
+        &original_source,
+        MAX_DIFF_SNAPSHOT_BYTES as usize,
+        trusted,
+    )?;
+    let original = match original {
+        BoundedContent::Bytes(content) => content,
+        BoundedContent::TooLarge => {
+            return Ok(unavailable_diff_snapshot(
+                original_size.is_some(),
+                modified_size.is_some(),
+                GitDiffPreviewUnavailableReason::Large,
+            ));
+        }
+    };
+    let remaining = MAX_DIFF_SNAPSHOT_BYTES as usize - original.len();
+    let modified = read_diff_content(root, &modified_source, remaining, trusted)?;
+    let modified = match modified {
+        BoundedContent::Bytes(content) => content,
+        BoundedContent::TooLarge => {
+            return Ok(unavailable_diff_snapshot(
+                original_size.is_some(),
+                modified_size.is_some(),
+                GitDiffPreviewUnavailableReason::Large,
+            ));
+        }
+    };
+
+    if original.contains(&0) || modified.contains(&0) {
+        return Ok(unavailable_diff_snapshot(
+            original_size.is_some(),
+            modified_size.is_some(),
+            GitDiffPreviewUnavailableReason::Binary,
+        ));
+    }
+
+    Ok(DiffSnapshot {
+        modified_content: String::from_utf8_lossy(&modified).to_string(),
+        modified_exists: modified_size.is_some(),
+        original_content: String::from_utf8_lossy(&original).to_string(),
+        original_exists: original_size.is_some(),
+        preview_unavailable_reason: None,
+    })
+}
+
+fn diff_content_size(
+    root: &Path,
+    source: &DiffContentSource,
+    trusted: bool,
+) -> io::Result<Option<u64>> {
+    let object = match source {
+        DiffContentSource::Missing => return Ok(None),
+        DiffContentSource::Worktree(path) => {
+            return fs::metadata(path).map(|metadata| Some(metadata.len()));
+        }
+        DiffContentSource::GitObject(object) => object,
+    };
     let output = git_command(trusted)
         .arg("-C")
         .arg(root)
-        .arg("show")
-        .arg(format!("HEAD:{relative_path}"))
+        .args(["cat-file", "-s", object])
         .output()?;
 
     if !output.status.success() {
-        return Ok(String::new());
+        return Ok(None);
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let size = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Git blob size is invalid."))?;
+    Ok(Some(size))
 }
 
-fn modified_content(root: &Path, change: &GitChangedFile) -> io::Result<String> {
-    if change.status == GitChangeStatus::Deleted {
-        return Ok(String::new());
+fn read_diff_content(
+    root: &Path,
+    source: &DiffContentSource,
+    max_bytes: usize,
+    trusted: bool,
+) -> io::Result<BoundedContent> {
+    let object = match source {
+        DiffContentSource::Missing => return Ok(BoundedContent::Bytes(Vec::new())),
+        DiffContentSource::Worktree(path) => {
+            let mut content = Vec::with_capacity(max_bytes.min(64 * 1024));
+            fs::File::open(path)?
+                .take(max_bytes.saturating_add(1) as u64)
+                .read_to_end(&mut content)?;
+            if content.len() > max_bytes {
+                return Ok(BoundedContent::TooLarge);
+            }
+
+            return Ok(BoundedContent::Bytes(content));
+        }
+        DiffContentSource::GitObject(object) => object,
+    };
+    read_git_object_content(root, object, max_bytes, trusted)
+}
+
+fn read_git_object_content(
+    root: &Path,
+    object: &str,
+    max_bytes: usize,
+    trusted: bool,
+) -> io::Result<BoundedContent> {
+    let mut child = git_command(trusted)
+        .arg("-C")
+        .arg(root)
+        .arg("show")
+        .arg(object)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_and_reap(&mut child)?;
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Git blob process did not expose stdout.",
+            ));
+        }
+    };
+    let mut content = Vec::with_capacity(max_bytes.min(64 * 1024));
+    let read_result = stdout
+        .by_ref()
+        .take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut content);
+    drop(stdout);
+
+    if let Err(error) = read_result {
+        terminate_and_reap(&mut child)?;
+        return Err(error);
     }
 
-    let path = root.join(safe_relative_path(&change.relative_path)?);
-    std::fs::read_to_string(path)
+    if content.len() > max_bytes {
+        terminate_and_reap(&mut child)?;
+        return Ok(BoundedContent::TooLarge);
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        return Ok(BoundedContent::Bytes(Vec::new()));
+    }
+
+    Ok(BoundedContent::Bytes(content))
+}
+
+fn terminate_and_reap(child: &mut Child) -> io::Result<()> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+
+    let kill_result = child.kill();
+    let wait_result = child.wait();
+    if let Err(error) = kill_result {
+        if error.kind() != io::ErrorKind::InvalidInput {
+            return Err(error);
+        }
+    }
+
+    wait_result.map(|_| ())
+}
+
+fn unavailable_diff_snapshot(
+    original_exists: bool,
+    modified_exists: bool,
+    reason: GitDiffPreviewUnavailableReason,
+) -> DiffSnapshot {
+    DiffSnapshot {
+        modified_content: String::new(),
+        modified_exists,
+        original_content: String::new(),
+        original_exists,
+        preview_unavailable_reason: Some(reason),
+    }
 }
 
 fn safe_relative_path(relative_path: &str) -> io::Result<PathBuf> {
@@ -2911,10 +3265,11 @@ mod tests {
         amend_selected_staged_changes, detect_git_repositories, git_command, load_commit_details,
         load_commit_diff, load_commit_files, load_commit_log, parse_blame_porcelain,
         parse_branch_list, parse_diff_hunks, parse_file_history, parse_porcelain_status,
-        parse_stash_list, reword_head_commit, safe_branch_name, safe_commit_sha,
-        safe_relative_path, safe_stash_index, single_hunk_patch, CommandGitRepositoryGateway,
-        GitChangeStatus, GitChangedFile, GitCommitFilters, GitRepositoryGateway,
-        DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH,
+        parse_stash_list, read_git_object_content, reword_head_commit, safe_branch_name,
+        safe_commit_sha, safe_relative_path, safe_stash_index, single_hunk_patch, BoundedContent,
+        CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile, GitCommitFilters,
+        GitDiffPreviewUnavailableReason, GitRepositoryGateway,
+        DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH, MAX_DIFF_SNAPSHOT_BYTES,
     };
     use std::{
         fs, io,
@@ -3574,6 +3929,28 @@ mod tests {
     }
 
     #[test]
+    fn splits_partially_staged_status_into_index_and_worktree_changes() {
+        let output = b"MM partial.php\0AM added.php\0MD deleted-later.php\0";
+        let changes = parse_porcelain_status(Path::new("/workspace"), output).expect("parse");
+
+        assert_eq!(changes.len(), 6);
+        assert_eq!(changes[0].relative_path, "partial.php");
+        assert!(changes[0].is_staged);
+        assert_eq!(changes[0].status, GitChangeStatus::Modified);
+        assert_eq!(changes[1].relative_path, "partial.php");
+        assert!(!changes[1].is_staged);
+        assert_eq!(changes[1].status, GitChangeStatus::Modified);
+        assert_eq!(changes[2].status, GitChangeStatus::Added);
+        assert!(changes[2].is_staged);
+        assert_eq!(changes[3].status, GitChangeStatus::Modified);
+        assert!(!changes[3].is_staged);
+        assert_eq!(changes[4].status, GitChangeStatus::Modified);
+        assert!(changes[4].is_staged);
+        assert_eq!(changes[5].status, GitChangeStatus::Deleted);
+        assert!(!changes[5].is_staged);
+    }
+
+    #[test]
     fn rejects_paths_outside_workspace() {
         assert!(safe_relative_path("../secret.php").is_err());
         assert!(safe_relative_path("/secret.php").is_err());
@@ -3831,6 +4208,345 @@ mod tests {
         assert!(gateway
             .file_commit_diff(repo.path(), "file.txt", "HEAD")
             .is_err());
+    }
+
+    #[test]
+    fn diff_isolates_index_and_worktree_for_partially_staged_file() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("file.txt", "one\ntwo\nthree\n");
+        repo.run(["add", "file.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("file.txt", "ONE\ntwo\nthree\n");
+        repo.run(["add", "file.txt"]);
+        repo.write("file.txt", "ONE\ntwo\nTHREE\n");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let status = gateway.status(repo.path()).expect("status");
+        let staged = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "file.txt" && change.is_staged)
+            .expect("staged change");
+        let worktree = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "file.txt" && !change.is_staged)
+            .expect("worktree change");
+
+        let staged_diff = gateway.diff(repo.path(), staged).expect("staged diff");
+        let worktree_diff = gateway.diff(repo.path(), worktree).expect("worktree diff");
+
+        assert_eq!(staged_diff.original_content, "one\ntwo\nthree\n");
+        assert_eq!(staged_diff.modified_content, "ONE\ntwo\nthree\n");
+        assert_eq!(worktree_diff.original_content, "ONE\ntwo\nthree\n");
+        assert_eq!(worktree_diff.modified_content, "ONE\ntwo\nTHREE\n");
+    }
+
+    #[test]
+    fn diff_reads_colon_prefixed_index_path_without_git_stage_ambiguity() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("0:foo", "zero base\n");
+        repo.write("foo", "plain base\n");
+        repo.run(["add", "0:foo", "foo"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("0:foo", "zero index\n");
+        repo.run(["add", "0:foo"]);
+        repo.write("0:foo", "zero worktree\n");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let status = gateway.status(repo.path()).expect("status");
+        let staged = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "0:foo" && change.is_staged)
+            .expect("staged colon-path change");
+        let worktree = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "0:foo" && !change.is_staged)
+            .expect("worktree colon-path change");
+
+        let staged_diff = gateway.diff(repo.path(), staged).expect("staged diff");
+        let worktree_diff = gateway.diff(repo.path(), worktree).expect("worktree diff");
+
+        assert_eq!(staged_diff.original_content, "zero base\n");
+        assert_eq!(staged_diff.modified_content, "zero index\n");
+        assert_eq!(worktree_diff.original_content, "zero index\n");
+        assert_eq!(worktree_diff.modified_content, "zero worktree\n");
+    }
+
+    #[test]
+    fn diff_rejects_large_staged_worktree_and_untracked_snapshots_before_loading() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("worktree-large.txt", "small\n");
+        repo.run(["add", "worktree-large.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+
+        let large = vec![b'x'; MAX_DIFF_SNAPSHOT_BYTES as usize + 1];
+        fs::write(repo.path().join("staged-large.txt"), &large).expect("large staged file");
+        repo.run(["add", "staged-large.txt"]);
+        fs::write(repo.path().join("worktree-large.txt"), &large).expect("large worktree file");
+        fs::write(repo.path().join("untracked-large.txt"), &large).expect("large untracked file");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let status = gateway.status(repo.path()).expect("status");
+        for (path, staged) in [
+            ("staged-large.txt", true),
+            ("worktree-large.txt", false),
+            ("untracked-large.txt", false),
+        ] {
+            let change = status
+                .changes
+                .iter()
+                .find(|change| change.relative_path == path && change.is_staged == staged)
+                .unwrap_or_else(|| panic!("missing {path} change"));
+            let diff = gateway
+                .diff(repo.path(), change)
+                .expect("large diff marker");
+
+            assert_eq!(
+                diff.preview_unavailable_reason,
+                Some(GitDiffPreviewUnavailableReason::Large)
+            );
+            assert!(diff.original_content.is_empty());
+            assert!(diff.modified_content.is_empty());
+        }
+    }
+
+    #[test]
+    fn git_object_reader_enforces_its_bound_independently_of_the_size_probe() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        let large = vec![b'x'; MAX_DIFF_SNAPSHOT_BYTES as usize + 1];
+        fs::write(repo.path().join("large.txt"), &large).expect("large index file");
+        repo.write("small.txt", "small content\n");
+        repo.run(["add", "large.txt", "small.txt"]);
+
+        let large_content = read_git_object_content(
+            repo.path(),
+            ":./large.txt",
+            MAX_DIFF_SNAPSHOT_BYTES as usize,
+            true,
+        )
+        .expect("bounded large blob read");
+        let small_content = read_git_object_content(
+            repo.path(),
+            ":./small.txt",
+            MAX_DIFF_SNAPSHOT_BYTES as usize,
+            true,
+        )
+        .expect("bounded small blob read");
+        let missing_content = read_git_object_content(
+            repo.path(),
+            ":./missing.txt",
+            MAX_DIFF_SNAPSHOT_BYTES as usize,
+            true,
+        )
+        .expect("missing blob read");
+
+        assert!(matches!(large_content, BoundedContent::TooLarge));
+        assert!(matches!(
+            small_content,
+            BoundedContent::Bytes(content) if content == b"small content\n"
+        ));
+        assert!(matches!(
+            missing_content,
+            BoundedContent::Bytes(content) if content.is_empty()
+        ));
+    }
+
+    #[test]
+    fn diff_rejects_binary_staged_and_worktree_snapshots_before_serialization() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("worktree.bin", "text\n");
+        repo.run(["add", "worktree.bin"]);
+        repo.run(["commit", "-m", "initial"]);
+        fs::write(repo.path().join("staged.bin"), b"staged\0binary").expect("staged binary");
+        repo.run(["add", "staged.bin"]);
+        fs::write(repo.path().join("worktree.bin"), b"worktree\0binary").expect("worktree binary");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let status = gateway.status(repo.path()).expect("status");
+        for (path, staged) in [("staged.bin", true), ("worktree.bin", false)] {
+            let change = status
+                .changes
+                .iter()
+                .find(|change| change.relative_path == path && change.is_staged == staged)
+                .unwrap_or_else(|| panic!("missing {path} change"));
+            let diff = gateway
+                .diff(repo.path(), change)
+                .expect("binary diff marker");
+
+            assert_eq!(
+                diff.preview_unavailable_reason,
+                Some(GitDiffPreviewUnavailableReason::Binary)
+            );
+            assert!(diff.original_content.is_empty());
+            assert!(diff.modified_content.is_empty());
+        }
+    }
+
+    #[test]
+    fn diff_handles_untracked_and_deleted_files_on_their_selected_side() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("deleted.txt", "tracked\n");
+        repo.run(["add", "deleted.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("new.txt", "untracked\n");
+        fs::create_dir_all(repo.path().join("new-directory")).expect("untracked directory");
+        fs::write(repo.path().join("new-directory/file.txt"), "nested\n")
+            .expect("nested untracked file");
+        fs::remove_file(repo.path().join("deleted.txt")).expect("delete tracked file");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let status = gateway.status(repo.path()).expect("status");
+        let untracked = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "new.txt")
+            .expect("untracked change");
+        let deleted = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "deleted.txt")
+            .expect("deleted change");
+        let nested_untracked = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "new-directory/file.txt")
+            .expect("nested untracked file change");
+
+        let untracked_diff = gateway
+            .diff(repo.path(), untracked)
+            .expect("untracked diff");
+        let deleted_diff = gateway.diff(repo.path(), deleted).expect("deleted diff");
+        let nested_diff = gateway
+            .diff(repo.path(), nested_untracked)
+            .expect("nested untracked diff");
+
+        assert_eq!(untracked_diff.original_content, "");
+        assert_eq!(untracked_diff.modified_content, "untracked\n");
+        assert_eq!(deleted_diff.original_content, "tracked\n");
+        assert_eq!(deleted_diff.modified_content, "");
+        assert_eq!(nested_diff.original_content, "");
+        assert_eq!(nested_diff.modified_content, "nested\n");
+    }
+
+    #[test]
+    fn diff_handles_staged_delete_and_rename_against_head() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("deleted.txt", "delete me\n");
+        repo.write("old.txt", "rename me\n");
+        repo.run(["add", "deleted.txt", "old.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.run(["rm", "deleted.txt"]);
+        repo.run(["mv", "old.txt", "new.txt"]);
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let status = gateway.status(repo.path()).expect("status");
+        let deleted = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "deleted.txt")
+            .expect("staged deletion");
+        let renamed = status
+            .changes
+            .iter()
+            .find(|change| change.relative_path == "new.txt")
+            .expect("staged rename");
+
+        let deleted_diff = gateway.diff(repo.path(), deleted).expect("deleted diff");
+        let renamed_diff = gateway.diff(repo.path(), renamed).expect("renamed diff");
+
+        assert!(deleted.is_staged);
+        assert_eq!(deleted_diff.original_content, "delete me\n");
+        assert_eq!(deleted_diff.modified_content, "");
+        assert!(renamed.is_staged);
+        assert_eq!(renamed.old_relative_path.as_deref(), Some("old.txt"));
+        assert_eq!(renamed_diff.original_content, "rename me\n");
+        assert_eq!(renamed_diff.modified_content, "rename me\n");
+    }
+
+    #[test]
+    fn diff_routes_nested_repository_change_through_its_owner() {
+        let workspace = TestGitRepo::new();
+        let nested = workspace.path().join("packages/nested");
+        fs::create_dir_all(&nested).expect("nested repository directory");
+        let run_nested = |args: &[&str]| {
+            let output = git_command(true)
+                .arg("-C")
+                .arg(&nested)
+                .args(args)
+                .output()
+                .expect("run nested git");
+            assert!(
+                output.status.success(),
+                "nested git failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run_nested(&["init"]);
+        run_nested(&["config", "user.email", "nested@example.com"]);
+        run_nested(&["config", "user.name", "Nested Author"]);
+        fs::write(nested.join("nested.txt"), "base\n").expect("nested base");
+        run_nested(&["add", "nested.txt"]);
+        run_nested(&["commit", "-m", "initial"]);
+        fs::write(nested.join("nested.txt"), "changed\n").expect("nested change");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let nested_status = gateway.status(&nested).expect("nested status");
+        let change = nested_status.changes.first().expect("nested change");
+        let diff = gateway
+            .diff(workspace.path(), change)
+            .expect("nested diff from workspace root");
+
+        assert_eq!(diff.change.relative_path, "nested.txt");
+        assert_eq!(diff.original_content, "base\n");
+        assert_eq!(diff.modified_content, "changed\n");
+        assert_eq!(diff.preview_unavailable_reason, None);
+    }
+
+    #[test]
+    fn diff_reads_unstaged_rename_base_from_the_old_index_path() {
+        let repo = TestGitRepo::new();
+        repo.run(["config", "user.email", "diff@example.com"]);
+        repo.run(["config", "user.name", "Diff Author"]);
+        repo.write("old.txt", "before\n");
+        repo.run(["add", "old.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        fs::rename(repo.path().join("old.txt"), repo.path().join("new.txt"))
+            .expect("rename worktree file");
+        fs::write(repo.path().join("new.txt"), "after\n").expect("modify renamed file");
+        let canonical_root = repo.path().canonicalize().expect("canonical repository");
+
+        let change = GitChangedFile {
+            is_staged: false,
+            is_unversioned: false,
+            old_path: Some(canonical_root.join("old.txt").to_string_lossy().to_string()),
+            old_relative_path: Some("old.txt".to_string()),
+            path: canonical_root.join("new.txt").to_string_lossy().to_string(),
+            relative_path: "new.txt".to_string(),
+            status: GitChangeStatus::Renamed,
+        };
+        let diff = CommandGitRepositoryGateway::new(true)
+            .diff(repo.path(), &change)
+            .expect("unstaged rename diff");
+
+        assert_eq!(diff.original_content, "before\n");
+        assert_eq!(diff.modified_content, "after\n");
     }
 
     #[test]

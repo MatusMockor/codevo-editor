@@ -1,10 +1,12 @@
+import { DiffEditor } from "@monaco-editor/react";
 import { ChevronDown, ChevronUp, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MutableRefObject } from "react";
+import type * as Monaco from "monaco-editor";
 import {
   defaultEditorFontFamily,
   defaultEditorFontLigatures,
   defaultEditorFontSize,
+  monacoFontLigaturesForEditorSetting,
   type MonacoAppTheme,
 } from "../domain/settings";
 import type {
@@ -13,6 +15,10 @@ import type {
   GitDiffHunk,
   GitFileDiff,
 } from "../domain/git";
+import {
+  applyImmediateFallbackTheme,
+  setupShikiTokenization,
+} from "../infrastructure/shikiHighlighter";
 
 interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
@@ -21,25 +27,24 @@ interface GitDiffPreviewProps {
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
-  /** True while a stage/unstage operation is running; disables hunk actions. */
   gitOperationLoading?: boolean;
   onClose(): void;
   onRevertFile?(change: GitChangedFile): void;
-  /**
-   * Loads the file's hunks (staged or worktree) for per-hunk staging. Receives
-   * the whole change so the owner can route the load into the repository that
-   * actually owns the file (multi-repo directory mappings) from its absolute
-   * path, not a repo-relative path that would be ambiguous across repositories.
-   */
   loadFileHunks?(change: GitChangedFile, staged: boolean): Promise<GitDiffHunk[]>;
   onStageHunk?(change: GitChangedFile, hunkIndex: number): void;
   onUnstageHunk?(change: GitChangedFile, hunkIndex: number): void;
 }
 
+type DiffNavigationTarget = "next" | "previous";
+type DiffFallbackReason = "binary" | "large" | "metadata" | "unchanged" | null;
+
+const MAX_DIFF_CONTENT_BYTES = 2_000_000;
+const MAX_DIFF_LINE_COUNT = 50_000;
+
 export function GitDiffPreview({
   diff,
   isLoading,
-  monacoTheme: _monacoTheme,
+  monacoTheme,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
@@ -51,46 +56,66 @@ export function GitDiffPreview({
   onUnstageHunk,
 }: GitDiffPreviewProps) {
   const [hunks, setHunks] = useState<GitDiffHunk[]>([]);
-  const [activeChangeIndex, setActiveChangeIndex] = useState(0);
-  const changeRowRefs = useRef<Array<HTMLTableRowElement | null>>([]);
+  const [lineChanges, setLineChanges] = useState<Monaco.editor.ILineChange[]>([]);
+  const [activeChangeIndex, setActiveChangeIndex] = useState(-1);
+  const diffEditorRef = useRef<Monaco.editor.IStandaloneDiffEditor | null>(null);
+  const diffListenerRef = useRef<Monaco.IDisposable | null>(null);
+  const monacoRef = useRef<Parameters<typeof setupShikiTokenization>[0] | null>(
+    null,
+  );
+  const requestedThemeRef = useRef<MonacoAppTheme | null>(null);
+  const themeRequestRef = useRef(0);
   const changeRelativePath = diff?.change.relativePath ?? null;
   const changeIsStaged = diff?.change.isStaged ?? false;
   const changeStatus = diff?.change.status ?? null;
-  // Per-hunk staging only applies to tracked text changes. Untracked files have
-  // no `git diff` hunks (they would need intent-to-add first) and conflicts are
-  // resolved through the editor, not hunk staging.
+  const originalContent = safeDiffContent(diff?.originalContent);
+  const modifiedContent = safeDiffContent(diff?.modifiedContent);
+  const fallbackReason = useMemo(
+    () => diffFallbackReason(diff, originalContent, modifiedContent),
+    [diff, modifiedContent, originalContent],
+  );
   const supportsHunkStaging =
+    !diff?.previewUnavailableReason &&
     Boolean(loadFileHunks) &&
     changeStatus !== null &&
     changeStatus !== "untracked" &&
     changeStatus !== "conflicted";
-  // `modifiedContent`/`originalContent` change after each stage/unstage, so
-  // including them re-loads the hunks to reflect the new index state.
-  const diffOriginalContent = diff?.originalContent ?? "";
-  const diffModifiedContent = diff?.modifiedContent ?? "";
-  const diffRows = useMemo(
-    () =>
-      buildPlainDiffRows(
-        diffOriginalContent,
-        diffModifiedContent,
-        diff?.change,
-      ),
-    [diff?.change, diffOriginalContent, diffModifiedContent],
+  const modelPaths = useMemo(
+    () => gitDiffModelPaths(diff?.change ?? null),
+    [changeIsStaged, changeRelativePath, diff?.change.path],
   );
-  const changeRowCount = diffRows.reduce(
-    (count, row) => count + (isChangedPlainDiffRow(row) ? 1 : 0),
-    0,
+  const fontLigatures = monacoFontLigaturesForEditorSetting(
+    editorFontLigatures,
+  );
+
+  const requestThemeSetup = useCallback(
+    (
+      monaco: Parameters<typeof setupShikiTokenization>[0],
+      theme: MonacoAppTheme,
+    ) => {
+      const request = ++themeRequestRef.current;
+      monacoRef.current = monaco;
+      requestedThemeRef.current = theme;
+      applyImmediateFallbackTheme(monaco, theme);
+
+      setupShikiTokenization(monaco, theme, {
+        shouldApply: () =>
+          request === themeRequestRef.current && monacoRef.current === monaco,
+      }).catch((error) => {
+        if (request !== themeRequestRef.current) {
+          return;
+        }
+
+        console.error("Shiki tokenization setup failed", error);
+      });
+    },
+    [],
   );
 
   useEffect(() => {
-    setActiveChangeIndex(0);
-    changeRowRefs.current = [];
-  }, [
-    changeRelativePath,
-    changeIsStaged,
-    diffOriginalContent,
-    diffModifiedContent,
-  ]);
+    setActiveChangeIndex(-1);
+    setLineChanges([]);
+  }, [changeIsStaged, changeRelativePath, modifiedContent, originalContent]);
 
   useEffect(() => {
     const change = diff?.change;
@@ -104,32 +129,15 @@ export function GitDiffPreview({
     const relativePath = changeRelativePath;
     const staged = changeIsStaged;
 
-    const applyLoadedHunks = (loaded: GitDiffHunk[]) => {
-      // Guard against an out-of-order resolve after the selected change moved
-      // on (per-tab isolation; the latest selection wins).
-      if (
-        cancelled ||
-        relativePath !== changeRelativePath ||
-        staged !== changeIsStaged
-      ) {
-        return;
-      }
-
-      // Per-hunk staging is a non-essential overlay on top of the diff. A
-      // malformed/undefined payload from the hunk command must never break the
-      // diff render, so only keep hunks that are safe to render and address
-      // back to the hunk-staging command.
-      setHunks(normalizeGitDiffHunks(loaded));
-    };
-
-    // The hunk load is best-effort. If the underlying command rejects (missing,
-    // failing, or unavailable), swallow it and keep the hunk list empty so the
-    // diff preview still renders instead of crashing the whole view to a blank
-    // screen (there is no error boundary around this tree). The whole change is
-    // handed to the loader so it routes to the owning repository (multi-repo).
     void Promise.resolve()
       .then(() => loadFileHunks(change, staged))
-      .then(applyLoadedHunks)
+      .then((loaded) => {
+        if (cancelled || relativePath !== changeRelativePath || staged !== changeIsStaged) {
+          return;
+        }
+
+        setHunks(normalizeGitDiffHunks(loaded));
+      })
       .catch((error) => {
         console.error("Loading git file hunks failed", error);
 
@@ -146,15 +154,84 @@ export function GitDiffPreview({
   }, [
     changeIsStaged,
     changeRelativePath,
-    diffModifiedContent,
-    diffOriginalContent,
+    modifiedContent,
+    originalContent,
     loadFileHunks,
     supportsHunkStaging,
   ]);
 
-  const change = diff?.change ?? null;
+  useEffect(
+    () => () => {
+      themeRequestRef.current += 1;
+      monacoRef.current = null;
+      requestedThemeRef.current = null;
+      diffListenerRef.current?.dispose();
+      diffListenerRef.current = null;
+      diffEditorRef.current = null;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (!monaco || requestedThemeRef.current === monacoTheme) {
+      return;
+    }
+
+    requestThemeSetup(monaco, monacoTheme);
+  }, [monacoTheme, requestThemeSetup]);
+
+  const refreshLineChanges = useCallback(
+    (editor: Monaco.editor.IStandaloneDiffEditor) => {
+      const next = editor.getLineChanges() ?? [];
+      setLineChanges(next);
+      setActiveChangeIndex((current) => {
+        if (next.length === 0) {
+          return -1;
+        }
+
+        return Math.min(Math.max(current, 0), next.length - 1);
+      });
+    },
+    [],
+  );
+
+  const onDiffEditorMount = useCallback(
+    (editor: Monaco.editor.IStandaloneDiffEditor) => {
+      diffListenerRef.current?.dispose();
+      diffEditorRef.current = editor;
+      refreshLineChanges(editor);
+      diffListenerRef.current = editor.onDidUpdateDiff(() => {
+        refreshLineChanges(editor);
+      });
+    },
+    [refreshLineChanges],
+  );
+
+  const goToChange = useCallback(
+    (target: DiffNavigationTarget) => {
+      const editor = diffEditorRef.current;
+      if (!editor || lineChanges.length === 0) {
+        return;
+      }
+
+      const direction = target === "next" ? 1 : -1;
+      const current = activeChangeIndex < 0 ? (target === "next" ? -1 : 0) : activeChangeIndex;
+      const nextIndex = (current + direction + lineChanges.length) % lineChanges.length;
+      const lineChange = lineChanges[nextIndex];
+      if (!lineChange) {
+        return;
+      }
+
+      setActiveChangeIndex(nextIndex);
+      revealLogicalChange(editor, lineChange);
+    },
+    [activeChangeIndex, lineChanges],
+  );
+
   const onToggleHunk = useCallback(
     (hunkIndex: number) => {
+      const change = diff?.change;
       if (!change || gitOperationLoading) {
         return;
       }
@@ -166,33 +243,7 @@ export function GitDiffPreview({
 
       onStageHunk?.(change, hunkIndex);
     },
-    [change, gitOperationLoading, onStageHunk, onUnstageHunk],
-  );
-
-  const goToChange = useCallback(
-    (target: DiffNavigationTarget) => {
-      if (changeRowCount === 0) {
-        return;
-      }
-
-      const nextIndex =
-        target === "next"
-          ? (activeChangeIndex + 1) % changeRowCount
-          : (activeChangeIndex - 1 + changeRowCount) % changeRowCount;
-      setActiveChangeIndex(nextIndex);
-
-      changeRowRefs.current[nextIndex]?.scrollIntoView({
-        block: "center",
-        inline: "nearest",
-      });
-    },
-    [activeChangeIndex, changeRowCount],
-  );
-
-  const onNextChange = useCallback(() => goToChange("next"), [goToChange]);
-  const onPreviousChange = useCallback(
-    () => goToChange("previous"),
-    [goToChange],
+    [diff?.change, gitOperationLoading, onStageHunk, onUnstageHunk],
   );
 
   const onRevert = useCallback(() => {
@@ -204,19 +255,11 @@ export function GitDiffPreview({
   }, [diff, onRevertFile]);
 
   if (isLoading) {
-    return (
-      <div className="empty-editor">
-        <p>Loading diff</p>
-      </div>
-    );
+    return <EmptyDiff message="Loading diff" />;
   }
 
   if (!diff) {
-    return (
-      <div className="empty-editor">
-        <p>Select a changed file to preview diff.</p>
-      </div>
-    );
+    return <EmptyDiff message="Select a changed file to preview diff." />;
   }
 
   return (
@@ -228,32 +271,34 @@ export function GitDiffPreview({
         </div>
         <div className="git-diff-toolbar" aria-label="Diff actions">
           <button
-            disabled={changeRowCount === 0}
-            onClick={onPreviousChange}
+            aria-label="Previous change"
+            disabled={lineChanges.length === 0}
+            onClick={() => goToChange("previous")}
             title="Previous change"
             type="button"
           >
             <ChevronUp aria-hidden="true" size={14} />
           </button>
           <button
-            disabled={changeRowCount === 0}
-            onClick={onNextChange}
+            aria-label="Next change"
+            disabled={lineChanges.length === 0}
+            onClick={() => goToChange("next")}
             title="Next change"
             type="button"
           >
             <ChevronDown aria-hidden="true" size={14} />
           </button>
           {onRevertFile ? (
-            <button onClick={onRevert} title="Revert file" type="button">
+            <button aria-label="Revert file" onClick={onRevert} title="Revert file" type="button">
               <RotateCcw aria-hidden="true" size={14} />
             </button>
           ) : null}
-          <button onClick={onClose} title="Close diff" type="button">
+          <button aria-label="Close diff" onClick={onClose} title="Close diff" type="button">
             <X aria-hidden="true" size={14} />
           </button>
         </div>
       </header>
-      {supportsHunkStaging && Array.isArray(hunks) && hunks.length > 0 ? (
+      {supportsHunkStaging && hunks.length > 0 ? (
         <GitDiffHunkList
           disabled={gitOperationLoading}
           hunks={hunks}
@@ -261,15 +306,95 @@ export function GitDiffPreview({
           onToggleHunk={onToggleHunk}
         />
       ) : null}
-      <PlainGitDiff
-        activeChangeIndex={activeChangeIndex}
-        changeRowRefs={changeRowRefs}
-        fontFamily={editorFontFamily}
-        fontLigatures={editorFontLigatures}
-        fontSize={editorFontSize}
-        rows={diffRows}
-      />
+      <div className="git-diff-pane-labels" aria-label="Compared versions">
+        <span>{changeIsStaged ? "HEAD" : "Index"}</span>
+        <span>{changeIsStaged ? "Staged" : "Working tree"}</span>
+      </div>
+      <div className="git-diff-editor" data-testid="git-monaco-diff">
+        {fallbackReason ? (
+          <GitDiffFallback change={diff.change} reason={fallbackReason} />
+        ) : (
+          <DiffEditor
+            beforeMount={(monaco) => requestThemeSetup(monaco, monacoTheme)}
+            height="100%"
+            key={`${modelPaths.original}:${modelPaths.modified}`}
+            language={diff.language || "plaintext"}
+            modified={modifiedContent}
+            modifiedModelPath={modelPaths.modified}
+            onMount={onDiffEditorMount}
+            options={{
+              automaticLayout: true,
+              diffAlgorithm: "advanced",
+              enableSplitViewResizing: true,
+              fontFamily: editorFontFamily,
+              fontLigatures,
+              fontSize: editorFontSize,
+              ignoreTrimWhitespace: false,
+              lineHeight: 20,
+              minimap: { enabled: false },
+              modifiedAriaLabel: "Current file content",
+              originalAriaLabel: "Base file content",
+              originalEditable: false,
+              readOnly: true,
+              renderIndicators: true,
+              renderMarginRevertIcon: false,
+              renderOverviewRuler: true,
+              renderSideBySide: true,
+              scrollBeyondLastLine: false,
+              useInlineViewWhenSpaceIsLimited: false,
+            }}
+            original={originalContent}
+            originalModelPath={modelPaths.original}
+            theme={monacoTheme}
+          />
+        )}
+      </div>
     </section>
+  );
+}
+
+function EmptyDiff({ message }: { message: string }) {
+  return (
+    <div className="empty-editor">
+      <p>{message}</p>
+    </div>
+  );
+}
+
+function GitDiffFallback({
+  change,
+  reason,
+}: {
+  change: GitChangedFile;
+  reason: Exclude<DiffFallbackReason, null>;
+}) {
+  if (reason === "metadata") {
+    return (
+      <div className="git-diff-fallback" role="status">
+        <strong>File metadata changed</strong>
+        <span>{metadataOnlyDiffText(change)}</span>
+      </div>
+    );
+  }
+
+  if (reason === "unchanged") {
+    return (
+      <div className="git-diff-fallback" role="status">
+        <strong>No differences</strong>
+        <span>The compared file contents are identical.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="git-diff-fallback" role="status">
+      <strong>{reason === "binary" ? "Binary diff" : "Large diff"}</strong>
+      <span>
+        {reason === "binary"
+          ? "Binary file contents cannot be previewed."
+          : "This file is too large for an interactive diff preview."}
+      </span>
+    </div>
   );
 }
 
@@ -280,15 +405,7 @@ interface GitDiffHunkListProps {
   onToggleHunk(hunkIndex: number): void;
 }
 
-// PhpStorm-style per-hunk staging. A checkbox per hunk stages (or, when viewing
-// the staged side, unstages) exactly that hunk; the surrounding diff preview
-// re-renders against the new index state after the operation resolves.
-function GitDiffHunkList({
-  disabled,
-  hunks,
-  staged,
-  onToggleHunk,
-}: GitDiffHunkListProps) {
+function GitDiffHunkList({ disabled, hunks, staged, onToggleHunk }: GitDiffHunkListProps) {
   const actionVerb = staged ? "Unstage" : "Stage";
 
   return (
@@ -316,7 +433,9 @@ function GitDiffHunkList({
                 <span className="git-diff-hunk-added">+{summary.added}</span>
               ) : null}
               {summary.removed > 0 ? (
-                <span className="git-diff-hunk-removed">-{summary.removed}</span>
+                <span className="git-diff-hunk-removed">
+                  -{summary.removed}
+                </span>
               ) : null}
             </span>
           </li>
@@ -326,107 +445,97 @@ function GitDiffHunkList({
   );
 }
 
-interface PlainGitDiffProps {
-  activeChangeIndex: number;
-  changeRowRefs: MutableRefObject<Array<HTMLTableRowElement | null>>;
-  fontFamily: string;
-  fontLigatures: boolean;
-  fontSize: number;
-  rows: PlainDiffRow[];
+function revealLogicalChange(
+  editor: Monaco.editor.IStandaloneDiffEditor,
+  change: Monaco.editor.ILineChange,
+): void {
+  const originalLine = Math.max(1, change.originalStartLineNumber);
+  const modifiedLine = Math.max(1, change.modifiedStartLineNumber);
+  const originalEditor = editor.getOriginalEditor();
+  const modifiedEditor = editor.getModifiedEditor();
+
+  originalEditor.revealLineInCenter(originalLine);
+  modifiedEditor.revealLineInCenter(modifiedLine);
+  modifiedEditor.setPosition({ column: 1, lineNumber: modifiedLine });
+  modifiedEditor.focus();
 }
 
-function PlainGitDiff({
-  activeChangeIndex,
-  changeRowRefs,
-  fontFamily,
-  fontLigatures,
-  fontSize,
-  rows,
-}: PlainGitDiffProps) {
-  let changeIndex = -1;
+function gitDiffModelPaths(change: GitChangedFile | null): { modified: string; original: string } {
+  if (!change) {
+    return {
+      modified: "codevo-git-diff:///empty/modified",
+      original: "codevo-git-diff:///empty/original",
+    };
+  }
 
-  return (
-    <div
-      className="git-plain-diff"
-      data-testid="plain-git-diff"
-      style={{
-        fontFamily,
-        fontSize,
-        fontVariantLigatures: fontLigatures ? "normal" : "none",
-      }}
-    >
-      {rows.length === 0 ? (
-        <div className="git-plain-diff-empty">No differences.</div>
-      ) : (
-        <table>
-          <tbody>
-            {rows.map((row, index) => {
-              if (row.kind === "header") {
-                return (
-                  <tr className="git-plain-diff-row header" key={index}>
-                    <td className="git-plain-diff-line" />
-                    <td className="git-plain-diff-line" />
-                    <td className="git-plain-diff-code" colSpan={2}>
-                      {row.text}
-                    </td>
-                  </tr>
-                );
-              }
+  const scope = encodeURIComponent(change.path || change.relativePath);
+  const surface = change.isStaged ? "staged" : "worktree";
+  return {
+    modified: `codevo-git-diff:///${surface}/modified/${scope}`,
+    original: `codevo-git-diff:///${surface}/original/${scope}`,
+  };
+}
 
-              if (row.kind === "metadata") {
-                return (
-                  <tr className="git-plain-diff-row metadata" key={index}>
-                    <td className="git-plain-diff-line" />
-                    <td className="git-plain-diff-line" />
-                    <td className="git-plain-diff-marker" />
-                    <td className="git-plain-diff-code">{row.text}</td>
-                  </tr>
-                );
-              }
+function diffFallbackReason(
+  diff: GitFileDiff | null,
+  originalContent: string,
+  modifiedContent: string,
+): DiffFallbackReason {
+  if (!diff) {
+    return null;
+  }
 
-              const changed = isChangedPlainDiffRow(row);
-              if (changed) {
-                changeIndex += 1;
-              }
+  if (diff.previewUnavailableReason) {
+    return diff.previewUnavailableReason;
+  }
 
-              return (
-                <tr
-                  className={`git-plain-diff-row ${row.kind}${
-                    changed && changeIndex === activeChangeIndex ? " active" : ""
-                  }`}
-                  key={index}
-                  ref={
-                    changed
-                      ? (element) => {
-                          changeRowRefs.current[changeIndex] = element;
-                        }
-                      : undefined
-                  }
-                >
-                  <td className="git-plain-diff-line">
-                    {row.originalLineNumber ?? ""}
-                  </td>
-                  <td className="git-plain-diff-line">
-                    {row.modifiedLineNumber ?? ""}
-                  </td>
-                  <td className="git-plain-diff-marker">{row.marker}</td>
-                  <td className="git-plain-diff-code">
-                    {row.text.length > 0 ? row.text : " "}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
+  if (originalContent.includes("\0") || modifiedContent.includes("\0")) {
+    return "binary";
+  }
+
+  const combinedLength = originalContent.length + modifiedContent.length;
+  if (combinedLength > MAX_DIFF_CONTENT_BYTES) {
+    return "large";
+  }
+
+  const lineCount = countLines(originalContent) + countLines(modifiedContent);
+  if (lineCount > MAX_DIFF_LINE_COUNT) {
+    return "large";
+  }
+
+  if (originalContent === modifiedContent) {
+    if (shouldRenderMetadataOnlyDiff(diff.change)) {
+      return "metadata";
+    }
+
+    return "unchanged";
+  }
+
+  return null;
+}
+
+function countLines(content: string): number {
+  if (content.length === 0) {
+    return 0;
+  }
+
+  let count = 1;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) === 10) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function safeDiffContent(content: unknown): string {
+  return typeof content === "string" ? content : "";
 }
 
 function hunkSummary(hunk: GitDiffHunk): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
-
   const lines = Array.isArray(hunk.lines) ? hunk.lines : [];
 
   for (const line of lines) {
@@ -453,7 +562,6 @@ function normalizeGitDiffHunks(loaded: unknown): GitDiffHunk[] {
   }
 
   const hunks: GitDiffHunk[] = [];
-
   for (const hunk of loaded) {
     if (!isRenderableGitDiffHunk(hunk)) {
       continue;
@@ -463,9 +571,7 @@ function normalizeGitDiffHunks(loaded: unknown): GitDiffHunk[] {
       header: hunk.header,
       index: hunk.index,
       isStaged: hunk.isStaged,
-      lines: hunk.lines.filter(
-        (line): line is string => typeof line === "string",
-      ),
+      lines: hunk.lines.filter((line): line is string => typeof line === "string"),
     });
   }
 
@@ -478,151 +584,14 @@ function isRenderableGitDiffHunk(hunk: unknown): hunk is GitDiffHunk {
   }
 
   const candidate = hunk as Partial<GitDiffHunk>;
-  const index = candidate.index;
-
   return (
     typeof candidate.header === "string" &&
-    typeof index === "number" &&
-    Number.isInteger(index) &&
-    index >= 0 &&
+    typeof candidate.index === "number" &&
+    Number.isInteger(candidate.index) &&
+    candidate.index >= 0 &&
     Array.isArray(candidate.lines) &&
     typeof candidate.isStaged === "boolean"
   );
-}
-
-type DiffNavigationTarget = "next" | "previous";
-
-type PlainDiffRow =
-  | { kind: "header"; text: string }
-  | { kind: "metadata"; text: string }
-  | {
-      kind: "context" | "added" | "removed";
-      marker: " " | "+" | "-";
-      modifiedLineNumber: number | null;
-      originalLineNumber: number | null;
-      text: string;
-    };
-
-function isChangedPlainDiffRow(row: PlainDiffRow): boolean {
-  return row.kind === "added" || row.kind === "removed";
-}
-
-function buildPlainDiffRows(
-  originalContent: string,
-  modifiedContent: string,
-  change?: GitChangedFile,
-): PlainDiffRow[] {
-  const originalLines = splitDiffLines(originalContent ?? "");
-  const modifiedLines = splitDiffLines(modifiedContent ?? "");
-
-  if (linesEqual(originalLines, modifiedLines)) {
-    const metadataRows = buildMetadataOnlyDiffRows(change);
-    if (metadataRows.length > 0) {
-      return metadataRows;
-    }
-
-    return [];
-  }
-
-  let prefixLength = 0;
-  while (
-    prefixLength < originalLines.length &&
-    prefixLength < modifiedLines.length &&
-    originalLines[prefixLength] === modifiedLines[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  let suffixLength = 0;
-  while (
-    suffixLength < originalLines.length - prefixLength &&
-    suffixLength < modifiedLines.length - prefixLength &&
-    originalLines[originalLines.length - 1 - suffixLength] ===
-      modifiedLines[modifiedLines.length - 1 - suffixLength]
-  ) {
-    suffixLength += 1;
-  }
-
-  const context = 3;
-  const originalChangeEnd = originalLines.length - suffixLength;
-  const modifiedChangeEnd = modifiedLines.length - suffixLength;
-  const originalHunkStart = Math.max(0, prefixLength - context);
-  const modifiedHunkStart = Math.max(0, prefixLength - context);
-  const originalHunkEnd = Math.min(
-    originalLines.length,
-    originalChangeEnd + context,
-  );
-  const modifiedHunkEnd = Math.min(
-    modifiedLines.length,
-    modifiedChangeEnd + context,
-  );
-  const rows: PlainDiffRow[] = [
-    {
-      kind: "header",
-      text: `@@ -${formatRange(
-        originalHunkStart + 1,
-        originalHunkEnd - originalHunkStart,
-      )} +${formatRange(
-        modifiedHunkStart + 1,
-        modifiedHunkEnd - modifiedHunkStart,
-      )} @@`,
-    },
-  ];
-
-  for (let index = originalHunkStart; index < prefixLength; index += 1) {
-    rows.push({
-      kind: "context",
-      marker: " ",
-      modifiedLineNumber: index + 1,
-      originalLineNumber: index + 1,
-      text: originalLines[index] ?? "",
-    });
-  }
-
-  for (let index = prefixLength; index < originalChangeEnd; index += 1) {
-    rows.push({
-      kind: "removed",
-      marker: "-",
-      modifiedLineNumber: null,
-      originalLineNumber: index + 1,
-      text: originalLines[index] ?? "",
-    });
-  }
-
-  for (let index = prefixLength; index < modifiedChangeEnd; index += 1) {
-    rows.push({
-      kind: "added",
-      marker: "+",
-      modifiedLineNumber: index + 1,
-      originalLineNumber: null,
-      text: modifiedLines[index] ?? "",
-    });
-  }
-
-  for (let index = originalChangeEnd; index < originalHunkEnd; index += 1) {
-    const modifiedLineNumber =
-      modifiedChangeEnd + (index - originalChangeEnd) + 1;
-    rows.push({
-      kind: "context",
-      marker: " ",
-      modifiedLineNumber,
-      originalLineNumber: index + 1,
-      text: originalLines[index] ?? "",
-    });
-  }
-
-  return rows;
-}
-
-function buildMetadataOnlyDiffRows(change?: GitChangedFile): PlainDiffRow[] {
-  if (!change || !shouldRenderMetadataOnlyDiff(change)) {
-    return [];
-  }
-
-  return [
-    { kind: "header", text: "@@ Git file metadata @@" },
-    { kind: "metadata", text: metadataOnlyDiffText(change) },
-  ];
 }
 
 function shouldRenderMetadataOnlyDiff(change: GitChangedFile): boolean {
@@ -656,34 +625,4 @@ function metadataOnlyDiffStatusLabel(status: GitChangeStatus): string {
   }
 
   return "Changed";
-}
-
-function splitDiffLines(content: string): string[] {
-  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (normalized.length === 0) {
-    return [];
-  }
-
-  const lines = normalized.split("\n");
-
-  if (lines.length > 1 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-
-  return lines;
-}
-
-function linesEqual(left: string[], right: string[]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((line, index) => line === right[index])
-  );
-}
-
-function formatRange(startLine: number, lineCount: number): string {
-  if (lineCount <= 1) {
-    return String(startLine);
-  }
-
-  return `${startLine},${lineCount}`;
 }

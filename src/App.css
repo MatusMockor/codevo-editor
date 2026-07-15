@@ -1811,79 +1811,48 @@ button {
   color: #ef7373;
 }
 
-.git-plain-diff {
+.git-diff-pane-labels {
+  display: grid;
+  min-height: 27px;
+  flex: 0 0 auto;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel-soft);
+  color: var(--color-text-subtle);
+  font-size: 11px;
+}
+
+.git-diff-pane-labels span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.git-diff-pane-labels span + span {
+  border-left: 1px solid var(--color-border);
+}
+
+.git-diff-editor {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
   background: var(--color-editor);
-  color: var(--color-text);
-  line-height: 20px;
-  white-space: pre;
 }
 
-.git-plain-diff table {
-  width: 100%;
-  min-width: max-content;
-  border-collapse: collapse;
-}
-
-.git-plain-diff-row {
-  height: 20px;
-}
-
-.git-plain-diff-row.header {
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  color: var(--color-text-muted);
-}
-
-.git-plain-diff-row.added {
-  background: color-mix(in srgb, #2f9d58 18%, transparent);
-}
-
-.git-plain-diff-row.removed {
-  background: color-mix(in srgb, #d44d4d 17%, transparent);
-}
-
-.git-plain-diff-row.active {
-  outline: 1px solid var(--color-accent);
-  outline-offset: -1px;
-}
-
-.git-plain-diff-line {
-  width: 52px;
-  user-select: none;
-  color: var(--color-text-muted);
-  padding: 0 10px;
-  text-align: right;
-}
-
-.git-plain-diff-marker {
-  width: 18px;
-  user-select: none;
-  color: var(--color-text-muted);
-  padding: 0 4px;
+.git-diff-fallback {
+  display: grid;
+  height: 100%;
+  align-content: center;
+  gap: 6px;
+  place-items: center;
+  color: var(--color-text-subtle);
+  padding: 24px;
   text-align: center;
 }
 
-.git-plain-diff-code {
-  padding: 0 14px 0 2px;
-}
-
-.git-plain-diff-row.added .git-plain-diff-marker,
-.git-plain-diff-row.added .git-plain-diff-code {
-  color: #9ee6b2;
-}
-
-.git-plain-diff-row.removed .git-plain-diff-marker,
-.git-plain-diff-row.removed .git-plain-diff-code {
-  color: #f09a9a;
-}
-
-.git-plain-diff-empty {
-  display: grid;
-  height: 100%;
-  place-items: center;
-  color: var(--color-text-subtle);
+.git-diff-fallback strong {
+  color: var(--color-text);
+  font-size: 13px;
 }
 
 .tree-chevron {

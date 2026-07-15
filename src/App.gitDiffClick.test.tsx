@@ -7,9 +7,53 @@ import type { GitChangedFile, GitFileDiff } from "./domain/git";
 
 const appGitDiffClickMocks = vi.hoisted(() => ({
   changes: [] as GitChangedFile[],
+  diffEditorProps: [] as Array<Record<string, unknown>>,
   diffErrorMessage: null as string | null,
   loadGitFileHunks: vi.fn(),
 }));
+
+vi.mock("@monaco-editor/react", async () => {
+  const React = await import("react");
+
+  return {
+    default: function EditorMock(props: Record<string, unknown>) {
+      return (
+        <div data-testid="monaco-editor">
+          {String(props.value ?? props.defaultValue ?? "")}
+        </div>
+      );
+    },
+    DiffEditor: function DiffEditorMock(props: Record<string, unknown>) {
+      appGitDiffClickMocks.diffEditorProps.push(props);
+
+      React.useEffect(() => {
+        const onMount = props.onMount as
+          | ((editor: Record<string, unknown>) => void)
+          | undefined;
+        onMount?.({
+          getLineChanges: () => [],
+          onDidUpdateDiff: () => ({ dispose: vi.fn() }),
+        });
+      }, []);
+
+      return (
+        <div
+          data-language={String(props.language ?? "plaintext")}
+          data-modified-model-path={String(props.modifiedModelPath ?? "")}
+          data-original-model-path={String(props.originalModelPath ?? "")}
+          data-testid="monaco-diff-editor"
+        >
+          <pre data-testid="monaco-diff-original">
+            {String(props.original ?? "")}
+          </pre>
+          <pre data-testid="monaco-diff-modified">
+            {String(props.modified ?? "")}
+          </pre>
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("./application/useWorkbenchController", async () => {
   const React = await import("react");
@@ -164,6 +208,7 @@ describe("App Git diff click path", () => {
     act(() => root.unmount());
     host.remove();
     appGitDiffClickMocks.changes = [];
+    appGitDiffClickMocks.diffEditorProps.length = 0;
     appGitDiffClickMocks.diffErrorMessage = null;
     appGitDiffClickMocks.loadGitFileHunks.mockReset();
     vi.restoreAllMocks();
@@ -173,11 +218,13 @@ describe("App Git diff click path", () => {
     {
       change: gitChange("modified", "README.md"),
       expectedText: "Updated docs",
+      expectedSurface: "worktree",
       stagedArgument: false,
     },
     {
       change: gitChange("modified", "src/staged.ts", { isStaged: true }),
       expectedText: "const value = 2;",
+      expectedSurface: "staged",
       stagedArgument: true,
     },
     {
@@ -185,11 +232,12 @@ describe("App Git diff click path", () => {
         isUnversioned: true,
       }),
       expectedText: "Write the QA notes",
+      expectedSurface: "worktree",
       stagedArgument: null,
     },
   ])(
     "clicks a $change.status Git row and renders a nonblank diff",
-    async ({ change, expectedText, stagedArgument }) => {
+    async ({ change, expectedSurface, expectedText, stagedArgument }) => {
       appGitDiffClickMocks.changes = [change];
 
       await act(async () => {
@@ -202,17 +250,30 @@ describe("App Git diff click path", () => {
 
       await act(async () => {
         changeButton?.click();
-        await Promise.resolve();
-        await Promise.resolve();
       });
+      await waitForText(host, expectedText);
 
       expect(host.textContent).toContain(fileName(change.relativePath));
       expect(host.textContent).toContain(
         `Diff: ${fileName(change.relativePath)}`,
       );
-      expect(host.textContent).toContain("@@");
-      expect(host.textContent).toContain(expectedText);
-      expect(host.querySelector('[data-testid="plain-git-diff"]')).not.toBeNull();
+      const diffEditor = host.querySelector<HTMLElement>(
+        '[data-testid="monaco-diff-editor"]',
+      );
+      const modifiedPane = host.querySelector<HTMLElement>(
+        '[data-testid="monaco-diff-modified"]',
+      );
+      expect(diffEditor).not.toBeNull();
+      expect(modifiedPane?.textContent).toContain(expectedText);
+      expect(modifiedPane?.textContent?.trim()).not.toBe("");
+      expect(diffEditor?.dataset.language).toBe(gitDiff(change).language);
+      expect(diffEditor?.dataset.originalModelPath).toContain(
+        `/${expectedSurface}/original/`,
+      );
+      expect(diffEditor?.dataset.modifiedModelPath).toContain(
+        `/${expectedSurface}/modified/`,
+      );
+      expect(host.textContent).not.toContain("Loading diff");
       expect(host.innerHTML).not.toBe("");
 
       if (stagedArgument === null) {
@@ -282,6 +343,7 @@ function createWorkbench(overrides: Record<string, unknown>) {
       fileHistoryPanelOpen: false,
       fileStructureOpen: false,
       gitBranchPanelOpen: false,
+      gitAmendEnabled: false,
       gitCommitMessage: "",
       gitLoading: false,
       gitOperationLoading: false,
@@ -402,4 +464,21 @@ function changeRowButton(
 function fileName(relativePath: string): string {
   const parts = relativePath.split("/");
   return parts[parts.length - 1] ?? relativePath;
+}
+
+async function waitForText(
+  container: ParentNode,
+  expectedText: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (container.textContent?.includes(expectedText)) {
+      return;
+    }
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  throw new Error(`Timed out waiting for rendered text: ${expectedText}`);
 }

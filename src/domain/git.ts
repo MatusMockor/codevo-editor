@@ -104,6 +104,7 @@ export interface GitFileDiff {
   language: string;
   modifiedContent: string;
   originalContent: string;
+  previewUnavailableReason?: "binary" | "large" | null;
 }
 
 /**
