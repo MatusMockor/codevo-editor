@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CommandRegistry,
   executeCommand,
+  executeCommandAndWait,
   type CommandContext,
 } from "./commandRegistry";
 
@@ -168,6 +169,85 @@ describe("CommandRegistry", () => {
 
     expect(() => executeCommand(registry, "workspace.fail", context)).toThrow(
       "command failed",
+    );
+  });
+
+  it("waits for asynchronous commands before reporting execution", async () => {
+    let resolveRun: (() => void) | undefined;
+    const command = {
+      id: "workspace.refresh",
+      title: "Refresh Workspace",
+      category: "Workspace",
+      isEnabled: () => true,
+      run: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveRun = resolve;
+          }),
+      ),
+    };
+    const execution = executeCommandAndWait(command, context);
+    let settled = false;
+    void execution.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+
+    expect(command.run).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    resolveRun?.();
+
+    await expect(execution).resolves.toBe("executed");
+  });
+
+  it("rechecks availability and does not run a disabled command", async () => {
+    const run = vi.fn();
+    const command = {
+      id: "editor.save",
+      title: "Save File",
+      category: "Editor",
+      isEnabled: (currentContext: CommandContext) =>
+        currentContext.hasActiveDocument,
+      run,
+    };
+
+    await expect(executeCommandAndWait(command, context)).resolves.toBe(
+      "disabled",
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("rejects when a command throws synchronously", async () => {
+    const command = {
+      id: "workspace.fail",
+      title: "Fail",
+      category: "Workspace",
+      isEnabled: () => true,
+      run: () => {
+        throw new Error("sync failure");
+      },
+    };
+
+    await expect(executeCommandAndWait(command, context)).rejects.toThrow(
+      "sync failure",
+    );
+  });
+
+  it("rejects when an asynchronous command rejects", async () => {
+    const command = {
+      id: "workspace.fail-async",
+      title: "Fail Async",
+      category: "Workspace",
+      isEnabled: () => true,
+      run: async () => {
+        throw new Error("async failure");
+      },
+    };
+
+    await expect(executeCommandAndWait(command, context)).rejects.toThrow(
+      "async failure",
     );
   });
 });

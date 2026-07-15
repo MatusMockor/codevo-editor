@@ -2,7 +2,11 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Command, CommandContext } from "../application/commandRegistry";
+import {
+  executeCommandAndWait,
+  type Command,
+  type CommandContext,
+} from "../application/commandRegistry";
 import { detectKeymapPlatform } from "../domain/keymap";
 import type { KeymapPlatform } from "../domain/keymap";
 
@@ -17,9 +21,10 @@ interface WindowChromeProps {
 type WindowMenuKey = "edit" | "file" | "view";
 
 interface WindowMenuItem {
+  command?: Command;
   disabled?: boolean;
   label: string;
-  onSelect(): void | Promise<void>;
+  onSelect?(): void | Promise<void>;
   separatorBefore?: boolean;
   shortcut?: string;
 }
@@ -33,6 +38,7 @@ export function WindowChrome({
 }: WindowChromeProps) {
   const [openMenu, setOpenMenu] = useState<WindowMenuKey | null>(null);
   const chromeRef = useRef<HTMLElement | null>(null);
+  const pendingCommandIdsRef = useRef(new Set<string>());
   const platform = detectKeymapPlatform();
   const commandsById = useMemo(
     () => new Map(commands.map((command) => [command.id, command])),
@@ -94,11 +100,31 @@ export function WindowChrome({
     }
 
     setOpenMenu(null);
+    let pendingCommandId: string | undefined;
 
     try {
+      if (item.command) {
+        if (pendingCommandIdsRef.current.has(item.command.id)) {
+          return;
+        }
+
+        pendingCommandId = item.command.id;
+        pendingCommandIdsRef.current.add(pendingCommandId);
+        await executeCommandAndWait(item.command, commandContext);
+        return;
+      }
+
+      if (!item.onSelect) {
+        return;
+      }
+
       await item.onSelect();
     } catch (error) {
       onCommandError(error);
+    } finally {
+      if (pendingCommandId !== undefined) {
+        pendingCommandIdsRef.current.delete(pendingCommandId);
+      }
     }
   }
 
@@ -351,9 +377,9 @@ function commandMenuItem(
   const command = commandsById.get(id);
 
   return {
+    command,
     disabled: !command || !command.isEnabled(context),
     label: command?.title ?? fallbackLabel,
-    onSelect: () => command?.run(),
     separatorBefore,
     shortcut: command?.shortcut,
   };

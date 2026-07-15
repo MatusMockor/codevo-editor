@@ -4,7 +4,9 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { FileTree } from "../components/FileTree";
+import type { SearchEverywhereActionItem } from "../domain/searchEverywhere";
 import type { FileEntry, WorkspaceFileGateway } from "../domain/workspace";
+import type { CommandContext } from "./commandRegistry";
 import {
   useWorkbenchNavigation,
   type WorkbenchNavigation,
@@ -12,6 +14,11 @@ import {
 } from "./useWorkbenchNavigation";
 
 const ROOT = "/workspace";
+const commandContext: CommandContext = {
+  activeDocumentDirty: false,
+  hasActiveDocument: false,
+  hasWorkspace: true,
+};
 
 function workspaceFiles(): WorkspaceFileGateway {
   return {
@@ -26,11 +33,14 @@ function workspaceFiles(): WorkspaceFileGateway {
   };
 }
 
-function renderNavigation() {
+function renderNavigation(
+  overrides: Partial<WorkbenchNavigationDependencies> = {},
+) {
   const openFile = vi.fn(async () => true);
   const deps: WorkbenchNavigationDependencies = {
     activeDocumentRef: { current: null },
     activeEditorPositionRef: { current: null },
+    commandContextRef: { current: commandContext },
     currentNavigationLocation: () => null,
     currentWorkspaceRootRef: { current: ROOT },
     documentsRef: { current: {} },
@@ -47,6 +57,7 @@ function renderNavigation() {
     setSearchEverywhereOpen: vi.fn(),
     setWorkspaceSymbolsOpen: vi.fn(),
     workspaceFiles: workspaceFiles(),
+    ...overrides,
   };
   let api: WorkbenchNavigation | null = null;
   const host = document.createElement("div");
@@ -63,6 +74,181 @@ function renderNavigation() {
 
   return { api: () => api as WorkbenchNavigation, deps, host, openFile, root };
 }
+
+function actionItem(
+  run: SearchEverywhereActionItem["command"]["run"],
+  isEnabled: SearchEverywhereActionItem["command"]["isEnabled"] = () => true,
+  commandId = "test.action",
+): SearchEverywhereActionItem {
+  return {
+    id: `action:0:${commandId}`,
+    kind: "action",
+    label: "Test Action",
+    detail: "Test",
+    shortcut: null,
+    command: {
+      id: commandId,
+      title: "Test Action",
+      category: "Test",
+      isEnabled,
+      run,
+    },
+  };
+}
+
+describe("useWorkbenchNavigation Search Everywhere actions", () => {
+  it("closes first, invokes once, and waits for command completion", async () => {
+    const events: string[] = [];
+    let resolveRun: (() => void) | undefined;
+    const setSearchEverywhereOpen = vi.fn(() => {
+      events.push("closed");
+    });
+    const harness = renderNavigation({ setSearchEverywhereOpen });
+    const run = vi.fn(() => {
+      events.push("run");
+      return new Promise<void>((resolve) => {
+        resolveRun = resolve;
+      });
+    });
+    let activationSettled = false;
+
+    await act(async () => {
+      const activation = harness.api().activateSearchEverywhereItem(
+        actionItem(run),
+      );
+      void activation.then(() => {
+        activationSettled = true;
+      });
+      await Promise.resolve();
+
+      expect(events).toEqual(["closed", "run"]);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(activationSettled).toBe(false);
+
+      resolveRun?.();
+      await activation;
+    });
+
+    expect(activationSettled).toBe(true);
+    harness.root.unmount();
+  });
+
+  it("ignores a reopened duplicate while pending but allows another command", async () => {
+    let resolveRun: (() => void) | undefined;
+    const harness = renderNavigation();
+    const run = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRun = resolve;
+        }),
+    );
+    const otherRun = vi.fn();
+    const item = actionItem(run);
+
+    await act(async () => {
+      const firstActivation = harness.api().activateSearchEverywhereItem(item);
+      harness.deps.setSearchEverywhereOpen(true);
+      const duplicateActivation =
+        harness.api().activateSearchEverywhereItem(item);
+      const otherActivation = harness.api().activateSearchEverywhereItem(
+        actionItem(otherRun, () => true, "test.other-action"),
+      );
+
+      await duplicateActivation;
+      await otherActivation;
+
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(otherRun).toHaveBeenCalledTimes(1);
+      expect(harness.deps.setSearchEverywhereOpen).toHaveBeenLastCalledWith(
+        false,
+      );
+
+      resolveRun?.();
+      await firstActivation;
+    });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    harness.root.unmount();
+  });
+
+  it("releases the pending command gate after rejection", async () => {
+    let rejectRun: ((error: Error) => void) | undefined;
+    const harness = renderNavigation();
+    const run = vi
+      .fn<SearchEverywhereActionItem["command"]["run"]>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectRun = reject;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const item = actionItem(run);
+
+    await act(async () => {
+      const firstActivation = harness.api().activateSearchEverywhereItem(item);
+      await harness.api().activateSearchEverywhereItem(item);
+
+      expect(run).toHaveBeenCalledTimes(1);
+
+      rejectRun?.(new Error("command failed"));
+      await firstActivation;
+      await harness.api().activateSearchEverywhereItem(item);
+    });
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(harness.deps.reportError).toHaveBeenCalledTimes(1);
+    harness.root.unmount();
+  });
+
+  it("rechecks the current context and does not fall back when disabled", async () => {
+    const harness = renderNavigation();
+    const run = vi.fn();
+    const isEnabled = vi.fn(
+      (currentContext: CommandContext) => currentContext.hasActiveDocument,
+    );
+    harness.deps.commandContextRef.current = {
+      ...commandContext,
+      hasActiveDocument: false,
+    };
+
+    await act(async () => {
+      await harness.api().activateSearchEverywhereItem(
+        actionItem(run, isEnabled),
+      );
+    });
+
+    expect(isEnabled).toHaveBeenCalledWith(
+      harness.deps.commandContextRef.current,
+    );
+    expect(run).not.toHaveBeenCalled();
+    expect(harness.deps.reportError).not.toHaveBeenCalled();
+    expect(harness.deps.setSearchEverywhereOpen).toHaveBeenCalledWith(false);
+    harness.root.unmount();
+  });
+
+  it.each([
+    ["synchronous", () => {
+      throw new Error("sync failure");
+    }],
+    ["asynchronous", async () => {
+      throw new Error("async failure");
+    }],
+  ])("reports %s command rejection", async (_label, run) => {
+    const harness = renderNavigation();
+
+    await act(async () => {
+      await harness.api().activateSearchEverywhereItem(actionItem(run));
+    });
+
+    expect(harness.deps.reportError).toHaveBeenCalledTimes(1);
+    expect(harness.deps.reportError).toHaveBeenCalledWith(
+      "Command",
+      expect.any(Error),
+    );
+    harness.root.unmount();
+  });
+});
 
 describe("useWorkbenchNavigation PHP read-only boundary", () => {
   it.each(["contextual definition", "indexed fallback"])(

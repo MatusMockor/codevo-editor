@@ -95,6 +95,190 @@ describe("CommandPalette", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("remains open while a command is pending and invokes it exactly once", async () => {
+    let resolveRun: (() => void) | undefined;
+    const run = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRun = resolve;
+        }),
+    );
+    const { onClose } = render({
+      commands: [command("editor.save", "Save File", { run })],
+    });
+    const row = host.querySelector<HTMLButtonElement>(".palette-command");
+
+    act(() => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveRun?.();
+      await Promise.resolve();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a new command after close and reopen without stale success closing it", async () => {
+    let resolveOld: (() => void) | undefined;
+    let resolveNew: (() => void) | undefined;
+    const oldRun = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveOld = resolve;
+        }),
+    );
+    const newRun = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveNew = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+    const onCommandError = vi.fn();
+    const sharedProps = { onClose, onCommandError };
+
+    render({
+      ...sharedProps,
+      commands: [command("editor.old", "Old Command", { run: oldRun })],
+    });
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(".palette-command")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    render({ ...sharedProps, isOpen: false });
+    render({
+      ...sharedProps,
+      commands: [command("editor.new", "New Command", { run: newRun })],
+    });
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(".palette-command")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(oldRun).toHaveBeenCalledTimes(1);
+    expect(newRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveOld?.();
+      await Promise.resolve();
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveNew?.();
+      await Promise.resolve();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onCommandError).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale rejection without clearing the reopened surface guard", async () => {
+    let rejectOld: ((error: unknown) => void) | undefined;
+    let resolveNew: (() => void) | undefined;
+    const oldRun = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectOld = reject;
+        }),
+    );
+    const newRun = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveNew = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+    const onCommandError = vi.fn();
+    const sharedProps = { onClose, onCommandError };
+
+    render({
+      ...sharedProps,
+      commands: [command("editor.old", "Old Command", { run: oldRun })],
+    });
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>(".palette-command")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    render({ ...sharedProps, isOpen: false });
+    render({
+      ...sharedProps,
+      commands: [command("editor.new", "New Command", { run: newRun })],
+    });
+    const newRow = host.querySelector<HTMLButtonElement>(".palette-command");
+    act(() => {
+      newRow?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await act(async () => {
+      rejectOld?.(new Error("Old command failed"));
+      await Promise.resolve();
+    });
+    act(() => {
+      newRow?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(newRun).toHaveBeenCalledTimes(1);
+    expect(onCommandError).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveNew?.();
+      await Promise.resolve();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not run or close for a disabled command", async () => {
+    const run = vi.fn();
+    const { onClose } = render({
+      commands: [
+        command("editor.save", "Save File", {
+          isEnabled: () => false,
+          run,
+        }),
+      ],
+    });
+    const row = host.querySelector<HTMLButtonElement>(".palette-command");
+
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("reports a rejected command and remains open", async () => {
+    const error = new Error("Save failed");
+    const run = vi.fn().mockRejectedValue(error);
+    const { onClose, onCommandError } = render({
+      commands: [command("editor.save", "Save File", { run })],
+    });
+    const row = host.querySelector<HTMLButtonElement>(".palette-command");
+
+    await act(async () => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(onCommandError).toHaveBeenCalledWith(error);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("filters commands by query", () => {
     const { onClose } = render();
     const field = host.querySelector<HTMLInputElement>(".palette-search input");

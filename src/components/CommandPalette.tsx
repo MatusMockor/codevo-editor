@@ -1,6 +1,10 @@
 import { Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import type { Command, CommandContext } from "../application/commandRegistry";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  executeCommandAndWait,
+  type Command,
+  type CommandContext,
+} from "../application/commandRegistry";
 import { PaletteFooter } from "./PaletteFooter";
 
 interface CommandPaletteProps {
@@ -20,8 +24,13 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const surfaceActivationRef = useRef<object>({});
+  const pendingCommandRef = useRef<object | null>(null);
 
   useEffect(() => {
+    surfaceActivationRef.current = {};
+    pendingCommandRef.current = null;
+
     if (!isOpen) {
       setQuery("");
       setActiveIndex(0);
@@ -53,15 +62,35 @@ export function CommandPalette({
   const activeCommand = filteredCommands[activeIndex];
 
   const runCommand = async (command: Command) => {
-    if (!command.isEnabled(context)) {
+    if (pendingCommandRef.current) {
       return;
     }
 
+    const surfaceActivation = surfaceActivationRef.current;
+    const commandActivation = {};
+    pendingCommandRef.current = commandActivation;
+
     try {
-      await command.run();
-      onClose();
+      const outcome = await executeCommandAndWait(command, context);
+
+      if (
+        outcome === "executed" &&
+        surfaceActivationRef.current === surfaceActivation &&
+        pendingCommandRef.current === commandActivation
+      ) {
+        onClose();
+      }
     } catch (error) {
-      onCommandError(error);
+      if (
+        surfaceActivationRef.current === surfaceActivation &&
+        pendingCommandRef.current === commandActivation
+      ) {
+        onCommandError(error);
+      }
+    } finally {
+      if (pendingCommandRef.current === commandActivation) {
+        pendingCommandRef.current = null;
+      }
     }
   };
 

@@ -1,4 +1,8 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useRef, type MutableRefObject } from "react";
+import {
+  executeCommandAndWait,
+  type CommandContext,
+} from "./commandRegistry";
 import type { WorkbenchNotice } from "./workbenchNotice";
 import { editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
 import {
@@ -38,6 +42,7 @@ interface OpenFileOptions {
 export interface WorkbenchNavigationDependencies {
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
+  commandContextRef: MutableRefObject<CommandContext>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
   noticesRef: MutableRefObject<WorkbenchNotice[]>;
@@ -94,6 +99,7 @@ export function useWorkbenchNavigation(
   const {
     activeDocumentRef,
     activeEditorPositionRef,
+    commandContextRef,
     currentWorkspaceRootRef,
     documentsRef,
     noticesRef,
@@ -111,6 +117,7 @@ export function useWorkbenchNavigation(
     setSearchEverywhereOpen,
     setWorkspaceSymbolsOpen,
   } = dependencies;
+  const pendingSearchEverywhereCommandIdsRef = useRef(new Set<string>());
 
   const openSearchResult = useCallback(
     async (result: FileSearchResult) => {
@@ -372,10 +379,18 @@ export function useWorkbenchNavigation(
       if (item.kind === "action") {
         setSearchEverywhereOpen(false);
 
+        if (pendingSearchEverywhereCommandIdsRef.current.has(item.command.id)) {
+          return;
+        }
+
+        pendingSearchEverywhereCommandIdsRef.current.add(item.command.id);
+
         try {
-          await item.command.run();
+          await executeCommandAndWait(item.command, commandContextRef.current);
         } catch (error) {
           reportError("Command", error);
+        } finally {
+          pendingSearchEverywhereCommandIdsRef.current.delete(item.command.id);
         }
 
         return;
@@ -412,7 +427,7 @@ export function useWorkbenchNavigation(
         );
       }
     },
-    [openFile, reportError],
+    [commandContextRef, openFile, reportError, setSearchEverywhereOpen],
   );
 
   return {

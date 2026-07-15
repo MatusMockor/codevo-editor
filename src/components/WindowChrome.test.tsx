@@ -303,6 +303,265 @@ describe("WindowChrome", () => {
     expect(undoRun).not.toHaveBeenCalled();
   });
 
+  it("rechecks command enablement when a menu item is selected", async () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Mozilla/5.0 X11 Linux x86_64",
+    });
+    let enabled = true;
+    const undoRun = vi.fn();
+    const reportCommandError = vi.fn();
+    const commands: Command[] = [
+      {
+        category: "Editor",
+        id: "edit.undo",
+        isEnabled: () => enabled,
+        run: undoRun,
+        title: "Undo",
+      },
+    ];
+
+    await act(async () => {
+      root.render(
+        <WindowChrome
+          appTitle="Codevo Editor"
+          commandContext={commandContext}
+          commands={commands}
+          onCommandError={reportCommandError}
+          onQuitApplication={vi.fn()}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonWithText(host, "Edit").click();
+    });
+    enabled = false;
+    await act(async () => {
+      buttonWithText(host, "Undo").click();
+    });
+
+    expect(host.querySelector(".window-menu-popover")).toBeNull();
+    expect(undoRun).not.toHaveBeenCalled();
+    expect(reportCommandError).not.toHaveBeenCalled();
+  });
+
+  it("closes the menu before awaiting a command and reports async rejection", async () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Mozilla/5.0 X11 Linux x86_64",
+    });
+    const error = new Error("Async command failed");
+    let rejectCommand: (error: Error) => void = () => undefined;
+    const run = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCommand = reject;
+        }),
+    );
+    const reportCommandError = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <WindowChrome
+          appTitle="Codevo Editor"
+          commandContext={commandContext}
+          commands={[command("editor.closeTab", "Close", run)]}
+          onCommandError={reportCommandError}
+          onQuitApplication={vi.fn()}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    act(() => {
+      buttonWithText(host, "Close").click();
+    });
+
+    expect(host.querySelector(".window-menu-popover")).toBeNull();
+    expect(run).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      rejectCommand(error);
+      await Promise.resolve();
+    });
+
+    expect(reportCommandError).toHaveBeenCalledOnce();
+    expect(reportCommandError).toHaveBeenCalledWith(error);
+  });
+
+  it("reports synchronous command rejection without invoking twice", async () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Mozilla/5.0 X11 Linux x86_64",
+    });
+    const error = new Error("Sync command failed");
+    const run = vi.fn(() => {
+      throw error;
+    });
+    const reportCommandError = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <WindowChrome
+          appTitle="Codevo Editor"
+          commandContext={commandContext}
+          commands={[command("editor.closeTab", "Close", run)]}
+          onCommandError={reportCommandError}
+          onQuitApplication={vi.fn()}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Close").click();
+      await Promise.resolve();
+    });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(reportCommandError).toHaveBeenCalledOnce();
+    expect(reportCommandError).toHaveBeenCalledWith(error);
+  });
+
+  it("ignores a reopened duplicate while allowing an unrelated command", async () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Mozilla/5.0 X11 Linux x86_64",
+    });
+    const closePending = deferred();
+    const closeRun = vi.fn(() => closePending.promise);
+    const saveRun = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <WindowChrome
+          appTitle="Codevo Editor"
+          commandContext={commandContext}
+          commands={[
+            command("editor.closeTab", "Close", closeRun),
+            command("editor.save", "Save", saveRun),
+          ]}
+          onCommandError={vi.fn()}
+          onQuitApplication={vi.fn()}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    act(() => {
+      buttonWithText(host, "Close").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    act(() => {
+      buttonWithText(host, "Close").click();
+    });
+
+    expect(closeRun).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Save").click();
+    });
+
+    expect(saveRun).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    await act(async () => {
+      closePending.resolve();
+      await closePending.promise;
+    });
+
+    expect(host.querySelector(".window-menu-popover")).not.toBeNull();
+    expect(closeRun).toHaveBeenCalledOnce();
+  });
+
+  it("releases the pending command gate after success and rejection", async () => {
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      userAgent: "Mozilla/5.0 X11 Linux x86_64",
+    });
+    const firstRun = deferred();
+    const secondRun = deferred();
+    const thirdRun = deferred();
+    const error = new Error("Deferred command failed");
+    const run = vi
+      .fn<() => Promise<void>>()
+      .mockReturnValueOnce(firstRun.promise)
+      .mockReturnValueOnce(secondRun.promise)
+      .mockReturnValueOnce(thirdRun.promise);
+    const reportCommandError = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <WindowChrome
+          appTitle="Codevo Editor"
+          commandContext={commandContext}
+          commands={[command("editor.closeTab", "Close", run)]}
+          onCommandError={reportCommandError}
+          onQuitApplication={vi.fn()}
+        />,
+      );
+    });
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    act(() => {
+      buttonWithText(host, "Close").click();
+    });
+    await act(async () => {
+      firstRun.resolve();
+      await firstRun.promise;
+    });
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    act(() => {
+      buttonWithText(host, "Close").click();
+    });
+
+    expect(run).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      secondRun.reject(error);
+      try {
+        await secondRun.promise;
+      } catch {
+        // The component reports the rejection through onCommandError.
+      }
+    });
+
+    expect(reportCommandError).toHaveBeenCalledWith(error);
+
+    await act(async () => {
+      buttonWithText(host, "File").click();
+    });
+    act(() => {
+      buttonWithText(host, "Close").click();
+    });
+
+    expect(run).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      thirdRun.resolve();
+      await thirdRun.promise;
+    });
+  });
+
   it("runs the custom window control actions through Tauri", async () => {
     vi.stubGlobal("navigator", {
       platform: "Linux x86_64",
@@ -439,7 +698,11 @@ function buttonWithText(host: HTMLElement, text: string): HTMLButtonElement {
   return button;
 }
 
-function command(id: string, title: string, run: () => void): Command {
+function command(
+  id: string,
+  title: string,
+  run: () => void | Promise<void>,
+): Command {
   return {
     category: "Test",
     id,
@@ -447,4 +710,15 @@ function command(id: string, title: string, run: () => void): Command {
     run,
     title,
   };
+}
+
+function deferred() {
+  let reject: (error: Error) => void = () => undefined;
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    reject = rejectPromise;
+    resolve = resolvePromise;
+  });
+
+  return { promise, reject, resolve };
 }

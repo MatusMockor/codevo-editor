@@ -15,6 +15,11 @@ export interface Command {
 
 export type CommandExecutionOutcome = "missing" | "disabled" | "executed";
 
+export type AwaitedCommandExecutionOutcome = Exclude<
+  CommandExecutionOutcome,
+  "missing"
+>;
+
 export type CommandExecutionRunner = (
   id: string,
   context?: CommandContext,
@@ -70,5 +75,17 @@ export function executeCommand(
   }
 
   void command.run();
+  return "executed";
+}
+
+export async function executeCommandAndWait(
+  command: Command,
+  context: CommandContext,
+): Promise<AwaitedCommandExecutionOutcome> {
+  if (!command.isEnabled(context)) {
+    return "disabled";
+  }
+
+  await command.run();
   return "executed";
 }

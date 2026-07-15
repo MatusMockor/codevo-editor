@@ -4997,6 +4997,19 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const commandContext = useMemo(
+    () => ({
+      hasWorkspace: Boolean(workspaceRoot),
+      hasActiveDocument: Boolean(activeDocument),
+      activeDocumentDirty: Boolean(
+        activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
+      ),
+    }),
+    [activeDocument, workspaceRoot],
+  );
+  const commandContextRef = useRef(commandContext);
+  commandContextRef.current = commandContext;
+
   const {
     activateSearchEverywhereItem,
     openClassSearchResult,
@@ -5012,6 +5025,7 @@ export function useWorkbenchController(
   } = useWorkbenchNavigation({
     activeDocumentRef,
     activeEditorPositionRef,
+    commandContextRef,
     currentWorkspaceRootRef,
     documentsRef,
     noticesRef,
@@ -7198,17 +7212,6 @@ export function useWorkbenchController(
     zoomEditorFontIn,
     zoomEditorFontOut,
   });
-
-  const commandContext = useMemo(
-    () => ({
-      hasWorkspace: Boolean(workspaceRoot),
-      hasActiveDocument: Boolean(activeDocument),
-      activeDocumentDirty: Boolean(
-        activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
-      ),
-    }),
-    [activeDocument, workspaceRoot],
-  );
 
   const runCommand = useCallback<CommandExecutionRunner>(
     (commandId, context = commandContext) =>
