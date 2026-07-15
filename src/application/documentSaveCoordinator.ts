@@ -1,7 +1,7 @@
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 
-export type DocumentSaveOutcome =
-  | { status: "saved" }
+export type DocumentSaveOutcome<TResult> =
+  | { status: "saved"; result: TResult }
   | { status: "stale" }
   | { status: "disposed" };
 
@@ -17,9 +17,9 @@ export interface DocumentSaveLease {
   isCurrent(): boolean;
 }
 
-export type DocumentSaveOperation = (
+export type DocumentSaveOperation<TResult> = (
   lease: DocumentSaveLease,
-) => Promise<void>;
+) => Promise<TResult>;
 
 export type DocumentSaveInvalidationScope =
   | { kind: "workspace"; rootPath: string }
@@ -31,47 +31,52 @@ export type RunWithDocumentSaveExclusion = <T>(
   operation: () => Promise<T>,
 ) => Promise<T>;
 
-interface PendingSave {
+interface PendingSave<TResult> {
   epoch: number;
-  operation: DocumentSaveOperation;
+  operation: DocumentSaveOperation<TResult>;
   sequence: number;
 }
 
-interface SaveWaiter {
+type SaveExecution<TResult> =
+  | { status: "pending" }
+  | { status: "failed"; error: unknown }
+  | { status: "succeeded"; result: TResult };
+
+interface SaveWaiter<TResult> {
   epoch: number;
-  failure?: unknown;
-  hasFailure: boolean;
+  execution: SaveExecution<TResult>;
   reject: (reason?: unknown) => void;
-  resolve: (outcome: DocumentSaveOutcome) => void;
+  resolve: (outcome: DocumentSaveOutcome<TResult>) => void;
   sequence: number;
   settled: boolean;
+  terminalSequence: number;
 }
 
 interface ActiveSave {
-  promise: Promise<void>;
+  promise: Promise<unknown>;
   sequence: number;
 }
 
-interface SaveLane {
+interface SaveLane<TResult> {
   active: ActiveSave | null;
   epoch: number;
   key: DocumentSaveKey;
   nextSequence: number;
-  pending: PendingSave | null;
-  waiters: SaveWaiter[];
+  pending: PendingSave<TResult> | null;
+  waiters: SaveWaiter<TResult>[];
 }
 
 /** Coordinates save operations without owning document or React state. */
-export class DocumentSaveCoordinator {
+export class DocumentSaveCoordinator<TResult = void> {
   private readonly exclusions = new Set<DocumentSaveInvalidationScope>();
-  private readonly lanes = new Map<string, SaveLane>();
+  private readonly lanes = new Map<string, SaveLane<TResult>>();
   private disposed = false;
   private nextEpoch = 0;
 
   request(
     key: DocumentSaveKey,
-    operation: DocumentSaveOperation,
-  ): Promise<DocumentSaveOutcome> {
+    operation: DocumentSaveOperation<TResult>,
+  ): Promise<DocumentSaveOutcome<TResult>> {
     if (this.disposed) {
       return Promise.resolve({ status: "disposed" });
     }
@@ -95,18 +100,24 @@ export class DocumentSaveCoordinator {
 
     const epoch = lane.epoch;
     const sequence = ++lane.nextSequence;
+    if (lane.pending) {
+      this.replacePendingExecution(lane, lane.pending.sequence, sequence);
+    }
     lane.pending = { epoch, operation, sequence };
 
-    const result = new Promise<DocumentSaveOutcome>((resolve, reject) => {
-      lane.waiters.push({
-        epoch,
-        hasFailure: false,
-        reject,
-        resolve,
-        sequence,
-        settled: false,
-      });
-    });
+    const result = new Promise<DocumentSaveOutcome<TResult>>(
+      (resolve, reject) => {
+        lane.waiters.push({
+          epoch,
+          execution: { status: "pending" },
+          reject,
+          resolve,
+          sequence,
+          settled: false,
+          terminalSequence: sequence,
+        });
+      },
+    );
 
     if (sequence === 1) {
       void this.drain(laneId, lane);
@@ -132,7 +143,7 @@ export class DocumentSaveCoordinator {
   ): Promise<T> {
     const exclusion = { ...scope } as DocumentSaveInvalidationScope;
     this.exclusions.add(exclusion);
-    const active: Promise<void>[] = [];
+    const active: Promise<unknown>[] = [];
 
     for (const lane of this.lanes.values()) {
       if (!matchesInvalidationScope(lane.key, exclusion)) {
@@ -169,7 +180,7 @@ export class DocumentSaveCoordinator {
     }
   }
 
-  private dropPending(lane: SaveLane): void {
+  private dropPending(lane: SaveLane<TResult>): void {
     lane.pending = null;
     const activeSequence = lane.active?.sequence ?? 0;
 
@@ -196,7 +207,7 @@ export class DocumentSaveCoordinator {
 
   private createLease(
     laneId: string,
-    lane: SaveLane,
+    lane: SaveLane<TResult>,
     epoch: number,
   ): DocumentSaveLease {
     return {
@@ -210,7 +221,10 @@ export class DocumentSaveCoordinator {
     };
   }
 
-  private async drain(laneId: string, lane: SaveLane): Promise<void> {
+  private async drain(
+    laneId: string,
+    lane: SaveLane<TResult>,
+  ): Promise<void> {
     while (lane.pending) {
       const pending = lane.pending;
       lane.pending = null;
@@ -220,7 +234,8 @@ export class DocumentSaveCoordinator {
           this.createLease(laneId, lane, pending.epoch),
         );
         lane.active = { promise, sequence: pending.sequence };
-        await promise;
+        const result = await promise;
+        this.recordResult(lane, pending, result);
       } catch (error) {
         this.recordFailure(lane, pending, error);
       } finally {
@@ -236,24 +251,54 @@ export class DocumentSaveCoordinator {
   }
 
   private recordFailure(
-    lane: SaveLane,
-    pending: PendingSave,
+    lane: SaveLane<TResult>,
+    pending: PendingSave<TResult>,
     error: unknown,
   ): void {
     for (const waiter of lane.waiters) {
       if (waiter.epoch !== pending.epoch) {
         continue;
       }
-      if (waiter.sequence > pending.sequence) {
+      if (waiter.terminalSequence !== pending.sequence) {
         continue;
       }
 
-      waiter.failure = error;
-      waiter.hasFailure = true;
+      waiter.execution = { status: "failed", error };
     }
   }
 
-  private settle(lane: SaveLane): void {
+  private recordResult(
+    lane: SaveLane<TResult>,
+    pending: PendingSave<TResult>,
+    result: TResult,
+  ): void {
+    for (const waiter of lane.waiters) {
+      if (waiter.epoch !== pending.epoch) {
+        continue;
+      }
+      if (waiter.terminalSequence !== pending.sequence) {
+        continue;
+      }
+
+      waiter.execution = { status: "succeeded", result };
+    }
+  }
+
+  private replacePendingExecution(
+    lane: SaveLane<TResult>,
+    replacedSequence: number,
+    replacementSequence: number,
+  ): void {
+    for (const waiter of lane.waiters) {
+      if (waiter.terminalSequence !== replacedSequence) {
+        continue;
+      }
+
+      waiter.terminalSequence = replacementSequence;
+    }
+  }
+
+  private settle(lane: SaveLane<TResult>): void {
     for (const waiter of lane.waiters) {
       if (this.disposed) {
         this.resolveWaiter(waiter, { status: "disposed" });
@@ -263,18 +308,25 @@ export class DocumentSaveCoordinator {
         this.resolveWaiter(waiter, { status: "stale" });
         continue;
       }
-      if (waiter.hasFailure) {
-        this.rejectWaiter(waiter, waiter.failure);
+      if (waiter.execution.status === "failed") {
+        this.rejectWaiter(waiter, waiter.execution.error);
+        continue;
+      }
+      if (waiter.execution.status !== "succeeded") {
+        this.resolveWaiter(waiter, { status: "stale" });
         continue;
       }
 
-      this.resolveWaiter(waiter, { status: "saved" });
+      this.resolveWaiter(waiter, {
+        status: "saved",
+        result: waiter.execution.result,
+      });
     }
 
     lane.waiters = [];
   }
 
-  private rejectWaiter(waiter: SaveWaiter, reason: unknown): void {
+  private rejectWaiter(waiter: SaveWaiter<TResult>, reason: unknown): void {
     if (waiter.settled) {
       return;
     }
@@ -284,8 +336,8 @@ export class DocumentSaveCoordinator {
   }
 
   private resolveWaiter(
-    waiter: SaveWaiter,
-    outcome: DocumentSaveOutcome,
+    waiter: SaveWaiter<TResult>,
+    outcome: DocumentSaveOutcome<TResult>,
   ): void {
     if (waiter.settled) {
       return;

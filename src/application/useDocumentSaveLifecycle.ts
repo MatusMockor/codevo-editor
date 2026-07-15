@@ -7,7 +7,6 @@ import {
   type SetStateAction,
 } from "react";
 import type { ResolvedEditorConfig } from "../domain/editorConfig";
-import { applyEditorConfigOnSave } from "../domain/editorConfig";
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
@@ -24,6 +23,14 @@ import {
   type DocumentSaveLease,
   type RunWithDocumentSaveExclusion,
 } from "./documentSaveCoordinator";
+import {
+  DocumentSaveService,
+  type DocumentSaveAcknowledgement,
+  type DocumentSaveResult,
+  type DocumentSaveTarget,
+} from "./documentSaveService";
+
+export type { DocumentSaveResult } from "./documentSaveService";
 
 export interface DocumentSaveLifecycleDependencies {
   workspaceRoot: string | null;
@@ -90,6 +97,7 @@ export interface DocumentSaveLifecycle {
     absolutePath: string,
     content: string,
   ) => Promise<void>;
+  saveDocument: (path: string) => Promise<DocumentSaveResult>;
   saveActiveDocument: () => Promise<void>;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   invalidateDocumentSave: (rootPath: string, path: string) => void;
@@ -129,11 +137,11 @@ export function useDocumentSaveLifecycle(
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
   } = dependencies;
-  const documentSaveCoordinatorRef = useRef<DocumentSaveCoordinator | null>(
-    null,
-  );
+  const documentSaveCoordinatorRef =
+    useRef<DocumentSaveCoordinator<DocumentSaveResult> | null>(null);
   if (!documentSaveCoordinatorRef.current) {
-    documentSaveCoordinatorRef.current = new DocumentSaveCoordinator();
+    documentSaveCoordinatorRef.current =
+      new DocumentSaveCoordinator<DocumentSaveResult>();
   }
   const documentSaveCoordinator = documentSaveCoordinatorRef.current;
   const documentSaveCoordinatorEffectGenerationRef = useRef(0);
@@ -252,340 +260,240 @@ export function useDocumentSaveLifecycle(
     [localHistoryGateway],
   );
 
-  const performDocumentSave = useCallback(
-    async (identity: DocumentSaveIdentity, lease: DocumentSaveLease) => {
-      const { path, requestedRoot, workspaceRequestToken } = identity;
-      const currentDocumentForSave = (): EditorDocument | null => {
-        if (
-          !lease.isCurrent() ||
-          workspaceRequestTokenRef.current !== workspaceRequestToken ||
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
-          return null;
-        }
+  const isSaveCurrent = useCallback(
+    (identity: DocumentSaveIdentity, lease: DocumentSaveLease): boolean =>
+      lease.isCurrent() &&
+      workspaceRequestTokenRef.current === identity.workspaceRequestToken &&
+      workspaceRootKeysEqual(
+        currentWorkspaceRootRef.current,
+        identity.requestedRoot,
+      ),
+    [currentWorkspaceRootRef, workspaceRequestTokenRef],
+  );
 
-        return documentsRef.current[path] ?? null;
-      };
-
-      try {
-        let documentToFormat = currentDocumentForSave();
-        if (!documentToFormat || documentToFormat.readOnly) {
-          return;
-        }
-        if (hasExternalFileConflict(requestedRoot, path)) {
-          setMessage("Resolve the external file conflict before saving.");
-          return;
-        }
-
-        while (true) {
-          const startingContent = documentToFormat.content;
-          const formattedContent = await formattedContentForSave(
-            documentToFormat,
-            requestedRoot,
-          );
-          let liveDocument = currentDocumentForSave();
-          if (!liveDocument) {
-            return;
-          }
-          if (hasExternalFileConflict(requestedRoot, path)) {
-            setMessage("Resolve the external file conflict before saving.");
-            return;
-          }
-          if (liveDocument !== documentToFormat) {
-            documentToFormat = liveDocument;
-            continue;
-          }
-
-          // Optimize imports AFTER formatting on the captured document snapshot.
-          // Any edit observed at an async boundary restarts the whole pipeline.
-          const phpOptimizedContent = optimizedImportsContentForSave(
-            documentToFormat,
-            formattedContent,
-          );
-
-          // JavaScript/TypeScript organize-imports goes through the language server
-          // (`source.organizeImports`). It is async, so it is given the upfront
-          // requested root (which it uses for every LSP call and re-checks after its
-          // await), and the workspace root is re-checked again here before writing.
-          // It is a no-op for non-JS/TS documents.
-          const contentToSave = await organizedImportsContentForSave(
-            documentToFormat,
-            phpOptimizedContent,
-            requestedRoot,
-          );
-          liveDocument = currentDocumentForSave();
-          if (!liveDocument) {
-            return;
-          }
-          if (hasExternalFileConflict(requestedRoot, path)) {
-            setMessage("Resolve the external file conflict before saving.");
-            return;
-          }
-          if (liveDocument !== documentToFormat) {
-            documentToFormat = liveDocument;
-            continue;
-          }
-
-          // EditorConfig on-save transforms (trim trailing whitespace, insert final
-          // newline, normalize EOL) run LAST so they compose over the formatted +
-          // import-organized content, mirroring VS Code / PhpStorm. Resolved per the
-          // saved document's own path through the per-workspace cascade. A no-op when
-          // no `.editorconfig` enables any on-save behaviour.
-          const editorConfigForSave = await resolveEditorConfigForFile(
-            requestedRoot,
-            documentToFormat.path,
-          );
-          liveDocument = currentDocumentForSave();
-          if (!liveDocument) {
-            return;
-          }
-          if (hasExternalFileConflict(requestedRoot, path)) {
-            setMessage("Resolve the external file conflict before saving.");
-            return;
-          }
-          if (liveDocument !== documentToFormat) {
-            documentToFormat = liveDocument;
-            continue;
-          }
-
-          const editorConfiguredContent = applyEditorConfigOnSave(
-            contentToSave,
-            editorConfigForSave,
-          );
-
-          const documentToSave: EditorDocument = {
-            ...documentToFormat,
-            content: editorConfiguredContent,
-          };
-
-          if (hasExternalFileConflict(requestedRoot, path)) {
-            setMessage("Resolve the external file conflict before saving.");
-            return;
-          }
-
-          const writeResult = documentToFormat.revision
-            ? await workspaceFiles.writeTextFile(
-                documentToSave.path,
-                documentToSave.content,
-                documentToFormat.revision,
-              )
-            : await workspaceFiles.writeTextFile(
-                documentToSave.path,
-                documentToSave.content,
-              );
-          if (writeResult?.status === "conflict") {
-            let disk: Awaited<
-              ReturnType<typeof readWorkspaceTextFileSnapshot>
-            > | null = null;
-            try {
-              disk = await readWorkspaceTextFileSnapshot(
-                workspaceFiles,
-                documentToSave.path,
-              );
-            } catch {
-              // The conflict remains guarded and can retry the authoritative read.
-            }
-            const conflictedDocument = currentDocumentForSave();
-            if (conflictedDocument) {
-              detectSaveConflict(requestedRoot, conflictedDocument, disk);
-              setMessage(
-                "The file changed on disk. Review the conflict before saving.",
-              );
-            }
-            return;
-          }
-          if (writeResult?.status === "error") {
-            throw new Error(writeResult.message);
-          }
-          if (writeResult?.status === "partial") {
-            const partiallyWrittenDocument = currentDocumentForSave();
-            if (partiallyWrittenDocument) {
-              const recoveredDocument = {
-                ...partiallyWrittenDocument,
-                revision: writeResult.revision,
-              };
-              documentsRef.current = {
-                ...documentsRef.current,
-                [documentToSave.path]: recoveredDocument,
-              };
-              if (activeDocumentRef.current?.path === documentToSave.path) {
-                activeDocumentRef.current = recoveredDocument;
-              }
-              setDocuments((current) => {
-                const existing = current[documentToSave.path];
-                if (!existing || !currentDocumentForSave()) {
-                  return current;
-                }
-                return {
-                  ...current,
-                  [documentToSave.path]: {
-                    ...existing,
-                    revision: writeResult.revision,
-                  },
-                };
-              });
-            }
-            throw new Error(
-              `The file was saved, but durability could not be confirmed: ${writeResult.message}`,
-            );
-          }
-          liveDocument = currentDocumentForSave();
-          if (!liveDocument) {
-            return;
-          }
-          if (hasExternalFileConflict(requestedRoot, path)) {
-            return;
-          }
-
-          const acknowledgedDocument: EditorDocument = {
-            ...liveDocument,
-            content:
-              liveDocument === documentToFormat &&
-              liveDocument.content === startingContent
-                ? documentToSave.content
-                : liveDocument.content,
-            savedContent: documentToSave.content,
-            revision:
-              writeResult?.status === "success"
-                ? writeResult.revision
-                : liveDocument.revision,
-          };
-          if (!currentDocumentForSave()) {
-            return;
-          }
-          documentsRef.current = {
-            ...documentsRef.current,
-            [documentToSave.path]: acknowledgedDocument,
-          };
-          if (!currentDocumentForSave()) {
-            return;
-          }
-          if (activeDocumentRef.current?.path === documentToSave.path) {
-            activeDocumentRef.current = acknowledgedDocument;
-          }
-
-          if (!currentDocumentForSave()) {
-            return;
-          }
-          setDocuments((current) => {
-            if (!currentDocumentForSave()) {
-              return current;
-            }
-
-            const existing = current[documentToSave.path];
-            if (!existing) {
-              return current;
-            }
-
-            return {
-              ...current,
-              [documentToSave.path]: {
-                ...existing,
-                content:
-                  existing === documentToFormat &&
-                  existing.content === startingContent
-                    ? documentToSave.content
-                    : existing.content,
-                savedContent: documentToSave.content,
-                revision:
-                  writeResult?.status === "success"
-                    ? writeResult.revision
-                    : existing.revision,
-              },
-            };
-          });
-
-          if (!currentDocumentForSave()) {
-            return;
-          }
-          filePrefetchCacheRef.current.invalidate(documentToSave.path);
-
-          if (!currentDocumentForSave()) {
-            return;
-          }
-          await captureLocalHistorySnapshot(
-            requestedRoot,
-            documentToSave.path,
-            documentToSave.content,
-          );
-
-          const isWrittenDocumentCurrent = () =>
-            currentDocumentForSave()?.content === documentToSave.content;
-          if (!isWrittenDocumentCurrent()) {
-            return;
-          }
-          await syncSavedDocument(documentToSave, isWrittenDocumentCurrent);
-
-          if (!isWrittenDocumentCurrent()) {
-            return;
-          }
-          await syncSavedJavaScriptTypeScriptDocument(
-            documentToSave,
-            isWrittenDocumentCurrent,
-          );
-
-          if (!isWrittenDocumentCurrent()) {
-            return;
-          }
-
-          setMessage(`Saved ${documentToSave.name}`);
-          scheduleAnalysisOnSave(documentToSave, requestedRoot);
-          return;
-        }
-      } catch (error) {
-        if (!currentDocumentForSave()) {
-          return;
-        }
-
-        reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", error);
+  const acknowledgeSavedDocument = useCallback(
+    (
+      target: DocumentSaveTarget,
+      acknowledgement: DocumentSaveAcknowledgement,
+    ): void => {
+      if (!target.isCurrent()) {
+        return;
       }
+
+      const liveDocument = documentsRef.current[target.path];
+      if (!liveDocument) {
+        return;
+      }
+      const acknowledgedDocument: EditorDocument = {
+        ...liveDocument,
+        content:
+          liveDocument === acknowledgement.expectedDocument &&
+          liveDocument.content === acknowledgement.startingContent
+            ? acknowledgement.savedDocument.content
+            : liveDocument.content,
+        savedContent: acknowledgement.savedDocument.content,
+        revision: acknowledgement.revision,
+      };
+      documentsRef.current = {
+        ...documentsRef.current,
+        [target.path]: acknowledgedDocument,
+      };
+      if (!target.isCurrent()) {
+        return;
+      }
+      if (activeDocumentRef.current?.path === target.path) {
+        activeDocumentRef.current = acknowledgedDocument;
+      }
+      if (!target.isCurrent()) {
+        return;
+      }
+
+      setDocuments((current) => {
+        if (!target.isCurrent()) {
+          return current;
+        }
+        const existing = current[target.path];
+        if (!existing) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [target.path]: {
+            ...existing,
+            content:
+              existing === acknowledgement.expectedDocument &&
+              existing.content === acknowledgement.startingContent
+                ? acknowledgement.savedDocument.content
+                : existing.content,
+            savedContent: acknowledgement.savedDocument.content,
+            revision: acknowledgement.revision,
+          },
+        };
+      });
+    },
+    [activeDocumentRef, documentsRef, setDocuments],
+  );
+
+  const updateDocumentRevision = useCallback(
+    (
+      target: DocumentSaveTarget,
+      revision: EditorDocument["revision"],
+    ): void => {
+      if (!target.isCurrent()) {
+        return;
+      }
+      const existing = documentsRef.current[target.path];
+      if (!existing) {
+        return;
+      }
+      const recoveredDocument = { ...existing, revision };
+      documentsRef.current = {
+        ...documentsRef.current,
+        [target.path]: recoveredDocument,
+      };
+      if (activeDocumentRef.current?.path === target.path) {
+        activeDocumentRef.current = recoveredDocument;
+      }
+      setDocuments((current) => {
+        const currentDocument = current[target.path];
+        if (!currentDocument || !target.isCurrent()) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [target.path]: { ...currentDocument, revision },
+        };
+      });
+    },
+    [activeDocumentRef, documentsRef, setDocuments],
+  );
+
+  const presentSaveResult = useCallback(
+    (requestedRoot: string, result: DocumentSaveResult): void => {
+      if (result.status === "blocked") {
+        if (result.reason === "external" && !result.silent) {
+          setMessage("Resolve the external file conflict before saving.");
+        }
+        return;
+      }
+      if (result.status === "conflict") {
+        detectSaveConflict(requestedRoot, result.document, result.snapshot);
+        setMessage(
+          "The file changed on disk. Review the conflict before saving.",
+        );
+        return;
+      }
+      if (result.status === "partial" || result.status === "failed") {
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          "Save File",
+          result.error,
+        );
+        return;
+      }
+      if (result.status !== "saved" || !result.contentIsCurrent) {
+        return;
+      }
+
+      setMessage(`Saved ${result.document.name}`);
+      scheduleAnalysisOnSave(result.document, requestedRoot);
     },
     [
-      captureLocalHistorySnapshot,
-      activeDocumentRef,
       detectSaveConflict,
-      documentsRef,
-      formattedContentForSave,
-      optimizedImportsContentForSave,
-      organizedImportsContentForSave,
       reportErrorForActiveWorkspaceRoot,
-      resolveEditorConfigForFile,
       scheduleAnalysisOnSave,
-      setDocuments,
-      syncSavedDocument,
-      syncSavedJavaScriptTypeScriptDocument,
-      workspaceFiles,
-      workspaceRequestTokenRef,
-      hasExternalFileConflict,
       setMessage,
     ],
   );
 
-  const saveActiveDocument = useCallback(async () => {
+  const performDocumentSave = useCallback(
+    async (
+      identity: DocumentSaveIdentity,
+      lease: DocumentSaveLease,
+    ): Promise<DocumentSaveResult> => {
+      const target: DocumentSaveTarget = {
+        path: identity.path,
+        rootPath: identity.requestedRoot,
+        isCurrent: () => isSaveCurrent(identity, lease),
+      };
+      const service = new DocumentSaveService({
+        workspaceFiles,
+        getDocument: (path) => documentsRef.current[path] ?? null,
+        acknowledgeSavedDocument,
+        updateDocumentRevision,
+        invalidatePrefetch: (path) =>
+          filePrefetchCacheRef.current.invalidate(path),
+        captureLocalHistorySnapshot,
+        formattedContentForSave,
+        optimizedImportsContentForSave,
+        organizedImportsContentForSave,
+        resolveEditorConfigForFile,
+        syncSavedDocument,
+        syncSavedJavaScriptTypeScriptDocument,
+        hasExternalFileConflict,
+      });
+      const result = await service.saveDocument(target);
+      presentSaveResult(identity.requestedRoot, result);
+      return result;
+    },
+    [
+      acknowledgeSavedDocument,
+      captureLocalHistorySnapshot,
+      documentsRef,
+      filePrefetchCacheRef,
+      formattedContentForSave,
+      hasExternalFileConflict,
+      isSaveCurrent,
+      optimizedImportsContentForSave,
+      organizedImportsContentForSave,
+      presentSaveResult,
+      resolveEditorConfigForFile,
+      syncSavedDocument,
+      syncSavedJavaScriptTypeScriptDocument,
+      updateDocumentRevision,
+      workspaceFiles,
+    ],
+  );
+
+  const saveDocument = useCallback(
+    async (path: string): Promise<DocumentSaveResult> => {
+      if (!workspaceRoot) {
+        return { status: "stale" };
+      }
+
+      const identity: DocumentSaveIdentity = {
+        path,
+        requestedRoot: workspaceRoot,
+        workspaceRequestToken: workspaceRequestTokenRef.current,
+      };
+      const outcome = await documentSaveCoordinator.request(
+        { rootPath: identity.requestedRoot, path: identity.path },
+        (lease) => performDocumentSave(identity, lease),
+      );
+      if (outcome.status !== "saved") {
+        return { status: "stale" };
+      }
+
+      return outcome.result;
+    },
+    [
+      documentSaveCoordinator,
+      performDocumentSave,
+      workspaceRequestTokenRef,
+      workspaceRoot,
+    ],
+  );
+
+  const saveActiveDocument = useCallback(async (): Promise<void> => {
     const document = activeDocumentRef.current;
-    if (!document || document.readOnly || !workspaceRoot) {
+    if (!document || document.readOnly) {
       return;
     }
 
-    const identity: DocumentSaveIdentity = {
-      path: document.path,
-      requestedRoot: workspaceRoot,
-      workspaceRequestToken: workspaceRequestTokenRef.current,
-    };
-    await documentSaveCoordinator.request(
-      { rootPath: identity.requestedRoot, path: identity.path },
-      (lease) => performDocumentSave(identity, lease),
-    );
-  }, [
-    activeDocumentRef,
-    documentSaveCoordinator,
-    performDocumentSave,
-    workspaceRoot,
-    workspaceRequestTokenRef,
-  ]);
+    await saveDocument(document.path);
+  }, [activeDocumentRef, saveDocument]);
 
   const runWithDocumentSaveExclusion =
     useCallback<RunWithDocumentSaveExclusion>(
@@ -623,6 +531,7 @@ export function useDocumentSaveLifecycle(
 
   return {
     captureLocalHistorySnapshot,
+    saveDocument,
     saveActiveDocument,
     runWithDocumentSaveExclusion,
     invalidateDocumentSave,

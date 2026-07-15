@@ -36,7 +36,7 @@ async function flushPromises(): Promise<void> {
 
 describe("DocumentSaveCoordinator", () => {
   it("serializes one path and coalesces pending requests to the latest", async () => {
-    const coordinator = new DocumentSaveCoordinator();
+    const coordinator = new DocumentSaveCoordinator<string>();
     const first = deferred();
     const latest = deferred();
     const calls: string[] = [];
@@ -45,13 +45,16 @@ describe("DocumentSaveCoordinator", () => {
     const saveA = coordinator.request(key("/a.php"), async () => {
       calls.push("A");
       await first.promise;
+      return "A-result";
     });
     const saveB = coordinator.request(key("/a.php"), async () => {
       calls.push("B");
+      return "B-result";
     });
     const saveC = coordinator.request(key("/a.php"), async () => {
       calls.push("C");
       await latest.promise;
+      return "C-result";
     });
     void saveA.then(settled);
     void saveB.then(settled);
@@ -66,9 +69,9 @@ describe("DocumentSaveCoordinator", () => {
 
     latest.resolve();
     await expect(Promise.all([saveA, saveB, saveC])).resolves.toEqual([
-      { status: "saved" },
-      { status: "saved" },
-      { status: "saved" },
+      { status: "saved", result: "A-result" },
+      { status: "saved", result: "C-result" },
+      { status: "saved", result: "C-result" },
     ]);
   });
 
@@ -173,6 +176,79 @@ describe("DocumentSaveCoordinator", () => {
       }),
     ).resolves.toEqual({ status: "saved" });
     expect(calls).toEqual(["first", "second", "third"]);
+  });
+
+  it("attributes a replacement failure only to its coalesced waiters", async () => {
+    const coordinator = new DocumentSaveCoordinator<string>();
+    const first = deferred();
+    const latest = deferred();
+    const error = new Error("latest write failed");
+    const calls: string[] = [];
+
+    const saveA = coordinator.request(key("/a.php"), async () => {
+      calls.push("A");
+      await first.promise;
+      return "A-result";
+    });
+    const saveB = coordinator.request(key("/a.php"), async () => {
+      calls.push("B");
+      return "B-result";
+    });
+    const saveC = coordinator.request(key("/a.php"), async () => {
+      calls.push("C");
+      await latest.promise;
+      return "C-result";
+    });
+
+    first.resolve();
+    await flushPromises();
+    expect(calls).toEqual(["A", "C"]);
+
+    latest.reject(error);
+    await expect(saveA).resolves.toEqual({
+      status: "saved",
+      result: "A-result",
+    });
+    await expect(saveB).rejects.toBe(error);
+    await expect(saveC).rejects.toBe(error);
+  });
+
+  it("keeps an earlier failure separate from a successful replacement", async () => {
+    const coordinator = new DocumentSaveCoordinator<string>();
+    const first = deferred();
+    const latest = deferred();
+    const error = new Error("first write failed");
+    const calls: string[] = [];
+
+    const saveA = coordinator.request(key("/a.php"), async () => {
+      calls.push("A");
+      await first.promise;
+      return "A-result";
+    });
+    const saveB = coordinator.request(key("/a.php"), async () => {
+      calls.push("B");
+      return "B-result";
+    });
+    const saveC = coordinator.request(key("/a.php"), async () => {
+      calls.push("C");
+      await latest.promise;
+      return "C-result";
+    });
+
+    first.reject(error);
+    await flushPromises();
+    expect(calls).toEqual(["A", "C"]);
+
+    latest.resolve();
+    await expect(saveA).rejects.toBe(error);
+    await expect(saveB).resolves.toEqual({
+      status: "saved",
+      result: "C-result",
+    });
+    await expect(saveC).resolves.toEqual({
+      status: "saved",
+      result: "C-result",
+    });
   });
 
   it("disposes idempotently, drops pending work, and rejects future execution", async () => {

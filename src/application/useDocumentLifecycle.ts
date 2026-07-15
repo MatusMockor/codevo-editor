@@ -53,6 +53,7 @@ export function useDocumentLifecycle(
 
   return {
     captureLocalHistorySnapshot: saveLifecycle.captureLocalHistorySnapshot,
+    saveDocument: saveLifecycle.saveDocument,
     saveActiveDocument: saveLifecycle.saveActiveDocument,
     runWithDocumentSaveExclusion: saveLifecycle.runWithDocumentSaveExclusion,
     ...closeLifecycle,

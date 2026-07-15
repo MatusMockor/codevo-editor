@@ -199,6 +199,172 @@ afterEach(() => {
 });
 
 describe("useDocumentSaveLifecycle", () => {
+  it("returns a saved result for a path-targeted non-active document", async () => {
+    const otherPath = `${ROOT}/src/Other.php`;
+    const otherDocument: EditorDocument = {
+      ...document("other", "old"),
+      name: "Other.php",
+      path: otherPath,
+    };
+    const harness = renderLifecycle();
+    harness.documentsRef.current = {
+      ...harness.documentsRef.current,
+      [otherPath]: otherDocument,
+    };
+
+    let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+    await act(async () => {
+      result = await harness.lifecycle().saveDocument(otherPath);
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "saved",
+        document: expect.objectContaining({ path: otherPath }),
+      }),
+    );
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+      otherPath,
+      "other",
+    );
+    expect(harness.activeDocumentRef.current?.path).toBe(PATH);
+    harness.unmount();
+  });
+
+  it("returns conflict details while keeping conflict presentation in the hook", async () => {
+    const snapshot = { content: "disk", revision: null };
+    const detectSaveConflict = vi.fn();
+    const harness = renderLifecycle({
+      detectSaveConflict,
+      workspaceFiles: workspaceFiles({
+        readTextFileSnapshot: vi.fn(async () => snapshot),
+        writeTextFile: vi.fn(async () => ({
+          status: "conflict" as const,
+          message: "changed",
+        })),
+      }),
+    });
+
+    let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+    await act(async () => {
+      result = await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ status: "conflict", snapshot }),
+    );
+    expect(detectSaveConflict).toHaveBeenCalledWith(
+      ROOT,
+      harness.documentsRef.current[PATH],
+      snapshot,
+    );
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "The file changed on disk. Review the conflict before saving.",
+    );
+    harness.unmount();
+  });
+
+  it("returns the latest saved result to a coalesced request", async () => {
+    const firstWrite = deferred<void>();
+    const writeTextFile = vi
+      .fn()
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValue(undefined);
+    const harness = renderLifecycle({
+      workspaceFiles: workspaceFiles({ writeTextFile }),
+    });
+
+    const first = harness.lifecycle().saveDocument(PATH);
+    await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+    harness.replaceDocument(document("second"));
+    const coalesced = harness.lifecycle().saveDocument(PATH);
+    harness.replaceDocument(document("latest"));
+    const latest = harness.lifecycle().saveDocument(PATH);
+    firstWrite.resolve();
+
+    let results!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>[];
+    await act(async () => {
+      results = await Promise.all([first, coalesced, latest]);
+    });
+
+    expect(results[0]).toEqual(
+      expect.objectContaining({ status: "saved", contentIsCurrent: false }),
+    );
+    expect(results[1]).toEqual(
+      expect.objectContaining({ status: "saved", contentIsCurrent: true }),
+    );
+    expect(results[2]).toEqual(
+      expect.objectContaining({ status: "saved", contentIsCurrent: true }),
+    );
+    expect(results[1]).toBe(results[2]);
+    expect(writeTextFile).toHaveBeenNthCalledWith(2, PATH, "latest");
+    harness.unmount();
+  });
+
+  it.each(["readOnly", "conflict", "failed"] as const)(
+    "returns the latest %s result to a coalesced request",
+    async (terminalStatus) => {
+      const firstWrite = deferred<void>();
+      const error = new Error("latest write failed");
+      const snapshot = { content: "disk", revision: null };
+      const latestWrite = vi.fn(async () => {
+        if (terminalStatus === "conflict") {
+          return { status: "conflict" as const, message: "changed" };
+        }
+        if (terminalStatus === "failed") {
+          throw error;
+        }
+      });
+      const writeTextFile = vi
+        .fn()
+        .mockImplementationOnce(() => firstWrite.promise)
+        .mockImplementation(latestWrite);
+      const harness = renderLifecycle({
+        workspaceFiles: workspaceFiles({
+          readTextFileSnapshot: vi.fn(async () => snapshot),
+          writeTextFile,
+        }),
+      });
+
+      const first = harness.lifecycle().saveDocument(PATH);
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+      harness.replaceDocument(document("second"));
+      const coalesced = harness.lifecycle().saveDocument(PATH);
+      harness.replaceDocument({
+        ...document("latest"),
+        readOnly: terminalStatus === "readOnly",
+      });
+      const latest = harness.lifecycle().saveDocument(PATH);
+      firstWrite.resolve();
+
+      let results!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>[];
+      await act(async () => {
+        results = await Promise.all([first, coalesced, latest]);
+      });
+
+      expect(results[0]).toEqual(
+        expect.objectContaining({ status: "saved", contentIsCurrent: false }),
+      );
+      expect(results[1]).toBe(results[2]);
+      if (terminalStatus === "readOnly") {
+        expect(results[1]).toEqual({ status: "blocked", reason: "readOnly" });
+        expect(latestWrite).not.toHaveBeenCalled();
+        harness.unmount();
+        return;
+      }
+      if (terminalStatus === "conflict") {
+        expect(results[1]).toEqual(
+          expect.objectContaining({ status: "conflict", snapshot }),
+        );
+        harness.unmount();
+        return;
+      }
+
+      expect(results[1]).toEqual({ status: "failed", error });
+      harness.unmount();
+    },
+  );
+
   it("writes and acknowledges through history and did-save in order", async () => {
     const events: string[] = [];
     const writeTextFile = vi.fn(async () => {

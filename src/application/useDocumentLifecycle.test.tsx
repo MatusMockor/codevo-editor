@@ -445,6 +445,25 @@ function renderLifecycle(
 }
 
 describe("useDocumentLifecycle", () => {
+  it("exposes result-bearing path saves while retaining the void active facade", async () => {
+    const harness = renderLifecycle();
+    const path = harness.activeDocumentRef.current?.path;
+    if (!path) {
+      throw new Error("expected active document");
+    }
+
+    let result!: Awaited<ReturnType<DocumentLifecycle["saveDocument"]>>;
+    let facadeResult!: void;
+    await act(async () => {
+      result = await harness.lifecycle().saveDocument(path);
+      facadeResult = await harness.lifecycle().saveActiveDocument();
+    });
+
+    expect(result.status).toBe("saved");
+    expect(facadeResult).toBeUndefined();
+    harness.unmount();
+  });
+
   describe("saveActiveDocument", () => {
     it("publishes an authoritative disk snapshot on a typed revision conflict and blocks stale retry", async () => {
       const loadedRevision = revision(1);
