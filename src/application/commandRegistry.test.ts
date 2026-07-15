@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CommandRegistry,
   executeCommand,
+  executeCommandAndReport,
   executeCommandAndWait,
   type CommandContext,
 } from "./commandRegistry";
@@ -170,6 +171,251 @@ describe("CommandRegistry", () => {
     expect(() => executeCommand(registry, "workspace.fail", context)).toThrow(
       "command failed",
     );
+  });
+
+  describe("executeCommandAndReport", () => {
+    it("returns missing without running or reporting", () => {
+      const registry = new CommandRegistry();
+      const reportError = vi.fn();
+
+      expect(
+        executeCommandAndReport(
+          registry,
+          "workspace.missing",
+          context,
+          reportError,
+        ),
+      ).toBe("missing");
+      expect(reportError).not.toHaveBeenCalled();
+    });
+
+    it("returns disabled without running or reporting", () => {
+      const registry = new CommandRegistry();
+      const run = vi.fn();
+      const reportError = vi.fn();
+      registry.register({
+        id: "editor.save",
+        title: "Save File",
+        category: "Editor",
+        isEnabled: () => false,
+        run,
+      });
+
+      expect(
+        executeCommandAndReport(registry, "editor.save", context, reportError),
+      ).toBe("disabled");
+      expect(run).not.toHaveBeenCalled();
+      expect(reportError).not.toHaveBeenCalled();
+    });
+
+    it("reports an availability failure as executed without running", () => {
+      const registry = new CommandRegistry();
+      const failure = new Error("availability failure");
+      const run = vi.fn();
+      const reportError = vi.fn();
+      registry.register({
+        id: "editor.save",
+        title: "Save File",
+        category: "Editor",
+        isEnabled: () => {
+          throw failure;
+        },
+        run,
+      });
+
+      expect(
+        executeCommandAndReport(registry, "editor.save", context, reportError),
+      ).toBe("executed");
+      expect(run).not.toHaveBeenCalled();
+      expect(reportError).toHaveBeenCalledTimes(1);
+      expect(reportError).toHaveBeenCalledWith(failure);
+    });
+
+    it("contains reporter failures for availability errors", () => {
+      const registry = new CommandRegistry();
+      const run = vi.fn();
+      const reportError = vi.fn(() => {
+        throw new Error("reporter failure");
+      });
+      registry.register({
+        id: "editor.save",
+        title: "Save File",
+        category: "Editor",
+        isEnabled: () => {
+          throw new Error("availability failure");
+        },
+        run,
+      });
+
+      expect(
+        executeCommandAndReport(registry, "editor.save", context, reportError),
+      ).toBe("executed");
+      expect(run).not.toHaveBeenCalled();
+      expect(reportError).toHaveBeenCalledTimes(1);
+    });
+
+    it("runs a synchronous command and returns executed without reporting", () => {
+      const registry = new CommandRegistry();
+      const run = vi.fn();
+      const reportError = vi.fn();
+      registry.register({
+        id: "workspace.open",
+        title: "Open Workspace",
+        category: "Workspace",
+        isEnabled: () => true,
+        run,
+      });
+
+      expect(
+        executeCommandAndReport(
+          registry,
+          "workspace.open",
+          context,
+          reportError,
+        ),
+      ).toBe("executed");
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(reportError).not.toHaveBeenCalled();
+    });
+
+    it("starts an asynchronous command and returns executed immediately", () => {
+      const registry = new CommandRegistry();
+      let resolveRun: (() => void) | undefined;
+      const run = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveRun = resolve;
+          }),
+      );
+      const reportError = vi.fn();
+      registry.register({
+        id: "workspace.refresh",
+        title: "Refresh Workspace",
+        category: "Workspace",
+        isEnabled: () => true,
+        run,
+      });
+
+      expect(
+        executeCommandAndReport(
+          registry,
+          "workspace.refresh",
+          context,
+          reportError,
+        ),
+      ).toBe("executed");
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(resolveRun).toBeTypeOf("function");
+      expect(reportError).not.toHaveBeenCalled();
+
+      resolveRun?.();
+    });
+
+    it("reports a synchronous command failure once and still returns executed", () => {
+      const registry = new CommandRegistry();
+      const failure = new Error("sync failure");
+      const reportError = vi.fn();
+      registry.register({
+        id: "workspace.fail",
+        title: "Fail",
+        category: "Workspace",
+        isEnabled: () => true,
+        run: () => {
+          throw failure;
+        },
+      });
+
+      expect(
+        executeCommandAndReport(
+          registry,
+          "workspace.fail",
+          context,
+          reportError,
+        ),
+      ).toBe("executed");
+      expect(reportError).toHaveBeenCalledTimes(1);
+      expect(reportError).toHaveBeenCalledWith(failure);
+    });
+
+    it("reports an asynchronous command rejection once", async () => {
+      const registry = new CommandRegistry();
+      const failure = new Error("async failure");
+      const reportError = vi.fn();
+      registry.register({
+        id: "workspace.fail-async",
+        title: "Fail Async",
+        category: "Workspace",
+        isEnabled: () => true,
+        run: () => Promise.reject(failure),
+      });
+
+      expect(
+        executeCommandAndReport(
+          registry,
+          "workspace.fail-async",
+          context,
+          reportError,
+        ),
+      ).toBe("executed");
+
+      await vi.waitFor(() => {
+        expect(reportError).toHaveBeenCalledTimes(1);
+      });
+      expect(reportError).toHaveBeenCalledWith(failure);
+    });
+
+    it("contains reporter failures for synchronous command errors", () => {
+      const registry = new CommandRegistry();
+      const reportError = vi.fn(() => {
+        throw new Error("reporter failure");
+      });
+      registry.register({
+        id: "workspace.fail",
+        title: "Fail",
+        category: "Workspace",
+        isEnabled: () => true,
+        run: () => {
+          throw new Error("command failure");
+        },
+      });
+
+      expect(() =>
+        executeCommandAndReport(
+          registry,
+          "workspace.fail",
+          context,
+          reportError,
+        ),
+      ).not.toThrow();
+      expect(reportError).toHaveBeenCalledTimes(1);
+    });
+
+    it("contains reporter failures for asynchronous command errors", async () => {
+      const registry = new CommandRegistry();
+      const reportError = vi.fn(() => {
+        throw new Error("reporter failure");
+      });
+      registry.register({
+        id: "workspace.fail-async",
+        title: "Fail Async",
+        category: "Workspace",
+        isEnabled: () => true,
+        run: () => Promise.reject(new Error("command failure")),
+      });
+
+      expect(
+        executeCommandAndReport(
+          registry,
+          "workspace.fail-async",
+          context,
+          reportError,
+        ),
+      ).toBe("executed");
+
+      await vi.waitFor(() => {
+        expect(reportError).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 
   it("waits for asynchronous commands before reporting execution", async () => {

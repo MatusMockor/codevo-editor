@@ -6899,6 +6899,111 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).toBeNull();
   });
 
+  it("reports one Command notice when an active-root async command rejects", async () => {
+    const commandRun = createDeferred<void>();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    });
+    const refreshCommand = getWorkbench().commands.find(
+      (command) => command.id === "workspace.refresh",
+    );
+    expect(refreshCommand).toBeDefined();
+    const runRefresh = vi
+      .spyOn(refreshCommand!, "run")
+      .mockReturnValue(commandRun.promise);
+
+    act(() => {
+      expect(getWorkbench().runCommand("workspace.refresh")).toBe("executed");
+    });
+    expect(runRefresh).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      commandRun.reject(new Error("active command failed"));
+      await commandRun.promise.catch(() => undefined);
+    });
+    await flushAsyncTurns();
+
+    const commandNotices = getWorkbench().notices.filter(
+      (notice) => notice.source === "Command",
+    );
+    expect(commandNotices).toEqual([
+      expect.objectContaining({ message: "Error: active command failed" }),
+    ]);
+    expect(getWorkbench().message).toBe("Error: active command failed");
+  });
+
+  it("drops an async command rejection after switching workspace roots", async () => {
+    const commandRun = createDeferred<void>();
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    });
+    const refreshCommand = getWorkbench().commands.find(
+      (command) => command.id === "workspace.refresh",
+    );
+    expect(refreshCommand).toBeDefined();
+    const runRefresh = vi
+      .spyOn(refreshCommand!, "run")
+      .mockReturnValue(commandRun.promise);
+
+    act(() => {
+      expect(getWorkbench().runCommand("workspace.refresh")).toBe("executed");
+    });
+    expect(runRefresh).toHaveBeenCalledOnce();
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      commandRun.reject(new Error("stale workspace-a command"));
+      await commandRun.promise.catch(() => undefined);
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).toBeNull();
+    expect(getWorkbench().notices).toEqual([]);
+  });
+
+  it("suppresses a reportCommandError callback captured for an inactive root", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    });
+    const reportWorkspaceACommandError = getWorkbench().reportCommandError;
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+    act(() => {
+      reportWorkspaceACommandError(new Error("stale callback command"));
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().message).toBeNull();
+    expect(getWorkbench().notices).toEqual([]);
+  });
+
   it("suppresses benign language server cancellations before they become notices", async () => {
     const runningStatus: LanguageServerRuntimeStatus = {
       capabilities: emptyLanguageServerCapabilities(),

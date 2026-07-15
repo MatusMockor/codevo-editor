@@ -1,5 +1,4 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
 import {
   useCallback,
   useEffect,
@@ -26,12 +25,12 @@ import {
   type EditorSurfaceEslintDisableRunner,
 } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
-import { executeCommand, type CommandExecutionRunner } from "./commandRegistry";
-import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 import {
-  NATIVE_MENU_EVENT_NAMES,
-  dispatchNativeMenuCommand,
-} from "./workbenchNativeMenuCommandDispatcher";
+  executeCommandAndReport,
+  type CommandExecutionRunner,
+} from "./commandRegistry";
+import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
+import { useWorkbenchNativeMenuCommands } from "./useWorkbenchNativeMenuCommands";
 import { useWorkbenchIndexLifecycle } from "./useWorkbenchIndexLifecycle";
 import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
@@ -250,7 +249,6 @@ import {
 } from "../domain/editorConfig";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
-import { createSafeUnsubscribe } from "../infrastructure/safeUnsubscribe";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
@@ -7214,51 +7212,33 @@ export function useWorkbenchController(
   });
 
   const runCommand = useCallback<CommandExecutionRunner>(
-    (commandId, context = commandContext) =>
-      executeCommand(commandRegistry, commandId, context),
-    [commandContext, commandRegistry],
+    (commandId, context = commandContext) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      return executeCommandAndReport(
+        commandRegistry,
+        commandId,
+        context,
+        (error) =>
+          reportErrorForActiveWorkspaceRoot(
+            requestedRoot,
+            "Command",
+            error,
+          ),
+      );
+    },
+    [
+      commandContext,
+      commandRegistry,
+      reportErrorForActiveWorkspaceRoot,
+    ],
   );
 
-  const nativeMenuCommandDispatchRef = useRef({
+  useWorkbenchNativeMenuCommands({
     commandContext,
-    commandRegistry,
+    reportError,
+    runCommand,
   });
-
-  useEffect(() => {
-    nativeMenuCommandDispatchRef.current = { commandContext, commandRegistry };
-  }, [commandContext, commandRegistry]);
-
-  useEffect(() => {
-    if (!isTauri()) {
-      return;
-    }
-
-    let active = true;
-    const unlisteners: TauriUnlistenFn[] = [];
-
-    NATIVE_MENU_EVENT_NAMES.forEach((eventName) => {
-      listen(eventName, () => {
-        dispatchNativeMenuCommand({
-          ...nativeMenuCommandDispatchRef.current,
-          eventName,
-        });
-      })
-        .then((dispose) => {
-          if (!active) {
-            dispose();
-            return;
-          }
-
-          unlisteners.push(createSafeUnsubscribe(dispose));
-        })
-        .catch((error) => reportError("Shortcuts", error));
-    });
-
-    return () => {
-      active = false;
-      unlisteners.forEach((unlisten) => unlisten());
-    };
-  }, [reportError]);
 
   const searchEverywhereModel = searchEverywhereModelFor(
     commandRegistry.list(),
@@ -7361,6 +7341,7 @@ export function useWorkbenchController(
     commandContext,
     commandRegistry,
     doubleShiftDetectorRef,
+    runCommand,
   });
 
   useEffect(() => {
@@ -7999,6 +7980,11 @@ export function useWorkbenchController(
       mergedLanguageServerDiagnosticsByPath,
     ],
   );
+  const reportCommandError = useCallback(
+    (error: unknown) =>
+      reportErrorForActiveWorkspaceRoot(workspaceRoot, "Command", error),
+    [reportErrorForActiveWorkspaceRoot, workspaceRoot],
+  );
 
   return {
     activeDocument,
@@ -8272,7 +8258,7 @@ export function useWorkbenchController(
     navigationHistory,
     getLatencySnapshot,
     recordCompletionLatency,
-    reportCommandError: (error: unknown) => reportError("Command", error),
+    reportCommandError,
     reportLanguageServerError,
     previewGitChange,
     quitApplication,

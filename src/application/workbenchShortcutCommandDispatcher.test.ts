@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultKeymapSettings } from "../domain/keymap";
 import {
   CommandRegistry,
+  executeCommand,
   type Command,
   type CommandContext,
+  type CommandExecutionRunner,
 } from "./commandRegistry";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 
@@ -17,21 +19,23 @@ describe("dispatchWorkbenchShortcutCommand", () => {
   it("runs the enabled command whose shortcut matches first", () => {
     const run = vi.fn();
     const event = keyboardEvent({ key: ",", metaKey: true });
+    const commandRegistry = registry({
+      "workbench.openSettings": command({
+        id: "workbench.openSettings",
+        run,
+      }),
+    });
 
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
       commandIds: ["workbench.openSettings"],
-      commandRegistry: registry({
-        "workbench.openSettings": command({
-          id: "workbench.openSettings",
-          run,
-        }),
-      }),
+      commandRegistry,
       event,
       keymap: {
         ...defaultKeymapSettings("mac"),
         "panel.toggleTodo": "Cmd+J",
       },
+      runCommand: registryRunner(commandRegistry),
     });
 
     expect(handled).toBe(true);
@@ -42,19 +46,21 @@ describe("dispatchWorkbenchShortcutCommand", () => {
   it("consumes a matching disabled command without running it", () => {
     const run = vi.fn();
     const event = keyboardEvent({ key: "t", metaKey: true, shiftKey: true });
+    const commandRegistry = registry({
+      "panel.toggleTodo": command({
+        enabled: false,
+        id: "panel.toggleTodo",
+        run,
+      }),
+    });
 
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
       commandIds: ["panel.toggleTodo"],
-      commandRegistry: registry({
-        "panel.toggleTodo": command({
-          enabled: false,
-          id: "panel.toggleTodo",
-          run,
-        }),
-      }),
+      commandRegistry,
       event,
       keymap: defaultKeymapSettings("mac"),
+      runCommand: registryRunner(commandRegistry),
     });
 
     expect(handled).toBe(true);
@@ -62,21 +68,78 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it.each(["disabled", "missing"] as const)(
+    "consumes a registered shortcut when the runner reports %s",
+    (outcome) => {
+      const event = keyboardEvent({ key: ",", metaKey: true });
+      const run = vi.fn();
+      const runCommand = vi.fn(() => outcome);
+
+      const handled = dispatchWorkbenchShortcutCommand({
+        commandContext,
+        commandIds: ["workbench.openSettings"],
+        commandRegistry: registry({
+          "workbench.openSettings": command({
+            id: "workbench.openSettings",
+            run,
+          }),
+        }),
+        event,
+        keymap: defaultKeymapSettings("mac"),
+        runCommand,
+      });
+
+      expect(handled).toBe(true);
+      expect(event.preventDefault).toHaveBeenCalledTimes(1);
+      expect(runCommand).toHaveBeenCalledWith(
+        "workbench.openSettings",
+        commandContext,
+      );
+      expect(run).not.toHaveBeenCalled();
+    },
+  );
+
+  it("consumes a registered shortcut before a runner failure propagates", () => {
+    const event = keyboardEvent({ key: ",", metaKey: true });
+    const runCommand = vi.fn(() => {
+      throw new Error("command failed");
+    });
+
+    expect(() =>
+      dispatchWorkbenchShortcutCommand({
+        commandContext,
+        commandIds: ["workbench.openSettings"],
+        commandRegistry: registry({
+          "workbench.openSettings": command({
+            id: "workbench.openSettings",
+            run: vi.fn(),
+          }),
+        }),
+        event,
+        keymap: defaultKeymapSettings("mac"),
+        runCommand,
+      }),
+    ).toThrow("command failed");
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
   it("does not consume unmatched shortcuts", () => {
     const run = vi.fn();
     const event = keyboardEvent({ key: "x", metaKey: true });
+    const commandRegistry = registry({
+      "workbench.openSettings": command({
+        id: "workbench.openSettings",
+        run,
+      }),
+    });
 
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
       commandIds: ["workbench.openSettings"],
-      commandRegistry: registry({
-        "workbench.openSettings": command({
-          id: "workbench.openSettings",
-          run,
-        }),
-      }),
+      commandRegistry,
       event,
       keymap: defaultKeymapSettings("mac"),
+      runCommand: registryRunner(commandRegistry),
     });
 
     expect(handled).toBe(false);
@@ -86,16 +149,19 @@ describe("dispatchWorkbenchShortcutCommand", () => {
 
   it("leaves an unregistered Monaco-only keymap shortcut untouched", () => {
     const event = keyboardEvent({ altKey: true, key: "F5" });
+    const runCommand = vi.fn();
 
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
       commandRegistry: registry({}),
       event,
       keymap: defaultKeymapSettings("mac"),
+      runCommand,
     });
 
     expect(handled).toBe(false);
     expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -112,14 +178,16 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     ({ commandId, event: eventOptions }) => {
       const run = vi.fn();
       const event = keyboardEvent(eventOptions);
+      const commandRegistry = registry({
+        [commandId]: command({ id: commandId, run }),
+      });
 
       const handled = dispatchWorkbenchShortcutCommand({
         commandContext,
-        commandRegistry: registry({
-          [commandId]: command({ id: commandId, run }),
-        }),
+        commandRegistry,
         event,
         keymap: defaultKeymapSettings("mac"),
+        runCommand: registryRunner(commandRegistry),
       });
 
       expect(handled).toBe(true);
@@ -153,6 +221,11 @@ function registry(commands: Record<string, Command>) {
     commandRegistry.register(registeredCommand);
   });
   return commandRegistry;
+}
+
+function registryRunner(commandRegistry: CommandRegistry): CommandExecutionRunner {
+  return (commandId, context = commandContext) =>
+    executeCommand(commandRegistry, commandId, context);
 }
 
 function keyboardEvent({

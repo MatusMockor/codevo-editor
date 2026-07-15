@@ -25,6 +25,8 @@ export type CommandExecutionRunner = (
   context?: CommandContext,
 ) => CommandExecutionOutcome;
 
+export type CommandErrorReporter = (error: unknown) => void;
+
 export interface CommandLookup {
   get(id: string): Command | undefined;
 }
@@ -75,6 +77,47 @@ export function executeCommand(
   }
 
   void command.run();
+  return "executed";
+}
+
+export function executeCommandAndReport(
+  commandLookup: CommandLookup,
+  id: string,
+  context: CommandContext,
+  reportError: CommandErrorReporter,
+): CommandExecutionOutcome {
+  const command = commandLookup.get(id);
+
+  if (!command) {
+    return "missing";
+  }
+
+  const reportSafely = (error: unknown): void => {
+    try {
+      reportError(error);
+    } catch {
+      return;
+    }
+  };
+
+  let enabled: boolean;
+  try {
+    enabled = command.isEnabled(context);
+  } catch (error) {
+    reportSafely(error);
+    return "executed";
+  }
+
+  if (!enabled) {
+    return "disabled";
+  }
+
+  try {
+    void Promise.resolve(command.run()).catch(reportSafely);
+  } catch (error) {
+    reportSafely(error);
+  }
+
   return "executed";
 }
 

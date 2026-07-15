@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { CommandRegistry, type CommandContext } from "./commandRegistry";
+import type {
+  CommandContext,
+  CommandExecutionOutcome,
+  CommandExecutionRunner,
+} from "./commandRegistry";
 import {
   NATIVE_MENU_EVENT_NAMES,
   dispatchNativeMenuCommand,
@@ -12,32 +16,22 @@ const commandContext: CommandContext = {
 };
 
 describe("dispatchNativeMenuCommand", () => {
-  it("dispatches every mapped native menu event to its registry command", () => {
+  it("dispatches every mapped native menu event through the command runner", () => {
     const expectedCommandIds = [
       "editor.closeTab",
       "editor.fontZoomIn",
       "editor.fontZoomOut",
       "editor.fontZoomReset",
-      "editor.toggleFontLigatures",
       "workbench.openAppearanceSettings",
+      "editor.toggleFontLigatures",
     ];
-    const runs = new Map(expectedCommandIds.map((id) => [id, vi.fn()]));
-    const commandRegistry = new CommandRegistry();
-    runs.forEach((run, id) => {
-      commandRegistry.register({
-        category: "Test",
-        id,
-        isEnabled: () => true,
-        run,
-        title: id,
-      });
-    });
+    const runCommand = commandRunner("executed");
 
     const results = NATIVE_MENU_EVENT_NAMES.map((eventName) =>
       dispatchNativeMenuCommand({
         commandContext,
-        commandRegistry,
         eventName,
+        runCommand,
       }),
     );
 
@@ -50,58 +44,54 @@ describe("dispatchNativeMenuCommand", () => {
       "mockor-toggle-font-ligatures",
     ]);
     expect(results).toEqual(NATIVE_MENU_EVENT_NAMES.map(() => true));
-    runs.forEach((run) => expect(run).toHaveBeenCalledTimes(1));
+    expect(runCommand.mock.calls).toEqual(
+      expectedCommandIds.map((commandId) => [commandId, commandContext]),
+    );
   });
 
-  it("skips a disabled command without running it", () => {
-    const run = vi.fn();
-    const commandRegistry = new CommandRegistry();
-    commandRegistry.register({
-      category: "Editor",
-      id: "editor.closeTab",
-      isEnabled: () => false,
-      run,
-      title: "Close",
-    });
+  it("consumes a disabled command", () => {
+    const runCommand = commandRunner("disabled");
 
     const dispatched = dispatchNativeMenuCommand({
       commandContext,
-      commandRegistry,
       eventName: "mockor-close-active-tab",
+      runCommand,
     });
 
-    expect(dispatched).toBe(false);
-    expect(run).not.toHaveBeenCalled();
+    expect(dispatched).toBe(true);
+    expect(runCommand).toHaveBeenCalledWith("editor.closeTab", commandContext);
   });
 
   it("returns false for an unknown event name", () => {
-    const run = vi.fn();
-    const commandRegistry = new CommandRegistry();
-    commandRegistry.register({
-      category: "Editor",
-      id: "editor.closeTab",
-      isEnabled: () => true,
-      run,
-      title: "Close",
-    });
+    const runCommand = commandRunner("executed");
 
     const dispatched = dispatchNativeMenuCommand({
       commandContext,
-      commandRegistry,
       eventName: "mockor-unknown-event",
+      runCommand,
     });
 
     expect(dispatched).toBe(false);
-    expect(run).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it("returns false when the mapped command is not registered", () => {
+    const runCommand = commandRunner("missing");
+
     const dispatched = dispatchNativeMenuCommand({
       commandContext,
-      commandRegistry: new CommandRegistry(),
       eventName: "mockor-editor-font-zoom-in",
+      runCommand,
     });
 
     expect(dispatched).toBe(false);
+    expect(runCommand).toHaveBeenCalledWith(
+      "editor.fontZoomIn",
+      commandContext,
+    );
   });
 });
+
+function commandRunner(outcome: CommandExecutionOutcome) {
+  return vi.fn<CommandExecutionRunner>(() => outcome);
+}

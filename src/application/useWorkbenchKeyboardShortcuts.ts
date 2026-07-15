@@ -7,8 +7,8 @@ import {
 import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import type { AppSettings } from "../domain/settings";
 import {
-  executeCommand,
   type CommandContext,
+  type CommandExecutionRunner,
   type CommandRegistry,
 } from "./commandRegistry";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
@@ -30,6 +30,7 @@ interface UseWorkbenchKeyboardShortcutsOptions {
   commandContext: CommandContext;
   commandRegistry: CommandRegistry;
   doubleShiftDetectorRef: MutableRefObject<DoubleShiftDetector>;
+  runCommand: CommandExecutionRunner;
 }
 
 export function useWorkbenchKeyboardShortcuts({
@@ -39,6 +40,7 @@ export function useWorkbenchKeyboardShortcuts({
   commandContext,
   commandRegistry,
   doubleShiftDetectorRef,
+  runCommand,
 }: UseWorkbenchKeyboardShortcutsOptions): void {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -58,11 +60,7 @@ export function useWorkbenchKeyboardShortcuts({
       // true only on the qualifying second bare Shift tap inside the window.
       if (doubleShiftDetectorRef.current.handleKeyDown(event, Date.now())) {
         event.preventDefault();
-        executeCommand(
-          commandRegistry,
-          "workbench.searchEverywhere",
-          commandContext,
-        );
+        runCommand("workbench.searchEverywhere", commandContext);
         return;
       }
 
@@ -74,11 +72,7 @@ export function useWorkbenchKeyboardShortcuts({
         !event.shiftKey
       ) {
         event.preventDefault();
-        executeCommand(
-          commandRegistry,
-          "editor.goToDefinition",
-          commandContext,
-        );
+        runCommand("editor.goToDefinition", commandContext);
         return;
       }
 
@@ -105,6 +99,7 @@ export function useWorkbenchKeyboardShortcuts({
           commandRegistry,
           event,
           keymap,
+          runCommand,
         })
       ) {
         return;
@@ -120,5 +115,6 @@ export function useWorkbenchKeyboardShortcuts({
     commandContext,
     commandRegistry,
     doubleShiftDetectorRef,
+    runCommand,
   ]);
 }

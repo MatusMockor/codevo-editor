@@ -1,8 +1,7 @@
 import type { KeymapCommandId } from "../domain/keymap";
-import {
-  executeCommand,
-  type CommandLookup,
-  type CommandContext,
+import type {
+  CommandContext,
+  CommandExecutionRunner,
 } from "./commandRegistry";
 
 const NATIVE_MENU_COMMAND_IDS = {
@@ -22,14 +21,14 @@ export const NATIVE_MENU_EVENT_NAMES = Object.keys(
 
 interface DispatchNativeMenuCommandOptions {
   commandContext: CommandContext;
-  commandRegistry: CommandLookup;
   eventName: string;
+  runCommand: CommandExecutionRunner;
 }
 
 export function dispatchNativeMenuCommand({
   commandContext,
-  commandRegistry,
   eventName,
+  runCommand,
 }: DispatchNativeMenuCommandOptions): boolean {
   const commandId = nativeMenuCommandId(eventName);
 
@@ -37,9 +36,7 @@ export function dispatchNativeMenuCommand({
     return false;
   }
 
-  return (
-    executeCommand(commandRegistry, commandId, commandContext) === "executed"
-  );
+  return runCommand(commandId, commandContext) !== "missing";
 }
 
 function nativeMenuCommandId(eventName: string): KeymapCommandId | undefined {

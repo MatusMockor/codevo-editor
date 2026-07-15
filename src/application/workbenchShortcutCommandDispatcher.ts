@@ -5,10 +5,10 @@ import {
   type KeymapCommandId,
   type KeymapSettings,
 } from "../domain/keymap";
-import {
-  executeCommand,
-  type CommandLookup,
-  type CommandContext,
+import type {
+  CommandContext,
+  CommandExecutionRunner,
+  CommandLookup,
 } from "./commandRegistry";
 
 interface DispatchWorkbenchShortcutCommandOptions {
@@ -17,6 +17,7 @@ interface DispatchWorkbenchShortcutCommandOptions {
   commandRegistry: CommandLookup;
   event: KeyboardEvent;
   keymap: KeymapSettings;
+  runCommand: CommandExecutionRunner;
 }
 
 const KEYMAP_COMMAND_IDS = keymapCommands.map((command) => command.id);
@@ -27,6 +28,7 @@ export function dispatchWorkbenchShortcutCommand({
   commandRegistry,
   event,
   keymap,
+  runCommand,
 }: DispatchWorkbenchShortcutCommandOptions): boolean {
   for (const commandId of commandIds) {
     if (!commandRegistry.get(commandId)) {
@@ -39,11 +41,7 @@ export function dispatchWorkbenchShortcutCommand({
 
     event.preventDefault();
 
-    const outcome = executeCommand(commandRegistry, commandId, commandContext);
-    if (outcome === "missing") {
-      continue;
-    }
-
+    runCommand(commandId, commandContext);
     return true;
   }
 

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { defaultKeymapSettings } from "../domain/keymap";
-import type { CommandContext } from "./commandRegistry";
+import {
+  CommandRegistry,
+  executeCommand,
+  type CommandContext,
+  type CommandExecutionRunner,
+} from "./commandRegistry";
 import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 
@@ -60,6 +65,16 @@ describe("workbenchMarkdownCommands", () => {
       openMarkdownPreview,
       shortcut: () => "Cmd+Shift+V",
     });
+    if (!command) {
+      throw new Error("Expected Markdown preview command");
+    }
+
+    const commandRegistry = new CommandRegistry();
+    commandRegistry.register(command);
+    const runCommand: CommandExecutionRunner = (
+      commandId,
+      context = commandContext,
+    ) => executeCommand(commandRegistry, commandId, context);
     const event = {
       altKey: false,
       ctrlKey: false,
@@ -72,12 +87,10 @@ describe("workbenchMarkdownCommands", () => {
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
       commandIds: ["markdown.openPreview"],
-      commandRegistry: {
-        get: (commandId) =>
-          commandId === "markdown.openPreview" ? command : undefined,
-      },
+      commandRegistry,
       event,
       keymap: defaultKeymapSettings("mac"),
+      runCommand,
     });
 
     expect(handled).toBe(true);
