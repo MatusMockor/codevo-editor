@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import type { EditorPosition } from "../domain/languageServerFeatures";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   createNeonIntelligence,
@@ -30,7 +31,6 @@ const STALE_NETTE_PROFILE_WITHOUT_PROVIDER = createPhpFrameworkIntelligence({
   profile: "nette",
   providers: [],
 });
-
 function makeDeps(
   overrides: Partial<NeonIntelligenceDependencies> = {},
 ): NeonIntelligenceDependencies {
@@ -323,6 +323,7 @@ class ProductPresenter {
       `${ROOT}/config/services.neon`,
       { column: 5, lineNumber: 2 },
       "Catalog",
+      { shouldCommit: expect.any(Function) },
     );
     expect(deps.setImplementationChooser).not.toHaveBeenCalled();
   });
@@ -444,6 +445,69 @@ class ProductPresenter {
     ).resolves.toBe(false);
     expect(openTarget).not.toHaveBeenCalled();
     expect(setImplementationChooser).not.toHaveBeenCalled();
+  });
+
+  it("drops same-root owner results before showing an injection chooser", async () => {
+    const workspace = buildNeonWorkspace({
+      "config/first.neon": "services:\n    first: App\\Services\\Catalog\n",
+      "config/second.neon": "services:\n    second: App\\Services\\Catalog\n",
+    });
+    let requestActive = true;
+    const setImplementationChooser = vi.fn();
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/ProductPresenter.php` }),
+      listDirectory: async (path) => {
+        const entries = await workspace.listDirectory(path);
+        requestActive = false;
+        return entries;
+      },
+      readFileContent: workspace.readFileContent,
+      setImplementationChooser,
+    });
+    const neon = createNeonIntelligence(() => deps);
+
+    await expect(
+      neon.providePhpNetteInjectionDefinition(
+        phpSource,
+        phpSource.lastIndexOf("Catalog") + 2,
+        { canNavigate: () => requestActive },
+      ),
+    ).resolves.toBe(false);
+    expect(setImplementationChooser).not.toHaveBeenCalled();
+  });
+
+  it("passes the owner fence into Nette injection target opening", async () => {
+    const workspace = buildNeonWorkspace({
+      "config/services.neon":
+        "services:\n    catalog: App\\Services\\Catalog\n",
+    });
+    let requestActive = true;
+    const openTarget = vi.fn(async (
+      _path: string,
+      _position: EditorPosition,
+      _label: string,
+      options?: { shouldCommit?: () => boolean },
+    ) => {
+      requestActive = false;
+      expect(options?.shouldCommit?.()).toBe(false);
+      return true;
+    });
+    const deps = makeDeps({
+      getActiveDocument: () => ({ path: `${ROOT}/app/ProductPresenter.php` }),
+      listDirectory: workspace.listDirectory,
+      openTarget,
+      readFileContent: workspace.readFileContent,
+    });
+    const neon = createNeonIntelligence(() => deps);
+
+    await expect(
+      neon.providePhpNetteInjectionDefinition(
+        phpSource,
+        phpSource.lastIndexOf("Catalog") + 2,
+        { canNavigate: () => requestActive },
+      ),
+    ).resolves.toBe(false);
+    expect(openTarget).toHaveBeenCalledOnce();
   });
 });
 

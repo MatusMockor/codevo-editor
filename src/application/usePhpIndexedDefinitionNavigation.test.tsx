@@ -136,6 +136,7 @@ describe("usePhpIndexedDefinitionNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       { column: 3, lineNumber: 9 },
       "ReportService",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -311,6 +312,117 @@ route('dashboard');`,
     const navigationPromise = harness.api().goToIndexedSymbolDefinition();
 
     currentWorkspaceRootRef.current = OTHER_ROOT;
+    symbols.reject(new Error("stale indexed definition"));
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not open an indexed target after same-root request replacement", async () => {
+    const symbols = deferred<ProjectSymbolSearchResult[]>();
+    const openNavigationTarget = vi.fn(async () => true);
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const deps = makeDeps({
+      openNavigationTarget,
+      projectSymbolSearch: {
+        searchProjectSymbols: vi.fn(() => symbols.promise),
+      },
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToIndexedSymbolDefinition(request);
+
+    requestActive = false;
+    symbols.resolve([symbol()]);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not commit an indexed target during same-root request replacement", async () => {
+    const openStarted = deferred<void>();
+    const finishOpen = deferred<void>();
+    const committedTargets: string[] = [];
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const openNavigationTarget = vi.fn(async (
+      path: string,
+      _position: { column: number; lineNumber: number },
+      _label: string,
+      options?: { shouldCommit?: () => boolean },
+    ) => {
+      openStarted.resolve();
+      await finishOpen.promise;
+
+      if (options?.shouldCommit?.() === false) {
+        return false;
+      }
+
+      committedTargets.push(path);
+      return true;
+    });
+    const deps = makeDeps({ openNavigationTarget });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToIndexedSymbolDefinition(request);
+
+    await openStarted.promise;
+    requestActive = false;
+    finishOpen.resolve();
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(committedTargets).toEqual([]);
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/Services/ReportService.php`,
+      { column: 3, lineNumber: 9 },
+      "ReportService",
+      { shouldCommit: expect.any(Function) },
+    );
+
+    harness.unmount();
+  });
+
+  it("does not set an indexed miss message after same-root request replacement", async () => {
+    const symbols = deferred<ProjectSymbolSearchResult[]>();
+    const setMessage = vi.fn();
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const deps = makeDeps({
+      projectSymbolSearch: {
+        searchProjectSymbols: vi.fn(() => symbols.promise),
+      },
+      setMessage,
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToIndexedSymbolDefinition(request);
+
+    requestActive = false;
+    symbols.resolve([]);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not report an indexed error after same-root request replacement", async () => {
+    const symbols = deferred<ProjectSymbolSearchResult[]>();
+    const reportErrorForActiveWorkspaceRoot = vi.fn();
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const deps = makeDeps({
+      projectSymbolSearch: {
+        searchProjectSymbols: vi.fn(() => symbols.promise),
+      },
+      reportErrorForActiveWorkspaceRoot,
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToIndexedSymbolDefinition(request);
+
+    requestActive = false;
     symbols.reject(new Error("stale indexed definition"));
 
     await expect(navigationPromise).resolves.toBe(false);

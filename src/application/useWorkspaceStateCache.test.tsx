@@ -30,6 +30,7 @@ import {
 } from "./useEditorSessionState";
 import {
   useWorkspaceStateCache,
+  workspaceIdentityStateCacheKey,
   type WorkspaceStateCache,
 } from "./useWorkspaceStateCache";
 
@@ -42,9 +43,10 @@ const CANONICAL_ROOT_A = "/real/workspace-a";
 function workspaceIdentity(
   selectedPath = ROOT_A,
   canonicalRoot = CANONICAL_ROOT_A,
+  workspaceId = "workspace-a-id",
 ): WorkspaceIdentityDescriptor {
   return {
-    workspaceId: "workspace-a-id",
+    workspaceId,
     selectedPath,
     canonicalRoot,
     caseSensitive: true,
@@ -312,7 +314,7 @@ function seedWorkspaceB(
 }
 
 describe("useWorkspaceStateCache", () => {
-  it("captures identity-backed state under its normalized canonical root", () => {
+  it("captures identity-backed state under its stable workspace id key", () => {
     const harness = renderWorkspaceStateCacheHarness();
     const identity = workspaceIdentity(
       ROOT_A,
@@ -326,8 +328,9 @@ describe("useWorkspaceStateCache", () => {
     harness.api().cacheCurrentWorkspaceState(ROOT_A);
 
     const cache = harness.api().workspaceStateCacheRef.current;
-    expect(Object.keys(cache)).toEqual([CANONICAL_ROOT_A]);
-    expect(cache[CANONICAL_ROOT_A].workspaceIdentityDescriptor).toBe(identity);
+    const identityKey = workspaceIdentityStateCacheKey(identity.workspaceId);
+    expect(Object.keys(cache)).toEqual([identityKey]);
+    expect(cache[identityKey].workspaceIdentityDescriptor).toBe(identity);
     harness.unmount();
   });
 
@@ -342,7 +345,9 @@ describe("useWorkspaceStateCache", () => {
     harness.api().cacheCurrentWorkspaceState(ROOT_A);
 
     const cached =
-      harness.api().workspaceStateCacheRef.current[CANONICAL_ROOT_A];
+      harness.api().workspaceStateCacheRef.current[
+        workspaceIdentityStateCacheKey(identity.workspaceId)
+      ];
     expect(Object.keys(cached.editorSurface.documents)).toEqual([DOC_A.path]);
     expect(cached.editorSurface.imageTabs).toEqual({
       [IMAGE_TAB_A.path]: IMAGE_TAB_A,
@@ -350,7 +355,7 @@ describe("useWorkspaceStateCache", () => {
     harness.unmount();
   });
 
-  it("migrates a legacy selected-root alias to canonical ownership", () => {
+  it("migrates a matching selected-root alias to identity ownership", () => {
     const harness = renderWorkspaceStateCacheHarness();
     const identity = workspaceIdentity();
 
@@ -365,12 +370,12 @@ describe("useWorkspaceStateCache", () => {
 
     expect(resolved).toBe(legacyState);
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
-      [CANONICAL_ROOT_A]: legacyState,
+      [workspaceIdentityStateCacheKey(identity.workspaceId)]: legacyState,
     });
     harness.unmount();
   });
 
-  it("keeps the canonical object unchanged when an alias collides", () => {
+  it("keeps the identity-owned object unchanged when an alias collides", () => {
     const harness = renderWorkspaceStateCacheHarness();
     const identity = workspaceIdentity();
 
@@ -387,7 +392,7 @@ describe("useWorkspaceStateCache", () => {
       workspaceIdentityDescriptor: identity,
     };
     harness.api().workspaceStateCacheRef.current = {
-      [CANONICAL_ROOT_A]: canonicalState,
+      [workspaceIdentityStateCacheKey(identity.workspaceId)]: canonicalState,
       [ROOT_A]: aliasState,
     };
 
@@ -395,7 +400,7 @@ describe("useWorkspaceStateCache", () => {
 
     expect(winner).toBe(canonicalState);
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
-      [CANONICAL_ROOT_A]: canonicalState,
+      [workspaceIdentityStateCacheKey(identity.workspaceId)]: canonicalState,
     });
     harness.unmount();
   });
@@ -422,7 +427,112 @@ describe("useWorkspaceStateCache", () => {
 
     expect(winner).toBe(firstAlias);
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
-      [CANONICAL_ROOT_A]: firstAlias,
+      [workspaceIdentityStateCacheKey(identity.workspaceId)]: firstAlias,
+    });
+    harness.unmount();
+  });
+
+  it("keeps owners with identical aliases independent while same-id aliases coalesce", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const identityA = workspaceIdentity(ROOT_A, CANONICAL_ROOT_A, "owner-a");
+    const identityB = workspaceIdentity(ROOT_A, CANONICAL_ROOT_A, "owner-b");
+
+    seedWorkspaceA(harness);
+    const captured = harness.api().workspaceStateCacheRef.current;
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    const baseState = Object.values(captured)[0];
+    const ownerAState = {
+      ...baseState,
+      bookmarks: [BOOKMARK_A],
+      editorSurface: {
+        ...baseState.editorSurface,
+        activePath: DIRTY_DOC_A.path,
+        documents: { [DIRTY_DOC_A.path]: DIRTY_DOC_A },
+        openPaths: [DIRTY_DOC_A.path],
+      },
+      navigationHistory: {
+        backStack: [
+          {
+            path: DIRTY_DOC_A.path,
+            position: { column: 2, lineNumber: 4 },
+          },
+        ],
+        forwardStack: [],
+      },
+      recentLocations: [
+        {
+          column: 2,
+          line: 4,
+          name: "a.ts",
+          path: DIRTY_DOC_A.path,
+          relativePath: "src/a.ts",
+          snippet: "owner a",
+        },
+      ],
+      workspaceIdentityDescriptor: identityA,
+    };
+    const ownerBState = {
+      ...baseState,
+      bookmarks: [],
+      editorSurface: {
+        ...baseState.editorSurface,
+        activePath: DOC_A_SECOND.path,
+        documents: { [DOC_A_SECOND.path]: DOC_A_SECOND },
+        openPaths: [DOC_A_SECOND.path],
+      },
+      navigationHistory: {
+        backStack: [],
+        forwardStack: [
+          {
+            path: DOC_A_SECOND.path,
+            position: { column: 1, lineNumber: 8 },
+          },
+        ],
+      },
+      recentLocations: [
+        {
+          column: 1,
+          line: 8,
+          name: "second.ts",
+          path: DOC_A_SECOND.path,
+          relativePath: "src/second.ts",
+          snippet: "owner b",
+        },
+      ],
+      workspaceIdentityDescriptor: identityB,
+    };
+    harness.api().workspaceStateCacheRef.current = {
+      [workspaceIdentityStateCacheKey(identityA.workspaceId)]: ownerAState,
+      [workspaceIdentityStateCacheKey(identityB.workspaceId)]: ownerBState,
+      [ROOT_A]: { ...ownerAState },
+    };
+
+    const resolvedA = harness
+      .api()
+      .coalesceWorkspaceStateCache(identityA, ROOT_A);
+    const resolvedB = harness
+      .api()
+      .resolveCachedWorkspaceState(CANONICAL_ROOT_A, identityB);
+
+    expect(resolvedA).toBe(ownerAState);
+    expect(resolvedB).toBe(ownerBState);
+    expect(resolvedA?.editorSurface.documents).toEqual({
+      [DIRTY_DOC_A.path]: DIRTY_DOC_A,
+    });
+    expect(resolvedA?.editorSurface.activePath).toBe(DIRTY_DOC_A.path);
+    expect(resolvedA?.bookmarks).toEqual([BOOKMARK_A]);
+    expect(resolvedA?.navigationHistory.backStack).toHaveLength(1);
+    expect(resolvedA?.recentLocations[0].snippet).toBe("owner a");
+    expect(resolvedB?.editorSurface.documents).toEqual({
+      [DOC_A_SECOND.path]: DOC_A_SECOND,
+    });
+    expect(resolvedB?.editorSurface.activePath).toBe(DOC_A_SECOND.path);
+    expect(resolvedB?.bookmarks).toEqual([]);
+    expect(resolvedB?.navigationHistory.forwardStack).toHaveLength(1);
+    expect(resolvedB?.recentLocations[0].snippet).toBe("owner b");
+    expect(harness.api().workspaceStateCacheRef.current).toEqual({
+      [workspaceIdentityStateCacheKey(identityA.workspaceId)]: ownerAState,
+      [workspaceIdentityStateCacheKey(identityB.workspaceId)]: ownerBState,
     });
     harness.unmount();
   });
@@ -455,7 +565,7 @@ describe("useWorkspaceStateCache", () => {
     harness.unmount();
   });
 
-  it("preserves exact-key legacy behavior without an identity", () => {
+  it("preserves normalized-root legacy behavior without an identity", () => {
     const harness = renderWorkspaceStateCacheHarness();
 
     seedWorkspaceA(harness);
@@ -463,12 +573,9 @@ describe("useWorkspaceStateCache", () => {
     const cached = harness.api().workspaceStateCacheRef.current[ROOT_A];
 
     expect(harness.api().resolveCachedWorkspaceState(ROOT_A)).toBe(cached);
-    expect(harness.api().resolveCachedWorkspaceState(`${ROOT_A}/`)).toBeNull();
+    expect(harness.api().resolveCachedWorkspaceState(`${ROOT_A}/`)).toBe(cached);
 
     harness.api().forgetCachedWorkspaceState(`${ROOT_A}/`);
-    expect(harness.api().workspaceStateCacheRef.current[ROOT_A]).toBe(cached);
-
-    harness.api().forgetCachedWorkspaceState(ROOT_A);
     expect(harness.api().workspaceStateCacheRef.current).toEqual({});
     harness.unmount();
   });

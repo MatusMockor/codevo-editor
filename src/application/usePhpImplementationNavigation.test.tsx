@@ -183,6 +183,7 @@ describe("usePhpImplementationNavigation", () => {
       `${ROOT}/app/Services/FacebookAdapterService.php`,
       { column: 21, lineNumber: 6 },
       "FacebookAdapterService",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -207,6 +208,88 @@ describe("usePhpImplementationNavigation", () => {
 
     await expect(navigationPromise).resolves.toBe(false);
     expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not show an implementation chooser after the navigation request becomes stale", async () => {
+    const symbols = deferred<ProjectSymbolSearchResult[]>();
+    let requestActive = true;
+    const setImplementationChooser = vi.fn();
+    const deps = makeDeps({
+      projectSymbolSearch: {
+        searchProjectSymbols: vi.fn(() => symbols.promise),
+      },
+      setImplementationChooser,
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToIndexedPhpImplementation(
+      undefined,
+      { canNavigate: () => requestActive },
+    );
+
+    requestActive = false;
+    symbols.resolve([
+      methodSymbol(),
+      methodSymbol({
+        containerName: "App\\Services\\InstagramAdapterService",
+        path: `${ROOT}/app/Services/InstagramAdapterService.php`,
+        relativePath: "app/Services/InstagramAdapterService.php",
+      }),
+    ]);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(setImplementationChooser).not.toHaveBeenCalled();
+    expect(deps.openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("does not open an implementation after the navigation request becomes stale", async () => {
+    const source = deferred<string>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      openNavigationTarget,
+      readNavigationFileContent: vi.fn(() => source.promise),
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToIndexedPhpImplementation(
+      undefined,
+      { canNavigate: () => requestActive },
+    );
+
+    requestActive = false;
+    source.resolve(IMPLEMENTATION_SOURCE);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("opens an implementation while an alias-preserving request remains valid", async () => {
+    const symbols = deferred<ProjectSymbolSearchResult[]>();
+    const currentWorkspaceRootRef = { current: ROOT };
+    const openNavigationTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      currentWorkspaceRootRef,
+      openNavigationTarget,
+      projectSymbolSearch: {
+        searchProjectSymbols: vi.fn(() => symbols.promise),
+      },
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToIndexedPhpImplementation(
+      undefined,
+      { canNavigate: () => true },
+    );
+
+    currentWorkspaceRootRef.current = `${ROOT}/`;
+    symbols.resolve([methodSymbol()]);
+
+    await expect(navigationPromise).resolves.toBe(true);
+    expect(openNavigationTarget).toHaveBeenCalledOnce();
 
     harness.unmount();
   });

@@ -56,7 +56,8 @@ function makeDeps(
     projectSymbolSearch: {
       searchProjectSymbols: vi.fn(async () => [methodSymbol()]),
     },
-    readNavigationFileContent: vi.fn(async () => `<?php
+    readNavigationFileContent: vi.fn(
+      async () => `<?php
 namespace App\\Services;
 
 class ReportService
@@ -64,7 +65,8 @@ class ReportService
     public function render(): void
     {
     }
-}`),
+}`,
+    ),
     resolvePhpClassReference: vi.fn((_source, reference) =>
       reference === "ReportTrait" ? "App\\Services\\ReportTrait" : null,
     ),
@@ -133,16 +135,16 @@ describe("usePhpMethodTargetNavigation", () => {
     const deps = makeDeps({ openNavigationTarget });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().openDirectPhpMethodTarget(
-      "App\\Services\\ReportService",
-      "render",
-    );
+    const handled = await harness
+      .api()
+      .openDirectPhpMethodTarget("App\\Services\\ReportService", "render");
 
     expect(handled).toBe(true);
     expect(openNavigationTarget).toHaveBeenCalledWith(
       `${ROOT}/app/Services/ReportService.php`,
       { column: 7, lineNumber: 12 },
       "render()",
+      { shouldCommit: expect.any(Function) },
     );
     expect(deps.readNavigationFileContent).not.toHaveBeenCalled();
 
@@ -159,10 +161,9 @@ describe("usePhpMethodTargetNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().openDirectPhpMethodTarget(
-      "App\\Services\\ReportService",
-      "render",
-    );
+    const handled = await harness
+      .api()
+      .openDirectPhpMethodTarget("App\\Services\\ReportService", "render");
 
     expect(handled).toBe(true);
     expect(deps.resolvePhpClassSourcePaths).toHaveBeenCalledWith(
@@ -172,6 +173,7 @@ describe("usePhpMethodTargetNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "render()",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -195,6 +197,7 @@ describe("usePhpMethodTargetNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "render()",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -212,10 +215,9 @@ describe("usePhpMethodTargetNavigation", () => {
       },
     });
     const harness = renderHook(deps);
-    const navigationPromise = harness.api().openDirectPhpMethodTarget(
-      "App\\Services\\ReportService",
-      "render",
-    );
+    const navigationPromise = harness
+      .api()
+      .openDirectPhpMethodTarget("App\\Services\\ReportService", "render");
 
     currentWorkspaceRootRef.current = OTHER_ROOT;
     symbols.resolve([methodSymbol()]);
@@ -237,11 +239,11 @@ describe("usePhpMethodTargetNavigation", () => {
       },
     });
     const harness = renderHook(deps);
-    const navigationPromise = harness.api().openDirectPhpMethodTarget(
-      "App\\Services\\ReportService",
-      "render",
-      { canNavigate: () => requestActive },
-    );
+    const navigationPromise = harness
+      .api()
+      .openDirectPhpMethodTarget("App\\Services\\ReportService", "render", {
+        canNavigate: () => requestActive,
+      });
 
     requestActive = false;
     symbols.resolve([methodSymbol()]);
@@ -250,6 +252,32 @@ describe("usePhpMethodTargetNavigation", () => {
     expect(openNavigationTarget).not.toHaveBeenCalled();
     expect(deps.readNavigationFileContent).not.toHaveBeenCalled();
 
+    harness.unmount();
+  });
+
+  it("fences an in-flight method open when its owner becomes stale", async () => {
+    const targetOpen = deferred<boolean>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(() => targetOpen.promise);
+    const deps = makeDeps({ openNavigationTarget });
+    const harness = renderHook(deps);
+    const navigationPromise = harness
+      .api()
+      .openDirectPhpMethodTarget("App\\Services\\ReportService", "render", {
+        canNavigate: () => requestActive,
+      });
+
+    await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
+    const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
+      shouldCommit?: () => boolean;
+    };
+    expect(options?.shouldCommit?.()).toBe(true);
+
+    requestActive = false;
+    expect(options?.shouldCommit?.()).toBe(false);
+    targetOpen.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
     harness.unmount();
   });
 });

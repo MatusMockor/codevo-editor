@@ -113,9 +113,9 @@ describe("useWorkbenchNavigation Search Everywhere actions", () => {
     let activationSettled = false;
 
     await act(async () => {
-      const activation = harness.api().activateSearchEverywhereItem(
-        actionItem(run),
-      );
+      const activation = harness
+        .api()
+        .activateSearchEverywhereItem(actionItem(run));
       void activation.then(() => {
         activationSettled = true;
       });
@@ -148,11 +148,14 @@ describe("useWorkbenchNavigation Search Everywhere actions", () => {
     await act(async () => {
       const firstActivation = harness.api().activateSearchEverywhereItem(item);
       harness.deps.setSearchEverywhereOpen(true);
-      const duplicateActivation =
-        harness.api().activateSearchEverywhereItem(item);
-      const otherActivation = harness.api().activateSearchEverywhereItem(
-        actionItem(otherRun, () => true, "test.other-action"),
-      );
+      const duplicateActivation = harness
+        .api()
+        .activateSearchEverywhereItem(item);
+      const otherActivation = harness
+        .api()
+        .activateSearchEverywhereItem(
+          actionItem(otherRun, () => true, "test.other-action"),
+        );
 
       await duplicateActivation;
       await otherActivation;
@@ -213,9 +216,9 @@ describe("useWorkbenchNavigation Search Everywhere actions", () => {
     };
 
     await act(async () => {
-      await harness.api().activateSearchEverywhereItem(
-        actionItem(run, isEnabled),
-      );
+      await harness
+        .api()
+        .activateSearchEverywhereItem(actionItem(run, isEnabled));
     });
 
     expect(isEnabled).toHaveBeenCalledWith(
@@ -228,12 +231,18 @@ describe("useWorkbenchNavigation Search Everywhere actions", () => {
   });
 
   it.each([
-    ["synchronous", () => {
-      throw new Error("sync failure");
-    }],
-    ["asynchronous", async () => {
-      throw new Error("async failure");
-    }],
+    [
+      "synchronous",
+      () => {
+        throw new Error("sync failure");
+      },
+    ],
+    [
+      "asynchronous",
+      async () => {
+        throw new Error("async failure");
+      },
+    ],
   ])("reports %s command rejection", async (_label, run) => {
     const harness = renderNavigation();
 
@@ -251,6 +260,52 @@ describe("useWorkbenchNavigation Search Everywhere actions", () => {
 });
 
 describe("useWorkbenchNavigation PHP read-only boundary", () => {
+  it("does not commit reveal, history, or message after a navigation owner replacement", async () => {
+    let resolveOpen: ((opened: boolean) => void) | undefined;
+    let requestActive = true;
+    const openFile = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+    const recordNavigationLocationSnapshot = vi.fn();
+    const setEditorRevealTarget = vi.fn();
+    const setMessage = vi.fn();
+    const harness = renderNavigation({
+      openFile,
+      recordNavigationLocationSnapshot,
+      setEditorRevealTarget,
+      setMessage,
+    });
+    const path = `${ROOT}/app/Services/Service.php`;
+    const navigation = harness
+      .api()
+      .openNavigationTarget(
+        path,
+        { column: 3, lineNumber: 4 },
+        "Service",
+        {},
+        { canNavigate: () => requestActive },
+      );
+
+    await vi.waitFor(() => expect(openFile).toHaveBeenCalledOnce());
+    const options = (openFile.mock.calls[0] as unknown[])[1] as {
+      shouldCommit?: () => boolean;
+    };
+    expect(options?.shouldCommit?.()).toBe(true);
+
+    requestActive = false;
+    expect(options?.shouldCommit?.()).toBe(false);
+    resolveOpen?.(true);
+
+    await expect(navigation).resolves.toBe(false);
+    expect(recordNavigationLocationSnapshot).not.toHaveBeenCalled();
+    expect(setEditorRevealTarget).not.toHaveBeenCalled();
+    expect(setMessage).not.toHaveBeenCalled();
+    harness.root.unmount();
+  });
+
   it.each(["contextual definition", "indexed fallback"])(
     "forces a vendor target from %s read-only",
     async (label) => {
@@ -258,11 +313,9 @@ describe("useWorkbenchNavigation PHP read-only boundary", () => {
       const path = `${ROOT}/vendor/acme/package/src/Service.php`;
 
       await act(async () => {
-        await harness.api().openNavigationTarget(
-          path,
-          { column: 3, lineNumber: 4 },
-          label,
-        );
+        await harness
+          .api()
+          .openNavigationTarget(path, { column: 3, lineNumber: 4 }, label);
       });
 
       expect(harness.openFile).toHaveBeenCalledWith(
@@ -279,11 +332,13 @@ describe("useWorkbenchNavigation PHP read-only boundary", () => {
     const path = `${ROOT}/app/Services/Service.php`;
 
     await act(async () => {
-      await harness.api().openNavigationTarget(
-        path,
-        { column: 3, lineNumber: 4 },
-        "contextual definition",
-      );
+      await harness
+        .api()
+        .openNavigationTarget(
+          path,
+          { column: 3, lineNumber: 4 },
+          "contextual definition",
+        );
     });
 
     expect(harness.openFile).toHaveBeenCalledWith(

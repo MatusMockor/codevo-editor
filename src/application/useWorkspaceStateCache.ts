@@ -15,7 +15,7 @@ import type { NavigationHistory } from "../domain/navigation";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
 import type { FileEntry } from "../domain/workspace";
-import { createWorkspaceRoot } from "../domain/workspacePath";
+import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import type { EditorSurfaceSnapshot } from "../domain/workspaceSessionSnapshot";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import type { SidebarView } from "./useWorkbenchController";
@@ -141,40 +141,32 @@ export function useWorkspaceStateCache(
       identity: WorkspaceIdentityDescriptor,
       requestedRootPath?: string,
     ): CachedWorkspaceWorkbenchState | null => {
-      const canonicalKey = normalizedCanonicalRootKey(identity);
+      const identityKey = workspaceIdentityStateCacheKey(identity.workspaceId);
       const cache = workspaceStateCacheRef.current;
-      const canonicalState = cache[canonicalKey];
-      const requestedState = requestedRootPath
-        ? cache[requestedRootPath]
-        : undefined;
-      const selectedState = cache[identity.selectedPath];
-      const describedAlias = Object.entries(cache).find(
+      const identityState = cache[identityKey];
+      const matchingAliases = Object.entries(cache).filter(
         ([key, cached]) =>
-          key !== canonicalKey &&
-          cachedStateDescribesCanonicalRoot(cached, canonicalKey),
-      )?.[1];
+          key !== identityKey && cachedStateHasWorkspaceId(cached, identity),
+      );
+      const requestedKey = normalizedWorkspaceRootKey(requestedRootPath);
+      const selectedKey = normalizedWorkspaceRootKey(identity.selectedPath);
+      const canonicalKey = normalizedWorkspaceRootKey(identity.canonicalRoot);
       const winner =
-        canonicalState ?? requestedState ?? selectedState ?? describedAlias;
+        identityState ??
+        matchingAliases.find(([key]) => key === requestedKey)?.[1] ??
+        matchingAliases.find(([key]) => key === selectedKey)?.[1] ??
+        matchingAliases.find(([key]) => key === canonicalKey)?.[1] ??
+        matchingAliases[0]?.[1];
 
-      for (const [key, cached] of Object.entries(cache)) {
-        if (key === canonicalKey) {
-          continue;
-        }
-
-        if (
-          key === requestedRootPath ||
-          key === identity.selectedPath ||
-          cachedStateDescribesCanonicalRoot(cached, canonicalKey)
-        ) {
-          delete cache[key];
-        }
+      for (const [key] of matchingAliases) {
+        delete cache[key];
       }
 
       if (!winner) {
         return null;
       }
 
-      cache[canonicalKey] = winner;
+      cache[identityKey] = winner;
       return winner;
     },
     [],
@@ -186,7 +178,8 @@ export function useWorkspaceStateCache(
       identity?: WorkspaceIdentityDescriptor | null,
     ): CachedWorkspaceWorkbenchState | null => {
       if (!identity) {
-        return workspaceStateCacheRef.current[rootPath] ?? null;
+        const rootKey = normalizedWorkspaceRootKey(rootPath);
+        return workspaceStateCacheRef.current[rootKey] ?? null;
       }
 
       return coalesceWorkspaceStateCache(identity, rootPath);
@@ -197,22 +190,20 @@ export function useWorkspaceStateCache(
   const forgetCachedWorkspaceState = useCallback(
     (rootPath: string, identity?: WorkspaceIdentityDescriptor | null) => {
       if (!identity) {
-        delete workspaceStateCacheRef.current[rootPath];
+        delete workspaceStateCacheRef.current[
+          normalizedWorkspaceRootKey(rootPath)
+        ];
         return;
       }
 
-      const canonicalKey = normalizedCanonicalRootKey(identity);
       const cache = workspaceStateCacheRef.current;
 
       for (const [key, cached] of Object.entries(cache)) {
-        if (
-          key === rootPath ||
-          key === identity.selectedPath ||
-          key === canonicalKey ||
-          cachedStateDescribesCanonicalRoot(cached, canonicalKey)
-        ) {
-          delete cache[key];
+        if (!cachedStateHasWorkspaceId(cached, identity)) {
+          continue;
         }
+
+        delete cache[key];
       }
     },
     [],
@@ -225,8 +216,10 @@ export function useWorkspaceStateCache(
       }
 
       const cacheKey = workspaceIdentityDescriptor
-        ? normalizedCanonicalRootKey(workspaceIdentityDescriptor)
-        : rootPath;
+        ? workspaceIdentityStateCacheKey(
+            workspaceIdentityDescriptor.workspaceId,
+          )
+        : normalizedWorkspaceRootKey(rootPath);
       workspaceStateCacheRef.current[cacheKey] = {
         bookmarks,
         bottomPanelView,
@@ -313,31 +306,15 @@ export function useWorkspaceStateCache(
   };
 }
 
-function normalizedCanonicalRootKey(
-  identity: WorkspaceIdentityDescriptor,
-): string {
-  const root = createWorkspaceRoot(
-    identity.workspaceId,
-    identity.canonicalRoot,
-    identity.policy,
-  );
-
-  if (!root.ok) {
-    return identity.canonicalRoot;
-  }
-
-  return root.value.nativePath;
+export function workspaceIdentityStateCacheKey(workspaceId: string): string {
+  return `workspace-id:${JSON.stringify(workspaceId)}`;
 }
 
-function cachedStateDescribesCanonicalRoot(
+function cachedStateHasWorkspaceId(
   cached: CachedWorkspaceWorkbenchState,
-  canonicalKey: string,
+  identity: WorkspaceIdentityDescriptor,
 ): boolean {
-  const identity = cached.workspaceIdentityDescriptor;
-
-  if (!identity) {
-    return false;
-  }
-
-  return normalizedCanonicalRootKey(identity) === canonicalKey;
+  return (
+    cached.workspaceIdentityDescriptor?.workspaceId === identity.workspaceId
+  );
 }

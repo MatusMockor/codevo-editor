@@ -26,6 +26,7 @@ export interface PhpClassTargetNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
+    options?: { shouldCommit?: () => boolean },
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent(path: string): Promise<string>;
@@ -97,11 +98,17 @@ export function usePhpClassTargetNavigation({
             return false;
           }
 
-          return openNavigationTarget(
+          const opened = await openNavigationTarget(
             indexedTarget.path,
             editorPositionFromProjectSymbol(indexedTarget),
             label,
+            {
+              shouldCommit: () =>
+                isRequestedRootActive() && canNavigate(request),
+            },
           );
+
+          return isRequestedRootActive() && canNavigate(request) && opened;
         }
       }
 
@@ -129,11 +136,17 @@ export function usePhpClassTargetNavigation({
             return false;
           }
 
-          return openNavigationTarget(
+          const opened = await openNavigationTarget(
             path,
             phpNamedTypePosition(content, shortPhpName(className)),
             label,
+            {
+              shouldCommit: () =>
+                isRequestedRootActive() && canNavigate(request),
+            },
           );
+
+          return isRequestedRootActive() && canNavigate(request) && opened;
         } catch {
           if (!isRequestedRootActive()) {
             return false;

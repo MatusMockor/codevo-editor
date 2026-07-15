@@ -74,6 +74,7 @@ export function createNeonIntelligence(
   const providePhpNetteInjectionDefinition = async (
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean> => {
     const context = createNeonRequestContext(
       getDependencies(),
@@ -89,6 +90,7 @@ export function createNeonIntelligence(
       context,
       source,
       offset,
+      request,
     );
   };
 

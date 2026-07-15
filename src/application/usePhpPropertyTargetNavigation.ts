@@ -10,6 +10,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 export interface PhpPropertyTargetNavigationDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -17,6 +18,7 @@ export interface PhpPropertyTargetNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
+    options?: { shouldCommit?: () => boolean },
   ): Promise<boolean>;
   readNavigationFileContent(path: string): Promise<string>;
   resolvePhpClassReference(source: string, reference: string): string | null;
@@ -29,6 +31,7 @@ export interface PhpPropertyTargetNavigation {
   openDirectPhpPropertyTarget(
     className: string,
     propertyName: string,
+    request?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -42,7 +45,11 @@ export function usePhpPropertyTargetNavigation({
   workspaceRoot,
 }: PhpPropertyTargetNavigationDependencies): PhpPropertyTargetNavigation {
   const openDirectPhpPropertyTarget = useCallback(
-    async (className: string, propertyName: string): Promise<boolean> => {
+    async (
+      className: string,
+      propertyName: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
@@ -56,7 +63,9 @@ export function usePhpPropertyTargetNavigation({
       const openPropertyInClassHierarchy = async (
         candidateClassName: string,
       ): Promise<boolean> => {
-        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
+        const normalizedCandidate = candidateClassName
+          .trim()
+          .replace(/^\\+/, "");
         const visitedKey = normalizedCandidate.toLowerCase();
 
         if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
@@ -67,10 +76,20 @@ export function usePhpPropertyTargetNavigation({
           return false;
         }
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         visitedClassNames.add(visitedKey);
 
-        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+        for (const path of await resolvePhpClassSourcePaths(
+          normalizedCandidate,
+        )) {
           if (!isRequestedRootActive()) {
+            return false;
+          }
+
+          if (!canNavigate(request)) {
             return false;
           }
 
@@ -81,6 +100,10 @@ export function usePhpPropertyTargetNavigation({
               return false;
             }
 
+            if (!canNavigate(request)) {
+              return false;
+            }
+
             const position = phpPropertyPositionOrNull(content, propertyName);
 
             if (position) {
@@ -88,7 +111,21 @@ export function usePhpPropertyTargetNavigation({
                 return false;
               }
 
-              return openNavigationTarget(path, position, `$${propertyName}`);
+              if (!canNavigate(request)) {
+                return false;
+              }
+
+              const opened = await openNavigationTarget(
+                path,
+                position,
+                `$${propertyName}`,
+                {
+                  shouldCommit: () =>
+                    isRequestedRootActive() && canNavigate(request),
+                },
+              );
+
+              return isRequestedRootActive() && canNavigate(request) && opened;
             }
 
             for (const traitName of phpTraitClassNames(content)) {
@@ -134,6 +171,10 @@ export function usePhpPropertyTargetNavigation({
             }
           } catch {
             if (!isRequestedRootActive()) {
+              return false;
+            }
+
+            if (!canNavigate(request)) {
               return false;
             }
 

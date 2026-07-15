@@ -19,6 +19,9 @@ import { callHierarchyRows } from "../domain/callHierarchy";
 import { typeHierarchyRows } from "../domain/typeHierarchy";
 import { referenceRows } from "../domain/referencesView";
 import {
+  adoptLegacyCachedWorkspaceState,
+  isLanguageServerSessionActiveForOwner,
+  isLanguageServerSessionCurrentForOwnerOrLegacy,
   resolveAdmittedDocumentSaveOwnership,
   useWorkbenchController,
   withWorkspaceIdentityLease,
@@ -58,6 +61,7 @@ import {
   type LanguageServerRuntimeGateway,
   type LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
+import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   emptyPhpFileOutline,
   type PhpFileOutlineGateway,
@@ -135,6 +139,90 @@ describe("useWorkbenchController preview tabs", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
+  });
+
+  it("rejects a colliding PHP session when the replacement owner has no cached runtime", () => {
+    const executionRoot = "/workspace/shared-owner-root";
+    const replacedOwner = createWorkspaceRuntimeOwner(
+      "workspace-owner-a",
+      executionRoot,
+    );
+    const replacementOwner = createWorkspaceRuntimeOwner(
+      "workspace-owner-b",
+      executionRoot,
+    );
+    const collidingSessionId = 701;
+    const runtimeStatuses = {
+      [replacedOwner.ownerKey]: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath: executionRoot,
+        sessionId: collidingSessionId,
+      },
+    };
+
+    expect(
+      isLanguageServerSessionCurrentForOwnerOrLegacy(
+        runtimeStatuses,
+        replacementOwner,
+        runtimeStatuses[replacedOwner.ownerKey],
+        executionRoot,
+        executionRoot,
+        collidingSessionId,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps the root-global session fallback for ownerless legacy workspaces", () => {
+    const executionRoot = "/workspace/legacy-root";
+    const sessionId = 703;
+    const legacyStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running" as const,
+      rootPath: executionRoot,
+      sessionId,
+    };
+
+    expect(
+      isLanguageServerSessionCurrentForOwnerOrLegacy(
+        {},
+        undefined,
+        legacyStatus,
+        executionRoot,
+        executionRoot,
+        sessionId,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a colliding TypeScript session when the replacement owner has no cached runtime", () => {
+    const executionRoot = "/workspace/shared-typescript-owner-root";
+    const replacedOwner = createWorkspaceRuntimeOwner(
+      "typescript-owner-a",
+      executionRoot,
+    );
+    const replacementOwner = createWorkspaceRuntimeOwner(
+      "typescript-owner-b",
+      executionRoot,
+    );
+    const collidingSessionId = 702;
+    const runtimeStatuses = {
+      [replacedOwner.ownerKey]: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath: executionRoot,
+        sessionId: collidingSessionId,
+      },
+    };
+
+    expect(
+      isLanguageServerSessionActiveForOwner(
+        runtimeStatuses,
+        replacementOwner,
+        executionRoot,
+        collidingSessionId,
+      ),
+    ).toBe(false);
   });
 
   afterEach(async () => {
@@ -70411,6 +70499,235 @@ class PostRepository
     });
   });
 
+  it("fences real PHP class fallback navigation by owner at the same root", async () => {
+    const sharedRoot = "/selected/navigation-owner";
+    const sourcePath = `${sharedRoot}/src/Source.php`;
+    const targetPath = `${sharedRoot}/src/Target.php`;
+    const source = `<?php
+namespace App\\Http;
+
+use Vendor\\MissingClass;
+
+MissingClass::class;
+`;
+    const firstOwner = trustedDescriptor("ws-navigation-owner-a", sharedRoot);
+    const secondOwner = trustedDescriptor("ws-navigation-owner-b", sharedRoot);
+    const descriptors = [firstOwner, secondOwner];
+    const classSearch = createDeferred<
+      Awaited<
+        ReturnType<ProjectSymbolSearchGateway["searchProjectSymbols"]>
+      >
+    >();
+    const readTextFile = vi.fn(async (path: string) =>
+      path === sourcePath ? source : "<?php\nclass MissingClass {}\n",
+    );
+    const { dependencies, getWorkbench } = renderController({
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+    ).mockImplementationOnce(async () => classSearch.promise);
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+      await getWorkbench().setSmartMode("fullSmart");
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "Source.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(
+        positionAfter(source, "\nMissingCla"),
+      );
+    });
+    const messageBeforeNavigation = getWorkbench().message;
+
+    let navigationPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      navigationPromise = Promise.resolve(
+        getWorkbench().commands
+          .find((candidate) => candidate.id === "editor.goToDefinition")
+          ?.run(),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.projectSymbols.searchProjectSymbols,
+      ).toHaveBeenCalledWith(sharedRoot, "Vendor\\MissingClass", 25);
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+    });
+    classSearch.resolve([
+      {
+        column: 7,
+        containerName: null,
+        fullyQualifiedName: "Vendor\\MissingClass",
+        kind: "class",
+        lineNumber: 2,
+        name: "MissingClass",
+        path: targetPath,
+        relativePath: "src/Target.php",
+      },
+    ]);
+    await act(async () => {
+      await navigationPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(getWorkbench().activePath).not.toBe(targetPath);
+    expect(readTextFile).not.toHaveBeenCalledWith(targetPath);
+    expect(getWorkbench().message).toBe(messageBeforeNavigation);
+    expect(getWorkbench().implementationChooser).toBeNull();
+    expect(getWorkbench().navigationHistory).toEqual({
+      backStack: [],
+      forwardStack: [],
+    });
+  });
+
+  it("allows pending TypeScript navigation across aliases of the same owner", async () => {
+    const firstOwner = {
+      ...trustedDescriptor("ws-navigation-alias", "/selected/navigation-first"),
+      canonicalRoot: "/canonical/navigation-alias",
+    };
+    const secondOwner = {
+      ...trustedDescriptor("ws-navigation-alias", "/selected/navigation-second"),
+      canonicalRoot: "/canonical/navigation-alias",
+    };
+    const sourcePath = `${firstOwner.selectedPath}/src/main.ts`;
+    const targetPath = `${secondOwner.selectedPath}/src/target.ts`;
+    const source = "import { target } from './target';\ntarget();\n";
+    const definitionResult = createDeferred<
+      Awaited<ReturnType<LanguageServerFeaturesGateway["definition"]>>
+    >();
+    const runtimeStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        definition: true,
+      },
+      kind: "running",
+      rootPath: firstOwner.selectedPath,
+      sessionId: 1202,
+    };
+    const features = featuresGateway();
+    vi.mocked(features.definition).mockImplementationOnce(
+      async () => definitionResult.promise,
+    );
+    const { getWorkbench } = renderController({
+      javaScriptTypeScriptInitialRuntimeStatus: runtimeStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: features,
+      javaScriptTypeScriptRuntimeStatus: runtimeStatus,
+      readTextFile: vi.fn(async (path: string) =>
+        path === sourcePath ? source : "export const target = 1;\n",
+      ),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async (path) =>
+          path === firstOwner.selectedPath ? firstOwner : secondOwner,
+        ),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(firstOwner.selectedPath);
+      await flushAsyncTurns(24);
+      await getWorkbench().openPinnedFile(fileEntry(sourcePath, "main.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveEditorPosition(positionAfter(source, "target()"));
+    });
+
+    let navigationPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      navigationPromise = Promise.resolve(
+        getWorkbench().commands
+          .find((candidate) => candidate.id === "editor.goToDefinition")
+          ?.run(),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(features.definition).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(secondOwner.selectedPath);
+      await flushAsyncTurns(24);
+    });
+    definitionResult.resolve([
+      {
+        range: range(0, 13, 0, 19),
+        uri: fileUriFromPath(targetPath),
+      },
+    ]);
+    await act(async () => {
+      await navigationPromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(getWorkbench().activePath).toBe(targetPath);
+  });
+
+  it("keeps workspace cache state distinct for admitted owners at the same path", async () => {
+    const sharedRoot = "/selected/cache-owner";
+    const path = `${sharedRoot}/src/Shared.php`;
+    const firstOwner = trustedDescriptor("ws-cache-owner-a", sharedRoot);
+    const secondOwner = trustedDescriptor("ws-cache-owner-b", sharedRoot);
+    const descriptors = [firstOwner, secondOwner, firstOwner];
+    const { getWorkbench } = renderController({
+      readTextFile: vi.fn(async () => "<?php\n// disk\n"),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? firstOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+      await getWorkbench().openPinnedFile(fileEntry(path, "Shared.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n// owner A\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+      await getWorkbench().openPinnedFile(fileEntry(path, "Shared.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n// owner B\n");
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(firstOwner);
+    expect(getWorkbench().activeDocument).toEqual(
+      expect.objectContaining({
+        content: "<?php\n// owner A\n",
+        path,
+      }),
+    );
+  });
+
   it("resolves save ownership from an admitted remembered alias", () => {
     const descriptor = {
       ...trustedDescriptor("ws-save-alias", "/selected/workspace"),
@@ -72611,6 +72928,136 @@ class PostRepository
 
     expect(getWorkbench().workspaceRoot).toBe(aliasRoot);
     expect(getWorkbench().sidebarView).toBe("php");
+  });
+
+  it("promotes the newest active legacy snapshot when the same root gains an identity", async () => {
+    const workspaceRoot = "/workspace/legacy-to-admitted";
+    const otherRoot = "/workspace/legacy-to-admitted-other";
+    const admittedDescriptor = trustedDescriptor(
+      "ws-newly-admitted",
+      workspaceRoot,
+    );
+    const identityGateway: WorkbenchWorkspaceGateways["identity"] = {
+      getDescriptor: vi.fn(),
+      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      unregister: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      workspaceIdentityGateway: identityGateway,
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(workspaceRoot);
+    });
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(otherRoot);
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(workspaceRoot);
+    });
+    expect(getWorkbench().sidebarView).toBe("git");
+
+    act(() => {
+      getWorkbench().setSidebarView("php");
+    });
+    identityGateway.openPath = vi.fn(async () => admittedDescriptor);
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(workspaceRoot);
+    });
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(
+      admittedDescriptor,
+    );
+    expect(getWorkbench().sidebarView).toBe("php");
+  });
+
+  it("rejects foreign legacy cache owners without adopting their editor state", () => {
+    const admittedDescriptor = {
+      ...trustedDescriptor("ws-admitted", "/link/workspace"),
+      canonicalRoot: "/real/workspace",
+    };
+    const canonicalOwner = {
+      ...trustedDescriptor("ws-canonical-foreign", "/real/workspace"),
+      canonicalRoot: "/real/workspace",
+    };
+    const selectedOwner = trustedDescriptor(
+      "ws-selected-foreign",
+      "/link/workspace",
+    );
+    const canonicalState = {
+      editorSurface: { marker: "canonical-documents" },
+      navigationHistory: { marker: "canonical-history" },
+      workspaceIdentityDescriptor: canonicalOwner,
+    };
+    const selectedState = {
+      editorSurface: { marker: "selected-documents" },
+      navigationHistory: { marker: "selected-history" },
+      workspaceIdentityDescriptor: selectedOwner,
+    };
+
+    const adopted = adoptLegacyCachedWorkspaceState(admittedDescriptor, [
+      canonicalState,
+      selectedState,
+    ]);
+
+    expect(adopted).toBeNull();
+    expect(canonicalState).toEqual({
+      editorSurface: { marker: "canonical-documents" },
+      navigationHistory: { marker: "canonical-history" },
+      workspaceIdentityDescriptor: canonicalOwner,
+    });
+    expect(selectedState).toEqual({
+      editorSurface: { marker: "selected-documents" },
+      navigationHistory: { marker: "selected-history" },
+      workspaceIdentityDescriptor: selectedOwner,
+    });
+  });
+
+  it("migrates a same-owner legacy alias after rejecting a foreign canonical entry", () => {
+    const admittedDescriptor = {
+      ...trustedDescriptor("ws-shared", "/link/workspace"),
+      canonicalRoot: "/real/workspace",
+    };
+    const foreignDescriptor = {
+      ...trustedDescriptor("ws-foreign", "/real/workspace"),
+      canonicalRoot: "/real/workspace",
+    };
+    const staleAliasDescriptor = {
+      ...trustedDescriptor("ws-shared", "/old-link/workspace"),
+      canonicalRoot: "/real/workspace",
+    };
+    const foreignCanonicalState = {
+      editorSurface: { marker: "foreign-documents" },
+      navigationHistory: { marker: "foreign-history" },
+      workspaceIdentityDescriptor: foreignDescriptor,
+    };
+    const matchingAliasState = {
+      editorSurface: { marker: "owned-documents" },
+      navigationHistory: { marker: "owned-history" },
+      workspaceIdentityDescriptor: staleAliasDescriptor,
+    };
+
+    const adopted = adoptLegacyCachedWorkspaceState(admittedDescriptor, [
+      foreignCanonicalState,
+      matchingAliasState,
+    ]);
+
+    expect(adopted).toBe(matchingAliasState);
+    expect(matchingAliasState.workspaceIdentityDescriptor).toBe(
+      admittedDescriptor,
+    );
+    expect(matchingAliasState.editorSurface).toEqual({
+      marker: "owned-documents",
+    });
+    expect(matchingAliasState.navigationHistory).toEqual({
+      marker: "owned-history",
+    });
+    expect(foreignCanonicalState.workspaceIdentityDescriptor).toBe(
+      foreignDescriptor,
+    );
   });
 
   it("opens, caches, and restores separate trusted descriptors across project tabs", async () => {

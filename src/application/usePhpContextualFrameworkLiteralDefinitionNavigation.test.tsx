@@ -402,14 +402,13 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
 
       expect(handled).toBe(true);
       expect(
-        deps.frameworkLiteralNavigationDependencies[
-          testCase.expectedResolver
-        ],
+        deps.frameworkLiteralNavigationDependencies[testCase.expectedResolver],
       ).toHaveBeenCalledWith(testCase.expectedValue);
       expect(openNavigationTarget).toHaveBeenCalledWith(
         testCase.expectedPath,
         POSITION,
         testCase.expectedLabel,
+        { shouldCommit: expect.any(Function) },
       );
 
       harness.unmount();
@@ -459,6 +458,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       `${ROOT}/routes/web.php`,
       POSITION,
       "dashboard",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -470,9 +470,7 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
       path: `${ROOT}/app/Models/User.php`,
       position: POSITION,
     };
-    const findValidationRuleModelTargets = vi.fn(async () => [
-      modelTarget,
-    ]);
+    const findValidationRuleModelTargets = vi.fn(async () => [modelTarget]);
     const openNavigationTarget = vi.fn(async () => true);
     const deps = makeDeps({
       frameworkLiteralNavigationDependencies: {
@@ -493,13 +491,12 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
         tableName: "users",
       }),
     ).resolves.toBe(true);
-    expect(findValidationRuleModelTargets).toHaveBeenCalledWith(
-      "users",
-    );
+    expect(findValidationRuleModelTargets).toHaveBeenCalledWith("users");
     expect(openNavigationTarget).toHaveBeenCalledWith(
       modelTarget.path,
       POSITION,
       modelTarget.label,
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -781,9 +778,10 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
 
   it("drops resolved literal targets when the active workspace changes", async () => {
     const source = "<?php route('dashboard');";
-    const routeTargets = deferred<
-      readonly [{ name: string; path: string; position: EditorPosition }]
-    >();
+    const routeTargets =
+      deferred<
+        readonly [{ name: string; path: string; position: EditorPosition }]
+      >();
     const currentWorkspaceRootRef = { current: ROOT };
     const openNavigationTarget = vi.fn(async () => true);
     const setMessage = vi.fn();
@@ -824,6 +822,90 @@ describe("usePhpContextualFrameworkLiteralDefinitionNavigation", () => {
     await expect(navigationPromise).resolves.toBe(false);
     expect(openNavigationTarget).not.toHaveBeenCalled();
     expect(setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("drops same-root owner results before opening or reporting a missing target", async () => {
+    const routeTargets = deferred<readonly []>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(async () => true);
+    const setMessage = vi.fn();
+    const deps = makeDeps({
+      activeDocument: {
+        content: "<?php route('missing');",
+        language: "php",
+        name: "Controller.php",
+        path: `${ROOT}/app/Controller.php`,
+        savedContent: "",
+      },
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(() => routeTargets.promise),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => null),
+      },
+      openNavigationTarget,
+      setMessage,
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness
+      .api()
+      .goToPhpFrameworkLiteralDefinition(
+        { kind: "route", name: "missing" },
+        { canNavigate: () => requestActive },
+      );
+
+    requestActive = false;
+    routeTargets.resolve([]);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+    expect(setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("passes the owner fence into target opening and rejects a stale completion", async () => {
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(
+      async (
+        _path: string,
+        _position: EditorPosition,
+        _label: string,
+        options?: { shouldCommit?: () => boolean },
+      ) => {
+        requestActive = false;
+        expect(options?.shouldCommit?.()).toBe(false);
+        return true;
+      },
+    );
+    const deps = makeDeps({
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => ({
+          key: "app.name",
+          path: `${ROOT}/config/app.php`,
+          position: POSITION,
+        })),
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => null),
+      },
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .goToPhpFrameworkLiteralDefinition(
+          { key: "app.name", kind: "config" },
+          { canNavigate: () => requestActive },
+        ),
+    ).resolves.toBe(false);
+    expect(openNavigationTarget).toHaveBeenCalledOnce();
 
     harness.unmount();
   });

@@ -2,6 +2,7 @@ import { netteInjectionTypeReferenceAt } from "../domain/netteDiContainer";
 import { getFileName } from "../domain/workspace";
 import type { NeonIntelligenceDependencies } from "./neonIntelligenceContracts";
 import type { NeonRequestContext } from "./neonIntelligenceRuntime";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import {
   loadNeonProjectConfig,
   neonServiceDefinitionLocations,
@@ -11,7 +12,15 @@ export async function providePhpNetteInjectionDefinition(
   context: NeonRequestContext<NeonIntelligenceDependencies>,
   source: string,
   offset: number,
+  request?: NavigationRequest,
 ): Promise<boolean> {
+  const canCommit = () =>
+    context.isRequestedRootActive() && canNavigate(request);
+
+  if (!canCommit()) {
+    return false;
+  }
+
   const reference = netteInjectionTypeReferenceAt(source, offset);
 
   if (!reference) {
@@ -20,7 +29,7 @@ export async function providePhpNetteInjectionDefinition(
 
   const config = await loadNeonProjectConfig(context);
 
-  if (!context.isRequestedRootActive()) {
+  if (!canCommit()) {
     return false;
   }
 
@@ -35,6 +44,10 @@ export async function providePhpNetteInjectionDefinition(
       position: location.position,
     }));
     const label = reference.type.split("\\").pop() ?? reference.type;
+
+    if (!canCommit()) {
+      return false;
+    }
 
     context.deps.setImplementationChooser({
       targets,
@@ -53,9 +66,10 @@ export async function providePhpNetteInjectionDefinition(
     location.path,
     location.position,
     reference.type.split("\\").pop() ?? reference.type,
+    { shouldCommit: canCommit },
   );
 
-  if (!context.isRequestedRootActive()) {
+  if (!canCommit()) {
     return false;
   }
 

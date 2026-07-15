@@ -7,10 +7,12 @@ import type {
   PhpFrameworkIdentifierDefinitionNavigationAdapter,
   PhpFrameworkIdentifierDefinitionHandler,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import type { PhpContextualFrameworkLiteralDefinitionRequest } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
 
 type PhpContextHandler<Kind extends PhpIdentifierContext["kind"]> = (
   context: Extract<PhpIdentifierContext, { kind: Kind }>,
+  request?: NavigationRequest,
 ) => Promise<boolean>;
 
 type LaravelConfigDerivedIdentifierKind =
@@ -98,6 +100,7 @@ export interface PhpLaravelIdentifierDefinitionNavigationAdapterDependencies {
   activeDocument: EditorDocument | null;
   goToPhpFrameworkLiteralDefinition(
     request: PhpContextualFrameworkLiteralDefinitionRequest,
+    navigationRequest?: NavigationRequest,
   ): Promise<boolean>;
   goToPhpFrameworkAuthorizationAbilityDefinition: PhpContextHandler<"laravelGateAbilityString">;
   goToPhpFrameworkMiddlewareAliasDefinition: PhpContextHandler<"laravelMiddlewareAliasString">;
@@ -105,8 +108,13 @@ export interface PhpLaravelIdentifierDefinitionNavigationAdapterDependencies {
   openDirectPhpMethodTarget(
     className: string,
     methodName: string,
+    request?: NavigationRequest,
   ): Promise<boolean>;
-  openPhpClassTarget?(className: string, label: string): Promise<boolean>;
+  openPhpClassTarget?(
+    className: string,
+    label: string,
+    request?: NavigationRequest,
+  ): Promise<boolean>;
 }
 
 export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
@@ -114,64 +122,89 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
 ): PhpFrameworkIdentifierDefinitionNavigationAdapter {
   const goToDefinition: PhpFrameworkIdentifierDefinitionHandler = async (
     context,
+    request,
   ): Promise<boolean> => {
+    if (!canNavigate(request)) {
+      return false;
+    }
+
     const configDerivedLiteralRequest =
       phpLaravelConfigDerivedFrameworkLiteralRequest(context);
 
     if (configDerivedLiteralRequest) {
-      return dependencies.goToPhpFrameworkLiteralDefinition(
+      return invokeNavigationDelegate(
+        dependencies.goToPhpFrameworkLiteralDefinition,
         configDerivedLiteralRequest,
+        request,
       );
     }
 
     switch (context.kind) {
       case "laravelRelationString":
-        return dependencies.goToPhpLaravelRelationStringDefinition(context);
+        return invokeNavigationDelegate(
+          dependencies.goToPhpLaravelRelationStringDefinition,
+          context,
+          request,
+        );
 
       case "laravelNamedRouteString":
-        return dependencies.goToPhpFrameworkLiteralDefinition({
-          kind: "route",
-          name: context.routeName,
-        });
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkLiteralDefinition,
+          { kind: "route", name: context.routeName },
+          request,
+        );
 
       case "laravelTranslationString":
-        return dependencies.goToPhpFrameworkLiteralDefinition({
-          key: context.translationKey,
-          kind: "translation",
-        });
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkLiteralDefinition,
+          { key: context.translationKey, kind: "translation" },
+          request,
+        );
 
       case "laravelEnvString":
-        return dependencies.goToPhpFrameworkLiteralDefinition({
-          kind: "env",
-          name: context.envName,
-        });
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkLiteralDefinition,
+          { kind: "env", name: context.envName },
+          request,
+        );
 
       case "laravelConfigString":
-        return dependencies.goToPhpFrameworkLiteralDefinition({
-          key: context.configKey,
-          kind: "config",
-        });
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkLiteralDefinition,
+          { key: context.configKey, kind: "config" },
+          request,
+        );
 
       case "laravelGateAbilityString":
-        return dependencies.goToPhpFrameworkAuthorizationAbilityDefinition(context);
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkAuthorizationAbilityDefinition,
+          context,
+          request,
+        );
 
       case "laravelMiddlewareAliasString":
-        return dependencies.goToPhpFrameworkMiddlewareAliasDefinition(context);
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkMiddlewareAliasDefinition,
+          context,
+          request,
+        );
 
       case "laravelViewString":
-        return dependencies.goToPhpFrameworkLiteralDefinition({
-          kind: "view",
-          name: context.viewName,
-        });
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkLiteralDefinition,
+          { kind: "view", name: context.viewName },
+          request,
+        );
 
       case "laravelValidationTableString":
-        return dependencies.goToPhpFrameworkLiteralDefinition({
-          kind: "validationTable",
-          tableName: context.tableName,
-        });
+        return invokeNavigationDelegate(
+          dependencies.goToPhpFrameworkLiteralDefinition,
+          { kind: "validationTable", tableName: context.tableName },
+          request,
+        );
 
       case "laravelRouteActionMethod":
-        return goToRouteActionMethodDefinition(context, dependencies);
+        return goToRouteActionMethodDefinition(context, dependencies, request);
 
       default:
         return false;
@@ -179,6 +212,54 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
   };
 
   return { goToDefinition };
+}
+
+async function invokeNavigationDelegate<Argument>(
+  delegate: (
+    argument: Argument,
+    request?: NavigationRequest,
+  ) => Promise<boolean>,
+  argument: Argument,
+  request?: NavigationRequest,
+): Promise<boolean> {
+  if (!canNavigate(request)) {
+    return false;
+  }
+
+  const handled = request
+    ? await delegate(argument, request)
+    : await delegate(argument);
+
+  if (!canNavigate(request)) {
+    return false;
+  }
+
+  return handled;
+}
+
+async function invokeTwoArgumentNavigationDelegate<First, Second>(
+  delegate: (
+    first: First,
+    second: Second,
+    request?: NavigationRequest,
+  ) => Promise<boolean>,
+  first: First,
+  second: Second,
+  request?: NavigationRequest,
+): Promise<boolean> {
+  if (!canNavigate(request)) {
+    return false;
+  }
+
+  const handled = request
+    ? await delegate(first, second, request)
+    : await delegate(first, second);
+
+  if (!canNavigate(request)) {
+    return false;
+  }
+
+  return handled;
 }
 
 function phpLaravelConfigDerivedFrameworkLiteralRequest(
@@ -213,8 +294,9 @@ async function goToRouteActionMethodDefinition(
     openDirectPhpMethodTarget,
     openPhpClassTarget,
   }: PhpLaravelIdentifierDefinitionNavigationAdapterDependencies,
+  request?: NavigationRequest,
 ): Promise<boolean> {
-  if (!activeDocument) {
+  if (!canNavigate(request) || !activeDocument) {
     return false;
   }
 
@@ -227,14 +309,29 @@ async function goToRouteActionMethodDefinition(
     return false;
   }
 
-  const openedMethodTarget = await openDirectPhpMethodTarget(
+  const openedMethodTarget = await invokeTwoArgumentNavigationDelegate(
+    openDirectPhpMethodTarget,
     className,
     context.methodName,
+    request,
   );
+
+  if (!canNavigate(request)) {
+    return false;
+  }
 
   if (openedMethodTarget) {
     return true;
   }
 
-  return openPhpClassTarget?.(className, context.className) ?? false;
+  if (!openPhpClassTarget) {
+    return false;
+  }
+
+  return invokeTwoArgumentNavigationDelegate(
+    openPhpClassTarget,
+    className,
+    context.className,
+    request,
+  );
 }

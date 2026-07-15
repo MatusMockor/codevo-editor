@@ -8,9 +8,11 @@ import {
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 export interface PhpLaravelModelNavigationTargetsDependencies {
@@ -32,10 +34,12 @@ export interface PhpLaravelModelNavigationTargets {
   openPhpLaravelDynamicWhereTarget(
     className: string,
     methodName: string,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   openPhpLaravelModelAttributeTarget(
     className: string,
     attributeName: string,
+    request?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -53,13 +57,18 @@ export function usePhpLaravelModelNavigationTargets({
     frameworkRuntime.supports("eloquentModelSemantics");
 
   const openPhpLaravelDynamicWhereTarget = useCallback(
-    async (className: string, methodName: string): Promise<boolean> =>
+    async (
+      className: string,
+      methodName: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> =>
       openLaravelModelSourceTarget({
         className,
         canOpenLaravelModelSourceTargets,
         currentWorkspaceRootRef,
         openNavigationTarget,
         readNavigationFileContent,
+        request,
         resolvePhpClassSourcePaths,
         resolveTarget: (source) =>
           phpLaravelDynamicWhereAttributeTargetFromSource(source, methodName),
@@ -78,13 +87,18 @@ export function usePhpLaravelModelNavigationTargets({
   );
 
   const openPhpLaravelModelAttributeTarget = useCallback(
-    async (className: string, attributeName: string): Promise<boolean> =>
+    async (
+      className: string,
+      attributeName: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> =>
       openLaravelModelSourceTarget({
         className,
         canOpenLaravelModelSourceTargets,
         currentWorkspaceRootRef,
         openNavigationTarget,
         readNavigationFileContent,
+        request,
         resolvePhpClassSourcePaths,
         resolveTarget: (source) =>
           phpLaravelModelAttributeTargetFromSource(source, attributeName) ??
@@ -125,6 +139,7 @@ interface OpenLaravelModelSourceTargetInput {
     options?: OpenNavigationOptions,
   ): Promise<boolean>;
   readNavigationFileContent(path: string): Promise<string>;
+  request?: NavigationRequest;
   resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
   resolveTarget(source: string): LaravelModelSourceTarget | null;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -137,6 +152,7 @@ async function openLaravelModelSourceTarget({
   currentWorkspaceRootRef,
   openNavigationTarget,
   readNavigationFileContent,
+  request,
   resolvePhpClassSourcePaths,
   resolveTarget,
   workspaceDescriptor,
@@ -146,6 +162,8 @@ async function openLaravelModelSourceTarget({
   const requestedDescriptor = workspaceDescriptor;
   const isRequestedRootActive = () =>
     workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+  const isNavigationActive = () =>
+    isRequestedRootActive() && canNavigate(request);
 
   if (
     !canOpenLaravelModelSourceTargets ||
@@ -162,14 +180,14 @@ async function openLaravelModelSourceTarget({
   }
 
   for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
-    if (!isRequestedRootActive()) {
+    if (!isNavigationActive()) {
       return false;
     }
 
     try {
       const content = await readNavigationFileContent(path);
 
-      if (!isRequestedRootActive()) {
+      if (!isNavigationActive()) {
         return false;
       }
 
@@ -179,13 +197,20 @@ async function openLaravelModelSourceTarget({
         continue;
       }
 
-      if (!isRequestedRootActive()) {
+      if (!isNavigationActive()) {
         return false;
       }
 
-      return openNavigationTarget(path, target.position, target.attributeName);
+      const opened = await openNavigationTarget(
+        path,
+        target.position,
+        target.attributeName,
+        { shouldCommit: isNavigationActive },
+      );
+
+      return isNavigationActive() && opened;
     } catch {
-      if (!isRequestedRootActive()) {
+      if (!isNavigationActive()) {
         return false;
       }
 

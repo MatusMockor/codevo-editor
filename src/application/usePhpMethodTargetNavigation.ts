@@ -29,6 +29,7 @@ export interface PhpMethodTargetNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
+    options?: { shouldCommit?: () => boolean },
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent(path: string): Promise<string>;
@@ -101,11 +102,17 @@ export function usePhpMethodTargetNavigation({
             return false;
           }
 
-          return openNavigationTarget(
+          const opened = await openNavigationTarget(
             path,
             phpMethodPosition(content, hint.methodName),
             `${hint.methodName}()`,
+            {
+              shouldCommit: () =>
+                isRequestedRootActive() && canNavigate(request),
+            },
           );
+
+          return isRequestedRootActive() && canNavigate(request) && opened;
         } catch {
           if (!isRequestedRootActive()) {
             return false;
@@ -179,11 +186,17 @@ export function usePhpMethodTargetNavigation({
             return false;
           }
 
-          return openNavigationTarget(
+          const opened = await openNavigationTarget(
             target.path,
             editorPositionFromProjectSymbol(target),
             `${methodName}()`,
+            {
+              shouldCommit: () =>
+                isRequestedRootActive() && canNavigate(request),
+            },
           );
+
+          return isRequestedRootActive() && canNavigate(request) && opened;
         }
       }
 
@@ -195,7 +208,9 @@ export function usePhpMethodTargetNavigation({
       const openMethodInClassHierarchy = async (
         candidateClassName: string,
       ): Promise<boolean> => {
-        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
+        const normalizedCandidate = candidateClassName
+          .trim()
+          .replace(/^\\+/, "");
         const visitedKey = normalizedCandidate.toLowerCase();
 
         if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
@@ -212,7 +227,9 @@ export function usePhpMethodTargetNavigation({
 
         visitedClassNames.add(visitedKey);
 
-        for (const path of await resolvePhpClassSourcePaths(normalizedCandidate)) {
+        for (const path of await resolvePhpClassSourcePaths(
+          normalizedCandidate,
+        )) {
           if (!isRequestedRootActive()) {
             return false;
           }
@@ -245,7 +262,17 @@ export function usePhpMethodTargetNavigation({
                 return false;
               }
 
-              return openNavigationTarget(path, position, `${methodName}()`);
+              const opened = await openNavigationTarget(
+                path,
+                position,
+                `${methodName}()`,
+                {
+                  shouldCommit: () =>
+                    isRequestedRootActive() && canNavigate(request),
+                },
+              );
+
+              return isRequestedRootActive() && canNavigate(request) && opened;
             }
 
             for (const traitName of phpTraitClassNames(content)) {

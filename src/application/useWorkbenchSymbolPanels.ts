@@ -28,16 +28,21 @@ import type { ReferenceRow, ReferencesView } from "../domain/referencesView";
 import type { TypeHierarchyRow, TypeHierarchyView } from "../domain/typeHierarchy";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import {
+  captureWorkspaceRuntimeOwnerFence,
+  type WorkspaceRuntimeOwnerFence,
+} from "./useWorkbenchLanguageNavigation";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 interface LanguageServerFeatureContext {
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingChange(path: string): Promise<void>;
-  isSessionActive(rootPath: string, sessionId: number): boolean;
-  sessionId: number;
+  isSessionActive(): boolean;
 }
 
 export interface WorkbenchSymbolPanelsDependencies {
@@ -55,10 +60,12 @@ export interface WorkbenchSymbolPanelsDependencies {
   isLanguageServerSessionActiveForRoot(
     rootPath: string,
     sessionId: number,
+    owner: WorkspaceRuntimeOwner,
   ): boolean;
   isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
     rootPath: string,
     sessionId: number,
+    owner: WorkspaceRuntimeOwner,
   ): boolean;
   openNavigationTarget(
     path: string,
@@ -72,6 +79,7 @@ export interface WorkbenchSymbolPanelsDependencies {
   ): boolean;
   closeCompetingSurfaces(): void;
   reportError(source: string, error: unknown): void;
+  resolveCurrentWorkspaceRuntimeOwner(): WorkspaceRuntimeOwner | null;
   setMessage: Dispatch<SetStateAction<string | null>>;
 }
 
@@ -112,6 +120,7 @@ export function useWorkbenchSymbolPanels(
     shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
     closeCompetingSurfaces,
     reportError,
+    resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
   } = dependencies;
 
@@ -137,6 +146,7 @@ export function useWorkbenchSymbolPanels(
       startingMessage: string,
       javaScriptTypeScriptUnavailableMessage: string,
       javaScriptTypeScriptStartingMessage: string,
+      ownerFence: WorkspaceRuntimeOwnerFence,
     ): LanguageServerFeatureContext | null => {
       if (!workspaceRoot) {
         return null;
@@ -167,8 +177,13 @@ export function useWorkbenchSymbolPanels(
         return {
           featuresGateway: languageServerFeaturesGateway,
           flushPendingChange: flushPendingDocumentChange,
-          isSessionActive: isLanguageServerSessionActiveForRoot,
-          sessionId: languageServerRuntimeStatus.sessionId,
+          isSessionActive: () =>
+            ownerFence.isCurrent() &&
+            isLanguageServerSessionActiveForRoot(
+              workspaceRoot,
+              languageServerRuntimeStatus.sessionId,
+              ownerFence.owner,
+            ),
         };
       }
 
@@ -196,9 +211,13 @@ export function useWorkbenchSymbolPanels(
       return {
         featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
         flushPendingChange: flushPendingJavaScriptTypeScriptDocumentChange,
-        isSessionActive:
-          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-        sessionId: javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
+        isSessionActive: () =>
+          ownerFence.isCurrent() &&
+          isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+            workspaceRoot,
+            javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
+            ownerFence.owner,
+          ),
       };
     },
     [
@@ -219,6 +238,14 @@ export function useWorkbenchSymbolPanels(
 
   const openCallHierarchyRow = useCallback(
     async (row: CallHierarchyRow) => {
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(
+        resolveCurrentWorkspaceRuntimeOwner,
+      );
+
+      if (!ownerFence) {
+        return;
+      }
+
       const path = pathFromLanguageServerUri(row.item.uri);
 
       if (!path) {
@@ -237,15 +264,19 @@ export function useWorkbenchSymbolPanels(
                 path,
               )
             : false,
+          shouldCommit: ownerFence.isCurrent,
         },
       );
 
-      if (opened) {
-        setCallHierarchyView(null);
+      if (!opened || !ownerFence.isCurrent()) {
+        return;
       }
+
+      setCallHierarchyView(null);
     },
     [
       openNavigationTarget,
+      resolveCurrentWorkspaceRuntimeOwner,
       setMessage,
       shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
       workspaceRoot,
@@ -254,6 +285,14 @@ export function useWorkbenchSymbolPanels(
 
   const openTypeHierarchyRow = useCallback(
     async (row: TypeHierarchyRow) => {
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(
+        resolveCurrentWorkspaceRuntimeOwner,
+      );
+
+      if (!ownerFence) {
+        return;
+      }
+
       const path = pathFromLanguageServerUri(row.item.uri);
 
       if (!path) {
@@ -272,15 +311,19 @@ export function useWorkbenchSymbolPanels(
                 path,
               )
             : false,
+          shouldCommit: ownerFence.isCurrent,
         },
       );
 
-      if (opened) {
-        setTypeHierarchyView(null);
+      if (!opened || !ownerFence.isCurrent()) {
+        return;
       }
+
+      setTypeHierarchyView(null);
     },
     [
       openNavigationTarget,
+      resolveCurrentWorkspaceRuntimeOwner,
       setMessage,
       shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
       workspaceRoot,
@@ -289,6 +332,14 @@ export function useWorkbenchSymbolPanels(
 
   const openReferenceRow = useCallback(
     async (row: ReferenceRow) => {
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(
+        resolveCurrentWorkspaceRuntimeOwner,
+      );
+
+      if (!ownerFence) {
+        return;
+      }
+
       const opened = await openNavigationTarget(
         row.path,
         toEditorPosition(row.location.range.start),
@@ -300,21 +351,33 @@ export function useWorkbenchSymbolPanels(
                 row.path,
               )
             : false,
+          shouldCommit: ownerFence.isCurrent,
         },
       );
 
-      if (opened) {
-        setReferencesView(null);
+      if (!opened || !ownerFence.isCurrent()) {
+        return;
       }
+
+      setReferencesView(null);
     },
     [
       openNavigationTarget,
+      resolveCurrentWorkspaceRuntimeOwner,
       shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
       workspaceRoot,
     ],
   );
 
   const openCallHierarchy = useCallback(async () => {
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(
+      resolveCurrentWorkspaceRuntimeOwner,
+    );
+
+    if (!ownerFence) {
+      return;
+    }
+
     const document = activeDocumentRef.current;
     if (!document) {
       setMessage(
@@ -337,6 +400,7 @@ export function useWorkbenchSymbolPanels(
       "PHP language server is starting. Try call hierarchy again in a moment.",
       "JavaScript/TypeScript service does not provide call hierarchy.",
       "JavaScript/TypeScript service is starting. Try call hierarchy again in a moment.",
+      ownerFence,
     );
 
     if (!context || !workspaceRoot) {
@@ -352,9 +416,7 @@ export function useWorkbenchSymbolPanels(
 
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
-    const requestedSessionId = context.sessionId;
-    const isRequestedSessionActive = () =>
-      context.isSessionActive(requestedRoot, requestedSessionId);
+    const isRequestedSessionActive = context.isSessionActive;
 
     closeSymbolPanels();
 
@@ -407,11 +469,20 @@ export function useWorkbenchSymbolPanels(
     closeSymbolPanels,
     languageServerFeatureContext,
     reportError,
+    resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
     workspaceRoot,
   ]);
 
   const openTypeHierarchy = useCallback(async () => {
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(
+      resolveCurrentWorkspaceRuntimeOwner,
+    );
+
+    if (!ownerFence) {
+      return;
+    }
+
     const document = activeDocumentRef.current;
     if (!document) {
       setMessage(
@@ -434,6 +505,7 @@ export function useWorkbenchSymbolPanels(
       "PHP language server is starting. Try type hierarchy again in a moment.",
       "JavaScript/TypeScript service does not provide type hierarchy.",
       "JavaScript/TypeScript service is starting. Try type hierarchy again in a moment.",
+      ownerFence,
     );
 
     if (!context || !workspaceRoot) {
@@ -449,9 +521,7 @@ export function useWorkbenchSymbolPanels(
 
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
-    const requestedSessionId = context.sessionId;
-    const isRequestedSessionActive = () =>
-      context.isSessionActive(requestedRoot, requestedSessionId);
+    const isRequestedSessionActive = context.isSessionActive;
 
     closeSymbolPanels();
 
@@ -504,11 +574,20 @@ export function useWorkbenchSymbolPanels(
     closeSymbolPanels,
     languageServerFeatureContext,
     reportError,
+    resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
     workspaceRoot,
   ]);
 
   const openReferencesPanel = useCallback(async () => {
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(
+      resolveCurrentWorkspaceRuntimeOwner,
+    );
+
+    if (!ownerFence) {
+      return;
+    }
+
     const document = activeDocumentRef.current;
     if (!document) {
       setMessage(
@@ -531,6 +610,7 @@ export function useWorkbenchSymbolPanels(
       "PHP language server is starting. Try find references again in a moment.",
       "JavaScript/TypeScript service does not provide references.",
       "JavaScript/TypeScript service is starting. Try find references again in a moment.",
+      ownerFence,
     );
 
     if (!context || !workspaceRoot) {
@@ -549,9 +629,7 @@ export function useWorkbenchSymbolPanels(
       "symbol";
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
-    const requestedSessionId = context.sessionId;
-    const isRequestedSessionActive = () =>
-      context.isSessionActive(requestedRoot, requestedSessionId);
+    const isRequestedSessionActive = context.isSessionActive;
 
     closeSymbolPanels();
 
@@ -592,11 +670,20 @@ export function useWorkbenchSymbolPanels(
     closeSymbolPanels,
     languageServerFeatureContext,
     reportError,
+    resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
     workspaceRoot,
   ]);
 
   const openFileReferencesPanel = useCallback(async () => {
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(
+      resolveCurrentWorkspaceRuntimeOwner,
+    );
+
+    if (!ownerFence) {
+      return;
+    }
+
     const document = activeDocumentRef.current;
 
     if (!document || !workspaceRoot) {
@@ -629,9 +716,11 @@ export function useWorkbenchSymbolPanels(
     const requestedSessionId =
       javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId;
     const isRequestedSessionActive = () =>
+      ownerFence.isCurrent() &&
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
         requestedRoot,
         requestedSessionId,
+        ownerFence.owner,
       );
 
     closeSymbolPanels();
@@ -683,6 +772,7 @@ export function useWorkbenchSymbolPanels(
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     reportError,
+    resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
     workspaceRoot,
   ]);

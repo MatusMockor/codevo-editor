@@ -19,6 +19,11 @@ import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
 import type { EditorDocument } from "../domain/workspace";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import {
+  createWorkspaceRuntimeOwner,
+  transferWorkspaceRuntimeOwner,
+  type WorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
 
 const ROOT = "/workspace";
 
@@ -50,6 +55,7 @@ interface Harness {
   openPathForNavigation: ReturnType<typeof vi.fn>;
   shouldOpenNavigationTargetReadOnly: ReturnType<typeof vi.fn>;
   setActiveDocument: (document: EditorDocument | null) => void;
+  setWorkspaceRuntimeOwner: (owner: WorkspaceRuntimeOwner | null) => void;
   setWorkspaceRoot: (root: string | null) => void;
   resetNavigationHistory: () => void;
   interruptNavigationHistoryReset: () => void;
@@ -102,6 +108,11 @@ function renderNavigationHistory(
   const currentWorkspaceRootRef: { current: string | null } = {
     current: initialWorkspaceRoot,
   };
+  let currentWorkspaceRuntimeOwner = initialWorkspaceRoot
+    ? createWorkspaceRuntimeOwner("workspace-a", initialWorkspaceRoot)
+    : null;
+  const resolveCurrentWorkspaceRuntimeOwner = () =>
+    currentWorkspaceRuntimeOwner;
   const activeEditorPositionRef: { current: EditorPosition | null } = {
     current: null,
   };
@@ -192,6 +203,7 @@ function renderNavigationHistory(
       openPathForNavigation,
       recordCurrentNavigationLocation:
         recentNavigation.recordCurrentNavigationLocation,
+      resolveCurrentWorkspaceRuntimeOwner,
       setEditorRevealTarget,
       setNavigationHistory,
       setRecentLocationsPanelOpen,
@@ -266,6 +278,9 @@ function renderNavigationHistory(
       act(() => {
         setActiveDocumentState(document);
       });
+    },
+    setWorkspaceRuntimeOwner: (owner: WorkspaceRuntimeOwner | null) => {
+      currentWorkspaceRuntimeOwner = owner;
     },
     setWorkspaceRoot: (rootPath: string | null) => {
       act(() => {
@@ -691,6 +706,105 @@ describe("useNavigationHistory", () => {
     harness.unmount();
   });
 
+  it("cancels backward activation when another owner replaces the same root", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    let activePath = `${ROOT}/b.ts`;
+    let resolveOpen: () => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(activePath));
+    harness.openPathForNavigation.mockImplementationOnce(
+      async (path, options) => {
+        await new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        });
+
+        if (options?.shouldCommit?.() === false) {
+          return false;
+        }
+
+        activePath = path;
+        return true;
+      },
+    );
+
+    const pending = harness.navigation().navigateBackward();
+
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-b", ROOT),
+    );
+    resolveOpen();
+    await act(async () => {
+      await pending;
+    });
+
+    expect(activePath).toBe(`${ROOT}/b.ts`);
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [previousLocation],
+      forwardStack: [],
+    });
+    expect(harness.editorRevealTarget()).toBeNull();
+
+    harness.unmount();
+  });
+
+  it("allows backward activation after a same-owner alias transfer", async () => {
+    const harness = renderNavigationHistory();
+    const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    let resolveOpen: () => void = () => {};
+
+    harness.setWorkspaceRuntimeOwner(owner);
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(`${ROOT}/b.ts`));
+    harness.openPathForNavigation.mockImplementationOnce(
+      async (_path, options) => {
+        await new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        });
+        return options?.shouldCommit?.() !== false;
+      },
+    );
+
+    const pending = harness.navigation().navigateBackward();
+
+    harness.setWorkspaceRuntimeOwner(
+      transferWorkspaceRuntimeOwner(owner, `${ROOT}/alias`),
+    );
+    resolveOpen();
+    await act(async () => {
+      await pending;
+    });
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [],
+      forwardStack: [
+        {
+          path: `${ROOT}/b.ts`,
+          position: { column: 1, lineNumber: 1 },
+        },
+      ],
+    });
+    expect(harness.editorRevealTarget()).toEqual(previousLocation);
+
+    harness.unmount();
+  });
+
   it("preserves a newer location recorded while backward navigation is pending", async () => {
     const harness = renderNavigationHistory();
     const previousLocation: NavigationLocation = {
@@ -1003,6 +1117,67 @@ describe("useNavigationHistory", () => {
     harness.unmount();
   });
 
+  it("cancels forward activation when another owner replaces the same root", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const currentLocation: NavigationLocation = {
+      path: `${ROOT}/b.ts`,
+      position: { column: 2, lineNumber: 5 },
+    };
+    let activePath = previousLocation.path;
+    let resolveOpen: () => void = () => {};
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(currentLocation.path));
+    harness.activeEditorPositionRef.current = currentLocation.position;
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    harness.setActiveDocument(editorDocument(previousLocation.path));
+    harness.activeEditorPositionRef.current = previousLocation.position;
+    harness.openPathForNavigation.mockImplementationOnce(
+      async (path, options) => {
+        await new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        });
+
+        if (options?.shouldCommit?.() === false) {
+          return false;
+        }
+
+        activePath = path;
+        return true;
+      },
+    );
+
+    const pending = harness.navigation().navigateForwardInHistory();
+
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-b", ROOT),
+    );
+    resolveOpen();
+    await act(async () => {
+      await pending;
+    });
+
+    expect(activePath).toBe(previousLocation.path);
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [],
+      forwardStack: [currentLocation],
+    });
+    expect(harness.editorRevealTarget()).toEqual(previousLocation);
+
+    harness.unmount();
+  });
+
   it("preserves a newer location recorded while forward navigation is pending", async () => {
     const harness = renderNavigationHistory();
     const previousLocation: NavigationLocation = {
@@ -1083,7 +1258,7 @@ describe("useNavigationHistory", () => {
 
     expect(harness.openPathForNavigation).toHaveBeenCalledWith(
       `${ROOT}/target.ts`,
-      { readOnly: false },
+      expect.objectContaining({ readOnly: false }),
     );
     expect(harness.editorRevealTarget()).toEqual({
       path: `${ROOT}/target.ts`,
@@ -1186,6 +1361,101 @@ describe("useNavigationHistory", () => {
     harness.unmount();
   });
 
+  it("cancels a recent-location activation when another owner replaces the same root", async () => {
+    const harness = renderNavigationHistory();
+    const target: RecentLocation = {
+      column: 1,
+      line: 1,
+      name: "target.ts",
+      path: `${ROOT}/target.ts`,
+      relativePath: "target.ts",
+      snippet: "",
+    };
+    let activePath = `${ROOT}/current.ts`;
+    let resolveOpen: () => void = () => {};
+
+    harness.setActiveDocument(editorDocument(activePath));
+    act(() => {
+      harness.recentNavigation().openRecentLocationsPanel();
+    });
+    harness.openPathForNavigation.mockImplementationOnce(
+      async (path, options) => {
+        await new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        });
+
+        if (options?.shouldCommit?.() === false) {
+          return false;
+        }
+
+        activePath = path;
+        return true;
+      },
+    );
+
+    const pending = harness.navigation().openRecentLocation(target);
+
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-b", ROOT),
+    );
+    resolveOpen();
+    await act(async () => {
+      await pending;
+    });
+
+    expect(activePath).toBe(`${ROOT}/current.ts`);
+    expect(harness.editorRevealTarget()).toBeNull();
+    expect(harness.recentLocationsPanelOpen()).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("preserves recent-location state when a failed open belongs to a replaced owner", async () => {
+    const harness = renderNavigationHistory();
+    const target: RecentLocation = {
+      column: 1,
+      line: 1,
+      name: "dead.ts",
+      path: `${ROOT}/dead.ts`,
+      relativePath: "dead.ts",
+      snippet: "x",
+    };
+    let resolveOpen: (opened: boolean) => void = () => {};
+
+    harness.documentsRef.current = {
+      [target.path]: editorDocument(target.path, "x\n"),
+    };
+    act(() => {
+      harness.recentNavigation().recordRecentLocationSnapshot({
+        path: target.path,
+        position: { column: 1, lineNumber: 1 },
+      });
+      harness.recentNavigation().openRecentLocationsPanel();
+    });
+    harness.openPathForNavigation.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    const pending = harness.navigation().openRecentLocation(target);
+
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-b", ROOT),
+    );
+    resolveOpen(false);
+    await act(async () => {
+      await pending;
+    });
+
+    expect(harness.recentLocations()).toHaveLength(1);
+    expect(harness.recentLocationsPanelOpen()).toBe(true);
+    expect(harness.editorRevealTarget()).toBeNull();
+
+    harness.unmount();
+  });
+
   it("routes the read-only decision through the injected resolver", async () => {
     const harness = renderNavigationHistory();
     harness.shouldOpenNavigationTargetReadOnly.mockReturnValue(true);
@@ -1209,7 +1479,7 @@ describe("useNavigationHistory", () => {
     );
     expect(harness.openPathForNavigation).toHaveBeenCalledWith(
       `${ROOT}/target.ts`,
-      { readOnly: true },
+      expect.objectContaining({ readOnly: true }),
     );
 
     harness.unmount();

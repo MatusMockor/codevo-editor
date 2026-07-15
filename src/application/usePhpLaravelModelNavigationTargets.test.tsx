@@ -151,6 +151,7 @@ describe("usePhpLaravelModelNavigationTargets", () => {
       MODEL_PATH,
       expect.objectContaining<Partial<EditorPosition>>({ lineNumber: 6 }),
       "content",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -170,6 +171,7 @@ describe("usePhpLaravelModelNavigationTargets", () => {
       MODEL_PATH,
       expect.objectContaining<Partial<EditorPosition>>({ lineNumber: 9 }),
       "full_name",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -211,12 +213,18 @@ describe("usePhpLaravelModelNavigationTargets", () => {
     await expect(
       harness
         .api()
-        .openPhpLaravelDynamicWhereTarget("App\\Models\\Comment", "whereContent"),
+        .openPhpLaravelDynamicWhereTarget(
+          "App\\Models\\Comment",
+          "whereContent",
+        ),
     ).resolves.toBe(false);
     await expect(
       harness
         .api()
-        .openPhpLaravelModelAttributeTarget("App\\Models\\Comment", "full_name"),
+        .openPhpLaravelModelAttributeTarget(
+          "App\\Models\\Comment",
+          "full_name",
+        ),
     ).resolves.toBe(false);
     expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
     expect(readNavigationFileContent).not.toHaveBeenCalled();
@@ -245,6 +253,34 @@ describe("usePhpLaravelModelNavigationTargets", () => {
     await expect(navigationPromise).resolves.toBe(false);
     expect(openNavigationTarget).not.toHaveBeenCalled();
 
+    harness.unmount();
+  });
+
+  it("fences an in-flight model target open when its owner becomes stale", async () => {
+    const targetOpen = deferred<boolean>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(() => targetOpen.promise);
+    const deps = makeDeps({ openNavigationTarget });
+    const harness = renderHook(deps);
+    const navigationPromise = harness
+      .api()
+      .openPhpLaravelDynamicWhereTarget(
+        "App\\Models\\Comment",
+        "whereContent",
+        { canNavigate: () => requestActive },
+      );
+
+    await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
+    const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
+      shouldCommit?: () => boolean;
+    };
+    expect(options?.shouldCommit?.()).toBe(true);
+
+    requestActive = false;
+    expect(options?.shouldCommit?.()).toBe(false);
+    targetOpen.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
     harness.unmount();
   });
 });

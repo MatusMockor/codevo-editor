@@ -247,6 +247,73 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
     );
   });
 
+  it("does not open the route action class after the request becomes stale", async () => {
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const openDirectPhpMethodTarget = vi.fn(async () => {
+      requestActive = false;
+      return false;
+    });
+    const openPhpClassTarget = vi.fn(async () => true);
+    const adapter = createPhpLaravelIdentifierDefinitionNavigationAdapter(
+      makeDeps({ openDirectPhpMethodTarget, openPhpClassTarget }),
+    );
+
+    await expect(
+      adapter.goToDefinition(
+        {
+          className: "DashboardController",
+          kind: "laravelRouteActionMethod",
+          methodName: "missing",
+        },
+        request,
+      ),
+    ).resolves.toBe(false);
+
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Http\\Controllers\\DashboardController",
+      "missing",
+      request,
+    );
+    expect(openPhpClassTarget).not.toHaveBeenCalled();
+  });
+
+  it("passes an active request to literal definition navigation", async () => {
+    const request = { canNavigate: vi.fn(() => true) };
+    const goToPhpFrameworkLiteralDefinition = vi.fn(async () => true);
+    const adapter = createPhpLaravelIdentifierDefinitionNavigationAdapter(
+      makeDeps({ goToPhpFrameworkLiteralDefinition }),
+    );
+
+    await expect(
+      adapter.goToDefinition(
+        { kind: "laravelNamedRouteString", routeName: "dashboard" },
+        request,
+      ),
+    ).resolves.toBe(true);
+
+    expect(goToPhpFrameworkLiteralDefinition).toHaveBeenCalledWith(
+      { kind: "route", name: "dashboard" },
+      request,
+    );
+  });
+
+  it("does not invoke definition helpers for a stale request", async () => {
+    const goToPhpFrameworkLiteralDefinition = vi.fn(async () => true);
+    const adapter = createPhpLaravelIdentifierDefinitionNavigationAdapter(
+      makeDeps({ goToPhpFrameworkLiteralDefinition }),
+    );
+
+    await expect(
+      adapter.goToDefinition(
+        { kind: "laravelNamedRouteString", routeName: "dashboard" },
+        { canNavigate: () => false },
+      ),
+    ).resolves.toBe(false);
+
+    expect(goToPhpFrameworkLiteralDefinition).not.toHaveBeenCalled();
+  });
+
   it("keeps route action methods direct-only without a class target opener", async () => {
     const openDirectPhpMethodTarget = vi.fn(async () => false);
     const context: PhpIdentifierContext = {

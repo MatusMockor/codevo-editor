@@ -179,6 +179,202 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
     harness.unmount();
   });
 
+  it("drops method navigation when its request is cancelled during dynamic where lookup", async () => {
+    const dynamicTarget = deferred<boolean>();
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const openDirectPhpMethodTarget = vi.fn(async () => false);
+    const openPhpLaravelDynamicWhereTarget = vi.fn(
+      () => dynamicTarget.promise,
+    );
+    const deps = makeDeps({
+      openDirectPhpMethodTarget,
+      openPhpLaravelDynamicWhereTarget,
+      resolvePhpEloquentBuilderModelType: vi.fn(
+        async () => "App\\Models\\Post",
+      ),
+      resolvePhpExpressionType: vi.fn(async () => "App\\Models\\Post"),
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToPhpMethodCallDefinition(
+      {
+        kind: "methodCall",
+        methodName: "whereTitle",
+        receiverExpression: "$post",
+        variableName: "post",
+      },
+      request,
+    );
+
+    await vi.waitFor(() => {
+      expect(openPhpLaravelDynamicWhereTarget).toHaveBeenCalled();
+    });
+    requestActive = false;
+    dynamicTarget.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openDirectPhpMethodTarget).toHaveBeenNthCalledWith(
+      1,
+      "App\\Models\\Post",
+      "whereTitle",
+      request,
+    );
+    expect(openPhpLaravelDynamicWhereTarget).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "whereTitle",
+      request,
+    );
+    expect(deps.setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("threads active requests through method hint navigation", async () => {
+    const request = { canNavigate: vi.fn(() => true) };
+    const openPhpMethodHintTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      openPhpMethodHintTarget,
+      resolvePhpExpressionType: vi.fn(
+        async () => "Illuminate\\Http\\Request",
+      ),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpMethodCallDefinition(
+      {
+        kind: "methodCall",
+        methodName: "input",
+        receiverExpression: "$request",
+        variableName: "request",
+      },
+      request,
+    );
+
+    expect(handled).toBe(true);
+    expect(openPhpMethodHintTarget).toHaveBeenCalledWith(
+      expect.any(Object),
+      request,
+    );
+
+    harness.unmount();
+  });
+
+  it("drops static navigation when its request is cancelled during a direct open", async () => {
+    const directTarget = deferred<boolean>();
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const openDirectPhpMethodTarget = vi.fn(() => directTarget.promise);
+    const deps = makeDeps({
+      openDirectPhpMethodTarget,
+      resolvePhpClassReference: vi.fn(() => "App\\Models\\Post"),
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToPhpStaticMethodCallDefinition(
+      {
+        className: "Post",
+        kind: "staticMethodCall",
+        methodName: "find",
+      },
+      request,
+    );
+
+    await vi.waitFor(() => {
+      expect(openDirectPhpMethodTarget).toHaveBeenCalled();
+    });
+    requestActive = false;
+    directTarget.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+      "find",
+      request,
+    );
+    expect(deps.setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("drops constant navigation when its request is cancelled during the open", async () => {
+    const navigationTarget = deferred<boolean>();
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const path = `${ROOT}/app/Status.php`;
+    const readNavigationFileContent = vi.fn(
+      async () => `<?php
+class Status
+{
+    public const ACTIVE = 1;
+}`,
+    );
+    const openNavigationTarget = vi.fn(() => navigationTarget.promise);
+    const openPhpClassTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      openNavigationTarget,
+      openPhpClassTarget,
+      readNavigationFileContent,
+      resolvePhpClassReference: vi.fn(() => "App\\Status"),
+      resolvePhpClassSourcePaths: vi.fn(async () => [path]),
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToPhpClassConstantDefinition(
+      {
+        className: "Status",
+        constantName: "ACTIVE",
+        kind: "classConstant",
+      },
+      request,
+    );
+
+    await vi.waitFor(() => {
+      expect(openNavigationTarget).toHaveBeenCalled();
+    });
+    requestActive = false;
+    navigationTarget.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(readNavigationFileContent).toHaveBeenCalledWith(path, request);
+    expect(openNavigationTarget).toHaveBeenCalledWith(
+      path,
+      expect.any(Object),
+      "ACTIVE",
+      {},
+      request,
+    );
+    expect(openPhpClassTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("threads active requests through the constant class fallback", async () => {
+    const request = { canNavigate: vi.fn(() => true) };
+    const openPhpClassTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      openPhpClassTarget,
+      resolvePhpClassReference: vi.fn(() => "App\\Status"),
+      resolvePhpClassSourcePaths: vi.fn(async () => []),
+    });
+    const harness = renderHook(deps);
+
+    const handled = await harness.api().goToPhpClassConstantDefinition(
+      {
+        className: "Status",
+        constantName: "ACTIVE",
+        kind: "classConstant",
+      },
+      request,
+    );
+
+    expect(handled).toBe(true);
+    expect(openPhpClassTarget).toHaveBeenCalledWith(
+      "App\\Status",
+      "Status",
+      request,
+    );
+
+    harness.unmount();
+  });
+
   it("drops relation navigation when the active workspace changes mid-resolution", async () => {
     const ownerType = deferred<string | null>();
     const currentWorkspaceRootRef = { current: ROOT };
@@ -211,6 +407,55 @@ describe("usePhpContextualMemberDefinitionNavigation", () => {
 
     await expect(navigationPromise).resolves.toBe(false);
     expect(openDirectPhpMethodTarget).not.toHaveBeenCalled();
+    expect(deps.setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("drops relation navigation when its request is cancelled during the direct open", async () => {
+    const directTarget = deferred<boolean>();
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const openDirectPhpMethodTarget = vi.fn(() => directTarget.promise);
+    const deps = makeDeps({
+      activeDocument: {
+        content: "<?php Comment::with('author');",
+        language: "php",
+        name: "CommentRepository.php",
+        path: `${ROOT}/app/CommentRepository.php`,
+        savedContent: "",
+      },
+      openDirectPhpMethodTarget,
+      resolvePhpLaravelRelationPathOwnerType: vi.fn(
+        async () => "App\\Models\\Comment",
+      ),
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness
+      .api()
+      .goToPhpLaravelRelationStringDefinition(
+        {
+          className: "App\\Models\\Comment",
+          kind: "laravelRelationString",
+          methodName: "with",
+          receiverExpression: null,
+          relationName: "author",
+        },
+        request,
+      );
+
+    await vi.waitFor(() => {
+      expect(openDirectPhpMethodTarget).toHaveBeenCalled();
+    });
+    requestActive = false;
+    directTarget.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Models\\Comment",
+      "author",
+      request,
+    );
     expect(deps.setMessage).not.toHaveBeenCalled();
 
     harness.unmount();

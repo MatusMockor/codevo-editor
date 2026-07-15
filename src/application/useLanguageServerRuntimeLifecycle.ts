@@ -840,21 +840,34 @@ export function useLanguageServerRuntimeLifecycle(
 
   const isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot = useCallback(
     (rootPath: string, sessionId: number) => {
-      const currentRuntimeStatus =
-        cachedLanguageServerRuntimeStatusForOwner(
-          javaScriptTypeScriptRuntimeStatusByRootRef.current,
-          runtimeOwnerForRoot(rootPath),
-        ) ??
-        (workspaceRootKeysEqual(
-          javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+      const currentRuntimeStatus = cachedLanguageServerRuntimeStatusForOwner(
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+        runtimeOwnerForRoot(rootPath),
+      );
+
+      if (currentRuntimeStatus) {
+        return isRunningLanguageServerSessionForWorkspace(
+          currentRuntimeStatus,
+          currentRuntimeStatus.rootPath ?? null,
           rootPath,
-        )
-          ? javaScriptTypeScriptLanguageServerRuntimeStatusRef.current
-          : null);
+          sessionId,
+        );
+      }
+
+      if (workspaceRuntimeOwner) {
+        return false;
+      }
+
+      const legacyRuntimeStatus = workspaceRootKeysEqual(
+        javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
+        rootPath,
+      )
+        ? javaScriptTypeScriptLanguageServerRuntimeStatusRef.current
+        : null;
 
       return isRunningLanguageServerSessionForWorkspace(
-        currentRuntimeStatus,
-        currentRuntimeStatus?.rootPath ??
+        legacyRuntimeStatus,
+        legacyRuntimeStatus?.rootPath ??
           javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current,
         rootPath,
         sessionId,
@@ -865,6 +878,7 @@ export function useLanguageServerRuntimeLifecycle(
       javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
       javaScriptTypeScriptRuntimeStatusByRootRef,
       runtimeOwnerForRoot,
+      workspaceRuntimeOwner,
     ],
   );
 

@@ -35,13 +35,15 @@ function makeDeps(
   return {
     currentWorkspaceRootRef: { current: ROOT },
     openNavigationTarget: vi.fn(async () => true),
-    readNavigationFileContent: vi.fn(async () => `<?php
+    readNavigationFileContent: vi.fn(
+      async () => `<?php
 namespace App\\Models;
 
 class Invoice
 {
     protected string $number;
-}`),
+}`,
+    ),
     resolvePhpClassReference: vi.fn((_source, reference) =>
       reference === "HasBilling" ? "App\\Models\\Concerns\\HasBilling" : null,
     ),
@@ -109,16 +111,16 @@ describe("usePhpPropertyTargetNavigation", () => {
     const deps = makeDeps({ openNavigationTarget });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().openDirectPhpPropertyTarget(
-      "App\\Models\\Invoice",
-      "number",
-    );
+    const handled = await harness
+      .api()
+      .openDirectPhpPropertyTarget("App\\Models\\Invoice", "number");
 
     expect(handled).toBe(true);
     expect(openNavigationTarget).toHaveBeenCalledWith(
       `${ROOT}/app/Models/Invoice.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "$number",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -161,16 +163,16 @@ trait HasBilling
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().openDirectPhpPropertyTarget(
-      "App\\Models\\Invoice",
-      "billingCode",
-    );
+    const handled = await harness
+      .api()
+      .openDirectPhpPropertyTarget("App\\Models\\Invoice", "billingCode");
 
     expect(handled).toBe(true);
     expect(openNavigationTarget).toHaveBeenCalledWith(
       `${ROOT}/app/Models/Concerns/HasBilling.php`,
       expect.objectContaining({ lineNumber: 6 }),
       "$billingCode",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -186,10 +188,9 @@ trait HasBilling
       readNavigationFileContent: vi.fn(() => content.promise),
     });
     const harness = renderHook(deps);
-    const navigationPromise = harness.api().openDirectPhpPropertyTarget(
-      "App\\Models\\Invoice",
-      "number",
-    );
+    const navigationPromise = harness
+      .api()
+      .openDirectPhpPropertyTarget("App\\Models\\Invoice", "number");
 
     currentWorkspaceRootRef.current = OTHER_ROOT;
     content.resolve(`<?php
@@ -201,6 +202,32 @@ class Invoice
     await expect(navigationPromise).resolves.toBe(false);
     expect(openNavigationTarget).not.toHaveBeenCalled();
 
+    harness.unmount();
+  });
+
+  it("fences an in-flight property open when its owner becomes stale", async () => {
+    const targetOpen = deferred<boolean>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(() => targetOpen.promise);
+    const deps = makeDeps({ openNavigationTarget });
+    const harness = renderHook(deps);
+    const navigationPromise = harness
+      .api()
+      .openDirectPhpPropertyTarget("App\\Models\\Invoice", "number", {
+        canNavigate: () => requestActive,
+      });
+
+    await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
+    const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
+      shouldCommit?: () => boolean;
+    };
+    expect(options?.shouldCommit?.()).toBe(true);
+
+    requestActive = false;
+    expect(options?.shouldCommit?.()).toBe(false);
+    targetOpen.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
     harness.unmount();
   });
 });

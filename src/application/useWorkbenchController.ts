@@ -50,6 +50,7 @@ import { usePhpSuperMethodNavigation } from "./usePhpSuperMethodNavigation";
 import { usePhpIndexedDefinitionNavigation } from "./usePhpIndexedDefinitionNavigation";
 import { usePhpContextualDefinitionNavigation } from "./usePhpContextualDefinitionNavigation";
 import { usePhpFrameworkIdentifierDefinitionNavigation } from "./usePhpFrameworkIdentifierDefinitionNavigation";
+import type { NavigationRequest } from "./navigationRequest";
 import {
   createDefaultPhpFrameworkIdentifierNavigationActivationAdapters,
   createPhpFrameworkIdentifierNavigationAdapters,
@@ -79,6 +80,7 @@ import {
 } from "./documentSessionState";
 import {
   useWorkspaceStateCache,
+  workspaceIdentityStateCacheKey,
   type CachedWorkspaceWorkbenchState,
 } from "./useWorkspaceStateCache";
 import {
@@ -301,6 +303,7 @@ import {
 import {
   cachedLanguageServerRuntimeStatusForOwner,
   cachedLanguageServerRuntimeStatusForRoot,
+  type LanguageServerRuntimeStatusByOwner,
 } from "../domain/languageServerRuntimeStatusCache";
 import {
   createLegacyWorkspaceRuntimeOwner,
@@ -575,7 +578,9 @@ export function useWorkbenchController(
     [workspaceIdentityDescriptor, workspaceRoot],
   );
   const workspaceRuntimeOwnerRef = useRef(workspaceRuntimeOwner);
-  workspaceRuntimeOwnerRef.current = workspaceRuntimeOwner;
+  workspaceRuntimeOwnerRef.current =
+    workspaceRuntimeOwner ??
+    (workspaceRoot ? createLegacyWorkspaceRuntimeOwner(workspaceRoot) : null);
   const resolveCurrentWorkspaceRuntimeOwner = useCallback(
     () => workspaceRuntimeOwnerRef.current,
     [],
@@ -2090,32 +2095,15 @@ export function useWorkbenchController(
   });
 
   const isLanguageServerSessionCurrentForRoot = useCallback(
-    (rootPath: string, sessionId: number) => {
-      const currentRuntimeStatus =
-        (workspaceRuntimeOwnerByTabRef.current[rootPath]
-          ? cachedLanguageServerRuntimeStatusForOwner(
-              languageServerRuntimeStatusByRootRef.current,
-              workspaceRuntimeOwnerByTabRef.current[rootPath],
-            )
-          : cachedLanguageServerRuntimeStatusForRoot(
-              languageServerRuntimeStatusByRootRef.current,
-              rootPath,
-            )) ??
-        (workspaceRootKeysEqual(
-          languageServerRuntimeStatusRootRef.current,
-          rootPath,
-        )
-          ? languageServerRuntimeStatusRef.current
-          : null);
-
-      return isRunningLanguageServerSessionForWorkspace(
-        currentRuntimeStatus,
-        currentRuntimeStatus?.rootPath ??
-          languageServerRuntimeStatusRootRef.current,
+    (rootPath: string, sessionId: number) =>
+      isLanguageServerSessionCurrentForOwnerOrLegacy(
+        languageServerRuntimeStatusByRootRef.current,
+        workspaceRuntimeOwnerByTabRef.current[rootPath],
+        languageServerRuntimeStatusRef.current,
+        languageServerRuntimeStatusRootRef.current,
         rootPath,
         sessionId,
-      );
-    },
+      ),
     [],
   );
 
@@ -2470,9 +2458,11 @@ export function useWorkbenchController(
     runPhpWorkspaceProbe,
     refreshJavaScriptTypeScriptLanguageServerPlan,
     forgetLanguageServerRuntimeStatuses,
-    isLanguageServerSessionActiveForRoot,
+    isLanguageServerSessionActiveForRoot:
+      isLegacyLanguageServerSessionActiveForRoot,
     isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot:
+      isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
     stopLanguageServerRuntime,
     stopJavaScriptTypeScriptLanguageServerRuntime,
     stopProjectRuntimes,
@@ -2536,6 +2526,67 @@ export function useWorkbenchController(
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
   });
+
+  const isLanguageServerSessionActiveForRoot = useCallback(
+    (
+      rootPath: string,
+      sessionId: number,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      if (!owner) {
+        return isLegacyLanguageServerSessionActiveForRoot(rootPath, sessionId);
+      }
+
+      if (
+        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== owner.ownerKey
+      ) {
+        return false;
+      }
+
+      return isLanguageServerSessionActiveForOwner(
+        languageServerRuntimeStatusByRootRef.current,
+        owner,
+        rootPath,
+        sessionId,
+      );
+    },
+    [
+      isLegacyLanguageServerSessionActiveForRoot,
+      resolveCurrentWorkspaceRuntimeOwner,
+    ],
+  );
+
+  const isJavaScriptTypeScriptLanguageServerSessionActiveForRoot = useCallback(
+    (
+      rootPath: string,
+      sessionId: number,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      if (!owner) {
+        return isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+          rootPath,
+          sessionId,
+        );
+      }
+
+      if (
+        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== owner.ownerKey
+      ) {
+        return false;
+      }
+
+      return isLanguageServerSessionActiveForOwner(
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+        owner,
+        rootPath,
+        sessionId,
+      );
+    },
+    [
+      isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      resolveCurrentWorkspaceRuntimeOwner,
+    ],
+  );
 
   const {
     applyJavaScriptTypeScriptSettingsChange,
@@ -2779,6 +2830,7 @@ export function useWorkbenchController(
     shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly,
     closeCompetingSurfaces: closeSymbolPanelCompetingSurfaces,
     reportError,
+    resolveCurrentWorkspaceRuntimeOwner,
     setMessage,
   });
 
@@ -3230,19 +3282,46 @@ export function useWorkbenchController(
         workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path);
       const previousRootPath = currentWorkspaceRootRef.current;
       const canonicalKey = identityDescriptor?.canonicalRoot ?? path;
-      let cachedWorkspaceState = identityDescriptor
-        ? coalesceWorkspaceStateCache(identityDescriptor, path)
-        : resolveCachedWorkspaceState(canonicalKey);
-      const identityAliasPaths = identityDescriptor
-        ? workspaceIdentityAliasPaths(
-            workspaceIdentityByRootRef.current,
-            identityDescriptor,
-            cachedWorkspaceState?.workspaceIdentityDescriptor ?? null,
-          )
-        : [];
+      const previousWorkspaceIdentity = previousRootPath
+        ? workspaceIdentityByRootRef.current[previousRootPath] ?? null
+        : null;
       const switchingWorkspace =
         previousRootPath &&
-        !workspaceRootKeysEqual(previousRootPath, path);
+        (!workspaceRootKeysEqual(previousRootPath, path) ||
+          Boolean(
+            identityDescriptor &&
+              previousWorkspaceIdentity?.workspaceId !==
+              identityDescriptor.workspaceId,
+          ));
+
+      let cachedWorkspaceState =
+        identityDescriptor && switchingWorkspace
+          ? null
+          : identityDescriptor
+            ? coalesceWorkspaceStateCache(identityDescriptor, path)
+            : resolveCachedWorkspaceState(canonicalKey);
+
+      const adoptLegacyWorkspaceCache = () => {
+        if (!identityDescriptor || cachedWorkspaceState) {
+          return;
+        }
+
+        const legacyCachedWorkspaceState = adoptLegacyCachedWorkspaceState(
+          identityDescriptor,
+          [
+            resolveCachedWorkspaceState(identityDescriptor.canonicalRoot),
+            resolveCachedWorkspaceState(path),
+          ],
+        );
+        if (!legacyCachedWorkspaceState) {
+          return;
+        }
+
+        cachedWorkspaceState = coalesceWorkspaceStateCache(
+          identityDescriptor,
+          path,
+        );
+      };
 
       if (switchingWorkspace) {
         resetFilePrefetchState();
@@ -3306,12 +3385,40 @@ export function useWorkbenchController(
         }
 
         if (identityDescriptor) {
+          const isNewIdentityForActiveLegacyWorkspace =
+            !previousWorkspaceIdentity &&
+            workspaceRootKeysEqual(previousRootPath, path);
+          if (isNewIdentityForActiveLegacyWorkspace) {
+            const capturedLegacyState = adoptLegacyCachedWorkspaceState(
+              identityDescriptor,
+              [
+                resolveCachedWorkspaceState(previousRootPath),
+                resolveCachedWorkspaceState(identityDescriptor.canonicalRoot),
+              ],
+            );
+            if (capturedLegacyState) {
+              forgetCachedWorkspaceState(path, identityDescriptor);
+              workspaceStateCacheRef.current[
+                workspaceIdentityStateCacheKey(identityDescriptor.workspaceId)
+              ] = capturedLegacyState;
+            }
+          }
+
           cachedWorkspaceState = coalesceWorkspaceStateCache(
             identityDescriptor,
             path,
           );
         }
       }
+
+      adoptLegacyWorkspaceCache();
+      const identityAliasPaths = identityDescriptor
+        ? workspaceIdentityAliasPaths(
+            workspaceIdentityByRootRef.current,
+            identityDescriptor,
+            cachedWorkspaceState?.workspaceIdentityDescriptor ?? null,
+          )
+        : [];
 
       workspaceSessionRestoredRef.current = false;
       resetLanguageServerDocuments();
@@ -3545,7 +3652,7 @@ export function useWorkbenchController(
       const explicitRuntimeOwner = identityDescriptor
         ? admittedRuntimeOwner
         : undefined;
-      workspaceRuntimeOwnerRef.current = explicitRuntimeOwner ?? null;
+      workspaceRuntimeOwnerRef.current = admittedRuntimeOwner;
       if (identityDescriptor) {
         registerWorkspaceRuntimeOwnerClaim(
           workspaceRuntimeOwnerClaimsRef.current,
@@ -7202,7 +7309,10 @@ export function useWorkbenchController(
     });
 
   const goToPhpClassIdentifierDefinition = useCallback(
-    async (name: string): Promise<boolean> => {
+    async (
+      name: string,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       if (!activeDocument) {
         return false;
       }
@@ -7213,7 +7323,9 @@ export function useWorkbenchController(
         return false;
       }
 
-      return openPhpClassTarget(className, name);
+      return request
+        ? openPhpClassTarget(className, name, request)
+        : openPhpClassTarget(className, name);
     },
     [activeDocument, openPhpClassTarget],
   );
@@ -7344,6 +7456,7 @@ export function useWorkbenchController(
     recordNavigationLocationSnapshot,
     reportErrorForActiveWorkspaceRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
+    resolveCurrentWorkspaceRuntimeOwner,
     setEditorRevealTarget,
     setImplementationChooser,
     setMessage,
@@ -7359,6 +7472,7 @@ export function useWorkbenchController(
       navigationHistory,
       openPathForNavigation,
       recordCurrentNavigationLocation,
+      resolveCurrentWorkspaceRuntimeOwner,
       setEditorRevealTarget,
       setNavigationHistory,
       setRecentLocationsPanelOpen,
@@ -9882,6 +9996,35 @@ export async function withWorkspaceIdentityLease(
   }
 }
 
+export function adoptLegacyCachedWorkspaceState<
+  T extends {
+    workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
+  },
+>(
+  identityDescriptor: WorkspaceIdentityDescriptor,
+  candidates: ReadonlyArray<T | null>,
+): T | null {
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+
+    const cachedWorkspaceId =
+      candidate.workspaceIdentityDescriptor?.workspaceId;
+    if (
+      cachedWorkspaceId &&
+      cachedWorkspaceId !== identityDescriptor.workspaceId
+    ) {
+      continue;
+    }
+
+    candidate.workspaceIdentityDescriptor = identityDescriptor;
+    return candidate;
+  }
+
+  return null;
+}
+
 function workspaceTabPathForPath(
   tabs: string[],
   path: string | null | undefined,
@@ -9910,6 +10053,61 @@ function isRunningLanguageServerSessionForWorkspace(
   return (
     isRunningLanguageServerForWorkspace(status, statusRoot, workspaceRoot) &&
     status.sessionId === sessionId
+  );
+}
+
+export function isLanguageServerSessionActiveForOwner(
+  runtimeStatuses: LanguageServerRuntimeStatusByOwner,
+  owner: WorkspaceRuntimeOwner,
+  rootPath: string,
+  sessionId: number,
+): boolean {
+  const ownerStatus = cachedLanguageServerRuntimeStatusForOwner(
+    runtimeStatuses,
+    owner,
+  );
+  if (!ownerStatus) {
+    return false;
+  }
+
+  return isRunningLanguageServerSessionForWorkspace(
+    ownerStatus,
+    owner.executionRoot,
+    rootPath,
+    sessionId,
+  );
+}
+
+export function isLanguageServerSessionCurrentForOwnerOrLegacy(
+  runtimeStatuses: LanguageServerRuntimeStatusByOwner,
+  owner: WorkspaceRuntimeOwner | undefined,
+  legacyStatus: LanguageServerRuntimeStatus | null,
+  legacyStatusRoot: string | null,
+  rootPath: string,
+  sessionId: number,
+): boolean {
+  if (owner) {
+    return isLanguageServerSessionActiveForOwner(
+      runtimeStatuses,
+      owner,
+      rootPath,
+      sessionId,
+    );
+  }
+
+  const cachedRuntimeStatus = cachedLanguageServerRuntimeStatusForRoot(
+    runtimeStatuses,
+    rootPath,
+  );
+  const currentLegacyStatus =
+    cachedRuntimeStatus ??
+    (workspaceRootKeysEqual(legacyStatusRoot, rootPath) ? legacyStatus : null);
+
+  return isRunningLanguageServerSessionForWorkspace(
+    currentLegacyStatus,
+    currentLegacyStatus?.rootPath ?? legacyStatusRoot,
+    rootPath,
+    sessionId,
   );
 }
 

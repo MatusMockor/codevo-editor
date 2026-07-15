@@ -13,7 +13,6 @@ import {
 import type { EditorConfigFile } from "../domain/editorConfig";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
-import { createWorkspaceRoot } from "../domain/workspacePath";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
 import { isDirty } from "../domain/workspace";
@@ -24,7 +23,10 @@ import {
 import { CloseCoordinator } from "./closeCoordinator";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import type { WorkspaceStateCache } from "./useWorkspaceStateCache";
+import {
+  workspaceIdentityStateCacheKey,
+  type WorkspaceStateCache,
+} from "./useWorkspaceStateCache";
 
 interface CachedWorkspaceDirtyState {
   editorSurface: {
@@ -234,6 +236,10 @@ export function useWorkbenchCloseLifecycle(
         workspaceIdentityForPaths(workspaceIdentityByRootRef.current, [
           cachedRoot,
         ]);
+      const cachedResourceRoots = cachedWorkspaceResourceRoots(
+        cachedRoot,
+        cachedIdentity,
+      );
       if (
         workspaceRootKeysEqual(cachedRoot, workspaceRoot) ||
         workspaceIdentityMatchesActiveRoot(
@@ -246,23 +252,24 @@ export function useWorkbenchCloseLifecycle(
       }
 
       const existingRoot = inactiveCachedRoots.find(
-        ({ roots, workspaceId }) =>
-          Boolean(
-            workspaceId &&
-              cachedIdentity &&
-              workspaceId === cachedIdentity.workspaceId,
-          ) || workspaceRootKeysEqual(roots[0], cachedRoot),
+        ({ roots, workspaceId }) => {
+          if (workspaceId || cachedIdentity) {
+            return workspaceId === cachedIdentity?.workspaceId;
+          }
+
+          return workspaceRootKeysEqual(roots[0], cachedRoot);
+        },
       );
       if (existingRoot) {
         existingRoot.hasDirtyDocuments ||=
           cachedWorkspaceHasDirtyDocuments(cachedState);
-        existingRoot.roots.push(cachedRoot);
+        existingRoot.roots.push(...cachedResourceRoots);
         continue;
       }
 
       inactiveCachedRoots.push({
         hasDirtyDocuments: cachedWorkspaceHasDirtyDocuments(cachedState),
-        roots: [cachedRoot],
+        roots: cachedResourceRoots,
         workspaceId: cachedIdentity?.workspaceId ?? null,
       });
     }
@@ -854,11 +861,8 @@ function workspaceIdentityMatchesActiveRoot(
     return false;
   }
 
-  if (
-    activeIdentity &&
-    cachedIdentity.workspaceId === activeIdentity.workspaceId
-  ) {
-    return true;
+  if (activeIdentity) {
+    return cachedIdentity.workspaceId === activeIdentity.workspaceId;
   }
 
   return (
@@ -903,6 +907,17 @@ function workspaceResourceRoots(
   return [...new Set(roots)];
 }
 
+function cachedWorkspaceResourceRoots(
+  cacheKey: string,
+  identity: WorkspaceIdentityDescriptor | null,
+): string[] {
+  if (!identity) {
+    return [cacheKey];
+  }
+
+  return [...new Set([identity.selectedPath, identity.canonicalRoot])];
+}
+
 function workspaceCloseKeys(
   tabPath: string,
   identity: WorkspaceIdentityDescriptor | null,
@@ -926,18 +941,14 @@ function resolveCachedWorkspaceStateFallback(
   identity?: WorkspaceIdentityDescriptor | null,
 ): CachedWorkspaceDirtyState | null {
   if (!identity) {
-    return cache[rootPath] ?? null;
+    return cache[normalizedWorkspaceRootKey(rootPath)] ?? null;
   }
 
-  const canonicalKey = canonicalWorkspaceRootKey(identity);
+  const identityKey = workspaceIdentityStateCacheKey(identity.workspaceId);
   return (
-    cache[canonicalKey] ??
-    cache[rootPath] ??
-    cache[identity.selectedPath] ??
+    matchingCachedWorkspaceState(cache[identityKey], identity) ??
     Object.values(cache).find(
-      (cached) =>
-        cached.workspaceIdentityDescriptor?.workspaceId ===
-        identity.workspaceId,
+      (cached) => matchingCachedWorkspaceState(cached, identity) !== null,
     ) ??
     null
   );
@@ -949,18 +960,12 @@ function forgetCachedWorkspaceStateFallback(
   identity?: WorkspaceIdentityDescriptor | null,
 ): void {
   if (!identity) {
-    delete cache[rootPath];
+    delete cache[normalizedWorkspaceRootKey(rootPath)];
     return;
   }
 
-  const canonicalKey = canonicalWorkspaceRootKey(identity);
   for (const [key, cached] of Object.entries(cache)) {
-    if (
-      key !== rootPath &&
-      key !== identity.selectedPath &&
-      key !== canonicalKey &&
-      cached.workspaceIdentityDescriptor?.workspaceId !== identity.workspaceId
-    ) {
+    if (matchingCachedWorkspaceState(cached, identity) === null) {
       continue;
     }
 
@@ -968,19 +973,17 @@ function forgetCachedWorkspaceStateFallback(
   }
 }
 
-function canonicalWorkspaceRootKey(
+function matchingCachedWorkspaceState(
+  cached: CachedWorkspaceDirtyState | undefined,
   identity: WorkspaceIdentityDescriptor,
-): string {
-  const root = createWorkspaceRoot(
-    identity.workspaceId,
-    identity.canonicalRoot,
-    identity.policy,
-  );
-  if (!root.ok) {
-    return identity.canonicalRoot;
+): CachedWorkspaceDirtyState | null {
+  if (
+    cached?.workspaceIdentityDescriptor?.workspaceId !== identity.workspaceId
+  ) {
+    return null;
   }
 
-  return root.value.nativePath;
+  return cached;
 }
 
 function workspaceTabsWithoutPath(tabs: string[], path: string): string[] {

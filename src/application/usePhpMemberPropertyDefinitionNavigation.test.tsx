@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import type { NavigationRequest } from "./navigationRequest";
 import {
   usePhpMemberPropertyDefinitionNavigation,
   type PhpMemberPropertyDefinitionNavigation,
@@ -157,6 +158,122 @@ describe("usePhpMemberPropertyDefinitionNavigation", () => {
 
     await expect(navigationPromise).resolves.toBe(false);
     expect(openDirectPhpMethodTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("propagates the request through every target delegate", async () => {
+    const request: NavigationRequest = { canNavigate: () => true };
+    const openDirectPhpMethodTarget = vi.fn(async () => false);
+    const openPhpLaravelModelAttributeTarget = vi.fn(async () => false);
+    const openPhpClassTarget = vi.fn(async () => false);
+    const openDirectPhpPropertyTarget = vi.fn(async () => false);
+    const deps = makeDeps({
+      openDirectPhpMethodTarget,
+      openDirectPhpPropertyTarget,
+      openPhpClassTarget,
+      openPhpLaravelModelAttributeTarget,
+    });
+    const harness = renderHook(deps);
+
+    await harness.api().goToPhpMemberPropertyDefinition(
+      {
+        kind: "memberPropertyAccess",
+        propertyName: "author",
+        receiverExpression: "$comment",
+        variableName: "comment",
+      },
+      request,
+    );
+
+    expect(openDirectPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Models\\Comment",
+      "author",
+      request,
+    );
+    expect(openPhpLaravelModelAttributeTarget).toHaveBeenCalledWith(
+      "App\\Models\\Comment",
+      "author",
+      request,
+    );
+    expect(openPhpClassTarget).toHaveBeenCalledWith(
+      "App\\Models\\User",
+      "User",
+      request,
+    );
+    expect(openDirectPhpPropertyTarget).toHaveBeenCalledWith(
+      "App\\Models\\Comment",
+      "author",
+      request,
+    );
+
+    harness.unmount();
+  });
+
+  it("does not open or message after the request owner is replaced", async () => {
+    const receiverType = deferred<string | null>();
+    let current = true;
+    const request: NavigationRequest = { canNavigate: () => current };
+    const deps = makeDeps({
+      resolvePhpExpressionType: vi.fn(() => receiverType.promise),
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToPhpMemberPropertyDefinition(
+      {
+        kind: "memberPropertyAccess",
+        propertyName: "author",
+        receiverExpression: "$comment",
+        variableName: "comment",
+      },
+      request,
+    );
+
+    current = false;
+    receiverType.resolve(null);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(deps.openDirectPhpMethodTarget).not.toHaveBeenCalled();
+    expect(deps.openDirectPhpPropertyTarget).not.toHaveBeenCalled();
+    expect(deps.openPhpClassTarget).not.toHaveBeenCalled();
+    expect(deps.openPhpLaravelModelAttributeTarget).not.toHaveBeenCalled();
+    expect(deps.setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("suppresses the fallback message when ownership changes in a delegate", async () => {
+    const methodTarget = deferred<boolean>();
+    let current = true;
+    const request: NavigationRequest = { canNavigate: () => current };
+    const deps = makeDeps({
+      openDirectPhpMethodTarget: vi.fn(() => methodTarget.promise),
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness.api().goToPhpMemberPropertyDefinition(
+      {
+        kind: "memberPropertyAccess",
+        propertyName: "author",
+        receiverExpression: "$comment",
+        variableName: "comment",
+      },
+      request,
+    );
+
+    await vi.waitFor(() => {
+      expect(deps.openDirectPhpMethodTarget).toHaveBeenCalledWith(
+        "App\\Models\\Comment",
+        "author",
+        request,
+      );
+    });
+    current = false;
+    methodTarget.resolve(false);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(deps.openPhpLaravelModelAttributeTarget).not.toHaveBeenCalled();
+    expect(deps.openPhpClassTarget).not.toHaveBeenCalled();
+    expect(deps.openDirectPhpPropertyTarget).not.toHaveBeenCalled();
+    expect(deps.setMessage).not.toHaveBeenCalled();
 
     harness.unmount();
   });

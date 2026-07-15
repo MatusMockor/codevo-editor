@@ -3,6 +3,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpIdentifierContext } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import type { PhpFrameworkIdentifierDefinitionNavigationAdapter } from "./phpFrameworkIdentifierDefinitionNavigation";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import { offsetAtEditorPosition } from "./neonIntelligenceRuntime";
 
 export interface PhpNetteIdentifierDefinitionNavigationAdapterDependencies {
@@ -11,6 +12,7 @@ export interface PhpNetteIdentifierDefinitionNavigationAdapterDependencies {
   providePhpNetteInjectionDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -20,8 +22,12 @@ export function createPhpNetteIdentifierDefinitionNavigationAdapter({
   providePhpNetteInjectionDefinition,
 }: PhpNetteIdentifierDefinitionNavigationAdapterDependencies): PhpFrameworkIdentifierDefinitionNavigationAdapter {
   return {
-    goToDefinition: async (context: PhpIdentifierContext): Promise<boolean> => {
+    goToDefinition: async (
+      context: PhpIdentifierContext,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       if (
+        !canNavigate(request) ||
         context.kind !== "classIdentifier" ||
         !activeDocument ||
         activeDocument.language !== "php"
@@ -35,10 +41,21 @@ export function createPhpNetteIdentifierDefinitionNavigationAdapter({
         return false;
       }
 
-      return providePhpNetteInjectionDefinition(
-        activeDocument.content,
-        offsetAtEditorPosition(activeDocument.content, position),
-      );
+      if (!canNavigate(request)) {
+        return false;
+      }
+
+      const source = activeDocument.content;
+      const offset = offsetAtEditorPosition(source, position);
+      const handled = request
+        ? await providePhpNetteInjectionDefinition(source, offset, request)
+        : await providePhpNetteInjectionDefinition(source, offset);
+
+      if (!canNavigate(request)) {
+        return false;
+      }
+
+      return handled;
     },
   };
 }

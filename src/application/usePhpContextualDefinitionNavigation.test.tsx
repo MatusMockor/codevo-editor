@@ -123,6 +123,125 @@ function renderHook(deps: PhpContextualDefinitionNavigationDependencies) {
 }
 
 describe("usePhpContextualDefinitionNavigation", () => {
+  it.each([
+    {
+      dependency: "goToPhpMethodCallDefinition",
+      kind: "methodCall",
+      needle: "run",
+      source: "<?php $service->run();",
+    },
+    {
+      dependency: "goToPhpMemberPropertyDefinition",
+      kind: "memberPropertyAccess",
+      needle: "name",
+      source: "<?php $service->name;",
+    },
+    {
+      dependency: "goToPhpStaticMethodCallDefinition",
+      kind: "staticMethodCall",
+      needle: "run",
+      source: "<?php ReportService::run();",
+    },
+    {
+      dependency: "goToPhpClassConstantDefinition",
+      kind: "classConstant",
+      needle: "STATUS",
+      source: "<?php ReportService::STATUS;",
+    },
+    {
+      dependency: "goToPhpFrameworkIdentifierDefinition",
+      kind: "laravelNamedRouteString",
+      needle: "dashboard",
+      source: "<?php route('dashboard');",
+    },
+  ] as const)(
+    "forwards the navigation request to $kind handlers",
+    async ({ dependency, kind, needle, source }) => {
+      const handler = vi.fn(async () => true);
+      const request = { canNavigate: vi.fn(() => true) };
+      const deps = makeDeps({
+        activeDocument: {
+          content: source,
+          language: "php",
+          name: "Controller.php",
+          path: `${ROOT}/app/Controller.php`,
+          savedContent: "",
+        },
+        activeEditorPositionRef: { current: positionAfter(source, needle) },
+        [dependency]: handler,
+      });
+      const harness = renderHook(deps);
+
+      await expect(
+        harness.api().goToContextualPhpDefinition(request),
+      ).resolves.toBe(true);
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({ kind }),
+        request,
+      );
+
+      harness.unmount();
+    },
+  );
+
+  it("forwards the navigation request through framework and class fallback", async () => {
+    const source = "<?php new ReportService();";
+    const request = { canNavigate: vi.fn(() => true) };
+    const goToPhpFrameworkIdentifierDefinition = vi.fn(async () => false);
+    const goToPhpClassIdentifierDefinition = vi.fn(async () => true);
+    const deps = makeDeps({
+      activeDocument: {
+        content: source,
+        language: "php",
+        name: "Controller.php",
+        path: `${ROOT}/app/Controller.php`,
+        savedContent: "",
+      },
+      activeEditorPositionRef: {
+        current: positionAfter(source, "ReportService"),
+      },
+      goToPhpClassIdentifierDefinition,
+      goToPhpFrameworkIdentifierDefinition,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().goToContextualPhpDefinition(request),
+    ).resolves.toBe(true);
+    expect(goToPhpFrameworkIdentifierDefinition).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "classIdentifier" }),
+      request,
+    );
+    expect(goToPhpClassIdentifierDefinition).toHaveBeenCalledWith(
+      "ReportService",
+      request,
+    );
+
+    harness.unmount();
+  });
+
+  it("drops a delegated result after same-root request replacement", async () => {
+    const result = deferred<boolean>();
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const goToPhpMethodCallDefinition = vi.fn(() => result.promise);
+    const harness = renderHook(makeDeps({ goToPhpMethodCallDefinition }));
+    const navigationPromise = harness
+      .api()
+      .goToContextualPhpDefinition(request);
+
+    requestActive = false;
+    result.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(goToPhpMethodCallDefinition).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "methodCall" }),
+      request,
+    );
+
+    harness.unmount();
+  });
+
   it("delegates PHP method calls to the method-call strategy", async () => {
     const goToPhpMethodCallDefinition = vi.fn(async () => true);
     const deps = makeDeps({ goToPhpMethodCallDefinition });
@@ -405,3 +524,12 @@ Route::get('/reports', [ReportController::class, 'store']);`;
     harness.unmount();
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
+}

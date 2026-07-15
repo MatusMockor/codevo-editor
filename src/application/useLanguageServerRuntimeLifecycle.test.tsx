@@ -1257,4 +1257,72 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     ).not.toHaveBeenCalled();
     harness.unmount();
   });
+
+  it("rejects a colliding TS session after a same-root owner cache miss", () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", FIRST_ROOT);
+    const globalStatus = running(FIRST_ROOT, 73);
+    const globalStatusRef = {
+      current: globalStatus as LanguageServerRuntimeStatus | null,
+    };
+    const globalStatusRootRef = { current: FIRST_ROOT as string | null };
+    const harness = renderLifecycle(firstOwner, {
+      javaScriptTypeScriptLanguageServerRuntimeStatus: globalStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: FIRST_ROOT,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef: globalStatusRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef:
+        globalStatusRootRef,
+    });
+
+    harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef.current[
+      firstOwner.ownerKey
+    ] = globalStatus;
+    harness.rerender(secondOwner, {
+      javaScriptTypeScriptLanguageServerRuntimeStatus: globalStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: FIRST_ROOT,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef: globalStatusRef,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef:
+        globalStatusRootRef,
+    });
+    delete harness.dependencies.javaScriptTypeScriptRuntimeStatusByRootRef
+      .current[secondOwner.ownerKey];
+
+    expect(
+      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
+        FIRST_ROOT,
+        73,
+      ),
+    ).toBe(false);
+    expect(
+      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+        FIRST_ROOT,
+        73,
+      ),
+    ).toBe(false);
+    harness.unmount();
+  });
+
+  it("retains the root-global TS session fallback for legacy ownership", () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const globalStatus = running(FIRST_ROOT, 74);
+    const harness = renderLifecycle(owner, {
+      workspaceRuntimeOwner: undefined,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: globalStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: FIRST_ROOT,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+        current: globalStatus,
+      },
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: {
+        current: FIRST_ROOT,
+      },
+    });
+
+    expect(
+      harness.lifecycle().isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot(
+        FIRST_ROOT,
+        74,
+      ),
+    ).toBe(true);
+    harness.unmount();
+  });
 });

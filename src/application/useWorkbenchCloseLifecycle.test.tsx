@@ -10,6 +10,7 @@ import {
   type WorkbenchCloseLifecycle,
   type WorkbenchCloseLifecycleDependencies,
 } from "./useWorkbenchCloseLifecycle";
+import { workspaceIdentityStateCacheKey } from "./useWorkspaceStateCache";
 import { DOCUMENT_SYNC_CLOSE_GRACE_MS } from "./closeCoordinator";
 import type {
   DocumentSaveInvalidationScope,
@@ -692,6 +693,79 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.unmount();
   });
 
+  it("does not forget a replacement owner admitted at the same paths while close waits", async () => {
+    const unregister = createDeferred<void>();
+    const closingIdentity = workspaceIdentity();
+    const replacementIdentity = {
+      ...closingIdentity,
+      workspaceId: "ws-replacement",
+    };
+    const closingState = {
+      editorSurface: { documents: {} },
+      workspaceIdentityDescriptor: closingIdentity,
+    };
+    const replacementState = {
+      editorSurface: {
+        documents: {
+          [`${replacementIdentity.selectedPath}/Replacement.php`]:
+            dirtyDocument(
+              `${replacementIdentity.selectedPath}/Replacement.php`,
+            ),
+        },
+      },
+      workspaceIdentityDescriptor: replacementIdentity,
+    };
+    const identities = {
+      [closingIdentity.selectedPath]: closingIdentity,
+      [closingIdentity.canonicalRoot]: closingIdentity,
+    };
+    const cache = {
+      [workspaceIdentityStateCacheKey(closingIdentity.workspaceId)]:
+        closingState,
+    };
+    const harness = renderLifecycle({
+      unregisterWorkspace: vi.fn(() => unregister.promise),
+      workspaceIdentityByRootRef: { current: identities },
+      workspaceStateCacheRef: { current: cache },
+    });
+
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = harness
+        .lifecycle()
+        .closeWorkspaceTab(closingIdentity.selectedPath);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    delete cache[workspaceIdentityStateCacheKey(closingIdentity.workspaceId)];
+    cache[workspaceIdentityStateCacheKey(replacementIdentity.workspaceId)] =
+      replacementState;
+    cache[replacementIdentity.selectedPath] = replacementState;
+    identities[replacementIdentity.selectedPath] = replacementIdentity;
+    identities[replacementIdentity.canonicalRoot] = replacementIdentity;
+    harness.appSettingsRef.current.workspaceTabs = [
+      replacementIdentity.selectedPath,
+      WORKSPACE_B,
+    ];
+
+    unregister.resolve();
+    await act(async () => closing);
+
+    expect(cache).toEqual({
+      [workspaceIdentityStateCacheKey(replacementIdentity.workspaceId)]:
+        replacementState,
+      [replacementIdentity.selectedPath]: replacementState,
+    });
+    expect(identities[replacementIdentity.selectedPath]).toBe(
+      replacementIdentity,
+    );
+    expect(identities[replacementIdentity.canonicalRoot]).toBe(
+      replacementIdentity,
+    );
+    harness.unmount();
+  });
+
   it("does not treat a read-only Git diff document as dirty cached work", async () => {
     const harness = renderLifecycle();
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
@@ -1341,6 +1415,39 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(harness.prompter.confirm).toHaveBeenCalledOnce();
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     expect(nativeShutdownInvocationCount()).toBe(0);
+    harness.unmount();
+  });
+
+  it("checks identity-keyed inactive conflicts through path aliases", async () => {
+    const descriptor = workspaceIdentity();
+    const identityKey = workspaceIdentityStateCacheKey(descriptor.workspaceId);
+    const workspaceHasExternalFileConflicts = vi.fn(
+      (root: string) => root === descriptor.selectedPath,
+    );
+    const harness = renderLifecycle({
+      workspaceHasExternalFileConflicts,
+      workspaceStateCacheRef: {
+        current: {
+          [identityKey]: {
+            editorSurface: { documents: {} },
+            workspaceIdentityDescriptor: descriptor,
+          },
+        },
+      },
+    });
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      requestNativeClose();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+    );
+    expect(workspaceHasExternalFileConflicts).not.toHaveBeenCalledWith(
+      identityKey,
+    );
     harness.unmount();
   });
 

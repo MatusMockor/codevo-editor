@@ -110,7 +110,8 @@ function renderHook(
   }: {
     dependencies: PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependencies;
   }) {
-    captured.api = usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation(dependencies);
+    captured.api =
+      usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation(dependencies);
     return null;
   }
 
@@ -159,10 +160,12 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpFrameworkAuthorizationAbilityDefinition({
-      ability: "publish-posts",
-      kind: "laravelGateAbilityString",
-    });
+    const handled = await harness
+      .api()
+      .goToPhpFrameworkAuthorizationAbilityDefinition({
+        ability: "publish-posts",
+        kind: "laravelGateAbilityString",
+      });
 
     expect(handled).toBe(true);
     expect(collectAuthorizationAbilityTargets).toHaveBeenCalledWith(
@@ -173,6 +176,7 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
       abilityTarget.path,
       abilityTarget.position,
       abilityTarget.name,
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -186,10 +190,12 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
-      alias: "verified",
-      kind: "laravelMiddlewareAliasString",
-    });
+    const handled = await harness
+      .api()
+      .goToPhpFrameworkMiddlewareAliasDefinition({
+        alias: "verified",
+        kind: "laravelMiddlewareAliasString",
+      });
 
     expect(handled).toBe(false);
     expect(setMessage).toHaveBeenCalledWith(
@@ -212,10 +218,12 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpFrameworkAuthorizationAbilityDefinition({
-      ability: "publish-posts",
-      kind: "laravelGateAbilityString",
-    });
+    const handled = await harness
+      .api()
+      .goToPhpFrameworkAuthorizationAbilityDefinition({
+        ability: "publish-posts",
+        kind: "laravelGateAbilityString",
+      });
 
     expect(handled).toBe(true);
     expect(collectAuthorizationAbilityTargets).toHaveBeenCalledOnce();
@@ -223,6 +231,7 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
       abilityTarget.path,
       abilityTarget.position,
       abilityTarget.name,
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -239,10 +248,12 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
-      alias: "auth",
-      kind: "laravelMiddlewareAliasString",
-    });
+    const handled = await harness
+      .api()
+      .goToPhpFrameworkMiddlewareAliasDefinition({
+        alias: "auth",
+        kind: "laravelMiddlewareAliasString",
+      });
 
     expect(handled).toBe(true);
     expect(collectMiddlewareAliasTargets).toHaveBeenCalledOnce();
@@ -250,13 +261,16 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
       aliasTarget.path,
       aliasTarget.position,
       aliasTarget.name,
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
   });
 
   it("does not resolve middleware aliases for an authorization-only provider", async () => {
-    const collectMiddlewareAliasTargets = vi.fn(async () => [namedTarget("auth")]);
+    const collectMiddlewareAliasTargets = vi.fn(async () => [
+      namedTarget("auth"),
+    ]);
     const openNavigationTarget = vi.fn(async () => true);
     const deps = makeDeps({
       collectMiddlewareAliasTargets,
@@ -265,10 +279,12 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
-      alias: "auth",
-      kind: "laravelMiddlewareAliasString",
-    });
+    const handled = await harness
+      .api()
+      .goToPhpFrameworkMiddlewareAliasDefinition({
+        alias: "auth",
+        kind: "laravelMiddlewareAliasString",
+      });
 
     expect(handled).toBe(false);
     expect(collectMiddlewareAliasTargets).not.toHaveBeenCalled();
@@ -291,10 +307,12 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().goToPhpFrameworkAuthorizationAbilityDefinition({
-      ability: "publish-posts",
-      kind: "laravelGateAbilityString",
-    });
+    const handled = await harness
+      .api()
+      .goToPhpFrameworkAuthorizationAbilityDefinition({
+        ability: "publish-posts",
+        kind: "laravelGateAbilityString",
+      });
 
     expect(handled).toBe(false);
     expect(collectAuthorizationAbilityTargets).not.toHaveBeenCalled();
@@ -314,8 +332,9 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
       openNavigationTarget,
     });
     const harness = renderHook(deps);
-    const navigationPromise =
-      harness.api().goToPhpFrameworkMiddlewareAliasDefinition({
+    const navigationPromise = harness
+      .api()
+      .goToPhpFrameworkMiddlewareAliasDefinition({
         alias: "auth",
         kind: "laravelMiddlewareAliasString",
       });
@@ -325,6 +344,69 @@ describe("usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation", () => {
 
     await expect(navigationPromise).resolves.toBe(false);
     expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("drops same-root owner results before opening or reporting missing aliases", async () => {
+    const middlewareTargets = deferred<ReturnType<typeof namedTarget>[]>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(async () => true);
+    const setMessage = vi.fn();
+    const deps = makeDeps({
+      collectMiddlewareAliasTargets: vi.fn(() => middlewareTargets.promise),
+      openNavigationTarget,
+      setMessage,
+    });
+    const harness = renderHook(deps);
+    const navigationPromise = harness
+      .api()
+      .goToPhpFrameworkMiddlewareAliasDefinition(
+        { alias: "missing", kind: "laravelMiddlewareAliasString" },
+        { canNavigate: () => requestActive },
+      );
+
+    requestActive = false;
+    middlewareTargets.resolve([]);
+
+    await expect(navigationPromise).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+    expect(setMessage).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("passes the owner fence into framework target opening", async () => {
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(
+      async (
+        _path: string,
+        _position: EditorPosition,
+        _label: string,
+        options?: { shouldCommit?: () => boolean },
+      ) => {
+        requestActive = false;
+        expect(options?.shouldCommit?.()).toBe(false);
+        return true;
+      },
+    );
+    const deps = makeDeps({
+      collectAuthorizationAbilityTargets: vi.fn(async () => [
+        namedTarget("publish-posts"),
+      ]),
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .goToPhpFrameworkAuthorizationAbilityDefinition(
+          { ability: "publish-posts", kind: "laravelGateAbilityString" },
+          { canNavigate: () => requestActive },
+        ),
+    ).resolves.toBe(false);
+    expect(openNavigationTarget).toHaveBeenCalledOnce();
 
     harness.unmount();
   });

@@ -1,8 +1,5 @@
 import { useCallback, useRef, type MutableRefObject } from "react";
-import {
-  executeCommandAndWait,
-  type CommandContext,
-} from "./commandRegistry";
+import { executeCommandAndWait, type CommandContext } from "./commandRegistry";
 import type { WorkbenchNotice } from "./workbenchNotice";
 import { editorPositionFromProjectSymbol } from "./projectSymbolNavigation";
 import {
@@ -27,6 +24,7 @@ import type {
 import type { NavigationLocation } from "../domain/navigation";
 import { shouldOpenPhpNavigationTargetReadOnly } from "../domain/phpNavigationTargetReadOnly";
 import type { RecentFileEntry } from "../domain/recentFiles";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
@@ -71,6 +69,7 @@ export interface WorkbenchNavigation {
     position: EditorPosition,
     label: string,
     options?: OpenNavigationOptions,
+    request?: NavigationRequest,
   ) => Promise<boolean>;
   openPathForNavigation: (
     path: string,
@@ -261,12 +260,22 @@ export function useWorkbenchNavigation(
       position: EditorPosition,
       label: string,
       options: OpenNavigationOptions = {},
+      request?: NavigationRequest,
     ): Promise<boolean> => {
+      const shouldCommit = navigationCommitGuard(options.shouldCommit, request);
+
+      if (shouldCommit?.() === false) {
+        return false;
+      }
+
       const previousLocation = currentNavigationLocation();
 
-      const opened = await openPathForNavigation(path, options);
+      const opened = await openPathForNavigation(path, {
+        ...options,
+        ...(shouldCommit ? { shouldCommit } : {}),
+      });
 
-      if (!opened) {
+      if (!opened || shouldCommit?.() === false) {
         return false;
       }
 
@@ -295,11 +304,7 @@ export function useWorkbenchNavigation(
         return false;
       }
 
-      return openNavigationTarget(
-        target.path,
-        target.range.start,
-        "problem",
-      );
+      return openNavigationTarget(target.path, target.range.start, "problem");
     },
     [openNavigationTarget],
   );
@@ -443,6 +448,17 @@ export function useWorkbenchNavigation(
     goToPreviousProblem,
     readNavigationFileContent,
   };
+}
+
+function navigationCommitGuard(
+  shouldCommit: (() => boolean) | undefined,
+  request: NavigationRequest | undefined,
+): (() => boolean) | undefined {
+  if (!request) {
+    return shouldCommit;
+  }
+
+  return () => (shouldCommit?.() ?? true) && canNavigate(request);
 }
 
 function navigationTargetReadOnly(

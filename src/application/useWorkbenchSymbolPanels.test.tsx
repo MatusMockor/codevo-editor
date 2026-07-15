@@ -4,8 +4,17 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { CallHierarchyRow } from "../domain/callHierarchy";
+import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
 import type { ReferenceRow } from "../domain/referencesView";
 import type { TypeHierarchyRow } from "../domain/typeHierarchy";
+import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import { emptyLanguageServerCapabilities } from "../domain/languageServerRuntime";
+import type { EditorDocument } from "../domain/workspace";
+import {
+  createWorkspaceRuntimeOwner,
+  transferWorkspaceRuntimeOwner,
+  type WorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
 import {
   useWorkbenchSymbolPanels,
   type WorkbenchSymbolPanels,
@@ -14,9 +23,12 @@ import {
 
 const ROOT = "/workspace";
 
-function renderPanels() {
+function renderPanels(
+  overrides: Partial<WorkbenchSymbolPanelsDependencies> = {},
+) {
+  const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
   const openNavigationTarget = vi.fn(async () => true);
-  const deps = {
+  const deps: WorkbenchSymbolPanelsDependencies = {
     activeDocumentRef: { current: null },
     activeEditorPositionRef: { current: null },
     closeCompetingSurfaces: vi.fn(),
@@ -36,10 +48,12 @@ function renderPanels() {
     languageServerRuntimeStatusRoot: null,
     openNavigationTarget,
     reportError: vi.fn(),
+    resolveCurrentWorkspaceRuntimeOwner: () => owner,
     setMessage: vi.fn(),
     shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly: vi.fn(() => false),
     workspaceRoot: ROOT,
-  } satisfies WorkbenchSymbolPanelsDependencies;
+    ...overrides,
+  };
   let api: WorkbenchSymbolPanels | null = null;
   const root = createRoot(document.createElement("div"));
 
@@ -52,7 +66,12 @@ function renderPanels() {
     root.render(<Harness />);
   });
 
-  return { api: () => api as WorkbenchSymbolPanels, openNavigationTarget, root };
+  return {
+    api: () => api as WorkbenchSymbolPanels,
+    deps,
+    openNavigationTarget,
+    root,
+  };
 }
 
 function range() {
@@ -128,7 +147,10 @@ describe("useWorkbenchSymbolPanels PHP target delegation", () => {
       path,
       { column: 3, lineNumber: 4 },
       expect.any(String),
-      { readOnly: false },
+      expect.objectContaining({
+        readOnly: false,
+        shouldCommit: expect.any(Function),
+      }),
     );
 
     harness.root.unmount();
@@ -146,8 +168,139 @@ describe("useWorkbenchSymbolPanels PHP target delegation", () => {
       path,
       { column: 3, lineNumber: 4 },
       "reference",
-      { readOnly: false },
+      expect.objectContaining({
+        readOnly: false,
+        shouldCommit: expect.any(Function),
+      }),
     );
+
+    harness.root.unmount();
+  });
+});
+
+function panelDocument(language: "php" | "typescript"): EditorDocument {
+  const source = language === "php" ? "<?php service();" : "service();";
+
+  return {
+    content: source,
+    language,
+    name: language === "php" ? "Source.php" : "source.ts",
+    path: `${ROOT}/src/${language === "php" ? "Source.php" : "source.ts"}`,
+    savedContent: source,
+  };
+}
+
+function runningStatus(capability: "references" = "references"): LanguageServerRuntimeStatus {
+  return {
+    capabilities: {
+      ...emptyLanguageServerCapabilities(),
+      [capability]: true,
+    },
+    kind: "running",
+    rootPath: ROOT,
+    sessionId: 7,
+  };
+}
+
+describe.each([
+  ["PHP", "php"],
+  ["JavaScript/TypeScript", "typescript"],
+] as const)("useWorkbenchSymbolPanels %s references owner fence", (_label, language) => {
+  it("drops a replaced owner's references result before panel and message mutations", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    const gateway = {
+      references: vi.fn(async () => {
+        currentOwner = replacementOwner;
+        return [referenceRow(`${ROOT}/src/Target.ts`).location];
+      }),
+    } as unknown as LanguageServerFeaturesGateway;
+    const status = runningStatus();
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument(language) },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus:
+        language === "typescript" ? status : null,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot:
+        language === "typescript" ? ROOT : null,
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: language === "php" ? status : null,
+      languageServerRuntimeStatusRoot: language === "php" ? ROOT : null,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+
+    await act(async () => {
+      await harness.api().openReferencesPanel();
+    });
+
+    expect(harness.api().referencesView).toBeNull();
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
+    expect(harness.deps.reportError).not.toHaveBeenCalled();
+    expect(harness.openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+});
+
+describe("useWorkbenchSymbolPanels file references owner fence", () => {
+  it("drops a replaced owner's file-reference result", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    const gateway = {
+      executeCommandLocations: vi.fn(async () => {
+        currentOwner = replacementOwner;
+        return [referenceRow(`${ROOT}/src/Target.ts`).location];
+      }),
+    } as unknown as LanguageServerFeaturesGateway;
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+
+    await act(async () => {
+      await harness.api().openFileReferencesPanel();
+    });
+
+    expect(harness.api().referencesView).toBeNull();
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
+    expect(harness.deps.reportError).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("accepts a same-owner alias transfer and checks the captured owner", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = owner;
+    const isSessionActive = vi.fn(() => true);
+    const gateway = {
+      executeCommandLocations: vi.fn(async () => {
+        currentOwner = transferWorkspaceRuntimeOwner(owner, "/workspace-alias");
+        return [referenceRow(`${ROOT}/src/Target.ts`).location];
+      }),
+    } as unknown as LanguageServerFeaturesGateway;
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("typescript") },
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot:
+        isSessionActive,
+      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus: runningStatus(),
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot: ROOT,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+
+    await act(async () => {
+      await harness.api().openFileReferencesPanel();
+    });
+
+    expect(isSessionActive).toHaveBeenCalledWith(ROOT, 7, owner);
+    expect(harness.api().referencesView?.locations).toHaveLength(1);
+    expect(harness.deps.setMessage).toHaveBeenLastCalledWith(null);
 
     harness.root.unmount();
   });

@@ -63,12 +63,14 @@ function makeDeps(
     projectSymbolSearch: {
       searchProjectSymbols: vi.fn(async () => [symbol()]),
     },
-    readNavigationFileContent: vi.fn(async () => `<?php
+    readNavigationFileContent: vi.fn(
+      async () => `<?php
 namespace App\\Services;
 
 class ReportService
 {
-}`),
+}`,
+    ),
     workspaceDescriptor: PHP_DESCRIPTOR,
     workspaceRoot: ROOT,
     ...overrides,
@@ -128,16 +130,16 @@ describe("usePhpClassTargetNavigation", () => {
     const deps = makeDeps({ openNavigationTarget });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().openPhpClassTarget(
-      "App\\Services\\ReportService",
-      "ReportService",
-    );
+    const handled = await harness
+      .api()
+      .openPhpClassTarget("App\\Services\\ReportService", "ReportService");
 
     expect(handled).toBe(true);
     expect(openNavigationTarget).toHaveBeenCalledWith(
       `${ROOT}/app/Services/ReportService.php`,
       { column: 5, lineNumber: 8 },
       "ReportService",
+      { shouldCommit: expect.any(Function) },
     );
     expect(deps.readNavigationFileContent).not.toHaveBeenCalled();
 
@@ -154,10 +156,9 @@ describe("usePhpClassTargetNavigation", () => {
     });
     const harness = renderHook(deps);
 
-    const handled = await harness.api().openPhpClassTarget(
-      "App\\Services\\ReportService",
-      "ReportService",
-    );
+    const handled = await harness
+      .api()
+      .openPhpClassTarget("App\\Services\\ReportService", "ReportService");
 
     expect(handled).toBe(true);
     expect(deps.readNavigationFileContent).toHaveBeenCalledWith(
@@ -167,6 +168,7 @@ describe("usePhpClassTargetNavigation", () => {
       `${ROOT}/app/Services/ReportService.php`,
       expect.objectContaining({ lineNumber: 4 }),
       "ReportService",
+      { shouldCommit: expect.any(Function) },
     );
 
     harness.unmount();
@@ -184,10 +186,9 @@ describe("usePhpClassTargetNavigation", () => {
       },
     });
     const harness = renderHook(deps);
-    const navigationPromise = harness.api().openPhpClassTarget(
-      "App\\Services\\ReportService",
-      "ReportService",
-    );
+    const navigationPromise = harness
+      .api()
+      .openPhpClassTarget("App\\Services\\ReportService", "ReportService");
 
     currentWorkspaceRootRef.current = OTHER_ROOT;
     symbols.resolve([symbol()]);
@@ -209,11 +210,11 @@ describe("usePhpClassTargetNavigation", () => {
       },
     });
     const harness = renderHook(deps);
-    const navigationPromise = harness.api().openPhpClassTarget(
-      "App\\Services\\ReportService",
-      "ReportService",
-      { canNavigate: () => requestActive },
-    );
+    const navigationPromise = harness
+      .api()
+      .openPhpClassTarget("App\\Services\\ReportService", "ReportService", {
+        canNavigate: () => requestActive,
+      });
 
     requestActive = false;
     symbols.resolve([symbol()]);
@@ -222,6 +223,32 @@ describe("usePhpClassTargetNavigation", () => {
     expect(openNavigationTarget).not.toHaveBeenCalled();
     expect(deps.readNavigationFileContent).not.toHaveBeenCalled();
 
+    harness.unmount();
+  });
+
+  it("fences an in-flight class open when its owner becomes stale", async () => {
+    const targetOpen = deferred<boolean>();
+    let requestActive = true;
+    const openNavigationTarget = vi.fn(() => targetOpen.promise);
+    const deps = makeDeps({ openNavigationTarget });
+    const harness = renderHook(deps);
+    const navigationPromise = harness
+      .api()
+      .openPhpClassTarget("App\\Services\\ReportService", "ReportService", {
+        canNavigate: () => requestActive,
+      });
+
+    await vi.waitFor(() => expect(openNavigationTarget).toHaveBeenCalledOnce());
+    const options = (openNavigationTarget.mock.calls[0] as unknown[])[3] as {
+      shouldCommit?: () => boolean;
+    };
+    expect(options?.shouldCommit?.()).toBe(true);
+
+    requestActive = false;
+    expect(options?.shouldCommit?.()).toBe(false);
+    targetOpen.resolve(true);
+
+    await expect(navigationPromise).resolves.toBe(false);
     harness.unmount();
   });
 });

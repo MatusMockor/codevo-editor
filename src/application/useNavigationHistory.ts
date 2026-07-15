@@ -30,6 +30,7 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 
 /**
  * Collaborators the Recent Files / Recent Locations / navigation-snapshot
@@ -257,6 +258,7 @@ export function useRecentNavigation(
  */
 export interface NavigationHistoryDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  resolveCurrentWorkspaceRuntimeOwner: () => WorkspaceRuntimeOwner | null;
   workspaceRoot: string | null;
   navigationHistory: NavigationHistory;
   setNavigationHistory: Dispatch<SetStateAction<NavigationHistory>>;
@@ -323,6 +325,21 @@ function compareAndSetNavigationHistory(
   return true;
 }
 
+function workspaceNavigationRequestIsCurrent(
+  currentWorkspaceRootRef: MutableRefObject<string | null>,
+  resolveCurrentWorkspaceRuntimeOwner: () => WorkspaceRuntimeOwner | null,
+  requestedRoot: string,
+  requestedOwner: WorkspaceRuntimeOwner,
+): boolean {
+  if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+    return false;
+  }
+
+  return (
+    resolveCurrentWorkspaceRuntimeOwner()?.ownerKey === requestedOwner.ownerKey
+  );
+}
+
 /**
  * Back/forward navigation history (PhpStorm parity) plus jumping to a Recent
  * Location from its panel. The history stack itself is injected (see
@@ -335,6 +352,7 @@ export function useNavigationHistory(
 ): NavigationHistoryPlayback {
   const {
     currentWorkspaceRootRef,
+    resolveCurrentWorkspaceRuntimeOwner,
     navigationHistory,
     setNavigationHistory,
     setRecentLocationsPanelOpen,
@@ -380,9 +398,7 @@ export function useNavigationHistory(
         shouldCommit,
       });
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!shouldCommit()) {
         return false;
       }
 
@@ -400,7 +416,12 @@ export function useNavigationHistory(
       requestedHistory: NavigationHistory,
       nextHistory: NavigationHistory,
       target: NavigationLocation,
+      shouldCommit: () => boolean,
     ) => {
+      if (!shouldCommit()) {
+        return;
+      }
+
       const committed = compareAndSetNavigationHistory(
         navigationHistoryTransaction,
         setNavigationHistory,
@@ -419,9 +440,10 @@ export function useNavigationHistory(
 
   const navigateBackward = useCallback(async () => {
     const requestedRoot = currentWorkspaceRootRef.current;
+    const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
     const requestedHistory = navigationHistory;
 
-    if (!requestedRoot) {
+    if (!requestedRoot || !requestedOwner) {
       return;
     }
 
@@ -433,7 +455,12 @@ export function useNavigationHistory(
 
     const shouldCommit = () =>
       navigationHistoryTransaction.current === requestedHistory &&
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      workspaceNavigationRequestIsCurrent(
+        currentWorkspaceRootRef,
+        resolveCurrentWorkspaceRuntimeOwner,
+        requestedRoot,
+        requestedOwner,
+      );
     const applied = await applyNavigationLocation(
       next.target,
       requestedRoot,
@@ -444,19 +471,26 @@ export function useNavigationHistory(
       return;
     }
 
-    commitNavigation(requestedHistory, next.history, next.target);
+    commitNavigation(
+      requestedHistory,
+      next.history,
+      next.target,
+      shouldCommit,
+    );
   }, [
     applyNavigationLocation,
     commitNavigation,
     currentNavigationLocation,
     navigationHistory,
+    resolveCurrentWorkspaceRuntimeOwner,
   ]);
 
   const navigateForwardInHistory = useCallback(async () => {
     const requestedRoot = currentWorkspaceRootRef.current;
+    const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
     const requestedHistory = navigationHistory;
 
-    if (!requestedRoot) {
+    if (!requestedRoot || !requestedOwner) {
       return;
     }
 
@@ -468,7 +502,12 @@ export function useNavigationHistory(
 
     const shouldCommit = () =>
       navigationHistoryTransaction.current === requestedHistory &&
-      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      workspaceNavigationRequestIsCurrent(
+        currentWorkspaceRootRef,
+        resolveCurrentWorkspaceRuntimeOwner,
+        requestedRoot,
+        requestedOwner,
+      );
     const applied = await applyNavigationLocation(
       next.target,
       requestedRoot,
@@ -479,24 +518,31 @@ export function useNavigationHistory(
       return;
     }
 
-    commitNavigation(requestedHistory, next.history, next.target);
+    commitNavigation(
+      requestedHistory,
+      next.history,
+      next.target,
+      shouldCommit,
+    );
   }, [
     applyNavigationLocation,
     commitNavigation,
     currentNavigationLocation,
     navigationHistory,
+    resolveCurrentWorkspaceRuntimeOwner,
   ]);
 
   // Jumps to a recent location from the panel. Mirrors the navigation flow:
   // snapshot where we were (so Back works and the spot stays in history), then
-  // reveal the target. Isolation: the requested root is captured up front and
-  // re-checked after the await, so a workspace switch mid-jump drops the stale
-  // result (no reveal, no panel mutation) for another tab.
+  // reveal the target. Isolation: the requested root and runtime owner are
+  // captured up front and re-checked after the await, so a workspace switch or
+  // same-root owner replacement drops the stale result for another tab.
   const openRecentLocation = useCallback(
     async (location: RecentLocation) => {
       const requestedRoot = currentWorkspaceRootRef.current;
+      const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
 
-      if (!requestedRoot) {
+      if (!requestedRoot || !requestedOwner) {
         return;
       }
 
@@ -506,16 +552,22 @@ export function useNavigationHistory(
         path: location.path,
         position: { column: location.column, lineNumber: location.line },
       };
+      const shouldCommit = () =>
+        workspaceNavigationRequestIsCurrent(
+          currentWorkspaceRootRef,
+          resolveCurrentWorkspaceRuntimeOwner,
+          requestedRoot,
+          requestedOwner,
+        );
       const opened = await openPathForNavigation(target.path, {
         readOnly: shouldOpenNavigationTargetReadOnly(
           requestedRoot,
           target.path,
         ),
+        shouldCommit,
       });
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!shouldCommit()) {
         return;
       }
 
@@ -534,6 +586,7 @@ export function useNavigationHistory(
       forgetRecentLocationsForPath,
       openPathForNavigation,
       recordCurrentNavigationLocation,
+      resolveCurrentWorkspaceRuntimeOwner,
       shouldOpenNavigationTargetReadOnly,
     ],
   );

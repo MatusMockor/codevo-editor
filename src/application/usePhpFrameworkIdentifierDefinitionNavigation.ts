@@ -5,6 +5,7 @@ import {
   type PhpFrameworkIdentifierDefinitionHandler,
   type PhpFrameworkIdentifierDefinitionNavigationAdapter,
 } from "./phpFrameworkIdentifierDefinitionNavigation";
+import type { NavigationRequest } from "./navigationRequest";
 
 export interface PhpFrameworkIdentifierDefinitionNavigationDependencies {
   adapters: readonly PhpFrameworkIdentifierDefinitionNavigationAdapter[];
@@ -21,16 +22,28 @@ export function usePhpFrameworkIdentifierDefinitionNavigation({
   contextualAdapters,
 }: PhpFrameworkIdentifierDefinitionNavigationDependencies): PhpFrameworkIdentifierDefinitionNavigation {
   const goToPhpFrameworkIdentifierDefinition = useCallback(
-    async (context: PhpIdentifierContext): Promise<boolean> =>
-      goToPhpFrameworkIdentifierDefinitionForContext(context, { adapters }),
+    async (
+      context: PhpIdentifierContext,
+      request?: NavigationRequest,
+    ): Promise<boolean> =>
+      goToPhpFrameworkIdentifierDefinitionForContext(
+        context,
+        { adapters },
+        request,
+      ),
     [adapters],
   );
 
   const goToContextualPhpFrameworkIdentifierDefinition = useCallback(
-    async (context: PhpIdentifierContext): Promise<boolean> =>
-      goToPhpFrameworkIdentifierDefinitionForContext(context, {
-        adapters: contextualAdapters,
-      }),
+    async (
+      context: PhpIdentifierContext,
+      request?: NavigationRequest,
+    ): Promise<boolean> =>
+      goToPhpFrameworkIdentifierDefinitionForContext(
+        context,
+        { adapters: contextualAdapters },
+        request,
+      ),
     [contextualAdapters],
   );
 

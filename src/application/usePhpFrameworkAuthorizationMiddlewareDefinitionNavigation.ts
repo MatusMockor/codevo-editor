@@ -8,10 +8,12 @@ import {
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 interface NamedNavigationTarget {
@@ -47,9 +49,11 @@ export interface PhpFrameworkAuthorizationMiddlewareDefinitionNavigationDependen
 export interface PhpFrameworkAuthorizationMiddlewareDefinitionNavigation {
   goToPhpFrameworkAuthorizationAbilityDefinition(
     context: AuthorizationAbilityContext,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   goToPhpFrameworkMiddlewareAliasDefinition(
     context: MiddlewareAliasContext,
+    request?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -74,17 +78,22 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
       label,
       missingMessage,
       resolve,
+      request,
     }: {
       gate: boolean;
       label(target: Target): string;
       missingMessage: string;
       resolve(): Promise<Target | null>;
+      request?: NavigationRequest;
     }): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+        workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        ) && canNavigate(request);
 
-      if (!requestedRoot || !activeDocument || !gate) {
+      if (!requestedRoot || !activeDocument || !gate || !canNavigate(request)) {
         return false;
       }
 
@@ -95,11 +104,26 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
       }
 
       if (!target) {
+        if (!isRequestedRootActive()) {
+          return false;
+        }
+
         setMessage(missingMessage);
         return false;
       }
 
-      return openNavigationTarget(target.path, target.position, label(target));
+      const opened = await openNavigationTarget(
+        target.path,
+        target.position,
+        label(target),
+        { shouldCommit: isRequestedRootActive },
+      );
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      return opened;
     },
     [
       activeDocument,
@@ -111,11 +135,15 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
   );
 
   const goToPhpFrameworkAuthorizationAbilityDefinition = useCallback(
-    async (context: AuthorizationAbilityContext): Promise<boolean> =>
+    async (
+      context: AuthorizationAbilityContext,
+      request?: NavigationRequest,
+    ): Promise<boolean> =>
       openResolvedTarget({
         gate: supportsAuthorizationAbilityTargets,
         label: (target) => target.name,
         missingMessage: `No Laravel authorization ability ${context.ability} found.`,
+        request,
         resolve: async () => {
           if (!activeDocument) {
             return null;
@@ -126,7 +154,10 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
             activeDocument.path,
           );
 
-          return abilities.find((ability) => ability.name === context.ability) ?? null;
+          return (
+            abilities.find((ability) => ability.name === context.ability) ??
+            null
+          );
         },
       }),
     [
@@ -138,11 +169,15 @@ export function usePhpFrameworkAuthorizationMiddlewareDefinitionNavigation({
   );
 
   const goToPhpFrameworkMiddlewareAliasDefinition = useCallback(
-    async (context: MiddlewareAliasContext): Promise<boolean> =>
+    async (
+      context: MiddlewareAliasContext,
+      request?: NavigationRequest,
+    ): Promise<boolean> =>
       openResolvedTarget({
         gate: supportsMiddlewareAliasTargets,
         label: (target) => target.name,
         missingMessage: `No Laravel middleware alias ${context.alias} found.`,
+        request,
         resolve: async () => {
           if (!activeDocument) {
             return null;

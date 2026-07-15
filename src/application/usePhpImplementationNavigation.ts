@@ -14,6 +14,7 @@ import { phpCurrentClassName } from "../domain/phpSemanticEngine";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import type { EditorDocument, IntelligenceMode } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import type { ImplementationChooserState } from "./useWorkbenchLanguageNavigation";
 
 export interface PhpImplementationNavigationDependencies {
@@ -29,6 +30,7 @@ export interface PhpImplementationNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
+    options?: { shouldCommit?: () => boolean },
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   readNavigationFileContent(path: string): Promise<string>;
@@ -41,9 +43,11 @@ export interface PhpImplementationNavigationDependencies {
 export interface PhpImplementationNavigation {
   goToIndexedPhpImplementation(
     requestedPosition?: EditorPosition,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   indexedPhpImplementationTargets(
     editorPosition: EditorPosition,
+    request?: NavigationRequest,
   ): Promise<ImplementationTarget[]>;
 }
 
@@ -66,7 +70,12 @@ export function usePhpImplementationNavigation({
       source: string,
       targetClassName: string,
       visitedClassNames = new Set<string>(),
+      request?: NavigationRequest,
     ): Promise<boolean> => {
+      if (!canNavigate(request)) {
+        return false;
+      }
+
       const normalizedTargetClassName = targetClassName
         .trim()
         .replace(/^\\+/, "")
@@ -91,6 +100,10 @@ export function usePhpImplementationNavigation({
         const resolvedClassName = resolvePhpClassReference(source, reference);
         const resolvedKey = resolvedClassName?.toLowerCase();
 
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         if (!resolvedClassName || !resolvedKey) {
           continue;
         }
@@ -99,18 +112,39 @@ export function usePhpImplementationNavigation({
           return true;
         }
 
-        for (const path of await resolvePhpClassSourcePaths(resolvedClassName)) {
+        const paths = await resolvePhpClassSourcePaths(resolvedClassName);
+
+        if (!canNavigate(request)) {
+          return false;
+        }
+
+        for (const path of paths) {
           try {
+            const inheritedSource = await readNavigationFileContent(path);
+
+            if (!canNavigate(request)) {
+              return false;
+            }
+
             if (
               await phpSourceInheritsOrImplementsType(
-                await readNavigationFileContent(path),
+                inheritedSource,
                 targetClassName,
                 visitedClassNames,
+                request,
               )
             ) {
               return true;
             }
+
+            if (!canNavigate(request)) {
+              return false;
+            }
           } catch {
+            if (!canNavigate(request)) {
+              return false;
+            }
+
             continue;
           }
         }
@@ -128,6 +162,7 @@ export function usePhpImplementationNavigation({
   const indexedPhpImplementationTargets = useCallback(
     async (
       editorPosition: EditorPosition,
+      request?: NavigationRequest,
     ): Promise<ImplementationTarget[]> => {
       const document = activeDocument;
       const requestedRoot = workspaceRoot;
@@ -138,7 +173,8 @@ export function usePhpImplementationNavigation({
         !document ||
         document.language !== "php" ||
         !requestedRoot ||
-        !shouldIndexWorkspace(intelligenceMode)
+        !shouldIndexWorkspace(intelligenceMode) ||
+        !canNavigate(request)
       ) {
         return [];
       }
@@ -166,6 +202,10 @@ export function usePhpImplementationNavigation({
         return [];
       }
 
+      if (!canNavigate(request)) {
+        return [];
+      }
+
       const targets = new Map<string, ImplementationTarget>();
 
       for (const symbol of symbols) {
@@ -188,6 +228,10 @@ export function usePhpImplementationNavigation({
             return [];
           }
 
+          if (!canNavigate(request)) {
+            return [];
+          }
+
           const candidateClassName =
             symbol.containerName ?? phpCurrentClassName(source);
 
@@ -198,12 +242,18 @@ export function usePhpImplementationNavigation({
             continue;
           }
 
-          if (
-            !(await phpSourceInheritsOrImplementsType(
-              source,
-              targetClassName,
-            ))
-          ) {
+          const isImplementation = await phpSourceInheritsOrImplementsType(
+            source,
+            targetClassName,
+            new Set<string>(),
+            request,
+          );
+
+          if (!canNavigate(request)) {
+            return [];
+          }
+
+          if (!isImplementation) {
             continue;
           }
 
@@ -216,6 +266,10 @@ export function usePhpImplementationNavigation({
         } catch {
           continue;
         }
+      }
+
+      if (!canNavigate(request)) {
+        return [];
       }
 
       return [...targets.values()];
@@ -232,20 +286,35 @@ export function usePhpImplementationNavigation({
   );
 
   const goToIndexedPhpImplementation = useCallback(
-    async (requestedPosition?: EditorPosition): Promise<boolean> => {
+    async (
+      requestedPosition?: EditorPosition,
+      request?: NavigationRequest,
+    ): Promise<boolean> => {
       const document = activeDocument;
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
       const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
-      if (!document || !requestedRoot || !editorPosition) {
+      if (
+        !document ||
+        !requestedRoot ||
+        !editorPosition ||
+        !canNavigate(request)
+      ) {
         return false;
       }
 
-      const targets = await indexedPhpImplementationTargets(editorPosition);
+      const targets = await indexedPhpImplementationTargets(
+        editorPosition,
+        request,
+      );
 
       if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!canNavigate(request)) {
         return false;
       }
 
@@ -259,6 +328,10 @@ export function usePhpImplementationNavigation({
       );
 
       if (targets.length > 1) {
+        if (!canNavigate(request)) {
+          return false;
+        }
+
         setImplementationChooser({
           targets,
           title: implementationChooserTitle(symbolName),
@@ -272,12 +345,32 @@ export function usePhpImplementationNavigation({
         return false;
       }
 
+      if (!canNavigate(request)) {
+        return false;
+      }
+
       setImplementationChooser(null);
       if (!isRequestedRootActive()) {
         return false;
       }
 
-      await openNavigationTarget(target.path, target.position, target.label);
+      if (!canNavigate(request)) {
+        return false;
+      }
+
+      await openNavigationTarget(target.path, target.position, target.label, {
+        shouldCommit: () =>
+          isRequestedRootActive() && canNavigate(request),
+      });
+
+      if (!isRequestedRootActive()) {
+        return false;
+      }
+
+      if (!canNavigate(request)) {
+        return false;
+      }
+
       return true;
     },
     [

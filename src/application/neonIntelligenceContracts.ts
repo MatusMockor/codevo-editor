@@ -39,6 +39,7 @@ export interface NeonIntelligenceDependencies {
     path: string,
     position: EditorPosition,
     label: string,
+    options?: { shouldCommit?: () => boolean },
   ): Promise<boolean>;
   readFileContent(path: string): Promise<string>;
   searchClassNames(
@@ -69,6 +70,7 @@ export interface NeonIntelligence {
   providePhpNetteInjectionDefinition(
     source: string,
     offset: number,
+    request?: NavigationRequest,
   ): Promise<boolean>;
   provideNeonCompletions(
     source: string,

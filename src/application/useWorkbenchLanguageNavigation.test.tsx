@@ -8,10 +8,16 @@ import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntim
 import { emptyLanguageServerCapabilities } from "../domain/languageServerRuntime";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import {
+  createWorkspaceRuntimeOwner,
+  transferWorkspaceRuntimeOwner,
+  type WorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
+import {
   useWorkbenchLanguageNavigation,
   type WorkbenchLanguageNavigation,
   type WorkbenchLanguageNavigationDependencies,
 } from "./useWorkbenchLanguageNavigation";
+import type { NavigationRequest } from "./navigationRequest";
 
 const ROOT = "/workspace";
 
@@ -103,6 +109,7 @@ function workspaceFiles(): WorkspaceFileGateway {
 function renderNavigation(
   overrides: Partial<WorkbenchLanguageNavigationDependencies> = {},
 ) {
+  const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
   const source = "{varType App\\Model\\Consent $consent}\n{$consent->name}";
   const activeDocument: EditorDocument = {
     content: source,
@@ -148,6 +155,7 @@ function renderNavigation(
       shouldBlockFallback: false,
     })),
     recordNavigationLocationSnapshot: vi.fn(),
+    resolveCurrentWorkspaceRuntimeOwner: () => owner,
     reportErrorForActiveWorkspaceRoot: vi.fn(),
     reportLanguageServerErrorForActiveWorkspaceRoot: vi.fn(),
     setEditorRevealTarget: vi.fn(),
@@ -191,6 +199,7 @@ describe("useWorkbenchLanguageNavigation Latte definition fallback", () => {
     expect(deps.provideLatteDefinitionOutcome).toHaveBeenCalledWith(
       source,
       source.indexOf("name"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
     expect(goToIndexedSymbolDefinition).not.toHaveBeenCalled();
 
@@ -210,6 +219,173 @@ describe("useWorkbenchLanguageNavigation Latte definition fallback", () => {
     expect(goToIndexedSymbolDefinition).toHaveBeenCalledTimes(1);
 
     root.unmount();
+  });
+});
+
+describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
+  it("passes the owner request to every definition fallback collaborator", async () => {
+    const bladeSource = "<x-panel />";
+    const bladeHarness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: bladeSource,
+          language: "php",
+          name: "panel.blade.php",
+          path: `${ROOT}/resources/views/panel.blade.php`,
+          savedContent: bladeSource,
+        },
+      },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+    });
+
+    await act(async () => {
+      await bladeHarness.api().goToDefinition();
+    });
+
+    const bladeRequest = vi.mocked(bladeHarness.deps.provideBladeDefinition)
+      .mock.calls[0]?.[2];
+    expect(bladeRequest?.canNavigate()).toBe(true);
+
+    const latteHarness = renderNavigation();
+
+    await act(async () => {
+      await latteHarness.api().goToDefinition();
+    });
+
+    const latteRequest = vi.mocked(
+      latteHarness.deps.provideLatteDefinitionOutcome,
+    ).mock.calls[0]?.[2];
+    const contextualRequest = vi.mocked(
+      latteHarness.deps.goToContextualPhpDefinition,
+    ).mock.calls[0]?.[0];
+    const indexedRequest = vi.mocked(
+      latteHarness.deps.goToIndexedSymbolDefinition,
+    ).mock.calls[0]?.[0];
+
+    expect(latteRequest?.canNavigate()).toBe(true);
+    expect(contextualRequest?.canNavigate()).toBe(true);
+    expect(indexedRequest?.canNavigate()).toBe(true);
+
+    bladeHarness.root.unmount();
+    latteHarness.root.unmount();
+  });
+
+  it("passes the owner request after the optional implementation position", async () => {
+    const goToIndexedPhpImplementation = vi.fn(async () => false);
+    const harness = renderNavigation({ goToIndexedPhpImplementation });
+    const position = { column: 4, lineNumber: 2 };
+
+    await act(async () => {
+      await harness.api().goToImplementation();
+      await harness.api().goToImplementationAt(position);
+    });
+
+    expect(goToIndexedPhpImplementation).toHaveBeenNthCalledWith(
+      1,
+      undefined,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+    expect(goToIndexedPhpImplementation).toHaveBeenNthCalledWith(
+      2,
+      position,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+
+    harness.root.unmount();
+  });
+
+  it("stops the definition chain and mutations when ownership changes inside a collaborator", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    const recordNavigationLocationSnapshot = vi.fn();
+    const setImplementationChooser = vi.fn();
+    const collaboratorMutation = vi.fn();
+    const goToContextualPhpDefinition = vi.fn(async () => false);
+    const goToIndexedSymbolDefinition = vi.fn(async () => false);
+    const provideLatteDefinitionOutcome = vi.fn(async (
+      _source: string,
+      _offset: number,
+      request?: NavigationRequest,
+    ) => {
+      currentOwner = replacementOwner;
+
+      if (request?.canNavigate()) {
+        collaboratorMutation();
+        recordNavigationLocationSnapshot(null);
+        setImplementationChooser({ targets: [], title: "stale" });
+      }
+
+      return { handled: false, shouldBlockFallback: false };
+    });
+    const harness = renderNavigation({
+      goToContextualPhpDefinition,
+      goToIndexedSymbolDefinition,
+      provideLatteDefinitionOutcome,
+      recordNavigationLocationSnapshot,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+      setImplementationChooser,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(provideLatteDefinitionOutcome).toHaveBeenCalledWith(
+      harness.source,
+      harness.source.indexOf("name"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+    expect(collaboratorMutation).not.toHaveBeenCalled();
+    expect(goToContextualPhpDefinition).not.toHaveBeenCalled();
+    expect(goToIndexedSymbolDefinition).not.toHaveBeenCalled();
+    expect(recordNavigationLocationSnapshot).not.toHaveBeenCalled();
+    expect(setImplementationChooser).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("blocks stale indexed implementation chooser and history mutations", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    const recordNavigationLocationSnapshot = vi.fn();
+    const setImplementationChooser = vi.fn();
+    const collaboratorMutation = vi.fn();
+    const goToIndexedPhpImplementation = vi.fn(async (
+      _position?: { column: number; lineNumber: number },
+      request?: NavigationRequest,
+    ) => {
+      currentOwner = replacementOwner;
+
+      if (request?.canNavigate()) {
+        collaboratorMutation();
+        recordNavigationLocationSnapshot(null);
+        setImplementationChooser({ targets: [], title: "stale" });
+      }
+
+      return false;
+    });
+    const harness = renderNavigation({
+      goToIndexedPhpImplementation,
+      recordNavigationLocationSnapshot,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+      setImplementationChooser,
+    });
+
+    await act(async () => {
+      await harness.api().goToImplementation();
+    });
+
+    expect(goToIndexedPhpImplementation).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+    expect(collaboratorMutation).not.toHaveBeenCalled();
+    expect(recordNavigationLocationSnapshot).not.toHaveBeenCalled();
+    expect(setImplementationChooser).not.toHaveBeenCalled();
+
+    harness.root.unmount();
   });
 });
 
@@ -263,6 +439,7 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
 
     expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
       `${ROOT}/vendor/acme/package/src/Service.php`,
+      expect.objectContaining({ shouldCommit: expect.any(Function) }),
     );
 
     harness.root.unmount();
@@ -277,6 +454,7 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
 
     expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
       `${ROOT}/app/Services/Service.php`,
+      expect.objectContaining({ shouldCommit: expect.any(Function) }),
     );
 
     harness.root.unmount();
@@ -297,8 +475,278 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
 
     expect(harness.deps.openPathForNavigation).toHaveBeenCalledWith(
       `${ROOT}/vendor/acme/package/src/Service.php`,
-      { readOnly: false },
+      expect.objectContaining({
+        readOnly: false,
+        shouldCommit: expect.any(Function),
+      }),
     );
+
+    harness.root.unmount();
+  });
+});
+
+const fencedLanguageFeatures = [
+  ["definition", "goToDefinition"],
+  ["declaration", "goToDeclaration"],
+  ["typeDefinition", "goToTypeDefinition"],
+  ["implementation", "goToImplementation"],
+] as const;
+
+function navigationLocation(path: string, line = 3) {
+  return {
+    range: {
+      end: { character: 8, line },
+      start: { character: 2, line },
+    },
+    uri: `file://${path}`,
+  };
+}
+
+describe.each([
+  ["PHP", "php"],
+  ["JavaScript/TypeScript", "typescript"],
+] as const)("useWorkbenchLanguageNavigation %s owner fence", (_label, language) => {
+  it.each(fencedLanguageFeatures)(
+    "drops a replaced owner's %s result before open or UI mutations",
+    async (feature, command) => {
+      const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+      const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+      let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+      const gateway = languageServerGateway();
+      const locations =
+        feature === "implementation"
+          ? [
+              navigationLocation(`${ROOT}/src/First.ts`, 1),
+              navigationLocation(`${ROOT}/src/Second.ts`, 2),
+            ]
+          : [navigationLocation(`${ROOT}/src/Target.ts`)];
+      vi.mocked(gateway[feature]).mockImplementation(async () => {
+        currentOwner = replacementOwner;
+        return locations;
+      });
+      const source = language === "php" ? "<?php service();" : "service();";
+      const activeDocument: EditorDocument = {
+        content: source,
+        language,
+        name: language === "php" ? "Source.php" : "source.ts",
+        path: `${ROOT}/src/${language === "php" ? "Source.php" : "source.ts"}`,
+        savedContent: source,
+      };
+      const status: LanguageServerRuntimeStatus = {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          [feature]: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      };
+      const harness = renderNavigation({
+        activeDocumentRef: { current: activeDocument },
+        activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+        javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+        javaScriptTypeScriptLanguageServerRuntimeStatus:
+          language === "typescript" ? status : null,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot:
+          language === "typescript" ? ROOT : null,
+        languageServerFeaturesGateway: gateway,
+        languageServerRuntimeStatus: language === "php" ? status : null,
+        languageServerRuntimeStatusRoot: language === "php" ? ROOT : null,
+        resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+      });
+
+      await act(async () => {
+        await harness.api()[command]();
+      });
+
+      expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+      expect(harness.deps.recordNavigationLocationSnapshot).not.toHaveBeenCalled();
+      expect(harness.deps.setEditorRevealTarget).not.toHaveBeenCalled();
+      expect(harness.deps.setMessage).not.toHaveBeenCalled();
+      expect(harness.deps.setImplementationChooser).not.toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.any(Array) }),
+      );
+      expect(harness.deps.goToIndexedPhpImplementation).not.toHaveBeenCalled();
+      expect(harness.deps.goToIndexedSymbolDefinition).not.toHaveBeenCalled();
+
+      harness.root.unmount();
+    },
+  );
+});
+
+describe("useWorkbenchLanguageNavigation owner alias transfer", () => {
+  it("keeps a pending request valid when the same owner transfers roots", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = owner;
+    const gateway = languageServerGateway();
+    vi.mocked(gateway.definition).mockImplementation(async () => {
+      currentOwner = transferWorkspaceRuntimeOwner(owner, "/workspace-alias");
+      return [navigationLocation(`${ROOT}/src/Target.php`)];
+    });
+    const isSessionActive = vi.fn(() => true);
+    const openPathForNavigation = vi.fn(async (
+      _path: string,
+      options?: { shouldCommit?: () => boolean },
+    ) => options?.shouldCommit?.() !== false);
+    const source = "<?php service();";
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "php",
+          name: "Source.php",
+          path: `${ROOT}/src/Source.php`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      isLanguageServerSessionActiveForRoot: isSessionActive,
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      },
+      languageServerRuntimeStatusRoot: ROOT,
+      openPathForNavigation,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(isSessionActive).toHaveBeenCalledWith(ROOT, 7, owner);
+    expect(openPathForNavigation).toHaveBeenCalledTimes(1);
+    expect(harness.deps.recordNavigationLocationSnapshot).toHaveBeenCalledTimes(1);
+    expect(harness.deps.setEditorRevealTarget).toHaveBeenCalledTimes(1);
+    expect(harness.deps.setMessage).toHaveBeenCalledTimes(1);
+
+    harness.root.unmount();
+  });
+});
+
+describe.each([
+  ["PHP", "php"],
+  ["JavaScript/TypeScript", "typescript"],
+] as const)("useWorkbenchLanguageNavigation %s implementation target fence", (_label, language) => {
+  it("drops ownership replaced while reading chooser target source", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    const gateway = languageServerGateway();
+    vi.mocked(gateway.implementation).mockResolvedValue([
+      navigationLocation(`${ROOT}/src/First.ts`, 1),
+      navigationLocation(`${ROOT}/src/Second.ts`, 2),
+    ]);
+    const files = workspaceFiles();
+    vi.mocked(files.readTextFile).mockImplementation(async () => {
+      currentOwner = replacementOwner;
+      return "export function service() {}";
+    });
+    const source = language === "php" ? "<?php service();" : "service();";
+    const status: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        implementation: true,
+      },
+      kind: "running",
+      rootPath: ROOT,
+      sessionId: 7,
+    };
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language,
+          name: language === "php" ? "Source.php" : "source.ts",
+          path: `${ROOT}/src/${language === "php" ? "Source.php" : "source.ts"}`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      javaScriptTypeScriptLanguageServerFeaturesGateway: gateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus:
+        language === "typescript" ? status : null,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot:
+        language === "typescript" ? ROOT : null,
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: language === "php" ? status : null,
+      languageServerRuntimeStatusRoot: language === "php" ? ROOT : null,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+      workspaceFiles: files,
+    });
+
+    await act(async () => {
+      await harness.api().goToImplementation();
+    });
+
+    expect(files.readTextFile).toHaveBeenCalledTimes(1);
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+    expect(harness.deps.setImplementationChooser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ targets: expect.any(Array) }),
+    );
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+});
+
+describe("useWorkbenchLanguageNavigation target-open fence", () => {
+  it("lets the open boundary reject ownership replaced during target open", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner: WorkspaceRuntimeOwner = firstOwner;
+    const gateway = languageServerGateway();
+    vi.mocked(gateway.definition).mockResolvedValue([
+      navigationLocation(`${ROOT}/src/Target.php`),
+    ]);
+    const openPathForNavigation = vi.fn(async (
+      _path: string,
+      options?: { shouldCommit?: () => boolean },
+    ) => {
+      currentOwner = replacementOwner;
+      return options?.shouldCommit?.() !== false;
+    });
+    const source = "<?php service();";
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "php",
+          name: "Source.php",
+          path: `${ROOT}/src/Source.php`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          definition: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      },
+      languageServerRuntimeStatusRoot: ROOT,
+      openPathForNavigation,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(openPathForNavigation).toHaveBeenCalledTimes(1);
+    expect(harness.deps.recordNavigationLocationSnapshot).not.toHaveBeenCalled();
+    expect(harness.deps.setEditorRevealTarget).not.toHaveBeenCalled();
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
 
     harness.root.unmount();
   });

@@ -10,13 +10,13 @@ import {
   type PhpContextualFrameworkLiteralDefinitionRequest,
   type PhpFrameworkLiteralNavigationDependencies,
 } from "./phpFrameworkLiteralDefinitionResolverRegistry";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
-export type {
-  PhpContextualFrameworkLiteralDefinitionRequest,
-} from "./phpFrameworkLiteralDefinitionResolverRegistry";
+export type { PhpContextualFrameworkLiteralDefinitionRequest } from "./phpFrameworkLiteralDefinitionResolverRegistry";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
@@ -38,6 +38,7 @@ export interface PhpContextualFrameworkLiteralDefinitionNavigationDependencies {
 export interface PhpContextualFrameworkLiteralDefinitionNavigation {
   goToPhpFrameworkLiteralDefinition(
     request: PhpContextualFrameworkLiteralDefinitionRequest,
+    navigationRequest?: NavigationRequest,
   ): Promise<boolean>;
 }
 
@@ -54,13 +55,18 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
   const goToPhpFrameworkLiteralDefinition = useCallback(
     async (
       request: PhpContextualFrameworkLiteralDefinitionRequest,
+      navigationRequest?: NavigationRequest,
     ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+        workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        ) && canNavigate(navigationRequest);
 
       if (
         !requestedRoot ||
+        !canNavigate(navigationRequest) ||
         !activeDocument ||
         activeDocument.language !== "php" ||
         !supportsStringLiterals
@@ -92,6 +98,10 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
           );
 
         if (missingMessage) {
+          if (!isRequestedRootActive()) {
+            return false;
+          }
+
           setMessage(missingMessage);
         }
 
@@ -109,6 +119,7 @@ export function usePhpContextualFrameworkLiteralDefinitionNavigation({
         target.path,
         target.position,
         target.label,
+        { shouldCommit: isRequestedRootActive },
       );
 
       if (!isRequestedRootActive()) {

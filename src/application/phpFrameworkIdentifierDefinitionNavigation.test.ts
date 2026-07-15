@@ -44,4 +44,54 @@ describe("phpFrameworkIdentifierDefinitionNavigation", () => {
       ),
     ).resolves.toBe(false);
   });
+
+  it("passes an active request to each adapter", async () => {
+    const context: PhpIdentifierContext = {
+      kind: "classIdentifier",
+      name: "ReportService",
+    };
+    const request = { canNavigate: vi.fn(() => true) };
+    const first: PhpFrameworkIdentifierDefinitionNavigationAdapter = {
+      goToDefinition: vi.fn(async () => false),
+    };
+    const second: PhpFrameworkIdentifierDefinitionNavigationAdapter = {
+      goToDefinition: vi.fn(async () => true),
+    };
+
+    await expect(
+      goToPhpFrameworkIdentifierDefinition(
+        context,
+        { adapters: [first, second] },
+        request,
+      ),
+    ).resolves.toBe(true);
+
+    expect(first.goToDefinition).toHaveBeenCalledWith(context, request);
+    expect(second.goToDefinition).toHaveBeenCalledWith(context, request);
+  });
+
+  it("stops before later adapters when the request becomes stale", async () => {
+    let requestActive = true;
+    const request = { canNavigate: () => requestActive };
+    const first: PhpFrameworkIdentifierDefinitionNavigationAdapter = {
+      goToDefinition: vi.fn(async () => {
+        requestActive = false;
+        return false;
+      }),
+    };
+    const second: PhpFrameworkIdentifierDefinitionNavigationAdapter = {
+      goToDefinition: vi.fn(async () => true),
+    };
+
+    await expect(
+      goToPhpFrameworkIdentifierDefinition(
+        { kind: "classIdentifier", name: "ReportService" },
+        { adapters: [first, second] },
+        request,
+      ),
+    ).resolves.toBe(false);
+
+    expect(first.goToDefinition).toHaveBeenCalledTimes(1);
+    expect(second.goToDefinition).not.toHaveBeenCalled();
+  });
 });

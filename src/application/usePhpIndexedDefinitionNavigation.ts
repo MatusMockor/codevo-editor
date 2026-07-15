@@ -6,9 +6,7 @@ import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import type { EditorDocument, IntelligenceMode } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  type PhpFrameworkIdentifierDefinitionHandler,
-} from "./phpFrameworkIdentifierDefinitionNavigation";
+import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import { resolvePhpIdentifierContextAt } from "./phpFrameworkIdentifierContextResolverRegistry";
 import {
   bestIndexedSymbolMatch,
@@ -17,6 +15,17 @@ import {
 
 type PhpContextHandler<Kind extends PhpIdentifierContext["kind"]> = (
   context: Extract<PhpIdentifierContext, { kind: Kind }>,
+  request?: NavigationRequest,
+) => Promise<boolean>;
+
+type PhpFrameworkIdentifierDefinitionHandler = (
+  context: PhpIdentifierContext,
+  request?: NavigationRequest,
+) => Promise<boolean>;
+
+type PhpClassIdentifierDefinitionHandler = (
+  name: string,
+  request?: NavigationRequest,
 ) => Promise<boolean>;
 
 export interface PhpIndexedDefinitionNavigationDependencies {
@@ -25,7 +34,7 @@ export interface PhpIndexedDefinitionNavigationDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   goToPhpFrameworkIdentifierDefinition: PhpFrameworkIdentifierDefinitionHandler;
   goToPhpClassConstantDefinition: PhpContextHandler<"classConstant">;
-  goToPhpClassIdentifierDefinition(name: string): Promise<boolean>;
+  goToPhpClassIdentifierDefinition: PhpClassIdentifierDefinitionHandler;
   goToPhpMethodCallDefinition: PhpContextHandler<"methodCall">;
   goToPhpStaticMethodCallDefinition: PhpContextHandler<"staticMethodCall">;
   identifierAtEditorPosition(
@@ -37,6 +46,7 @@ export interface PhpIndexedDefinitionNavigationDependencies {
     path: string,
     position: EditorPosition,
     label: string,
+    options?: { shouldCommit?: () => boolean },
   ): Promise<boolean>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   providers: readonly PhpFrameworkProvider[];
@@ -50,7 +60,24 @@ export interface PhpIndexedDefinitionNavigationDependencies {
 }
 
 export interface PhpIndexedDefinitionNavigation {
-  goToIndexedSymbolDefinition(): Promise<boolean>;
+  goToIndexedSymbolDefinition(request?: NavigationRequest): Promise<boolean>;
+}
+
+async function invokeNavigationHandler<Argument>(
+  handler: (argument: Argument, request?: NavigationRequest) => Promise<boolean>,
+  argument: Argument,
+  request: NavigationRequest | undefined,
+  isNavigationActive: () => boolean,
+): Promise<boolean> {
+  const handled = request
+    ? await handler(argument, request)
+    : await handler(argument);
+
+  if (!isNavigationActive()) {
+    return false;
+  }
+
+  return handled;
 }
 
 export function usePhpIndexedDefinitionNavigation({
@@ -71,7 +98,9 @@ export function usePhpIndexedDefinitionNavigation({
   setMessage,
   workspaceRoot,
 }: PhpIndexedDefinitionNavigationDependencies): PhpIndexedDefinitionNavigation {
-  const goToIndexedSymbolDefinition = useCallback(async (): Promise<boolean> => {
+  const goToIndexedSymbolDefinition = useCallback(async (
+    request?: NavigationRequest,
+  ): Promise<boolean> => {
     if (!activeDocument || !workspaceRoot) {
       return false;
     }
@@ -79,6 +108,13 @@ export function usePhpIndexedDefinitionNavigation({
     const requestedRoot = workspaceRoot;
     const isRequestedRootActive = () =>
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+    const isNavigationActive = () =>
+      isRequestedRootActive() && canNavigate(request);
+
+    if (!isNavigationActive()) {
+      return false;
+    }
+
     const editorPosition = activeEditorPositionRef.current;
 
     if (!editorPosition) {
@@ -96,6 +132,10 @@ export function usePhpIndexedDefinitionNavigation({
 
     const openIndexedSymbolByName = async (query: string): Promise<boolean> => {
       if (!shouldIndexWorkspace(intelligenceMode)) {
+        if (!isNavigationActive()) {
+          return false;
+        }
+
         setMessage("Enable Smart Index or IDE Mode to search indexed symbols.");
         return false;
       }
@@ -106,7 +146,7 @@ export function usePhpIndexedDefinitionNavigation({
         25,
       );
 
-      if (!isRequestedRootActive()) {
+      if (!isNavigationActive()) {
         return false;
       }
 
@@ -117,20 +157,41 @@ export function usePhpIndexedDefinitionNavigation({
       );
 
       if (!target) {
+        if (!isNavigationActive()) {
+          return false;
+        }
+
         setMessage(`No indexed symbol found for ${query}.`);
         return false;
       }
 
-      return openNavigationTarget(
+      if (!isNavigationActive()) {
+        return false;
+      }
+
+      const opened = await openNavigationTarget(
         target.path,
         editorPositionFromProjectSymbol(target),
         target.name,
+        { shouldCommit: isNavigationActive },
       );
+
+      if (!isNavigationActive()) {
+        return false;
+      }
+
+      return opened;
     };
 
     try {
       if (activeDocument.language !== "php") {
-        return await openIndexedSymbolByName(symbolName);
+        const openedIndexedTarget = await openIndexedSymbolByName(symbolName);
+
+        if (!isNavigationActive()) {
+          return false;
+        }
+
+        return openedIndexedTarget;
       }
 
       const context = resolvePhpIdentifierContextAt(
@@ -144,21 +205,58 @@ export function usePhpIndexedDefinitionNavigation({
       }
 
       if (context.kind === "methodCall") {
-        return goToPhpMethodCallDefinition(context);
+        const handled = await invokeNavigationHandler(
+          goToPhpMethodCallDefinition,
+          context,
+          request,
+          isNavigationActive,
+        );
+
+        if (!isNavigationActive()) {
+          return false;
+        }
+
+        return handled;
       }
 
       if (context.kind === "staticMethodCall") {
-        return goToPhpStaticMethodCallDefinition(context);
+        const handled = await invokeNavigationHandler(
+          goToPhpStaticMethodCallDefinition,
+          context,
+          request,
+          isNavigationActive,
+        );
+
+        if (!isNavigationActive()) {
+          return false;
+        }
+
+        return handled;
       }
 
       if (context.kind === "classConstant") {
-        return goToPhpClassConstantDefinition(context);
+        const handled = await invokeNavigationHandler(
+          goToPhpClassConstantDefinition,
+          context,
+          request,
+          isNavigationActive,
+        );
+
+        if (!isNavigationActive()) {
+          return false;
+        }
+
+        return handled;
       }
 
-      const openedFrameworkTarget =
-        await goToPhpFrameworkIdentifierDefinition(context);
+      const openedFrameworkTarget = await invokeNavigationHandler(
+        goToPhpFrameworkIdentifierDefinition,
+        context,
+        request,
+        isNavigationActive,
+      );
 
-      if (!isRequestedRootActive()) {
+      if (!isNavigationActive()) {
         return false;
       }
 
@@ -166,15 +264,22 @@ export function usePhpIndexedDefinitionNavigation({
         return true;
       }
 
+      if (!isNavigationActive()) {
+        return false;
+      }
+
       if (context.kind !== "classIdentifier") {
         return false;
       }
 
-      const openedClassTarget = await goToPhpClassIdentifierDefinition(
+      const openedClassTarget = await invokeNavigationHandler(
+        goToPhpClassIdentifierDefinition,
         context.name,
+        request,
+        isNavigationActive,
       );
 
-      if (!isRequestedRootActive()) {
+      if (!isNavigationActive()) {
         return false;
       }
 
@@ -182,9 +287,19 @@ export function usePhpIndexedDefinitionNavigation({
         return true;
       }
 
-      return await openIndexedSymbolByName(context.name);
+      if (!isNavigationActive()) {
+        return false;
+      }
+
+      const openedIndexedTarget = await openIndexedSymbolByName(context.name);
+
+      if (!isNavigationActive()) {
+        return false;
+      }
+
+      return openedIndexedTarget;
     } catch (error) {
-      if (!isRequestedRootActive()) {
+      if (!isNavigationActive()) {
         return false;
       }
 
