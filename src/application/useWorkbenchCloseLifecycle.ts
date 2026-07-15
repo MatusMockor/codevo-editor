@@ -13,6 +13,7 @@ import {
 import type { EditorConfigFile } from "../domain/editorConfig";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
+import { createWorkspaceRoot } from "../domain/workspacePath";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
 import { isDirty } from "../domain/workspace";
@@ -23,15 +24,22 @@ import {
 import { CloseCoordinator } from "./closeCoordinator";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { WorkspaceStateCache } from "./useWorkspaceStateCache";
 
 interface CachedWorkspaceDirtyState {
   editorSurface: {
     documents: Record<string, EditorDocument>;
   };
+  workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
 }
 
 interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
+}
+
+interface ClearActiveWorkspaceOptions {
+  ownership?: WorkspaceCloseOwnership;
+  runtimeAlreadyStopped?: boolean;
 }
 
 export interface WorkspaceCloseSessionPort {
@@ -41,6 +49,12 @@ export interface WorkspaceCloseSessionPort {
   };
 }
 
+export interface WorkspaceCloseOwnership {
+  isCurrent: () => boolean;
+}
+
+export type WorkspaceIdentityReleaseOutcome = "deferred" | "released";
+
 export interface WorkbenchCloseLifecycleDependencies {
   workspaceRoot: string | null;
   dirtyCount: number;
@@ -49,6 +63,8 @@ export interface WorkbenchCloseLifecycleDependencies {
   workspaceStateCacheRef: MutableRefObject<
     Record<string, CachedWorkspaceDirtyState>
   >;
+  resolveCachedWorkspaceState?: WorkspaceStateCache["resolveCachedWorkspaceState"];
+  forgetCachedWorkspaceState?: WorkspaceStateCache["forgetCachedWorkspaceState"];
   workspaceIdentityByRootRef: MutableRefObject<
     Record<string, WorkspaceIdentityDescriptor>
   >;
@@ -63,7 +79,10 @@ export interface WorkbenchCloseLifecycleDependencies {
 
   prompter: WorkbenchPrompter;
   workspaceCloseSession: WorkspaceCloseSessionPort;
-  commitWorkspaceClose: (rootPath: string) => void;
+  commitWorkspaceClose: (
+    rootPath: string,
+    identity: WorkspaceIdentityDescriptor | null,
+  ) => WorkspaceCloseOwnership | void;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   persistAppSettings: (nextSettings: AppSettings) => Promise<void>;
   closeSyncedLanguageServerDocumentsForRoot: (
@@ -72,17 +91,24 @@ export interface WorkbenchCloseLifecycleDependencies {
   closeSyncedJavaScriptTypeScriptDocumentsForRoot: (
     rootPath: string,
   ) => Promise<void>;
-  stopProjectRuntimes: (rootPath?: string) => Promise<void>;
+  stopProjectRuntimes: (
+    rootPath?: string,
+    ownership?: WorkspaceCloseOwnership,
+  ) => Promise<void>;
   forgetLanguageServerRuntimeStatuses: (rootPath: string) => void;
   forgetLatencyTrackerForRoot: (rootPath: string) => void;
-  unregisterWorkspace: (workspaceId: string) => Promise<void>;
+  unregisterWorkspace: (
+    workspaceId: string,
+  ) => Promise<WorkspaceIdentityReleaseOutcome | void>;
   clearExternalFileConflictsForRoot: (rootPath: string) => void;
   workspaceHasExternalFileConflicts: (rootPath: string) => boolean;
   openWorkspacePath: (
     path: string,
     options?: OpenWorkspacePathOptions,
   ) => Promise<void>;
-  clearActiveWorkspace: () => Promise<void>;
+  clearActiveWorkspace: (
+    options?: ClearActiveWorkspaceOptions,
+  ) => Promise<void>;
   persistWorkspaceSession?: (rootPath: string) => Promise<void>;
   reportError: (source: string, error: unknown) => void;
 }
@@ -96,6 +122,15 @@ export interface WorkbenchCloseLifecycle {
 const NATIVE_CLOSE_REQUEST_EVENT = "mockor-native-close-requested";
 
 type NativeCloseKind = "close" | "quit";
+type WorkspaceDisposalResult =
+  | "disposed"
+  | "identity-release-deferred"
+  | "identity-release-failed"
+  | "stale";
+
+const alwaysCurrentWorkspaceCloseOwnership: WorkspaceCloseOwnership = {
+  isCurrent: () => true,
+};
 
 function isNativeCloseKind(payload: unknown): payload is NativeCloseKind {
   return payload === "close" || payload === "quit";
@@ -109,6 +144,18 @@ export function useWorkbenchCloseLifecycle(
     dirtyCount,
     appSettingsRef,
     workspaceStateCacheRef,
+    resolveCachedWorkspaceState = (rootPath, identity) =>
+      resolveCachedWorkspaceStateFallback(
+        workspaceStateCacheRef.current,
+        rootPath,
+        identity,
+      ),
+    forgetCachedWorkspaceState = (rootPath, identity) =>
+      forgetCachedWorkspaceStateFallback(
+        workspaceStateCacheRef.current,
+        rootPath,
+        identity,
+      ),
     workspaceIdentityByRootRef,
     editorConfigCacheRef,
     openWorkspaceRequestPathRef,
@@ -136,6 +183,7 @@ export function useWorkbenchCloseLifecycle(
   } = dependencies;
   const closeCoordinator = useMemo(() => new CloseCoordinator(), []);
   const nativeCloseInFlightRef = useRef(false);
+  const workspaceCloseInFlightRef = useRef(new Map<string, Promise<void>>());
   const nativeCloseRequestRef = useRef<(payload: unknown) => void>(
     () => undefined,
   );
@@ -172,16 +220,38 @@ export function useWorkbenchCloseLifecycle(
     const inactiveCachedRoots: Array<{
       hasDirtyDocuments: boolean;
       roots: string[];
+      workspaceId: string | null;
     }> = [];
+    const activeIdentity = workspaceIdentityForPaths(
+      workspaceIdentityByRootRef.current,
+      workspaceRoot ? [workspaceRoot] : [],
+    );
     for (const [cachedRoot, cachedState] of Object.entries(
       workspaceStateCacheRef.current,
     )) {
-      if (workspaceRootKeysEqual(cachedRoot, workspaceRoot)) {
+      const cachedIdentity =
+        cachedState.workspaceIdentityDescriptor ??
+        workspaceIdentityForPaths(workspaceIdentityByRootRef.current, [
+          cachedRoot,
+        ]);
+      if (
+        workspaceRootKeysEqual(cachedRoot, workspaceRoot) ||
+        workspaceIdentityMatchesActiveRoot(
+          cachedIdentity,
+          activeIdentity,
+          workspaceRoot,
+        )
+      ) {
         continue;
       }
 
-      const existingRoot = inactiveCachedRoots.find(({ roots }) =>
-        workspaceRootKeysEqual(roots[0], cachedRoot),
+      const existingRoot = inactiveCachedRoots.find(
+        ({ roots, workspaceId }) =>
+          Boolean(
+            workspaceId &&
+              cachedIdentity &&
+              workspaceId === cachedIdentity.workspaceId,
+          ) || workspaceRootKeysEqual(roots[0], cachedRoot),
       );
       if (existingRoot) {
         existingRoot.hasDirtyDocuments ||=
@@ -193,6 +263,7 @@ export function useWorkbenchCloseLifecycle(
       inactiveCachedRoots.push({
         hasDirtyDocuments: cachedWorkspaceHasDirtyDocuments(cachedState),
         roots: [cachedRoot],
+        workspaceId: cachedIdentity?.workspaceId ?? null,
       });
     }
 
@@ -215,6 +286,7 @@ export function useWorkbenchCloseLifecycle(
     workspaceHasExternalFileConflicts,
     workspaceRoot,
     workspaceStateCacheRef,
+    workspaceIdentityByRootRef,
   ]);
 
   const requestApplicationShutdown = useCallback(
@@ -312,41 +384,83 @@ export function useWorkbenchCloseLifecycle(
   }, [reportError]);
 
   const disposeWorkspaceTabResources = useCallback(
-    async (tabPath: string, targetRootPath: string) => {
-      delete workspaceStateCacheRef.current[tabPath];
-      delete workspaceStateCacheRef.current[targetRootPath];
-      delete editorConfigCacheRef.current[tabPath];
-      delete editorConfigCacheRef.current[targetRootPath];
-      clearExternalFileConflictsForRoot(targetRootPath);
+    async (
+      tabPath: string,
+      targetRootPath: string,
+      identityDescriptor: WorkspaceIdentityDescriptor | null,
+      ownership: WorkspaceCloseOwnership,
+    ): Promise<WorkspaceDisposalResult> => {
+      if (!ownership.isCurrent()) {
+        return "stale";
+      }
 
-      const identityDescriptor =
-        workspaceIdentityByRootRef.current[tabPath] ??
-        workspaceIdentityByRootRef.current[targetRootPath] ??
-        null;
       if (identityDescriptor) {
-        delete workspaceIdentityByRootRef.current[
-          identityDescriptor.selectedPath
-        ];
-        delete workspaceIdentityByRootRef.current[
-          identityDescriptor.canonicalRoot
-        ];
         try {
-          await unregisterWorkspace(identityDescriptor.workspaceId);
+          const releaseOutcome = await unregisterWorkspace(
+            identityDescriptor.workspaceId,
+          );
+          if (releaseOutcome === "deferred") {
+            return "identity-release-deferred";
+          }
         } catch (error) {
           reportError("Workspace", error);
+          return "identity-release-failed";
+        }
+
+        if (!ownership.isCurrent()) {
+          return "stale";
+        }
+      }
+
+      await closeCoordinator.close({
+        closeDocuments: [
+          () =>
+            ownership.isCurrent()
+              ? closeSyncedLanguageServerDocumentsForRoot(targetRootPath)
+              : Promise.resolve(),
+          () =>
+            ownership.isCurrent()
+              ? closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath)
+              : Promise.resolve(),
+        ],
+        disposeRuntime: () =>
+          stopRuntimeForOwnedClose(
+            stopProjectRuntimes,
+            targetRootPath,
+            ownership,
+          ),
+      });
+
+      if (!ownership.isCurrent()) {
+        return "stale";
+      }
+
+      forgetCachedWorkspaceState(tabPath, identityDescriptor);
+      const resourceRoots = workspaceResourceRoots(
+        tabPath,
+        targetRootPath,
+        identityDescriptor,
+      );
+      for (const rootPath of resourceRoots) {
+        delete editorConfigCacheRef.current[rootPath];
+        clearExternalFileConflictsForRoot(rootPath);
+      }
+
+      if (identityDescriptor) {
+        for (const [rootPath, descriptor] of Object.entries(
+          workspaceIdentityByRootRef.current,
+        )) {
+          if (descriptor.workspaceId !== identityDescriptor.workspaceId) {
+            continue;
+          }
+
+          delete workspaceIdentityByRootRef.current[rootPath];
         }
       }
 
       forgetLatencyTrackerForRoot(targetRootPath);
       forgetLanguageServerRuntimeStatuses(targetRootPath);
-      await closeCoordinator.close({
-        closeDocuments: [
-          () => closeSyncedLanguageServerDocumentsForRoot(targetRootPath),
-          () => closeSyncedJavaScriptTypeScriptDocumentsForRoot(targetRootPath),
-        ],
-        disposeRuntime: () => stopProjectRuntimes(targetRootPath),
-      });
-      forgetLanguageServerRuntimeStatuses(targetRootPath);
+      return "disposed";
     },
     [
       closeSyncedJavaScriptTypeScriptDocumentsForRoot,
@@ -354,38 +468,74 @@ export function useWorkbenchCloseLifecycle(
       closeCoordinator,
       clearExternalFileConflictsForRoot,
       editorConfigCacheRef,
+      forgetCachedWorkspaceState,
       forgetLanguageServerRuntimeStatuses,
       forgetLatencyTrackerForRoot,
       stopProjectRuntimes,
-      workspaceStateCacheRef,
       workspaceIdentityByRootRef,
       unregisterWorkspace,
       reportError,
     ],
   );
 
-  const closeWorkspaceTab = useCallback(
+  const restoreSettingsAfterIdentityReleaseFailure = useCallback(
+    async (
+      settings: AppSettings,
+      ownership: WorkspaceCloseOwnership,
+    ): Promise<void> => {
+      if (!ownership.isCurrent()) {
+        return;
+      }
+
+      try {
+        await persistAppSettings(settings);
+      } catch (error) {
+        reportError("Settings", error);
+      }
+    },
+    [persistAppSettings, reportError],
+  );
+
+  const closeWorkspaceTabOperation = useCallback(
     async (path: string) => {
       const currentSettings = appSettingsRef.current;
       const currentTabs = currentSettings.workspaceTabs;
-      const tabPath = workspaceTabPathForPath(currentTabs, path) ?? path;
+      const tabPath =
+        workspaceTabPathForIdentity(
+          currentTabs,
+          path,
+          workspaceIdentityByRootRef.current,
+        ) ?? path;
       const activeSession = workspaceCloseSession.current();
       const activeRootPath = activeSession.activeRoot;
-      const closingActiveWorkspace = workspaceRootKeysEqual(
-        tabPath,
-        activeRootPath,
+      const identityDescriptor = workspaceIdentityForPaths(
+        workspaceIdentityByRootRef.current,
+        [tabPath, path],
       );
+      const activeIdentityDescriptor = workspaceIdentityForPaths(
+        workspaceIdentityByRootRef.current,
+        activeRootPath ? [activeRootPath] : [],
+      );
+      const closingActiveWorkspace =
+        workspaceRootKeysEqual(tabPath, activeRootPath) ||
+        Boolean(
+          identityDescriptor &&
+            activeIdentityDescriptor &&
+            identityDescriptor.workspaceId ===
+              activeIdentityDescriptor.workspaceId,
+        );
       const targetRootPath =
         closingActiveWorkspace && activeRootPath ? activeRootPath : tabPath;
       const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
-      const cachedWorkspaceState =
-        workspaceStateCacheRef.current[tabPath] ??
-        workspaceStateCacheRef.current[targetRootPath] ??
-        null;
 
       if (nextTabs.length === currentTabs.length) {
         return;
       }
+
+      const cachedWorkspaceState = resolveCachedWorkspaceState(
+        tabPath,
+        identityDescriptor,
+      );
 
       if (
         closingActiveWorkspace &&
@@ -408,7 +558,9 @@ export function useWorkbenchCloseLifecycle(
         }
       }
 
-      commitWorkspaceClose(targetRootPath);
+      const ownership =
+        commitWorkspaceClose(targetRootPath, identityDescriptor) ??
+        alwaysCurrentWorkspaceCloseOwnership;
 
       if (
         workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, tabPath) ||
@@ -428,6 +580,10 @@ export function useWorkbenchCloseLifecycle(
             rootPath: normalizedWorkspaceRootKey(targetRootPath),
           },
           async () => {
+            if (!ownership.isCurrent()) {
+              return;
+            }
+
             const nextRecentPath = workspaceRootKeysEqual(
               currentSettings.recentWorkspacePath,
               tabPath,
@@ -445,7 +601,28 @@ export function useWorkbenchCloseLifecycle(
               reportError("Settings", error);
               return;
             }
-            await disposeWorkspaceTabResources(tabPath, targetRootPath);
+
+            if (!ownership.isCurrent()) {
+              return;
+            }
+
+            const disposalResult = await disposeWorkspaceTabResources(
+              tabPath,
+              targetRootPath,
+              identityDescriptor,
+              ownership,
+            );
+            if (
+              disposalResult !== "identity-release-failed" &&
+              disposalResult !== "identity-release-deferred"
+            ) {
+              return;
+            }
+
+            await restoreSettingsAfterIdentityReleaseFailure(
+              currentSettings,
+              ownership,
+            );
           },
         );
         return;
@@ -457,10 +634,18 @@ export function useWorkbenchCloseLifecycle(
           rootPath: normalizedWorkspaceRootKey(targetRootPath),
         },
         async () => {
+          if (!ownership.isCurrent()) {
+            return;
+          }
+
           try {
             await persistWorkspaceSession(targetRootPath);
           } catch (error) {
             reportError("Session", error);
+          }
+
+          if (!ownership.isCurrent()) {
+            return;
           }
 
           openFileRequestTokenRef.current += 1;
@@ -483,7 +668,30 @@ export function useWorkbenchCloseLifecycle(
             return;
           }
 
-          await disposeWorkspaceTabResources(tabPath, targetRootPath);
+          if (!ownership.isCurrent()) {
+            return;
+          }
+
+          const disposalResult = await disposeWorkspaceTabResources(
+            tabPath,
+            targetRootPath,
+            identityDescriptor,
+            ownership,
+          );
+          if (
+            disposalResult === "identity-release-failed" ||
+            disposalResult === "identity-release-deferred"
+          ) {
+            await restoreSettingsAfterIdentityReleaseFailure(
+              currentSettings,
+              ownership,
+            );
+            return;
+          }
+
+          if (disposalResult !== "disposed" || !ownership.isCurrent()) {
+            return;
+          }
 
           if (nextPath) {
             await openWorkspacePath(nextPath, {
@@ -492,7 +700,10 @@ export function useWorkbenchCloseLifecycle(
             return;
           }
 
-          await clearActiveWorkspace();
+          await clearActiveWorkspace({
+            ownership,
+            runtimeAlreadyStopped: true,
+          });
         },
       );
     },
@@ -512,9 +723,53 @@ export function useWorkbenchCloseLifecycle(
       prompter,
       reportError,
       runWithDocumentSaveExclusion,
+      resolveCachedWorkspaceState,
+      restoreSettingsAfterIdentityReleaseFailure,
       workspaceCloseSession,
-      workspaceStateCacheRef,
+      workspaceIdentityByRootRef,
       workspaceHasExternalFileConflicts,
+    ],
+  );
+
+  const closeWorkspaceTab = useCallback(
+    (path: string) => {
+      const tabPath =
+        workspaceTabPathForIdentity(
+          appSettingsRef.current.workspaceTabs,
+          path,
+          workspaceIdentityByRootRef.current,
+        ) ??
+        path;
+      const identityDescriptor = workspaceIdentityForPaths(
+        workspaceIdentityByRootRef.current,
+        [tabPath, path],
+      );
+      const closeKeys = workspaceCloseKeys(tabPath, identityDescriptor);
+      const inFlight = closeKeys
+        .map((key) => workspaceCloseInFlightRef.current.get(key))
+        .find((operation) => operation !== undefined);
+      if (inFlight) {
+        return inFlight;
+      }
+
+      const operation = closeWorkspaceTabOperation(tabPath).finally(() => {
+        for (const key of closeKeys) {
+          if (workspaceCloseInFlightRef.current.get(key) !== operation) {
+            continue;
+          }
+
+          workspaceCloseInFlightRef.current.delete(key);
+        }
+      });
+      for (const key of closeKeys) {
+        workspaceCloseInFlightRef.current.set(key, operation);
+      }
+      return operation;
+    },
+    [
+      appSettingsRef,
+      closeWorkspaceTabOperation,
+      workspaceIdentityByRootRef,
     ],
   );
 
@@ -547,7 +802,185 @@ export function useWorkbenchCloseLifecycle(
 function cachedWorkspaceHasDirtyDocuments(
   cached: CachedWorkspaceDirtyState,
 ): boolean {
-  return Object.values(cached.editorSurface.documents).some(isDirty);
+  return Object.values(cached.editorSurface.documents).some(
+    (document) => !document.readOnly && isDirty(document),
+  );
+}
+
+function stopRuntimeForOwnedClose(
+  stopProjectRuntimes: WorkbenchCloseLifecycleDependencies["stopProjectRuntimes"],
+  rootPath: string,
+  ownership: WorkspaceCloseOwnership,
+): Promise<void> {
+  if (!ownership.isCurrent()) {
+    return Promise.resolve();
+  }
+
+  if (ownership === alwaysCurrentWorkspaceCloseOwnership) {
+    return stopProjectRuntimes(rootPath);
+  }
+
+  return stopProjectRuntimes(rootPath, ownership);
+}
+
+function workspaceIdentityForPaths(
+  identities: Record<string, WorkspaceIdentityDescriptor>,
+  paths: string[],
+): WorkspaceIdentityDescriptor | null {
+  for (const path of paths) {
+    const exactIdentity = identities[path];
+    if (exactIdentity) {
+      return exactIdentity;
+    }
+  }
+
+  return (
+    Object.values(identities).find((identity) =>
+      paths.some(
+        (path) =>
+          workspaceRootKeysEqual(path, identity.selectedPath) ||
+          workspaceRootKeysEqual(path, identity.canonicalRoot),
+      ),
+    ) ?? null
+  );
+}
+
+function workspaceIdentityMatchesActiveRoot(
+  cachedIdentity: WorkspaceIdentityDescriptor | null,
+  activeIdentity: WorkspaceIdentityDescriptor | null,
+  activeRoot: string | null,
+): boolean {
+  if (!cachedIdentity) {
+    return false;
+  }
+
+  if (
+    activeIdentity &&
+    cachedIdentity.workspaceId === activeIdentity.workspaceId
+  ) {
+    return true;
+  }
+
+  return (
+    workspaceRootKeysEqual(cachedIdentity.selectedPath, activeRoot) ||
+    workspaceRootKeysEqual(cachedIdentity.canonicalRoot, activeRoot)
+  );
+}
+
+function workspaceTabPathForIdentity(
+  tabs: string[],
+  path: string,
+  identities: Record<string, WorkspaceIdentityDescriptor>,
+): string | null {
+  const exactTabPath = workspaceTabPathForPath(tabs, path);
+  if (exactTabPath) {
+    return exactTabPath;
+  }
+
+  const requestedIdentity = workspaceIdentityForPaths(identities, [path]);
+  if (!requestedIdentity) {
+    return null;
+  }
+
+  return (
+    tabs.find((tabPath) => {
+      const tabIdentity = workspaceIdentityForPaths(identities, [tabPath]);
+      return tabIdentity?.workspaceId === requestedIdentity.workspaceId;
+    }) ?? null
+  );
+}
+
+function workspaceResourceRoots(
+  tabPath: string,
+  targetRootPath: string,
+  identity: WorkspaceIdentityDescriptor | null,
+): string[] {
+  const roots = [tabPath, targetRootPath];
+  if (identity) {
+    roots.push(identity.selectedPath, identity.canonicalRoot);
+  }
+
+  return [...new Set(roots)];
+}
+
+function workspaceCloseKeys(
+  tabPath: string,
+  identity: WorkspaceIdentityDescriptor | null,
+): string[] {
+  const keys = [`root:${normalizedWorkspaceRootKey(tabPath)}`];
+  if (!identity) {
+    return keys;
+  }
+
+  keys.push(
+    `workspace:${identity.workspaceId}`,
+    `root:${normalizedWorkspaceRootKey(identity.selectedPath)}`,
+    `root:${normalizedWorkspaceRootKey(identity.canonicalRoot)}`,
+  );
+  return [...new Set(keys)];
+}
+
+function resolveCachedWorkspaceStateFallback(
+  cache: Record<string, CachedWorkspaceDirtyState>,
+  rootPath: string,
+  identity?: WorkspaceIdentityDescriptor | null,
+): CachedWorkspaceDirtyState | null {
+  if (!identity) {
+    return cache[rootPath] ?? null;
+  }
+
+  const canonicalKey = canonicalWorkspaceRootKey(identity);
+  return (
+    cache[canonicalKey] ??
+    cache[rootPath] ??
+    cache[identity.selectedPath] ??
+    Object.values(cache).find(
+      (cached) =>
+        cached.workspaceIdentityDescriptor?.workspaceId ===
+        identity.workspaceId,
+    ) ??
+    null
+  );
+}
+
+function forgetCachedWorkspaceStateFallback(
+  cache: Record<string, CachedWorkspaceDirtyState>,
+  rootPath: string,
+  identity?: WorkspaceIdentityDescriptor | null,
+): void {
+  if (!identity) {
+    delete cache[rootPath];
+    return;
+  }
+
+  const canonicalKey = canonicalWorkspaceRootKey(identity);
+  for (const [key, cached] of Object.entries(cache)) {
+    if (
+      key !== rootPath &&
+      key !== identity.selectedPath &&
+      key !== canonicalKey &&
+      cached.workspaceIdentityDescriptor?.workspaceId !== identity.workspaceId
+    ) {
+      continue;
+    }
+
+    delete cache[key];
+  }
+}
+
+function canonicalWorkspaceRootKey(
+  identity: WorkspaceIdentityDescriptor,
+): string {
+  const root = createWorkspaceRoot(
+    identity.workspaceId,
+    identity.canonicalRoot,
+    identity.policy,
+  );
+  if (!root.ok) {
+    return identity.canonicalRoot;
+  }
+
+  return root.value.nativePath;
 }
 
 function workspaceTabsWithoutPath(tabs: string[], path: string): string[] {

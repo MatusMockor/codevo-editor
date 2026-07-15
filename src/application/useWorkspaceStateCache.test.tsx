@@ -21,11 +21,7 @@ import {
 } from "../domain/navigation";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
-import type {
-  EditorDocument,
-  FileEntry,
-  ImageTab,
-} from "../domain/workspace";
+import type { EditorDocument, FileEntry, ImageTab } from "../domain/workspace";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import type { SidebarView } from "./useWorkbenchController";
 import {
@@ -41,6 +37,21 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT_A = "/workspace-a";
 const ROOT_B = "/workspace-b";
+const CANONICAL_ROOT_A = "/real/workspace-a";
+
+function workspaceIdentity(
+  selectedPath = ROOT_A,
+  canonicalRoot = CANONICAL_ROOT_A,
+): WorkspaceIdentityDescriptor {
+  return {
+    workspaceId: "workspace-a-id",
+    selectedPath,
+    canonicalRoot,
+    caseSensitive: true,
+    unicodeNormalizationPolicy: "preserved",
+    policy: { caseSensitive: true, unicodeNormalization: "none" },
+  };
+}
 
 function editorDocument(path: string): EditorDocument {
   return {
@@ -55,7 +66,9 @@ function editorDocument(path: string): EditorDocument {
 const DOC_A = editorDocument(`${ROOT_A}/src/a.ts`);
 const DOC_A_SECOND = editorDocument(`${ROOT_A}/src/second.ts`);
 const DOC_B = editorDocument(`${ROOT_B}/src/b.ts`);
-const GIT_DIFF_DOC = editorDocument(`mockor-git-diff:worktree:${ROOT_A}/src/a.ts`);
+const GIT_DIFF_DOC = editorDocument(
+  `mockor-git-diff:worktree:${ROOT_A}/src/a.ts`,
+);
 
 const DIRTY_DOC_A: EditorDocument = {
   ...DOC_A,
@@ -112,6 +125,9 @@ interface HarnessSetters {
   setExpandedDirectories: (directories: Set<string>) => void;
   setIndexProgress: (progress: IndexProgressState) => void;
   setSidebarView: (view: SidebarView) => void;
+  setWorkspaceIdentityDescriptor: (
+    descriptor: WorkspaceIdentityDescriptor | null,
+  ) => void;
 }
 
 function renderWorkspaceStateCacheHarness() {
@@ -138,9 +154,8 @@ function renderWorkspaceStateCacheHarness() {
     );
     const [manuallyCollapsedDirectories, setManuallyCollapsedDirectories] =
       useState<Set<string>>(new Set());
-    const [indexProgress, setIndexProgress] = useState<IndexProgressState>(
-      initialIndexProgress,
-    );
+    const [indexProgress, setIndexProgress] =
+      useState<IndexProgressState>(initialIndexProgress);
     const [indexHealthLogs, setIndexHealthLogs] = useState<
       IndexHealthLogEntry[]
     >([]);
@@ -200,6 +215,7 @@ function renderWorkspaceStateCacheHarness() {
       setExpandedDirectories,
       setIndexProgress,
       setSidebarView,
+      setWorkspaceIdentityDescriptor,
     };
     captured.state = {
       bookmarks,
@@ -245,7 +261,9 @@ function renderWorkspaceStateCacheHarness() {
   };
 }
 
-function seedWorkspaceA(harness: ReturnType<typeof renderWorkspaceStateCacheHarness>) {
+function seedWorkspaceA(
+  harness: ReturnType<typeof renderWorkspaceStateCacheHarness>,
+) {
   act(() => {
     harness.session().setDocuments({ [DOC_A.path]: DOC_A });
     harness.session().setImageTabs({ [IMAGE_TAB_A.path]: IMAGE_TAB_A });
@@ -268,7 +286,9 @@ function seedWorkspaceA(harness: ReturnType<typeof renderWorkspaceStateCacheHarn
   });
 }
 
-function seedWorkspaceB(harness: ReturnType<typeof renderWorkspaceStateCacheHarness>) {
+function seedWorkspaceB(
+  harness: ReturnType<typeof renderWorkspaceStateCacheHarness>,
+) {
   act(() => {
     harness.session().setDocuments({ [DOC_B.path]: DOC_B });
     harness.session().setImageTabs({});
@@ -292,6 +312,167 @@ function seedWorkspaceB(harness: ReturnType<typeof renderWorkspaceStateCacheHarn
 }
 
 describe("useWorkspaceStateCache", () => {
+  it("captures identity-backed state under its normalized canonical root", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const identity = workspaceIdentity(
+      ROOT_A,
+      `${CANONICAL_ROOT_A}/packages/..`,
+    );
+
+    act(() => {
+      harness.setters().setWorkspaceIdentityDescriptor(identity);
+    });
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+
+    const cache = harness.api().workspaceStateCacheRef.current;
+    expect(Object.keys(cache)).toEqual([CANONICAL_ROOT_A]);
+    expect(cache[CANONICAL_ROOT_A].workspaceIdentityDescriptor).toBe(identity);
+    harness.unmount();
+  });
+
+  it("uses the selected runtime root when snapshotting canonical-owned state", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const identity = workspaceIdentity();
+
+    act(() => {
+      harness.setters().setWorkspaceIdentityDescriptor(identity);
+    });
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+
+    const cached =
+      harness.api().workspaceStateCacheRef.current[CANONICAL_ROOT_A];
+    expect(Object.keys(cached.editorSurface.documents)).toEqual([DOC_A.path]);
+    expect(cached.editorSurface.imageTabs).toEqual({
+      [IMAGE_TAB_A.path]: IMAGE_TAB_A,
+    });
+    harness.unmount();
+  });
+
+  it("migrates a legacy selected-root alias to canonical ownership", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const identity = workspaceIdentity();
+
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    const legacyState = harness.api().workspaceStateCacheRef.current[ROOT_A];
+    legacyState.workspaceIdentityDescriptor = identity;
+
+    const resolved = harness
+      .api()
+      .resolveCachedWorkspaceState(ROOT_A, identity);
+
+    expect(resolved).toBe(legacyState);
+    expect(harness.api().workspaceStateCacheRef.current).toEqual({
+      [CANONICAL_ROOT_A]: legacyState,
+    });
+    harness.unmount();
+  });
+
+  it("keeps the canonical object unchanged when an alias collides", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const identity = workspaceIdentity();
+
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    const captured = harness.api().workspaceStateCacheRef.current[ROOT_A];
+    const canonicalState = {
+      ...captured,
+      workspaceIdentityDescriptor: identity,
+    };
+    const aliasState = {
+      ...captured,
+      bookmarks: [],
+      workspaceIdentityDescriptor: identity,
+    };
+    harness.api().workspaceStateCacheRef.current = {
+      [CANONICAL_ROOT_A]: canonicalState,
+      [ROOT_A]: aliasState,
+    };
+
+    const winner = harness.api().coalesceWorkspaceStateCache(identity, ROOT_A);
+
+    expect(winner).toBe(canonicalState);
+    expect(harness.api().workspaceStateCacheRef.current).toEqual({
+      [CANONICAL_ROOT_A]: canonicalState,
+    });
+    harness.unmount();
+  });
+
+  it("collapses every alias describing the same canonical root", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const identity = workspaceIdentity();
+    const secondIdentity = workspaceIdentity("/second-link/workspace-a");
+
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    const captured = harness.api().workspaceStateCacheRef.current[ROOT_A];
+    const firstAlias = { ...captured, workspaceIdentityDescriptor: identity };
+    const secondAlias = {
+      ...captured,
+      workspaceIdentityDescriptor: secondIdentity,
+    };
+    harness.api().workspaceStateCacheRef.current = {
+      [ROOT_A]: firstAlias,
+      [secondIdentity.selectedPath]: secondAlias,
+    };
+
+    const winner = harness.api().coalesceWorkspaceStateCache(identity, ROOT_A);
+
+    expect(winner).toBe(firstAlias);
+    expect(harness.api().workspaceStateCacheRef.current).toEqual({
+      [CANONICAL_ROOT_A]: firstAlias,
+    });
+    harness.unmount();
+  });
+
+  it("forgets canonical state and all aliases for an identity", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const identity = workspaceIdentity();
+    const secondIdentity = workspaceIdentity("/second-link/workspace-a");
+
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    const captured = harness.api().workspaceStateCacheRef.current[ROOT_A];
+    const ownedState = { ...captured, workspaceIdentityDescriptor: identity };
+    const secondAlias = {
+      ...captured,
+      workspaceIdentityDescriptor: secondIdentity,
+    };
+    harness.api().workspaceStateCacheRef.current = {
+      [CANONICAL_ROOT_A]: ownedState,
+      [ROOT_A]: ownedState,
+      [secondIdentity.selectedPath]: secondAlias,
+      [ROOT_B]: captured,
+    };
+
+    harness.api().forgetCachedWorkspaceState(ROOT_A, identity);
+
+    expect(harness.api().workspaceStateCacheRef.current).toEqual({
+      [ROOT_B]: captured,
+    });
+    harness.unmount();
+  });
+
+  it("preserves exact-key legacy behavior without an identity", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    const cached = harness.api().workspaceStateCacheRef.current[ROOT_A];
+
+    expect(harness.api().resolveCachedWorkspaceState(ROOT_A)).toBe(cached);
+    expect(harness.api().resolveCachedWorkspaceState(`${ROOT_A}/`)).toBeNull();
+
+    harness.api().forgetCachedWorkspaceState(`${ROOT_A}/`);
+    expect(harness.api().workspaceStateCacheRef.current[ROOT_A]).toBe(cached);
+
+    harness.api().forgetCachedWorkspaceState(ROOT_A);
+    expect(harness.api().workspaceStateCacheRef.current).toEqual({});
+    harness.unmount();
+  });
+
   it("round-trips cached workspace state per root without leaking between roots", () => {
     const harness = renderWorkspaceStateCacheHarness();
 

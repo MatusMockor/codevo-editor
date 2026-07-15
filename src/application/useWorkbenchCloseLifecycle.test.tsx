@@ -40,6 +40,33 @@ vi.mock("@tauri-apps/api/event", () => ({
 const WORKSPACE_A = "/workspace-a";
 const WORKSPACE_B = "/workspace-b";
 
+function workspaceIdentity(
+  selectedPath = WORKSPACE_A,
+  canonicalRoot = "/real/workspace-a",
+) {
+  return {
+    workspaceId: "ws-a",
+    selectedPath,
+    canonicalRoot,
+    caseSensitive: true,
+    unicodeNormalizationPolicy: "preserved" as const,
+    policy: {
+      caseSensitive: true as const,
+      unicodeNormalization: "none" as const,
+    },
+  };
+}
+
+function mutableCloseOwnership() {
+  let current = true;
+  return {
+    invalidate: () => {
+      current = false;
+    },
+    ownership: { isCurrent: () => current },
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   tauriMocks.invoke.mockReset();
@@ -288,6 +315,405 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(unregisterWorkspace).toHaveBeenCalledWith("ws-a");
   });
 
+  it("prompts from canonical dirty state when closing a selected alias", async () => {
+    const descriptor = workspaceIdentity();
+    const canonicalState = {
+      editorSurface: {
+        documents: {
+          [`${descriptor.canonicalRoot}/Dirty.php`]: dirtyDocument(
+            `${descriptor.canonicalRoot}/Dirty.php`,
+          ),
+        },
+      },
+      workspaceIdentityDescriptor: descriptor,
+    };
+    const cache = { [descriptor.canonicalRoot]: canonicalState };
+    const resolveCachedWorkspaceState = vi.fn(() => canonicalState) as unknown as
+      NonNullable<
+        WorkbenchCloseLifecycleDependencies["resolveCachedWorkspaceState"]
+      >;
+    const harness = renderLifecycle({
+      resolveCachedWorkspaceState,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+      workspaceStateCacheRef: { current: cache },
+    });
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    expect(cache[descriptor.canonicalRoot]).toBe(canonicalState);
+    expect(resolveCachedWorkspaceState).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+      descriptor,
+    );
+    harness.unmount();
+  });
+
+  it("atomically forgets identity aliases and coalesces duplicate close calls", async () => {
+    const persistence = createDeferred<void>();
+    const descriptor = workspaceIdentity();
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const persistAppSettings = vi.fn(async () => persistence.promise);
+    const describedAlias = "/described-workspace-a";
+    const cachedState = {
+      editorSurface: { documents: {} },
+      workspaceIdentityDescriptor: descriptor,
+    };
+    const cache = {
+      [descriptor.selectedPath]: cachedState,
+      [descriptor.canonicalRoot]: cachedState,
+      [describedAlias]: cachedState,
+    };
+    const identities = {
+      [descriptor.selectedPath]: descriptor,
+      [descriptor.canonicalRoot]: descriptor,
+      [describedAlias]: descriptor,
+    };
+    const forgetCachedWorkspaceState = vi.fn(
+      (_rootPath: string, identity = descriptor) => {
+        for (const [key, cached] of Object.entries(cache)) {
+          if (cached.workspaceIdentityDescriptor !== identity) {
+            continue;
+          }
+
+          delete cache[key as keyof typeof cache];
+        }
+      },
+    );
+    const resolveCachedWorkspaceState = vi.fn(
+      () => cache[descriptor.canonicalRoot],
+    ) as unknown as NonNullable<
+      WorkbenchCloseLifecycleDependencies["resolveCachedWorkspaceState"]
+    >;
+    const harness = renderLifecycle({
+      forgetCachedWorkspaceState,
+      persistAppSettings,
+      resolveCachedWorkspaceState,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: { current: identities },
+      workspaceStateCacheRef: { current: cache },
+    });
+
+    let selectedClose!: Promise<void>;
+    let canonicalClose!: Promise<void>;
+    await act(async () => {
+      selectedClose = harness
+        .lifecycle()
+        .closeWorkspaceTab(descriptor.selectedPath);
+      canonicalClose = harness
+        .lifecycle()
+        .closeWorkspaceTab(descriptor.canonicalRoot);
+      await Promise.resolve();
+    });
+
+    expect(persistAppSettings).toHaveBeenCalledOnce();
+    expect(unregisterWorkspace).not.toHaveBeenCalled();
+    expect(Object.keys(cache)).toHaveLength(3);
+
+    persistence.resolve();
+    await act(async () => {
+      await Promise.all([selectedClose, canonicalClose]);
+    });
+
+    expect(cache).toEqual({});
+    expect(identities).toEqual({});
+    expect(unregisterWorkspace).toHaveBeenCalledOnce();
+    expect(unregisterWorkspace).toHaveBeenCalledWith(descriptor.workspaceId);
+    expect(forgetCachedWorkspaceState).toHaveBeenCalledOnce();
+    expect(forgetCachedWorkspaceState).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+      descriptor,
+    );
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledOnce();
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+    );
+    harness.unmount();
+  });
+
+  it("coalesces a canonical-first close into the selected workspace tab close", async () => {
+    const persistence = createDeferred<void>();
+    const descriptor = workspaceIdentity();
+    const persistAppSettings = vi.fn(async () => persistence.promise);
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      persistAppSettings,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+
+    let canonicalClose!: Promise<void>;
+    let selectedClose!: Promise<void>;
+    await act(async () => {
+      canonicalClose = harness
+        .lifecycle()
+        .closeWorkspaceTab(descriptor.canonicalRoot);
+      selectedClose = harness
+        .lifecycle()
+        .closeWorkspaceTab(descriptor.selectedPath);
+      await Promise.resolve();
+    });
+
+    expect(persistAppSettings).toHaveBeenCalledOnce();
+    expect(persistAppSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceTabs: [WORKSPACE_B] }),
+    );
+
+    persistence.resolve();
+    await act(async () => {
+      await Promise.all([canonicalClose, selectedClose]);
+    });
+
+    expect(unregisterWorkspace).toHaveBeenCalledOnce();
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledOnce();
+    expect(harness.stopProjectRuntimes).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+    );
+    harness.unmount();
+  });
+
+  it("preserves a same-id alias reopened during close settings persistence", async () => {
+    const settings = createDeferred<void>();
+    const oldDescriptor = workspaceIdentity();
+    const reopenedDescriptor = workspaceIdentity(
+      "/reopened/workspace-a",
+      oldDescriptor.canonicalRoot,
+    );
+    const closeOwnership = mutableCloseOwnership();
+    const commitWorkspaceClose = vi.fn(() => closeOwnership.ownership);
+    const forgetCachedWorkspaceState = vi.fn();
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const stopProjectRuntimes = vi.fn(async () => undefined);
+    const identities = {
+      [oldDescriptor.selectedPath]: oldDescriptor,
+      [oldDescriptor.canonicalRoot]: oldDescriptor,
+    };
+    const cache = {
+      [oldDescriptor.canonicalRoot]: {
+        editorSurface: { documents: {} },
+        workspaceIdentityDescriptor: oldDescriptor,
+      },
+    };
+    const harness = renderLifecycle({
+      commitWorkspaceClose,
+      forgetCachedWorkspaceState,
+      persistAppSettings: vi.fn(() => settings.promise),
+      stopProjectRuntimes,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: { current: identities },
+      workspaceStateCacheRef: { current: cache },
+    });
+
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = harness.lifecycle().closeWorkspaceTab(oldDescriptor.selectedPath);
+      await Promise.resolve();
+    });
+
+    closeOwnership.invalidate();
+    delete identities[oldDescriptor.selectedPath];
+    identities[reopenedDescriptor.selectedPath] = reopenedDescriptor;
+    identities[oldDescriptor.canonicalRoot] = reopenedDescriptor;
+    cache[oldDescriptor.canonicalRoot] = {
+      editorSurface: { documents: {} },
+      workspaceIdentityDescriptor: reopenedDescriptor,
+    };
+    harness.appSettingsRef.current.workspaceTabs = [
+      reopenedDescriptor.selectedPath,
+      WORKSPACE_B,
+    ];
+
+    settings.resolve();
+    await act(async () => closing);
+
+    expect(forgetCachedWorkspaceState).not.toHaveBeenCalled();
+    expect(unregisterWorkspace).not.toHaveBeenCalled();
+    expect(stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(identities[reopenedDescriptor.selectedPath]).toBe(
+      reopenedDescriptor,
+    );
+    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(
+      reopenedDescriptor,
+    );
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(
+      reopenedDescriptor.selectedPath,
+    );
+    harness.unmount();
+  });
+
+  it("preserves a reused native identity reopened while unregister waits", async () => {
+    const unregister = createDeferred<void>();
+    const oldDescriptor = workspaceIdentity();
+    const reopenedDescriptor = workspaceIdentity(
+      "/reopened-during-unregister",
+      oldDescriptor.canonicalRoot,
+    );
+    const closeOwnership = mutableCloseOwnership();
+    const forgetCachedWorkspaceState = vi.fn();
+    const stopProjectRuntimes = vi.fn(async () => undefined);
+    const unregisterWorkspace = vi.fn(() => unregister.promise);
+    const identities = {
+      [oldDescriptor.selectedPath]: oldDescriptor,
+      [oldDescriptor.canonicalRoot]: oldDescriptor,
+    };
+    const cache = {
+      [oldDescriptor.canonicalRoot]: {
+        editorSurface: { documents: {} },
+        workspaceIdentityDescriptor: oldDescriptor,
+      },
+    };
+    const harness = renderLifecycle({
+      commitWorkspaceClose: vi.fn(() => closeOwnership.ownership),
+      forgetCachedWorkspaceState,
+      stopProjectRuntimes,
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: { current: identities },
+      workspaceStateCacheRef: { current: cache },
+    });
+
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = harness.lifecycle().closeWorkspaceTab(oldDescriptor.selectedPath);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(unregisterWorkspace).toHaveBeenCalledOnce();
+
+    closeOwnership.invalidate();
+    delete identities[oldDescriptor.selectedPath];
+    identities[reopenedDescriptor.selectedPath] = reopenedDescriptor;
+    identities[oldDescriptor.canonicalRoot] = reopenedDescriptor;
+    cache[oldDescriptor.canonicalRoot] = {
+      editorSurface: { documents: {} },
+      workspaceIdentityDescriptor: reopenedDescriptor,
+    };
+    harness.appSettingsRef.current.workspaceTabs = [
+      reopenedDescriptor.selectedPath,
+      WORKSPACE_B,
+    ];
+
+    unregister.resolve();
+    await act(async () => closing);
+
+    expect(forgetCachedWorkspaceState).not.toHaveBeenCalled();
+    expect(stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(unregisterWorkspace).toHaveBeenCalledOnce();
+    expect(identities[reopenedDescriptor.selectedPath]).toBe(
+      reopenedDescriptor,
+    );
+    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(
+      reopenedDescriptor,
+    );
+    harness.unmount();
+  });
+
+  it("preserves reopened resources when the old runtime stop completes late", async () => {
+    const runtimeStop = createDeferred<void>();
+    const oldDescriptor = workspaceIdentity();
+    const reopenedDescriptor = workspaceIdentity(
+      "/reopened-during-runtime-stop",
+      oldDescriptor.canonicalRoot,
+    );
+    const closeOwnership = mutableCloseOwnership();
+    const forgetCachedWorkspaceState = vi.fn();
+    const forgetLanguageServerRuntimeStatuses = vi.fn();
+    const forgetLatencyTrackerForRoot = vi.fn();
+    const stopProjectRuntimes = vi.fn(() => runtimeStop.promise);
+    const identities = {
+      [oldDescriptor.selectedPath]: oldDescriptor,
+      [oldDescriptor.canonicalRoot]: oldDescriptor,
+    };
+    const cache = {
+      [oldDescriptor.canonicalRoot]: {
+        editorSurface: { documents: {} },
+        workspaceIdentityDescriptor: oldDescriptor,
+      },
+    };
+    const harness = renderLifecycle({
+      commitWorkspaceClose: vi.fn(() => closeOwnership.ownership),
+      forgetCachedWorkspaceState,
+      forgetLanguageServerRuntimeStatuses,
+      forgetLatencyTrackerForRoot,
+      stopProjectRuntimes,
+      workspaceIdentityByRootRef: { current: identities },
+      workspaceStateCacheRef: { current: cache },
+    });
+
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = harness.lifecycle().closeWorkspaceTab(oldDescriptor.selectedPath);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(stopProjectRuntimes).toHaveBeenCalledOnce();
+
+    closeOwnership.invalidate();
+    delete identities[oldDescriptor.selectedPath];
+    identities[reopenedDescriptor.selectedPath] = reopenedDescriptor;
+    identities[oldDescriptor.canonicalRoot] = reopenedDescriptor;
+    cache[oldDescriptor.canonicalRoot] = {
+      editorSurface: { documents: {} },
+      workspaceIdentityDescriptor: reopenedDescriptor,
+    };
+    harness.appSettingsRef.current.workspaceTabs = [
+      reopenedDescriptor.selectedPath,
+      WORKSPACE_B,
+    ];
+
+    runtimeStop.resolve();
+    await act(async () => closing);
+
+    expect(forgetCachedWorkspaceState).not.toHaveBeenCalled();
+    expect(forgetLanguageServerRuntimeStatuses).not.toHaveBeenCalled();
+    expect(forgetLatencyTrackerForRoot).not.toHaveBeenCalled();
+    expect(identities[reopenedDescriptor.selectedPath]).toBe(
+      reopenedDescriptor,
+    );
+    expect(cache[oldDescriptor.canonicalRoot].workspaceIdentityDescriptor).toBe(
+      reopenedDescriptor,
+    );
+    harness.unmount();
+  });
+
+  it("does not treat a read-only Git diff document as dirty cached work", async () => {
+    const harness = renderLifecycle();
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: {
+        documents: {
+          "git-diff://workspace-a/Dirty.php": {
+            ...dirtyDocument("git-diff://workspace-a/Dirty.php"),
+            readOnly: true,
+          },
+        },
+      },
+    };
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(harness.prompter.confirm).not.toHaveBeenCalled();
+    expect(harness.persistAppSettings).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
   it("keeps descriptor and resources alive when settings persistence fails", async () => {
     const unregisterWorkspace = vi.fn(async () => undefined);
     const clearExternalFileConflictsForRoot = vi.fn();
@@ -506,7 +932,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(harness.prompter.confirm).toHaveBeenCalledWith(
       "Close workspace and discard unsaved changes?",
     );
-    expect(commitWorkspaceClose).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(commitWorkspaceClose).toHaveBeenCalledWith(WORKSPACE_A, null);
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     expect(harness.persistAppSettings).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -943,6 +1369,47 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(harness.prompter.confirm).not.toHaveBeenCalled();
     expect(workspaceHasExternalFileConflicts).toHaveBeenCalledTimes(1);
+    expect(nativeShutdownInvocationCount()).toBe(1);
+    harness.unmount();
+  });
+
+  it("excludes an active selected alias canonical cache from shutdown dirtiness", async () => {
+    const descriptor = workspaceIdentity(
+      WORKSPACE_B,
+      "/real/workspace-b",
+    );
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const canonicalState = {
+      editorSurface: {
+        documents: {
+          [`${descriptor.canonicalRoot}/Dirty.php`]: dirtyDocument(
+            `${descriptor.canonicalRoot}/Dirty.php`,
+          ),
+        },
+      },
+      workspaceIdentityDescriptor: descriptor,
+    };
+    const harness = renderLifecycle({
+      persistWorkspaceSession,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+      workspaceStateCacheRef: {
+        current: { [descriptor.canonicalRoot]: canonicalState },
+      },
+    });
+
+    await act(async () => {
+      requestNativeClose();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.prompter.confirm).not.toHaveBeenCalled();
+    expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
     expect(nativeShutdownInvocationCount()).toBe(1);
     harness.unmount();
   });

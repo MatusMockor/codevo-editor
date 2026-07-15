@@ -5376,8 +5376,8 @@ describe("useWorkbenchController preview tabs", () => {
       activeValidation: false,
       backgroundRoot: "/workspace-b/",
       backgroundValidation: true,
-      expectedCount: 1,
-      title: "caches JavaScript and TypeScript diagnostics using an aliased background root",
+      expectedCount: 0,
+      title: "does not preload settings for an unadmitted background alias",
     },
     {
       activeValidation: true,
@@ -70430,6 +70430,1056 @@ class PostRepository
     expect(getWorkbench().workspaceIdentityStatus).toBe("legacyCompatibility");
   });
 
+  it("admits a direct alias before canonical settings and keeps selected runtime ownership", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-alias", "/selected/workspace"),
+      canonicalRoot: "/canonical/workspace",
+    };
+    const order: string[] = [];
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn(async () => {
+        order.push("settings");
+        return defaultWorkspaceSettings();
+      }),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const openPath = vi.fn(async () => {
+      order.push("admission");
+      return descriptor;
+    });
+    const { dependencies, getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath,
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+    });
+
+    expect(order.slice(0, 2)).toEqual(["admission", "settings"]);
+    expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith({
+      canonicalKey: descriptor.canonicalRoot,
+      legacyRawKeys: [descriptor.canonicalRoot, descriptor.selectedPath],
+    });
+    expect(getWorkbench().workspaceRoot).toBe(descriptor.selectedPath);
+    expect(getWorkbench().workspaceTabs).toEqual([descriptor.selectedPath]);
+    expect(dependencies.workspaceTrustGateway.getTrust).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+    );
+    expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+      "basic",
+    );
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        getWorkbench().workspaceTrust?.trusted ?? null,
+      );
+    });
+    expect(settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
+      {
+        canonicalKey: descriptor.canonicalRoot,
+        legacyRawKeys: [descriptor.canonicalRoot, descriptor.selectedPath],
+      },
+      expect.any(Object),
+    );
+  });
+
+  it("admits a restored alias through openPath before opening it", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-restored", "/selected/restored"),
+      canonicalRoot: "/canonical/restored",
+    };
+    const openPath = vi.fn(async () => descriptor);
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => ({
+        ...defaultAppSettings(),
+        recentWorkspacePath: descriptor.selectedPath,
+        workspaceTabs: [descriptor.selectedPath],
+      })),
+      loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath,
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await flushAsyncTurns(24);
+
+    expect(openPath).toHaveBeenCalledExactlyOnceWith(descriptor.selectedPath);
+    expect(getWorkbench().workspaceRoot).toBe(descriptor.selectedPath);
+    expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith({
+      canonicalKey: descriptor.canonicalRoot,
+      legacyRawKeys: [descriptor.canonicalRoot, descriptor.selectedPath],
+    });
+  });
+
+  it("unregisters a superseded direct admission and never opens it later", async () => {
+    const descriptorA = trustedDescriptor("ws-direct-a", "/workspace-a");
+    const descriptorB = trustedDescriptor("ws-direct-b", "/workspace-b");
+    const admissionA = createDeferred<typeof descriptorA>();
+    const unregister = vi.fn(async () => undefined);
+    const openPath = vi.fn((path: string) =>
+      path === descriptorA.selectedPath
+        ? admissionA.promise
+        : Promise.resolve(descriptorB),
+    );
+    const { getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath,
+        unregister,
+      },
+    });
+
+    let firstOpen!: Promise<boolean>;
+    await act(async () => {
+      firstOpen = getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(openPath).toHaveBeenCalledWith(descriptorA.selectedPath);
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
+    });
+    await act(async () => {
+      admissionA.resolve(descriptorA);
+      await firstOpen;
+    });
+
+    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptorA.workspaceId);
+    expect(getWorkbench().workspaceRoot).toBe(descriptorB.selectedPath);
+    expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
+  });
+
+  it("does not unregister an active native workspace when a same-id alias loses", async () => {
+    const canonicalRoot = "/real/shared";
+    const activeDescriptor = {
+      ...trustedDescriptor("ws-shared", "/link/active"),
+      canonicalRoot,
+    };
+    const staleDescriptor = {
+      ...trustedDescriptor("ws-shared", "/link/stale"),
+      canonicalRoot,
+    };
+    const staleSettings = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
+    const unregister = vi.fn(async () => undefined);
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn((identity) => {
+        const legacyRawKeys =
+          typeof identity === "string" ? [identity] : identity.legacyRawKeys ?? [];
+        return legacyRawKeys.includes(staleDescriptor.selectedPath)
+          ? staleSettings.promise
+          : Promise.resolve(defaultWorkspaceSettings());
+      }),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async (path) =>
+          path === activeDescriptor.selectedPath
+            ? activeDescriptor
+            : staleDescriptor,
+        ),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(activeDescriptor.selectedPath);
+    });
+    let staleOpen!: Promise<boolean>;
+    await act(async () => {
+      staleOpen = getWorkbench().openWorkspaceRoot(staleDescriptor.selectedPath);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith({
+        canonicalKey: canonicalRoot,
+        legacyRawKeys: [canonicalRoot, staleDescriptor.selectedPath],
+      });
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(activeDescriptor.selectedPath);
+      staleSettings.resolve(defaultWorkspaceSettings());
+      await staleOpen;
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe(activeDescriptor.selectedPath);
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(activeDescriptor);
+    expect(unregister).not.toHaveBeenCalled();
+  });
+
+  it("defers loser cleanup while a same-id winner is still in openPath", async () => {
+    const canonicalRoot = "/real/pending-winner";
+    const descriptorA = {
+      ...trustedDescriptor("ws-pending-winner", "/link/pending-a"),
+      canonicalRoot,
+    };
+    const descriptorB = {
+      ...trustedDescriptor("ws-pending-winner", "/link/pending-b"),
+      canonicalRoot,
+    };
+    const settingsA = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
+    const admissionB = createDeferred<typeof descriptorB>();
+    const unregister = vi.fn(async () => undefined);
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn((identity) => {
+        const legacyRawKeys =
+          typeof identity === "string" ? [identity] : identity.legacyRawKeys ?? [];
+        return legacyRawKeys.includes(descriptorA.selectedPath)
+          ? settingsA.promise
+          : Promise.resolve(defaultWorkspaceSettings());
+      }),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn((path) =>
+          path === descriptorA.selectedPath
+            ? Promise.resolve(descriptorA)
+            : admissionB.promise,
+        ),
+        unregister,
+      },
+    });
+
+    let openA!: Promise<boolean>;
+    await act(async () => {
+      openA = getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledOnce();
+    });
+    let openB!: Promise<boolean>;
+    await act(async () => {
+      openB = getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      settingsA.resolve(defaultWorkspaceSettings());
+      await openA;
+    });
+
+    expect(unregister).not.toHaveBeenCalled();
+
+    await act(async () => {
+      admissionB.resolve(descriptorB);
+      await openB;
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe(descriptorB.selectedPath);
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
+    expect(unregister).not.toHaveBeenCalled();
+  });
+
+  it("lets a concurrent same-id alias win with its own migrated settings", async () => {
+    const canonicalRoot = "/real/concurrent";
+    const descriptorA = {
+      ...trustedDescriptor("ws-concurrent", "/link/a"),
+      canonicalRoot,
+    };
+    const descriptorB = {
+      ...trustedDescriptor("ws-concurrent", "/link/b"),
+      canonicalRoot,
+    };
+    const settingsA = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
+    const settingsOnlyUnderB = {
+      ...defaultWorkspaceSettings(),
+      statusBar: {
+        ...defaultWorkspaceSettings().statusBar,
+        message: false,
+      },
+    };
+    const unregister = vi.fn(async () => undefined);
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn((identity) => {
+        const legacyRawKeys =
+          typeof identity === "string" ? [identity] : identity.legacyRawKeys ?? [];
+        if (legacyRawKeys.includes(descriptorB.selectedPath)) {
+          return Promise.resolve(settingsOnlyUnderB);
+        }
+        return settingsA.promise;
+      }),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async (path) =>
+          path === descriptorA.selectedPath ? descriptorA : descriptorB,
+        ),
+        unregister,
+      },
+    });
+
+    let openA!: Promise<boolean>;
+    await act(async () => {
+      openA = getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith({
+        canonicalKey: canonicalRoot,
+        legacyRawKeys: [canonicalRoot, descriptorA.selectedPath],
+      });
+    });
+    let openB!: Promise<boolean>;
+    await act(async () => {
+      openB = getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      settingsA.resolve(defaultWorkspaceSettings());
+      await Promise.all([openA, openB]);
+    });
+
+    expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledWith({
+      canonicalKey: canonicalRoot,
+      legacyRawKeys: [canonicalRoot, descriptorB.selectedPath],
+    });
+    expect(getWorkbench().workspaceRoot).toBe(descriptorB.selectedPath);
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
+    expect(getWorkbench().workspaceSettings.statusBar.message).toBe(false);
+    expect(unregister).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a deferred openPath admission on unmount", async () => {
+    const descriptor = trustedDescriptor("ws-unmounted-open", "/workspace-late");
+    const admission = createDeferred<typeof descriptor>();
+    const unregister = vi.fn(async () => undefined);
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(() => admission.promise),
+        unregister,
+      },
+    });
+
+    const staleWorkbench = getWorkbench();
+    let open!: Promise<boolean>;
+    await act(async () => {
+      open = staleWorkbench.openWorkspaceRoot(descriptor.selectedPath);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    admission.resolve(descriptor);
+    await open;
+
+    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptor.workspaceId);
+    expect(settingsGateway.loadWorkspaceSettings).not.toHaveBeenCalled();
+    expect(staleWorkbench.workspaceRoot).toBeNull();
+    expect(staleWorkbench.workspaceIdentityDescriptor).toBeNull();
+  });
+
+  it("invalidates a deferred canonical settings admission on unmount", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-unmounted-settings", "/link/unmounted"),
+      canonicalRoot: "/real/unmounted",
+    };
+    const settings = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
+    const unregister = vi.fn(async () => undefined);
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn(() => settings.promise),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister,
+      },
+    });
+
+    const staleWorkbench = getWorkbench();
+    let open!: Promise<boolean>;
+    await act(async () => {
+      open = staleWorkbench.openWorkspaceRoot(descriptor.selectedPath);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.loadWorkspaceSettings).toHaveBeenCalledOnce();
+    });
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    settings.resolve(defaultWorkspaceSettings());
+    await open;
+
+    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptor.workspaceId);
+    expect(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceTrustGateway.getTrust).not.toHaveBeenCalled();
+    expect(staleWorkbench.workspaceRoot).toBeNull();
+    expect(staleWorkbench.workspaceIdentityDescriptor).toBeNull();
+  });
+
+  it("coalesces sequential same-id aliases into one selected workspace tab", async () => {
+    const canonicalRoot = "/real/sequential";
+    const descriptorA = {
+      ...trustedDescriptor("ws-sequential", "/link/sequential-a"),
+      canonicalRoot,
+    };
+    const descriptorB = {
+      ...trustedDescriptor("ws-sequential", "/link/sequential-b"),
+      canonicalRoot,
+    };
+    const otherDescriptor = trustedDescriptor("ws-sequential-other", "/workspace-other");
+    const unregister = vi.fn(async () => undefined);
+    const { getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async (path) => {
+          if (path === descriptorB.selectedPath) {
+            return descriptorB;
+          }
+          if (path === otherDescriptor.selectedPath) {
+            return otherDescriptor;
+          }
+          return descriptorA;
+        }),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+    });
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe(descriptorB.selectedPath);
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
+    expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
+    expect(getWorkbench().sidebarView).toBe("git");
+    expect(unregister).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(otherDescriptor.selectedPath);
+    });
+    expect(getWorkbench().workspaceTabs).toEqual([
+      descriptorB.selectedPath,
+      otherDescriptor.selectedPath,
+    ]);
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(descriptorB.selectedPath);
+    });
+    expect(getWorkbench().workspaceTabs).toEqual([
+      descriptorB.selectedPath,
+      otherDescriptor.selectedPath,
+    ]);
+    expect(getWorkbench().sidebarView).toBe("git");
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(canonicalRoot);
+    });
+    expect(getWorkbench().workspaceTabs).toEqual([otherDescriptor.selectedPath]);
+    expect(getWorkbench().workspaceRoot).toBe(otherDescriptor.selectedPath);
+    expect(unregister).toHaveBeenCalledExactlyOnceWith(descriptorB.workspaceId);
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+    });
+    expect(getWorkbench().workspaceRoot).toBe(descriptorA.selectedPath);
+    expect(getWorkbench().workspaceTabs).toEqual([
+      otherDescriptor.selectedPath,
+      descriptorA.selectedPath,
+    ]);
+  });
+
+  it("preserves canonical mappings when a dirty alias close is cancelled", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-close-cancel", "/link/close-cancel"),
+      canonicalRoot: "/real/close-cancel",
+    };
+    const unregister = vi.fn(async () => undefined);
+    const { dependencies, getWorkbench } = renderController({
+      readTextFile: vi.fn(async () => "const clean = true;\n"),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(`${descriptor.selectedPath}/Dirty.ts`, "Dirty.ts"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("const dirty = true;\n");
+    });
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(false);
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptor.canonicalRoot);
+    });
+
+    expect(getWorkbench().workspaceTabs).toEqual([descriptor.selectedPath]);
+    expect(getWorkbench().workspaceRoot).toBe(descriptor.selectedPath);
+    expect(unregister).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().setStatusBarItemVisibility("message", false);
+    });
+    expect(
+      dependencies.settingsGateway.saveWorkspaceSettings,
+    ).toHaveBeenLastCalledWith(
+      {
+        canonicalKey: descriptor.canonicalRoot,
+        legacyRawKeys: [descriptor.canonicalRoot, descriptor.selectedPath],
+      },
+      expect.any(Object),
+    );
+
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(true);
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptor.canonicalRoot);
+    });
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(descriptor.selectedPath);
+  });
+
+  it("preserves canonical mappings when alias close settings persistence fails", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-close-failure", "/link/close-failure"),
+      canonicalRoot: "/real/close-failure",
+    };
+    const unregister = vi.fn(async () => undefined);
+    const { dependencies, getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister,
+      },
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+    });
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockRejectedValueOnce(
+      new Error("close settings failed"),
+    );
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptor.canonicalRoot);
+    });
+
+    expect(getWorkbench().workspaceTabs).toEqual([descriptor.selectedPath]);
+    expect(getWorkbench().workspaceRoot).toBe(descriptor.selectedPath);
+    expect(unregister).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().setStatusBarItemVisibility("message", false);
+    });
+    expect(
+      dependencies.settingsGateway.saveWorkspaceSettings,
+    ).toHaveBeenLastCalledWith(
+      {
+        canonicalKey: descriptor.canonicalRoot,
+        legacyRawKeys: [descriptor.canonicalRoot, descriptor.selectedPath],
+      },
+      expect.any(Object),
+    );
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptor.canonicalRoot);
+    });
+    expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledWith(descriptor.selectedPath);
+  });
+
+  it("retains identity ownership after unregister failure and retries on close", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-close-unregister-retry", "/link/retry-close"),
+      canonicalRoot: "/real/retry-close",
+    };
+    const unregister = vi
+      .fn<(workspaceId: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("transient unregister failure"))
+      .mockResolvedValue(undefined);
+    const { dependencies, getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+    });
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptor.canonicalRoot);
+    });
+
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(getWorkbench().workspaceTabs).toEqual([descriptor.selectedPath]);
+    expect(getWorkbench().workspaceRoot).toBe(descriptor.selectedPath);
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptor);
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptor.canonicalRoot);
+    });
+
+    expect(unregister).toHaveBeenCalledTimes(2);
+    expect(unregister).toHaveBeenLastCalledWith(descriptor.workspaceId);
+    expect(getWorkbench().workspaceTabs).toEqual([]);
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledExactlyOnceWith(descriptor.selectedPath);
+  });
+
+  it("retains failed identity ownership for one unmount retry", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-close-unregister-unmount", "/link/retry-unmount"),
+      canonicalRoot: "/real/retry-unmount",
+    };
+    const unregister = vi
+      .fn<(workspaceId: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("transient unregister failure"))
+      .mockResolvedValue(undefined);
+    const { getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+      await getWorkbench().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(unregister).toHaveBeenCalledOnce();
+    expect(getWorkbench().workspaceTabs).toEqual([descriptor.selectedPath]);
+
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+
+    expect(unregister).toHaveBeenCalledTimes(2);
+    expect(unregister).toHaveBeenLastCalledWith(descriptor.workspaceId);
+  });
+
+  it("defers close cleanup until unrelated admission release succeeds", async () => {
+    const descriptorA = trustedDescriptor(
+      "ws-deferred-release-success",
+      "/workspace-deferred-success",
+    );
+    const descriptorB = trustedDescriptor(
+      "ws-unrelated-admission-success",
+      "/workspace-unrelated-success",
+    );
+    const admissionB = createDeferred<typeof descriptorB>();
+    const releaseA = createDeferred<void>();
+    const unregister = vi.fn((workspaceId: string) =>
+      workspaceId === descriptorA.workspaceId
+        ? releaseA.promise
+        : Promise.resolve(),
+    );
+    const { dependencies, getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn((path) =>
+          path === descriptorB.selectedPath
+            ? admissionB.promise
+            : Promise.resolve(descriptorA),
+        ),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+    });
+
+    let openingB!: Promise<boolean>;
+    await act(async () => {
+      openingB = getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
+    });
+
+    expect(unregister).not.toHaveBeenCalled();
+    expect(getWorkbench().workspaceTabs).toEqual([descriptorA.selectedPath]);
+
+    admissionB.resolve(descriptorB);
+    await act(async () => openingB);
+    await vi.waitFor(() => {
+      expect(unregister).toHaveBeenCalledExactlyOnceWith(
+        descriptorA.workspaceId,
+      );
+    });
+
+    releaseA.resolve();
+    await act(async () => {
+      await releaseA.promise;
+      await Promise.resolve();
+    });
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
+    });
+
+    expect(
+      unregister.mock.calls.filter(
+        ([workspaceId]) => workspaceId === descriptorA.workspaceId,
+      ),
+    ).toHaveLength(1);
+    expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledExactlyOnceWith(descriptorA.selectedPath);
+  });
+
+  it("preserves deferred close state after unrelated admission release fails and retries", async () => {
+    const descriptorA = trustedDescriptor(
+      "ws-deferred-release-failure",
+      "/workspace-deferred-failure",
+    );
+    const descriptorB = trustedDescriptor(
+      "ws-unrelated-admission-failure",
+      "/workspace-unrelated-failure",
+    );
+    const admissionB = createDeferred<typeof descriptorB>();
+    const firstReleaseA = createDeferred<void>();
+    let releaseAttempts = 0;
+    const unregister = vi.fn((workspaceId: string) => {
+      if (workspaceId !== descriptorA.workspaceId) {
+        return Promise.resolve();
+      }
+
+      releaseAttempts += 1;
+      if (releaseAttempts === 1) {
+        return firstReleaseA.promise;
+      }
+
+      return Promise.resolve();
+    });
+    const { dependencies, getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn((path) =>
+          path === descriptorB.selectedPath
+            ? admissionB.promise
+            : Promise.resolve(descriptorA),
+        ),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+    });
+
+    let openingB!: Promise<boolean>;
+    await act(async () => {
+      openingB = getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
+    });
+
+    admissionB.resolve(descriptorB);
+    await act(async () => openingB);
+    await vi.waitFor(() => {
+      expect(releaseAttempts).toBe(1);
+    });
+
+    firstReleaseA.reject(new Error("deferred unregister failed"));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().workspaceTabs).toEqual([
+      descriptorA.selectedPath,
+      descriptorB.selectedPath,
+    ]);
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(descriptorA.selectedPath);
+    });
+
+    expect(releaseAttempts).toBe(2);
+    expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).toHaveBeenCalledExactlyOnceWith(descriptorA.selectedPath);
+  });
+
+  it("keeps a same-id alias reopened while close settings persistence waits", async () => {
+    const canonicalRoot = "/real/reopen-during-close";
+    const descriptorA = {
+      ...trustedDescriptor("ws-reopen-during-close", "/link/close-a"),
+      canonicalRoot,
+    };
+    const descriptorB = {
+      ...trustedDescriptor("ws-reopen-during-close", "/link/close-b"),
+      canonicalRoot,
+    };
+    const closeSettings = createDeferred<void>();
+    const unregister = vi.fn(async () => undefined);
+    const { dependencies, getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async (path) =>
+          path === descriptorB.selectedPath ? descriptorB : descriptorA,
+        ),
+        unregister,
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptorA.selectedPath);
+    });
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+
+    const saveAppSettings = vi.mocked(
+      dependencies.settingsGateway.saveAppSettings,
+    );
+    saveAppSettings.mockClear();
+    saveAppSettings
+      .mockImplementationOnce(() => closeSettings.promise)
+      .mockResolvedValue(undefined);
+
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = getWorkbench().closeWorkspaceTab(descriptorA.canonicalRoot);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(saveAppSettings).toHaveBeenCalledOnce();
+    });
+
+    let reopening!: Promise<boolean>;
+    await act(async () => {
+      reopening = getWorkbench().openWorkspaceRoot(descriptorB.selectedPath);
+      await Promise.resolve();
+    });
+
+    closeSettings.resolve();
+    await act(async () => {
+      await Promise.all([closing, reopening]);
+    });
+
+    expect(getWorkbench().workspaceTabs).toEqual([descriptorB.selectedPath]);
+    expect(getWorkbench().workspaceRoot).toBe(descriptorB.selectedPath);
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptorB);
+    expect(getWorkbench().sidebarView).toBe("git");
+    expect(unregister).not.toHaveBeenCalled();
+  });
+
+  it("keeps a same-path reopen while the single final runtime disposal waits", async () => {
+    const canonicalRoot = "/real/reopen-during-clear";
+    const descriptor = {
+      ...trustedDescriptor("ws-reopen-during-clear", "/link/clear-a"),
+      canonicalRoot,
+    };
+    const finalRuntimeStop = createDeferred<void>();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: descriptor.selectedPath,
+      sessionId: 77,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      runtimeStatus: runningStatus,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+    });
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+
+    const disposeWorkspace = vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    );
+    disposeWorkspace.mockClear();
+    disposeWorkspace
+      .mockImplementationOnce(() => finalRuntimeStop.promise)
+      .mockResolvedValue(undefined);
+
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = getWorkbench().closeWorkspaceTab(descriptor.selectedPath);
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(disposeWorkspace).toHaveBeenCalledOnce();
+    });
+
+    let reopening!: Promise<boolean>;
+    await act(async () => {
+      reopening = getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+      await Promise.resolve();
+    });
+
+    finalRuntimeStop.resolve();
+    await act(async () => {
+      await Promise.all([closing, reopening]);
+    });
+
+    expect(disposeWorkspace).toHaveBeenCalledOnce();
+    expect(getWorkbench().workspaceTabs).toEqual([descriptor.selectedPath]);
+    expect(getWorkbench().workspaceRoot).toBe(descriptor.selectedPath);
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(descriptor);
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(runningStatus);
+  });
+
+  it("restores the canonical cache winner when admitted over legacy alias collisions", async () => {
+    const aliasRoot = "/link/workspace";
+    const canonicalRoot = "/real/workspace";
+    const otherRoot = "/other/workspace";
+    const identityGateway: WorkbenchWorkspaceGateways["identity"] = {
+      getDescriptor: vi.fn(),
+      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      unregister: vi.fn(async () => undefined),
+    };
+    const { getWorkbench } = renderController({ workspaceIdentityGateway: identityGateway });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(aliasRoot);
+    });
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(otherRoot);
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(canonicalRoot);
+    });
+    act(() => {
+      getWorkbench().setSidebarView("php");
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(otherRoot);
+    });
+
+    identityGateway.openPath = vi.fn(async () => ({
+      ...trustedDescriptor("ws-canonical-winner", aliasRoot),
+      canonicalRoot,
+    }));
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(aliasRoot);
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe(aliasRoot);
+    expect(getWorkbench().sidebarView).toBe("php");
+  });
+
   it("opens, caches, and restores separate trusted descriptors across project tabs", async () => {
     const descriptorA = {
       workspaceId: "ws-a",
@@ -70476,11 +71526,11 @@ class PostRepository
       descriptorB.selectedPath,
     ]);
     expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
-      descriptorA.canonicalRoot,
+      descriptorA.selectedPath,
       "basic",
     );
     expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
-      descriptorB.canonicalRoot,
+      descriptorB.selectedPath,
       "basic",
     );
 
@@ -70489,7 +71539,7 @@ class PostRepository
     });
     expect(
       dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
-    ).toHaveBeenCalledWith(descriptorA.canonicalRoot);
+    ).toHaveBeenCalledWith(descriptorA.selectedPath);
   });
 
   it("releases an unadopted descriptor when workspace opening throws", async () => {
@@ -70515,8 +71565,9 @@ class PostRepository
     const firstSettings = createDeferred<ReturnType<typeof defaultWorkspaceSettings>>();
     const settingsGateway: SettingsGateway = {
       loadAppSettings: vi.fn(async () => defaultAppSettings()),
-      loadWorkspaceSettings: vi.fn((path: string) =>
-        path === "/workspace-a"
+      loadWorkspaceSettings: vi.fn((identity) =>
+        (typeof identity === "string" ? identity : identity.canonicalKey) ===
+        "/workspace-a"
           ? firstSettings.promise
           : Promise.resolve(defaultWorkspaceSettings()),
       ),

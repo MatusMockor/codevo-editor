@@ -82,7 +82,9 @@ import {
 } from "./workspaceSessionSwitchLifecycle";
 import {
   useWorkbenchCloseLifecycle,
+  type WorkspaceCloseOwnership,
   type WorkspaceCloseSessionPort,
+  type WorkspaceIdentityReleaseOutcome,
 } from "./useWorkbenchCloseLifecycle";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
@@ -342,6 +344,7 @@ import {
   type WorkspaceSessionState,
   type WorkspaceSessionViewState,
   type WorkspaceSettings,
+  type WorkspaceSettingsIdentity,
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import {
@@ -426,13 +429,21 @@ export interface WorkbenchControllerOptions {
 }
 
 interface OpenWorkspacePathOptions {
-  adoptIdentity?: () => void;
   cachePreviousWorkspace?: boolean;
-  identityDescriptor?: WorkspaceIdentityDescriptor | null;
 }
 
 interface OpenWorkspaceFileRequest {
   canOpen(): boolean;
+}
+
+interface WorkspaceIdentityAdmissionLease {
+  generation: number;
+  workspaceId: string;
+}
+
+interface PendingWorkspaceSettingsLoad {
+  legacyRawKeys: readonly string[];
+  promise: Promise<WorkspaceSettings>;
 }
 
 interface InFlightDirectoryLoad {
@@ -465,6 +476,19 @@ function languageServerDiagnosticsEqual(
       diagnostic.code === comparison.code
     );
   });
+}
+
+function restoreRuntimeStatusCacheEntry(
+  cache: Record<string, LanguageServerRuntimeStatus>,
+  rootKey: string,
+  status: LanguageServerRuntimeStatus | undefined,
+): void {
+  if (!status) {
+    delete cache[rootKey];
+    return;
+  }
+
+  cache[rootKey] = status;
 }
 
 const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
@@ -781,7 +805,7 @@ export function useWorkbenchController(
   const workspaceSettingsSaveCoordinator =
     workspaceSettingsSaveCoordinatorRef.current;
   const workspaceSettingsLoadByRootRef = useRef<
-    Record<string, Promise<WorkspaceSettings>>
+    Record<string, PendingWorkspaceSettingsLoad>
   >({});
   const workspaceSessionRestoredRef = useRef(false);
   const workspaceEditorViewStatesRef = useRef<
@@ -799,6 +823,26 @@ export function useWorkbenchController(
   const openWorkspaceRequestTokenRef = useRef(0);
   const openWorkspaceRequestPathRef = useRef<string | null>(null);
   const openWorkspaceRequestInFlightTokenRef = useRef<number | null>(null);
+  const workbenchMountedRef = useRef(true);
+  const pendingWorkspaceIdentityRequestTokensRef = useRef<Set<number>>(
+    new Set(),
+  );
+  const deferredWorkspaceIdentityCleanupIdsRef = useRef<Set<string>>(new Set());
+  const workspaceIdentityAdmissionGenerationRef = useRef(0);
+  const pendingWorkspaceIdentityAdmissionsRef = useRef<
+    Record<string, Set<number>>
+  >({});
+  const ownedWorkspaceIdentityIdsRef = useRef<Set<string>>(new Set());
+  const ownedWorkspaceIdentityGenerationByIdRef = useRef<
+    Record<string, number>
+  >({});
+  const workspaceIdentityReleaseGenerationByIdRef = useRef<
+    Record<string, number>
+  >({});
+  const releasedWorkspaceIdentityIdsRef = useRef<Set<string>>(new Set());
+  const workspaceIdentityUnregisterByIdRef = useRef<
+    Record<string, Promise<void>>
+  >({});
   const inFlightDirectoryLoadsRef = useRef(
     new Map<string, InFlightDirectoryLoad>(),
   );
@@ -1010,7 +1054,201 @@ export function useWorkbenchController(
     Record<string, WorkspaceIdentityDescriptor>
   >({});
   const workspaceRuntimeRootByTabRef = useRef<Record<string, string>>({});
+  const unregisterWorkspaceIdentityIfUnused = useCallback(
+    async (
+      workspaceId: string,
+      requestedReleaseGeneration?: number,
+    ): Promise<WorkspaceIdentityReleaseOutcome> => {
+      const releaseGeneration =
+        requestedReleaseGeneration ??
+        workspaceIdentityReleaseGenerationByIdRef.current[workspaceId];
+      const ownedGeneration =
+        ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId];
+      if (
+        ownedWorkspaceIdentityIdsRef.current.has(workspaceId) &&
+        releaseGeneration === undefined
+      ) {
+        return "deferred";
+      }
+
+      if (
+        releaseGeneration !== undefined &&
+        ownedGeneration !== releaseGeneration
+      ) {
+        if (
+          workspaceIdentityReleaseGenerationByIdRef.current[workspaceId] ===
+          releaseGeneration
+        ) {
+          delete workspaceIdentityReleaseGenerationByIdRef.current[workspaceId];
+        }
+        return "deferred";
+      }
+
+      if (pendingWorkspaceIdentityAdmissionsRef.current[workspaceId]?.size) {
+        return "deferred";
+      }
+
+      if (pendingWorkspaceIdentityRequestTokensRef.current.size > 0) {
+        deferredWorkspaceIdentityCleanupIdsRef.current.add(workspaceId);
+        return "deferred";
+      }
+
+      const pendingUnregister =
+        workspaceIdentityUnregisterByIdRef.current[workspaceId];
+      if (pendingUnregister) {
+        await pendingUnregister;
+        return releasedWorkspaceIdentityIdsRef.current.has(workspaceId)
+          ? "released"
+          : "deferred";
+      }
+
+      const request = workspaceGateways.identity.unregister(workspaceId);
+      deferredWorkspaceIdentityCleanupIdsRef.current.delete(workspaceId);
+      workspaceIdentityUnregisterByIdRef.current[workspaceId] = request;
+      let requestStillCurrent = true;
+      try {
+        await request;
+      } finally {
+        if (
+          workspaceIdentityUnregisterByIdRef.current[workspaceId] !== request
+        ) {
+          requestStillCurrent = false;
+        }
+
+        if (requestStillCurrent) {
+          delete workspaceIdentityUnregisterByIdRef.current[workspaceId];
+        }
+      }
+      if (!requestStillCurrent) {
+        return "deferred";
+      }
+
+      if (releaseGeneration === undefined) {
+        return "released";
+      }
+
+      if (
+        workspaceIdentityReleaseGenerationByIdRef.current[workspaceId] ===
+        releaseGeneration
+      ) {
+        delete workspaceIdentityReleaseGenerationByIdRef.current[workspaceId];
+      }
+      if (
+        ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId] !==
+        releaseGeneration
+      ) {
+        return "deferred";
+      }
+
+      ownedWorkspaceIdentityIdsRef.current.delete(workspaceId);
+      delete ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId];
+      releasedWorkspaceIdentityIdsRef.current.add(workspaceId);
+      return "released";
+    },
+    [workspaceGateways.identity],
+  );
+  const flushDeferredWorkspaceIdentityCleanup = useCallback(() => {
+    if (pendingWorkspaceIdentityRequestTokensRef.current.size > 0) {
+      return;
+    }
+
+    const workspaceIds = [...deferredWorkspaceIdentityCleanupIdsRef.current];
+    for (const workspaceId of workspaceIds) {
+      void unregisterWorkspaceIdentityIfUnused(workspaceId).catch((error) => {
+        if (!workbenchMountedRef.current) {
+          return;
+        }
+        reportError("Workspace", error);
+      });
+    }
+  }, [reportError, unregisterWorkspaceIdentityIfUnused]);
+  const beginWorkspaceIdentityAdmission = useCallback(
+    (workspaceId: string): WorkspaceIdentityAdmissionLease => {
+      const generation = workspaceIdentityAdmissionGenerationRef.current + 1;
+      workspaceIdentityAdmissionGenerationRef.current = generation;
+      const pending =
+        pendingWorkspaceIdentityAdmissionsRef.current[workspaceId] ?? new Set();
+      pending.add(generation);
+      pendingWorkspaceIdentityAdmissionsRef.current[workspaceId] = pending;
+      return { generation, workspaceId };
+    },
+    [],
+  );
+  const adoptWorkspaceIdentityAdmission = useCallback(
+    (lease: WorkspaceIdentityAdmissionLease) => {
+      const pending =
+        pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
+      pending?.delete(lease.generation);
+      if (pending?.size === 0) {
+        delete pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
+      }
+      ownedWorkspaceIdentityIdsRef.current.add(lease.workspaceId);
+      releasedWorkspaceIdentityIdsRef.current.delete(lease.workspaceId);
+      ownedWorkspaceIdentityGenerationByIdRef.current[lease.workspaceId] =
+        lease.generation;
+    },
+    [],
+  );
+  const releaseWorkspaceIdentityAdmission = useCallback(
+    async (lease: WorkspaceIdentityAdmissionLease): Promise<void> => {
+      const pending =
+        pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
+      pending?.delete(lease.generation);
+      if (pending?.size === 0) {
+        delete pendingWorkspaceIdentityAdmissionsRef.current[lease.workspaceId];
+      }
+      await unregisterWorkspaceIdentityIfUnused(lease.workspaceId);
+    },
+    [unregisterWorkspaceIdentityIfUnused],
+  );
+  const releaseOwnedWorkspaceIdentity = useCallback(
+    async (
+      workspaceId: string,
+    ): Promise<WorkspaceIdentityReleaseOutcome> => {
+      if (releasedWorkspaceIdentityIdsRef.current.has(workspaceId)) {
+        return "released";
+      }
+
+      const ownershipGeneration =
+        ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId];
+      if (ownershipGeneration === undefined) {
+        return unregisterWorkspaceIdentityIfUnused(workspaceId);
+      }
+
+      workspaceIdentityReleaseGenerationByIdRef.current[workspaceId] =
+        ownershipGeneration;
+      return unregisterWorkspaceIdentityIfUnused(
+        workspaceId,
+        ownershipGeneration,
+      );
+    },
+    [unregisterWorkspaceIdentityIfUnused],
+  );
+  const withManagedWorkspaceIdentityLease = useCallback(
+    async (
+      descriptor: WorkspaceIdentityDescriptor,
+      useLease: (adopt: () => void) => Promise<void>,
+    ): Promise<void> => {
+      const lease = beginWorkspaceIdentityAdmission(descriptor.workspaceId);
+      await withWorkspaceIdentityLease(
+        descriptor,
+        () => releaseWorkspaceIdentityAdmission(lease),
+        (adoptLease) =>
+          useLease(() => {
+            adoptWorkspaceIdentityAdmission(lease);
+            adoptLease();
+          }),
+      );
+    },
+    [
+      adoptWorkspaceIdentityAdmission,
+      beginWorkspaceIdentityAdmission,
+      releaseWorkspaceIdentityAdmission,
+    ],
+  );
   const workspaceCloseGenerationByRootRef = useRef<Record<string, number>>({});
+  const workspaceCloseOwnershipGenerationRef = useRef(0);
+  const workspaceCloseOwnershipByKeyRef = useRef<Record<string, number>>({});
   const clearExternalFileConflictsForRootRef = useRef<(root: string) => void>(
     () => {},
   );
@@ -1440,50 +1678,6 @@ export function useWorkbenchController(
     setWorkspaceSettings(settings);
   }, []);
 
-  const loadWorkspaceSettingsForRoot = useCallback(
-    (rootPath: string): Promise<WorkspaceSettings> => {
-      const cached = workspaceSettingsByRoot.resolve(rootPath);
-      if (cached) {
-        return Promise.resolve(cached);
-      }
-
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const pending = workspaceSettingsLoadByRootRef.current[rootKey];
-      if (pending) {
-        return pending;
-      }
-
-      const requestedRevision = workspaceSettingsByRoot.revision(rootPath);
-      const request = settingsGateway
-        .loadWorkspaceSettings(rootPath)
-        .then((settings) => {
-          const captured = workspaceSettingsByRoot.captureIfRevision(
-            rootPath,
-            requestedRevision,
-            settings,
-          );
-          if (captured) {
-            workspaceSettingsSaveCoordinator.captureCommitted(rootPath, settings);
-          }
-          return settings;
-        })
-        .finally(() => {
-          if (workspaceSettingsLoadByRootRef.current[rootKey] !== request) {
-            return;
-          }
-
-          delete workspaceSettingsLoadByRootRef.current[rootKey];
-        });
-      workspaceSettingsLoadByRootRef.current[rootKey] = request;
-      return request;
-    },
-    [
-      settingsGateway,
-      workspaceSettingsByRoot,
-      workspaceSettingsSaveCoordinator,
-    ],
-  );
-
   const persistAppSettings = useCallback(
     async (nextSettings: AppSettings) => {
       const previousSettings = appSettingsRef.current;
@@ -1539,13 +1733,24 @@ export function useWorkbenchController(
 
   const persistWorkspaceSettings = useCallback(
     async (rootPath: string, nextSettings: WorkspaceSettings) => {
+      const identityDescriptor = workspaceIdentityByRootRef.current[rootPath];
+      const canonicalKey = identityDescriptor?.canonicalRoot ?? rootPath;
+      const settingsIdentity = identityDescriptor
+        ? workspaceSettingsIdentity(
+            canonicalKey,
+            identityDescriptor.selectedPath,
+          )
+        : rootPath;
       const isRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath);
       const previousSettings =
-        workspaceSettingsByRoot.resolve(rootPath) ??
+        workspaceSettingsByRoot.resolve(canonicalKey) ??
         (isRootActive() ? workspaceSettingsRef.current : null);
 
-      const saveRevision = workspaceSettingsByRoot.capture(rootPath, nextSettings);
+      const saveRevision = workspaceSettingsByRoot.capture(
+        canonicalKey,
+        nextSettings,
+      );
 
       if (isRootActive()) {
         applyWorkspaceSettings(nextSettings);
@@ -1553,22 +1758,24 @@ export function useWorkbenchController(
 
       try {
         await workspaceSettingsSaveCoordinator.save(
-          rootPath,
+          canonicalKey,
           previousSettings,
           nextSettings,
-          () => settingsGateway.saveWorkspaceSettings(rootPath, nextSettings),
+          () =>
+            settingsGateway.saveWorkspaceSettings(settingsIdentity, nextSettings),
         );
       } catch (error) {
-        if (workspaceSettingsByRoot.revision(rootPath) !== saveRevision) {
+        if (workspaceSettingsByRoot.revision(canonicalKey) !== saveRevision) {
           throw error;
         }
 
-        const committedSettings = workspaceSettingsSaveCoordinator.committed(rootPath);
+        const committedSettings =
+          workspaceSettingsSaveCoordinator.committed(canonicalKey);
         if (committedSettings) {
-          workspaceSettingsByRoot.capture(rootPath, committedSettings);
+          workspaceSettingsByRoot.capture(canonicalKey, committedSettings);
         }
         if (!committedSettings) {
-          workspaceSettingsByRoot.forget(rootPath);
+          workspaceSettingsByRoot.forget(canonicalKey);
         }
         if (isRootActive() && committedSettings) {
           applyWorkspaceSettings(committedSettings);
@@ -1588,6 +1795,9 @@ export function useWorkbenchController(
   const {
     workspaceStateCacheRef,
     cacheCurrentWorkspaceState,
+    resolveCachedWorkspaceState,
+    coalesceWorkspaceStateCache,
+    forgetCachedWorkspaceState,
     restoreCachedWorkspaceState,
     clearWorkspaceStateCache,
   } = useWorkspaceStateCache({
@@ -2453,14 +2663,30 @@ export function useWorkbenchController(
     filePrefetchCacheRef.current.clear();
   }, []);
 
-  const clearActiveWorkspace = useCallback(async () => {
-    const currentRootPath = currentWorkspaceRootRef.current;
+  const clearActiveWorkspace = useCallback(async (options?: {
+    ownership?: WorkspaceCloseOwnership;
+    runtimeAlreadyStopped?: boolean;
+  }) => {
+    const ownership = options?.ownership;
+    if (ownership && !ownership.isCurrent()) {
+      return;
+    }
 
+    const currentRootPath = currentWorkspaceRootRef.current;
     if (currentRootPath) {
       clearPhpstanDiagnosticsForRoot(currentRootPath);
+    }
+
+    if (currentRootPath && !options?.runtimeAlreadyStopped) {
       await stopProjectRuntimes(
         workspaceRuntimeRootByTabRef.current[currentRootPath] ?? currentRootPath,
       );
+      if (ownership && !ownership.isCurrent()) {
+        return;
+      }
+    }
+
+    if (currentRootPath) {
       languageServerDiagnosticsCoalescerRef.current?.dropRoot(currentRootPath);
       javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(
         currentRootPath,
@@ -2852,22 +3078,37 @@ export function useWorkbenchController(
     );
 
   const performOpenWorkspacePath = useCallback(
-    async (path: string, options: OpenWorkspacePathOptions = {}) => {
+    async (
+      path: string,
+      identityDescriptor: WorkspaceIdentityDescriptor | null,
+      adoptIdentity: (() => void) | null,
+      requestToken: number,
+      options: OpenWorkspacePathOptions = {},
+    ) => {
       const shouldCachePreviousWorkspace =
         options.cachePreviousWorkspace !== false;
-      const requestToken = openWorkspaceRequestTokenRef.current + 1;
-      openWorkspaceRequestTokenRef.current = requestToken;
+      if (openWorkspaceRequestTokenRef.current !== requestToken) {
+        return;
+      }
+
       openWorkspaceRequestPathRef.current = path;
       setArtisanMakePaletteRoot(null);
       const isCurrentOpenWorkspaceRequest = () =>
+        workbenchMountedRef.current &&
         openWorkspaceRequestTokenRef.current === requestToken &&
         workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path);
       const previousRootPath = currentWorkspaceRootRef.current;
-      const cachedWorkspaceState = workspaceStateCacheRef.current[path] ?? null;
-      const identityDescriptor =
-        options.identityDescriptor ??
-        cachedWorkspaceState?.workspaceIdentityDescriptor ??
-        null;
+      const canonicalKey = identityDescriptor?.canonicalRoot ?? path;
+      let cachedWorkspaceState = identityDescriptor
+        ? coalesceWorkspaceStateCache(identityDescriptor, path)
+        : resolveCachedWorkspaceState(canonicalKey);
+      const identityAliasPaths = identityDescriptor
+        ? workspaceIdentityAliasPaths(
+            workspaceIdentityByRootRef.current,
+            identityDescriptor,
+            cachedWorkspaceState?.workspaceIdentityDescriptor ?? null,
+          )
+        : [];
       const switchingWorkspace =
         previousRootPath &&
         !workspaceRootKeysEqual(previousRootPath, path);
@@ -2929,6 +3170,13 @@ export function useWorkbenchController(
         if (switchResult === "stale" || !isCurrentOpenWorkspaceRequest()) {
           return;
         }
+
+        if (identityDescriptor) {
+          cachedWorkspaceState = coalesceWorkspaceStateCache(
+            identityDescriptor,
+            path,
+          );
+        }
       }
 
       workspaceSessionRestoredRef.current = false;
@@ -2940,7 +3188,7 @@ export function useWorkbenchController(
       clearPhpLocalDiagnostics();
       let workspaceSettings = defaultWorkspaceSettings();
       const pendingWorkspaceSettingsSave =
-        workspaceSettingsSaveCoordinator.waitForIdle(path);
+        workspaceSettingsSaveCoordinator.waitForIdle(canonicalKey);
 
       if (pendingWorkspaceSettingsSave) {
         await pendingWorkspaceSettingsSave;
@@ -2951,10 +3199,80 @@ export function useWorkbenchController(
       }
 
       const workspaceSettingsRevisionAtLoad =
-        workspaceSettingsByRoot.revision(path);
+        workspaceSettingsByRoot.revision(canonicalKey);
+      const workspaceSettingsLoadKey = normalizedWorkspaceRootKey(canonicalKey);
+      const requestedSettingsIdentity = identityDescriptor
+        ? workspaceSettingsIdentity(canonicalKey, path)
+        : path;
+      const requestedLegacyRawKeys =
+        typeof requestedSettingsIdentity === "string"
+          ? [requestedSettingsIdentity]
+          : requestedSettingsIdentity.legacyRawKeys ?? [];
 
       try {
-        workspaceSettings = await settingsGateway.loadWorkspaceSettings(path);
+        const trackWorkspaceSettingsLoad = (
+          promise: Promise<WorkspaceSettings>,
+          legacyRawKeys: readonly string[],
+        ): PendingWorkspaceSettingsLoad => {
+          const tracked = { legacyRawKeys, promise };
+          workspaceSettingsLoadByRootRef.current[workspaceSettingsLoadKey] =
+            tracked;
+          const clearWorkspaceSettingsLoad = () => {
+            if (
+              workspaceSettingsLoadByRootRef.current[
+                workspaceSettingsLoadKey
+              ] !== tracked
+            ) {
+              return;
+            }
+
+            delete workspaceSettingsLoadByRootRef.current[
+              workspaceSettingsLoadKey
+            ];
+          };
+          void promise.then(
+            clearWorkspaceSettingsLoad,
+            clearWorkspaceSettingsLoad,
+          );
+          return tracked;
+        };
+        let workspaceSettingsLoad =
+          workspaceSettingsLoadByRootRef.current[workspaceSettingsLoadKey];
+        if (!workspaceSettingsLoad) {
+          workspaceSettingsLoad = trackWorkspaceSettingsLoad(
+            settingsGateway.loadWorkspaceSettings(requestedSettingsIdentity),
+            requestedLegacyRawKeys,
+          );
+        }
+
+        const hasAllRequestedLegacyRawKeys = requestedLegacyRawKeys.every(
+          (legacyRawKey) =>
+            workspaceSettingsLoad.legacyRawKeys.includes(legacyRawKey),
+        );
+        if (!hasAllRequestedLegacyRawKeys) {
+          const continueWithWinningAlias = () => {
+            if (!isCurrentOpenWorkspaceRequest()) {
+              return defaultWorkspaceSettings();
+            }
+
+            return settingsGateway.loadWorkspaceSettings(
+              requestedSettingsIdentity,
+            );
+          };
+          workspaceSettingsLoad = trackWorkspaceSettingsLoad(
+            workspaceSettingsLoad.promise.then(
+              continueWithWinningAlias,
+              continueWithWinningAlias,
+            ),
+            [
+              ...new Set([
+                ...workspaceSettingsLoad.legacyRawKeys,
+                ...requestedLegacyRawKeys,
+              ]),
+            ],
+          );
+        }
+        workspaceSettings = await workspaceSettingsLoad.promise;
       } catch (error) {
         if (!isCurrentOpenWorkspaceRequest()) {
           return;
@@ -2968,31 +3286,34 @@ export function useWorkbenchController(
       }
 
       const capturedWorkspaceSettings = workspaceSettingsByRoot.captureIfRevision(
-        path,
+        canonicalKey,
         workspaceSettingsRevisionAtLoad,
         workspaceSettings,
       );
       if (capturedWorkspaceSettings) {
-        workspaceSettingsSaveCoordinator.captureCommitted(path, workspaceSettings);
+        workspaceSettingsSaveCoordinator.captureCommitted(
+          canonicalKey,
+          workspaceSettings,
+        );
       }
       if (!capturedWorkspaceSettings) {
         workspaceSettings =
-          workspaceSettingsByRoot.resolve(path) ?? workspaceSettings;
+          workspaceSettingsByRoot.resolve(canonicalKey) ?? workspaceSettings;
       }
 
-      if (options.identityDescriptor) {
+      if (identityDescriptor) {
         const previousIdentity =
           workspaceIdentityByRootRef.current[path] ??
           cachedWorkspaceState?.workspaceIdentityDescriptor ??
           null;
-        options.adoptIdentity?.();
+        adoptIdentity?.();
         if (cachedWorkspaceState) {
           cachedWorkspaceState.workspaceIdentityDescriptor =
-            options.identityDescriptor;
+            identityDescriptor;
         }
         if (
           previousIdentity &&
-          previousIdentity.workspaceId !== options.identityDescriptor.workspaceId
+          previousIdentity.workspaceId !== identityDescriptor.workspaceId
         ) {
           delete workspaceRuntimeRootByTabRef.current[
             previousIdentity.selectedPath
@@ -3004,9 +3325,15 @@ export function useWorkbenchController(
             workspaceIdentityByRootRef.current,
             previousIdentity,
           );
-          void workspaceGateways.identity
-            .unregister(previousIdentity.workspaceId)
+          void releaseOwnedWorkspaceIdentity(previousIdentity.workspaceId)
             .catch((error) => reportError("Workspace", error));
+        }
+        removeWorkspaceIdentityMappings(
+          workspaceIdentityByRootRef.current,
+          identityDescriptor,
+        );
+        for (const aliasPath of identityAliasPaths) {
+          delete workspaceRuntimeRootByTabRef.current[aliasPath];
         }
       }
 
@@ -3020,10 +3347,9 @@ export function useWorkbenchController(
         workspaceIdentityByRootRef.current[path] = identityDescriptor;
         workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot] =
           identityDescriptor;
-        workspaceRuntimeRootByTabRef.current[path] =
-          identityDescriptor.canonicalRoot;
+        workspaceRuntimeRootByTabRef.current[path] = path;
         workspaceRuntimeRootByTabRef.current[identityDescriptor.canonicalRoot] =
-          identityDescriptor.canonicalRoot;
+          path;
       }
       currentWorkspaceRootRef.current = path;
       lastLanguageServerCrashRef.current = null;
@@ -3133,9 +3459,17 @@ export function useWorkbenchController(
         const nextWorkspaceTabs = workspaceTabsWithPath(
           appSettingsRef.current.workspaceTabs,
           path,
+          identityAliasPaths,
         );
+        const recentWorkspaceCandidates =
+          (appSettingsRef.current.recentWorkspacePaths ?? []).filter(
+            (recentPath) =>
+              !identityAliasPaths.some((aliasPath) =>
+                workspaceRootKeysEqual(aliasPath, recentPath),
+              ),
+          );
         const recentWorkspacePaths = pushRecentWorkspacePath(
-          appSettingsRef.current.recentWorkspacePaths,
+          recentWorkspaceCandidates,
           path,
         );
         await persistAppSettings({
@@ -3165,7 +3499,7 @@ export function useWorkbenchController(
 
       try {
         const smartMode = await smartModeGateway.setMode(
-          identityDescriptor?.canonicalRoot ?? path,
+          path,
           workspaceSettings.intelligenceMode,
         );
 
@@ -3349,7 +3683,10 @@ export function useWorkbenchController(
       runPhpWorkspaceProbe,
       reportError,
       reportErrorForActiveWorkspaceRoot,
+      releaseOwnedWorkspaceIdentity,
       restoreLanguageServerDiagnosticsForRoot,
+      coalesceWorkspaceStateCache,
+      resolveCachedWorkspaceState,
       restoreCachedWorkspaceState,
       restoreJavaScriptTypeScriptDiagnosticsForRoot,
       restoreWorkspaceSession,
@@ -3384,42 +3721,216 @@ export function useWorkbenchController(
     ],
   );
 
+  const advanceWorkspaceCloseOwnership = useCallback(
+    (
+      path: string | null,
+      identity: WorkspaceIdentityDescriptor | null,
+    ): { generation: number; keys: string[] } => {
+      const generation = workspaceCloseOwnershipGenerationRef.current + 1;
+      workspaceCloseOwnershipGenerationRef.current = generation;
+      const rootPaths = [
+        path,
+        identity?.selectedPath ?? null,
+        identity?.canonicalRoot ?? null,
+      ];
+      const keys = rootPaths.flatMap((rootPath) => {
+        const rootKey = normalizedWorkspaceRootKey(rootPath);
+        if (!rootKey) {
+          return [];
+        }
+
+        workspaceCloseGenerationByRootRef.current[rootKey] =
+          (workspaceCloseGenerationByRootRef.current[rootKey] ?? 0) + 1;
+        return [`root:${rootKey}`];
+      });
+      if (identity) {
+        keys.push(`workspace:${identity.workspaceId}`);
+      }
+
+      const uniqueKeys = [...new Set(keys)];
+      for (const key of uniqueKeys) {
+        workspaceCloseOwnershipByKeyRef.current[key] = generation;
+      }
+
+      return { generation, keys: uniqueKeys };
+    },
+    [],
+  );
+
+  const invalidateWorkspaceCloseOwnership = useCallback(
+    (path: string | null, identity: WorkspaceIdentityDescriptor | null) => {
+      advanceWorkspaceCloseOwnership(path, identity);
+    },
+    [advanceWorkspaceCloseOwnership],
+  );
+
+  const beginWorkspaceClose = useCallback(
+    (
+      rootPath: string,
+      identity: WorkspaceIdentityDescriptor | null,
+    ): WorkspaceCloseOwnership => {
+      const { generation, keys } = advanceWorkspaceCloseOwnership(
+        rootPath,
+        identity,
+      );
+      return {
+        isCurrent: () =>
+          keys.every(
+            (key) =>
+              workspaceCloseOwnershipByKeyRef.current[key] === generation,
+          ),
+      };
+    },
+    [advanceWorkspaceCloseOwnership],
+  );
+
+  const issueOpenWorkspaceRequest = useCallback(
+    (path: string | null) => {
+      const identity = path
+        ? workspaceIdentityByRootRef.current[path] ?? null
+        : null;
+      invalidateWorkspaceCloseOwnership(path, identity);
+      const requestToken = openWorkspaceRequestTokenRef.current + 1;
+      openWorkspaceRequestTokenRef.current = requestToken;
+      openWorkspaceRequestPathRef.current = path;
+      openWorkspaceRequestInFlightTokenRef.current = requestToken;
+      pendingWorkspaceIdentityRequestTokensRef.current.add(requestToken);
+      return requestToken;
+    },
+    [invalidateWorkspaceCloseOwnership],
+  );
+
+  const completeOpenWorkspaceRequest = useCallback((requestToken: number) => {
+    pendingWorkspaceIdentityRequestTokensRef.current.delete(requestToken);
+    flushDeferredWorkspaceIdentityCleanup();
+    if (openWorkspaceRequestInFlightTokenRef.current !== requestToken) {
+      return;
+    }
+
+    openWorkspaceRequestInFlightTokenRef.current = null;
+  }, [flushDeferredWorkspaceIdentityCleanup]);
+
   const openWorkspacePath = useCallback(
     (
       path: string,
       options: OpenWorkspacePathOptions = {},
     ): Promise<void> => {
-      const request = performOpenWorkspacePath(path, options);
-      const requestToken = openWorkspaceRequestTokenRef.current;
-      openWorkspaceRequestInFlightTokenRef.current = requestToken;
+      const requestToken = issueOpenWorkspaceRequest(path);
+      const request = (async () => {
+        const openPath = workspaceGateways.identity.openPath;
+        if (openPath) {
+          let descriptor: WorkspaceIdentityDescriptor;
+          try {
+            descriptor = await openPath.call(workspaceGateways.identity, path);
+          } catch (error) {
+            if (openWorkspaceRequestTokenRef.current === requestToken) {
+              reportError("Workspace", error);
+            }
+            return;
+          }
 
-      return request.finally(() => {
-        if (openWorkspaceRequestInFlightTokenRef.current !== requestToken) {
+          invalidateWorkspaceCloseOwnership(path, descriptor);
+
+          await withManagedWorkspaceIdentityLease(
+            descriptor,
+            async (adoptIdentity) => {
+              if (
+                !workbenchMountedRef.current ||
+                openWorkspaceRequestTokenRef.current !== requestToken
+              ) {
+                return;
+              }
+
+              await performOpenWorkspacePath(
+                descriptor.selectedPath,
+                descriptor,
+                adoptIdentity,
+                requestToken,
+                options,
+              );
+            },
+          );
           return;
         }
 
-        openWorkspaceRequestInFlightTokenRef.current = null;
+        const cachedWorkspaceState = resolveCachedWorkspaceState(path);
+        const identityDescriptor =
+          workspaceIdentityByRootRef.current[path] ??
+          cachedWorkspaceState?.workspaceIdentityDescriptor ??
+          null;
+        invalidateWorkspaceCloseOwnership(path, identityDescriptor);
+        await performOpenWorkspacePath(
+          identityDescriptor?.selectedPath ?? path,
+          identityDescriptor,
+          null,
+          requestToken,
+          options,
+        );
+      })();
+
+      return request.finally(() => {
+        completeOpenWorkspaceRequest(requestToken);
       });
     },
-    [performOpenWorkspacePath],
+    [
+      completeOpenWorkspaceRequest,
+      issueOpenWorkspaceRequest,
+      invalidateWorkspaceCloseOwnership,
+      performOpenWorkspacePath,
+      reportError,
+      resolveCachedWorkspaceState,
+      withManagedWorkspaceIdentityLease,
+      workspaceGateways.identity,
+    ],
   );
 
   const openWorkspace = useCallback(async () => {
-    const result = await workspaceGateways.identity.openFromPicker();
-    if (result.status === "cancelled") {
-      return;
-    }
+    const requestToken = issueOpenWorkspaceRequest(null);
+    try {
+      const result = await workspaceGateways.identity.openFromPicker();
+      if (result.status === "cancelled") {
+        return;
+      }
 
-    await withWorkspaceIdentityLease(
-      result.descriptor,
-      (workspaceId) => workspaceGateways.identity.unregister(workspaceId),
-      (adoptIdentity) =>
-        openWorkspacePath(result.descriptor.selectedPath, {
-          adoptIdentity,
-          identityDescriptor: result.descriptor,
-        }),
-    );
-  }, [openWorkspacePath, workspaceGateways.identity]);
+      invalidateWorkspaceCloseOwnership(
+        result.descriptor.selectedPath,
+        result.descriptor,
+      );
+
+      await withManagedWorkspaceIdentityLease(
+        result.descriptor,
+        async (adoptIdentity) => {
+          if (
+            !workbenchMountedRef.current ||
+            openWorkspaceRequestTokenRef.current !== requestToken
+          ) {
+            return;
+          }
+
+          await performOpenWorkspacePath(
+            result.descriptor.selectedPath,
+            result.descriptor,
+            adoptIdentity,
+            requestToken,
+          );
+        },
+      );
+    } catch (error) {
+      if (openWorkspaceRequestTokenRef.current === requestToken) {
+        reportError("Workspace", error);
+      }
+    } finally {
+      completeOpenWorkspaceRequest(requestToken);
+    }
+  }, [
+    completeOpenWorkspaceRequest,
+    issueOpenWorkspaceRequest,
+    invalidateWorkspaceCloseOwnership,
+    performOpenWorkspacePath,
+    reportError,
+    withManagedWorkspaceIdentityLease,
+    workspaceGateways.identity,
+  ]);
 
   const openWorkspaceRoot = useCallback(
     async (path: string): Promise<boolean> => {
@@ -3432,11 +3943,14 @@ export function useWorkbenchController(
 
   const activateWorkspaceTab = useCallback(
     async (path: string) => {
+      invalidateWorkspaceCloseOwnership(
+        path,
+        workspaceIdentityByRootRef.current[path] ?? null,
+      );
       if (workspaceRootKeysEqual(path, workspaceRoot)) {
         const inFlightToken = openWorkspaceRequestInFlightTokenRef.current;
         if (
           inFlightToken === openWorkspaceRequestTokenRef.current &&
-          openWorkspaceRequestPathRef.current &&
           !workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path)
         ) {
           openWorkspaceRequestTokenRef.current += 1;
@@ -3448,25 +3962,25 @@ export function useWorkbenchController(
 
       await openWorkspacePath(path);
     },
-    [openWorkspacePath, workspaceRoot],
+    [invalidateWorkspaceCloseOwnership, openWorkspacePath, workspaceRoot],
   );
 
   useEffect(
     () => () => {
-      const workspaceIds = new Set(
-        Object.values(workspaceIdentityByRootRef.current).map(
-          (descriptor) => descriptor.workspaceId,
-        ),
-      );
+      workbenchMountedRef.current = false;
+      openWorkspaceRequestTokenRef.current += 1;
+      openWorkspaceRequestPathRef.current = null;
+      openWorkspaceRequestInFlightTokenRef.current = null;
+      openFileRequestTokenRef.current += 1;
+      workspaceSettingsLoadByRootRef.current = {};
+      const workspaceIds = [...ownedWorkspaceIdentityIdsRef.current];
       workspaceIdentityByRootRef.current = {};
       workspaceRuntimeRootByTabRef.current = {};
       for (const workspaceId of workspaceIds) {
-        void workspaceGateways.identity
-          .unregister(workspaceId)
-          .catch((error) => reportError("Workspace", error));
+        void releaseOwnedWorkspaceIdentity(workspaceId).catch(() => undefined);
       }
     },
-    [reportError, workspaceGateways.identity],
+    [releaseOwnedWorkspaceIdentity],
   );
 
   const refreshDirectory = useCallback(
@@ -4077,19 +4591,77 @@ export function useWorkbenchController(
   ).length;
 
   const stopProjectRuntimesForWorkspaceClose = useCallback(
-    (rootPath?: string) => {
+    async (rootPath?: string, ownership?: WorkspaceCloseOwnership) => {
       if (!rootPath) {
-        return stopProjectRuntimes(rootPath);
+        await stopProjectRuntimes(rootPath);
+        return;
       }
 
       const identityDescriptor = workspaceIdentityByRootRef.current[rootPath];
-      return stopProjectRuntimes(
+      const runtimeRootPath =
         workspaceRuntimeRootByTabRef.current[rootPath] ??
-          identityDescriptor?.canonicalRoot ??
+          identityDescriptor?.selectedPath ??
+          rootPath;
+      const runtimeRootKey = normalizedWorkspaceRootKey(runtimeRootPath);
+      const previousPhpStatus =
+        languageServerRuntimeStatusByRootRef.current[runtimeRootKey];
+      const previousJavaScriptTypeScriptStatus =
+        javaScriptTypeScriptRuntimeStatusByRootRef.current[runtimeRootKey];
+      const previousActivePhpStatus = languageServerRuntimeStatusRef.current;
+      const previousActivePhpStatusRoot =
+        languageServerRuntimeStatusRootRef.current;
+      const previousActiveJavaScriptTypeScriptStatus =
+        javaScriptTypeScriptLanguageServerRuntimeStatusRef.current;
+      const previousActiveJavaScriptTypeScriptStatusRoot =
+        javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current;
+
+      await stopProjectRuntimes(runtimeRootPath);
+      if (!ownership || ownership.isCurrent()) {
+        return;
+      }
+
+      restoreRuntimeStatusCacheEntry(
+        languageServerRuntimeStatusByRootRef.current,
+        runtimeRootKey,
+        previousPhpStatus,
+      );
+      restoreRuntimeStatusCacheEntry(
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+        runtimeRootKey,
+        previousJavaScriptTypeScriptStatus,
+      );
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
           rootPath,
+        )
+      ) {
+        return;
+      }
+
+      languageServerRuntimeStatusRef.current = previousActivePhpStatus;
+      languageServerRuntimeStatusRootRef.current =
+        previousActivePhpStatusRoot;
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef.current =
+        previousActiveJavaScriptTypeScriptStatus;
+      javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current =
+        previousActiveJavaScriptTypeScriptStatusRoot;
+      setLanguageServerRuntimeStatus(previousActivePhpStatus);
+      setLanguageServerRuntimeStatusRoot(previousActivePhpStatusRoot);
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus(
+        previousActiveJavaScriptTypeScriptStatus,
+      );
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
+        previousActiveJavaScriptTypeScriptStatusRoot,
       );
     },
-    [stopProjectRuntimes],
+    [
+      setJavaScriptTypeScriptLanguageServerRuntimeStatus,
+      setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      setLanguageServerRuntimeStatus,
+      setLanguageServerRuntimeStatusRoot,
+      stopProjectRuntimes,
+    ],
   );
 
   const runWithDocumentSaveExclusionRef =
@@ -4102,11 +4674,7 @@ export function useWorkbenchController(
         runWithDocumentSaveExclusionRef.current(scope, operation),
       [],
     );
-  const commitWorkspaceClose = useCallback((rootPath: string) => {
-    const rootKey = normalizedWorkspaceRootKey(rootPath);
-    workspaceCloseGenerationByRootRef.current[rootKey] =
-      (workspaceCloseGenerationByRootRef.current[rootKey] ?? 0) + 1;
-  }, []);
+  const commitWorkspaceClose = beginWorkspaceClose;
   const workspaceCloseSession = useMemo<WorkspaceCloseSessionPort>(
     () => ({
       current: () => {
@@ -4142,6 +4710,8 @@ export function useWorkbenchController(
     dirtyCount,
     appSettingsRef,
     workspaceStateCacheRef,
+    resolveCachedWorkspaceState,
+    forgetCachedWorkspaceState,
     workspaceIdentityByRootRef,
     editorConfigCacheRef,
     openWorkspaceRequestPathRef,
@@ -4159,8 +4729,7 @@ export function useWorkbenchController(
     stopProjectRuntimes: stopProjectRuntimesForWorkspaceClose,
     forgetLanguageServerRuntimeStatuses,
     forgetLatencyTrackerForRoot,
-    unregisterWorkspace: (workspaceId) =>
-      workspaceGateways.identity.unregister(workspaceId),
+    unregisterWorkspace: releaseOwnedWorkspaceIdentity,
     clearExternalFileConflictsForRoot: (root) =>
       clearExternalFileConflictsForRootRef.current(root),
     workspaceHasExternalFileConflicts: (root) =>
@@ -4173,24 +4742,40 @@ export function useWorkbenchController(
 
   const closeWorkspaceTab = useCallback(
     async (path: string) => {
-      const runtimeRootPath = workspaceRuntimeRootByTabRef.current[path] ?? path;
+      const identityDescriptor = workspaceIdentityByRootRef.current[path] ?? null;
+      const canonicalKey = identityDescriptor?.canonicalRoot ?? path;
+      const resolvedTabPath = identityDescriptor
+        ? appSettingsRef.current.workspaceTabs.find(
+            (tabPath) =>
+              workspaceIdentityByRootRef.current[tabPath]?.workspaceId ===
+              identityDescriptor.workspaceId,
+          ) ?? identityDescriptor.selectedPath
+        : path;
+      const runtimeRootPath =
+        workspaceRuntimeRootByTabRef.current[resolvedTabPath] ?? resolvedTabPath;
       await closeWorkspaceTabWithLifecycle(path);
 
-      if (
-        appSettingsRef.current.workspaceTabs.some((tabPath) =>
-          workspaceRootKeysEqual(tabPath, path),
-        )
-      ) {
+      const resolvedTabStillOpen = appSettingsRef.current.workspaceTabs.some(
+        (tabPath) =>
+          workspaceRootKeysEqual(tabPath, resolvedTabPath) ||
+          Boolean(
+            identityDescriptor &&
+              workspaceIdentityByRootRef.current[tabPath]?.workspaceId ===
+                identityDescriptor.workspaceId,
+          ),
+      );
+      if (resolvedTabStillOpen) {
         return;
       }
 
-      workspaceSettingsByRoot.forget(path);
+      workspaceSettingsByRoot.forget(canonicalKey);
       delete workspaceRuntimeRootByTabRef.current[path];
+      delete workspaceRuntimeRootByTabRef.current[resolvedTabPath];
       delete workspaceRuntimeRootByTabRef.current[runtimeRootPath];
 
       recentlyClosedTabsRef.current = clearRecentlyClosedTabs(
         recentlyClosedTabsRef.current,
-        path,
+        resolvedTabPath,
       );
     },
     [closeWorkspaceTabWithLifecycle, workspaceSettingsByRoot],
@@ -7511,12 +8096,6 @@ export function useWorkbenchController(
         }
 
         void openWorkspacePath(workspacePath);
-        settings.workspaceTabs.forEach((rootPath) => {
-          if (workspaceRootKeysEqual(rootPath, workspacePath)) {
-            return;
-          }
-          void loadWorkspaceSettingsForRoot(rootPath).catch(() => undefined);
-        });
       })
       .catch((error) => reportError("Settings", error));
 
@@ -7525,7 +8104,6 @@ export function useWorkbenchController(
     };
   }, [
     applyAppSettings,
-    loadWorkspaceSettingsForRoot,
     openWorkspacePath,
     reportError,
     settingsGateway,
@@ -8725,12 +9303,62 @@ function normalizedSessionPath(path: string): string {
   return path.trim().split("\\").join("/").replace(/\/+$/, "");
 }
 
-function workspaceTabsWithPath(tabs: string[], path: string): string[] {
+function workspaceTabsWithPath(
+  tabs: string[],
+  path: string,
+  identityAliasPaths: readonly string[] = [],
+): string[] {
+  const replacedTabIndex = tabs.findIndex((tabPath) =>
+    identityAliasPaths.some((aliasPath) =>
+      workspaceRootKeysEqual(aliasPath, tabPath),
+    ),
+  );
+  if (replacedTabIndex >= 0) {
+    const nextTabs = tabs.filter(
+      (tabPath) =>
+        !identityAliasPaths.some((aliasPath) =>
+          workspaceRootKeysEqual(aliasPath, tabPath),
+        ),
+    );
+    nextTabs.splice(Math.min(replacedTabIndex, nextTabs.length), 0, path);
+    return nextTabs;
+  }
+
   if (workspaceTabPathForPath(tabs, path)) {
     return tabs;
   }
 
   return [...tabs, path];
+}
+
+function workspaceIdentityAliasPaths(
+  identities: Record<string, WorkspaceIdentityDescriptor>,
+  descriptor: WorkspaceIdentityDescriptor,
+  cachedDescriptor: WorkspaceIdentityDescriptor | null,
+): string[] {
+  const aliases = [descriptor.selectedPath, descriptor.canonicalRoot];
+  if (cachedDescriptor?.workspaceId === descriptor.workspaceId) {
+    aliases.push(cachedDescriptor.selectedPath, cachedDescriptor.canonicalRoot);
+  }
+
+  for (const [rootPath, registered] of Object.entries(identities)) {
+    if (registered.workspaceId !== descriptor.workspaceId) {
+      continue;
+    }
+    aliases.push(rootPath, registered.selectedPath, registered.canonicalRoot);
+  }
+
+  return [...new Set(aliases)];
+}
+
+function workspaceSettingsIdentity(
+  canonicalKey: string,
+  selectedRoot: string,
+): WorkspaceSettingsIdentity {
+  return {
+    canonicalKey,
+    legacyRawKeys: [...new Set([canonicalKey, selectedRoot])],
+  };
 }
 
 function removeWorkspaceIdentityMappings(
