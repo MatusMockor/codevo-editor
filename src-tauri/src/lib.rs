@@ -423,7 +423,7 @@ impl LegacyLocalHistoryWorkspaceAuthorizer {
         self.descriptors().clear();
     }
 
-    fn authorize(&self, registry: &WorkspaceRegistry, root_path: &str) -> Result<(), String> {
+    fn authorize(&self, registry: &WorkspaceRegistry, root_path: &str) -> Result<String, String> {
         let requested_root = canonicalize_workspace_root(root_path)?;
         let workspace_id = self
             .descriptors()
@@ -440,7 +440,15 @@ impl LegacyLocalHistoryWorkspaceAuthorizer {
             return Err("Local history workspace identity changed.".to_string());
         }
 
-        Ok(())
+        // Keep the legacy on-disk layout compatible for canonical-root buckets,
+        // but never fall back to a caller alias. Historical alias buckets have
+        // no owner metadata, so adopting them automatically could expose a
+        // previous workspace after the alias is retargeted. They remain
+        // quarantined until a future explicit, ownership-proven migration.
+        requested_root
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "Local history workspace path is not valid UTF-8.".to_string())
     }
 }
 
@@ -2524,10 +2532,11 @@ async fn record_local_history_snapshot(
     // to its own workspace bucket and file (no cross-root or cross-file leak).
     run_blocking_command(move || {
         ensure_local_history_relative_path(&relative_path)?;
-        app.state::<LegacyLocalHistoryWorkspaceAuthorizer>()
+        let storage_root = app
+            .state::<LegacyLocalHistoryWorkspaceAuthorizer>()
             .authorize(&app.state::<WorkspaceRegistry>(), &root_path)?;
         let store = local_history_store(&app)?;
-        store.record_snapshot(&root_path, &relative_path, &content)
+        store.record_snapshot(&storage_root, &relative_path, &content)
     })
     .await
 }
@@ -2542,10 +2551,11 @@ async fn get_local_history_versions(
     // main thread and scope it to the requested workspace + file.
     run_blocking_command(move || {
         ensure_local_history_relative_path(&relative_path)?;
-        app.state::<LegacyLocalHistoryWorkspaceAuthorizer>()
+        let storage_root = app
+            .state::<LegacyLocalHistoryWorkspaceAuthorizer>()
             .authorize(&app.state::<WorkspaceRegistry>(), &root_path)?;
         let store = local_history_store(&app)?;
-        store.list_versions(&root_path, &relative_path)
+        store.list_versions(&storage_root, &relative_path)
     })
     .await
 }
@@ -2561,10 +2571,11 @@ async fn get_local_history_version_content(
     // requested workspace + file + version.
     run_blocking_command(move || {
         ensure_local_history_relative_path(&relative_path)?;
-        app.state::<LegacyLocalHistoryWorkspaceAuthorizer>()
+        let storage_root = app
+            .state::<LegacyLocalHistoryWorkspaceAuthorizer>()
             .authorize(&app.state::<WorkspaceRegistry>(), &root_path)?;
         let store = local_history_store(&app)?;
-        store.read_version(&root_path, &relative_path, &version_id)
+        store.read_version(&storage_root, &relative_path, &version_id)
     })
     .await
 }
@@ -6381,6 +6392,7 @@ mod tests {
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
+    use crate::local_history::LocalHistoryStore;
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
     use crate::lsp_features::{
@@ -8712,10 +8724,27 @@ mod tests {
         let descriptor = registry.register(&alias).expect("register alias");
         authorizer.admit(&descriptor);
 
-        assert!(authorizer
+        let alias_identity = authorizer
             .authorize(&registry, &path_string(&alias))
-            .is_ok());
-        assert!(authorizer.authorize(&registry, &path_string(&root)).is_ok());
+            .expect("authorize alias");
+        let canonical_identity = authorizer
+            .authorize(&registry, &path_string(&root))
+            .expect("authorize canonical root");
+        assert_eq!(alias_identity, path_string(&root));
+        assert_eq!(canonical_identity, path_string(&root));
+
+        let store = LocalHistoryStore::new(temp_workspace("local-history-canonical-compat"));
+        store
+            .record_snapshot(&path_string(&root), "src/User.php", "legacy-canonical")
+            .expect("legacy canonical history");
+        assert_eq!(
+            store
+                .list_versions(&alias_identity, "src/User.php")
+                .expect("history through authorized alias")
+                .len(),
+            1,
+            "authorized aliases retain compatibility with canonical legacy buckets"
+        );
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -8740,6 +8769,62 @@ mod tests {
         assert!(authorizer
             .authorize(&registry, &path_string(&registered_root))
             .is_err());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_history_alias_retarget_cannot_reuse_the_previous_owners_bucket() {
+        use std::os::unix::fs::symlink;
+
+        let root_a = temp_workspace("local-history-retarget-a");
+        let root_b = temp_workspace("local-history-retarget-b");
+        let alias_parent = temp_workspace("local-history-retarget-alias-parent");
+        let alias = alias_parent.join("workspace-alias");
+        let alias_key = path_string(&alias);
+        let registry = WorkspaceRegistry::new();
+        let authorizer = LegacyLocalHistoryWorkspaceAuthorizer::default();
+        let store = LocalHistoryStore::new(temp_workspace("local-history-retarget-store"));
+
+        symlink(&root_a, &alias).expect("alias workspace A");
+        let descriptor_a = registry.register(&alias).expect("register workspace A");
+        authorizer.admit(&descriptor_a);
+        let storage_a = authorizer
+            .authorize(&registry, &alias_key)
+            .expect("authorize workspace A");
+        store
+            .record_snapshot(&storage_a, "src/User.php", "canonical-a")
+            .expect("canonical A history");
+        store
+            .record_snapshot(&alias_key, "src/User.php", "legacy-alias-a")
+            .expect("simulate pre-fix alias history");
+
+        registry
+            .unregister(&descriptor_a.workspace_id)
+            .expect("close workspace A");
+        authorizer.revoke(&descriptor_a.workspace_id);
+        fs::remove_file(&alias).expect("remove workspace A alias");
+        symlink(&root_b, &alias).expect("retarget alias to workspace B");
+
+        let descriptor_b = registry.register(&alias).expect("register workspace B");
+        authorizer.admit(&descriptor_b);
+        let storage_b = authorizer
+            .authorize(&registry, &alias_key)
+            .expect("authorize workspace B");
+
+        assert_eq!(storage_a, path_string(&root_a));
+        assert_eq!(storage_b, path_string(&root_b));
+        assert!(store
+            .list_versions(&storage_b, "src/User.php")
+            .expect("workspace B history")
+            .is_empty());
+        assert_eq!(
+            store
+                .list_versions(&alias_key, "src/User.php")
+                .expect("quarantined legacy alias history")
+                .len(),
+            1,
+            "unowned legacy alias history remains quarantined instead of being adopted"
+        );
     }
 
     #[test]
