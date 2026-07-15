@@ -1,9 +1,4 @@
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, type MutableRefObject } from "react";
 import type { GitChangedFile, GitFileDiff, GitStatus } from "../domain/git";
 import {
   hasRecentlyClosedTabs,
@@ -15,8 +10,14 @@ import type { WorkspaceSessionViewState } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
 import { isDirty } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { planDocumentClose } from "./documentCloseLifecycle";
+import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+
+export interface DocumentCloseSessionPort {
+  getActivePath: DocumentTabSessionPort["getActivePath"];
+  getDocument: DocumentTabSessionPort["getDocument"];
+  removeDocument: DocumentTabSessionPort["removeDocument"];
+}
 
 export interface DocumentCloseOptions {
   recordRecentlyClosed?: boolean;
@@ -25,17 +26,12 @@ export interface DocumentCloseOptions {
 
 export interface DocumentCloseLifecycleDependencies {
   workspaceRoot: string | null;
-  activeDocument: EditorDocument | null;
-  activePath: string | null;
   gitStatus: GitStatus;
   selectedGitChange: GitChangedFile | null;
   gitDiffLoading: boolean;
+  documentTabSession: DocumentCloseSessionPort;
 
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  activeDocumentRef: MutableRefObject<EditorDocument | null>;
-  documentsRef: MutableRefObject<Record<string, EditorDocument>>;
-  openPathsRef: MutableRefObject<string[]>;
-  previewPathRef: MutableRefObject<string | null>;
   externallyRemovedDocumentRootByPathRef: MutableRefObject<
     Record<string, string>
   >;
@@ -43,14 +39,10 @@ export interface DocumentCloseLifecycleDependencies {
   selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
   recentlyClosedTabsRef: MutableRefObject<RecentlyClosedTabs>;
 
-  setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
-  setPreviewPath: Dispatch<SetStateAction<string | null>>;
-  setOpenPaths: Dispatch<SetStateAction<string[]>>;
-  setActivePath: Dispatch<SetStateAction<string | null>>;
-  setGitDiffLoading: Dispatch<SetStateAction<boolean>>;
-  setSelectedGitChange: Dispatch<SetStateAction<GitChangedFile | null>>;
-  setGitDiffPreview: Dispatch<SetStateAction<GitFileDiff | null>>;
-  setMessage: Dispatch<SetStateAction<string | null>>;
+  setGitDiffLoading: (loading: boolean) => void;
+  setSelectedGitChange: (change: GitChangedFile | null) => void;
+  setGitDiffPreview: (diff: GitFileDiff | null) => void;
+  setMessage: (message: string | null) => void;
 
   prompter: WorkbenchPrompter;
   invalidateDocumentSave: (rootPath: string, path: string) => void;
@@ -103,24 +95,15 @@ export function useDocumentCloseLifecycle(
 ): DocumentCloseLifecycle {
   const {
     workspaceRoot,
-    activeDocument,
-    activePath,
     gitStatus,
     selectedGitChange,
     gitDiffLoading,
+    documentTabSession,
     currentWorkspaceRootRef,
-    activeDocumentRef,
-    documentsRef,
-    openPathsRef,
-    previewPathRef,
     externallyRemovedDocumentRootByPathRef,
     gitDiffRequestTokenRef,
     selectedGitChangeRef,
     recentlyClosedTabsRef,
-    setDocuments,
-    setPreviewPath,
-    setOpenPaths,
-    setActivePath,
     setGitDiffLoading,
     setSelectedGitChange,
     setGitDiffPreview,
@@ -146,21 +129,12 @@ export function useDocumentCloseLifecycle(
 
   const closeDocument = useCallback(
     (path: string, options: DocumentCloseOptions = {}) => {
-      const effectiveActivePath = activeDocumentRef.current?.path ?? activePath;
-      const plan = planDocumentClose({
-        closePath: path,
-        activePath: effectiveActivePath,
-        documents: documentsRef.current,
-        openPaths: openPathsRef.current,
-        previewPath: previewPathRef.current,
-        gitStatusChanges: gitStatus.changes,
-        gitChangeForDiffDocumentPath,
-      });
-      const { document } = plan;
+      const document = documentTabSession.getDocument(path);
+      const rootPath = currentWorkspaceRootRef.current;
       const externallyRemovedRoot =
         externallyRemovedDocumentRootByPathRef.current[path];
       const hasExternalConflict = document
-        ? hasExternalFileConflict(workspaceRoot, path)
+        ? hasExternalFileConflict(rootPath, path)
         : false;
 
       if (
@@ -175,8 +149,6 @@ export function useDocumentCloseLifecycle(
       ) {
         return;
       }
-
-      const rootPath = currentWorkspaceRootRef.current;
 
       if (rootPath) {
         invalidateDocumentSave(rootPath, path);
@@ -199,7 +171,7 @@ export function useDocumentCloseLifecycle(
         void syncClosedDocument(document);
         void syncClosedJavaScriptTypeScriptDocument(document);
         clearPhpLocalDiagnosticsForPath(path);
-        clearExternalFileConflict(workspaceRoot, path);
+        clearExternalFileConflict(rootPath, path);
       }
 
       if (externallyRemovedRoot) {
@@ -215,42 +187,27 @@ export function useDocumentCloseLifecycle(
         setMessage(null);
       }
 
-      documentsRef.current = plan.nextDocuments;
-      openPathsRef.current = plan.nextOpenPaths;
-      previewPathRef.current = plan.nextPreviewPath;
-      if (activeDocumentRef.current?.path === path) {
-        activeDocumentRef.current = plan.nextActivePath
-          ? (plan.nextDocuments[plan.nextActivePath] ?? null)
-          : null;
-      }
+      const removal = documentTabSession.removeDocument(path);
 
-      setDocuments((current) => {
-        const next = { ...current };
-        delete next[path];
-        return next;
-      });
-      setPreviewPath((current) => (current === path ? null : current));
-      setOpenPaths((current) => current.filter((item) => item !== path));
-
-      if (!plan.closedActiveDocument) {
+      if (!removal.closedActiveDocument || !removal.nextActivePath) {
         return;
       }
 
-      if (plan.nextActivePath && plan.nextGitChange) {
-        loadGitDiffDocument(plan.nextActivePath, plan.nextGitChange);
+      const nextGitChange = gitChangeForDiffDocumentPath(
+        removal.nextActivePath,
+        gitStatus.changes,
+      );
+      if (nextGitChange) {
+        loadGitDiffDocument(removal.nextActivePath, nextGitChange);
         return;
       }
-
-      setActivePath(plan.nextActivePath);
     },
     [
-      activeDocumentRef,
-      activePath,
       clearExternalFileConflict,
       clearLanguageServerDiagnosticsForPath,
       clearPhpLocalDiagnosticsForPath,
       currentWorkspaceRootRef,
-      documentsRef,
+      documentTabSession,
       externallyRemovedDocumentRootByPathRef,
       gitChangeForDiffDocumentPath,
       gitDiffRequestTokenRef,
@@ -260,23 +217,16 @@ export function useDocumentCloseLifecycle(
       isGitDiffDocumentPath,
       loadGitDiffDocument,
       onRecentlyClosedTabsChange,
-      openPathsRef,
-      previewPathRef,
       prompter,
       recentlyClosedDocumentViewState,
       recentlyClosedTabsRef,
       selectedGitChangeRef,
-      setActivePath,
-      setDocuments,
       setGitDiffLoading,
       setGitDiffPreview,
       setMessage,
-      setOpenPaths,
-      setPreviewPath,
       setSelectedGitChange,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
-      workspaceRoot,
     ],
   );
 
@@ -287,23 +237,22 @@ export function useDocumentCloseLifecycle(
         return;
       }
 
-      const currentActiveDocument = activeDocumentRef.current ?? activeDocument;
-      if (currentActiveDocument) {
-        closeDocument(currentActiveDocument.path, options);
+      const currentActivePath = documentTabSession.getActivePath();
+      if (currentActivePath) {
+        closeDocument(currentActivePath, options);
         return;
       }
 
       closeEmptyWorkbenchSurface();
     },
     [
-      activeDocument,
-      activeDocumentRef,
       closeDocument,
       closeEmptyWorkbenchSurface,
       closeGitDiffPreview,
       gitDiffLoading,
       selectedGitChange,
       selectedGitChangeRef,
+      documentTabSession,
     ],
   );
 
@@ -326,7 +275,7 @@ export function useDocumentCloseLifecycle(
         return;
       }
 
-      if (documentsRef.current[popped.entry.path]) {
+      if (documentTabSession.getDocument(popped.entry.path)) {
         continue;
       }
 
@@ -355,7 +304,7 @@ export function useDocumentCloseLifecycle(
     }
   }, [
     currentWorkspaceRootRef,
-    documentsRef,
+    documentTabSession,
     onRecentlyClosedTabsChange,
     openRecentlyClosedDocument,
     recentlyClosedTabsRef,

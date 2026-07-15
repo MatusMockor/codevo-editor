@@ -12,12 +12,17 @@ import type { GitChangedFile } from "../domain/git";
 import { emptyGitStatus } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import { defaultWorkspaceSettings } from "../domain/settings";
-import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
+import {
+  nextActiveEditorPathAfterClose,
+  type EditorDocument,
+  type WorkspaceFileGateway,
+} from "../domain/workspace";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import {
   emptyRecentlyClosedTabs,
   hasRecentlyClosedTabs,
 } from "../domain/recentlyClosedTabs";
+import type { DocumentCloseSessionPort } from "./useDocumentCloseLifecycle";
 
 const ROOT = "/workspace";
 
@@ -256,6 +261,57 @@ function renderLifecycle(
   const runPhpstanAnalysisOnSave = vi.fn();
   const openRecentlyClosedDocument = vi.fn(async () => true);
   const restoreRecentlyClosedDocumentViewState = vi.fn();
+  const documentTabSession: DocumentCloseSessionPort =
+    overrides.documentTabSession ?? {
+      getActivePath: () => activeDocumentRef.current?.path ?? null,
+      getDocument: (path) => documentsRef.current[path] ?? null,
+      removeDocument: (path) => {
+        const removedDocument = documentsRef.current[path] ?? null;
+        const activePath = activeDocumentRef.current?.path ?? null;
+
+        if (!removedDocument) {
+          return {
+            closedActiveDocument: false,
+            nextActivePath: activePath,
+            removedDocument: null,
+          };
+        }
+
+        const closedActiveDocument = activePath === path;
+        const nextActivePath = closedActiveDocument
+          ? nextActiveEditorPathAfterClose(
+              path,
+              openPathsRef.current,
+              previewPathRef.current,
+            )
+          : activePath;
+        const nextDocuments = { ...documentsRef.current };
+        delete nextDocuments[path];
+        const nextOpenPaths = openPathsRef.current.filter(
+          (openPath) => openPath !== path,
+        );
+        const nextPreviewPath =
+          previewPathRef.current === path ? null : previewPathRef.current;
+
+        documentsRef.current = nextDocuments;
+        openPathsRef.current = nextOpenPaths;
+        previewPathRef.current = nextPreviewPath;
+        if (closedActiveDocument) {
+          activeDocumentRef.current = nextActivePath
+            ? (nextDocuments[nextActivePath] ?? null)
+            : null;
+        }
+
+        setDocuments(nextDocuments);
+        setOpenPaths(nextOpenPaths);
+        setPreviewPath(nextPreviewPath);
+        if (closedActiveDocument) {
+          setActivePath(nextActivePath);
+        }
+
+        return { closedActiveDocument, nextActivePath, removedDocument };
+      },
+    };
 
   const deps: DocumentLifecycleDependencies = {
     workspaceRoot: ROOT,
@@ -267,6 +323,7 @@ function renderLifecycle(
     gitStatus: emptyGitStatus(),
     selectedGitChange: null,
     gitDiffLoading: false,
+    documentTabSession,
     workspaceSettings: defaultWorkspaceSettings(),
     currentWorkspaceRootRef: rootRef,
     workspaceRequestTokenRef,

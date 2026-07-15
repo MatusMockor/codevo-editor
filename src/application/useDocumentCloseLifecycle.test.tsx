@@ -7,10 +7,12 @@ import type { GitChangedFile } from "../domain/git";
 import { emptyGitStatus } from "../domain/git";
 import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import type { EditorDocument } from "../domain/workspace";
+import { nextActiveEditorPathAfterClose } from "../domain/workspace";
 import {
   useDocumentCloseLifecycle,
   type DocumentCloseLifecycle,
   type DocumentCloseLifecycleDependencies,
+  type DocumentCloseSessionPort,
 } from "./useDocumentCloseLifecycle";
 
 const ROOT = "/workspace";
@@ -45,15 +47,24 @@ function diffPath(change: GitChangedFile): string {
   return `mockor-git-diff:worktree:${change.path}`;
 }
 
+type TestDependencies = DocumentCloseLifecycleDependencies & {
+  activeDocument: EditorDocument | null;
+  activePath: string | null;
+  activeDocumentRef: { current: EditorDocument | null };
+  documentsRef: { current: Record<string, EditorDocument> };
+  openPathsRef: { current: string[] };
+  previewPathRef: { current: string | null };
+};
+
 interface Harness {
-  dependencies: DocumentCloseLifecycleDependencies;
+  dependencies: TestDependencies;
   lifecycle: () => DocumentCloseLifecycle;
-  rerender: (overrides?: Partial<DocumentCloseLifecycleDependencies>) => void;
+  rerender: (overrides?: Partial<TestDependencies>) => void;
   unmount: () => void;
 }
 
 function renderLifecycle(
-  overrides: Partial<DocumentCloseLifecycleDependencies> = {},
+  overrides: Partial<TestDependencies> = {},
 ): Harness {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -81,14 +92,58 @@ function renderLifecycle(
   const recentlyClosedTabsRef = overrides.recentlyClosedTabsRef ?? {
     current: emptyRecentlyClosedTabs(),
   };
+  const documentTabSession: DocumentCloseSessionPort =
+    overrides.documentTabSession ??
+    {
+      getActivePath: vi.fn(() => activeDocumentRef.current?.path ?? null),
+      getDocument: vi.fn((path: string) => documentsRef.current[path] ?? null),
+      removeDocument: vi.fn((path: string) => {
+        const removedDocument = documentsRef.current[path] ?? null;
+        const activePath = activeDocumentRef.current?.path ?? null;
 
-  const dependencies: DocumentCloseLifecycleDependencies = {
+        if (!removedDocument) {
+          return {
+            closedActiveDocument: false,
+            nextActivePath: activePath,
+            removedDocument: null,
+          };
+        }
+
+        const closedActiveDocument = activePath === path;
+        const nextActivePath = closedActiveDocument
+          ? nextActiveEditorPathAfterClose(
+              path,
+              openPathsRef.current,
+              previewPathRef.current,
+            )
+          : activePath;
+        const nextDocuments = { ...documentsRef.current };
+        delete nextDocuments[path];
+        documentsRef.current = nextDocuments;
+        openPathsRef.current = openPathsRef.current.filter(
+          (openPath) => openPath !== path,
+        );
+        if (previewPathRef.current === path) {
+          previewPathRef.current = null;
+        }
+        if (closedActiveDocument) {
+          activeDocumentRef.current = nextActivePath
+            ? (nextDocuments[nextActivePath] ?? null)
+            : null;
+        }
+
+        return { closedActiveDocument, nextActivePath, removedDocument };
+      }),
+    };
+
+  const dependencies: TestDependencies = {
     workspaceRoot: ROOT,
     activeDocument,
     activePath: activeDocument?.path ?? null,
     gitStatus: emptyGitStatus(),
     selectedGitChange: null,
     gitDiffLoading: false,
+    documentTabSession,
     currentWorkspaceRootRef,
     activeDocumentRef,
     documentsRef,
@@ -98,10 +153,6 @@ function renderLifecycle(
     gitDiffRequestTokenRef: { current: 0 },
     selectedGitChangeRef: { current: null },
     recentlyClosedTabsRef,
-    setDocuments: vi.fn(),
-    setPreviewPath: vi.fn(),
-    setOpenPaths: vi.fn(),
-    setActivePath: vi.fn(),
     setGitDiffLoading: vi.fn(),
     setSelectedGitChange: vi.fn(),
     setGitDiffPreview: vi.fn(),
@@ -132,7 +183,7 @@ function renderLifecycle(
   }
 
   const rerender = (
-    nextOverrides: Partial<DocumentCloseLifecycleDependencies> = {},
+    nextOverrides: Partial<TestDependencies> = {},
   ) => {
     Object.assign(dependencies, nextOverrides);
     act(() => root.render(<TestComponent />));
@@ -168,7 +219,43 @@ describe("useDocumentCloseLifecycle", () => {
 
     expect(harness.dependencies.invalidateDocumentSave).not.toHaveBeenCalled();
     expect(harness.dependencies.syncClosedDocument).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.documentTabSession.removeDocument,
+    ).not.toHaveBeenCalled();
     expect(harness.dependencies.documentsRef.current[dirty.path]).toBe(dirty);
+    harness.unmount();
+  });
+
+  it("runs confirmation, invalidation, recent, cleanup, then removal", () => {
+    const change = changedFile(`${ROOT}/src/Ordered.php`);
+    const path = diffPath(change);
+    const dirty = editorDocument(path, "edited", "saved");
+    const confirm = vi.fn(() => true);
+    const harness = renderLifecycle({
+      activeDocument: dirty,
+      activePath: path,
+      activeDocumentRef: { current: dirty },
+      documentsRef: { current: { [path]: dirty } },
+      openPathsRef: { current: [path] },
+      gitStatus: { ...emptyGitStatus(), changes: [change] },
+      prompter: { confirm, prompt: vi.fn() },
+    });
+
+    act(() => harness.lifecycle().closeDocument(path));
+
+    const callOrder = [
+      confirm,
+      harness.dependencies.invalidateDocumentSave,
+      harness.dependencies.onRecentlyClosedTabsChange,
+      harness.dependencies.syncClosedDocument,
+      harness.dependencies.clearPhpLocalDiagnosticsForPath,
+      harness.dependencies.setGitDiffLoading,
+      harness.dependencies.documentTabSession.removeDocument,
+    ].map((mock) => vi.mocked(mock).mock.invocationCallOrder[0]);
+    expect(callOrder).toEqual([...callOrder].sort((left, right) => left - right));
+    expect(
+      harness.dependencies.documentTabSession.removeDocument,
+    ).toHaveBeenCalledOnce();
     harness.unmount();
   });
 
@@ -198,6 +285,13 @@ describe("useDocumentCloseLifecycle", () => {
     expect(invalidateDocumentSave.mock.invocationCallOrder[0]).toBeLessThan(
       syncClosedDocument.mock.invocationCallOrder[0],
     );
+    expect(invalidateDocumentSave.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(harness.dependencies.documentTabSession.removeDocument).mock
+        .invocationCallOrder[0],
+    );
+    expect(
+      harness.dependencies.documentTabSession.removeDocument,
+    ).toHaveBeenCalledOnce();
     expect(documentsRef.current[active.path]).toBeUndefined();
     expect(activeDocumentRef.current).toBeNull();
     harness.unmount();
@@ -269,7 +363,7 @@ describe("useDocumentCloseLifecycle", () => {
       secondPath,
       secondChange,
     );
-    expect(harness.dependencies.setActivePath).not.toHaveBeenCalled();
+    expect(harness.dependencies.activeDocumentRef.current).toBe(second);
     expect(harness.dependencies.openPathsRef.current).toEqual([secondPath]);
     harness.unmount();
   });
@@ -293,6 +387,9 @@ describe("useDocumentCloseLifecycle", () => {
 
     act(() => harness.lifecycle().closeActiveSurface());
 
+    expect(
+      harness.dependencies.documentTabSession.getActivePath,
+    ).toHaveBeenCalled();
     expect(harness.dependencies.invalidateDocumentSave).toHaveBeenCalledWith(
       ROOT,
       second.path,
@@ -300,7 +397,7 @@ describe("useDocumentCloseLifecycle", () => {
     expect(harness.dependencies.syncClosedDocument).toHaveBeenCalledWith(
       second,
     );
-    expect(harness.dependencies.setActivePath).toHaveBeenCalledWith(first.path);
+    expect(harness.dependencies.activeDocumentRef.current).toBe(first);
     harness.unmount();
   });
 

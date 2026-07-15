@@ -48,15 +48,19 @@ function splitState(path: string): EditorGroupsState {
 }
 
 interface Harness {
+  activeDocumentRef: { current: EditorDocument | null };
   closeTextDocument: ReturnType<typeof vi.fn>;
+  closeTextSurface: ReturnType<typeof vi.fn>;
+  currentWorkspaceRootRef: { current: string | null };
   editorGroupsRef: { current: EditorGroupsState };
+  eslintDiagnostics: () => EslintDiagnosticsByRoot;
   imageTabsRef: { current: Record<string, ImageTab> };
   lifecycle: () => WorkbenchEditorGroupCloseLifecycle;
   openPathsRef: { current: string[] };
-  prompter: {
-    confirm: ReturnType<typeof vi.fn>;
-    prompt: ReturnType<typeof vi.fn>;
-  };
+  phpstanDiagnostics: () => PhpstanDiagnosticsByRoot;
+  prompter: WorkbenchEditorGroupCloseLifecycleDependencies["prompter"];
+  setEslintDiagnosticsByRoot: ReturnType<typeof vi.fn>;
+  setPhpstanDiagnosticsByRoot: ReturnType<typeof vi.fn>;
   unmount: () => void;
 }
 
@@ -70,6 +74,7 @@ function renderLifecycle(
   const captured: { lifecycle: WorkbenchEditorGroupCloseLifecycle | null } = {
     lifecycle: null,
   };
+  const currentWorkspaceRootRef = { current: ROOT as string | null };
   const editorGroupsRef = { current: state };
   const activeGroup = state.groups[state.activeGroupId];
   const openPathsRef = { current: activeGroup?.openPaths ?? [] };
@@ -85,16 +90,47 @@ function renderLifecycle(
     current: Record<string, MarkdownPreviewTab>;
   } = { current: {} };
   const closeTextDocument = vi.fn();
+  const closeTextSurface = vi.fn();
   const prompter = {
     confirm: vi.fn(() => true),
     prompt: vi.fn(),
   };
-  let eslintDiagnostics: EslintDiagnosticsByRoot = {};
-  let phpstanDiagnostics: PhpstanDiagnosticsByRoot = {};
+  let eslintDiagnostics: EslintDiagnosticsByRoot = {
+    [ROOT]: Object.fromEntries(
+      Object.keys(documents).map((path) => [
+        path,
+        [{ identifier: "eslint.rule", line: 1 }],
+      ]),
+    ),
+  };
+  let phpstanDiagnostics: PhpstanDiagnosticsByRoot = {
+    [ROOT]: Object.fromEntries(
+      Object.keys(documents).map((path) => [
+        path,
+        [{ identifier: "phpstan.rule", line: 1 }],
+      ]),
+    ),
+  };
+  const setEslintDiagnosticsByRoot = vi.fn(
+    (update: Parameters<
+      WorkbenchEditorGroupCloseLifecycleDependencies["setEslintDiagnosticsByRoot"]
+    >[0]) => {
+      eslintDiagnostics =
+        typeof update === "function" ? update(eslintDiagnostics) : update;
+    },
+  );
+  const setPhpstanDiagnosticsByRoot = vi.fn(
+    (update: Parameters<
+      WorkbenchEditorGroupCloseLifecycleDependencies["setPhpstanDiagnosticsByRoot"]
+    >[0]) => {
+      phpstanDiagnostics =
+        typeof update === "function" ? update(phpstanDiagnostics) : update;
+    },
+  );
 
   const dependencies: WorkbenchEditorGroupCloseLifecycleDependencies = {
     workspaceRoot: ROOT,
-    currentWorkspaceRootRef: { current: ROOT },
+    currentWorkspaceRootRef,
     editorGroupsRef,
     openPathsRef,
     previewPathRef,
@@ -112,19 +148,13 @@ function renderLifecycle(
           ? update(markdownPreviewTabsRef.current)
           : update;
     },
-    setEslintDiagnosticsByRoot: (update) => {
-      eslintDiagnostics =
-        typeof update === "function" ? update(eslintDiagnostics) : update;
-    },
-    setPhpstanDiagnosticsByRoot: (update) => {
-      phpstanDiagnostics =
-        typeof update === "function" ? update(phpstanDiagnostics) : update;
-    },
+    setEslintDiagnosticsByRoot,
+    setPhpstanDiagnosticsByRoot,
     updateEditorGroups: (update) => {
       editorGroupsRef.current = update(editorGroupsRef.current);
     },
     closeTextDocument,
-    closeTextSurface: vi.fn(),
+    closeTextSurface,
     hasExternalFileConflict: vi.fn(() => false),
     prompter,
     ...overrides,
@@ -140,8 +170,12 @@ function renderLifecycle(
   });
 
   return {
+    activeDocumentRef,
     closeTextDocument,
+    closeTextSurface,
+    currentWorkspaceRootRef,
     editorGroupsRef,
+    eslintDiagnostics: () => eslintDiagnostics,
     imageTabsRef,
     lifecycle: () => {
       if (!captured.lifecycle) {
@@ -150,10 +184,39 @@ function renderLifecycle(
       return captured.lifecycle;
     },
     openPathsRef,
-    prompter,
+    phpstanDiagnostics: () => phpstanDiagnostics,
+    prompter: dependencies.prompter,
+    setEslintDiagnosticsByRoot,
+    setPhpstanDiagnosticsByRoot,
     unmount: () => root.unmount(),
   };
 }
+
+const textClosePaths = [
+  {
+    name: "ordinary tab close",
+    close: (harness: Harness, path: string) =>
+      harness.lifecycle().closeDocument(path),
+    expectAccepted: (harness: Harness, path: string) => {
+      expect(harness.closeTextDocument).toHaveBeenCalledOnce();
+      expect(harness.closeTextDocument).toHaveBeenCalledWith(path, {
+        skipConfirmation: true,
+      });
+      expect(harness.closeTextSurface).not.toHaveBeenCalled();
+    },
+  },
+  {
+    name: "active surface close",
+    close: (harness: Harness) => harness.lifecycle().closeActiveSurface(),
+    expectAccepted: (harness: Harness) => {
+      expect(harness.closeTextDocument).not.toHaveBeenCalled();
+      expect(harness.closeTextSurface).toHaveBeenCalledOnce();
+      expect(harness.closeTextSurface).toHaveBeenCalledWith({
+        skipConfirmation: true,
+      });
+    },
+  },
+];
 
 describe("useWorkbenchEditorGroupCloseLifecycle", () => {
   it("removes split group membership without closing the shared document", () => {
@@ -209,6 +272,143 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     harness.unmount();
   });
 
+  it.each(textClosePaths)(
+    "clears diagnostics once after an accepted $name",
+    ({ close, expectAccepted }) => {
+      const path = `${ROOT}/dirty.php`;
+      const state = createInitialEditorGroupsState("editor-main", {
+        activePath: path,
+        openPaths: [path],
+        previewPath: null,
+      });
+      const harness = renderLifecycle(state, {
+        [path]: editorDocument(path, "edited", "saved"),
+      });
+
+      act(() => close(harness, path));
+
+      expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+      expectAccepted(harness, path);
+      expect(harness.setEslintDiagnosticsByRoot).toHaveBeenCalledOnce();
+      expect(harness.setPhpstanDiagnosticsByRoot).toHaveBeenCalledOnce();
+      expect(harness.eslintDiagnostics()[ROOT]?.[path]).toBeUndefined();
+      expect(harness.phpstanDiagnostics()[ROOT]?.[path]).toBeUndefined();
+
+      harness.unmount();
+    },
+  );
+
+  it.each(
+    textClosePaths.flatMap((closePath) => [
+      {
+        ...closePath,
+        attention: "dirty",
+        document: (path: string) => editorDocument(path, "edited", "saved"),
+        expectedPrompt: "Discard changes?",
+        hasExternalFileConflict: vi.fn(() => false),
+      },
+      {
+        ...closePath,
+        attention: "conflict",
+        document: (path: string) => editorDocument(path),
+        expectedPrompt: "Close file with an unresolved external conflict?",
+        hasExternalFileConflict: vi.fn(() => true),
+      },
+    ]),
+  )(
+    "does not clear diagnostics or mutate state when a $attention $name is declined",
+    ({ close, document, expectedPrompt, hasExternalFileConflict }) => {
+      const path = `${ROOT}/attention.php`;
+      const state = createInitialEditorGroupsState("editor-main", {
+        activePath: path,
+        openPaths: [path],
+        previewPath: null,
+      });
+      const harness = renderLifecycle(
+        state,
+        { [path]: document(path) },
+        {
+          hasExternalFileConflict,
+          prompter: { confirm: vi.fn(() => false), prompt: vi.fn() },
+        },
+      );
+      const editorGroups = harness.editorGroupsRef.current;
+      const activeDocument = harness.activeDocumentRef.current;
+      const openPaths = harness.openPathsRef.current;
+      const eslintDiagnostics = harness.eslintDiagnostics();
+      const phpstanDiagnostics = harness.phpstanDiagnostics();
+
+      act(() => close(harness, path));
+
+      expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+      expect(harness.prompter.confirm).toHaveBeenCalledWith(expectedPrompt);
+      expect(harness.closeTextDocument).not.toHaveBeenCalled();
+      expect(harness.closeTextSurface).not.toHaveBeenCalled();
+      expect(harness.setEslintDiagnosticsByRoot).not.toHaveBeenCalled();
+      expect(harness.setPhpstanDiagnosticsByRoot).not.toHaveBeenCalled();
+      expect(harness.editorGroupsRef.current).toBe(editorGroups);
+      expect(harness.activeDocumentRef.current).toBe(activeDocument);
+      expect(harness.openPathsRef.current).toBe(openPaths);
+      expect(harness.eslintDiagnostics()).toBe(eslintDiagnostics);
+      expect(harness.phpstanDiagnostics()).toBe(phpstanDiagnostics);
+
+      harness.unmount();
+    },
+  );
+
+  it.each(textClosePaths)(
+    "uses a same-tick live root switch when preflighting a conflict-only $name",
+    ({ close }) => {
+      const nextRoot = "/next-workspace";
+      const path = `${nextRoot}/conflict.php`;
+      const state = createInitialEditorGroupsState("editor-main", {
+        activePath: path,
+        openPaths: [path],
+        previewPath: null,
+      });
+      const hasExternalFileConflict = vi.fn(
+        (rootPath: string | null, conflictPath: string) =>
+          rootPath === nextRoot && conflictPath === path,
+      );
+      const harness = renderLifecycle(
+        state,
+        { [path]: editorDocument(path) },
+        {
+          hasExternalFileConflict,
+          prompter: { confirm: vi.fn(() => false), prompt: vi.fn() },
+        },
+      );
+      const editorGroups = harness.editorGroupsRef.current;
+      const activeDocument = harness.activeDocumentRef.current;
+      const openPaths = harness.openPathsRef.current;
+      const eslintDiagnostics = harness.eslintDiagnostics();
+      const phpstanDiagnostics = harness.phpstanDiagnostics();
+
+      act(() => {
+        harness.currentWorkspaceRootRef.current = nextRoot;
+        close(harness, path);
+      });
+
+      expect(hasExternalFileConflict).toHaveBeenCalledOnce();
+      expect(hasExternalFileConflict).toHaveBeenCalledWith(nextRoot, path);
+      expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+      expect(harness.prompter.confirm).toHaveBeenCalledWith(
+        "Close file with an unresolved external conflict?",
+      );
+      expect(harness.closeTextDocument).not.toHaveBeenCalled();
+      expect(harness.closeTextSurface).not.toHaveBeenCalled();
+      expect(harness.setEslintDiagnosticsByRoot).not.toHaveBeenCalled();
+      expect(harness.setPhpstanDiagnosticsByRoot).not.toHaveBeenCalled();
+      expect(harness.editorGroupsRef.current).toBe(editorGroups);
+      expect(harness.activeDocumentRef.current).toBe(activeDocument);
+      expect(harness.openPathsRef.current).toBe(openPaths);
+      expect(harness.eslintDiagnostics()).toBe(eslintDiagnostics);
+      expect(harness.phpstanDiagnostics()).toBe(phpstanDiagnostics);
+
+      harness.unmount();
+    },
+  );
+
   it("prompts once before final dirty membership close", () => {
     const path = `${ROOT}/dirty.php`;
     const state = createInitialEditorGroupsState("editor-main", {
@@ -228,6 +428,105 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     expect(harness.closeTextDocument).toHaveBeenCalledWith(path, {
       skipConfirmation: true,
     });
+    expect(harness.setEslintDiagnosticsByRoot).toHaveBeenCalledOnce();
+    expect(harness.setPhpstanDiagnosticsByRoot).toHaveBeenCalledOnce();
+    expect(harness.eslintDiagnostics()[ROOT]?.[path]).toBeUndefined();
+    expect(harness.phpstanDiagnostics()[ROOT]?.[path]).toBeUndefined();
+
+    harness.unmount();
+  });
+
+  it("keeps active state and diagnostics when final dirty membership close is declined", () => {
+    const activePath = `${ROOT}/active.php`;
+    const closingPath = `${ROOT}/dirty.php`;
+    const state = splitState(activePath);
+    state.activeGroupId = "editor-main";
+    state.groups["editor-side"] = {
+      activePath: closingPath,
+      openPaths: [closingPath],
+      previewPath: null,
+    };
+    const harness = renderLifecycle(
+      state,
+      {
+        [activePath]: editorDocument(activePath),
+        [closingPath]: editorDocument(closingPath, "edited", "saved"),
+      },
+      { prompter: { confirm: vi.fn(() => false), prompt: vi.fn() } },
+    );
+    const eslintDiagnostics = harness.eslintDiagnostics();
+    const phpstanDiagnostics = harness.phpstanDiagnostics();
+
+    act(() => {
+      harness
+        .lifecycle()
+        .closeDocumentInEditorGroup("editor-side", closingPath);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith("Discard changes?");
+    expect(harness.closeTextDocument).not.toHaveBeenCalled();
+    expect(harness.editorGroupsRef.current.activeGroupId).toBe("editor-main");
+    expect(
+      harness.editorGroupsRef.current.groups["editor-main"]?.activePath,
+    ).toBe(activePath);
+    expect(
+      harness.editorGroupsRef.current.groups["editor-side"]?.activePath,
+    ).toBe(closingPath);
+    expect(harness.activeDocumentRef.current?.path).toBe(activePath);
+    expect(harness.openPathsRef.current).toEqual([activePath]);
+    expect(harness.eslintDiagnostics()).toBe(eslintDiagnostics);
+    expect(harness.phpstanDiagnostics()).toBe(phpstanDiagnostics);
+
+    harness.unmount();
+  });
+
+  it("keeps active state and diagnostics when final conflict membership close is declined", () => {
+    const activePath = `${ROOT}/active.php`;
+    const closingPath = `${ROOT}/conflict.php`;
+    const state = splitState(activePath);
+    state.activeGroupId = "editor-main";
+    state.groups["editor-side"] = {
+      activePath: closingPath,
+      openPaths: [closingPath],
+      previewPath: null,
+    };
+    const harness = renderLifecycle(
+      state,
+      {
+        [activePath]: editorDocument(activePath),
+        [closingPath]: editorDocument(closingPath),
+      },
+      {
+        hasExternalFileConflict: vi.fn(
+          (_rootPath, path) => path === closingPath,
+        ),
+        prompter: { confirm: vi.fn(() => false), prompt: vi.fn() },
+      },
+    );
+    const eslintDiagnostics = harness.eslintDiagnostics();
+    const phpstanDiagnostics = harness.phpstanDiagnostics();
+
+    act(() => {
+      harness
+        .lifecycle()
+        .closeDocumentInEditorGroup("editor-side", closingPath);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close file with an unresolved external conflict?",
+    );
+    expect(harness.closeTextDocument).not.toHaveBeenCalled();
+    expect(harness.editorGroupsRef.current.activeGroupId).toBe("editor-main");
+    expect(
+      harness.editorGroupsRef.current.groups["editor-main"]?.activePath,
+    ).toBe(activePath);
+    expect(
+      harness.editorGroupsRef.current.groups["editor-side"]?.activePath,
+    ).toBe(closingPath);
+    expect(harness.activeDocumentRef.current?.path).toBe(activePath);
+    expect(harness.openPathsRef.current).toEqual([activePath]);
+    expect(harness.eslintDiagnostics()).toBe(eslintDiagnostics);
+    expect(harness.phpstanDiagnostics()).toBe(phpstanDiagnostics);
 
     harness.unmount();
   });

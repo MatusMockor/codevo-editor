@@ -18,10 +18,19 @@ export type { DocumentCloseOptions } from "./useDocumentCloseLifecycle";
  * passing the complete editor-session state during the controller split.
  */
 export type DocumentLifecycleDependencies = DocumentSaveLifecycleDependencies &
-  Omit<DocumentCloseLifecycleDependencies, "invalidateDocumentSave"> & {
+  Omit<
+    DocumentCloseLifecycleDependencies,
+    "invalidateDocumentSave"
+  > & {
+    activePath: string | null;
     documents: Record<string, EditorDocument>;
     openPaths: string[];
     previewPath: string | null;
+    setActivePath: (path: string | null) => void;
+    setOpenPaths: (paths: string[]) => void;
+    setPreviewPath: (path: string | null) => void;
+    openPathsRef: { current: string[] };
+    previewPathRef: { current: string | null };
   };
 
 export interface DocumentLifecycle

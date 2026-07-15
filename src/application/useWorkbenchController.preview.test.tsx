@@ -12922,6 +12922,96 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("uses live dirty state when closing a newly active workspace in the same tick", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    const dirtyFile = fileEntry("/workspace-b/src/Dirty.php", "Dirty.php");
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(dirtyFile);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("dirty content");
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(false);
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+      vi.mocked(dependencies.settingsGateway.saveAppSettings).mockClear();
+      vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
+      vi.mocked(
+        dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+      ).mockClear();
+      await getWorkbench().closeWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(dependencies.settingsGateway.saveAppSettings).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTabs).toEqual([
+      "/workspace-a",
+      "/workspace-b",
+    ]);
+  });
+
+  it("uses the inactive close path for the previous workspace after a same-tick switch", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    const liveWorkspaceFile = fileEntry(
+      "/workspace-b/src/Live.php",
+      "Live.php",
+    );
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+      await getWorkbench().openPinnedFile(liveWorkspaceFile);
+      vi.mocked(dependencies.settingsGateway.saveAppSettings).mockClear();
+      vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
+      await getWorkbench().closeWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns(24);
+
+    expect(
+      vi
+        .mocked(dependencies.settingsGateway.saveWorkspaceSettings)
+        .mock.calls.some(([rootPath]) => rootPath === "/workspace-a"),
+    ).toBe(false);
+    expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recentWorkspacePath: "/workspace-b",
+        workspaceTabs: ["/workspace-b"],
+      }),
+    );
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace-b"]);
+    expect(getWorkbench().activePath).toBe(liveWorkspaceFile.path);
+  });
+
   it("removes an inactive project tab without changing the active workspace", async () => {
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -21647,7 +21737,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().message).not.toBe("Settings saved.");
   });
 
-  it("does not recreate smart mode state when a delayed settings save outlives workspace close", async () => {
+  it("keeps an in-flight settings save current when active workspace close is declined", async () => {
     const appSettingsSave = createDeferred<void>();
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
@@ -21657,6 +21747,14 @@ describe("useWorkbenchController preview tabs", () => {
       },
     });
     await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry("/workspace/src/Dirty.php", "Dirty.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("dirty content");
+    });
     vi.mocked(dependencies.smartModeGateway.setMode).mockClear();
     vi.mocked(dependencies.settingsGateway.saveAppSettings).mockClear();
     vi.mocked(dependencies.settingsGateway.saveAppSettings).mockImplementationOnce(
@@ -21679,6 +21777,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledOnce();
     });
 
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(false);
     await act(async () => {
       await getWorkbench().closeWorkspaceTab("/workspace");
     });
@@ -21689,6 +21788,77 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns(24);
 
+    expect(dependencies.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(dependencies.smartModeGateway.setMode).toHaveBeenCalledWith(
+      "/workspace",
+      "fullSmart",
+    );
+    expect(getWorkbench().workspaceRoot).toBe("/workspace");
+    expect(getWorkbench().workspaceTabs).toEqual(["/workspace"]);
+  });
+
+  it("invalidates a delayed settings save before accepted workspace teardown", async () => {
+    const appSettingsSave = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry("/workspace/src/Dirty.php", "Dirty.php"),
+      );
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("dirty content");
+    });
+    vi.mocked(dependencies.smartModeGateway.setMode).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockClear();
+    vi.mocked(dependencies.settingsGateway.saveAppSettings).mockImplementationOnce(
+      async () => appSettingsSave.promise,
+    );
+
+    let savePromise: Promise<void> = Promise.resolve();
+    await act(async () => {
+      savePromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        {
+          ...getWorkbench().workspaceSettings,
+          intelligenceMode: "fullSmart",
+        },
+        getWorkbench().workspaceTrust?.trusted ?? null,
+      );
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.settingsGateway.saveAppSettings).toHaveBeenCalledOnce();
+    });
+    vi.mocked(
+      dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
+    ).mockImplementationOnce(async () => {
+      appSettingsSave.resolve(undefined);
+      await savePromise;
+      expect(dependencies.smartModeGateway.setMode).not.toHaveBeenCalled();
+    });
+    vi.mocked(dependencies.prompter.confirm).mockReturnValueOnce(true);
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+    });
+
+    await act(async () => {
+      await savePromise;
+    });
+    await flushAsyncTurns(24);
+
+    expect(dependencies.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
     expect(
       vi
         .mocked(dependencies.smartModeGateway.setMode)

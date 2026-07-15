@@ -34,6 +34,13 @@ interface OpenWorkspacePathOptions {
   cachePreviousWorkspace?: boolean;
 }
 
+export interface WorkspaceCloseSessionPort {
+  current: () => {
+    activeRoot: string | null;
+    needsAttention: boolean;
+  };
+}
+
 export interface WorkbenchCloseLifecycleDependencies {
   workspaceRoot: string | null;
   dirtyCount: number;
@@ -55,6 +62,8 @@ export interface WorkbenchCloseLifecycleDependencies {
   editorGitBaselineRequestTokenRef: MutableRefObject<number>;
 
   prompter: WorkbenchPrompter;
+  workspaceCloseSession: WorkspaceCloseSessionPort;
+  commitWorkspaceClose: (rootPath: string) => void;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   persistAppSettings: (nextSettings: AppSettings) => Promise<void>;
   closeSyncedLanguageServerDocumentsForRoot: (
@@ -108,6 +117,8 @@ export function useWorkbenchCloseLifecycle(
     gitDiffRequestTokenRef,
     editorGitBaselineRequestTokenRef,
     prompter,
+    workspaceCloseSession,
+    commitWorkspaceClose,
     runWithDocumentSaveExclusion,
     persistAppSettings,
     closeSyncedLanguageServerDocumentsForRoot,
@@ -358,12 +369,14 @@ export function useWorkbenchCloseLifecycle(
       const currentSettings = appSettingsRef.current;
       const currentTabs = currentSettings.workspaceTabs;
       const tabPath = workspaceTabPathForPath(currentTabs, path) ?? path;
+      const activeSession = workspaceCloseSession.current();
+      const activeRootPath = activeSession.activeRoot;
       const closingActiveWorkspace = workspaceRootKeysEqual(
         tabPath,
-        workspaceRoot,
+        activeRootPath,
       );
       const targetRootPath =
-        closingActiveWorkspace && workspaceRoot ? workspaceRoot : tabPath;
+        closingActiveWorkspace && activeRootPath ? activeRootPath : tabPath;
       const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
       const cachedWorkspaceState =
         workspaceStateCacheRef.current[tabPath] ??
@@ -375,14 +388,11 @@ export function useWorkbenchCloseLifecycle(
       }
 
       if (
-        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, tabPath) ||
-        workspaceRootKeysEqual(
-          openWorkspaceRequestPathRef.current,
-          targetRootPath,
-        )
+        closingActiveWorkspace &&
+        activeSession.needsAttention &&
+        !prompter.confirm("Close workspace and discard unsaved changes?")
       ) {
-        openWorkspaceRequestTokenRef.current += 1;
-        openWorkspaceRequestPathRef.current = null;
+        return;
       }
 
       if (!closingActiveWorkspace) {
@@ -396,7 +406,22 @@ export function useWorkbenchCloseLifecycle(
         ) {
           return;
         }
+      }
 
+      commitWorkspaceClose(targetRootPath);
+
+      if (
+        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, tabPath) ||
+        workspaceRootKeysEqual(
+          openWorkspaceRequestPathRef.current,
+          targetRootPath,
+        )
+      ) {
+        openWorkspaceRequestTokenRef.current += 1;
+        openWorkspaceRequestPathRef.current = null;
+      }
+
+      if (!closingActiveWorkspace) {
         await runWithDocumentSaveExclusion(
           {
             kind: "workspace",
@@ -407,7 +432,7 @@ export function useWorkbenchCloseLifecycle(
               currentSettings.recentWorkspacePath,
               tabPath,
             )
-              ? (workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null)
+              ? (activeRootPath ?? nextTabs[nextTabs.length - 1] ?? null)
               : currentSettings.recentWorkspacePath;
 
             try {
@@ -423,13 +448,6 @@ export function useWorkbenchCloseLifecycle(
             await disposeWorkspaceTabResources(tabPath, targetRootPath);
           },
         );
-        return;
-      }
-
-      if (
-        dirtyCount > 0 &&
-        !prompter.confirm("Close workspace and discard unsaved changes?")
-      ) {
         return;
       }
 
@@ -481,7 +499,7 @@ export function useWorkbenchCloseLifecycle(
     [
       appSettingsRef,
       clearActiveWorkspace,
-      dirtyCount,
+      commitWorkspaceClose,
       editorGitBaselineRequestTokenRef,
       disposeWorkspaceTabResources,
       gitDiffRequestTokenRef,
@@ -494,7 +512,7 @@ export function useWorkbenchCloseLifecycle(
       prompter,
       reportError,
       runWithDocumentSaveExclusion,
-      workspaceRoot,
+      workspaceCloseSession,
       workspaceStateCacheRef,
       workspaceHasExternalFileConflicts,
     ],

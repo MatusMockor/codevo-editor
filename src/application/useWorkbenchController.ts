@@ -80,7 +80,10 @@ import {
   closeWorkspaceDocumentsBeforeSwitch,
   WorkspaceDocumentCloseCoordinator,
 } from "./workspaceSessionSwitchLifecycle";
-import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
+import {
+  useWorkbenchCloseLifecycle,
+  type WorkspaceCloseSessionPort,
+} from "./useWorkbenchCloseLifecycle";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
 import { useWorkbenchFileOperations } from "./useWorkbenchFileOperations";
@@ -4037,6 +4040,36 @@ export function useWorkbenchController(
         runWithDocumentSaveExclusionRef.current(scope, operation),
       [],
     );
+  const commitWorkspaceClose = useCallback((rootPath: string) => {
+    const rootKey = normalizedWorkspaceRootKey(rootPath);
+    workspaceCloseGenerationByRootRef.current[rootKey] =
+      (workspaceCloseGenerationByRootRef.current[rootKey] ?? 0) + 1;
+  }, []);
+  const workspaceCloseSession = useMemo<WorkspaceCloseSessionPort>(
+    () => ({
+      current: () => {
+        const activeRoot = currentWorkspaceRootRef.current;
+        if (!activeRoot) {
+          return { activeRoot: null, needsAttention: false };
+        }
+
+        const hasDirtyDocument = editorGroupsUniquePaths(
+          editorGroupsRef.current,
+        ).some((path) => {
+          const document = documentsRef.current[path];
+          return Boolean(document && !document.readOnly && isDirty(document));
+        });
+        return {
+          activeRoot,
+          needsAttention: documentNeedsAttention(
+            hasDirtyDocument,
+            workspaceHasExternalFileConflictsRef.current(activeRoot),
+          ),
+        };
+      },
+    }),
+    [documentsRef, editorGroupsRef],
+  );
 
   const {
     closeApplicationWindow,
@@ -4055,6 +4088,8 @@ export function useWorkbenchController(
     gitDiffRequestTokenRef,
     editorGitBaselineRequestTokenRef,
     prompter,
+    workspaceCloseSession,
+    commitWorkspaceClose,
     runWithDocumentSaveExclusion: runWithDocumentSaveExclusionDelegate,
     persistAppSettings,
     closeSyncedLanguageServerDocumentsForRoot,
@@ -4076,10 +4111,7 @@ export function useWorkbenchController(
 
   const closeWorkspaceTab = useCallback(
     async (path: string) => {
-      const rootKey = normalizedWorkspaceRootKey(path);
       const runtimeRootPath = workspaceRuntimeRootByTabRef.current[path] ?? path;
-      workspaceCloseGenerationByRootRef.current[rootKey] =
-        (workspaceCloseGenerationByRootRef.current[rootKey] ?? 0) + 1;
       await closeWorkspaceTabWithLifecycle(path);
 
       if (
@@ -4162,6 +4194,7 @@ export function useWorkbenchController(
     canReopenClosedDocument,
   } = useDocumentLifecycle({
     workspaceRoot,
+    documentTabSession,
     activeDocument,
     documents,
     openPaths,

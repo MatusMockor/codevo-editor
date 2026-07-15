@@ -75,7 +75,6 @@ export function useWorkbenchEditorGroupCloseLifecycle(
   dependencies: WorkbenchEditorGroupCloseLifecycleDependencies,
 ): WorkbenchEditorGroupCloseLifecycle {
   const {
-    workspaceRoot,
     currentWorkspaceRootRef,
     editorGroupsRef,
     openPathsRef,
@@ -117,16 +116,54 @@ export function useWorkbenchEditorGroupCloseLifecycle(
     ],
   );
 
+  const acceptTextDocumentClose = useCallback(
+    (path: string, options: DocumentCloseOptions = {}) => {
+      if (options.skipConfirmation === true) {
+        return true;
+      }
+
+      const document = documentsRef.current[path];
+      if (!document) {
+        return true;
+      }
+
+      const hasConflict = hasExternalFileConflict(
+        currentWorkspaceRootRef.current,
+        path,
+      );
+      if (!isDirty(document) && !hasConflict) {
+        return true;
+      }
+
+      return prompter.confirm(
+        hasConflict
+          ? "Close file with an unresolved external conflict?"
+          : "Discard changes?",
+      );
+    },
+    [
+      documentsRef,
+      currentWorkspaceRootRef,
+      hasExternalFileConflict,
+      prompter,
+    ],
+  );
+
   const closeDocument = useCallback(
     (path: string, options: DocumentCloseOptions = {}) => {
-      clearCodeQualityDiagnostics(path);
-
       const markdownPreview = markdownPreviewTabsRef.current[path];
 
       if (!imageTabsRef.current[path] && !markdownPreview) {
-        closeTextDocument(path, options);
+        if (!acceptTextDocumentClose(path, options)) {
+          return;
+        }
+
+        clearCodeQualityDiagnostics(path);
+        closeTextDocument(path, { ...options, skipConfirmation: true });
         return;
       }
+
+      clearCodeQualityDiagnostics(path);
       const nextMarkdownPreviews = { ...markdownPreviewTabsRef.current };
       const nextImages = { ...imageTabsRef.current };
       delete nextMarkdownPreviews[path];
@@ -160,6 +197,7 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       }));
     },
     [
+      acceptTextDocumentClose,
       activeDocumentRef,
       clearCodeQualityDiagnostics,
       closeTextDocument,
@@ -195,6 +233,9 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       if (!target) {
         return;
       }
+      if (!acceptTextDocumentClose(path, options)) {
+        return;
+      }
       const activated = {
         ...current,
         activeGroupId: groupId,
@@ -208,9 +249,10 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       previewPathRef.current = target.previewPath;
       activeDocumentRef.current = documentsRef.current[path] ?? null;
       updateEditorGroups(() => activated);
-      closeDocument(path, options);
+      closeDocument(path, { ...options, skipConfirmation: true });
     },
     [
+      acceptTextDocumentClose,
       activeDocumentRef,
       closeDocument,
       documentsRef,
@@ -233,18 +275,9 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       current,
       groupId,
     ).finalMembershipPaths;
-    const shouldAbort = finalMembershipPaths.some((path) => {
-      const document = documentsRef.current[path];
-      const hasConflict = hasExternalFileConflict(workspaceRoot, path);
-      if (!document || (!isDirty(document) && !hasConflict)) {
-        return false;
-      }
-      return !prompter.confirm(
-        hasConflict
-          ? "Close file with an unresolved external conflict?"
-          : "Discard changes?",
-      );
-    });
+    const shouldAbort = finalMembershipPaths.some(
+      (path) => !acceptTextDocumentClose(path),
+    );
     if (shouldAbort) {
       return;
     }
@@ -255,13 +288,10 @@ export function useWorkbenchEditorGroupCloseLifecycle(
     );
     updateEditorGroups((state) => closeEditorGroup(state, groupId).state);
   }, [
+    acceptTextDocumentClose,
     closeDocumentInEditorGroup,
-    documentsRef,
     editorGroupsRef,
-    hasExternalFileConflict,
-    prompter,
     updateEditorGroups,
-    workspaceRoot,
   ]);
 
   const closeActiveSurface = useCallback(() => {
@@ -277,12 +307,19 @@ export function useWorkbenchEditorGroupCloseLifecycle(
       return;
     }
 
-    if (activePath) {
-      clearCodeQualityDiagnostics(activePath);
+    if (!activePath) {
+      closeTextSurface();
+      return;
     }
 
-    closeTextSurface();
+    if (!acceptTextDocumentClose(activePath)) {
+      return;
+    }
+
+    clearCodeQualityDiagnostics(activePath);
+    closeTextSurface({ skipConfirmation: true });
   }, [
+    acceptTextDocumentClose,
     clearCodeQualityDiagnostics,
     closeDocument,
     closeTextSurface,

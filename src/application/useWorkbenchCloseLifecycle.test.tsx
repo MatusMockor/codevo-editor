@@ -155,11 +155,19 @@ function renderLifecycle(
   const runWithDocumentSaveExclusion = documentSaveExclusionMock();
   const stopProjectRuntimes = vi.fn(async () => undefined);
   const reportError = vi.fn();
+  const liveWorkspaceRoot =
+    overrides.workspaceRoot === undefined
+      ? WORKSPACE_B
+      : overrides.workspaceRoot;
+  const liveDirtyCount = overrides.dirtyCount ?? 0;
+  const liveWorkspaceHasExternalFileConflicts =
+    overrides.workspaceHasExternalFileConflicts ?? vi.fn(() => false);
 
   const dependencies: WorkbenchCloseLifecycleDependencies = {
     appSettingsRef,
     clearActiveWorkspace: vi.fn(async () => undefined),
     clearExternalFileConflictsForRoot: vi.fn(),
+    commitWorkspaceClose: vi.fn(),
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
     closeSyncedLanguageServerDocumentsForRoot,
     dirtyCount: 0,
@@ -178,6 +186,17 @@ function renderLifecycle(
     runWithDocumentSaveExclusion,
     stopProjectRuntimes,
     workspaceRoot: WORKSPACE_B,
+    workspaceCloseSession: {
+      current: () => ({
+        activeRoot: liveWorkspaceRoot,
+        needsAttention:
+          liveDirtyCount > 0 ||
+          Boolean(
+            liveWorkspaceRoot &&
+              liveWorkspaceHasExternalFileConflicts(liveWorkspaceRoot),
+          ),
+      }),
+    },
     workspaceStateCacheRef,
     workspaceIdentityByRootRef: { current: {} },
     unregisterWorkspace: vi.fn(async () => undefined),
@@ -327,7 +346,8 @@ describe("useWorkbenchCloseLifecycle", () => {
   });
 
   it("keeps an inactive dirty workspace tab when discard is declined", async () => {
-    const harness = renderLifecycle();
+    const commitWorkspaceClose = vi.fn();
+    const harness = renderLifecycle({ commitWorkspaceClose });
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
       editorSurface: {
         documents: {
@@ -348,11 +368,152 @@ describe("useWorkbenchCloseLifecycle", () => {
     );
     expect(harness.persistAppSettings).not.toHaveBeenCalled();
     expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
+    expect(commitWorkspaceClose).not.toHaveBeenCalled();
     expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
     expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
       WORKSPACE_A,
       WORKSPACE_B,
     ]);
+    harness.unmount();
+  });
+
+  it("preserves an active conflict-only workspace when discard is declined", async () => {
+    const commitWorkspaceClose = vi.fn();
+    const openWorkspaceRequestPathRef = {
+      current: WORKSPACE_B as string | null,
+    };
+    const openWorkspaceRequestTokenRef = { current: 11 };
+    const openFileRequestTokenRef = { current: 12 };
+    const gitDiffRequestTokenRef = { current: 13 };
+    const editorGitBaselineRequestTokenRef = { current: 14 };
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const openWorkspacePath = vi.fn(async () => undefined);
+    const clearActiveWorkspace = vi.fn(async () => undefined);
+    const clearExternalFileConflictsForRoot = vi.fn();
+    const harness = renderLifecycle({
+      clearActiveWorkspace,
+      clearExternalFileConflictsForRoot,
+      commitWorkspaceClose,
+      dirtyCount: 0,
+      editorGitBaselineRequestTokenRef,
+      gitDiffRequestTokenRef,
+      openFileRequestTokenRef,
+      openWorkspacePath,
+      openWorkspaceRequestPathRef,
+      openWorkspaceRequestTokenRef,
+      persistWorkspaceSession,
+      workspaceHasExternalFileConflicts: vi.fn(
+        (root) => root === WORKSPACE_B,
+      ),
+    });
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_B);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(openWorkspaceRequestPathRef.current).toBe(WORKSPACE_B);
+    expect(openWorkspaceRequestTokenRef.current).toBe(11);
+    expect(openFileRequestTokenRef.current).toBe(12);
+    expect(gitDiffRequestTokenRef.current).toBe(13);
+    expect(editorGitBaselineRequestTokenRef.current).toBe(14);
+    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
+      WORKSPACE_A,
+      WORKSPACE_B,
+    ]);
+    expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
+    expect(commitWorkspaceClose).not.toHaveBeenCalled();
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    expect(clearExternalFileConflictsForRoot).not.toHaveBeenCalled();
+    expect(
+      harness.closeSyncedLanguageServerDocumentsForRoot,
+    ).not.toHaveBeenCalled();
+    expect(
+      harness.closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+    ).not.toHaveBeenCalled();
+    expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(openWorkspacePath).not.toHaveBeenCalled();
+    expect(clearActiveWorkspace).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("uses the live active workspace and attention after a same-tick switch", async () => {
+    let activeSession = {
+      activeRoot: WORKSPACE_A as string | null,
+      needsAttention: false,
+    };
+    const commitWorkspaceClose = vi.fn();
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      commitWorkspaceClose,
+      persistWorkspaceSession,
+      workspaceRoot: WORKSPACE_A,
+      workspaceCloseSession: { current: () => activeSession },
+    });
+    activeSession = { activeRoot: WORKSPACE_B, needsAttention: true };
+    harness.prompter.confirm.mockReturnValueOnce(false);
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_B);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(commitWorkspaceClose).not.toHaveBeenCalled();
+    expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
+      WORKSPACE_A,
+      WORKSPACE_B,
+    ]);
+    harness.unmount();
+  });
+
+  it("uses the inactive cache after a same-tick switch away from the closing root", async () => {
+    let activeRoot: string | null = WORKSPACE_A;
+    const commitWorkspaceClose = vi.fn();
+    const persistWorkspaceSession = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      commitWorkspaceClose,
+      persistWorkspaceSession,
+      workspaceRoot: WORKSPACE_A,
+      workspaceCloseSession: {
+        current: () => ({ activeRoot, needsAttention: false }),
+      },
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: {
+        documents: {
+          [`${WORKSPACE_A}/src/Dirty.php`]: dirtyDocument(
+            `${WORKSPACE_A}/src/Dirty.php`,
+          ),
+        },
+      },
+    };
+    harness.appSettingsRef.current.recentWorkspacePath = WORKSPACE_A;
+    activeRoot = WORKSPACE_B;
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(commitWorkspaceClose).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(harness.persistAppSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recentWorkspacePath: WORKSPACE_B,
+        workspaceTabs: [WORKSPACE_B],
+      }),
+    );
     harness.unmount();
   });
 
@@ -372,11 +533,15 @@ describe("useWorkbenchCloseLifecycle", () => {
     const persistAppSettings = vi.fn(async () => {
       events.push("persist");
     });
+    const commitWorkspaceClose = vi.fn((rootPath: string) => {
+      events.push(`commit:${rootPath}`);
+    });
     const stopProjectRuntimes = vi.fn(() => {
       events.push("runtime");
       return runtimeStop.promise;
     });
     const harness = renderLifecycle({
+      commitWorkspaceClose,
       persistAppSettings,
       runWithDocumentSaveExclusion,
       stopProjectRuntimes,
@@ -396,7 +561,12 @@ describe("useWorkbenchCloseLifecycle", () => {
       kind: "workspace",
       rootPath: WORKSPACE_A,
     });
-    expect(events).toEqual(["lock", "persist", "runtime"]);
+    expect(events).toEqual([
+      `commit:${WORKSPACE_A}`,
+      "lock",
+      "persist",
+      "runtime",
+    ]);
 
     runtimeStop.resolve();
     await act(async () => {
@@ -406,7 +576,13 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(persistAppSettings).toHaveBeenCalledOnce();
     expect(harness.workspaceStateCacheRef.current[WORKSPACE_A]).toBeUndefined();
     expect(stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
-    expect(events).toEqual(["lock", "persist", "runtime", "unlock"]);
+    expect(events).toEqual([
+      `commit:${WORKSPACE_A}`,
+      "lock",
+      "persist",
+      "runtime",
+      "unlock",
+    ]);
     harness.unmount();
   });
 
@@ -426,6 +602,9 @@ describe("useWorkbenchCloseLifecycle", () => {
     const persistWorkspaceSession = vi.fn(async () => {
       events.push("session");
     });
+    const commitWorkspaceClose = vi.fn((rootPath: string) => {
+      events.push(`commit:${rootPath}`);
+    });
     const persistAppSettings = vi.fn(async () => {
       events.push("settings");
     });
@@ -437,6 +616,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       return workspaceSwitch.promise;
     });
     const harness = renderLifecycle({
+      commitWorkspaceClose,
       dirtyCount: 1,
       openWorkspacePath,
       persistAppSettings,
@@ -460,6 +640,7 @@ describe("useWorkbenchCloseLifecycle", () => {
       rootPath: WORKSPACE_B,
     });
     expect(events).toEqual([
+      `commit:${WORKSPACE_B}`,
       "lock",
       "session",
       "settings",
