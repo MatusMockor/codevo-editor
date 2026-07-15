@@ -166,6 +166,14 @@ export interface Diagnostics {
     rootPath: string | null | undefined,
     owner?: WorkspaceRuntimeOwner,
   ) => void;
+  resetLanguageServerDiagnosticsForRoot: (
+    rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
+  ) => void;
+  prepareLanguageServerDiagnosticsForRuntimeStart: (
+    rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
+  ) => void;
   clearLanguageServerDiagnosticsForRoot: (
     rootPath: string | null | undefined,
     owner?: WorkspaceRuntimeOwner,
@@ -173,6 +181,14 @@ export interface Diagnostics {
   clearJavaScriptTypeScriptLanguageServerDiagnostics: () => void;
   clearPhpLocalDiagnostics: () => void;
   restoreJavaScriptTypeScriptDiagnosticsForRoot: (
+    rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
+  ) => void;
+  resetJavaScriptTypeScriptDiagnosticsForRoot: (
+    rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
+  ) => void;
+  prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart: (
     rootPath: string | null | undefined,
     owner?: WorkspaceRuntimeOwner,
   ) => void;
@@ -327,6 +343,24 @@ export function useDiagnostics(
     closedDiagnosticsOwnerKeysRef.current.add(ownerKey);
   }, []);
 
+  const resetDiagnosticsOwnerPendingWork = useCallback((ownerKey: string) => {
+    if (closedDiagnosticsOwnerKeysRef.current.has(ownerKey)) {
+      return;
+    }
+
+    diagnosticsOwnerRevisionRef.current[ownerKey] =
+      (diagnosticsOwnerRevisionRef.current[ownerKey] ?? 0) + 1;
+  }, []);
+
+  const prepareDiagnosticsOwnerForRuntimeStart = useCallback(
+    (ownerKey: string) => {
+      diagnosticsOwnerRevisionRef.current[ownerKey] =
+        (diagnosticsOwnerRevisionRef.current[ownerKey] ?? 0) + 1;
+      closedDiagnosticsOwnerKeysRef.current.delete(ownerKey);
+    },
+    [],
+  );
+
   const restoreDiagnosticsOwner = useCallback((ownerKey: string) => {
     closedDiagnosticsOwnerKeysRef.current.delete(ownerKey);
   }, []);
@@ -429,6 +463,41 @@ export function useDiagnostics(
     );
   }, []);
 
+  const resetLanguageServerDiagnosticsContentForRoot = useCallback(
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+
+      if (rootKey) {
+        delete languageServerDiagnosticsByRootRef.current[rootKey];
+      }
+
+      if (owner) {
+        languageServerDiagnosticsCoalescerRef.current?.dropOwner(owner.ownerKey);
+      }
+
+      if (!owner) {
+        languageServerDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
+      }
+
+      const executionRoot = diagnosticsExecutionRoot(rootPath, owner);
+      if (
+        !isDiagnosticsOwnerVisible(
+          rootKey,
+          executionRoot,
+          visibleLanguageServerDiagnosticsOwnerKeyRef,
+        )
+      ) {
+        return;
+      }
+
+      clearLanguageServerDiagnostics();
+    },
+    [clearLanguageServerDiagnostics, isDiagnosticsOwnerVisible],
+  );
+
   const restoreLanguageServerDiagnosticsForRoot = useCallback(
     (
       rootPath: string | null | undefined,
@@ -492,34 +561,46 @@ export function useDiagnostics(
     ) => {
       const rootKey = diagnosticsOwnerKey(rootPath, owner);
 
-      if (rootKey) {
-        delete languageServerDiagnosticsByRootRef.current[rootKey];
-      }
-
       if (owner) {
         closeDiagnosticsOwner(diagnosticsOwnerLifecycleKey("php", rootKey));
-        languageServerDiagnosticsCoalescerRef.current?.dropOwner(owner.ownerKey);
       }
 
-      if (!owner) {
-        languageServerDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
-      }
+      resetLanguageServerDiagnosticsContentForRoot(rootPath, owner);
+    },
+    [closeDiagnosticsOwner, resetLanguageServerDiagnosticsContentForRoot],
+  );
 
-      const executionRoot = diagnosticsExecutionRoot(rootPath, owner);
-      if (
-        isDiagnosticsOwnerVisible(
-          rootKey,
-          executionRoot,
-          visibleLanguageServerDiagnosticsOwnerKeyRef,
-        )
-      ) {
-        clearLanguageServerDiagnostics();
-      }
+  const resetLanguageServerDiagnosticsForRoot = useCallback(
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("php", rootKey);
+
+      resetDiagnosticsOwnerPendingWork(lifecycleKey);
+      resetLanguageServerDiagnosticsContentForRoot(rootPath, owner);
     },
     [
-      clearLanguageServerDiagnostics,
-      closeDiagnosticsOwner,
-      isDiagnosticsOwnerVisible,
+      resetDiagnosticsOwnerPendingWork,
+      resetLanguageServerDiagnosticsContentForRoot,
+    ],
+  );
+
+  const prepareLanguageServerDiagnosticsForRuntimeStart = useCallback(
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("php", rootKey);
+
+      prepareDiagnosticsOwnerForRuntimeStart(lifecycleKey);
+      resetLanguageServerDiagnosticsContentForRoot(rootPath, owner);
+    },
+    [
+      prepareDiagnosticsOwnerForRuntimeStart,
+      resetLanguageServerDiagnosticsContentForRoot,
     ],
   );
 
@@ -532,6 +613,46 @@ export function useDiagnostics(
       ),
     );
   }, []);
+
+  const resetJavaScriptTypeScriptDiagnosticsContentForRoot = useCallback(
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+
+      if (rootKey) {
+        delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
+      }
+
+      if (owner) {
+        javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropOwner(
+          owner.ownerKey,
+        );
+      }
+
+      if (!owner) {
+        javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
+      }
+
+      const executionRoot = diagnosticsExecutionRoot(rootPath, owner);
+      if (
+        !isDiagnosticsOwnerVisible(
+          rootKey,
+          executionRoot,
+          visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef,
+        )
+      ) {
+        return;
+      }
+
+      clearJavaScriptTypeScriptLanguageServerDiagnostics();
+    },
+    [
+      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      isDiagnosticsOwnerVisible,
+    ],
+  );
 
   const clearPhpLocalDiagnostics = useCallback(() => {
     setPhpLocalDiagnosticsByPath({});
@@ -615,38 +736,51 @@ export function useDiagnostics(
     ) => {
       const rootKey = diagnosticsOwnerKey(rootPath, owner);
 
-      if (rootKey) {
-        delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
-      }
-
       if (owner) {
         closeDiagnosticsOwner(
           diagnosticsOwnerLifecycleKey("typescript", rootKey),
         );
-        javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropOwner(
-          owner.ownerKey,
-        );
       }
 
-      if (!owner) {
-        javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
-      }
-
-      const executionRoot = diagnosticsExecutionRoot(rootPath, owner);
-      if (
-        isDiagnosticsOwnerVisible(
-          rootKey,
-          executionRoot,
-          visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef,
-        )
-      ) {
-        clearJavaScriptTypeScriptLanguageServerDiagnostics();
-      }
+      resetJavaScriptTypeScriptDiagnosticsContentForRoot(rootPath, owner);
     },
     [
-      clearJavaScriptTypeScriptLanguageServerDiagnostics,
       closeDiagnosticsOwner,
-      isDiagnosticsOwnerVisible,
+      resetJavaScriptTypeScriptDiagnosticsContentForRoot,
+    ],
+  );
+
+  const resetJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("typescript", rootKey);
+
+      resetDiagnosticsOwnerPendingWork(lifecycleKey);
+      resetJavaScriptTypeScriptDiagnosticsContentForRoot(rootPath, owner);
+    },
+    [
+      resetDiagnosticsOwnerPendingWork,
+      resetJavaScriptTypeScriptDiagnosticsContentForRoot,
+    ],
+  );
+
+  const prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart = useCallback(
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("typescript", rootKey);
+
+      prepareDiagnosticsOwnerForRuntimeStart(lifecycleKey);
+      resetJavaScriptTypeScriptDiagnosticsContentForRoot(rootPath, owner);
+    },
+    [
+      prepareDiagnosticsOwnerForRuntimeStart,
+      resetJavaScriptTypeScriptDiagnosticsContentForRoot,
     ],
   );
 
@@ -1380,10 +1514,14 @@ export function useDiagnostics(
     clearPhpstanDiagnosticsForRoot,
     clearLanguageServerDiagnostics,
     restoreLanguageServerDiagnosticsForRoot,
+    resetLanguageServerDiagnosticsForRoot,
+    prepareLanguageServerDiagnosticsForRuntimeStart,
     clearLanguageServerDiagnosticsForRoot,
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
     restoreJavaScriptTypeScriptDiagnosticsForRoot,
+    resetJavaScriptTypeScriptDiagnosticsForRoot,
+    prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
     clearJavaScriptTypeScriptDiagnosticsForRoot,
     clearPhpLocalDiagnosticsForPath,
     clearLanguageServerDiagnosticsForPath,

@@ -70577,6 +70577,1056 @@ class PostRepository
     );
   });
 
+  it("keeps a direct admission current through the open-time PHP probe", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-php-open-owner", "/selected/php"),
+      canonicalRoot: "/canonical/php",
+    };
+    const tools = createDeferred<
+      Awaited<
+        ReturnType<WorkbenchWorkspaceGateways["phpTools"]["detectPhpTools"]>
+      >
+    >();
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(() => tools.promise),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      languageServerPlan: phpactorLanguageServerPlan(),
+      phpToolGateway,
+      runtimeStatus: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 303,
+      },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister: vi.fn(async () => undefined),
+      },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+    });
+
+    let openPromise: Promise<unknown> | null = null;
+    await act(async () => {
+      openPromise = getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+      for (let index = 0; index < 24; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(phpToolGateway.detectPhpTools).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+    );
+    await act(async () => {
+      tools.resolve({ intelephense: null, phpactor: null });
+      await openPromise;
+      for (let index = 0; index < 24; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(
+      dependencies.languageServerGateway.planPhpLanguageServer,
+    ).toHaveBeenCalledWith(
+      descriptor.selectedPath,
+      defaultPhpLanguageServerOptions(),
+    );
+    expect(getWorkbench().languageServerPlan?.status).toBe("ready");
+  });
+
+  it("keeps a direct admission current through the open-time TypeScript probe", async () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-ts-open-owner", "/selected/typescript"),
+      canonicalRoot: "/canonical/typescript",
+    };
+    const plan = createDeferred<LanguageServerPlan>();
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(() => plan.promise),
+      planPhpLanguageServer: vi.fn(async () => phpactorLanguageServerPlan()),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      languageServerGateway,
+      javaScriptTypeScriptRuntimeStatus: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 304,
+      },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptor),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    let openPromise: Promise<unknown> | null = null;
+    await act(async () => {
+      openPromise = getWorkbench().openWorkspaceRoot(descriptor.selectedPath);
+      for (let index = 0; index < 24; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(
+      languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalled();
+    await act(async () => {
+      plan.resolve(readyJavaScriptTypeScriptPlan(descriptor.selectedPath));
+      await openPromise;
+      for (let index = 0; index < 24; index += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith(descriptor.selectedPath, expect.any(Object));
+  });
+
+  it("routes background diagnostics by the admitted event root owner", async () => {
+    const workspaceA = trustedDescriptor(
+      "ws-diagnostics-owner-a",
+      "/selected/diagnostics-a",
+    );
+    const workspaceB = trustedDescriptor(
+      "ws-diagnostics-owner-b",
+      "/selected/diagnostics-b",
+    );
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const { getWorkbench } = renderController({
+      languageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      runtimeStatus: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 305,
+      },
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async (path) =>
+          path === workspaceA.selectedPath ? workspaceA : workspaceB,
+        ),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(workspaceB.selectedPath);
+      await getWorkbench().openWorkspaceRoot(workspaceA.selectedPath);
+      await flushAsyncTurns(24);
+    });
+
+    const diagnosticPath = `${workspaceB.selectedPath}/src/Background.php`;
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "background owner diagnostic",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: workspaceB.selectedPath,
+        sessionId: 305,
+        uri: fileUriFromPath(diagnosticPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[diagnosticPath],
+    ).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(workspaceB.selectedPath);
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[diagnosticPath],
+    ).toHaveLength(1);
+  });
+
+  it("transfers one admitted runtime owner across selected aliases and forgets it on final close", async () => {
+    const firstAlias = {
+      ...trustedDescriptor("ws-shared-alias", "/selected/first"),
+      canonicalRoot: "/canonical/shared",
+    };
+    const secondAlias = {
+      ...trustedDescriptor("ws-shared-alias", "/selected/second"),
+      canonicalRoot: "/canonical/shared",
+    };
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      sessionId: 301,
+    };
+    const openPath = vi.fn(async (path: string) =>
+      path === firstAlias.selectedPath ? firstAlias : secondAlias,
+    );
+    const { dependencies, getWorkbench } = renderController({
+      languageServerDiagnosticsGateway,
+      runtimeStatus: runningStatus,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath,
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(firstAlias.selectedPath);
+      await flushAsyncTurns();
+    });
+    const diagnosticPath = `${firstAlias.selectedPath}/src/Alias.php`;
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "shared owner diagnostic",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: firstAlias.selectedPath,
+        sessionId: 301,
+        uri: fileUriFromPath(diagnosticPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[diagnosticPath],
+    ).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(secondAlias.selectedPath);
+      await flushAsyncTurns();
+    });
+
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[diagnosticPath],
+    ).toHaveLength(1);
+    expect(
+      dependencies.languageServerRuntimeGateway.getStatus,
+    ).toHaveBeenCalledWith(secondAlias.selectedPath);
+    expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab(secondAlias.selectedPath);
+      await getWorkbench().openWorkspaceRoot(secondAlias.selectedPath);
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().languageServerDiagnosticsByPath).toEqual({});
+  });
+
+  it("routes PHP and TypeScript diagnostics from a retained runtime's old selected alias", async () => {
+    const firstAlias = {
+      ...trustedDescriptor("ws-retained-runtime-alias", "/selected/retained-first"),
+      canonicalRoot: "/canonical/retained-runtime",
+    };
+    const secondAlias = {
+      ...trustedDescriptor("ws-retained-runtime-alias", "/selected/retained-second"),
+      canonicalRoot: "/canonical/retained-runtime",
+    };
+    let publishPhpDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishTypeScriptDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const runningStatus = (
+      rootPath: string,
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath,
+      sessionId,
+    });
+    const runtimeGateway = (
+      sessionId: number,
+    ): LanguageServerRuntimeGateway => ({
+      getStatus: vi.fn(async (rootPath) => runningStatus(rootPath, sessionId)),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => runningStatus(rootPath, sessionId)),
+      stop: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    });
+    const phpRuntimeGateway = runtimeGateway(602);
+    const typeScriptRuntimeGateway = runtimeGateway(702);
+    const phpDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishPhpDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const typeScriptDiagnosticsGateway: LanguageServerDiagnosticsGateway = {
+      subscribeDiagnostics: vi.fn(async (listener) => {
+        publishTypeScriptDiagnostics = listener;
+        return () => undefined;
+      }),
+    };
+    const { getWorkbench } = renderController({
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway:
+        typeScriptDiagnosticsGateway,
+      javaScriptTypeScriptLanguageServerRuntimeGateway: typeScriptRuntimeGateway,
+      languageServerDiagnosticsGateway: phpDiagnosticsGateway,
+      languageServerRuntimeGateway: phpRuntimeGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async (path) =>
+          path === firstAlias.selectedPath ? firstAlias : secondAlias,
+        ),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(firstAlias.selectedPath);
+      await flushAsyncTurns(24);
+    });
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(secondAlias.selectedPath);
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({ sessionId: 602 }),
+    );
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(expect.objectContaining({ sessionId: 702 }));
+    expect(
+      getWorkbench().workspaceSettings.javaScriptTypeScriptValidation,
+    ).toBe(true);
+    expect(typeScriptRuntimeGateway.stop).not.toHaveBeenCalled();
+
+    const phpPath = `${firstAlias.selectedPath}/src/Retained.php`;
+    const typeScriptPath = `${firstAlias.selectedPath}/src/retained.ts`;
+    act(() => {
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "retained PHP runtime",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: firstAlias.selectedPath,
+        sessionId: 602,
+        uri: fileUriFromPath(phpPath),
+        version: null,
+      });
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "retained TypeScript runtime",
+          severity: "warning",
+          source: "tsserver",
+        }],
+        rootPath: firstAlias.selectedPath,
+        sessionId: 702,
+        uri: fileUriFromPath(typeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondAlias);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[phpPath],
+    ).toHaveLength(1);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[typeScriptPath],
+    ).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        {
+          ...getWorkbench().workspaceSettings,
+          javaScriptTypeScriptValidation: false,
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[typeScriptPath],
+    ).toBeUndefined();
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        {
+          ...getWorkbench().workspaceSettings,
+          javaScriptTypeScriptValidation: true,
+        },
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+    const resumedTypeScriptPath =
+      `${firstAlias.selectedPath}/src/resumed.ts`;
+    act(() => {
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "resumed TypeScript validation",
+          severity: "warning",
+          source: "tsserver",
+        }],
+        rootPath: firstAlias.selectedPath,
+        sessionId: 702,
+        uri: fileUriFromPath(resumedTypeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[resumedTypeScriptPath],
+    ).toHaveLength(1);
+  });
+
+  it("retires replaced and closed owner claims before reusing unchanged sessions", async () => {
+    const sharedRoot = "/selected/retired-owner-root";
+    const firstOwner = trustedDescriptor("ws-retired-owner-a", sharedRoot);
+    const secondOwner = trustedDescriptor("ws-retired-owner-b", sharedRoot);
+    const secondOwnerAlias = {
+      ...trustedDescriptor("ws-retired-owner-b", "/selected/retired-owner-b"),
+      canonicalRoot: secondOwner.canonicalRoot,
+    };
+    const otherOwner = trustedDescriptor(
+      "ws-retired-owner-other",
+      "/selected/retired-owner-other",
+    );
+    const thirdOwner = trustedDescriptor("ws-retired-owner-c", sharedRoot);
+    const descriptors = [
+      firstOwner,
+      secondOwner,
+      secondOwnerAlias,
+      otherOwner,
+      thirdOwner,
+    ];
+    let publishPhpDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishTypeScriptDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const runtimeGateway = (
+      sessionId: number,
+    ): LanguageServerRuntimeGateway => ({
+      getStatus: vi.fn(async (rootPath) => ({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath,
+        sessionId,
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => ({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath,
+        sessionId,
+      })),
+      stop: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    });
+    const { getWorkbench } = renderController({
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishTypeScriptDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway: runtimeGateway(911),
+      languageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishPhpDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      languageServerRuntimeGateway: runtimeGateway(811),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? thirdOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+    });
+
+    const replacementPhpPath = `${sharedRoot}/src/Replacement.php`;
+    const replacementTypeScriptPath = `${sharedRoot}/src/replacement.ts`;
+    act(() => {
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "replacement PHP owner",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 811,
+        uri: fileUriFromPath(replacementPhpPath),
+        version: null,
+      });
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "replacement TypeScript owner",
+          severity: "warning",
+          source: "tsserver",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 911,
+        uri: fileUriFromPath(replacementTypeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[replacementPhpPath],
+    ).toHaveLength(1);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[
+        replacementTypeScriptPath
+      ],
+    ).toHaveLength(1);
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(secondOwnerAlias.selectedPath);
+      await flushAsyncTurns(24);
+      await getWorkbench().openWorkspaceRoot(otherOwner.selectedPath);
+      await flushAsyncTurns(24);
+      await getWorkbench().closeWorkspaceTab(secondOwnerAlias.selectedPath);
+      await flushAsyncTurns(24);
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+    });
+
+    const reopenedPhpPath = `${sharedRoot}/src/Reopened.php`;
+    const reopenedTypeScriptPath = `${sharedRoot}/src/reopened.ts`;
+    act(() => {
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "reopened PHP owner",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 811,
+        uri: fileUriFromPath(reopenedPhpPath),
+        version: null,
+      });
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "reopened TypeScript owner",
+          severity: "warning",
+          source: "tsserver",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 911,
+        uri: fileUriFromPath(reopenedTypeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(thirdOwner);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[reopenedPhpPath],
+    ).toHaveLength(1);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[reopenedTypeScriptPath],
+    ).toHaveLength(1);
+  });
+
+  it("keeps shared keepAlive claims ambiguous and matches sessions by runtime kind", async () => {
+    const sharedRoot = "/selected/concurrent-owner-root";
+    const firstOwner = {
+      ...trustedDescriptor("ws-concurrent-owner-a", sharedRoot),
+      canonicalRoot: "/canonical/concurrent-owner-a",
+    };
+    const firstOwnerAlias = {
+      ...trustedDescriptor(
+        "ws-concurrent-owner-a",
+        "/selected/concurrent-owner-a",
+      ),
+      canonicalRoot: firstOwner.canonicalRoot,
+    };
+    const secondOwner = {
+      ...trustedDescriptor("ws-concurrent-owner-b", sharedRoot),
+      canonicalRoot: "/canonical/concurrent-owner-b",
+    };
+    const descriptors = [firstOwner, firstOwnerAlias, secondOwner];
+    let phpSessionId = 31;
+    let typeScriptSessionId = 41;
+    let publishPhpStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    let publishTypeScriptStatus:
+      | ((status: LanguageServerRuntimeStatus) => void)
+      | null = null;
+    let publishPhpDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishTypeScriptDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const runtimeGateway = (
+      currentSessionId: () => number,
+      captureStatusListener: (
+        listener: (status: LanguageServerRuntimeStatus) => void,
+      ) => void,
+    ): LanguageServerRuntimeGateway => ({
+      getStatus: vi.fn(async (rootPath) => ({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath,
+        sessionId: currentSessionId(),
+      })),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async (rootPath) => ({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running" as const,
+        rootPath,
+        sessionId: currentSessionId(),
+      })),
+      stop: vi.fn(async (rootPath) => ({
+        kind: "stopped" as const,
+        rootPath,
+      })),
+      subscribeStatus: vi.fn(async (listener) => {
+        captureStatusListener(listener);
+        return () => undefined;
+      }),
+    });
+    const { getWorkbench } = renderController({
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishTypeScriptDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway: runtimeGateway(
+        () => typeScriptSessionId,
+        (listener) => {
+          publishTypeScriptStatus = listener;
+        },
+      ),
+      languageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishPhpDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      languageServerRuntimeGateway: runtimeGateway(
+        () => phpSessionId,
+        (listener) => {
+          publishPhpStatus = listener;
+        },
+      ),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+      await getWorkbench().openWorkspaceRoot(firstOwnerAlias.selectedPath);
+      await flushAsyncTurns(24);
+      await getWorkbench().openWorkspaceRoot(sharedRoot);
+      await flushAsyncTurns(24);
+    });
+
+    const ambiguousPhpPath = `${sharedRoot}/src/Ambiguous.php`;
+    const ambiguousTypeScriptPath = `${sharedRoot}/src/ambiguous.ts`;
+    act(() => {
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "ambiguous PHP owners",
+          severity: "error",
+          source: "phpactor",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 31,
+        uri: fileUriFromPath(ambiguousPhpPath),
+        version: null,
+      });
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "ambiguous TypeScript owners",
+          severity: "error",
+          source: "tsserver",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 41,
+        uri: fileUriFromPath(ambiguousTypeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[ambiguousPhpPath],
+    ).toBeUndefined();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[ambiguousTypeScriptPath],
+    ).toBeUndefined();
+
+    phpSessionId = 41;
+    typeScriptSessionId = 31;
+    act(() => {
+      publishPhpStatus?.({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: sharedRoot,
+        sessionId: phpSessionId,
+      });
+      publishTypeScriptStatus?.({
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        rootPath: sharedRoot,
+        sessionId: typeScriptSessionId,
+      });
+    });
+    await flushAsyncTurns(24);
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({ sessionId: 41 }),
+    );
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(expect.objectContaining({ sessionId: 31 }));
+
+    const routedPhpPath = `${sharedRoot}/src/Routed.php`;
+    const routedTypeScriptPath = `${sharedRoot}/src/routed.ts`;
+    act(() => {
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "runtime-kind PHP owner",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 41,
+        uri: fileUriFromPath(routedPhpPath),
+        version: null,
+      });
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "runtime-kind TypeScript owner",
+          severity: "warning",
+          source: "tsserver",
+        }],
+        rootPath: sharedRoot,
+        sessionId: 31,
+        uri: fileUriFromPath(routedTypeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[routedPhpPath],
+    ).toHaveLength(1);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[routedTypeScriptPath],
+    ).toHaveLength(1);
+  });
+
+  it("isolates distinct admitted owners that select the same execution root", async () => {
+    const selectedRoot = "/selected/shared-root";
+    const firstOwner = trustedDescriptor("ws-owner-a", selectedRoot);
+    const secondOwner = trustedDescriptor("ws-owner-b", selectedRoot);
+    let publishDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    const descriptors = [firstOwner, secondOwner, firstOwner];
+    const { getWorkbench } = renderController({
+      languageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      runtimeStatus: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 302,
+      },
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? firstOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns();
+    });
+    const firstPath = `${selectedRoot}/src/First.php`;
+    act(() => {
+      publishDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "first owner",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: selectedRoot,
+        sessionId: 302,
+        uri: fileUriFromPath(firstPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns();
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(getWorkbench().languageServerDiagnosticsByPath).toEqual({});
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns();
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(firstOwner);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[firstPath],
+    ).toHaveLength(1);
+  });
+
+  it("rejects late PHP and TypeScript diagnostics from a replaced owner at the same root", async () => {
+    const selectedRoot = "/selected/reused-runtime-root";
+    const firstOwner = trustedDescriptor("ws-reused-owner-a", selectedRoot);
+    const secondOwner = trustedDescriptor("ws-reused-owner-b", selectedRoot);
+    const descriptors = [firstOwner, secondOwner];
+    let publishPhpDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let publishTypeScriptDiagnostics:
+      | ((event: LanguageServerDiagnosticEvent) => void)
+      | null = null;
+    let phpSessionId = 401;
+    let typeScriptSessionId = 501;
+    const runningStatus = (
+      sessionId: number,
+    ): LanguageServerRuntimeStatus => ({
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: selectedRoot,
+      sessionId,
+    });
+    const runtimeGateway = (
+      currentSessionId: () => number,
+    ): LanguageServerRuntimeGateway => ({
+      getStatus: vi.fn(async () => runningStatus(currentSessionId())),
+      openLog: vi.fn(async () => null),
+      start: vi.fn(async () => runningStatus(currentSessionId())),
+      stop: vi.fn(async () => ({
+        kind: "stopped" as const,
+        rootPath: selectedRoot,
+      })),
+      subscribeStatus: vi.fn(async () => () => undefined),
+    });
+    const { getWorkbench } = renderController({
+      javaScriptTypeScriptLanguageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishTypeScriptDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      javaScriptTypeScriptLanguageServerRuntimeGateway: runtimeGateway(
+        () => typeScriptSessionId,
+      ),
+      languageServerDiagnosticsGateway: {
+        subscribeDiagnostics: vi.fn(async (listener) => {
+          publishPhpDiagnostics = listener;
+          return () => undefined;
+        }),
+      },
+      languageServerRuntimeGateway: runtimeGateway(() => phpSessionId),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+
+    phpSessionId = 402;
+    typeScriptSessionId = 502;
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(getWorkbench().languageServerRuntimeStatus).toEqual(
+      expect.objectContaining({ sessionId: 402 }),
+    );
+    expect(
+      getWorkbench().javaScriptTypeScriptLanguageServerRuntimeStatus,
+    ).toEqual(expect.objectContaining({ sessionId: 502 }));
+
+    const latePhpPath = `${selectedRoot}/src/LateA.php`;
+    const lateTypeScriptPath = `${selectedRoot}/src/LateA.ts`;
+    const ambiguousPath = `${selectedRoot}/src/Ambiguous.php`;
+    const currentPhpPath = `${selectedRoot}/src/CurrentB.php`;
+    const currentTypeScriptPath = `${selectedRoot}/src/CurrentB.ts`;
+    act(() => {
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "late owner A PHP",
+          severity: "error",
+          source: "phpactor",
+        }],
+        rootPath: selectedRoot,
+        sessionId: 401,
+        uri: fileUriFromPath(latePhpPath),
+        version: null,
+      });
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "late owner A TypeScript",
+          severity: "error",
+          source: "tsserver",
+        }],
+        rootPath: selectedRoot,
+        sessionId: 501,
+        uri: fileUriFromPath(lateTypeScriptPath),
+        version: null,
+      });
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "ambiguous root-only owner",
+          severity: "error",
+          source: "phpactor",
+        }],
+        rootPath: selectedRoot,
+        sessionId: 999,
+        uri: fileUriFromPath(ambiguousPath),
+        version: null,
+      });
+      publishPhpDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "current owner B PHP",
+          severity: "warning",
+          source: "phpactor",
+        }],
+        rootPath: selectedRoot,
+        sessionId: 402,
+        uri: fileUriFromPath(currentPhpPath),
+        version: null,
+      });
+      publishTypeScriptDiagnostics?.({
+        diagnostics: [{
+          character: 0,
+          line: 0,
+          message: "current owner B TypeScript",
+          severity: "warning",
+          source: "tsserver",
+        }],
+        rootPath: selectedRoot,
+        sessionId: 502,
+        uri: fileUriFromPath(currentTypeScriptPath),
+        version: null,
+      });
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[latePhpPath],
+    ).toBeUndefined();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[lateTypeScriptPath],
+    ).toBeUndefined();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[ambiguousPath],
+    ).toBeUndefined();
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[currentPhpPath],
+    ).toHaveLength(1);
+    expect(
+      getWorkbench().languageServerDiagnosticsByPath[currentTypeScriptPath],
+    ).toHaveLength(1);
+  });
+
   it("admits a restored alias through openPath before opening it", async () => {
     const descriptor = {
       ...trustedDescriptor("ws-restored", "/selected/restored"),

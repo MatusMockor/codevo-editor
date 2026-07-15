@@ -463,6 +463,176 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
     );
   });
 
+  it("resets transient owner diagnostics and accepts the next event", async () => {
+    const harness = createHarness();
+    const owner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    harness.lsStatusByRootRef.current = {
+      [owner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    let releaseFirstFilter = () => {};
+    harness.contextualFilterRef.current = async (_path, diagnostics) => {
+      await new Promise<void>((resolve) => {
+        releaseFirstFilter = resolve;
+      });
+      return diagnostics;
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, owner);
+    api().applyLanguageServerDiagnostics(
+      diagnosticEvent({
+        diagnostics: [errorDiagnostic({ message: "stale" })],
+      }),
+      owner,
+    );
+    await Promise.resolve();
+
+    api().resetLanguageServerDiagnosticsForRoot(ROOT, owner);
+    harness.contextualFilterRef.current = async (_path, diagnostics) =>
+      diagnostics;
+    api().applyLanguageServerDiagnostics(
+      diagnosticEvent({
+        version: 2,
+        diagnostics: [errorDiagnostic({ message: "fresh" })],
+      }),
+      owner,
+    );
+    await flushMicrotasks();
+    releaseFirstFilter();
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[owner.ownerKey][USER_PATH][0].message).toBe(
+      "fresh",
+    );
+    expect(harness.languageServerDiagnostics.value[USER_PATH][0].message).toBe(
+      "fresh",
+    );
+    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(owner.ownerKey);
+  });
+
+  it("keeps an owner closed when transient reset follows permanent clear", async () => {
+    const harness = createHarness();
+    const owner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    harness.lsStatusByRootRef.current = {
+      [owner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, owner);
+    api().clearLanguageServerDiagnosticsForRoot(ROOT, owner);
+    api().resetLanguageServerDiagnosticsForRoot(ROOT, owner);
+    api().applyLanguageServerDiagnostics(diagnosticEvent({ version: 2 }), owner);
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[owner.ownerKey]).toBeUndefined();
+    expect(harness.languageServerDiagnostics.value).toEqual({});
+  });
+
+  it("reopens a permanently cleared owner when preparing runtime start", async () => {
+    const harness = createHarness();
+    const owner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    harness.lsStatusByRootRef.current = {
+      [owner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, owner);
+    api().clearLanguageServerDiagnosticsForRoot(ROOT, owner);
+    api().prepareLanguageServerDiagnosticsForRuntimeStart(ROOT, owner);
+    api().applyLanguageServerDiagnostics(diagnosticEvent({ version: 2 }), owner);
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[owner.ownerKey][USER_PATH]).toHaveLength(1);
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toHaveLength(1);
+    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(owner.ownerKey);
+  });
+
+  it("prepares a background owner without making its diagnostics visible", async () => {
+    const harness = createHarness();
+    const visibleOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const backgroundOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const visibleDiagnostic = errorDiagnostic({ message: "visible owner" });
+    harness.lsStatusByRootRef.current = {
+      [visibleOwner.ownerKey]: runningStatus(ROOT, SESSION),
+      [backgroundOwner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    harness.lsByRootRef.current[visibleOwner.ownerKey] = {
+      [USER_PATH]: [visibleDiagnostic],
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, visibleOwner);
+    api().prepareLanguageServerDiagnosticsForRuntimeStart(ROOT, backgroundOwner);
+    api().applyLanguageServerDiagnostics(
+      diagnosticEvent({
+        version: 2,
+        diagnostics: [errorDiagnostic({ message: "background owner" })],
+      }),
+      backgroundOwner,
+    );
+    await flushMicrotasks();
+
+    expect(
+      harness.lsByRootRef.current[backgroundOwner.ownerKey][USER_PATH][0]
+        .message,
+    ).toBe("background owner");
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
+      visibleDiagnostic,
+    ]);
+  });
+
+  it("rejects an async result captured before runtime-start preparation", async () => {
+    const harness = createHarness();
+    const owner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    harness.lsStatusByRootRef.current = {
+      [owner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    let releaseFilter = () => {};
+    harness.contextualFilterRef.current = async (_path, diagnostics) => {
+      await new Promise<void>((resolve) => {
+        releaseFilter = resolve;
+      });
+      return diagnostics;
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, owner);
+    api().applyLanguageServerDiagnostics(diagnosticEvent(), owner);
+    await Promise.resolve();
+    api().prepareLanguageServerDiagnosticsForRuntimeStart(ROOT, owner);
+    releaseFilter();
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[owner.ownerKey]).toBeUndefined();
+    expect(harness.languageServerDiagnostics.value).toEqual({});
+  });
+
+  it("resets one owner without disturbing a distinct owner at the same root", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const secondOwnerDiagnostic = errorDiagnostic({ message: "owner B" });
+    harness.lsByRootRef.current = {
+      [firstOwner.ownerKey]: { [USER_PATH]: [errorDiagnostic()] },
+      [secondOwner.ownerKey]: { [USER_PATH]: [secondOwnerDiagnostic] },
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, secondOwner);
+    api().resetLanguageServerDiagnosticsForRoot(ROOT, firstOwner);
+
+    expect(harness.lsByRootRef.current[firstOwner.ownerKey]).toBeUndefined();
+    expect(harness.lsByRootRef.current[secondOwner.ownerKey][USER_PATH]).toEqual([
+      secondOwnerDiagnostic,
+    ]);
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
+      secondOwnerDiagnostic,
+    ]);
+    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(
+      firstOwner.ownerKey,
+    );
+  });
+
   it("keeps owner B visible when owner A finishes a late same-root update", async () => {
     const harness = createHarness();
     const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
@@ -747,6 +917,57 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     ).toBe(true);
   });
 
+  it("resets transient TypeScript diagnostics without closing the owner", async () => {
+    const harness = createHarness();
+    const owner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    const tsPath = `${ROOT}/src/index.ts`;
+    const tsUri = fileUriFromPath(tsPath);
+    harness.jstsStatusByRootRef.current = {
+      [owner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreJavaScriptTypeScriptDiagnosticsForRoot(ROOT, owner);
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({ uri: tsUri }),
+      owner,
+    );
+    api().resetJavaScriptTypeScriptDiagnosticsForRoot(ROOT, owner);
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({ uri: tsUri, version: 2 }),
+      owner,
+    );
+    await flushMicrotasks();
+
+    expect(harness.jstsByRootRef.current[owner.ownerKey][tsPath]).toHaveLength(1);
+    expect(harness.javaScriptTypeScriptDiagnostics.value[tsPath]).toHaveLength(1);
+    expect(harness.jstsCoalescer.dropOwner).toHaveBeenCalledWith(owner.ownerKey);
+  });
+
+  it("prepares a permanently cleared TypeScript owner for fresh events", async () => {
+    const harness = createHarness();
+    const owner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    const tsPath = `${ROOT}/src/index.ts`;
+    const tsUri = fileUriFromPath(tsPath);
+    harness.jstsStatusByRootRef.current = {
+      [owner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreJavaScriptTypeScriptDiagnosticsForRoot(ROOT, owner);
+    api().clearJavaScriptTypeScriptDiagnosticsForRoot(ROOT, owner);
+    api().prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart(ROOT, owner);
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      diagnosticEvent({ uri: tsUri, version: 2 }),
+      owner,
+    );
+    await flushMicrotasks();
+
+    expect(harness.jstsByRootRef.current[owner.ownerKey][tsPath]).toHaveLength(1);
+    expect(harness.javaScriptTypeScriptDiagnostics.value[tsPath]).toHaveLength(1);
+    expect(harness.jstsCoalescer.dropOwner).toHaveBeenCalledWith(owner.ownerKey);
+  });
+
   it("suppresses TypeScript diagnostics when validation is disabled", async () => {
     const harness = createHarness();
     harness.workspaceSettingsRef.current = {
@@ -967,6 +1188,21 @@ describe("useDiagnostics - local PHP diagnostics", () => {
 });
 
 describe("useDiagnostics - per-root clear / restore isolation", () => {
+  it("supports transient reset for legacy root-scoped diagnostics", async () => {
+    const harness = createHarness();
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyLanguageServerDiagnostics(diagnosticEvent());
+    await flushMicrotasks();
+    api().resetLanguageServerDiagnosticsForRoot(ROOT);
+    api().applyLanguageServerDiagnostics(diagnosticEvent({ version: 2 }));
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[ROOT][USER_PATH]).toHaveLength(1);
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toHaveLength(1);
+    expect(harness.lsCoalescer.dropRoot).toHaveBeenCalledWith(ROOT);
+  });
+
   it("clears the active root: drops cache, notifies the coalescer, clears state", () => {
     const harness = createHarness();
     harness.lsByRootRef.current = { [ROOT]: { [USER_PATH]: [errorDiagnostic()] } };

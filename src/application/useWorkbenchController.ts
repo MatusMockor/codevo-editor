@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { useEditorSessionState } from "./useEditorSessionState";
 import type { EditorGroupFocusRunner } from "./editorGroupFocusPort";
 import { useGitStashPanel } from "./useGitStashPanel";
@@ -128,7 +129,10 @@ import {
   type WorkspaceSettingsByRootSnapshot,
 } from "./workspaceSettingsForRoot";
 import { createWorkspaceSettingsSaveCoordinator } from "./workspaceSettingsSaveCoordinator";
-import { useLanguageServerDiagnosticsSubscriptions } from "./useLanguageServerDiagnosticsSubscriptions";
+import {
+  type LanguageServerDiagnosticsRuntimeKind,
+  useLanguageServerDiagnosticsSubscriptions,
+} from "./useLanguageServerDiagnosticsSubscriptions";
 import { useLanguageServerRuntimeLifecycle } from "./useLanguageServerRuntimeLifecycle";
 import { useJavaScriptTypeScriptLanguageServerSettings } from "./useJavaScriptTypeScriptLanguageServerSettings";
 import { useWorkspaceEditFileOperations } from "./useWorkspaceEditFileOperations";
@@ -295,8 +299,14 @@ import {
   type LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
 import {
+  cachedLanguageServerRuntimeStatusForOwner,
   cachedLanguageServerRuntimeStatusForRoot,
 } from "../domain/languageServerRuntimeStatusCache";
+import {
+  createLegacyWorkspaceRuntimeOwner,
+  createWorkspaceRuntimeOwner,
+  type WorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
 import {
   type WorkspaceFileChangeGateway,
   type WorkspaceFileChangeUnsubscribeFn,
@@ -345,6 +355,7 @@ import {
   normalizeEditorFontSize,
   pushRecentWorkspacePath,
   type AppSettings,
+  type BackgroundRuntimePolicy,
   type SettingsGateway,
   type SettingsSection,
   type StatusBarItemVisibility,
@@ -553,6 +564,22 @@ export function useWorkbenchController(
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [workspaceIdentityDescriptor, setWorkspaceIdentityDescriptor] =
     useState<WorkspaceIdentityDescriptor | null>(null);
+  const workspaceRuntimeOwner = useMemo(
+    () =>
+      workspaceRoot && workspaceIdentityDescriptor
+        ? workspaceRuntimeOwnerFor(
+            workspaceRoot,
+            workspaceIdentityDescriptor,
+          )
+        : null,
+    [workspaceIdentityDescriptor, workspaceRoot],
+  );
+  const workspaceRuntimeOwnerRef = useRef(workspaceRuntimeOwner);
+  workspaceRuntimeOwnerRef.current = workspaceRuntimeOwner;
+  const resolveCurrentWorkspaceRuntimeOwner = useCallback(
+    () => workspaceRuntimeOwnerRef.current,
+    [],
+  );
   const [workspaceDescriptor, setWorkspaceDescriptor] =
     useState<WorkspaceDescriptor | null>(null);
   useEffect(() => {
@@ -1079,7 +1106,55 @@ export function useWorkbenchController(
       )?.canonicalRoot ?? rootPath,
     [workspaceGateways.identity],
   );
+  const resolveWorkspaceSettingsForDiagnosticsRoot = useCallback(
+    (rootPath: string) => {
+      const descriptor = admittedWorkspaceIdentityForRoot(
+        workspaceIdentityByRootRef.current,
+        workspaceGateways.identity,
+        rootPath,
+      );
+      return workspaceSettingsByRoot.resolve(
+        descriptor?.canonicalRoot ?? rootPath,
+      );
+    },
+    [workspaceGateways.identity, workspaceSettingsByRoot],
+  );
   const workspaceRuntimeRootByTabRef = useRef<Record<string, string>>({});
+  const workspaceRuntimeOwnerByTabRef = useRef<
+    Record<string, WorkspaceRuntimeOwner>
+  >({});
+  const workspaceRuntimeOwnerClaimsRef = useRef<
+    WorkspaceRuntimeOwnerClaimRegistry
+  >({});
+  const retireWorkspaceRuntimeOwnerClaim = useCallback(
+    (ownerKey: string, expectedGeneration?: number | null) => {
+      retireClaimedWorkspaceRuntimeOwner(
+        workspaceRuntimeOwnerClaimsRef.current,
+        ownerKey,
+        expectedGeneration,
+      );
+    },
+    [],
+  );
+  const resolveWorkspaceRuntimeOwnerForDiagnosticsEvent = useCallback(
+    (
+      event: LanguageServerDiagnosticEvent,
+      runtimeKind: LanguageServerDiagnosticsRuntimeKind,
+    ): WorkspaceRuntimeOwner | null => {
+      if (!event.rootPath) {
+        return null;
+      }
+
+      return resolveClaimedWorkspaceRuntimeOwnerForDiagnosticsEvent(
+        workspaceRuntimeOwnerClaimsRef.current,
+        event,
+        runtimeKind,
+        languageServerRuntimeStatusByRootRef.current,
+        javaScriptTypeScriptRuntimeStatusByRootRef.current,
+      );
+    },
+    [],
+  );
   const unregisterWorkspaceIdentityIfUnused = useCallback(
     async (
       workspaceId: string,
@@ -1231,24 +1306,37 @@ export function useWorkbenchController(
     async (
       workspaceId: string,
     ): Promise<WorkspaceIdentityReleaseOutcome> => {
+      const claimedGeneration =
+        workspaceRuntimeOwnerClaimsRef.current[workspaceId]?.generation;
       if (releasedWorkspaceIdentityIdsRef.current.has(workspaceId)) {
+        if (claimedGeneration !== undefined) {
+          retireWorkspaceRuntimeOwnerClaim(workspaceId, claimedGeneration);
+        }
         return "released";
       }
 
       const ownershipGeneration =
         ownedWorkspaceIdentityGenerationByIdRef.current[workspaceId];
       if (ownershipGeneration === undefined) {
-        return unregisterWorkspaceIdentityIfUnused(workspaceId);
+        const outcome = await unregisterWorkspaceIdentityIfUnused(workspaceId);
+        if (outcome === "released" && claimedGeneration !== undefined) {
+          retireWorkspaceRuntimeOwnerClaim(workspaceId, claimedGeneration);
+        }
+        return outcome;
       }
 
       workspaceIdentityReleaseGenerationByIdRef.current[workspaceId] =
         ownershipGeneration;
-      return unregisterWorkspaceIdentityIfUnused(
+      const outcome = await unregisterWorkspaceIdentityIfUnused(
         workspaceId,
         ownershipGeneration,
       );
+      if (outcome === "released") {
+        retireWorkspaceRuntimeOwnerClaim(workspaceId, ownershipGeneration);
+      }
+      return outcome;
     },
-    [unregisterWorkspaceIdentityIfUnused],
+    [retireWorkspaceRuntimeOwnerClaim, unregisterWorkspaceIdentityIfUnused],
   );
   const withManagedWorkspaceIdentityLease = useCallback(
     async (
@@ -2004,10 +2092,15 @@ export function useWorkbenchController(
   const isLanguageServerSessionCurrentForRoot = useCallback(
     (rootPath: string, sessionId: number) => {
       const currentRuntimeStatus =
-        cachedLanguageServerRuntimeStatusForRoot(
-          languageServerRuntimeStatusByRootRef.current,
-          rootPath,
-        ) ??
+        (workspaceRuntimeOwnerByTabRef.current[rootPath]
+          ? cachedLanguageServerRuntimeStatusForOwner(
+              languageServerRuntimeStatusByRootRef.current,
+              workspaceRuntimeOwnerByTabRef.current[rootPath],
+            )
+          : cachedLanguageServerRuntimeStatusForRoot(
+              languageServerRuntimeStatusByRootRef.current,
+              rootPath,
+            )) ??
         (workspaceRootKeysEqual(
           languageServerRuntimeStatusRootRef.current,
           rootPath,
@@ -2033,10 +2126,14 @@ export function useWorkbenchController(
     clearPhpstanDiagnosticsForRoot,
     clearLanguageServerDiagnostics,
     restoreLanguageServerDiagnosticsForRoot,
+    resetLanguageServerDiagnosticsForRoot,
+    prepareLanguageServerDiagnosticsForRuntimeStart,
     clearLanguageServerDiagnosticsForRoot,
     clearJavaScriptTypeScriptLanguageServerDiagnostics,
     clearPhpLocalDiagnostics,
     restoreJavaScriptTypeScriptDiagnosticsForRoot,
+    resetJavaScriptTypeScriptDiagnosticsForRoot,
+    prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
     clearJavaScriptTypeScriptDiagnosticsForRoot,
     clearPhpLocalDiagnosticsForPath,
     clearLanguageServerDiagnosticsForPath,
@@ -2050,7 +2147,7 @@ export function useWorkbenchController(
     documentsRef,
     activeDocument,
     appSettingsRef,
-    workspaceSettingsForRoot: workspaceSettingsByRoot.resolve,
+    workspaceSettingsForRoot: resolveWorkspaceSettingsForDiagnosticsRoot,
     setLanguageServerDiagnosticsByPath,
     setJavaScriptTypeScriptDiagnosticsByPath,
     setPhpLocalDiagnosticsByPath,
@@ -2385,6 +2482,7 @@ export function useWorkbenchController(
     restartJavaScriptTypeScriptService,
   } = useLanguageServerRuntimeLifecycle({
     workspaceRoot,
+    workspaceRuntimeOwner,
     workspaceTrust,
     intelligenceMode,
     workspaceSettings,
@@ -2426,6 +2524,10 @@ export function useWorkbenchController(
     terminalGateway,
     clearLanguageServerDiagnosticsForRoot,
     clearJavaScriptTypeScriptDiagnosticsForRoot,
+    resetLanguageServerDiagnosticsForRoot,
+    resetJavaScriptTypeScriptDiagnosticsForRoot,
+    prepareLanguageServerDiagnosticsForRuntimeStart,
+    prepareJavaScriptTypeScriptDiagnosticsForRuntimeStart,
     resetLanguageServerDocuments,
     resetJavaScriptTypeScriptLanguageServerDocuments,
     isLanguageServerSessionCurrentForRoot,
@@ -2706,6 +2808,7 @@ export function useWorkbenchController(
     if (currentRootPath && !options?.runtimeAlreadyStopped) {
       await stopProjectRuntimes(
         workspaceRuntimeRootByTabRef.current[currentRootPath] ?? currentRootPath,
+        workspaceRuntimeOwnerByTabRef.current[currentRootPath],
       );
       if (ownership && !ownership.isCurrent()) {
         return;
@@ -2725,6 +2828,8 @@ export function useWorkbenchController(
     clearWorkspaceStateCache();
     workspaceIdentityByRootRef.current = {};
     workspaceRuntimeRootByTabRef.current = {};
+    workspaceRuntimeOwnerByTabRef.current = {};
+    workspaceRuntimeOwnerClaimsRef.current = {};
     editorConfigCacheRef.current = {};
     resetFilePrefetchState();
     languageServerRuntimeStatusByRootRef.current = {};
@@ -3330,6 +3435,54 @@ export function useWorkbenchController(
           workspaceSettingsByRoot.resolve(canonicalKey) ?? workspaceSettings;
       }
 
+      const runtimePolicy = appSettingsRef.current.runtimePolicy;
+      if (runtimePolicy !== "keepAlive") {
+        const disposedRuntimeOwnerClaims = backgroundRuntimeOwnersForPolicy(
+          runtimePolicy,
+          path,
+          previousRootPath,
+          appSettingsRef.current.workspaceTabs,
+          workspaceRuntimeOwnerByTabRef.current,
+        ).map((owner) => ({
+          generation:
+            workspaceRuntimeOwnerClaimsRef.current[owner.ownerKey]?.generation,
+          owner,
+        }));
+        try {
+          await stopBackgroundProjectRuntimes(
+            runtimePolicy,
+            path,
+            previousRootPath,
+          );
+          for (const disposedRuntimeOwnerClaim of disposedRuntimeOwnerClaims) {
+            const disposedRuntimeOwner = disposedRuntimeOwnerClaim.owner;
+            if (disposedRuntimeOwnerClaim.generation === undefined) {
+              continue;
+            }
+            if (
+              identityDescriptor?.workspaceId ===
+              disposedRuntimeOwner.ownerKey
+            ) {
+              continue;
+            }
+            retireWorkspaceRuntimeOwnerClaim(
+              disposedRuntimeOwner.ownerKey,
+              disposedRuntimeOwnerClaim.generation,
+            );
+          }
+        } catch (error) {
+          if (!isCurrentOpenWorkspaceRequest()) {
+            return;
+          }
+
+          reportError("Settings", error);
+        }
+      }
+
+      if (!isCurrentOpenWorkspaceRequest()) {
+        return;
+      }
+
       if (identityDescriptor) {
         const previousIdentity =
           workspaceIdentityByRootRef.current[path] ??
@@ -3344,10 +3497,22 @@ export function useWorkbenchController(
           previousIdentity &&
           previousIdentity.workspaceId !== identityDescriptor.workspaceId
         ) {
+          retireWorkspaceRuntimeOwnerClaim(
+            previousIdentity.workspaceId,
+            workspaceRuntimeOwnerClaimsRef.current[
+              previousIdentity.workspaceId
+            ]?.generation,
+          );
           delete workspaceRuntimeRootByTabRef.current[
             previousIdentity.selectedPath
           ];
           delete workspaceRuntimeRootByTabRef.current[
+            previousIdentity.canonicalRoot
+          ];
+          delete workspaceRuntimeOwnerByTabRef.current[
+            previousIdentity.selectedPath
+          ];
+          delete workspaceRuntimeOwnerByTabRef.current[
             previousIdentity.canonicalRoot
           ];
           removeWorkspaceIdentityMappings(
@@ -3363,6 +3528,7 @@ export function useWorkbenchController(
         );
         for (const aliasPath of identityAliasPaths) {
           delete workspaceRuntimeRootByTabRef.current[aliasPath];
+          delete workspaceRuntimeOwnerByTabRef.current[aliasPath];
         }
       }
 
@@ -3372,18 +3538,41 @@ export function useWorkbenchController(
         [path]: { composerScripts: [], hasArtisan: false, npmScripts: [] },
       }));
       setWorkspaceIdentityDescriptor(identityDescriptor);
+      const admittedRuntimeOwner = workspaceRuntimeOwnerFor(
+        path,
+        identityDescriptor,
+      );
+      const explicitRuntimeOwner = identityDescriptor
+        ? admittedRuntimeOwner
+        : undefined;
+      workspaceRuntimeOwnerRef.current = explicitRuntimeOwner ?? null;
       if (identityDescriptor) {
+        registerWorkspaceRuntimeOwnerClaim(
+          workspaceRuntimeOwnerClaimsRef.current,
+          admittedRuntimeOwner,
+          identityAliasPaths,
+          ownedWorkspaceIdentityGenerationByIdRef.current[
+            identityDescriptor.workspaceId
+          ] ?? null,
+        );
         workspaceIdentityByRootRef.current[path] = identityDescriptor;
         workspaceIdentityByRootRef.current[identityDescriptor.canonicalRoot] =
           identityDescriptor;
         workspaceRuntimeRootByTabRef.current[path] = path;
         workspaceRuntimeRootByTabRef.current[identityDescriptor.canonicalRoot] =
           path;
+        workspaceRuntimeOwnerByTabRef.current[path] = admittedRuntimeOwner;
+        workspaceRuntimeOwnerByTabRef.current[
+          identityDescriptor.canonicalRoot
+        ] = admittedRuntimeOwner;
+      }
+      if (!identityDescriptor) {
+        workspaceRuntimeOwnerByTabRef.current[path] = admittedRuntimeOwner;
       }
       currentWorkspaceRootRef.current = path;
       lastLanguageServerCrashRef.current = null;
-      restoreLanguageServerDiagnosticsForRoot(path);
-      restoreJavaScriptTypeScriptDiagnosticsForRoot(path);
+      restoreLanguageServerDiagnosticsForRoot(path, explicitRuntimeOwner);
+      restoreJavaScriptTypeScriptDiagnosticsForRoot(path, explicitRuntimeOwner);
 
       if (cachedWorkspaceState) {
         restoreCachedWorkspaceState(path, cachedWorkspaceState);
@@ -3428,9 +3617,9 @@ export function useWorkbenchController(
       setWorkspaceTrust(null);
       setLanguageServerPlan(null);
       setJavaScriptTypeScriptLanguageServerPlan(null);
-      const cachedPhpStatus = cachedLanguageServerRuntimeStatusForRoot(
+      const cachedPhpStatus = cachedLanguageServerRuntimeStatusForOwner(
         languageServerRuntimeStatusByRootRef.current,
-        path,
+        admittedRuntimeOwner,
       );
       if (cachedPhpStatus) {
         setLanguageServerRuntimeStatus(cachedPhpStatus);
@@ -3481,8 +3670,10 @@ export function useWorkbenchController(
       installingManagedPhpactorRootRef.current = null;
       setInstallingManagedPhpactor(false);
       installingManagedTypeScriptLanguageServerRootRef.current = null;
-      setInstallingManagedTypeScriptLanguageServer(false);
-      autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+      flushSync(() => {
+        setInstallingManagedTypeScriptLanguageServer(false);
+        autoStartedJavaScriptTypeScriptLanguageServerRootRef.current = null;
+      });
 
       try {
         const nextWorkspaceTabs = workspaceTabsWithPath(
@@ -3507,11 +3698,6 @@ export function useWorkbenchController(
           recentWorkspacePaths,
           workspaceTabs: nextWorkspaceTabs,
         });
-        await stopBackgroundProjectRuntimes(
-          appSettingsRef.current.runtimePolicy,
-          path,
-          previousRootPath,
-        );
       } catch (error) {
         if (!isCurrentOpenWorkspaceRequest()) {
           return;
@@ -3616,7 +3802,7 @@ export function useWorkbenchController(
               shouldStartLanguageServer(resolvedIntelligenceMode)
             ) {
               warmedUpPhpProbe = true;
-              void runPhpWorkspaceProbe(path);
+              void runPhpWorkspaceProbe(path, explicitRuntimeOwner);
             }
 
             return detected;
@@ -3652,7 +3838,11 @@ export function useWorkbenchController(
         runGitRepositoryDiscovery(path, workspaceSettings);
 
       // Fire-and-forget plans/scans that already isolate themselves per root.
-      void refreshJavaScriptTypeScriptLanguageServerPlan(path);
+      void refreshJavaScriptTypeScriptLanguageServerPlan(
+        path,
+        undefined,
+        explicitRuntimeOwner,
+      );
 
       if (
         shouldIndexWorkspace(resolvedIntelligenceMode) &&
@@ -3700,7 +3890,7 @@ export function useWorkbenchController(
         return;
       }
 
-      await runPhpWorkspaceProbe(path);
+      await runPhpWorkspaceProbe(path, explicitRuntimeOwner);
     },
     [
       applyWorkspaceSettings,
@@ -3714,6 +3904,7 @@ export function useWorkbenchController(
       reportError,
       reportErrorForActiveWorkspaceRoot,
       releaseOwnedWorkspaceIdentity,
+      retireWorkspaceRuntimeOwnerClaim,
       restoreLanguageServerDiagnosticsForRoot,
       coalesceWorkspaceStateCache,
       resolveCachedWorkspaceState,
@@ -4006,6 +4197,8 @@ export function useWorkbenchController(
       const workspaceIds = [...ownedWorkspaceIdentityIdsRef.current];
       workspaceIdentityByRootRef.current = {};
       workspaceRuntimeRootByTabRef.current = {};
+      workspaceRuntimeOwnerByTabRef.current = {};
+      workspaceRuntimeOwnerClaimsRef.current = {};
       for (const workspaceId of workspaceIds) {
         void releaseOwnedWorkspaceIdentity(workspaceId).catch(() => undefined);
       }
@@ -4633,7 +4826,10 @@ export function useWorkbenchController(
         workspaceRuntimeRootByTabRef.current[rootPath] ??
           identityDescriptor?.selectedPath ??
           rootPath;
-      const runtimeRootKey = normalizedWorkspaceRootKey(runtimeRootPath);
+      const runtimeOwner =
+        workspaceRuntimeOwnerByTabRef.current[rootPath] ??
+        workspaceRuntimeOwnerFor(runtimeRootPath, identityDescriptor ?? null);
+      const runtimeRootKey = runtimeOwner.ownerKey;
       const previousPhpStatus =
         languageServerRuntimeStatusByRootRef.current[runtimeRootKey];
       const previousJavaScriptTypeScriptStatus =
@@ -4646,7 +4842,7 @@ export function useWorkbenchController(
       const previousActiveJavaScriptTypeScriptStatusRoot =
         javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current;
 
-      await stopProjectRuntimes(runtimeRootPath);
+      await stopProjectRuntimes(runtimeRootPath, runtimeOwner);
       if (!ownership || ownership.isCurrent()) {
         return;
       }
@@ -4693,6 +4889,25 @@ export function useWorkbenchController(
       setLanguageServerRuntimeStatusRoot,
       stopProjectRuntimes,
     ],
+  );
+
+  const forgetLanguageServerRuntimeStatusesForWorkspaceClose = useCallback(
+    (rootPath: string) => {
+      const runtimeOwner = workspaceRuntimeOwnerByTabRef.current[rootPath];
+      const claimGeneration = runtimeOwner
+        ? workspaceRuntimeOwnerClaimsRef.current[runtimeOwner.ownerKey]
+            ?.generation
+        : undefined;
+      forgetLanguageServerRuntimeStatuses(rootPath, runtimeOwner);
+      if (runtimeOwner) {
+        retireWorkspaceRuntimeOwnerClaim(
+          runtimeOwner.ownerKey,
+          claimGeneration,
+        );
+      }
+      delete workspaceRuntimeOwnerByTabRef.current[rootPath];
+    },
+    [forgetLanguageServerRuntimeStatuses, retireWorkspaceRuntimeOwnerClaim],
   );
 
   const runWithDocumentSaveExclusionRef =
@@ -4758,7 +4973,8 @@ export function useWorkbenchController(
     closeSyncedLanguageServerDocumentsForRoot,
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
     stopProjectRuntimes: stopProjectRuntimesForWorkspaceClose,
-    forgetLanguageServerRuntimeStatuses,
+    forgetLanguageServerRuntimeStatuses:
+      forgetLanguageServerRuntimeStatusesForWorkspaceClose,
     forgetLatencyTrackerForRoot,
     unregisterWorkspace: releaseOwnedWorkspaceIdentity,
     clearExternalFileConflictsForRoot: (root) =>
@@ -4803,6 +5019,8 @@ export function useWorkbenchController(
       delete workspaceRuntimeRootByTabRef.current[path];
       delete workspaceRuntimeRootByTabRef.current[resolvedTabPath];
       delete workspaceRuntimeRootByTabRef.current[runtimeRootPath];
+      delete workspaceRuntimeOwnerByTabRef.current[path];
+      delete workspaceRuntimeOwnerByTabRef.current[resolvedTabPath];
 
       recentlyClosedTabsRef.current = clearRecentlyClosedTabs(
         recentlyClosedTabsRef.current,
@@ -7967,10 +8185,14 @@ export function useWorkbenchController(
       return;
     }
 
-    clearJavaScriptTypeScriptDiagnosticsForRoot(workspaceRoot);
+    resetJavaScriptTypeScriptDiagnosticsForRoot(
+      workspaceRoot,
+      workspaceRuntimeOwner ?? undefined,
+    );
   }, [
-    clearJavaScriptTypeScriptDiagnosticsForRoot,
+    resetJavaScriptTypeScriptDiagnosticsForRoot,
     workspaceSettings.javaScriptTypeScriptValidation,
+    workspaceRuntimeOwner,
     workspaceRoot,
   ]);
 
@@ -8299,6 +8521,9 @@ export function useWorkbenchController(
 
   useLanguageServerDiagnosticsSubscriptions({
     workspaceRoot,
+    workspaceRuntimeOwner,
+    resolveCurrentWorkspaceRuntimeOwner,
+    resolveWorkspaceRuntimeOwnerForDiagnosticsEvent,
     currentWorkspaceRootRef,
     diagnosticsFlushSchedulerRef,
     languageServerDiagnosticsCoalescerRef,
@@ -8857,7 +9082,11 @@ export function useWorkbenchController(
     revealEntry,
     renameEntry,
     clearLanguageServerDiagnosticsForPath: (path: string) =>
-      clearLanguageServerDiagnosticsForPath(workspaceRoot, path),
+      clearLanguageServerDiagnosticsForPath(
+        workspaceRoot,
+        path,
+        workspaceRuntimeOwner ?? undefined,
+      ),
     updateLocalPhpDiagnostics,
     previewFile,
     previewPath,
@@ -9457,6 +9686,171 @@ function workspaceSettingsIdentity(
     canonicalKey,
     legacyRawKeys: [...new Set([canonicalKey, selectedRoot])],
   };
+}
+
+interface WorkspaceRuntimeOwnerClaim {
+  aliases: string[];
+  generation: number | null;
+  owner: WorkspaceRuntimeOwner;
+}
+
+type WorkspaceRuntimeOwnerClaimRegistry = Record<
+  string,
+  WorkspaceRuntimeOwnerClaim
+>;
+
+function registerWorkspaceRuntimeOwnerClaim(
+  registry: WorkspaceRuntimeOwnerClaimRegistry,
+  owner: WorkspaceRuntimeOwner,
+  aliases: readonly string[],
+  generation: number | null,
+): void {
+  const previous = registry[owner.ownerKey];
+  const nextAliases = [
+    ...(previous?.aliases ?? []),
+    ...aliases,
+    owner.executionRoot,
+  ];
+  registry[owner.ownerKey] = {
+    aliases: nextAliases.filter(
+      (alias, index) =>
+        nextAliases.findIndex((candidate) =>
+          workspaceRootKeysEqual(candidate, alias),
+        ) === index,
+    ),
+    generation,
+    owner,
+  };
+}
+
+function retireClaimedWorkspaceRuntimeOwner(
+  registry: WorkspaceRuntimeOwnerClaimRegistry,
+  ownerKey: string,
+  expectedGeneration?: number | null,
+): void {
+  const claim = registry[ownerKey];
+  if (!claim) {
+    return;
+  }
+
+  if (
+    expectedGeneration !== undefined &&
+    claim.generation !== expectedGeneration
+  ) {
+    return;
+  }
+
+  delete registry[ownerKey];
+}
+
+function resolveClaimedWorkspaceRuntimeOwnerForDiagnosticsEvent(
+  registry: WorkspaceRuntimeOwnerClaimRegistry,
+  event: LanguageServerDiagnosticEvent,
+  runtimeKind: LanguageServerDiagnosticsRuntimeKind,
+  phpRuntimeStatuses: Record<string, LanguageServerRuntimeStatus>,
+  javaScriptTypeScriptRuntimeStatuses: Record<
+    string,
+    LanguageServerRuntimeStatus
+  >,
+): WorkspaceRuntimeOwner | null {
+  const claims = Object.values(registry).filter((claim) =>
+    claim.aliases.some((alias) =>
+      workspaceRootKeysEqual(alias, event.rootPath),
+    ),
+  );
+  if (claims.length === 0) {
+    return null;
+  }
+
+  const sessionMatches = claims.filter((claim) =>
+    workspaceRuntimeOwnerSessionIds(
+      claim.owner,
+      runtimeKind,
+      phpRuntimeStatuses,
+      javaScriptTypeScriptRuntimeStatuses,
+    ).includes(event.sessionId),
+  );
+  if (sessionMatches.length === 1) {
+    return sessionMatches[0].owner;
+  }
+
+  if (claims.length !== 1 || sessionMatches.length > 1) {
+    return null;
+  }
+
+  const knownSessionIds = workspaceRuntimeOwnerSessionIds(
+    claims[0].owner,
+    runtimeKind,
+    phpRuntimeStatuses,
+    javaScriptTypeScriptRuntimeStatuses,
+  );
+  if (knownSessionIds.length > 0) {
+    return null;
+  }
+
+  return claims[0].owner;
+}
+
+function workspaceRuntimeOwnerSessionIds(
+  owner: WorkspaceRuntimeOwner,
+  runtimeKind: LanguageServerDiagnosticsRuntimeKind,
+  phpRuntimeStatuses: Record<string, LanguageServerRuntimeStatus>,
+  javaScriptTypeScriptRuntimeStatuses: Record<
+    string,
+    LanguageServerRuntimeStatus
+  >,
+): number[] {
+  const status = runtimeKind === "php"
+    ? phpRuntimeStatuses[owner.ownerKey]
+    : javaScriptTypeScriptRuntimeStatuses[owner.ownerKey];
+  if (!status || (status.kind !== "starting" && status.kind !== "running")) {
+    return [];
+  }
+
+  return [status.sessionId];
+}
+
+function backgroundRuntimeOwnersForPolicy(
+  policy: BackgroundRuntimePolicy,
+  activeRootPath: string | null,
+  previousRootPath: string | null,
+  workspaceTabs: readonly string[],
+  runtimeOwnersByTab: Record<string, WorkspaceRuntimeOwner>,
+): WorkspaceRuntimeOwner[] {
+  if (policy === "keepAlive") {
+    return [];
+  }
+
+  const rootPaths =
+    policy === "singleActive" || previousRootPath === null
+      ? workspaceTabs.filter(
+          (rootPath) => !workspaceRootKeysEqual(rootPath, activeRootPath),
+        )
+      : previousRootPath &&
+          !workspaceRootKeysEqual(previousRootPath, activeRootPath)
+        ? [previousRootPath]
+        : [];
+  const owners = rootPaths.flatMap((rootPath) => {
+    const owner = runtimeOwnersByTab[rootPath];
+    return owner ? [owner] : [];
+  });
+
+  return owners.filter(
+    (owner, index) =>
+      owners.findIndex((candidate) => candidate.ownerKey === owner.ownerKey) ===
+      index,
+  );
+}
+
+function workspaceRuntimeOwnerFor(
+  executionRoot: string,
+  descriptor: WorkspaceIdentityDescriptor | null,
+): WorkspaceRuntimeOwner {
+  if (descriptor) {
+    return createWorkspaceRuntimeOwner(descriptor.workspaceId, executionRoot);
+  }
+
+  return createLegacyWorkspaceRuntimeOwner(executionRoot);
 }
 
 function removeWorkspaceIdentityMappings(
