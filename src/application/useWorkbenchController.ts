@@ -62,6 +62,7 @@ import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
+import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroupCloseLifecycle";
 import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
 import {
@@ -3994,6 +3995,17 @@ export function useWorkbenchController(
     [stopProjectRuntimes],
   );
 
+  const runWithDocumentSaveExclusionRef =
+    useRef<RunWithDocumentSaveExclusion>(async (_scope, operation) =>
+      operation(),
+    );
+  const runWithDocumentSaveExclusionDelegate =
+    useCallback<RunWithDocumentSaveExclusion>(
+      (scope, operation) =>
+        runWithDocumentSaveExclusionRef.current(scope, operation),
+      [],
+    );
+
   const {
     closeApplicationWindow,
     closeWorkspaceTab: closeWorkspaceTabWithLifecycle,
@@ -4011,6 +4023,7 @@ export function useWorkbenchController(
     gitDiffRequestTokenRef,
     editorGitBaselineRequestTokenRef,
     prompter,
+    runWithDocumentSaveExclusion: runWithDocumentSaveExclusionDelegate,
     persistAppSettings,
     closeSyncedLanguageServerDocumentsForRoot,
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
@@ -4110,6 +4123,7 @@ export function useWorkbenchController(
   const {
     captureLocalHistorySnapshot,
     saveActiveDocument,
+    runWithDocumentSaveExclusion,
     closeDocument: closeTextDocument,
     closeActiveSurface: closeTextSurface,
     reopenClosedDocument,
@@ -4173,6 +4187,7 @@ export function useWorkbenchController(
     restoreRecentlyClosedDocumentViewState,
     onRecentlyClosedTabsChange,
   });
+  runWithDocumentSaveExclusionRef.current = runWithDocumentSaveExclusion;
 
   const {
     closeDocument,
@@ -6415,6 +6430,7 @@ export function useWorkbenchController(
     forgetRecentFile,
     forgetRecentLocationsForPath,
     invalidateFrameworkCachesForPath,
+    runWithDocumentSaveExclusion,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,

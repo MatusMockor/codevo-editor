@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -146,6 +146,7 @@ interface Harness {
 
 function renderLifecycle(
   overrides: Partial<DocumentLifecycleDependencies> = {},
+  options: { strictMode?: boolean } = {},
 ): Harness {
   const container = globalThis.document.createElement("div");
   const root = createRoot(container);
@@ -322,7 +323,15 @@ function renderLifecycle(
   }
 
   act(() => {
-    root.render(<HarnessComponent />);
+    root.render(
+      options.strictMode ? (
+        <StrictMode>
+          <HarnessComponent />
+        </StrictMode>
+      ) : (
+        <HarnessComponent />
+      ),
+    );
   });
 
   return {
@@ -794,6 +803,332 @@ describe("useDocumentLifecycle", () => {
       harness.unmount();
     });
 
+    it("does not write a deleted path when close invalidates a save during preparation", async () => {
+      const formatting = createDeferred<string>();
+      const formattedContentForSave = vi.fn(() => formatting.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => {
+        expect(formattedContentForSave).toHaveBeenCalledOnce();
+      });
+
+      act(() => {
+        harness.lifecycle().closeDocument(activeDocument.path, {
+          recordRecentlyClosed: false,
+          skipConfirmation: true,
+        });
+      });
+      await act(async () => {
+        formatting.resolve("formatted");
+        await savePromise;
+      });
+
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(harness.documentsRef.current[activeDocument.path]).toBeUndefined();
+      harness.unmount();
+    });
+
+    it("acknowledges an active save before the exclusion callback begins", async () => {
+      const write = createDeferred<void>();
+      const events: string[] = [];
+      const writeTextFile = vi.fn(async () => {
+        await write.promise;
+        events.push("write");
+      });
+      const recordSnapshot = vi.fn(async () => {
+        events.push("history");
+        return null;
+      });
+      const syncSavedDocument = vi.fn(async () => {
+        events.push("didSave");
+      });
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        localHistoryGateway: createFakeLocalHistoryGateway({ recordSnapshot }),
+        syncSavedDocument,
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+
+      const exclusionCallback = vi.fn(async () => {
+        events.push("callback");
+        expect(
+          harness.documentsRef.current[activeDocument.path].savedContent,
+        ).toBe("edited");
+        expect(recordSnapshot).toHaveBeenCalledOnce();
+        expect(syncSavedDocument).toHaveBeenCalledOnce();
+        return "excluded";
+      });
+      let exclusionPromise!: Promise<string>;
+      act(() => {
+        exclusionPromise = harness.lifecycle().runWithDocumentSaveExclusion(
+          {
+            kind: "file",
+            path: activeDocument.path,
+            rootPath: ROOT,
+          },
+          exclusionCallback,
+        );
+      });
+      await Promise.resolve();
+      expect(exclusionCallback).not.toHaveBeenCalled();
+
+      let result!: string;
+      await act(async () => {
+        write.resolve();
+        [, result] = await Promise.all([savePromise, exclusionPromise]);
+      });
+
+      expect(result).toBe("excluded");
+      expect(events).toEqual(["write", "history", "didSave", "callback"]);
+      harness.unmount();
+    });
+
+    it("drops a pending save when an exclusion starts", async () => {
+      const firstWrite = createDeferred<void>();
+      const writeTextFile = vi.fn(() => firstWrite.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "first",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let firstSave!: Promise<void>;
+      act(() => {
+        firstSave = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+
+      replaceLiveDocument(harness, { ...activeDocument, content: "pending" });
+      let pendingSave!: Promise<void>;
+      act(() => {
+        pendingSave = harness.lifecycle().saveActiveDocument();
+      });
+
+      const exclusionCallback = vi.fn(async () => undefined);
+      let exclusionPromise!: Promise<void>;
+      act(() => {
+        exclusionPromise = harness.lifecycle().runWithDocumentSaveExclusion(
+          { kind: "file", path: activeDocument.path, rootPath: ROOT },
+          exclusionCallback,
+        );
+      });
+
+      await act(async () => {
+        firstWrite.resolve();
+        await Promise.all([firstSave, pendingSave, exclusionPromise]);
+      });
+
+      expect(writeTextFile).toHaveBeenCalledOnce();
+      expect(exclusionCallback).toHaveBeenCalledOnce();
+      harness.unmount();
+    });
+
+    it("does not run new saves while the exclusion callback is active", async () => {
+      const callback = createDeferred<void>();
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+      });
+
+      const exclusionCallback = vi.fn(() => callback.promise);
+      let exclusionPromise!: Promise<void>;
+      act(() => {
+        exclusionPromise = harness.lifecycle().runWithDocumentSaveExclusion(
+          { kind: "file", path: activeDocument.path, rootPath: ROOT },
+          exclusionCallback,
+        );
+      });
+      await vi.waitFor(() => expect(exclusionCallback).toHaveBeenCalledOnce());
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await act(async () => {
+        await savePromise;
+      });
+      expect(harness.formattedContentForSave).not.toHaveBeenCalled();
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+
+      await act(async () => {
+        callback.resolve();
+        await exclusionPromise;
+      });
+
+      expect(harness.formattedContentForSave).not.toHaveBeenCalled();
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("keeps an in-flight save current across a rerender", async () => {
+      const formatting = createDeferred<string>();
+      const formattedContentForSave = vi.fn(() => formatting.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => {
+        expect(formattedContentForSave).toHaveBeenCalledOnce();
+      });
+
+      harness.rerender({ workspaceSettings: defaultWorkspaceSettings() });
+      await act(async () => {
+        formatting.resolve("formatted");
+        await savePromise;
+      });
+
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        activeDocument.path,
+        "formatted",
+      );
+      harness.unmount();
+    });
+
+    it("disposes the stable coordinator on unmount", async () => {
+      const formatting = createDeferred<string>();
+      const formattedContentForSave = vi.fn(() => formatting.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(formattedContentForSave).toHaveBeenCalledOnce());
+
+      harness.unmount();
+      formatting.resolve("formatted");
+      await savePromise;
+
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    });
+
+    it("keeps the live coordinator usable through StrictMode effect replay", async () => {
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const harness = renderLifecycle(
+        {
+          activeDocument,
+          documents: { [activeDocument.path]: activeDocument },
+        },
+        { strictMode: true },
+      );
+
+      await act(async () => {
+        await harness.lifecycle().saveActiveDocument();
+      });
+
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+        activeDocument.path,
+        activeDocument.content,
+      );
+      harness.unmount();
+    });
+
+    it("does not write the old path after rename invalidates a save during preparation", async () => {
+      const formatting = createDeferred<string>();
+      const formattedContentForSave = vi.fn(() => formatting.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const renamedDocument = {
+        ...activeDocument,
+        name: "Account.php",
+        path: `${ROOT}/src/Account.php`,
+      };
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave,
+      });
+
+      let savePromise!: Promise<void>;
+      act(() => {
+        savePromise = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => {
+        expect(formattedContentForSave).toHaveBeenCalledOnce();
+      });
+
+      act(() => {
+        harness.lifecycle().closeDocument(activeDocument.path, {
+          recordRecentlyClosed: false,
+          skipConfirmation: true,
+        });
+      });
+      harness.documentsRef.current = { [renamedDocument.path]: renamedDocument };
+      harness.activeDocumentRef.current = renamedDocument;
+      await act(async () => {
+        formatting.resolve("formatted");
+        await savePromise;
+      });
+
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(harness.documentsRef.current[renamedDocument.path]).toBe(
+        renamedDocument,
+      );
+      harness.unmount();
+    });
+
     it("restarts formatting with the latest content when typing occurs during format", async () => {
       const firstFormat = createDeferred<string>();
       const formattedContentForSave = vi
@@ -1078,6 +1413,55 @@ describe("useDocumentLifecycle", () => {
         expect.objectContaining({ content: "C" }),
         expect.any(Function),
       );
+      harness.unmount();
+    });
+
+    it("close invalidates a queued save for the same path", async () => {
+      const firstWrite = createDeferred<void>();
+      const writeTextFile = vi.fn(() => firstWrite.promise);
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "first",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        workspaceFiles: createFakeWorkspaceFiles({ writeTextFile }),
+      });
+
+      let firstSave!: Promise<void>;
+      act(() => {
+        firstSave = harness.lifecycle().saveActiveDocument();
+      });
+      await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+
+      replaceLiveDocument(harness, {
+        ...activeDocument,
+        content: "queued",
+      });
+      let queuedSave!: Promise<void>;
+      act(() => {
+        queuedSave = harness.lifecycle().saveActiveDocument();
+      });
+      act(() => {
+        harness.lifecycle().closeDocument(activeDocument.path, {
+          recordRecentlyClosed: false,
+          skipConfirmation: true,
+        });
+      });
+
+      await act(async () => {
+        firstWrite.resolve();
+        await Promise.all([firstSave, queuedSave]);
+      });
+
+      expect(writeTextFile).toHaveBeenCalledOnce();
+      expect(writeTextFile).toHaveBeenCalledWith(
+        activeDocument.path,
+        "first",
+      );
+      expect(harness.documentsRef.current[activeDocument.path]).toBeUndefined();
       harness.unmount();
     });
 

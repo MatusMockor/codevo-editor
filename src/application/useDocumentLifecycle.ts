@@ -34,6 +34,11 @@ import {
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { planDocumentClose } from "./documentCloseLifecycle";
+import {
+  DocumentSaveCoordinator,
+  type DocumentSaveLease,
+  type RunWithDocumentSaveExclusion,
+} from "./documentSaveCoordinator";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
 /**
@@ -183,6 +188,7 @@ export interface DocumentLifecycle {
     content: string,
   ) => Promise<void>;
   saveActiveDocument: () => Promise<void>;
+  runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   closeDocument: (path: string, options?: DocumentCloseOptions) => void;
   closeActiveSurface: (options?: DocumentCloseOptions) => void;
   reopenClosedDocument: () => Promise<void>;
@@ -190,15 +196,9 @@ export interface DocumentLifecycle {
 }
 
 interface DocumentSaveIdentity {
-  documentEpoch: number;
   path: string;
   requestedRoot: string;
   workspaceRequestToken: number;
-}
-
-interface DocumentSaveQueueEntry {
-  pending: DocumentSaveIdentity | null;
-  promise: Promise<void>;
 }
 
 /**
@@ -271,8 +271,14 @@ export function useDocumentLifecycle(
     restoreRecentlyClosedDocumentViewState,
     onRecentlyClosedTabsChange,
   } = dependencies;
-  const documentEpochByPathRef = useRef<Record<string, number>>({});
-  const saveQueueByPathRef = useRef<Record<string, DocumentSaveQueueEntry>>({});
+  const documentSaveCoordinatorRef = useRef<DocumentSaveCoordinator | null>(
+    null,
+  );
+  if (!documentSaveCoordinatorRef.current) {
+    documentSaveCoordinatorRef.current = new DocumentSaveCoordinator();
+  }
+  const documentSaveCoordinator = documentSaveCoordinatorRef.current;
+  const documentSaveCoordinatorEffectGenerationRef = useRef(0);
   const eslintAnalysisOnSaveTimerRef = useRef<number | null>(null);
   const phpstanAnalysisOnSaveTimerRef = useRef<number | null>(null);
 
@@ -291,6 +297,22 @@ export function useDocumentLifecycle(
     clearAnalysisOnSaveTimers,
     workspaceRoot,
   ]);
+
+  useEffect(() => {
+    const generation = ++documentSaveCoordinatorEffectGenerationRef.current;
+
+    return () => {
+      queueMicrotask(() => {
+        if (
+          documentSaveCoordinatorEffectGenerationRef.current !== generation
+        ) {
+          return;
+        }
+
+        documentSaveCoordinator.dispose();
+      });
+    };
+  }, [documentSaveCoordinator]);
 
   const scheduleAnalysisOnSave = useCallback(
     (document: EditorDocument, requestedRoot: string) => {
@@ -374,21 +396,23 @@ export function useDocumentLifecycle(
     [localHistoryGateway],
   );
 
-  const performDocumentSave = useCallback(async (identity: DocumentSaveIdentity) => {
+  const performDocumentSave = useCallback(async (
+    identity: DocumentSaveIdentity,
+    lease: DocumentSaveLease,
+  ) => {
     const {
-      documentEpoch,
       path,
       requestedRoot,
       workspaceRequestToken,
     } = identity;
     const currentDocumentForSave = (): EditorDocument | null => {
       if (
+        !lease.isCurrent() ||
         workspaceRequestTokenRef.current !== workspaceRequestToken ||
         !workspaceRootKeysEqual(
           currentWorkspaceRootRef.current,
           requestedRoot,
-        ) ||
-        (documentEpochByPathRef.current[path] ?? 0) !== documentEpoch
+        )
       ) {
         return null;
       }
@@ -689,41 +713,27 @@ export function useDocumentLifecycle(
     }
 
     const identity: DocumentSaveIdentity = {
-      documentEpoch: documentEpochByPathRef.current[document.path] ?? 0,
       path: document.path,
       requestedRoot: workspaceRoot,
       workspaceRequestToken: workspaceRequestTokenRef.current,
     };
-    const existingQueue = saveQueueByPathRef.current[identity.path];
-    if (existingQueue) {
-      existingQueue.pending = identity;
-      return existingQueue.promise;
-    }
-
-    const queue: DocumentSaveQueueEntry = {
-      pending: identity,
-      promise: Promise.resolve(),
-    };
-    saveQueueByPathRef.current[identity.path] = queue;
-    queue.promise = (async () => {
-      while (queue.pending) {
-        const pending = queue.pending;
-        queue.pending = null;
-        await performDocumentSave(pending);
-      }
-    })().finally(() => {
-      if (saveQueueByPathRef.current[identity.path] === queue) {
-        delete saveQueueByPathRef.current[identity.path];
-      }
-    });
-
-    return queue.promise;
+    await documentSaveCoordinator.request(
+      { rootPath: identity.requestedRoot, path: identity.path },
+      (lease) => performDocumentSave(identity, lease),
+    );
   }, [
     activeDocumentRef,
+    documentSaveCoordinator,
     performDocumentSave,
     workspaceRoot,
     workspaceRequestTokenRef,
   ]);
+
+  const runWithDocumentSaveExclusion = useCallback<RunWithDocumentSaveExclusion>(
+    (scope, operation) =>
+      documentSaveCoordinator.runWithExclusion(scope, operation),
+    [documentSaveCoordinator],
+  );
 
   useEffect(() => {
     if (!workspaceSettings.autoSave) {
@@ -773,6 +783,10 @@ export function useDocumentLifecycle(
 
       const rootPath = currentWorkspaceRootRef.current;
 
+      if (rootPath) {
+        documentSaveCoordinator.invalidate({ rootPath, path });
+      }
+
       if (document && rootPath && options.recordRecentlyClosed !== false) {
         const viewState = recentlyClosedDocumentViewState(rootPath, path);
         recentlyClosedTabsRef.current = pushRecentlyClosedTab(
@@ -787,8 +801,6 @@ export function useDocumentLifecycle(
       }
 
       if (document) {
-        documentEpochByPathRef.current[path] =
-          (documentEpochByPathRef.current[path] ?? 0) + 1;
         void syncClosedDocument(document);
         void syncClosedJavaScriptTypeScriptDocument(document);
         clearPhpLocalDiagnosticsForPath(path);
@@ -846,6 +858,7 @@ export function useDocumentLifecycle(
       previewPathRef,
       prompter,
       currentWorkspaceRootRef,
+      documentSaveCoordinator,
       recentlyClosedDocumentViewState,
       recentlyClosedTabsRef,
       hasExternalFileConflict,
@@ -938,6 +951,7 @@ export function useDocumentLifecycle(
   return {
     captureLocalHistorySnapshot,
     saveActiveDocument,
+    runWithDocumentSaveExclusion,
     closeDocument,
     closeActiveSurface,
     reopenClosedDocument,

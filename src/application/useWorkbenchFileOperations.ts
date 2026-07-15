@@ -40,7 +40,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type {
   DocumentSaveInvalidationScope,
-  InvalidateAndWaitForDocumentSaves,
+  RunWithDocumentSaveExclusion,
 } from "./documentSaveCoordinator";
 
 const WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS = 120;
@@ -101,7 +101,7 @@ export interface WorkbenchFileOperationsDependencies {
   forgetRecentFile: (path: string) => void;
   forgetRecentLocationsForPath: (path: string) => void;
   invalidateFrameworkCachesForPath: (rootPath: string, path: string) => void;
-  invalidateAndWaitForDocumentSaves: InvalidateAndWaitForDocumentSaves;
+  runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   invalidatePhpFrameworkSourcePath: (
     rootPath: string,
     path: string,
@@ -191,7 +191,7 @@ export function useWorkbenchFileOperations(
     forgetRecentFile,
     forgetRecentLocationsForPath,
     invalidateFrameworkCachesForPath,
-    invalidateAndWaitForDocumentSaves,
+    runWithDocumentSaveExclusion,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
@@ -379,64 +379,80 @@ export function useWorkbenchFileOperations(
         path: oldPath,
         rootPath: requestedRoot,
       };
-      await invalidateAndWaitForDocumentSaves(invalidationScope);
-      await workspaceFiles.renamePath(oldPath, nextPath);
-      filePrefetchCacheRef.current.invalidate(document.path);
-      filePrefetchCacheRef.current.invalidate(nextPath);
-      if (isLanguageServerDocument(document)) {
-        await notifyPhpFileRenamed(document.path, nextPath);
-      }
+      await runWithDocumentSaveExclusion(invalidationScope, async () => {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          return;
+        }
+        await workspaceFiles.renamePath(oldPath, nextPath);
+        filePrefetchCacheRef.current.invalidate(document.path);
+        filePrefetchCacheRef.current.invalidate(nextPath);
+        if (isLanguageServerDocument(document)) {
+          await notifyPhpFileRenamed(document.path, nextPath);
+        }
 
-      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-        await notifyJavaScriptTypeScriptFileRenamed(document.path, nextPath);
-      }
+        if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
+          await notifyJavaScriptTypeScriptFileRenamed(document.path, nextPath);
+        }
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
 
-      await syncClosedDocument(document);
-      await syncClosedJavaScriptTypeScriptDocument(document);
+        await syncClosedDocument(document);
+        await syncClosedJavaScriptTypeScriptDocument(document);
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
+        ) {
+          return;
+        }
 
-      clearLanguageServerDiagnosticsForPath(requestedRoot, oldPath);
+        clearLanguageServerDiagnosticsForPath(requestedRoot, oldPath);
 
-      setDocuments((current) => {
-        const currentDocument = current[document.path] ?? document;
-        const renamedDocument = {
-          ...currentDocument,
-          language: detectLanguage(nextPath),
+        setDocuments((current) => {
+          const currentDocument = current[document.path] ?? document;
+          const renamedDocument = {
+            ...currentDocument,
+            language: detectLanguage(nextPath),
+            name: nextName,
+            path: nextPath,
+          };
+          const next = { ...current };
+          delete next[document.path];
+          next[nextPath] = renamedDocument;
+          return next;
+        });
+        setOpenPaths((current) =>
+          current.map((path) => (path === document.path ? nextPath : path)),
+        );
+        setActivePath(nextPath);
+        remapRecentFile(oldPath, { name: nextName, path: nextPath });
+        remapRecentLocations(oldPath, {
           name: nextName,
           path: nextPath,
-        };
-        const next = { ...current };
-        delete next[document.path];
-        next[nextPath] = renamedDocument;
-        return next;
-      });
-      setOpenPaths((current) =>
-        current.map((path) => (path === document.path ? nextPath : path)),
-      );
-      setActivePath(nextPath);
-      remapRecentFile(oldPath, { name: nextName, path: nextPath });
-      remapRecentLocations(oldPath, {
-        name: nextName,
-        path: nextPath,
-        relativePath:
-          workspaceRelativePath(requestedRoot, nextPath) ?? nextPath,
-      });
-      setBookmarks((current) =>
-        renameBookmarksForPath(current, oldPath, nextPath),
-      );
-      await refreshDirectory(parentPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
+          relativePath:
+            workspaceRelativePath(requestedRoot, nextPath) ?? nextPath,
+        });
+        setBookmarks((current) =>
+          renameBookmarksForPath(current, oldPath, nextPath),
+        );
+        await refreshDirectory(parentPath);
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
+        ) {
+          return;
+        }
 
-      setMessage(`Renamed ${document.name}`);
+        setMessage(`Renamed ${document.name}`);
+      });
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename File", error);
     }
@@ -447,7 +463,7 @@ export function useWorkbenchFileOperations(
     clearLanguageServerDiagnosticsForPath,
     currentWorkspaceRootRef,
     filePrefetchCacheRef,
-    invalidateAndWaitForDocumentSaves,
+    runWithDocumentSaveExclusion,
     notifyJavaScriptTypeScriptFileRenamed,
     notifyPhpFileRenamed,
     prompter,
@@ -507,7 +523,10 @@ export function useWorkbenchFileOperations(
         }
 
         if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
         ) {
           return;
         }
@@ -517,106 +536,137 @@ export function useWorkbenchFileOperations(
           path: oldPath,
           rootPath: requestedRoot,
         };
-        await invalidateAndWaitForDocumentSaves(invalidationScope);
-        await workspaceFiles.renamePath(oldPath, nextPath);
-        filePrefetchCacheRef.current.invalidate(oldPath);
-        filePrefetchCacheRef.current.invalidate(nextPath);
-
-        if (!skipLspRename) {
-          await notifyPhpFileRenamed(oldPath, nextPath);
-          await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
-        }
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        const diagnosticPaths = new Set([
-          ...Object.keys(languageServerDiagnosticsByPath),
-          ...Object.keys(javaScriptTypeScriptDiagnosticsByPath),
-          ...Object.keys(phpLocalDiagnosticsByPath),
-          ...Object.keys(documentsRef.current),
-        ]);
-
-        for (const diagnosticPath of diagnosticPaths) {
-          if (isPathInDirectory(diagnosticPath, oldPath)) {
-            clearLanguageServerDiagnosticsForPath(requestedRoot, diagnosticPath);
-          }
-        }
-
-        const remappedDocuments = Object.values(documentsRef.current).filter(
-          (document) =>
-            remapPathForDirectoryRename(document.path, oldPath, nextPath) !==
-            document.path,
-        );
-        await Promise.all(
-          remappedDocuments.flatMap((document) => [
-            syncClosedDocument(document),
-            syncClosedJavaScriptTypeScriptDocument(document),
-          ]),
-        );
-
-        const nextDocuments: Record<string, EditorDocument> = {};
-        for (const document of Object.values(documentsRef.current)) {
-          const remappedPath = remapPathForDirectoryRename(
-            document.path,
-            oldPath,
-            nextPath,
-          );
-          const remappedDocument =
-            remappedPath === document.path
-              ? document
-              : {
-                  ...document,
-                  language: detectLanguage(remappedPath),
-                  name: getFileName(remappedPath),
-                  path: remappedPath,
-                };
-          nextDocuments[remappedDocument.path] = remappedDocument;
-        }
-
-        const nextOpenPaths = openPathsRef.current.map((path) =>
-          remapPathForDirectoryRename(path, oldPath, nextPath),
-        );
-        const nextPreviewPath = previewPathRef.current
-          ? remapPathForDirectoryRename(previewPathRef.current, oldPath, nextPath)
-          : null;
-        const nextActivePath = activePath
-          ? remapPathForDirectoryRename(activePath, oldPath, nextPath)
-          : null;
-
-        documentsRef.current = nextDocuments;
-        openPathsRef.current = nextOpenPaths;
-        previewPathRef.current = nextPreviewPath;
-        activeDocumentRef.current = nextActivePath
-          ? nextDocuments[nextActivePath] ?? null
-          : null;
-
-        setDocuments(nextDocuments);
-        setOpenPaths(nextOpenPaths);
-        setPreviewPath(nextPreviewPath);
-        setActivePath(nextActivePath);
-        setEntriesByDirectory((current) =>
-          remapEntriesByDirectoryForDirectoryRename(current, oldPath, nextPath),
-        );
-        setExpandedDirectories((current) =>
-          remapPathSetForDirectoryRename(current, oldPath, nextPath),
-        );
-        setManuallyCollapsedDirectories((current) =>
-          remapPathSetForDirectoryRename(current, oldPath, nextPath),
-        );
-
-        const directoriesToRefresh = new Set([parentPath, getParentPath(nextPath)]);
-        for (const directory of directoriesToRefresh) {
-          await refreshDirectory(directory);
+        await runWithDocumentSaveExclusion(invalidationScope, async () => {
           if (
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )
           ) {
             return;
           }
-        }
+          await workspaceFiles.renamePath(oldPath, nextPath);
+          filePrefetchCacheRef.current.invalidate(oldPath);
+          filePrefetchCacheRef.current.invalidate(nextPath);
 
-        setMessage(`Renamed ${entry.name}`);
+          if (!skipLspRename) {
+            await notifyPhpFileRenamed(oldPath, nextPath);
+            await notifyJavaScriptTypeScriptFileRenamed(oldPath, nextPath);
+          }
+
+          if (
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )
+          ) {
+            return;
+          }
+
+          const diagnosticPaths = new Set([
+            ...Object.keys(languageServerDiagnosticsByPath),
+            ...Object.keys(javaScriptTypeScriptDiagnosticsByPath),
+            ...Object.keys(phpLocalDiagnosticsByPath),
+            ...Object.keys(documentsRef.current),
+          ]);
+
+          for (const diagnosticPath of diagnosticPaths) {
+            if (isPathInDirectory(diagnosticPath, oldPath)) {
+              clearLanguageServerDiagnosticsForPath(
+                requestedRoot,
+                diagnosticPath,
+              );
+            }
+          }
+
+          const remappedDocuments = Object.values(documentsRef.current).filter(
+            (document) =>
+              remapPathForDirectoryRename(document.path, oldPath, nextPath) !==
+              document.path,
+          );
+          await Promise.all(
+            remappedDocuments.flatMap((document) => [
+              syncClosedDocument(document),
+              syncClosedJavaScriptTypeScriptDocument(document),
+            ]),
+          );
+
+          const nextDocuments: Record<string, EditorDocument> = {};
+          for (const document of Object.values(documentsRef.current)) {
+            const remappedPath = remapPathForDirectoryRename(
+              document.path,
+              oldPath,
+              nextPath,
+            );
+            const remappedDocument =
+              remappedPath === document.path
+                ? document
+                : {
+                    ...document,
+                    language: detectLanguage(remappedPath),
+                    name: getFileName(remappedPath),
+                    path: remappedPath,
+                  };
+            nextDocuments[remappedDocument.path] = remappedDocument;
+          }
+
+          const nextOpenPaths = openPathsRef.current.map((path) =>
+            remapPathForDirectoryRename(path, oldPath, nextPath),
+          );
+          const nextPreviewPath = previewPathRef.current
+            ? remapPathForDirectoryRename(
+                previewPathRef.current,
+                oldPath,
+                nextPath,
+              )
+            : null;
+          const nextActivePath = activePath
+            ? remapPathForDirectoryRename(activePath, oldPath, nextPath)
+            : null;
+
+          documentsRef.current = nextDocuments;
+          openPathsRef.current = nextOpenPaths;
+          previewPathRef.current = nextPreviewPath;
+          activeDocumentRef.current = nextActivePath
+            ? (nextDocuments[nextActivePath] ?? null)
+            : null;
+
+          setDocuments(nextDocuments);
+          setOpenPaths(nextOpenPaths);
+          setPreviewPath(nextPreviewPath);
+          setActivePath(nextActivePath);
+          setEntriesByDirectory((current) =>
+            remapEntriesByDirectoryForDirectoryRename(
+              current,
+              oldPath,
+              nextPath,
+            ),
+          );
+          setExpandedDirectories((current) =>
+            remapPathSetForDirectoryRename(current, oldPath, nextPath),
+          );
+          setManuallyCollapsedDirectories((current) =>
+            remapPathSetForDirectoryRename(current, oldPath, nextPath),
+          );
+
+          const directoriesToRefresh = new Set([
+            parentPath,
+            getParentPath(nextPath),
+          ]);
+          for (const directory of directoriesToRefresh) {
+            await refreshDirectory(directory);
+            if (
+              !workspaceRootKeysEqual(
+                currentWorkspaceRootRef.current,
+                requestedRoot,
+              )
+            ) {
+              return;
+            }
+          }
+
+          setMessage(`Renamed ${entry.name}`);
+        });
       } catch (error) {
         reportErrorForActiveWorkspaceRoot(requestedRoot, "Rename Folder", error);
       }
@@ -630,7 +680,7 @@ export function useWorkbenchFileOperations(
       currentWorkspaceRootRef,
       documentsRef,
       filePrefetchCacheRef,
-      invalidateAndWaitForDocumentSaves,
+      runWithDocumentSaveExclusion,
       javaScriptTypeScriptDiagnosticsByPath,
       languageServerDiagnosticsByPath,
       notifyJavaScriptTypeScriptFileRenamed,
@@ -689,35 +739,59 @@ export function useWorkbenchFileOperations(
         path: deletedPath,
         rootPath: requestedRoot,
       };
-      await invalidateAndWaitForDocumentSaves(invalidationScope);
-      await workspaceFiles.deletePath(deletedPath);
-      filePrefetchCacheRef.current.invalidate(deletedPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
+      await runWithDocumentSaveExclusion(invalidationScope, async () => {
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
+        ) {
+          return;
+        }
+        await workspaceFiles.deletePath(deletedPath);
+        filePrefetchCacheRef.current.invalidate(deletedPath);
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
+        ) {
+          return;
+        }
 
-      if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
-        await syncClosedJavaScriptTypeScriptDocument(document);
-      }
-      await notifyJavaScriptTypeScriptFileDeleted(deletedPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
+        if (isJavaScriptTypeScriptLanguageServerDocument(document)) {
+          await syncClosedJavaScriptTypeScriptDocument(document);
+        }
+        await notifyJavaScriptTypeScriptFileDeleted(deletedPath);
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
+        ) {
+          return;
+        }
 
-      closeDocument(deletedPath, {
-        recordRecentlyClosed: false,
-        skipConfirmation: true,
+        closeDocument(deletedPath, {
+          recordRecentlyClosed: false,
+          skipConfirmation: true,
+        });
+        forgetRecentFile(deletedPath);
+        forgetRecentLocationsForPath(deletedPath);
+        setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
+        clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
+        await refreshDirectory(parentPath);
+        if (
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          )
+        ) {
+          return;
+        }
+
+        setMessage(`Deleted ${document.name}`);
       });
-      forgetRecentFile(deletedPath);
-      forgetRecentLocationsForPath(deletedPath);
-      setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
-      clearLanguageServerDiagnosticsForPath(requestedRoot, deletedPath);
-      await refreshDirectory(parentPath);
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
-      }
-
-      setMessage(`Deleted ${document.name}`);
     } catch (error) {
       reportErrorForActiveWorkspaceRoot(requestedRoot, "Delete File", error);
     }
@@ -730,7 +804,7 @@ export function useWorkbenchFileOperations(
     filePrefetchCacheRef,
     forgetRecentFile,
     forgetRecentLocationsForPath,
-    invalidateAndWaitForDocumentSaves,
+    runWithDocumentSaveExclusion,
     notifyJavaScriptTypeScriptFileDeleted,
     prompter,
     refreshDirectory,

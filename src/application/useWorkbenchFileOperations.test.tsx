@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
-import type { DocumentSaveInvalidationScope } from "./documentSaveCoordinator";
+import type {
+  DocumentSaveInvalidationScope,
+  RunWithDocumentSaveExclusion,
+} from "./documentSaveCoordinator";
 import {
   useWorkbenchFileOperations,
   type WorkbenchFileOperations,
@@ -24,6 +27,22 @@ function createDeferred<T>() {
   });
 
   return { promise, resolve };
+}
+
+function createSaveExclusionMock(
+  beforeOperation: () => Promise<void> = async () => {},
+) {
+  const mock = vi.fn(
+    async (
+      _scope: DocumentSaveInvalidationScope,
+      operation: () => Promise<unknown>,
+    ) => {
+      await beforeOperation();
+      return operation();
+    },
+  );
+
+  return mock as typeof mock & RunWithDocumentSaveExclusion;
 }
 
 function workspaceFiles(): WorkspaceFileGateway {
@@ -91,7 +110,7 @@ function makeDependencies(
     forgetRecentFile: vi.fn(),
     forgetRecentLocationsForPath: vi.fn(),
     invalidateFrameworkCachesForPath: vi.fn(),
-    invalidateAndWaitForDocumentSaves: vi.fn(),
+    runWithDocumentSaveExclusion: createSaveExclusionMock(),
     invalidatePhpFrameworkSourcePath: vi.fn(),
     invalidatePhpFrameworkBindingsForFileChange: vi.fn(),
     markExternallyRemovedDocumentPath: vi.fn(),
@@ -341,8 +360,8 @@ describe("useWorkbenchFileOperations close intent", () => {
   });
 });
 
-describe("useWorkbenchFileOperations save invalidation", () => {
-  it("awaits file-save invalidation before renaming the active file", async () => {
+describe("useWorkbenchFileOperations save exclusion", () => {
+  it("runs active file rename with the exact file-save scope", async () => {
     const document = {
       content: "content",
       language: "plaintext",
@@ -350,13 +369,13 @@ describe("useWorkbenchFileOperations save invalidation", () => {
       path: `${ROOT}/Old.txt`,
       savedContent: "content",
     };
-    const invalidation = createDeferred<void>();
-    const invalidateAndWaitForDocumentSaves = vi.fn(
-      (_scope: DocumentSaveInvalidationScope) => invalidation.promise,
+    const exclusion = createDeferred<void>();
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(
+      () => exclusion.promise,
     );
     const dependencies = makeDependencies("", {
       activeDocumentRef: { current: document },
-      invalidateAndWaitForDocumentSaves,
+      runWithDocumentSaveExclusion,
       prompter: { prompt: vi.fn(() => "New.txt"), confirm: vi.fn() },
     });
     const operations = renderHook(dependencies);
@@ -366,14 +385,20 @@ describe("useWorkbenchFileOperations save invalidation", () => {
       renamePromise = operations().renameActiveDocument();
     });
     await vi.waitFor(() => {
-      expect(invalidateAndWaitForDocumentSaves.mock.calls).toEqual([
-        [{ kind: "file", path: document.path, rootPath: ROOT }],
-      ]);
+      expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+        kind: "file",
+        path: document.path,
+        rootPath: ROOT,
+      });
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(
+        expect.any(Function),
+      );
     });
     expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
 
     await act(async () => {
-      invalidation.resolve();
+      exclusion.resolve();
       await renamePromise;
     });
 
@@ -383,15 +408,105 @@ describe("useWorkbenchFileOperations save invalidation", () => {
     );
   });
 
-  it("awaits directory-save invalidation before renaming a directory", async () => {
+  it("holds active file rename exclusion through operation completion", async () => {
+    const document = {
+      content: "content",
+      language: "plaintext",
+      name: "Old.txt",
+      path: `${ROOT}/Old.txt`,
+      savedContent: "content",
+    };
+    const refresh = createDeferred<void>();
+    let excluded = false;
+    const runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion = async <
+      T,
+    >(
+      _scope: DocumentSaveInvalidationScope,
+      operation: () => Promise<T>,
+    ) => {
+      excluded = true;
+      try {
+        return await operation();
+      } finally {
+        excluded = false;
+      }
+    };
+    const dependencies = makeDependencies("", {
+      activeDocumentRef: { current: document },
+      refreshDirectory: vi.fn(() => refresh.promise),
+      runWithDocumentSaveExclusion,
+      prompter: { prompt: vi.fn(() => "New.txt"), confirm: vi.fn() },
+    });
+    const operations = renderHook(dependencies);
+
+    let renamePromise!: Promise<void>;
+    act(() => {
+      renamePromise = operations().renameActiveDocument();
+    });
+    await vi.waitFor(() => {
+      expect(dependencies.workspaceFiles.renamePath).toHaveBeenCalledOnce();
+      expect(dependencies.refreshDirectory).toHaveBeenCalledOnce();
+    });
+
+    expect(excluded).toBe(true);
+    expect(dependencies.setMessage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      refresh.resolve();
+      await renamePromise;
+    });
+
+    expect(excluded).toBe(false);
+    expect(dependencies.setMessage).toHaveBeenCalledWith("Renamed Old.txt");
+  });
+
+  it("aborts active file rename when the workspace changes while entering save exclusion", async () => {
+    const document = {
+      content: "content",
+      language: "plaintext",
+      name: "Old.txt",
+      path: `${ROOT}/Old.txt`,
+      savedContent: "content",
+    };
+    const currentWorkspaceRootRef = { current: ROOT };
+    const exclusion = createDeferred<void>();
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(
+      () => exclusion.promise,
+    );
+    const dependencies = makeDependencies("", {
+      activeDocumentRef: { current: document },
+      currentWorkspaceRootRef,
+      runWithDocumentSaveExclusion,
+      prompter: { prompt: vi.fn(() => "New.txt"), confirm: vi.fn() },
+    });
+    const operations = renderHook(dependencies);
+
+    let renamePromise!: Promise<void>;
+    act(() => {
+      renamePromise = operations().renameActiveDocument();
+    });
+    await vi.waitFor(() => {
+      expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+    });
+
+    currentWorkspaceRootRef.current = "/other-workspace";
+    await act(async () => {
+      exclusion.resolve();
+      await renamePromise;
+    });
+
+    expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
+  });
+
+  it("runs directory rename with the exact directory-save scope", async () => {
     const oldPath = `${ROOT}/src`;
-    const invalidation = createDeferred<void>();
-    const invalidateAndWaitForDocumentSaves = vi.fn(
-      (_scope: DocumentSaveInvalidationScope) => invalidation.promise,
+    const exclusion = createDeferred<void>();
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(
+      () => exclusion.promise,
     );
     const dependencies = makeDependencies("", {
       applyJavaScriptTypeScriptRenameEdits: vi.fn(async () => true),
-      invalidateAndWaitForDocumentSaves,
+      runWithDocumentSaveExclusion,
       prompter: { prompt: vi.fn(() => "source"), confirm: vi.fn() },
     });
     const operations = renderHook(dependencies);
@@ -405,14 +520,20 @@ describe("useWorkbenchFileOperations save invalidation", () => {
       });
     });
     await vi.waitFor(() => {
-      expect(invalidateAndWaitForDocumentSaves.mock.calls).toEqual([
-        [{ kind: "directory", path: oldPath, rootPath: ROOT }],
-      ]);
+      expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+        kind: "directory",
+        path: oldPath,
+        rootPath: ROOT,
+      });
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(
+        expect.any(Function),
+      );
     });
     expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
 
     await act(async () => {
-      invalidation.resolve();
+      exclusion.resolve();
       await renamePromise;
     });
 
@@ -422,7 +543,43 @@ describe("useWorkbenchFileOperations save invalidation", () => {
     );
   });
 
-  it("awaits file-save invalidation before deleting the active file", async () => {
+  it("aborts directory rename when the workspace changes while entering save exclusion", async () => {
+    const oldPath = `${ROOT}/src`;
+    const currentWorkspaceRootRef = { current: ROOT };
+    const exclusion = createDeferred<void>();
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(
+      () => exclusion.promise,
+    );
+    const dependencies = makeDependencies("", {
+      applyJavaScriptTypeScriptRenameEdits: vi.fn(async () => true),
+      currentWorkspaceRootRef,
+      runWithDocumentSaveExclusion,
+      prompter: { prompt: vi.fn(() => "source"), confirm: vi.fn() },
+    });
+    const operations = renderHook(dependencies);
+
+    let renamePromise!: Promise<void>;
+    act(() => {
+      renamePromise = operations().renameEntry({
+        kind: "directory",
+        name: "src",
+        path: oldPath,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+    });
+
+    currentWorkspaceRootRef.current = "/other-workspace";
+    await act(async () => {
+      exclusion.resolve();
+      await renamePromise;
+    });
+
+    expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
+  });
+
+  it("runs active file delete with the exact file-save scope", async () => {
     const document = {
       content: "content",
       language: "plaintext",
@@ -430,14 +587,14 @@ describe("useWorkbenchFileOperations save invalidation", () => {
       path: `${ROOT}/Deleted.txt`,
       savedContent: "content",
     };
-    const invalidation = createDeferred<void>();
-    const invalidateAndWaitForDocumentSaves = vi.fn(
-      (_scope: DocumentSaveInvalidationScope) => invalidation.promise,
+    const exclusion = createDeferred<void>();
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(
+      () => exclusion.promise,
     );
     const dependencies = makeDependencies("", {
       activeDocumentRef: { current: document },
       applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
-      invalidateAndWaitForDocumentSaves,
+      runWithDocumentSaveExclusion,
       prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
     });
     const operations = renderHook(dependencies);
@@ -447,14 +604,20 @@ describe("useWorkbenchFileOperations save invalidation", () => {
       deletePromise = operations().deleteActiveDocument();
     });
     await vi.waitFor(() => {
-      expect(invalidateAndWaitForDocumentSaves.mock.calls).toEqual([
-        [{ kind: "file", path: document.path, rootPath: ROOT }],
-      ]);
+      expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+        kind: "file",
+        path: document.path,
+        rootPath: ROOT,
+      });
+      expect(runWithDocumentSaveExclusion.mock.calls[0]?.[1]).toEqual(
+        expect.any(Function),
+      );
     });
     expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
 
     await act(async () => {
-      invalidation.resolve();
+      exclusion.resolve();
       await deletePromise;
     });
 
@@ -463,7 +626,46 @@ describe("useWorkbenchFileOperations save invalidation", () => {
     );
   });
 
-  it("does not invalidate saves when rename or delete is declined or a no-op", async () => {
+  it("aborts active file delete when the workspace changes while entering save exclusion", async () => {
+    const document = {
+      content: "content",
+      language: "plaintext",
+      name: "Deleted.txt",
+      path: `${ROOT}/Deleted.txt`,
+      savedContent: "content",
+    };
+    const currentWorkspaceRootRef = { current: ROOT };
+    const exclusion = createDeferred<void>();
+    const runWithDocumentSaveExclusion = createSaveExclusionMock(
+      () => exclusion.promise,
+    );
+    const dependencies = makeDependencies("", {
+      activeDocumentRef: { current: document },
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+      currentWorkspaceRootRef,
+      runWithDocumentSaveExclusion,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+    });
+    const operations = renderHook(dependencies);
+
+    let deletePromise!: Promise<void>;
+    act(() => {
+      deletePromise = operations().deleteActiveDocument();
+    });
+    await vi.waitFor(() => {
+      expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+    });
+
+    currentWorkspaceRootRef.current = "/other-workspace";
+    await act(async () => {
+      exclusion.resolve();
+      await deletePromise;
+    });
+
+    expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
+  });
+
+  it("does not request save exclusion when rename or delete is declined or a no-op", async () => {
     const document = {
       content: "content",
       language: "plaintext",
@@ -471,10 +673,10 @@ describe("useWorkbenchFileOperations save invalidation", () => {
       path: `${ROOT}/Current.txt`,
       savedContent: "content",
     };
-    const invalidateAndWaitForDocumentSaves = vi.fn();
+    const runWithDocumentSaveExclusion = createSaveExclusionMock();
     const dependencies = makeDependencies("", {
       activeDocumentRef: { current: document },
-      invalidateAndWaitForDocumentSaves,
+      runWithDocumentSaveExclusion,
       prompter: {
         prompt: vi.fn(() => document.name),
         confirm: vi.fn(() => false),
@@ -485,7 +687,7 @@ describe("useWorkbenchFileOperations save invalidation", () => {
     await act(async () => operations().renameActiveDocument());
     await act(async () => operations().deleteActiveDocument());
 
-    expect(invalidateAndWaitForDocumentSaves).not.toHaveBeenCalled();
+    expect(runWithDocumentSaveExclusion).not.toHaveBeenCalled();
     expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
     expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
   });

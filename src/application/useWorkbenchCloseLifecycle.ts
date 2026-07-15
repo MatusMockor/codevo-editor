@@ -16,8 +16,12 @@ import type { EditorDocument } from "../domain/workspace";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { documentNeedsAttention } from "../domain/externalFileConflict";
 import { isDirty } from "../domain/workspace";
-import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  normalizedWorkspaceRootKey,
+  workspaceRootKeysEqual,
+} from "../domain/workspaceRootKey";
 import { CloseCoordinator } from "./closeCoordinator";
+import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 
 interface CachedWorkspaceDirtyState {
@@ -51,6 +55,7 @@ export interface WorkbenchCloseLifecycleDependencies {
   editorGitBaselineRequestTokenRef: MutableRefObject<number>;
 
   prompter: WorkbenchPrompter;
+  runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   persistAppSettings: (nextSettings: AppSettings) => Promise<void>;
   closeSyncedLanguageServerDocumentsForRoot: (
     rootPath: string,
@@ -103,6 +108,7 @@ export function useWorkbenchCloseLifecycle(
     gitDiffRequestTokenRef,
     editorGitBaselineRequestTokenRef,
     prompter,
+    runWithDocumentSaveExclusion,
     persistAppSettings,
     closeSyncedLanguageServerDocumentsForRoot,
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
@@ -148,10 +154,7 @@ export function useWorkbenchCloseLifecycle(
       return true;
     }
 
-    if (
-      workspaceRoot &&
-      workspaceHasExternalFileConflicts(workspaceRoot)
-    ) {
+    if (workspaceRoot && workspaceHasExternalFileConflicts(workspaceRoot)) {
       return true;
     }
 
@@ -220,12 +223,27 @@ export function useWorkbenchCloseLifecycle(
         return;
       }
 
-      void shutdown().catch((error) => {
+      const roots = uniqueNormalizedWorkspaceRoots([
+        ...appSettingsRef.current.workspaceTabs,
+        workspaceRoot,
+      ]);
+      void runWithWorkspaceSaveExclusions(
+        roots,
+        runWithDocumentSaveExclusion,
+        shutdown,
+      ).catch((error) => {
         nativeCloseInFlightRef.current = false;
         reportError(errorSource, error);
       });
     },
-    [applicationNeedsAttention, prompter, reportError],
+    [
+      appSettingsRef,
+      applicationNeedsAttention,
+      prompter,
+      reportError,
+      runWithDocumentSaveExclusion,
+      workspaceRoot,
+    ],
   );
 
   nativeCloseRequestRef.current = (payload) => {
@@ -379,24 +397,32 @@ export function useWorkbenchCloseLifecycle(
           return;
         }
 
-        const nextRecentPath = workspaceRootKeysEqual(
-          currentSettings.recentWorkspacePath,
-          tabPath,
-        )
-          ? (workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null)
-          : currentSettings.recentWorkspacePath;
+        await runWithDocumentSaveExclusion(
+          {
+            kind: "workspace",
+            rootPath: normalizedWorkspaceRootKey(targetRootPath),
+          },
+          async () => {
+            const nextRecentPath = workspaceRootKeysEqual(
+              currentSettings.recentWorkspacePath,
+              tabPath,
+            )
+              ? (workspaceRoot ?? nextTabs[nextTabs.length - 1] ?? null)
+              : currentSettings.recentWorkspacePath;
 
-        try {
-          await persistAppSettings({
-            ...currentSettings,
-            recentWorkspacePath: nextRecentPath,
-            workspaceTabs: nextTabs,
-          });
-        } catch (error) {
-          reportError("Settings", error);
-          return;
-        }
-        await disposeWorkspaceTabResources(tabPath, targetRootPath);
+            try {
+              await persistAppSettings({
+                ...currentSettings,
+                recentWorkspacePath: nextRecentPath,
+                workspaceTabs: nextTabs,
+              });
+            } catch (error) {
+              reportError("Settings", error);
+              return;
+            }
+            await disposeWorkspaceTabResources(tabPath, targetRootPath);
+          },
+        );
         return;
       }
 
@@ -407,40 +433,50 @@ export function useWorkbenchCloseLifecycle(
         return;
       }
 
-      try {
-        await persistWorkspaceSession(targetRootPath);
-      } catch (error) {
-        reportError("Session", error);
-      }
+      await runWithDocumentSaveExclusion(
+        {
+          kind: "workspace",
+          rootPath: normalizedWorkspaceRootKey(targetRootPath),
+        },
+        async () => {
+          try {
+            await persistWorkspaceSession(targetRootPath);
+          } catch (error) {
+            reportError("Session", error);
+          }
 
-      openFileRequestTokenRef.current += 1;
-      gitDiffRequestTokenRef.current += 1;
-      editorGitBaselineRequestTokenRef.current += 1;
-      const currentIndex = workspaceTabIndexForPath(currentTabs, tabPath);
-      const nextPath =
-        nextTabs[Math.min(currentIndex, nextTabs.length - 1)] ??
-        nextTabs[nextTabs.length - 1] ??
-        null;
+          openFileRequestTokenRef.current += 1;
+          gitDiffRequestTokenRef.current += 1;
+          editorGitBaselineRequestTokenRef.current += 1;
+          const currentIndex = workspaceTabIndexForPath(currentTabs, tabPath);
+          const nextPath =
+            nextTabs[Math.min(currentIndex, nextTabs.length - 1)] ??
+            nextTabs[nextTabs.length - 1] ??
+            null;
 
-      try {
-        await persistAppSettings({
-          ...currentSettings,
-          recentWorkspacePath: nextPath,
-          workspaceTabs: nextTabs,
-        });
-      } catch (error) {
-        reportError("Settings", error);
-        return;
-      }
+          try {
+            await persistAppSettings({
+              ...currentSettings,
+              recentWorkspacePath: nextPath,
+              workspaceTabs: nextTabs,
+            });
+          } catch (error) {
+            reportError("Settings", error);
+            return;
+          }
 
-      await disposeWorkspaceTabResources(tabPath, targetRootPath);
+          await disposeWorkspaceTabResources(tabPath, targetRootPath);
 
-      if (nextPath) {
-        await openWorkspacePath(nextPath, { cachePreviousWorkspace: false });
-        return;
-      }
+          if (nextPath) {
+            await openWorkspacePath(nextPath, {
+              cachePreviousWorkspace: false,
+            });
+            return;
+          }
 
-      await clearActiveWorkspace();
+          await clearActiveWorkspace();
+        },
+      );
     },
     [
       appSettingsRef,
@@ -457,6 +493,7 @@ export function useWorkbenchCloseLifecycle(
       persistWorkspaceSession,
       prompter,
       reportError,
+      runWithDocumentSaveExclusion,
       workspaceRoot,
       workspaceStateCacheRef,
       workspaceHasExternalFileConflicts,
@@ -479,10 +516,7 @@ export function useWorkbenchCloseLifecycle(
       return;
     }
 
-    requestApplicationShutdown(
-      () => confirmNativeShutdown("close"),
-      "Window",
-    );
+    requestApplicationShutdown(() => confirmNativeShutdown("close"), "Window");
   }, [confirmNativeShutdown, requestApplicationShutdown]);
 
   return {
@@ -514,4 +548,42 @@ function workspaceTabIndexForPath(
   path: string | null | undefined,
 ): number {
   return tabs.findIndex((tabPath) => workspaceRootKeysEqual(tabPath, path));
+}
+
+function uniqueNormalizedWorkspaceRoots(
+  paths: Array<string | null | undefined>,
+): string[] {
+  const roots: string[] = [];
+
+  for (const path of paths) {
+    const root = normalizedWorkspaceRootKey(path);
+    if (!root || roots.includes(root)) {
+      continue;
+    }
+
+    roots.push(root);
+  }
+
+  return roots;
+}
+
+function runWithWorkspaceSaveExclusions<T>(
+  roots: string[],
+  runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion,
+  operation: () => Promise<T>,
+  index = 0,
+): Promise<T> {
+  const rootPath = roots[index];
+  if (!rootPath) {
+    return operation();
+  }
+
+  return runWithDocumentSaveExclusion({ kind: "workspace", rootPath }, () =>
+    runWithWorkspaceSaveExclusions(
+      roots,
+      runWithDocumentSaveExclusion,
+      operation,
+      index + 1,
+    ),
+  );
 }

@@ -11,6 +11,10 @@ import {
   type WorkbenchCloseLifecycleDependencies,
 } from "./useWorkbenchCloseLifecycle";
 import { DOCUMENT_SYNC_CLOSE_GRACE_MS } from "./closeCoordinator";
+import type {
+  DocumentSaveInvalidationScope,
+  RunWithDocumentSaveExclusion,
+} from "./documentSaveCoordinator";
 
 const tauriMocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: unknown) => Promise<void>>(
@@ -69,6 +73,18 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
+type DocumentSaveExclusionMock = RunWithDocumentSaveExclusion &
+  ReturnType<typeof vi.fn>;
+
+function documentSaveExclusionMock(
+  implementation: (
+    scope: DocumentSaveInvalidationScope,
+    operation: () => Promise<void>,
+  ) => Promise<void> = async (_scope, operation) => operation(),
+): DocumentSaveExclusionMock {
+  return vi.fn(implementation) as unknown as DocumentSaveExclusionMock;
+}
+
 function dirtyDocument(path: string): EditorDocument {
   return {
     content: "edited",
@@ -97,6 +113,7 @@ interface Harness {
     prompt: ReturnType<typeof vi.fn>;
   };
   reportError: ReturnType<typeof vi.fn>;
+  runWithDocumentSaveExclusion: DocumentSaveExclusionMock;
   stopProjectRuntimes: ReturnType<typeof vi.fn>;
   unmount: () => void;
   workspaceStateCacheRef: {
@@ -135,6 +152,7 @@ function renderLifecycle(
   const closeSyncedJavaScriptTypeScriptDocumentsForRoot = vi.fn(
     async () => undefined,
   );
+  const runWithDocumentSaveExclusion = documentSaveExclusionMock();
   const stopProjectRuntimes = vi.fn(async () => undefined);
   const reportError = vi.fn();
 
@@ -157,6 +175,7 @@ function renderLifecycle(
     persistAppSettings,
     prompter,
     reportError,
+    runWithDocumentSaveExclusion,
     stopProjectRuntimes,
     workspaceRoot: WORKSPACE_B,
     workspaceStateCacheRef,
@@ -189,6 +208,8 @@ function renderLifecycle(
     persistAppSettings,
     prompter: dependencies.prompter as Harness["prompter"],
     reportError: dependencies.reportError as Harness["reportError"],
+    runWithDocumentSaveExclusion:
+      dependencies.runWithDocumentSaveExclusion as DocumentSaveExclusionMock,
     stopProjectRuntimes,
     unmount: () => root.unmount(),
     workspaceStateCacheRef,
@@ -326,11 +347,138 @@ describe("useWorkbenchCloseLifecycle", () => {
       "Close workspace and discard unsaved changes?",
     );
     expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
     expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
     expect(harness.appSettingsRef.current.workspaceTabs).toEqual([
       WORKSPACE_A,
       WORKSPACE_B,
     ]);
+    harness.unmount();
+  });
+
+  it("holds the exact inactive workspace exclusion through persistence and runtime disposal", async () => {
+    const runtimeStop = createDeferred<void>();
+    const events: string[] = [];
+    const runWithDocumentSaveExclusion = documentSaveExclusionMock(
+      async (_scope, operation: () => Promise<void>) => {
+        events.push("lock");
+        try {
+          await operation();
+        } finally {
+          events.push("unlock");
+        }
+      },
+    );
+    const persistAppSettings = vi.fn(async () => {
+      events.push("persist");
+    });
+    const stopProjectRuntimes = vi.fn(() => {
+      events.push("runtime");
+      return runtimeStop.promise;
+    });
+    const harness = renderLifecycle({
+      persistAppSettings,
+      runWithDocumentSaveExclusion,
+      stopProjectRuntimes,
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: { documents: {} },
+    };
+
+    let closePromise!: Promise<void>;
+    await act(async () => {
+      closePromise = harness.lifecycle().closeWorkspaceTab(`${WORKSPACE_A}/`);
+      await Promise.resolve();
+    });
+
+    expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+    expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+      kind: "workspace",
+      rootPath: WORKSPACE_A,
+    });
+    expect(events).toEqual(["lock", "persist", "runtime"]);
+
+    runtimeStop.resolve();
+    await act(async () => {
+      await closePromise;
+    });
+
+    expect(persistAppSettings).toHaveBeenCalledOnce();
+    expect(harness.workspaceStateCacheRef.current[WORKSPACE_A]).toBeUndefined();
+    expect(stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
+    expect(events).toEqual(["lock", "persist", "runtime", "unlock"]);
+    harness.unmount();
+  });
+
+  it("holds the exact active workspace exclusion through persistence, disposal, and switching", async () => {
+    const workspaceSwitch = createDeferred<void>();
+    const events: string[] = [];
+    const runWithDocumentSaveExclusion = documentSaveExclusionMock(
+      async (_scope, operation: () => Promise<void>) => {
+        events.push("lock");
+        try {
+          await operation();
+        } finally {
+          events.push("unlock");
+        }
+      },
+    );
+    const persistWorkspaceSession = vi.fn(async () => {
+      events.push("session");
+    });
+    const persistAppSettings = vi.fn(async () => {
+      events.push("settings");
+    });
+    const stopProjectRuntimes = vi.fn(async () => {
+      events.push("runtime");
+    });
+    const openWorkspacePath = vi.fn(() => {
+      events.push("switch");
+      return workspaceSwitch.promise;
+    });
+    const harness = renderLifecycle({
+      dirtyCount: 1,
+      openWorkspacePath,
+      persistAppSettings,
+      persistWorkspaceSession,
+      runWithDocumentSaveExclusion,
+      stopProjectRuntimes,
+    });
+
+    let closePromise!: Promise<void>;
+    await act(async () => {
+      closePromise = harness.lifecycle().closeWorkspaceTab(`${WORKSPACE_B}/`);
+      await Promise.resolve();
+    });
+
+    expect(harness.prompter.confirm).toHaveBeenCalledWith(
+      "Close workspace and discard unsaved changes?",
+    );
+    expect(runWithDocumentSaveExclusion).toHaveBeenCalledOnce();
+    expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+      kind: "workspace",
+      rootPath: WORKSPACE_B,
+    });
+    expect(events).toEqual([
+      "lock",
+      "session",
+      "settings",
+      "runtime",
+      "switch",
+    ]);
+
+    workspaceSwitch.resolve();
+    await act(async () => {
+      await closePromise;
+    });
+
+    expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
+    expect(persistAppSettings).toHaveBeenCalledOnce();
+    expect(stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_B);
+    expect(openWorkspacePath).toHaveBeenCalledWith(WORKSPACE_A, {
+      cachePreviousWorkspace: false,
+    });
+    expect(events[events.length - 1]).toBe("unlock");
     harness.unmount();
   });
 
@@ -420,12 +568,48 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.unmount();
   });
 
-  it("persists the active workspace session before closing the Tauri window", async () => {
+  it("waits for every normalized workspace exclusion before closing the Tauri window", async () => {
+    const barrier = createDeferred<void>();
     const persistWorkspaceSession = vi.fn(async () => undefined);
-    const harness = renderLifecycle({ persistWorkspaceSession });
+    const runWithDocumentSaveExclusion = documentSaveExclusionMock(
+      async (scope, operation: () => Promise<void>) => {
+        if (scope.rootPath === WORKSPACE_B) {
+          await barrier.promise;
+        }
+
+        await operation();
+      },
+    );
+    const harness = renderLifecycle({
+      persistWorkspaceSession,
+      runWithDocumentSaveExclusion,
+    });
+    harness.appSettingsRef.current.workspaceTabs = [
+      `${WORKSPACE_A}/`,
+      WORKSPACE_A,
+      `${WORKSPACE_B}/`,
+    ];
 
     await act(async () => {
       harness.lifecycle().closeApplicationWindow();
+      await Promise.resolve();
+    });
+
+    expect(
+      runWithDocumentSaveExclusion.mock.calls.map(([scope]) => scope),
+    ).toEqual([
+      { kind: "workspace", rootPath: WORKSPACE_A },
+      { kind: "workspace", rootPath: WORKSPACE_B },
+    ]);
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(tauriMocks.invoke).not.toHaveBeenCalledWith(
+      "confirm_native_shutdown",
+      expect.anything(),
+    );
+
+    await act(async () => {
+      barrier.resolve();
+      await barrier.promise;
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -455,23 +639,54 @@ describe("useWorkbenchCloseLifecycle", () => {
     );
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
     expect(tauriMocks.invoke).not.toHaveBeenCalledWith("quit_application");
+    expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
     harness.unmount();
   });
 
-  it("persists and quits when active dirty changes are confirmed", async () => {
+  it("waits for every normalized workspace exclusion before quitting", async () => {
+    const barrier = createDeferred<void>();
     const persistWorkspaceSession = vi.fn(async () => undefined);
+    const runWithDocumentSaveExclusion = documentSaveExclusionMock(
+      async (scope, operation: () => Promise<void>) => {
+        if (scope.rootPath === WORKSPACE_B) {
+          await barrier.promise;
+        }
+
+        await operation();
+      },
+    );
     const harness = renderLifecycle({
       dirtyCount: 1,
       persistWorkspaceSession,
+      runWithDocumentSaveExclusion,
     });
+    harness.appSettingsRef.current.workspaceTabs = [
+      `${WORKSPACE_A}/`,
+      WORKSPACE_A,
+    ];
 
     await act(async () => {
       harness.lifecycle().quitApplication();
       await Promise.resolve();
-      await Promise.resolve();
     });
 
     expect(harness.prompter.confirm).toHaveBeenCalledOnce();
+    expect(
+      runWithDocumentSaveExclusion.mock.calls.map(([scope]) => scope),
+    ).toEqual([
+      { kind: "workspace", rootPath: WORKSPACE_A },
+      { kind: "workspace", rootPath: WORKSPACE_B },
+    ]);
+    expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(tauriMocks.invoke).not.toHaveBeenCalledWith("quit_application");
+
+    await act(async () => {
+      barrier.resolve();
+      await barrier.promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
     expect(persistWorkspaceSession).toHaveBeenCalledWith(WORKSPACE_B);
     expect(tauriMocks.invoke).toHaveBeenCalledWith("quit_application");
     harness.unmount();
@@ -505,9 +720,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     const persistWorkspaceSession = vi.fn(async () => undefined);
     const harness = renderLifecycle({
       persistWorkspaceSession,
-      workspaceHasExternalFileConflicts: vi.fn(
-        (root) => root === WORKSPACE_A,
-      ),
+      workspaceHasExternalFileConflicts: vi.fn((root) => root === WORKSPACE_A),
     });
     harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
       editorSurface: { documents: {} },
@@ -644,6 +857,7 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(harness.prompter.confirm).toHaveBeenCalledTimes(1);
     expect(persistWorkspaceSession).not.toHaveBeenCalled();
+    expect(harness.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
     expect(nativeShutdownInvocationCount()).toBe(0);
     harness.unmount();
   });
