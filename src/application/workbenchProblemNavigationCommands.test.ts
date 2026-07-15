@@ -40,23 +40,61 @@ describe("workbenchProblemNavigationCommands", () => {
     expect(createCommands().map(enabled)).toEqual([true, true]);
   });
 
-  it("invokes callbacks without returning navigation internals", () => {
-    const nextResult = Promise.resolve(true);
-    const previousResult = Promise.resolve(false);
-    const goToNextProblem = vi.fn(() => nextResult);
-    const goToPreviousProblem = vi.fn(() => previousResult);
-    const commands = workbenchProblemNavigationCommands({
-      shortcut: (commandId) => commandId,
-      goToNextProblem,
-      goToPreviousProblem,
-    });
+  it("propagates deferred next-problem completion as void", async () => {
+    const navigation = createDeferred<boolean>();
+    const goToNextProblem = vi.fn(() => navigation.promise);
+    const [command] = createCommands({ goToNextProblem });
 
-    expect(commands[0].run()).toBeUndefined();
-    expect(commands[1].run()).toBeUndefined();
+    const completion = command.run();
+
     expect(goToNextProblem).toHaveBeenCalledTimes(1);
+    navigation.resolve(true);
+    await expect(completion).resolves.toBeUndefined();
+    expect(goToNextProblem).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates deferred previous-problem rejection", async () => {
+    const navigation = createDeferred<boolean>();
+    const failure = new Error("navigation failed");
+    const goToPreviousProblem = vi.fn(() => navigation.promise);
+    const [, command] = createCommands({ goToPreviousProblem });
+
+    const completion = command.run();
+
+    expect(goToPreviousProblem).toHaveBeenCalledTimes(1);
+    navigation.reject(failure);
+    await expect(completion).rejects.toBe(failure);
     expect(goToPreviousProblem).toHaveBeenCalledTimes(1);
   });
+
+  it("converts a synchronous navigation throw to a rejection", async () => {
+    const failure = new Error("synchronous navigation failure");
+    const goToNextProblem = vi.fn(() => {
+      throw failure;
+    });
+    const [command] = createCommands({ goToNextProblem });
+
+    const completion = command.run();
+
+    await expect(completion).rejects.toBe(failure);
+    expect(goToNextProblem).toHaveBeenCalledTimes(1);
+  });
 });
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T): void;
+  reject(reason: unknown): void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, resolve, reject };
+}
 
 function createCommands(
   overrides: Partial<Parameters<typeof workbenchProblemNavigationCommands>[0]> = {},

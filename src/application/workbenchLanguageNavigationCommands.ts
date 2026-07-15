@@ -34,7 +34,7 @@ export function workbenchLanguageNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.goToDefinition"),
       isEnabled: canAttemptNavigation,
-      run: fireAndForget(goToDefinition),
+      run: awaitNavigation(goToDefinition),
     },
     {
       id: "editor.goToSourceDefinition",
@@ -42,7 +42,7 @@ export function workbenchLanguageNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.goToSourceDefinition"),
       isEnabled: canAttemptNavigation,
-      run: fireAndForget(goToSourceDefinition),
+      run: awaitNavigation(goToSourceDefinition),
     },
     {
       id: "editor.goToDeclaration",
@@ -50,7 +50,7 @@ export function workbenchLanguageNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.goToDeclaration"),
       isEnabled: canAttemptNavigation,
-      run: fireAndForget(goToDeclaration),
+      run: awaitNavigation(goToDeclaration),
     },
     {
       id: "editor.goToTypeDefinition",
@@ -58,7 +58,7 @@ export function workbenchLanguageNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.goToTypeDefinition"),
       isEnabled: canAttemptNavigation,
-      run: fireAndForget(goToTypeDefinition),
+      run: awaitNavigation(goToTypeDefinition),
     },
     {
       id: "editor.goToImplementation",
@@ -66,7 +66,7 @@ export function workbenchLanguageNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.goToImplementation"),
       isEnabled: canAttemptNavigation,
-      run: fireAndForget(goToImplementation),
+      run: awaitNavigation(goToImplementation),
     },
     {
       id: "editor.goToSuperMethod",
@@ -74,13 +74,13 @@ export function workbenchLanguageNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.goToSuperMethod"),
       isEnabled: canAttemptNavigation,
-      run: fireAndForget(goToSuperMethod),
+      run: awaitNavigation(goToSuperMethod),
     },
   ];
 }
 
-function fireAndForget(run: NavigationRun): Command["run"] {
-  return () => {
-    void run();
+function awaitNavigation(run: NavigationRun): Command["run"] {
+  return async () => {
+    await run();
   };
 }

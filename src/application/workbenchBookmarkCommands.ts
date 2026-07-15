@@ -31,8 +31,8 @@ export function workbenchBookmarkCommands({
       category: "Bookmarks",
       shortcut: shortcut("bookmark.next"),
       isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void goToNextBookmark();
+      run: async () => {
+        await goToNextBookmark();
       },
     },
     {
@@ -41,8 +41,8 @@ export function workbenchBookmarkCommands({
       category: "Bookmarks",
       shortcut: shortcut("bookmark.previous"),
       isEnabled: (context) => context.hasWorkspace,
-      run: () => {
-        void goToPreviousBookmark();
+      run: async () => {
+        await goToPreviousBookmark();
       },
     },
     {

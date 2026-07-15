@@ -161,9 +161,16 @@ describe("workbenchLanguageNavigationCommands", () => {
     ).toBe(true);
   });
 
-  it("invokes the exact injected callbacks without returning navigation internals", () => {
-    const results = Array.from({ length: 6 }, () => Promise.resolve());
-    const callbacks = results.map((result) => vi.fn(() => result));
+  it("keeps each command pending until its injected navigation completes", async () => {
+    const resolvers: Array<() => void> = [];
+    const callbacks = Array.from({ length: 6 }, () =>
+      vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolvers.push(() => resolve(true));
+          }),
+      ),
+    );
     const commands = workbenchLanguageNavigationCommands({
       ...baseOptions(),
       goToDefinition: callbacks[0],
@@ -174,10 +181,60 @@ describe("workbenchLanguageNavigationCommands", () => {
       goToSuperMethod: callbacks[5],
     });
 
-    commands.forEach((command, index) => {
-      expect(command.run()).toBeUndefined();
+    const executions = commands.map((command, index) => {
+      const execution = command.run();
+      let settled = false;
+      void execution?.then(() => {
+        settled = true;
+      });
+
       expect(callbacks[index]).toHaveBeenCalledTimes(1);
+      return { execution, isSettled: () => settled };
     });
+
+    await Promise.resolve();
+    executions.forEach(({ isSettled }) => expect(isSettled()).toBe(false));
+
+    resolvers.forEach((resolve) => resolve());
+    await Promise.all(executions.map(({ execution }) => execution));
+  });
+
+  it("resolves each command to void instead of exposing navigation results", async () => {
+    const callbacks = Array.from({ length: 6 }, (_, index) =>
+      vi.fn(() => (index % 2 === 0 ? true : Promise.resolve(false))),
+    );
+    const commands = workbenchLanguageNavigationCommands({
+      ...baseOptions(),
+      goToDefinition: callbacks[0],
+      goToSourceDefinition: callbacks[1],
+      goToDeclaration: callbacks[2],
+      goToTypeDefinition: callbacks[3],
+      goToImplementation: callbacks[4],
+      goToSuperMethod: callbacks[5],
+    });
+
+    await Promise.all(
+      commands.map(async (command, index) => {
+        await expect(command.run()).resolves.toBeUndefined();
+        expect(callbacks[index]).toHaveBeenCalledTimes(1);
+      }),
+    );
+  });
+
+  it.each([
+    ["synchronous", () => {
+      throw new Error("navigation failed");
+    }],
+    ["asynchronous", () => Promise.reject(new Error("navigation failed"))],
+  ])("propagates %s rejection and invokes navigation exactly once", async (_, fail) => {
+    const goToDefinition = vi.fn(fail);
+    const definition = command(
+      "editor.goToDefinition",
+      commandsFor({ goToDefinition }),
+    );
+
+    await expect(definition.run()).rejects.toThrow("navigation failed");
+    expect(goToDefinition).toHaveBeenCalledTimes(1);
   });
 });
 

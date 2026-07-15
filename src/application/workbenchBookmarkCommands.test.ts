@@ -131,28 +131,103 @@ describe("workbenchBookmarkCommands", () => {
     expect(toggleBookmarksPanel).toHaveBeenCalledTimes(1);
   });
 
-  it("does not await next or previous bookmark navigation from the command body", () => {
-    const goToNextBookmark = vi.fn(
-      () => new Promise<boolean>(() => undefined),
-    );
-    const goToPreviousBookmark = vi.fn(
-      () => new Promise<boolean>(() => undefined),
-    );
-    const commands = workbenchBookmarkCommands({
-      shortcut: () => "",
-      toggleBookmarkAtCursor: vi.fn(),
-      goToNextBookmark,
-      goToPreviousBookmark,
-      toggleBookmarksPanel: vi.fn(),
-    });
-    const nextCommand = commands.find((command) => command.id === "bookmark.next");
-    const previousCommand = commands.find(
-      (command) => command.id === "bookmark.previous",
-    );
+  it.each([
+    ["bookmark.next", "next"],
+    ["bookmark.previous", "previous"],
+  ] as const)(
+    "propagates deferred %s navigation and normalizes success to void",
+    async (commandId, direction) => {
+      let resolveNavigation!: (value: boolean) => void;
+      const navigation = new Promise<boolean>((resolve) => {
+        resolveNavigation = resolve;
+      });
+      const goToNextBookmark = vi.fn(() => navigation);
+      const goToPreviousBookmark = vi.fn(() => navigation);
+      const commands = workbenchBookmarkCommands({
+        shortcut: () => "",
+        toggleBookmarkAtCursor: vi.fn(),
+        goToNextBookmark,
+        goToPreviousBookmark,
+        toggleBookmarksPanel: vi.fn(),
+      });
+      const command = commands.find((candidate) => candidate.id === commandId);
+      const runPromise = command?.run();
+      let completed = false;
+      void runPromise?.then(() => {
+        completed = true;
+      });
 
-    expect(nextCommand?.run()).toBeUndefined();
-    expect(previousCommand?.run()).toBeUndefined();
-    expect(goToNextBookmark).toHaveBeenCalledTimes(1);
-    expect(goToPreviousBookmark).toHaveBeenCalledTimes(1);
-  });
+      await Promise.resolve();
+      expect(completed).toBe(false);
+
+      resolveNavigation(true);
+
+      await expect(runPromise).resolves.toBeUndefined();
+      expect(
+        direction === "next" ? goToNextBookmark : goToPreviousBookmark,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        direction === "next" ? goToPreviousBookmark : goToNextBookmark,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["bookmark.next", "next"],
+    ["bookmark.previous", "previous"],
+  ] as const)(
+    "propagates %s navigation rejection",
+    async (commandId, direction) => {
+      const rejection = new Error(`${direction} failed`);
+      const goToNextBookmark = vi.fn(() => Promise.reject(rejection));
+      const goToPreviousBookmark = vi.fn(() => Promise.reject(rejection));
+      const commands = workbenchBookmarkCommands({
+        shortcut: () => "",
+        toggleBookmarkAtCursor: vi.fn(),
+        goToNextBookmark,
+        goToPreviousBookmark,
+        toggleBookmarksPanel: vi.fn(),
+      });
+      const command = commands.find((candidate) => candidate.id === commandId);
+
+      await expect(command?.run()).rejects.toBe(rejection);
+      expect(
+        direction === "next" ? goToNextBookmark : goToPreviousBookmark,
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        direction === "next" ? goToPreviousBookmark : goToNextBookmark,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["bookmark.next", "next"],
+    ["bookmark.previous", "previous"],
+  ] as const)(
+    "converts synchronous %s navigation throws to promise rejections",
+    async (commandId, direction) => {
+      const rejection = new Error(`${direction} threw`);
+      const throwSynchronously = vi.fn(() => {
+        throw rejection;
+      });
+      const resolveNavigation = vi.fn(async () => true);
+      const goToNextBookmark =
+        direction === "next" ? throwSynchronously : resolveNavigation;
+      const goToPreviousBookmark =
+        direction === "previous" ? throwSynchronously : resolveNavigation;
+      const commands = workbenchBookmarkCommands({
+        shortcut: () => "",
+        toggleBookmarkAtCursor: vi.fn(),
+        goToNextBookmark,
+        goToPreviousBookmark,
+        toggleBookmarksPanel: vi.fn(),
+      });
+      const command = commands.find((candidate) => candidate.id === commandId);
+      const runPromise = command?.run();
+
+      await expect(runPromise).rejects.toBe(rejection);
+      expect(throwSynchronously).toHaveBeenCalledTimes(1);
+      expect(resolveNavigation).not.toHaveBeenCalled();
+    },
+  );
 });

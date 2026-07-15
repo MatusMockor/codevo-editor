@@ -19,7 +19,7 @@ export function workbenchProblemNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.nextProblem"),
       isEnabled: () => true,
-      run: fireAndForget(goToNextProblem),
+      run: normalizeCompletion(goToNextProblem),
     },
     {
       id: "editor.previousProblem",
@@ -27,13 +27,13 @@ export function workbenchProblemNavigationCommands({
       category: "Editor",
       shortcut: shortcut("editor.previousProblem"),
       isEnabled: () => true,
-      run: fireAndForget(goToPreviousProblem),
+      run: normalizeCompletion(goToPreviousProblem),
     },
   ];
 }
 
-function fireAndForget(run: () => unknown): Command["run"] {
-  return () => {
-    void run();
+function normalizeCompletion(run: () => unknown): Command["run"] {
+  return async () => {
+    await run();
   };
 }
