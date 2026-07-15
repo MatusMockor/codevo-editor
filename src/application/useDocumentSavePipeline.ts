@@ -34,8 +34,12 @@ export interface DocumentSavePipelineDependencies {
   javaScriptTypeScriptLanguageServerRuntimeStatusRootRef: MutableRefObject<string | null>;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
-  flushPendingDocumentChange: (path: string) => Promise<void>;
-  flushPendingJavaScriptTypeScriptDocumentChange: (
+  flushPendingDocumentChangeForRoot: (
+    rootPath: string,
+    path: string,
+  ) => Promise<void>;
+  flushPendingJavaScriptTypeScriptDocumentChangeForRoot: (
+    rootPath: string,
     path: string,
   ) => Promise<void>;
   isLanguageServerSessionActiveForRoot: (
@@ -76,8 +80,8 @@ export function useDocumentSavePipeline(
     javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
     languageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
-    flushPendingDocumentChange,
-    flushPendingJavaScriptTypeScriptDocumentChange,
+    flushPendingDocumentChangeForRoot,
+    flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
     isLanguageServerSessionActiveForRoot,
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
   } = dependencies;
@@ -117,15 +121,25 @@ export function useDocumentSavePipeline(
   );
 
   const flushPendingDocumentChangeForFormatOnSave = useCallback(
-    async (plan: FormatOnSavePlan, path: string): Promise<void> => {
+    async (
+      plan: FormatOnSavePlan,
+      requestedRoot: string,
+      path: string,
+    ): Promise<void> => {
       if (plan.provider === "javaScriptTypeScript") {
-        await flushPendingJavaScriptTypeScriptDocumentChange(path);
+        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
+          requestedRoot,
+          path,
+        );
         return;
       }
 
-      await flushPendingDocumentChange(path);
+      await flushPendingDocumentChangeForRoot(requestedRoot, path);
     },
-    [flushPendingDocumentChange, flushPendingJavaScriptTypeScriptDocumentChange],
+    [
+      flushPendingDocumentChangeForRoot,
+      flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
+    ],
   );
 
   const formattedContentForSave = useCallback(
@@ -167,7 +181,11 @@ export function useDocumentSavePipeline(
       try {
         // Flush any debounced document change so the language server formats the
         // current content rather than the stale snapshot it last received.
-        await flushPendingDocumentChangeForFormatOnSave(plan, document.path);
+        await flushPendingDocumentChangeForFormatOnSave(
+          plan,
+          requestedRoot,
+          document.path,
+        );
 
         if (!isRequestedSessionActive()) {
           return document.content;
@@ -265,7 +283,10 @@ export function useDocumentSavePipeline(
       try {
         // Flush any debounced change so the server organizes the current content
         // rather than the stale snapshot it last received.
-        await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
+        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
+          requestedRoot,
+          document.path,
+        );
 
         if (!isRequestedSessionActive()) {
           return content;
@@ -336,7 +357,7 @@ export function useDocumentSavePipeline(
       }
     },
     [
-      flushPendingJavaScriptTypeScriptDocumentChange,
+      flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatusRef,

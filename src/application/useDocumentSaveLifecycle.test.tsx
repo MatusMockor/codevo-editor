@@ -391,9 +391,18 @@ describe("useDocumentSaveLifecycle", () => {
     expect(harness.documentsRef.current[PATH]).toEqual(
       expect.objectContaining({ content: "edited", savedContent: "edited" }),
     );
+    expect(syncSavedDocument).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ path: PATH, content: "edited" }),
+      expect.any(Function),
+    );
     expect(
       harness.syncSavedJavaScriptTypeScriptDocument,
-    ).toHaveBeenCalledOnce();
+    ).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ path: PATH, content: "edited" }),
+      expect.any(Function),
+    );
     expect(harness.setMessage).toHaveBeenCalledWith("Saved User.php");
     harness.unmount();
   });

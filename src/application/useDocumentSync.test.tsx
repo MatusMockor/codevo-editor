@@ -537,7 +537,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     const document = phpDocument({ content: "a" });
 
     await api().syncOpenDocument(document);
-    await api().syncSavedDocument(document);
+    await api().syncSavedDocument(ROOT, document);
     await flushMicrotasks();
 
     expect(harness.phpGateway.didSave).toHaveBeenCalledTimes(1);
@@ -545,6 +545,72 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       ROOT,
       expect.objectContaining({ path: document.path, version: 1 }),
     );
+  });
+
+  it("does not mutate pending state or save for a mismatched explicit root", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument({ content: "ab" });
+    const key = languageServerDocumentSyncKey(ROOT, document.path);
+
+    await api().syncOpenDocument(phpDocument({ content: "a" }));
+    api().scheduleDocumentChange(document);
+    const pendingDocument = harness.php.pendingChanges.current[key];
+    const timer = harness.php.changeTimers.current[key];
+
+    await api().flushPendingDocumentChangeForRoot(OTHER_ROOT, document.path);
+    await api().syncSavedDocument(OTHER_ROOT, document);
+
+    expect(harness.php.pendingChanges.current[key]).toBe(pendingDocument);
+    expect(harness.php.changeTimers.current[key]).toBe(timer);
+    expect(harness.phpGateway.didChange).not.toHaveBeenCalled();
+    expect(harness.phpGateway.didSave).not.toHaveBeenCalled();
+  });
+
+  it("flushes PHP didChange before didSave", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument({ content: "ab" });
+    const events: string[] = [];
+    vi.mocked(harness.phpGateway.didChange).mockImplementation(async () => {
+      events.push("didChange");
+    });
+    vi.mocked(harness.phpGateway.didSave).mockImplementation(async () => {
+      events.push("didSave");
+    });
+
+    await api().syncOpenDocument(phpDocument({ content: "a" }));
+    api().scheduleDocumentChange(document);
+    await api().syncSavedDocument(ROOT, document);
+
+    expect(events).toEqual(["didChange", "didSave"]);
+  });
+
+  it("suppresses PHP didSave after an A to B to A generation change", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument({ content: "ab" });
+    let releaseDidChange: (() => void) | undefined;
+    vi.mocked(harness.phpGateway.didChange).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDidChange = resolve;
+        }),
+    );
+
+    await api().syncOpenDocument(phpDocument({ content: "a" }));
+    api().scheduleDocumentChange(document);
+    const save = api().syncSavedDocument(ROOT, document);
+    await flushMicrotasks();
+    expect(harness.phpGateway.didChange).toHaveBeenCalledTimes(1);
+
+    harness.currentRootRef.current = OTHER_ROOT;
+    harness.php.generation.current += 1;
+    harness.currentRootRef.current = ROOT;
+    releaseDidChange?.();
+    await save;
+
+    expect(harness.phpGateway.didSave).not.toHaveBeenCalled();
   });
 
   it("emits a newer didChange but suppresses stale didSave after the flush", async () => {
@@ -566,7 +632,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
 
     await api().syncOpenDocument(savedDocument);
     api().scheduleDocumentChange(newerDocument);
-    await api().syncSavedDocument(savedDocument, () => true);
+    await api().syncSavedDocument(ROOT, savedDocument, () => true);
     await flushMicrotasks();
 
     expect(events).toEqual(["didChange:typed later"]);
@@ -670,7 +736,10 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
       expect.objectContaining({ text: "ab", version: 2 }),
     );
 
-    await api().syncSavedJavaScriptTypeScriptDocument(tsDocument({ content: "ab" }));
+    await api().syncSavedJavaScriptTypeScriptDocument(
+      ROOT,
+      tsDocument({ content: "ab" }),
+    );
     await flushMicrotasks();
     expect(harness.jstsGateway.didSave).toHaveBeenCalledTimes(1);
 
@@ -678,6 +747,75 @@ describe("useDocumentSync - JavaScript/TypeScript (tsserver) family", () => {
     await flushMicrotasks();
     expect(harness.jstsGateway.didClose).toHaveBeenCalledWith(ROOT, path);
     expect(harness.jsts.syncedPaths.current.has(key)).toBe(false);
+  });
+
+  it("does not mutate pending state or save for a mismatched explicit root", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = tsDocument({ content: "ab" });
+    const key = languageServerDocumentSyncKey(ROOT, document.path);
+
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "a" }));
+    api().scheduleJavaScriptTypeScriptDocumentChange(document);
+    const pendingDocument = harness.jsts.pendingChanges.current[key];
+    const timer = harness.jsts.changeTimers.current[key];
+
+    await api().flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
+      OTHER_ROOT,
+      document.path,
+    );
+    await api().syncSavedJavaScriptTypeScriptDocument(OTHER_ROOT, document);
+
+    expect(harness.jsts.pendingChanges.current[key]).toBe(pendingDocument);
+    expect(harness.jsts.changeTimers.current[key]).toBe(timer);
+    expect(harness.jstsGateway.didChange).not.toHaveBeenCalled();
+    expect(harness.jstsGateway.didSave).not.toHaveBeenCalled();
+  });
+
+  it("flushes JavaScript/TypeScript didChange before didSave", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = tsDocument({ content: "ab" });
+    const events: string[] = [];
+    vi.mocked(harness.jstsGateway.didChange).mockImplementation(async () => {
+      events.push("didChange");
+    });
+    vi.mocked(harness.jstsGateway.didSave).mockImplementation(async () => {
+      events.push("didSave");
+    });
+
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "a" }));
+    api().scheduleJavaScriptTypeScriptDocumentChange(document);
+    await api().syncSavedJavaScriptTypeScriptDocument(ROOT, document);
+
+    expect(events).toEqual(["didChange", "didSave"]);
+  });
+
+  it("suppresses JavaScript/TypeScript didSave after an A to B to A generation change", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = tsDocument({ content: "ab" });
+    let releaseDidChange: (() => void) | undefined;
+    vi.mocked(harness.jstsGateway.didChange).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDidChange = resolve;
+        }),
+    );
+
+    await api().syncOpenJavaScriptTypeScriptDocument(tsDocument({ content: "a" }));
+    api().scheduleJavaScriptTypeScriptDocumentChange(document);
+    const save = api().syncSavedJavaScriptTypeScriptDocument(ROOT, document);
+    await flushMicrotasks();
+    expect(harness.jstsGateway.didChange).toHaveBeenCalledTimes(1);
+
+    harness.currentRootRef.current = OTHER_ROOT;
+    harness.jsts.generation.current += 1;
+    harness.currentRootRef.current = ROOT;
+    releaseDidChange?.();
+    await save;
+
+    expect(harness.jstsGateway.didSave).not.toHaveBeenCalled();
   });
 
   it("does not sync a document outside the workspace root", async () => {

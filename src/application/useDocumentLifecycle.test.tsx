@@ -1486,6 +1486,7 @@ describe("useDocumentLifecycle", () => {
       );
       expect(harness.syncSavedDocument).toHaveBeenCalledTimes(1);
       expect(harness.syncSavedDocument).toHaveBeenCalledWith(
+        ROOT,
         expect.objectContaining({ content: "C" }),
         expect.any(Function),
       );
@@ -1546,6 +1547,7 @@ describe("useDocumentLifecycle", () => {
       const downstreamDidSave = vi.fn();
       const syncSavedDocument = vi.fn(
         async (
+          _rootPath: string,
           document: EditorDocument,
           shouldEmit: (() => boolean) | undefined,
         ) => {

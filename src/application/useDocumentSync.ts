@@ -170,15 +170,25 @@ export interface DocumentSync {
     document: EditorDocument,
   ) => void;
   flushPendingDocumentChange: (path: string) => Promise<void>;
+  flushPendingDocumentChangeForRoot: (
+    requestedRoot: string,
+    path: string,
+  ) => Promise<void>;
   flushPendingJavaScriptTypeScriptDocumentChange: (
+    path: string,
+  ) => Promise<void>;
+  flushPendingJavaScriptTypeScriptDocumentChangeForRoot: (
+    requestedRoot: string,
     path: string,
   ) => Promise<void>;
   isLanguageServerDocumentSynced: (path: string) => boolean;
   syncSavedDocument: (
+    requestedRoot: string,
     document: EditorDocument,
     shouldEmit?: () => boolean,
   ) => Promise<void>;
   syncSavedJavaScriptTypeScriptDocument: (
+    requestedRoot: string,
     document: EditorDocument,
     shouldEmit?: () => boolean,
   ) => Promise<void>;
@@ -738,16 +748,19 @@ export function useDocumentSync(
     ],
   );
 
-  const flushPendingDocumentChange = useCallback(
-    async (path: string) => {
-      const rootPath = currentWorkspaceRootRef.current;
-      const syncKey = rootPath
-        ? languageServerDocumentSyncKey(rootPath, path)
-        : null;
-
-      if (!rootPath || !syncKey) {
+  const flushPendingDocumentChangeForRoot = useCallback(
+    async (requestedRoot: string, path: string) => {
+      if (
+        !workspaceRootKeysEqual(
+          requestedRoot,
+          currentWorkspaceRootRef.current,
+        )
+      ) {
         return;
       }
+
+      const rootPath = requestedRoot;
+      const syncKey = languageServerDocumentSyncKey(rootPath, path);
 
       if (
         !isRunningLanguageServerForWorkspace(
@@ -831,6 +844,19 @@ export function useDocumentSync(
     ],
   );
 
+  const flushPendingDocumentChange = useCallback(
+    (path: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return Promise.resolve();
+      }
+
+      return flushPendingDocumentChangeForRoot(requestedRoot, path);
+    },
+    [flushPendingDocumentChangeForRoot],
+  );
+
   // BUG 2 gate: reports whether a PHP document has already been opened
   // (`didOpen` sent) on the active workspace's language server. Outline /
   // breadcrumb DocumentSymbol fetches consult this so they never race ahead of
@@ -848,16 +874,19 @@ export function useDocumentSync(
     );
   }, []);
 
-  const flushPendingJavaScriptTypeScriptDocumentChange = useCallback(
-    async (path: string) => {
-      const rootPath = currentWorkspaceRootRef.current;
-      const syncKey = rootPath
-        ? languageServerDocumentSyncKey(rootPath, path)
-        : null;
-
-      if (!rootPath || !syncKey) {
+  const flushPendingJavaScriptTypeScriptDocumentChangeForRoot = useCallback(
+    async (requestedRoot: string, path: string) => {
+      if (
+        !workspaceRootKeysEqual(
+          requestedRoot,
+          currentWorkspaceRootRef.current,
+        )
+      ) {
         return;
       }
+
+      const rootPath = requestedRoot;
+      const syncKey = languageServerDocumentSyncKey(rootPath, path);
 
       if (!isSessionPathInWorkspace(rootPath, path)) {
         return;
@@ -964,18 +993,45 @@ export function useDocumentSync(
     ],
   );
 
-  const syncSavedDocument = useCallback(
-    async (document: EditorDocument, shouldEmit: () => boolean = () => true) => {
-      const rootPath = currentWorkspaceRootRef.current;
-      const syncKey = rootPath
-        ? languageServerDocumentSyncKey(rootPath, document.path)
-        : null;
+  const flushPendingJavaScriptTypeScriptDocumentChange = useCallback(
+    (path: string) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
 
-      if (!rootPath || !syncKey || !syncedDocumentPathsRef.current.has(syncKey)) {
+      if (!requestedRoot) {
+        return Promise.resolve();
+      }
+
+      return flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
+        requestedRoot,
+        path,
+      );
+    },
+    [flushPendingJavaScriptTypeScriptDocumentChangeForRoot],
+  );
+
+  const syncSavedDocument = useCallback(
+    async (
+      requestedRoot: string,
+      document: EditorDocument,
+      shouldEmit: () => boolean = () => true,
+    ) => {
+      if (
+        !workspaceRootKeysEqual(
+          requestedRoot,
+          currentWorkspaceRootRef.current,
+        )
+      ) {
         return;
       }
 
-      if (!rootPath || !isLanguageServerDocument(document)) {
+      const rootPath = requestedRoot;
+      const syncKey = languageServerDocumentSyncKey(rootPath, document.path);
+
+      if (!syncedDocumentPathsRef.current.has(syncKey)) {
+        return;
+      }
+
+      if (!isLanguageServerDocument(document)) {
         return;
       }
 
@@ -1001,7 +1057,7 @@ export function useDocumentSync(
         syncedDocumentContentRef.current[syncKey] === document.content;
 
       try {
-        await flushPendingDocumentChange(document.path);
+        await flushPendingDocumentChangeForRoot(rootPath, document.path);
 
         if (!isSavedContentCurrent()) {
           return;
@@ -1030,7 +1086,7 @@ export function useDocumentSync(
     },
     [
       enqueueDocumentSync,
-      flushPendingDocumentChange,
+      flushPendingDocumentChangeForRoot,
       isLanguageServerSessionCurrentForRoot,
       languageServerDocumentSyncGateway,
       languageServerRuntimeStatus,
@@ -1040,21 +1096,28 @@ export function useDocumentSync(
   );
 
   const syncSavedJavaScriptTypeScriptDocument = useCallback(
-    async (document: EditorDocument, shouldEmit: () => boolean = () => true) => {
-      const rootPath = currentWorkspaceRootRef.current;
-      const syncKey = rootPath
-        ? languageServerDocumentSyncKey(rootPath, document.path)
-        : null;
-
+    async (
+      requestedRoot: string,
+      document: EditorDocument,
+      shouldEmit: () => boolean = () => true,
+    ) => {
       if (
-        !syncKey ||
-        !javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)
+        !workspaceRootKeysEqual(
+          requestedRoot,
+          currentWorkspaceRootRef.current,
+        )
       ) {
         return;
       }
 
+      const rootPath = requestedRoot;
+      const syncKey = languageServerDocumentSyncKey(rootPath, document.path);
+
+      if (!javaScriptTypeScriptSyncedDocumentPathsRef.current.has(syncKey)) {
+        return;
+      }
+
       if (
-        !rootPath ||
         !isJavaScriptTypeScriptDocumentSyncableForRoot(rootPath, document)
       ) {
         return;
@@ -1090,7 +1153,10 @@ export function useDocumentSync(
           document.content;
 
       try {
-        await flushPendingJavaScriptTypeScriptDocumentChange(document.path);
+        await flushPendingJavaScriptTypeScriptDocumentChangeForRoot(
+          rootPath,
+          document.path,
+        );
 
         if (!isSavedContentCurrent()) {
           return;
@@ -1123,7 +1189,7 @@ export function useDocumentSync(
     },
     [
       enqueueJavaScriptTypeScriptDocumentSync,
-      flushPendingJavaScriptTypeScriptDocumentChange,
+      flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
       isJavaScriptTypeScriptLanguageServerSessionCurrentForRoot,
       javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -1433,7 +1499,9 @@ export function useDocumentSync(
     scheduleDocumentChange,
     scheduleJavaScriptTypeScriptDocumentChange,
     flushPendingDocumentChange,
+    flushPendingDocumentChangeForRoot,
     flushPendingJavaScriptTypeScriptDocumentChange,
+    flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
     isLanguageServerDocumentSynced,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,

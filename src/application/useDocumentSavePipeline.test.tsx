@@ -134,8 +134,10 @@ function makeDeps(
   overrides: Partial<DocumentSavePipelineDependencies> = {},
 ): DocumentSavePipelineDependencies {
   return {
-    flushPendingDocumentChange: vi.fn(async () => undefined),
-    flushPendingJavaScriptTypeScriptDocumentChange: vi.fn(async () => undefined),
+    flushPendingDocumentChangeForRoot: vi.fn(async () => undefined),
+    flushPendingJavaScriptTypeScriptDocumentChangeForRoot: vi.fn(
+      async () => undefined,
+    ),
     hasPhpWorkspace: false,
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: vi.fn(() => true),
     isLanguageServerSessionActiveForRoot: vi.fn(() => true),
@@ -210,7 +212,9 @@ describe("useDocumentSavePipeline", () => {
 
     expect(result).toBe(document.content);
     expect(jsTsGateway.formatting).not.toHaveBeenCalled();
-    expect(deps.flushPendingJavaScriptTypeScriptDocumentChange).not.toHaveBeenCalled();
+    expect(
+      deps.flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
+    ).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -225,9 +229,11 @@ describe("useDocumentSavePipeline", () => {
       }),
     });
     const deps = makeDeps({
-      flushPendingJavaScriptTypeScriptDocumentChange: vi.fn(async () => {
-        events.push("flush");
-      }),
+      flushPendingJavaScriptTypeScriptDocumentChangeForRoot: vi.fn(
+        async (rootPath, path) => {
+          events.push(`flush:${rootPath}:${path}`);
+        },
+      ),
       javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
         current: runningStatus({ formatting: true }),
@@ -245,13 +251,93 @@ describe("useDocumentSavePipeline", () => {
         ROOT,
       );
 
-    expect(events).toEqual(["flush", "format"]);
+    expect(events).toEqual([
+      `flush:${ROOT}:${ROOT}/src/App.ts`,
+      "format",
+    ]);
     expect(result).toBe(formatted);
     expect(jsTsGateway.formatting).toHaveBeenCalledWith(
       ROOT,
       `${ROOT}/src/App.ts`,
       expect.objectContaining({ insertSpaces: true, tabSize: 4 }),
     );
+    harness.unmount();
+  });
+
+  it("forwards the requested root when flushing PHP changes before formatting", async () => {
+    const events: string[] = [];
+    const path = `${ROOT}/src/App.php`;
+    const original = "<?php\n$value=1;\n";
+    const formatted = "<?php\n$value = 1;\n";
+    const phpGateway = featuresGateway({
+      formatting: vi.fn(async (rootPath, requestedPath) => {
+        events.push(`format:${rootPath}:${requestedPath}`);
+        return [fullTextEdit(original, formatted)];
+      }),
+    });
+    const deps = makeDeps({
+      flushPendingDocumentChangeForRoot: vi.fn(
+        async (rootPath, requestedPath) => {
+          events.push(`flush:${rootPath}:${requestedPath}`);
+        },
+      ),
+      hasPhpWorkspace: true,
+      languageServerFeaturesGateway: phpGateway,
+      languageServerRuntimeStatusRef: {
+        current: runningStatus({ formatting: true }),
+      },
+      workspaceSettingsRef: {
+        current: { ...defaultWorkspaceSettings(), formatOnSave: true },
+      },
+    });
+    const harness = renderPipeline(deps);
+
+    const result = await harness
+      .pipeline()
+      .formattedContentForSave(editorDocument(path, original, "php"), ROOT);
+
+    expect(events).toEqual([
+      `flush:${ROOT}:${path}`,
+      `format:${ROOT}:${path}`,
+    ]);
+    expect(result).toBe(formatted);
+    harness.unmount();
+  });
+
+  it("does not format when the root-aware flush observes a root mismatch", async () => {
+    const path = `${ROOT}/src/App.ts`;
+    const activeRoot = "/other-workspace";
+    const jsTsGateway = featuresGateway();
+    let active = true;
+    const deps = makeDeps({
+      flushPendingJavaScriptTypeScriptDocumentChangeForRoot: vi.fn(
+        async (requestedRoot) => {
+          active = requestedRoot === activeRoot;
+        },
+      ),
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: vi.fn(
+        () => active,
+      ),
+      javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
+        current: runningStatus({ formatting: true }),
+      },
+      workspaceSettingsRef: {
+        current: { ...defaultWorkspaceSettings(), formatOnSave: true },
+      },
+    });
+    const harness = renderPipeline(deps);
+    const document = editorDocument(path, "const value = 1;\n");
+
+    const result = await harness
+      .pipeline()
+      .formattedContentForSave(document, ROOT);
+
+    expect(
+      deps.flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
+    ).toHaveBeenCalledWith(ROOT, path);
+    expect(jsTsGateway.formatting).not.toHaveBeenCalled();
+    expect(result).toBe(document.content);
     harness.unmount();
   });
 
@@ -392,17 +478,26 @@ describe("useDocumentSavePipeline", () => {
   });
 
   it("resolves data-only JS/TS source actions and applies their edits", async () => {
+    const events: string[] = [];
     const path = `${ROOT}/src/App.ts`;
     const original = "import { b } from './b';\nimport { a } from './a';\n";
     const organized = "import { a } from './a';\nimport { b } from './b';\n";
     const pendingAction = dataOnlyAction();
     const jsTsGateway = featuresGateway({
-      codeActions: vi.fn(async () => [pendingAction]),
+      codeActions: vi.fn(async (rootPath, requestedPath) => {
+        events.push(`codeActions:${rootPath}:${requestedPath}`);
+        return [pendingAction];
+      }),
       resolveCodeAction: vi.fn(async () =>
         action(path, original, organized, "source.organizeImports"),
       ),
     });
     const deps = makeDeps({
+      flushPendingJavaScriptTypeScriptDocumentChangeForRoot: vi.fn(
+        async (rootPath, requestedPath) => {
+          events.push(`flush:${rootPath}:${requestedPath}`);
+        },
+      ),
       javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
       javaScriptTypeScriptLanguageServerRuntimeStatusRef: {
         current: runningStatus({ codeAction: true }),
@@ -428,6 +523,10 @@ describe("useDocumentSavePipeline", () => {
       ROOT,
       pendingAction,
     );
+    expect(events).toEqual([
+      `flush:${ROOT}:${path}`,
+      `codeActions:${ROOT}:${path}`,
+    ]);
     expect(result).toBe(organized);
     harness.unmount();
   });

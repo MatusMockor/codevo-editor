@@ -76,10 +76,12 @@ export interface DocumentSaveServiceDependencies {
     path: string,
   ) => Promise<ResolvedEditorConfig>;
   syncSavedDocument: (
+    rootPath: string,
     document: EditorDocument,
     shouldEmit?: () => boolean,
   ) => Promise<void>;
   syncSavedJavaScriptTypeScriptDocument: (
+    rootPath: string,
     document: EditorDocument,
     shouldEmit?: () => boolean,
   ) => Promise<void>;
@@ -368,6 +370,7 @@ export class DocumentSaveService {
       };
     }
     await this.dependencies.syncSavedDocument(
+      target.rootPath,
       savedDocument,
       isWrittenDocumentCurrent,
     );
@@ -379,6 +382,7 @@ export class DocumentSaveService {
       };
     }
     await this.dependencies.syncSavedJavaScriptTypeScriptDocument(
+      target.rootPath,
       savedDocument,
       isWrittenDocumentCurrent,
     );

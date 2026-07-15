@@ -40,8 +40,12 @@ export interface LocalHistoryDependencies {
     absolutePath: string,
     content: string,
   ) => Promise<void>;
-  syncSavedDocument: (document: EditorDocument) => Promise<void>;
+  syncSavedDocument: (
+    rootPath: string,
+    document: EditorDocument,
+  ) => Promise<void>;
   syncSavedJavaScriptTypeScriptDocument: (
+    rootPath: string,
     document: EditorDocument,
   ) => Promise<void>;
   setMessage: (message: string) => void;
@@ -370,8 +374,8 @@ export function useLocalHistory(
 
         const reverted = documentsRef.current[absolutePath];
         if (reverted) {
-          await syncSavedDocument(reverted);
-          await syncSavedJavaScriptTypeScriptDocument(reverted);
+          await syncSavedDocument(requestedRoot, reverted);
+          await syncSavedJavaScriptTypeScriptDocument(requestedRoot, reverted);
         }
 
         if (

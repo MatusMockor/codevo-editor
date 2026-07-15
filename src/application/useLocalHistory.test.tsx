@@ -284,8 +284,20 @@ describe("useLocalHistory", () => {
       `${ROOT}/src/User.php`,
       "reverted content",
     );
-    expect(harness.syncSavedDocument).toHaveBeenCalled();
-    expect(harness.syncSavedJavaScriptTypeScriptDocument).toHaveBeenCalled();
+    expect(harness.syncSavedDocument).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({
+        path: `${ROOT}/src/User.php`,
+        content: "reverted content",
+      }),
+    );
+    expect(harness.syncSavedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({
+        path: `${ROOT}/src/User.php`,
+        content: "reverted content",
+      }),
+    );
     expect(harness.setMessage).toHaveBeenCalledWith(
       "Reverted to selected local history version",
     );

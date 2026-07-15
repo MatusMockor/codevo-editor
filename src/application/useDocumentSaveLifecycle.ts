@@ -68,10 +68,12 @@ export interface DocumentSaveLifecycleDependencies {
   ) => Promise<ResolvedEditorConfig>;
 
   syncSavedDocument: (
+    rootPath: string,
     document: EditorDocument,
     shouldEmit?: () => boolean,
   ) => Promise<void>;
   syncSavedJavaScriptTypeScriptDocument: (
+    rootPath: string,
     document: EditorDocument,
     shouldEmit?: () => boolean,
   ) => Promise<void>;

@@ -93,6 +93,12 @@ function createHarness(options: {
       };
     },
   );
+  const syncSavedDocument = vi.fn(async () => {
+    events.push("php");
+  });
+  const syncSavedJavaScriptTypeScriptDocument = vi.fn(async () => {
+    events.push("js");
+  });
   const dependencies: DocumentSaveServiceDependencies = {
     workspaceFiles: options.workspaceFiles ?? workspaceFiles(),
     getDocument: (path) => documents[path] ?? null,
@@ -123,12 +129,8 @@ function createHarness(options: {
       events.push("editorconfig");
       return {};
     },
-    syncSavedDocument: async () => {
-      events.push("php");
-    },
-    syncSavedJavaScriptTypeScriptDocument: async () => {
-      events.push("js");
-    },
+    syncSavedDocument,
+    syncSavedJavaScriptTypeScriptDocument,
     hasExternalFileConflict: () => false,
     ...options.overrides,
   };
@@ -142,6 +144,8 @@ function createHarness(options: {
     setCurrent: (value: boolean) => {
       current = value;
     },
+    syncSavedDocument,
+    syncSavedJavaScriptTypeScriptDocument,
     target,
   };
 }
@@ -178,6 +182,18 @@ describe("DocumentSaveService", () => {
     expect(writeTextFile).toHaveBeenCalledWith(
       PATH,
       "edited:formatted:optimized:organized",
+    );
+    expect(harness.syncSavedDocument).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ path: PATH }),
+      expect.any(Function),
+    );
+    expect(
+      harness.syncSavedJavaScriptTypeScriptDocument,
+    ).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ path: PATH }),
+      expect.any(Function),
     );
   });
 
