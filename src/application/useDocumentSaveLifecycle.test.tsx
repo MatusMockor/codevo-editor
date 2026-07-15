@@ -430,6 +430,7 @@ describe("useDocumentSaveLifecycle", () => {
       await save;
 
       expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(harness.documentsRef.current[PATH].savedContent).toBe("saved");
       harness.unmount();
     },
   );

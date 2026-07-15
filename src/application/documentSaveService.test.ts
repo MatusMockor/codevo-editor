@@ -6,10 +6,13 @@ import type {
 } from "../domain/workspace";
 import {
   DocumentSaveService,
-  type DocumentSaveAcknowledgement,
   type DocumentSaveServiceDependencies,
   type DocumentSaveTarget,
 } from "./documentSaveService";
+import type {
+  ActiveDocumentSaveStorePort,
+  DocumentSaveAcknowledgement,
+} from "./activeDocumentSaveStore";
 
 const ROOT = "/workspace";
 const PATH = `${ROOT}/src/User.php`;
@@ -70,7 +73,8 @@ function createHarness(options: {
   const target: DocumentSaveTarget = {
     rootPath: ROOT,
     path: options.targetPath ?? PATH,
-    isCurrent: () => current,
+    workspaceRequestToken: 1,
+    lease: { isCurrent: () => current },
   };
   const acknowledgeSavedDocument = vi.fn(
     (
@@ -99,16 +103,25 @@ function createHarness(options: {
   const syncSavedJavaScriptTypeScriptDocument = vi.fn(async () => {
     events.push("js");
   });
-  const dependencies: DocumentSaveServiceDependencies = {
-    workspaceFiles: options.workspaceFiles ?? workspaceFiles(),
-    getDocument: (path) => documents[path] ?? null,
-    acknowledgeSavedDocument,
-    updateDocumentRevision: (saveTarget, nextRevision) => {
+  const saveStore: ActiveDocumentSaveStorePort = {
+    current: (saveTarget) => {
+      if (!saveTarget.lease.isCurrent()) {
+        return null;
+      }
+
+      return documents[saveTarget.path] ?? null;
+    },
+    acknowledge: acknowledgeSavedDocument,
+    updateRevision: (saveTarget, nextRevision) => {
       const live = documents[saveTarget.path];
       if (live) {
         documents[saveTarget.path] = { ...live, revision: nextRevision };
       }
     },
+  };
+  const dependencies: DocumentSaveServiceDependencies = {
+    workspaceFiles: options.workspaceFiles ?? workspaceFiles(),
+    saveStore,
     invalidatePrefetch: () => events.push("prefetch"),
     captureLocalHistorySnapshot: async () => {
       events.push("history");

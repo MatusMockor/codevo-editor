@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   type Dispatch,
   type MutableRefObject,
@@ -19,15 +20,17 @@ import {
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
+  ActiveDocumentSaveStore,
+  type DocumentSaveTarget,
+} from "./activeDocumentSaveStore";
+import {
   DocumentSaveCoordinator,
   type DocumentSaveLease,
   type RunWithDocumentSaveExclusion,
 } from "./documentSaveCoordinator";
 import {
   DocumentSaveService,
-  type DocumentSaveAcknowledgement,
   type DocumentSaveResult,
-  type DocumentSaveTarget,
 } from "./documentSaveService";
 
 export type { DocumentSaveResult } from "./documentSaveService";
@@ -262,114 +265,22 @@ export function useDocumentSaveLifecycle(
     [localHistoryGateway],
   );
 
-  const isSaveCurrent = useCallback(
-    (identity: DocumentSaveIdentity, lease: DocumentSaveLease): boolean =>
-      lease.isCurrent() &&
-      workspaceRequestTokenRef.current === identity.workspaceRequestToken &&
-      workspaceRootKeysEqual(
-        currentWorkspaceRootRef.current,
-        identity.requestedRoot,
-      ),
-    [currentWorkspaceRootRef, workspaceRequestTokenRef],
-  );
-
-  const acknowledgeSavedDocument = useCallback(
-    (
-      target: DocumentSaveTarget,
-      acknowledgement: DocumentSaveAcknowledgement,
-    ): void => {
-      if (!target.isCurrent()) {
-        return;
-      }
-
-      const liveDocument = documentsRef.current[target.path];
-      if (!liveDocument) {
-        return;
-      }
-      const acknowledgedDocument: EditorDocument = {
-        ...liveDocument,
-        content:
-          liveDocument === acknowledgement.expectedDocument &&
-          liveDocument.content === acknowledgement.startingContent
-            ? acknowledgement.savedDocument.content
-            : liveDocument.content,
-        savedContent: acknowledgement.savedDocument.content,
-        revision: acknowledgement.revision,
-      };
-      documentsRef.current = {
-        ...documentsRef.current,
-        [target.path]: acknowledgedDocument,
-      };
-      if (!target.isCurrent()) {
-        return;
-      }
-      if (activeDocumentRef.current?.path === target.path) {
-        activeDocumentRef.current = acknowledgedDocument;
-      }
-      if (!target.isCurrent()) {
-        return;
-      }
-
-      setDocuments((current) => {
-        if (!target.isCurrent()) {
-          return current;
-        }
-        const existing = current[target.path];
-        if (!existing) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [target.path]: {
-            ...existing,
-            content:
-              existing === acknowledgement.expectedDocument &&
-              existing.content === acknowledgement.startingContent
-                ? acknowledgement.savedDocument.content
-                : existing.content,
-            savedContent: acknowledgement.savedDocument.content,
-            revision: acknowledgement.revision,
-          },
-        };
-      });
-    },
-    [activeDocumentRef, documentsRef, setDocuments],
-  );
-
-  const updateDocumentRevision = useCallback(
-    (
-      target: DocumentSaveTarget,
-      revision: EditorDocument["revision"],
-    ): void => {
-      if (!target.isCurrent()) {
-        return;
-      }
-      const existing = documentsRef.current[target.path];
-      if (!existing) {
-        return;
-      }
-      const recoveredDocument = { ...existing, revision };
-      documentsRef.current = {
-        ...documentsRef.current,
-        [target.path]: recoveredDocument,
-      };
-      if (activeDocumentRef.current?.path === target.path) {
-        activeDocumentRef.current = recoveredDocument;
-      }
-      setDocuments((current) => {
-        const currentDocument = current[target.path];
-        if (!currentDocument || !target.isCurrent()) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [target.path]: { ...currentDocument, revision },
-        };
-      });
-    },
-    [activeDocumentRef, documentsRef, setDocuments],
+  const activeDocumentSaveStore = useMemo(
+    () =>
+      new ActiveDocumentSaveStore({
+        currentWorkspaceRootRef,
+        workspaceRequestTokenRef,
+        activeDocumentRef,
+        documentsRef,
+        setDocuments,
+      }),
+    [
+      activeDocumentRef,
+      currentWorkspaceRootRef,
+      documentsRef,
+      setDocuments,
+      workspaceRequestTokenRef,
+    ],
   );
 
   const presentSaveResult = useCallback(
@@ -418,13 +329,12 @@ export function useDocumentSaveLifecycle(
       const target: DocumentSaveTarget = {
         path: identity.path,
         rootPath: identity.requestedRoot,
-        isCurrent: () => isSaveCurrent(identity, lease),
+        workspaceRequestToken: identity.workspaceRequestToken,
+        lease,
       };
       const service = new DocumentSaveService({
         workspaceFiles,
-        getDocument: (path) => documentsRef.current[path] ?? null,
-        acknowledgeSavedDocument,
-        updateDocumentRevision,
+        saveStore: activeDocumentSaveStore,
         invalidatePrefetch: (path) =>
           filePrefetchCacheRef.current.invalidate(path),
         captureLocalHistorySnapshot,
@@ -441,20 +351,17 @@ export function useDocumentSaveLifecycle(
       return result;
     },
     [
-      acknowledgeSavedDocument,
+      activeDocumentSaveStore,
       captureLocalHistorySnapshot,
-      documentsRef,
       filePrefetchCacheRef,
       formattedContentForSave,
       hasExternalFileConflict,
-      isSaveCurrent,
       optimizedImportsContentForSave,
       organizedImportsContentForSave,
       presentSaveResult,
       resolveEditorConfigForFile,
       syncSavedDocument,
       syncSavedJavaScriptTypeScriptDocument,
-      updateDocumentRevision,
       workspaceFiles,
     ],
   );

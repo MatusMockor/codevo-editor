@@ -3,23 +3,18 @@ import { applyEditorConfigOnSave } from "../domain/editorConfig";
 import type {
   EditorDocument,
   WorkspaceFileGateway,
-  WorkspaceFileRevision,
   WorkspaceTextFileSnapshot,
 } from "../domain/workspace";
 import { readWorkspaceTextFileSnapshot } from "../domain/workspace";
+import type {
+  ActiveDocumentSaveStorePort,
+  DocumentSaveTarget,
+} from "./activeDocumentSaveStore";
 
-export interface DocumentSaveTarget {
-  readonly rootPath: string;
-  readonly path: string;
-  isCurrent(): boolean;
-}
-
-export interface DocumentSaveAcknowledgement {
-  readonly expectedDocument: EditorDocument;
-  readonly savedDocument: EditorDocument;
-  readonly startingContent: string;
-  readonly revision: WorkspaceFileRevision | null | undefined;
-}
+export type {
+  DocumentSaveAcknowledgement,
+  DocumentSaveTarget,
+} from "./activeDocumentSaveStore";
 
 export type DocumentSaveResult =
   | {
@@ -43,15 +38,7 @@ export type DocumentSaveResult =
 
 export interface DocumentSaveServiceDependencies {
   workspaceFiles: WorkspaceFileGateway;
-  getDocument: (path: string) => EditorDocument | null;
-  acknowledgeSavedDocument: (
-    target: DocumentSaveTarget,
-    acknowledgement: DocumentSaveAcknowledgement,
-  ) => void;
-  updateDocumentRevision: (
-    target: DocumentSaveTarget,
-    revision: WorkspaceFileRevision | null,
-  ) => void;
+  saveStore: ActiveDocumentSaveStorePort;
   invalidatePrefetch: (path: string) => void;
   captureLocalHistorySnapshot: (
     rootPath: string,
@@ -94,11 +81,7 @@ export class DocumentSaveService {
 
   async saveDocument(target: DocumentSaveTarget): Promise<DocumentSaveResult> {
     const currentDocument = (): EditorDocument | null => {
-      if (!target.isCurrent()) {
-        return null;
-      }
-
-      return this.dependencies.getDocument(target.path);
+      return this.dependencies.saveStore.current(target);
     };
 
     try {
@@ -317,7 +300,7 @@ export class DocumentSaveService {
       if (!currentDocument()) {
         return { status: "stale" };
       }
-      this.dependencies.updateDocumentRevision(target, writeResult.revision);
+      this.dependencies.saveStore.updateRevision(target, writeResult.revision);
       return {
         status: "partial",
         error: new Error(
@@ -338,7 +321,7 @@ export class DocumentSaveService {
       };
     }
 
-    this.dependencies.acknowledgeSavedDocument(target, {
+    this.dependencies.saveStore.acknowledge(target, {
       expectedDocument,
       revision:
         writeResult?.status === "success"

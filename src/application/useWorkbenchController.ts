@@ -380,6 +380,7 @@ import {
   getParentPath,
   isDirty,
   joinWorkspacePath,
+  readWorkspaceTextFileSnapshot,
   workspaceRelativePath,
   visibleEditorPaths,
   type EditorDocument,
@@ -2781,13 +2782,17 @@ export function useWorkbenchController(
         rootPath,
         session,
         async (path): Promise<EditorDocument> => {
-          const content = await workspaceFiles.readTextFile(path);
+          const snapshot = await readWorkspaceTextFileSnapshot(
+            workspaceFiles,
+            path,
+          );
           return {
-            content,
+            content: snapshot.content,
             language: detectLanguage(path),
             name: getFileName(path),
             path,
-            savedContent: content,
+            revision: snapshot.revision,
+            savedContent: snapshot.content,
           };
         },
       );

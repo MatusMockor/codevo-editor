@@ -60475,6 +60475,68 @@ final class InvoiceAdapter
     ).toBe(false);
   });
 
+  it("restores a session document revision for the next trusted save", async () => {
+    const path = "/workspace/src/Restored.ts";
+    const restoredRevision = {
+      device: 1,
+      inode: 2,
+      size: 24,
+      modifiedSeconds: 3,
+      modifiedNanoseconds: 4,
+      contentHash: 5,
+    };
+    const savedRevision = { ...restoredRevision, size: 23, contentHash: 6 };
+    const readTextFileSnapshot = vi.fn(async () => ({
+      content: "export const value = 1;\n",
+      revision: restoredRevision,
+    }));
+    const writeTextFile = vi.fn(async () => ({
+      status: "success" as const,
+      revision: savedRevision,
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceFiles: { readTextFileSnapshot, writeTextFile },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        autoSave: false,
+        formatOnSave: false,
+        optimizeImportsOnSave: false,
+        session: {
+          activePath: path,
+          bottomPanelView: "problems",
+          openPaths: [path],
+          sidebarView: "files",
+        },
+      },
+    });
+
+    await flushAsyncTurns(24);
+
+    expect(readTextFileSnapshot).toHaveBeenCalledWith(path);
+    expect(getWorkbench().activeDocument).toMatchObject({
+      path,
+      revision: restoredRevision,
+    });
+
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 2;\n");
+    });
+    await act(async () => {
+      await getWorkbench().saveActiveDocument();
+    });
+
+    expect(writeTextFile).toHaveBeenCalledWith(
+      path,
+      "export const value = 2;\n",
+      restoredRevision,
+    );
+    expect(getWorkbench().activeDocument?.revision).toEqual(savedRevision);
+  });
+
   it("restores a persisted preview only when it belongs to the restored paths", async () => {
     const pinnedPath = "/workspace/src/Pinned.ts";
     const previewPath = "/workspace/src/Preview.ts";
