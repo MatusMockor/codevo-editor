@@ -351,7 +351,77 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
-  it("routes F12 to go to definition through the registry", () => {
+  it("routes qualifying double-Shift through an enabled registry command", () => {
+    const actions = createActions();
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    const doubleShiftDetector = createDoubleShiftDetectorStub(true);
+    registry.register({
+      category: "Workbench",
+      id: "workbench.searchEverywhere",
+      isEnabled: () => true,
+      run,
+      title: "Search Everywhere",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+      doubleShiftDetector,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(actions.openSearchEverywhere).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("consumes qualifying double-Shift when the registry command is disabled", () => {
+    const actions = createActions();
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    const doubleShiftDetector = createDoubleShiftDetectorStub(true);
+    registry.register({
+      category: "Workbench",
+      id: "workbench.searchEverywhere",
+      isEnabled: () => false,
+      run,
+      title: "Search Everywhere",
+    });
+    const harness = renderHook({
+      actions,
+      commandRegistry: registry,
+      doubleShiftDetector,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+    expect(actions.openSearchEverywhere).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("consumes qualifying double-Shift when the registry command is missing", () => {
+    const actions = createActions();
+    const doubleShiftDetector = createDoubleShiftDetectorStub(true);
+    const harness = renderHook({
+      actions,
+      doubleShiftDetector,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(actions.openSearchEverywhere).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("routes default F12 alias to go to definition through the registry", () => {
     const actions = createActions();
     const run = vi.fn();
     const registry = new CommandRegistry();
@@ -376,7 +446,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
-  it("consumes F12 without running a disabled go to definition command", () => {
+  it("consumes default F12 alias without running a disabled go to definition command", () => {
     const actions = createActions();
     const run = vi.fn();
     const registry = new CommandRegistry();
@@ -432,6 +502,7 @@ interface RenderHookOptions {
   actions?: KeyboardShortcutTestActions;
   appSettings?: ReturnType<typeof defaultAppSettings>;
   commandRegistry?: CommandRegistry;
+  doubleShiftDetector?: DoubleShiftDetector;
 }
 
 type KeyboardShortcutTestActions = ReturnType<typeof createActionsBase>;
@@ -440,6 +511,7 @@ function renderHook({
   actions = createActions(),
   appSettings = defaultAppSettings(),
   commandRegistry = new CommandRegistry(),
+  doubleShiftDetector = createDoubleShiftDetectorStub(),
 }: RenderHookOptions = {}) {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -450,6 +522,7 @@ function renderHook({
         actions={actions}
         appSettings={appSettings}
         commandRegistry={commandRegistry}
+        doubleShiftDetector={doubleShiftDetector}
       />,
     );
   });
@@ -465,10 +538,12 @@ function HookHarness({
   actions,
   appSettings,
   commandRegistry,
+  doubleShiftDetector,
 }: {
   actions: KeyboardShortcutTestActions;
   appSettings: ReturnType<typeof defaultAppSettings>;
   commandRegistry: CommandRegistry;
+  doubleShiftDetector: DoubleShiftDetector;
 }) {
   useWorkbenchKeyboardShortcuts({
     actions,
@@ -476,7 +551,7 @@ function HookHarness({
     bareKeyShortcutsRef: ref({ keymap: null, keys: new Set<string>() }),
     commandContext,
     commandRegistry,
-    doubleShiftDetectorRef: ref(createDoubleShiftDetectorStub()),
+    doubleShiftDetectorRef: ref(doubleShiftDetector),
   });
 
   return null;
@@ -531,9 +606,11 @@ function commandShortcutCase(
   };
 }
 
-function createDoubleShiftDetectorStub(): DoubleShiftDetector {
+function createDoubleShiftDetectorStub(
+  handleKeyDownResult = false,
+): DoubleShiftDetector {
   return {
-    handleKeyDown: vi.fn(() => false),
+    handleKeyDown: vi.fn(() => handleKeyDownResult),
     reset: vi.fn(),
   };
 }

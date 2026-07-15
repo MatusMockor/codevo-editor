@@ -6,7 +6,11 @@ import {
 } from "../domain/keymap";
 import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import type { AppSettings } from "../domain/settings";
-import type { CommandContext, CommandRegistry } from "./commandRegistry";
+import {
+  executeCommand,
+  type CommandContext,
+  type CommandRegistry,
+} from "./commandRegistry";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
 
 interface BareKeyShortcutCache {
@@ -54,7 +58,11 @@ export function useWorkbenchKeyboardShortcuts({
       // true only on the qualifying second bare Shift tap inside the window.
       if (doubleShiftDetectorRef.current.handleKeyDown(event, Date.now())) {
         event.preventDefault();
-        actions.openSearchEverywhere();
+        executeCommand(
+          commandRegistry,
+          "workbench.searchEverywhere",
+          commandContext,
+        );
         return;
       }
 
@@ -66,13 +74,11 @@ export function useWorkbenchKeyboardShortcuts({
         !event.shiftKey
       ) {
         event.preventDefault();
-
-        const command = commandRegistry.get("editor.goToDefinition");
-
-        if (command?.isEnabled(commandContext)) {
-          void command.run();
-        }
-
+        executeCommand(
+          commandRegistry,
+          "editor.goToDefinition",
+          commandContext,
+        );
         return;
       }
 
