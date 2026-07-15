@@ -35,6 +35,7 @@ pub const MAX_VERSIONS_PER_FILE: usize = 50;
 const INDEX_FILE_NAME: &str = "index.json";
 const SNAPSHOT_EXTENSION: &str = "snapshot";
 const LOCAL_HISTORY_DIR: &str = "local-history";
+const VERSION_ID_LENGTH: usize = 12;
 
 /// A single retained snapshot of a file's content.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -95,7 +96,7 @@ impl LocalHistoryStore {
         fs::create_dir_all(&file_dir).map_err(|error| error.to_string())?;
 
         let version = LocalHistoryVersion {
-            id: next_version_id(&mut index),
+            id: next_version_id(&mut index)?,
             timestamp_ms: now_unix_millis(),
             size_bytes: content.len() as u64,
         };
@@ -133,6 +134,7 @@ impl LocalHistoryStore {
         relative_path: &str,
         version_id: &str,
     ) -> Result<String, String> {
+        ensure_generated_version_id(version_id)?;
         let file_dir = self.file_dir(workspace_root, relative_path);
         let index = read_index(&file_dir)?;
 
@@ -174,12 +176,15 @@ fn latest_content_matches(
     Ok(existing == content)
 }
 
-fn next_version_id(index: &mut FileHistoryIndex) -> String {
+fn next_version_id(index: &mut FileHistoryIndex) -> Result<String, String> {
     let sequence = index.next_sequence;
+    if sequence >= 10_u64.pow(VERSION_ID_LENGTH as u32) {
+        return Err("Local history version sequence is exhausted.".to_string());
+    }
     index.next_sequence += 1;
     // Zero-padded so the id sorts lexicographically in capture order, which is
     // also the snapshot filename order on disk.
-    format!("{sequence:012}")
+    Ok(format!("{sequence:012}"))
 }
 
 fn evict_overflow(file_dir: &Path, index: &mut FileHistoryIndex) {
@@ -199,7 +204,21 @@ fn read_index(file_dir: &Path) -> Result<FileHistoryIndex, String> {
     }
 
     let raw = fs::read_to_string(&index_path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&raw).map_err(|error| error.to_string())
+    let index: FileHistoryIndex = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    for version in &index.versions {
+        ensure_generated_version_id(&version.id)?;
+    }
+    Ok(index)
+}
+
+fn ensure_generated_version_id(version_id: &str) -> Result<(), String> {
+    if version_id.len() != VERSION_ID_LENGTH
+        || !version_id.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("Invalid local history version id.".to_string());
+    }
+
+    Ok(())
 }
 
 fn write_index(file_dir: &Path, index: &FileHistoryIndex) -> Result<(), String> {
@@ -334,6 +353,45 @@ mod tests {
 
         let result = store.read_version("/project", "src/User.php", "does-not-exist");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_version_rejects_path_shaped_version_ids() {
+        let store = temp_store("read-malicious-id");
+        store
+            .record_snapshot("/project", "src/User.php", "payload")
+            .expect("record");
+
+        for version_id in [
+            "../000000001",
+            "/00000000000",
+            "00000000000/",
+            "00000000000a",
+        ] {
+            assert!(
+                store
+                    .read_version("/project", "src/User.php", version_id)
+                    .is_err(),
+                "malicious version id must be rejected: {version_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn corrupted_index_cannot_authorize_a_path_shaped_version_id() {
+        let store = temp_store("corrupt-id");
+        let file_dir = store.file_dir("/project", "src/User.php");
+        fs::create_dir_all(&file_dir).expect("history directory");
+        fs::write(
+            file_dir.join(INDEX_FILE_NAME),
+            r#"{"versions":[{"id":"../outside","timestampMs":1,"sizeBytes":1}],"nextSequence":1}"#,
+        )
+        .expect("corrupt index");
+
+        assert!(store.list_versions("/project", "src/User.php").is_err());
+        assert!(store
+            .record_snapshot("/project", "src/User.php", "new")
+            .is_err());
     }
 
     #[test]

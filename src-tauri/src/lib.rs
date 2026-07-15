@@ -124,7 +124,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use smart_mode::{IntelligenceMode, SmartModeService, SmartModeState};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
@@ -353,6 +353,9 @@ fn enumerate_monospace_font_families() -> Vec<String> {
 }
 
 fn shutdown_runtime_processes(app: &AppHandle) {
+    if let Some(authorizer) = app.try_state::<LegacyLocalHistoryWorkspaceAuthorizer>() {
+        authorizer.clear();
+    }
     if let Some(registry) = app.try_state::<WorkspaceRegistry>() {
         registry.clear();
     }
@@ -390,10 +393,62 @@ enum NativeWorkspaceOpenResult {
     Cancelled,
 }
 
+/// Temporary authorization bridge for legacy Local History commands that still
+/// receive a raw root path. Entries originate only from descriptors admitted by
+/// `WorkspaceRegistry`; the registry remains the authority for liveness.
+#[derive(Default)]
+struct LegacyLocalHistoryWorkspaceAuthorizer {
+    descriptors: Mutex<HashMap<WorkspaceId, ManagedWorkspaceDescriptor>>,
+}
+
+impl LegacyLocalHistoryWorkspaceAuthorizer {
+    fn descriptors(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<WorkspaceId, ManagedWorkspaceDescriptor>> {
+        self.descriptors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn admit(&self, descriptor: &ManagedWorkspaceDescriptor) {
+        self.descriptors()
+            .insert(descriptor.workspace_id.clone(), descriptor.clone());
+    }
+
+    fn revoke(&self, workspace_id: &WorkspaceId) {
+        self.descriptors().remove(workspace_id);
+    }
+
+    fn clear(&self) {
+        self.descriptors().clear();
+    }
+
+    fn authorize(&self, registry: &WorkspaceRegistry, root_path: &str) -> Result<(), String> {
+        let requested_root = canonicalize_workspace_root(root_path)?;
+        let workspace_id = self
+            .descriptors()
+            .iter()
+            .find_map(|(workspace_id, descriptor)| {
+                (descriptor.canonical_root_path == requested_root).then(|| workspace_id.clone())
+            })
+            .ok_or_else(|| "Local history workspace is not open.".to_string())?;
+        let live_descriptor = registry
+            .descriptor(&workspace_id)
+            .map_err(|_| "Local history workspace is not open.".to_string())?;
+
+        if live_descriptor.canonical_root_path != requested_root {
+            return Err("Local history workspace identity changed.".to_string());
+        }
+
+        Ok(())
+    }
+}
+
 #[tauri::command]
 async fn open_workspace_from_picker(
     app: AppHandle,
     registry: State<'_, WorkspaceRegistry>,
+    local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
 ) -> Result<NativeWorkspaceOpenResult, String> {
     let Some(selected_root) = app.dialog().file().blocking_pick_folder() else {
         return Ok(NativeWorkspaceOpenResult::Cancelled);
@@ -404,6 +459,7 @@ async fn open_workspace_from_picker(
     let descriptor = registry
         .register(selected_root)
         .map_err(|error| error.to_string())?;
+    local_history_authorizer.admit(&descriptor);
     Ok(NativeWorkspaceOpenResult::Opened { descriptor })
 }
 
@@ -423,19 +479,25 @@ fn register_workspace_path_in_registry(
 #[tauri::command]
 fn register_workspace_path(
     registry: State<'_, WorkspaceRegistry>,
+    local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
     root_path: String,
 ) -> Result<ManagedWorkspaceDescriptor, String> {
-    register_workspace_path_in_registry(&registry, &root_path)
+    let descriptor = register_workspace_path_in_registry(&registry, &root_path)?;
+    local_history_authorizer.admit(&descriptor);
+    Ok(descriptor)
 }
 
 #[tauri::command]
 fn unregister_workspace(
     registry: State<'_, WorkspaceRegistry>,
+    local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
     workspace_id: WorkspaceId,
 ) -> Result<(), String> {
     registry
         .unregister(&workspace_id)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    local_history_authorizer.revoke(&workspace_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -2417,18 +2479,34 @@ fn ensure_local_history_relative_path(relative_path: &str) -> Result<(), String>
     // (which Path::components on Unix would treat as a single filename) is still
     // detected. The store hashes the same normalized form, so this keeps the
     // guard and the storage key in agreement.
+    if relative_path.is_empty() || relative_path.contains('\0') {
+        return Err("Local history path must name a workspace file.".to_string());
+    }
+
     let normalized = relative_path.replace('\\', "/");
+    if normalized.starts_with('/')
+        || normalized.ends_with('/')
+        || normalized.contains("//")
+        || normalized
+            .split('/')
+            .any(|component| component == "." || component == "..")
+        || normalized
+            .split('/')
+            .next()
+            .is_some_and(|component| component.ends_with(':'))
+    {
+        return Err("Local history path must be an unambiguous relative path.".to_string());
+    }
     let path = Path::new(&normalized);
 
     if path.is_absolute() {
         return Err("Local history path must be workspace-relative.".to_string());
     }
 
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err("Local history path must stay inside the workspace.".to_string());
+    for component in path.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err("Local history path must stay inside the workspace.".to_string());
+        }
     }
 
     Ok(())
@@ -2446,6 +2524,8 @@ async fn record_local_history_snapshot(
     // to its own workspace bucket and file (no cross-root or cross-file leak).
     run_blocking_command(move || {
         ensure_local_history_relative_path(&relative_path)?;
+        app.state::<LegacyLocalHistoryWorkspaceAuthorizer>()
+            .authorize(&app.state::<WorkspaceRegistry>(), &root_path)?;
         let store = local_history_store(&app)?;
         store.record_snapshot(&root_path, &relative_path, &content)
     })
@@ -2462,6 +2542,8 @@ async fn get_local_history_versions(
     // main thread and scope it to the requested workspace + file.
     run_blocking_command(move || {
         ensure_local_history_relative_path(&relative_path)?;
+        app.state::<LegacyLocalHistoryWorkspaceAuthorizer>()
+            .authorize(&app.state::<WorkspaceRegistry>(), &root_path)?;
         let store = local_history_store(&app)?;
         store.list_versions(&root_path, &relative_path)
     })
@@ -2479,6 +2561,8 @@ async fn get_local_history_version_content(
     // requested workspace + file + version.
     run_blocking_command(move || {
         ensure_local_history_relative_path(&relative_path)?;
+        app.state::<LegacyLocalHistoryWorkspaceAuthorizer>()
+            .authorize(&app.state::<WorkspaceRegistry>(), &root_path)?;
         let store = local_history_store(&app)?;
         store.read_version(&root_path, &relative_path, &version_id)
     })
@@ -6293,6 +6377,7 @@ mod tests {
         run_pint_format_with_trust, save_git_stash, search_files, stage_git_files, stage_git_hunk,
         stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        LegacyLocalHistoryWorkspaceAuthorizer,
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
@@ -8597,12 +8682,64 @@ mod tests {
     #[test]
     fn local_history_relative_path_guard_rejects_escape_and_absolute_paths() {
         assert!(ensure_local_history_relative_path("src/User.php").is_ok());
+        assert!(ensure_local_history_relative_path("src\\User.php").is_ok());
+        assert!(ensure_local_history_relative_path("").is_err());
+        assert!(ensure_local_history_relative_path(".").is_err());
+        assert!(ensure_local_history_relative_path("src/./User.php").is_err());
+        assert!(ensure_local_history_relative_path("src//User.php").is_err());
+        assert!(ensure_local_history_relative_path("src/User.php/").is_err());
         assert!(ensure_local_history_relative_path("../secret.txt").is_err());
         assert!(ensure_local_history_relative_path("nested/../../secret.txt").is_err());
         assert!(ensure_local_history_relative_path("/etc/passwd").is_err());
+        assert!(ensure_local_history_relative_path("C:/secret.txt").is_err());
+        assert!(ensure_local_history_relative_path("C:\\secret.txt").is_err());
         // Backslash-expressed traversal must also be rejected (Windows paths).
         assert!(ensure_local_history_relative_path("..\\secret.txt").is_err());
         assert!(ensure_local_history_relative_path("nested\\..\\..\\secret.txt").is_err());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_history_authorizer_accepts_registered_aliases_and_canonical_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_workspace("local-history-authorized-root");
+        let alias_parent = temp_workspace("local-history-authorized-alias-parent");
+        let alias = alias_parent.join("workspace-alias");
+        symlink(&root, &alias).expect("workspace alias");
+        let registry = WorkspaceRegistry::new();
+        let authorizer = LegacyLocalHistoryWorkspaceAuthorizer::default();
+        let descriptor = registry.register(&alias).expect("register alias");
+        authorizer.admit(&descriptor);
+
+        assert!(authorizer
+            .authorize(&registry, &path_string(&alias))
+            .is_ok());
+        assert!(authorizer.authorize(&registry, &path_string(&root)).is_ok());
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_history_authorizer_rejects_unknown_and_closed_roots() {
+        let registered_root = temp_workspace("local-history-registered-root");
+        let unknown_root = temp_workspace("local-history-unknown-root");
+        let registry = WorkspaceRegistry::new();
+        let authorizer = LegacyLocalHistoryWorkspaceAuthorizer::default();
+        let descriptor = registry
+            .register(&registered_root)
+            .expect("register workspace");
+        authorizer.admit(&descriptor);
+
+        assert!(authorizer
+            .authorize(&registry, &path_string(&unknown_root))
+            .is_err());
+
+        registry
+            .unregister(&descriptor.workspace_id)
+            .expect("close workspace");
+        assert!(authorizer
+            .authorize(&registry, &path_string(&registered_root))
+            .is_err());
     }
 
     #[test]
@@ -9530,6 +9667,7 @@ pub fn run() {
         .manage(WorkspaceIndexLifecycle::new())
         .manage(TerminalSupervisor::new())
         .manage(WorkspaceRegistry::new())
+        .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
