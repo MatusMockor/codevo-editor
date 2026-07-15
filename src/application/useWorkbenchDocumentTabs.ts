@@ -25,11 +25,7 @@ import {
   type WorkspaceFileGateway,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  documentSessionPathTransitionForOpenedPath,
-  pinDocumentSessionPath,
-  replaceableDocumentSessionPreview,
-} from "./documentSessionState";
+import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 
 const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 
@@ -47,18 +43,11 @@ export interface OpenReadOnlyDocumentOptions {
 export interface WorkbenchDocumentTabsDependencies {
   // Shared workspace + tab state (shell-owned).
   workspaceRoot: string | null;
-  activePath: string | null;
-  documents: Record<string, EditorDocument>;
-  openPaths: string[];
   gitStatus: GitStatus;
+  documentTabSession: DocumentTabSessionPort;
 
   appSettingsRef: MutableRefObject<AppSettings>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  activeDocumentRef: MutableRefObject<EditorDocument | null>;
-  documentsRef: MutableRefObject<Record<string, EditorDocument>>;
-  imageTabsRef: MutableRefObject<Record<string, ImageTab>>;
-  openPathsRef: MutableRefObject<string[]>;
-  previewPathRef: MutableRefObject<string | null>;
   openFileRequestTokenRef: MutableRefObject<number>;
   openingFileFlagOwnerTokenRef: MutableRefObject<number | null>;
   emptyDocumentRefreshTimeoutsRef: MutableRefObject<Set<number>>;
@@ -69,11 +58,6 @@ export interface WorkbenchDocumentTabsDependencies {
   gitDiffRequestTokenRef: MutableRefObject<number>;
   selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
 
-  setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
-  setImageTabs: Dispatch<SetStateAction<Record<string, ImageTab>>>;
-  setOpenPaths: Dispatch<SetStateAction<string[]>>;
-  setPreviewPath: Dispatch<SetStateAction<string | null>>;
-  setActivePath: Dispatch<SetStateAction<string | null>>;
   setIsOpeningFile: Dispatch<SetStateAction<boolean>>;
   setSelectedGitChange: Dispatch<SetStateAction<GitChangedFile | null>>;
   setGitDiffPreview: Dispatch<SetStateAction<GitFileDiff | null>>;
@@ -138,17 +122,10 @@ export function useWorkbenchDocumentTabs(
 ): WorkbenchDocumentTabs {
   const {
     workspaceRoot,
-    activePath,
-    documents,
-    openPaths,
     gitStatus,
+    documentTabSession,
     appSettingsRef,
     currentWorkspaceRootRef,
-    activeDocumentRef,
-    documentsRef,
-    imageTabsRef,
-    openPathsRef,
-    previewPathRef,
     openFileRequestTokenRef,
     openingFileFlagOwnerTokenRef,
     emptyDocumentRefreshTimeoutsRef,
@@ -156,11 +133,6 @@ export function useWorkbenchDocumentTabs(
     filePrefetchTimersRef,
     gitDiffRequestTokenRef,
     selectedGitChangeRef,
-    setDocuments,
-    setImageTabs,
-    setOpenPaths,
-    setPreviewPath,
-    setActivePath,
     setIsOpeningFile,
     setSelectedGitChange,
     setGitDiffPreview,
@@ -182,7 +154,7 @@ export function useWorkbenchDocumentTabs(
 
   const activateDocument = useCallback(
     (path: string) => {
-      if (activePath === path) {
+      if (documentTabSession.getActivePath() === path) {
         return;
       }
 
@@ -197,43 +169,30 @@ export function useWorkbenchDocumentTabs(
       selectedGitChangeRef.current = null;
       setSelectedGitChange(null);
       setGitDiffPreview(null);
-      setActivePath(path);
+      documentTabSession.activate(path);
       recordRecentFile({
-        name:
-          documentsRef.current[path]?.name ??
-          imageTabsRef.current[path]?.name ??
-          getFileName(path),
+        name: documentTabSession.getTabDisplayName(path) ?? getFileName(path),
         path,
       });
     },
     [
-      activePath,
+      documentTabSession,
       gitChangeForDiffDocumentPath,
       gitStatus.changes,
       loadGitDiffDocument,
       recordCurrentNavigationLocation,
       recordRecentFile,
       selectedGitChangeRef,
-      setActivePath,
       setGitDiffPreview,
       setSelectedGitChange,
-      documentsRef,
-      imageTabsRef,
     ],
   );
 
   const pinDocument = useCallback(
     (path: string) => {
-      setOpenPaths((current) =>
-        pinDocumentSessionPath(current, previewPathRef.current, path)
-          .nextOpenPaths,
-      );
-      setPreviewPath((current) =>
-        pinDocumentSessionPath(openPathsRef.current, current, path)
-          .nextPreviewPath,
-      );
+      documentTabSession.pin(path);
     },
-    [openPathsRef, previewPathRef, setOpenPaths, setPreviewPath],
+    [documentTabSession],
   );
 
   const openFile = useCallback(
@@ -283,23 +242,16 @@ export function useWorkbenchDocumentTabs(
             byteLength: payload.byteLength,
             dataUrl: `data:${imageMimeType(entry.path)};base64,${payload.base64}`,
           };
-          const pathTransition = documentSessionPathTransitionForOpenedPath({
-            openPaths: openPathsRef.current,
-            path: entry.path,
-            pin: true,
-            replacedPath: null,
-          });
-          imageTabsRef.current = { ...imageTabsRef.current, [entry.path]: image };
-          openPathsRef.current = pathTransition.nextOpenPaths;
-          previewPathRef.current = pathTransition.nextPreviewPath;
-          activeDocumentRef.current = null;
-          setImageTabs((current) => ({ ...current, [entry.path]: image }));
-          setOpenPaths(pathTransition.nextOpenPaths);
-          setPreviewPath(pathTransition.nextPreviewPath);
+          const commit = documentTabSession.commitImageOpen(image);
+          if (commit.replacedDocument) {
+            void syncClosedDocument(commit.replacedDocument);
+            void syncClosedJavaScriptTypeScriptDocument(
+              commit.replacedDocument,
+            );
+          }
           selectedGitChangeRef.current = null;
           setSelectedGitChange(null);
           setGitDiffPreview(null);
-          setActivePath(entry.path);
           setMessage(null);
           recordRecentFile({ name: entry.name, path: entry.path });
           return true;
@@ -335,7 +287,7 @@ export function useWorkbenchDocumentTabs(
               return;
             }
 
-            const currentDocument = documentsRef.current[targetPath];
+            const currentDocument = documentTabSession.getDocument(targetPath);
 
             if (
               !currentDocument ||
@@ -364,50 +316,15 @@ export function useWorkbenchDocumentTabs(
               return;
             }
 
-            const latestDocument = documentsRef.current[targetPath];
+            const refreshedDocument =
+              documentTabSession.refreshCleanDocument(
+                targetPath,
+                refreshedContent,
+              );
 
-            if (
-              !latestDocument ||
-              latestDocument.content !== "" ||
-              latestDocument.savedContent !== ""
-            ) {
+            if (!refreshedDocument) {
               return;
             }
-
-            const refreshedDocument: EditorDocument = {
-              ...latestDocument,
-              content: refreshedContent,
-              savedContent: refreshedContent,
-            };
-
-            documentsRef.current = {
-              ...documentsRef.current,
-              [targetPath]: refreshedDocument,
-            };
-            activeDocumentRef.current =
-              activeDocumentRef.current?.path === targetPath
-                ? refreshedDocument
-                : activeDocumentRef.current;
-            setDocuments((current) => {
-              const currentDocument = current[targetPath];
-
-              if (
-                !currentDocument ||
-                currentDocument.content !== "" ||
-                currentDocument.savedContent !== ""
-              ) {
-                return current;
-              }
-
-              return {
-                ...current,
-                [targetPath]: {
-                  ...currentDocument,
-                  content: refreshedContent,
-                  savedContent: refreshedContent,
-                },
-              };
-            });
             refreshLocalPhpDiagnosticsForContent(
               refreshedDocument.path,
               refreshedDocument.content,
@@ -421,8 +338,7 @@ export function useWorkbenchDocumentTabs(
         emptyDocumentRefreshTimeoutsRef.current.add(timeoutId);
       };
 
-      const existingDocument =
-        documentsRef.current[entry.path] ?? documents[entry.path];
+      const existingDocument = documentTabSession.getDocument(entry.path);
 
       if (existingDocument) {
         if (options.shouldCommit?.() === false) {
@@ -451,92 +367,60 @@ export function useWorkbenchDocumentTabs(
             return false;
           }
 
+          const liveDocument = documentTabSession.getDocument(entry.path);
           const stillEmptyAndUnedited =
-            documentsRef.current[entry.path]?.savedContent === "" &&
-            documentsRef.current[entry.path]?.content === "";
+            liveDocument?.savedContent === "" && liveDocument.content === "";
 
           if (refreshedContent !== "" && stillEmptyAndUnedited) {
-            const refreshedDocument: EditorDocument = {
-              ...documentsRef.current[entry.path],
-              content: refreshedContent,
-              savedContent: refreshedContent,
-            };
-            activeDocumentRef.current =
-              activeDocumentRef.current?.path === entry.path
-                ? refreshedDocument
-                : activeDocumentRef.current;
-            documentsRef.current = {
-              ...documentsRef.current,
-              [entry.path]: refreshedDocument,
-            };
-            setDocuments((current) => ({
-              ...current,
-              [entry.path]: {
-                ...(current[entry.path] ?? refreshedDocument),
-                content: refreshedContent,
-                savedContent: refreshedContent,
-              },
-            }));
-            refreshLocalPhpDiagnosticsForContent(
-              refreshedDocument.path,
-              refreshedDocument.content,
-              refreshedDocument.language,
-            );
+            const refreshedDocument =
+              documentTabSession.refreshCleanDocument(
+                entry.path,
+                refreshedContent,
+              );
+
+            if (refreshedDocument) {
+              refreshLocalPhpDiagnosticsForContent(
+                refreshedDocument.path,
+                refreshedDocument.content,
+                refreshedDocument.language,
+              );
+            }
           } else if (refreshedContent === "" && stillEmptyAndUnedited) {
             scheduleEmptyDocumentRefresh(entry.path);
           }
         }
 
-        const documentToMakeReadOnly =
-          documentsRef.current[entry.path] ?? documents[entry.path];
-
-        if (options.readOnly === true && !documentToMakeReadOnly.readOnly) {
-          const readOnlyDocument = {
-            ...documentToMakeReadOnly,
-            readOnly: true,
-          };
-          activeDocumentRef.current =
-            activeDocumentRef.current?.path === entry.path
-              ? readOnlyDocument
-              : activeDocumentRef.current;
-          documentsRef.current = {
-            ...documentsRef.current,
-            [entry.path]: readOnlyDocument,
-          };
-          setDocuments((current) => ({
-            ...current,
-            [entry.path]: {
-              ...(current[entry.path] ?? readOnlyDocument),
-              readOnly: true,
-            },
-          }));
-        }
-
-        if (shouldRecordNavigation && activePath !== entry.path) {
+        if (
+          shouldRecordNavigation &&
+          documentTabSession.getActivePath() !== entry.path
+        ) {
           recordCurrentNavigationLocation();
         }
 
-        if (!shouldPin && !openPaths.includes(entry.path)) {
-          setPreviewPath(entry.path);
+        const opened = documentTabSession.openExistingDocument({
+          path: entry.path,
+          pin: shouldPin,
+          readOnly: options.readOnly === true,
+        });
+
+        if (!opened) {
+          return false;
         }
 
-        if (shouldPin) {
-          pinDocument(entry.path);
+        if (opened.replacedDocument) {
+          void syncClosedDocument(opened.replacedDocument);
+          void syncClosedJavaScriptTypeScriptDocument(opened.replacedDocument);
         }
 
         selectedGitChangeRef.current = null;
         setSelectedGitChange(null);
         setGitDiffPreview(null);
-        const activatedDocument =
-          documentsRef.current[entry.path] ??
-          documents[entry.path] ??
-          openedDocument;
+        const activatedDocument = opened.document;
         refreshLocalPhpDiagnosticsForContent(
           activatedDocument.path,
           activatedDocument.content,
           activatedDocument.language,
         );
-        setActivePath(entry.path);
         recordRecentFile({ name: entry.name, path: entry.path });
         return true;
       }
@@ -582,16 +466,6 @@ export function useWorkbenchDocumentTabs(
           return false;
         }
 
-        // Compute the replacement from live refs after the read resolves, so a
-        // rapid preview sequence never acts on a stale closure capture.
-        const replacement = replaceableDocumentSessionPreview(
-          activeDocumentRef.current,
-          documentsRef.current,
-          openPathsRef.current,
-          previewPathRef.current,
-        );
-        const replacedPath = replacement?.path ?? null;
-
         const document: EditorDocument = {
           path: entry.path,
           name: entry.name,
@@ -606,60 +480,27 @@ export function useWorkbenchDocumentTabs(
           recordCurrentNavigationLocation();
         }
 
-        if (replacement) {
-          void syncClosedDocument(replacement);
-          void syncClosedJavaScriptTypeScriptDocument(replacement);
-        }
-
-        const nextDocuments = {
-          ...documentsRef.current,
-          [entry.path]: document,
-        };
-
-        if (replacedPath) {
-          delete nextDocuments[replacedPath];
-        }
-
-        const pathTransition = documentSessionPathTransitionForOpenedPath({
-          openPaths: openPathsRef.current,
-          path: entry.path,
+        const commit = documentTabSession.commitTextOpen({
+          document,
           pin: shouldPin,
-          replacedPath,
         });
 
-        documentsRef.current = nextDocuments;
-        activeDocumentRef.current = document;
-        openPathsRef.current = pathTransition.nextOpenPaths;
-        previewPathRef.current = pathTransition.nextPreviewPath;
+        if (commit.replacedDocument) {
+          void syncClosedDocument(commit.replacedDocument);
+          void syncClosedJavaScriptTypeScriptDocument(
+            commit.replacedDocument,
+          );
+        }
+
         refreshLocalPhpDiagnosticsForContent(
           document.path,
           document.content,
           document.language,
         );
 
-        setDocuments((current) => {
-          const next = { ...current, [entry.path]: document };
-
-          if (replacedPath) {
-            delete next[replacedPath];
-          }
-
-          return next;
-        });
-        setOpenPaths((current) => {
-          return documentSessionPathTransitionForOpenedPath({
-            openPaths: current,
-            path: entry.path,
-            pin: shouldPin,
-            replacedPath,
-          }).nextOpenPaths;
-        });
-        setPreviewPath(pathTransition.nextPreviewPath);
-
         selectedGitChangeRef.current = null;
         setSelectedGitChange(null);
         setGitDiffPreview(null);
-        setActivePath(entry.path);
         recordRecentFile({ name: entry.name, path: entry.path });
         setMessage(null);
         filePrefetchCacheRef.current.invalidate(entry.path);
@@ -689,36 +530,23 @@ export function useWorkbenchDocumentTabs(
       }
     },
     [
-      activeDocumentRef,
-      activePath,
       appSettingsRef,
       currentWorkspaceRootRef,
-      documents,
-      documentsRef,
-      imageTabsRef,
+      documentTabSession,
       emptyDocumentRefreshTimeoutsRef,
       filePrefetchCacheRef,
       forgetExternallyRemovedDocumentPath,
       openFileRequestTokenRef,
       openingFileFlagOwnerTokenRef,
-      openPaths,
-      openPathsRef,
-      pinDocument,
-      previewPathRef,
       recordCurrentNavigationLocation,
       recordRecentFile,
       refreshLocalPhpDiagnosticsForContent,
       reportError,
       reportErrorForActiveWorkspaceRoot,
       selectedGitChangeRef,
-      setActivePath,
-      setDocuments,
-      setImageTabs,
       setGitDiffPreview,
       setIsOpeningFile,
       setMessage,
-      setOpenPaths,
-      setPreviewPath,
       setSelectedGitChange,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
@@ -740,7 +568,7 @@ export function useWorkbenchDocumentTabs(
 
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
 
-      if (documentsRef.current[entry.path]) {
+      if (documentTabSession.getDocument(entry.path)) {
         return;
       }
 
@@ -757,7 +585,7 @@ export function useWorkbenchDocumentTabs(
           return;
         }
 
-        if (documentsRef.current[entry.path]) {
+        if (documentTabSession.getDocument(entry.path)) {
           return;
         }
 
@@ -773,7 +601,7 @@ export function useWorkbenchDocumentTabs(
     },
     [
       currentWorkspaceRootRef,
-      documentsRef,
+      documentTabSession,
       filePrefetchCacheRef,
       workspaceFiles,
       workspaceRoot,
@@ -844,67 +672,33 @@ export function useWorkbenchDocumentTabs(
       };
 
       recordCurrentNavigationLocation();
-      documentsRef.current = {
-        ...documentsRef.current,
-        [nextDocument.path]: nextDocument,
-      };
-      activeDocumentRef.current = nextDocument;
+      const commit = documentTabSession.openReadOnlyDocument(
+        nextDocument,
+        options.pin === true,
+      );
 
-      if (options.pin === true) {
-        const pathTransition = pinDocumentSessionPath(
-          openPathsRef.current,
-          previewPathRef.current,
-          nextDocument.path,
-        );
-        openPathsRef.current = pathTransition.nextOpenPaths;
-        previewPathRef.current = pathTransition.nextPreviewPath;
-        setOpenPaths((current) =>
-          pinDocumentSessionPath(
-            current,
-            previewPathRef.current,
-            nextDocument.path,
-          ).nextOpenPaths,
-        );
-        setPreviewPath((current) =>
-          pinDocumentSessionPath(
-            openPathsRef.current,
-            current,
-            nextDocument.path,
-          ).nextPreviewPath,
-        );
-      } else {
-        previewPathRef.current = nextDocument.path;
-        setPreviewPath(nextDocument.path);
+      if (commit.replacedDocument) {
+        void syncClosedDocument(commit.replacedDocument);
+        void syncClosedJavaScriptTypeScriptDocument(commit.replacedDocument);
       }
-
-      setDocuments((current) => ({
-        ...current,
-        [nextDocument.path]: nextDocument,
-      }));
       selectedGitChangeRef.current = null;
       setSelectedGitChange(null);
       setGitDiffPreview(null);
       setGitDiffLoading(false);
       gitDiffRequestTokenRef.current += 1;
-      setActivePath(nextDocument.path);
       setMessage(null);
     },
     [
-      activeDocumentRef,
-      documentsRef,
+      documentTabSession,
       gitDiffRequestTokenRef,
-      openPathsRef,
-      previewPathRef,
       recordCurrentNavigationLocation,
       selectedGitChangeRef,
-      setActivePath,
-      setDocuments,
       setGitDiffLoading,
       setGitDiffPreview,
       setMessage,
-      setOpenPaths,
-      setPreviewPath,
       setSelectedGitChange,
+      syncClosedDocument,
+      syncClosedJavaScriptTypeScriptDocument,
     ],
   );
 

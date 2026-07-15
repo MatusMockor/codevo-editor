@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
@@ -13,6 +14,7 @@ import {
   editorGroupVisiblePaths,
   updateEditorGroupOpenPaths,
   updateEditorGroupPreviewPath,
+  type EditorLayout,
   type EditorGroupsState,
 } from "../domain/editorGroups";
 import { isPersistableEditorDocumentPath } from "../domain/editorDocumentSchemes";
@@ -23,11 +25,20 @@ import {
   selectEditorSurfaceRestore,
   type EditorSurfaceSnapshot,
 } from "../domain/workspaceSessionSnapshot";
-import type {
-  EditorDocument,
-  ImageTab,
-} from "../domain/workspace";
+import type { EditorDocument, ImageTab } from "../domain/workspace";
 import { isSessionPathInWorkspace } from "./documentSessionState";
+import {
+  activateDocumentTabSessionPath,
+  commitImageTabOpen,
+  commitTextDocumentOpen,
+  openReadOnlyDocumentInSession,
+  openExistingDocumentInSession,
+  pinDocumentTabSessionPath,
+  refreshCleanDocumentInSession,
+  synchronizeSnapshotView,
+  type DocumentTabSessionPort,
+  type DocumentTabSessionSnapshot,
+} from "./documentTabSessionPort";
 
 type Documents = Record<string, EditorDocument>;
 type ImageTabs = Record<string, ImageTab>;
@@ -42,6 +53,7 @@ export interface EditorSessionState {
   activePath: string | null;
   documents: Documents;
   documentsRef: MutableRefObject<Documents>;
+  documentTabSession: DocumentTabSessionPort;
   editorGroups: EditorGroupsState;
   editorGroupsRef: MutableRefObject<EditorGroupsState>;
   imageTabs: ImageTabs;
@@ -92,7 +104,7 @@ export function useEditorSessionState(): EditorSessionState {
     openPathsRef.current = group.openPaths;
     previewPathRef.current = group.previewPath;
     activeDocumentRef.current = group.activePath
-      ? documentsRef.current[group.activePath] ?? null
+      ? (documentsRef.current[group.activePath] ?? null)
       : null;
   }, []);
 
@@ -136,10 +148,10 @@ export function useEditorSessionState(): EditorSessionState {
   const activeGroupId = editorGroups.activeGroupId;
   const activeGroup = editorGroups.groups[activeGroupId] ?? createEditorGroup();
   const { activePath, openPaths, previewPath } = activeGroup;
-  const activeDocument = activePath ? documents[activePath] ?? null : null;
-  const activeImage = activePath ? imageTabs[activePath] ?? null : null;
+  const activeDocument = activePath ? (documents[activePath] ?? null) : null;
+  const activeImage = activePath ? (imageTabs[activePath] ?? null) : null;
   const activeMarkdownPreview = activePath
-    ? markdownPreviewTabs[activePath] ?? null
+    ? (markdownPreviewTabs[activePath] ?? null)
     : null;
 
   const setActivePath = useCallback<Dispatch<SetStateAction<string | null>>>(
@@ -197,7 +209,10 @@ export function useEditorSessionState(): EditorSessionState {
           ...current,
           groups: {
             ...current.groups,
-            [current.activeGroupId]: updateEditorGroupPreviewPath(group, update),
+            [current.activeGroupId]: updateEditorGroupPreviewPath(
+              group,
+              update,
+            ),
           },
         };
       });
@@ -219,26 +234,136 @@ export function useEditorSessionState(): EditorSessionState {
     setEditorGroupsState(nextEditorGroups);
   }, [synchronizeActiveGroupRefs]);
 
-  const snapshotEditorSurface = useCallback(
-    (rootPath: string) => {
-      const current = editorGroupsRef.current;
-      const group = current.groups[current.activeGroupId] ?? createEditorGroup();
-
-      return scopeEditorSurfaceSnapshot(
-        rootPath,
-        buildEditorSurfaceSnapshot({
-          activePath: group.activePath,
-          documents: documentsRef.current,
-          editorGroups: current,
-          imageTabs: imageTabsRef.current,
-          markdownPreviewTabs: markdownPreviewTabsRef.current,
-          openPaths: group.openPaths,
-          previewPath: group.previewPath,
-        }),
-      );
-    },
+  const liveDocumentTabSnapshot = useCallback(
+    (): DocumentTabSessionSnapshot =>
+      synchronizeSnapshotView({
+        documents: documentsRef.current,
+        editorGroups: editorGroupsRef.current,
+        imageTabs: imageTabsRef.current,
+      }),
     [],
   );
+
+  const snapshotDocumentTabs = useCallback(
+    (): DocumentTabSessionSnapshot =>
+      detachDocumentTabSnapshot(liveDocumentTabSnapshot()),
+    [liveDocumentTabSnapshot],
+  );
+
+  const commitDocumentTabs = useCallback(
+    (snapshot: DocumentTabSessionSnapshot) => {
+      if (documentTabSnapshotsEqual(liveDocumentTabSnapshot(), snapshot)) {
+        return;
+      }
+
+      documentsRef.current = snapshot.documents;
+      imageTabsRef.current = snapshot.imageTabs;
+      editorGroupsRef.current = snapshot.editorGroups;
+      synchronizeActiveGroupRefs(snapshot.editorGroups);
+      setDocumentsState(snapshot.documents);
+      setImageTabsState(snapshot.imageTabs);
+      setEditorGroupsState(snapshot.editorGroups);
+    },
+    [liveDocumentTabSnapshot, synchronizeActiveGroupRefs],
+  );
+
+  const documentTabSession = useMemo<DocumentTabSessionPort>(
+    () => ({
+      activate: (path) => {
+        commitDocumentTabs(
+          activateDocumentTabSessionPath(liveDocumentTabSnapshot(), path),
+        );
+      },
+      commitImageOpen: (image) => {
+        const transition = commitImageTabOpen(liveDocumentTabSnapshot(), image);
+        commitDocumentTabs(transition.snapshot);
+        return transition.result;
+      },
+      commitTextOpen: (input) => {
+        const transition = commitTextDocumentOpen(
+          liveDocumentTabSnapshot(),
+          input,
+        );
+        commitDocumentTabs(transition.snapshot);
+        return transition.result;
+      },
+      getActivePath: () => {
+        const groups = editorGroupsRef.current;
+        return groups.groups[groups.activeGroupId]?.activePath ?? null;
+      },
+      getDocument: (path) => documentsRef.current[path] ?? null,
+      getTabDisplayName: (path) =>
+        documentsRef.current[path]?.name ??
+        imageTabsRef.current[path]?.name ??
+        null,
+      openReadOnlyDocument: (document, pin) => {
+        const nextDocument = {
+          ...document,
+          readOnly: true,
+          savedContent: document.savedContent ?? document.content,
+        };
+        const transition = openReadOnlyDocumentInSession(
+          liveDocumentTabSnapshot(),
+          nextDocument,
+          pin,
+        );
+        commitDocumentTabs(transition.snapshot);
+        return transition.result;
+      },
+      openExistingDocument: (input) => {
+        const transition = openExistingDocumentInSession(
+          liveDocumentTabSnapshot(),
+          input,
+        );
+
+        if (!transition.result) {
+          return null;
+        }
+
+        commitDocumentTabs(transition.snapshot);
+        return transition.result;
+      },
+      pin: (path) => {
+        commitDocumentTabs(
+          pinDocumentTabSessionPath(liveDocumentTabSnapshot(), path),
+        );
+      },
+      refreshCleanDocument: (path, content) => {
+        const transition = refreshCleanDocumentInSession(
+          liveDocumentTabSnapshot(),
+          path,
+          content,
+        );
+
+        if (!transition.document) {
+          return null;
+        }
+
+        commitDocumentTabs(transition.snapshot);
+        return transition.document;
+      },
+      snapshot: snapshotDocumentTabs,
+    }),
+    [commitDocumentTabs, liveDocumentTabSnapshot, snapshotDocumentTabs],
+  );
+
+  const snapshotEditorSurface = useCallback((rootPath: string) => {
+    const current = editorGroupsRef.current;
+    const group = current.groups[current.activeGroupId] ?? createEditorGroup();
+
+    return scopeEditorSurfaceSnapshot(
+      rootPath,
+      buildEditorSurfaceSnapshot({
+        activePath: group.activePath,
+        documents: documentsRef.current,
+        editorGroups: current,
+        imageTabs: imageTabsRef.current,
+        markdownPreviewTabs: markdownPreviewTabsRef.current,
+        openPaths: group.openPaths,
+        previewPath: group.previewPath,
+      }),
+    );
+  }, []);
 
   const restoreEditorSurface = useCallback(
     (rootPath: string, snapshot: EditorSurfaceSnapshot) => {
@@ -262,6 +387,7 @@ export function useEditorSessionState(): EditorSessionState {
     activePath,
     documents,
     documentsRef,
+    documentTabSession,
     editorGroups,
     editorGroupsRef,
     imageTabs,
@@ -384,4 +510,136 @@ function resolveStateUpdate<Value>(
   }
 
   return update;
+}
+
+function detachDocumentTabSnapshot(
+  snapshot: DocumentTabSessionSnapshot,
+): DocumentTabSessionSnapshot {
+  const documents = Object.fromEntries(
+    Object.entries(snapshot.documents).map(([path, document]) => [
+      path,
+      {
+        ...document,
+        revision: document.revision
+          ? { ...document.revision }
+          : document.revision,
+      },
+    ]),
+  );
+  const imageTabs = Object.fromEntries(
+    Object.entries(snapshot.imageTabs).map(([path, image]) => [
+      path,
+      { ...image },
+    ]),
+  );
+  const editorGroups = detachEditorGroups(snapshot.editorGroups);
+
+  return synchronizeSnapshotView({ documents, editorGroups, imageTabs });
+}
+
+function detachEditorGroups(
+  editorGroups: EditorGroupsState,
+): EditorGroupsState {
+  return {
+    activeGroupId: editorGroups.activeGroupId,
+    groups: Object.fromEntries(
+      Object.entries(editorGroups.groups).map(([groupId, group]) => [
+        groupId,
+        { ...group, openPaths: [...group.openPaths] },
+      ]),
+    ),
+    layout: detachEditorLayout(editorGroups.layout),
+  };
+}
+
+function detachEditorLayout(layout: EditorLayout): EditorLayout {
+  if (layout.kind === "group") {
+    return { ...layout };
+  }
+
+  return {
+    ...layout,
+    children: [
+      detachEditorLayout(layout.children[0]),
+      detachEditorLayout(layout.children[1]),
+    ],
+    sizes: [...layout.sizes],
+  };
+}
+
+function documentTabSnapshotsEqual(
+  current: DocumentTabSessionSnapshot,
+  next: DocumentTabSessionSnapshot,
+): boolean {
+  return (
+    shallowRecordEqual(current.documents, next.documents) &&
+    shallowRecordEqual(current.imageTabs, next.imageTabs) &&
+    editorGroupsEqual(current.editorGroups, next.editorGroups)
+  );
+}
+
+function shallowRecordEqual<Value>(
+  current: Readonly<Record<string, Value>>,
+  next: Readonly<Record<string, Value>>,
+): boolean {
+  if (current === next) {
+    return true;
+  }
+
+  const currentKeys = Object.keys(current);
+  const nextKeys = Object.keys(next);
+
+  return (
+    currentKeys.length === nextKeys.length &&
+    currentKeys.every((key) => current[key] === next[key])
+  );
+}
+
+function editorGroupsEqual(
+  current: EditorGroupsState,
+  next: EditorGroupsState,
+): boolean {
+  if (current === next) {
+    return true;
+  }
+
+  if (
+    current.activeGroupId !== next.activeGroupId ||
+    current.layout !== next.layout
+  ) {
+    return false;
+  }
+
+  const currentGroupIds = Object.keys(current.groups);
+  const nextGroupIds = Object.keys(next.groups);
+
+  return (
+    currentGroupIds.length === nextGroupIds.length &&
+    currentGroupIds.every((groupId) =>
+      editorGroupEqual(current.groups[groupId], next.groups[groupId]),
+    )
+  );
+}
+
+function editorGroupEqual(
+  current: EditorGroupsState["groups"][string] | undefined,
+  next: EditorGroupsState["groups"][string] | undefined,
+): boolean {
+  if (current === next) {
+    return true;
+  }
+
+  if (
+    !current ||
+    !next ||
+    current.activePath !== next.activePath ||
+    current.previewPath !== next.previewPath ||
+    current.openPaths.length !== next.openPaths.length
+  ) {
+    return false;
+  }
+
+  return current.openPaths.every(
+    (path, index) => path === next.openPaths[index],
+  );
 }
