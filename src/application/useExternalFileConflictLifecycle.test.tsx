@@ -22,6 +22,9 @@ function deferred<T>() {
 async function createHarness(
   readTextFile = vi.fn(async () => "disk"),
   workspaceFileOverrides: Partial<WorkspaceFileGateway> = {},
+  resolveDocumentSaveOwnership?: Parameters<
+    typeof useExternalFileConflictLifecycle
+  >[0]["resolveDocumentSaveOwnership"],
 ) {
   const host = document.createElement("div");
   const root = createRoot(host);
@@ -38,6 +41,7 @@ async function createHarness(
     lifecycle = useExternalFileConflictLifecycle({
       ...refs,
       activePath: PATH,
+      resolveDocumentSaveOwnership,
       setActivePath: vi.fn(),
       setDocuments: vi.fn(),
       setOpenPaths: vi.fn(),
@@ -62,6 +66,112 @@ const modified = () => ({
 });
 
 describe("useExternalFileConflictLifecycle", () => {
+  it("shares conflict, clear, event, and retry ownership across workspace aliases", async () => {
+    const aliasRoot = "/workspace-alias";
+    const aliasPath = `${aliasRoot}/file.php`;
+    const resolveOwnership = (root: string, path: string) => {
+      const relativePath = path.slice(root.length + 1);
+      if (!path.startsWith(`${root}/`) || !relativePath) {
+        return null;
+      }
+      return {
+        canonicalRoot: "/real/workspace",
+        workspaceRelativePath: relativePath,
+      };
+    };
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("unreadable"))
+      .mockResolvedValueOnce("recovered disk");
+    const test = await createHarness(read, {}, resolveOwnership);
+
+    let result: false | "resolved" | "unreadable" = false;
+    await act(async () => {
+      result = await test.lifecycle().handleFileChange({
+        ...modified(),
+        rootPath: aliasRoot,
+        path: aliasPath,
+        relativePath: "file.php",
+      });
+    });
+    expect(result).toBe("unreadable");
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(true);
+    expect(test.lifecycle().hasConflict(aliasRoot, aliasPath)).toBe(true);
+    expect(test.lifecycle().activeState.conflict?.baseline.path).toBe(PATH);
+    const unreadable = test.lifecycle().activeState.conflict;
+    expect(unreadable?.kind).toBe("unreadable");
+    expect(unreadable?.kind === "unreadable" && unreadable.attemptedPath).toBe(
+      aliasPath,
+    );
+
+    await act(async () => test.lifecycle().action("retryRead"));
+    expect(test.lifecycle().activeState.conflict?.disk).toMatchObject({
+      content: "recovered disk",
+      path: aliasPath,
+    });
+
+    act(() => test.lifecycle().clearConflict(aliasRoot, aliasPath));
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    act(() => test.root.unmount());
+  });
+
+  it("isolates equal relative paths owned by distinct canonical workspaces", async () => {
+    const test = await createHarness();
+    act(() => {
+      test.lifecycle().detectSaveConflict(
+        ROOT,
+        test.refs.documentsRef.current[PATH],
+        { content: "disk", revision: revision(2) },
+      );
+    });
+
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(true);
+    expect(
+      test.lifecycle().hasConflict("/other-workspace", "/other-workspace/file.php"),
+    ).toBe(false);
+    act(() => test.root.unmount());
+  });
+
+  it("supports legacy raw-root ownership and rejects files outside that root", async () => {
+    const test = await createHarness();
+    const outside = { ...editorDocument(), path: "/other/file.php" };
+
+    act(() => {
+      test.lifecycle().detectSaveConflict(ROOT, outside, {
+        content: "outside disk",
+        revision: revision(2),
+      });
+    });
+    expect(test.lifecycle().hasConflict(ROOT, outside.path)).toBe(false);
+
+    act(() => {
+      test.lifecycle().detectSaveConflict(
+        ROOT,
+        test.refs.documentsRef.current[PATH],
+        { content: "legacy disk", revision: revision(3) },
+      );
+    });
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(true);
+    act(() => test.root.unmount());
+  });
+
+  it("does not fall back to legacy ownership after an injected rejection", async () => {
+    const rejectOwnership = vi.fn(() => null);
+    const test = await createHarness(undefined, {}, rejectOwnership);
+
+    act(() => {
+      test.lifecycle().detectSaveConflict(
+        ROOT,
+        test.refs.documentsRef.current[PATH],
+        { content: "disk", revision: revision(2) },
+      );
+    });
+
+    expect(rejectOwnership).toHaveBeenCalledWith(ROOT, PATH);
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    act(() => test.root.unmount());
+  });
+
   it("shows a save conflict with the actual disk revision and advances only on reload", async () => {
     const test = await createHarness();
     const diskRevision = revision(2);

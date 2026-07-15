@@ -6,12 +6,43 @@ import {
   type DocumentSaveLease,
   type DocumentSaveWritePermit,
 } from "./documentSaveCoordinator";
+import {
+  createDocumentSaveIdentity,
+  documentSaveIdentityFromSelectedPath,
+  legacyDocumentSaveIdentity,
+  type DocumentSaveIdentity,
+} from "./documentSaveIdentity";
+import type { WorkspacePathPolicy } from "../domain/workspacePath";
 
 const rootA = "/workspace-a";
 const rootB = "/workspace-b";
 
 function key(path: string, rootPath = rootA): DocumentSaveKey {
-  return { path, rootPath };
+  return canonical(rootPath, path);
+}
+
+function canonical(rootPath: string, path: string): DocumentSaveIdentity {
+  const identity = createDocumentSaveIdentity(
+    rootPath,
+    path.replace(/^\/+/, ""),
+  );
+  if (!identity) {
+    throw new Error(`Invalid test save identity: ${rootPath} ${path}`);
+  }
+
+  return identity;
+}
+
+function workspaceScope(canonicalRoot = rootA) {
+  return { kind: "workspace" as const, canonicalRoot };
+}
+
+function fileScope(path: string, canonicalRoot = rootA) {
+  return { kind: "file" as const, ...canonical(canonicalRoot, path) };
+}
+
+function directoryScope(path: string, canonicalRoot = rootA) {
+  return { kind: "directory" as const, ...canonical(canonicalRoot, path) };
 }
 
 interface Deferred<T> {
@@ -37,6 +68,164 @@ async function flushPromises(): Promise<void> {
 }
 
 describe("DocumentSaveCoordinator", () => {
+  it("normalizes case and Unicode with the workspace path policy", () => {
+    const policy: WorkspacePathPolicy = {
+      caseSensitive: false,
+      foldCase: (value) => value.toLocaleLowerCase("en-US"),
+      unicodeNormalization: "NFD",
+    };
+    const composed = createDocumentSaveIdentity(
+      "/real/Project/",
+      "SRC/Caf\u00e9.php",
+      policy,
+    );
+    const decomposed = createDocumentSaveIdentity(
+      "/real/Project",
+      "src/cafe\u0301.php",
+      policy,
+    );
+
+    expect(composed).toEqual(decomposed);
+    expect(composed).toEqual({
+      canonicalRoot: "/real/Project",
+      workspaceRelativePath: "src/cafe\u0301.php",
+    });
+    expect(Object.isFrozen(composed)).toBe(true);
+    expect(createDocumentSaveIdentity("/real/Project\\", "src/a\\b")).toEqual({
+      canonicalRoot: "/real/Project\\",
+      workspaceRelativePath: "src/a\\b",
+    });
+    expect(createDocumentSaveIdentity("/real/Project", "src/a\\b")).not.toEqual(
+      createDocumentSaveIdentity("/real/Project", "src/a/b"),
+    );
+  });
+
+  it("rejects legacy lexical paths outside the root", () => {
+    expect(
+      legacyDocumentSaveIdentity("/workspace", "/workspace/src/App.ts"),
+    ).toEqual({
+      canonicalRoot: "/workspace",
+      workspaceRelativePath: "src/App.ts",
+    });
+    expect(
+      legacyDocumentSaveIdentity("/workspace", "/workspace-other/App.ts"),
+    ).toBeNull();
+    expect(
+      legacyDocumentSaveIdentity(
+        "/workspace",
+        "/workspace/src/../../outside/App.ts",
+      ),
+    ).toBeNull();
+    expect(legacyDocumentSaveIdentity("/workspace", "/workspace")).toBeNull();
+  });
+
+  it("serializes and coalesces selected aliases by canonical ownership", async () => {
+    const coordinator = new DocumentSaveCoordinator<string>();
+    const first = deferred();
+    const calls: string[] = [];
+    const selectedAlias = "/selected/project/src/App.ts";
+    const canonicalAlias = "/real/project/src/App.ts";
+    const ownershipFromSelectedAlias = documentSaveIdentityFromSelectedPath(
+      "/real/project",
+      "/selected/project",
+      selectedAlias,
+    );
+    const ownershipFromCanonicalAlias = documentSaveIdentityFromSelectedPath(
+      "/real/project",
+      "/real/project",
+      canonicalAlias,
+    );
+    expect(ownershipFromSelectedAlias).toEqual(ownershipFromCanonicalAlias);
+    expect(ownershipFromSelectedAlias).not.toBeNull();
+    if (!ownershipFromSelectedAlias || !ownershipFromCanonicalAlias) {
+      throw new Error("Expected alias ownership");
+    }
+
+    const selectedSave = coordinator.request(ownershipFromSelectedAlias, async () => {
+      calls.push(selectedAlias);
+      await first.promise;
+      return "selected";
+    });
+    const replacedSave = coordinator.request(ownershipFromSelectedAlias, async () => {
+      calls.push("replaced");
+      return "replaced";
+    });
+    const canonicalSave = coordinator.request(ownershipFromCanonicalAlias, async () => {
+      calls.push(canonicalAlias);
+      return "canonical";
+    });
+
+    expect(calls).toEqual([selectedAlias]);
+    first.resolve();
+    await expect(
+      Promise.all([selectedSave, replacedSave, canonicalSave]),
+    ).resolves.toEqual([
+      { status: "saved", result: "selected" },
+      { status: "saved", result: "canonical" },
+      { status: "saved", result: "canonical" },
+    ]);
+    expect(calls).toEqual([selectedAlias, canonicalAlias]);
+  });
+
+  it("matches canonical directory and workspace exclusions across aliases", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const directory = deferred();
+    const workspace = deferred();
+    const app = canonical("/real/project", "src/App.ts");
+    const sibling = canonical("/real/project", "src-old/App.ts");
+
+    const directoryExclusion = coordinator.runWithExclusion(
+      directoryScope("src", "/real/project"),
+      async () => directory.promise,
+    );
+    await expect(
+      coordinator.request(app, async () => undefined),
+    ).resolves.toEqual({ status: "stale" });
+    await expect(
+      coordinator.request(sibling, async () => undefined),
+    ).resolves.toEqual({ status: "saved" });
+    directory.resolve();
+    await directoryExclusion;
+
+    const workspaceExclusion = coordinator.runWithExclusion(
+      workspaceScope("/real/project"),
+      async () => workspace.promise,
+    );
+    await expect(
+      coordinator.request(app, async () => undefined),
+    ).resolves.toEqual({ status: "stale" });
+    workspace.resolve();
+    await workspaceExclusion;
+  });
+
+  it("invalidates canonical work regardless of the selected alias", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const blocked = deferred();
+    const ownershipFromSelectedAlias = canonical(
+      "/real/project",
+      "src/App.ts",
+    );
+    const ownershipFromCanonicalAlias = canonical(
+      "/real/project/",
+      "src/App.ts",
+    );
+    const captured: { lease: DocumentSaveLease | null } = { lease: null };
+
+    const save = coordinator.request(
+      ownershipFromSelectedAlias,
+      async (activeLease) => {
+        captured.lease = activeLease;
+        await blocked.promise;
+      },
+    );
+    expect(captured.lease?.isCurrent()).toBe(true);
+
+    coordinator.invalidate(ownershipFromCanonicalAlias);
+    expect(captured.lease?.isCurrent()).toBe(false);
+    blocked.resolve();
+    await expect(save).resolves.toEqual({ status: "stale" });
+  });
+
   it("serializes one path and coalesces pending requests to the latest", async () => {
     const coordinator = new DocumentSaveCoordinator<string>();
     const first = deferred();
@@ -334,7 +523,7 @@ describe("DocumentSaveCoordinator", () => {
     });
 
     const exclusion = coordinator.runWithExclusion(
-      { kind: "workspace", rootPath: rootA },
+      workspaceScope(),
       async () => {
         calls.push("callback:start");
         await callback.promise;
@@ -401,7 +590,7 @@ describe("DocumentSaveCoordinator", () => {
     });
 
     const exclusion = coordinator.runWithIssuedWriteDrain(
-      { kind: "file", path: "/a.php", rootPath: rootA },
+      fileScope("/a.php"),
       async () => {
         calls.push("callback:start");
         await callback.promise;
@@ -462,7 +651,7 @@ describe("DocumentSaveCoordinator", () => {
     });
 
     const exclusion = coordinator.runWithIssuedWriteDrain(
-      { kind: "workspace", rootPath: rootA },
+      workspaceScope(),
       async () => {
         calls.push("callback");
         return "switched";
@@ -510,7 +699,7 @@ describe("DocumentSaveCoordinator", () => {
     });
 
     const exclusion = coordinator.runWithIssuedWriteDrain(
-      { kind: "file", path: "/a.php", rootPath: rootA },
+      fileScope("/a.php"),
       async () => {
         calls.push("callback:start");
         await callback.promise;
@@ -558,7 +747,7 @@ describe("DocumentSaveCoordinator", () => {
 
     await expect(
       coordinator.runWithIssuedWriteDrain(
-        { kind: "directory", path: "/project/src", rootPath: rootA },
+        directoryScope("/project/src"),
         async () => {
           calls.push("callback");
         },
@@ -584,7 +773,7 @@ describe("DocumentSaveCoordinator", () => {
     void save.catch(() => calls.push("write:rejected"));
 
     const exclusion = coordinator.runWithIssuedWriteDrain(
-      { kind: "workspace", rootPath: rootA },
+      workspaceScope(),
       async () => {
         calls.push("callback");
       },
@@ -609,7 +798,7 @@ describe("DocumentSaveCoordinator", () => {
       await operationFinished.promise;
     });
     const drain = coordinator.runWithIssuedWriteDrain(
-      { kind: "workspace", rootPath: rootA },
+      workspaceScope(),
       callback,
     );
 
@@ -636,7 +825,7 @@ describe("DocumentSaveCoordinator", () => {
     const afterDispose = vi.fn(async () => "unexpected");
     await expect(
       coordinator.runWithIssuedWriteDrain(
-        { kind: "workspace", rootPath: rootA },
+        workspaceScope(),
         afterDispose,
       ),
     ).rejects.toBeInstanceOf(DocumentSaveCoordinatorDisposedError);
@@ -649,11 +838,7 @@ describe("DocumentSaveCoordinator", () => {
     const calls: string[] = [];
 
     const exclusion = coordinator.runWithExclusion(
-      {
-        kind: "directory",
-        path: "/project/src",
-        rootPath: `${rootA}/`,
-      },
+      directoryScope("/project/src", `${rootA}/`),
       async () => callback.promise,
     );
 
@@ -688,11 +873,7 @@ describe("DocumentSaveCoordinator", () => {
 
     const fileCallback = deferred();
     const fileExclusion = coordinator.runWithExclusion(
-      {
-        kind: "file",
-        path: "/project/file.php",
-        rootPath: rootA,
-      },
+      fileScope("/project/file.php"),
       async () => fileCallback.promise,
     );
     await expect(
@@ -717,18 +898,11 @@ describe("DocumentSaveCoordinator", () => {
     const calls: string[] = [];
 
     const outer = coordinator.runWithExclusion(
-      {
-        kind: "workspace",
-        rootPath: rootA,
-      },
+      workspaceScope(),
       async () => {
         calls.push("outer:start");
         await coordinator.runWithExclusion(
-          {
-            kind: "file",
-            path: "/a.php",
-            rootPath: rootA,
-          },
+          fileScope("/a.php"),
           async () => {
             calls.push("inner:start");
             await innerCallback.promise;
@@ -772,11 +946,11 @@ describe("DocumentSaveCoordinator", () => {
     const fileCallback = deferred();
 
     const directoryExclusion = coordinator.runWithExclusion(
-      { kind: "directory", path: "/project", rootPath: rootA },
+      directoryScope("/project"),
       async () => directoryCallback.promise,
     );
     const fileExclusion = coordinator.runWithExclusion(
-      { kind: "file", path: "/project/a.php", rootPath: rootA },
+      fileScope("/project/a.php"),
       async () => fileCallback.promise,
     );
 
@@ -803,7 +977,7 @@ describe("DocumentSaveCoordinator", () => {
 
     await expect(
       coordinator.runWithExclusion(
-        { kind: "file", path: "/a.php", rootPath: rootA },
+        fileScope("/a.php"),
         async () => {
           throw error;
         },

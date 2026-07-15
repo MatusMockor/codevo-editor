@@ -25,9 +25,14 @@ import {
 } from "./activeDocumentSaveStore";
 import {
   DocumentSaveCoordinator,
+  type DocumentSaveInvalidationScope,
   type DocumentSaveLease,
   type RunWithDocumentSaveExclusion,
 } from "./documentSaveCoordinator";
+import {
+  legacyDocumentSaveIdentity,
+  type ResolveDocumentSaveOwnership,
+} from "./documentSaveIdentity";
 import {
   DocumentSaveService,
   type DocumentSaveResult,
@@ -51,6 +56,7 @@ export interface DocumentSaveLifecycleDependencies {
 
   localHistoryGateway: LocalHistoryGateway;
   workspaceFiles: WorkspaceFileGateway;
+  resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
 
   formattedContentForSave: (
     document: EditorDocument,
@@ -131,6 +137,7 @@ export function useDocumentSaveLifecycle(
     setMessage,
     localHistoryGateway,
     workspaceFiles,
+    resolveDocumentSaveOwnership,
     formattedContentForSave,
     optimizedImportsContentForSave,
     organizedImportsContentForSave,
@@ -396,8 +403,14 @@ export function useDocumentSaveLifecycle(
         requestedRoot: workspaceRoot,
         workspaceRequestToken: workspaceRequestTokenRef.current,
       };
+      const ownership = resolveDocumentSaveOwnership
+        ? resolveDocumentSaveOwnership(identity.requestedRoot, identity.path)
+        : legacyDocumentSaveIdentity(identity.requestedRoot, identity.path);
+      if (!ownership) {
+        return { status: "stale" };
+      }
       const outcome = await documentSaveCoordinator.request(
-        { rootPath: identity.requestedRoot, path: identity.path },
+        ownership,
         (lease) => performDocumentSave(identity, lease),
       );
       if (outcome.status !== "saved") {
@@ -409,6 +422,7 @@ export function useDocumentSaveLifecycle(
     [
       documentSaveCoordinator,
       performDocumentSave,
+      resolveDocumentSaveOwnership,
       workspaceRequestTokenRef,
       workspaceRoot,
     ],
@@ -425,22 +439,53 @@ export function useDocumentSaveLifecycle(
 
   const runWithDocumentSaveExclusion =
     useCallback<RunWithDocumentSaveExclusion>(
-      (scope, operation) =>
-        documentSaveCoordinator.runWithExclusion(scope, operation),
-      [documentSaveCoordinator],
+      (scope, operation) => {
+        const resolvedScope = resolveDocumentSaveInvalidationScope(
+          scope,
+          resolveDocumentSaveOwnership,
+        );
+        if (!resolvedScope) {
+          return Promise.reject(documentSaveOwnershipResolutionError(scope));
+        }
+
+        return documentSaveCoordinator.runWithExclusion(
+          resolvedScope,
+          operation,
+        );
+      },
+      [documentSaveCoordinator, resolveDocumentSaveOwnership],
     );
 
   const runWithIssuedWriteDrain = useCallback<RunWithDocumentSaveExclusion>(
-    (scope, operation) =>
-      documentSaveCoordinator.runWithIssuedWriteDrain(scope, operation),
-    [documentSaveCoordinator],
+    (scope, operation) => {
+      const resolvedScope = resolveDocumentSaveInvalidationScope(
+        scope,
+        resolveDocumentSaveOwnership,
+      );
+      if (!resolvedScope) {
+        return Promise.reject(documentSaveOwnershipResolutionError(scope));
+      }
+
+      return documentSaveCoordinator.runWithIssuedWriteDrain(
+        resolvedScope,
+        operation,
+      );
+    },
+    [documentSaveCoordinator, resolveDocumentSaveOwnership],
   );
 
   const invalidateDocumentSave = useCallback(
     (rootPath: string, path: string): void => {
-      documentSaveCoordinator.invalidate({ rootPath, path });
+      const ownership = resolveDocumentSaveOwnership
+        ? resolveDocumentSaveOwnership(rootPath, path)
+        : legacyDocumentSaveIdentity(rootPath, path);
+      if (!ownership) {
+        return;
+      }
+
+      documentSaveCoordinator.invalidate(ownership);
     },
-    [documentSaveCoordinator],
+    [documentSaveCoordinator, resolveDocumentSaveOwnership],
   );
 
   useEffect(() => {
@@ -471,4 +516,43 @@ export function useDocumentSaveLifecycle(
     runWithIssuedWriteDrain,
     invalidateDocumentSave,
   };
+}
+
+function resolveDocumentSaveInvalidationScope(
+  scope: DocumentSaveInvalidationScope,
+  resolveOwnership: ResolveDocumentSaveOwnership | undefined,
+): DocumentSaveInvalidationScope | null {
+  if ("canonicalRoot" in scope && scope.canonicalRoot !== undefined) {
+    return scope;
+  }
+  if (!resolveOwnership) {
+    return scope;
+  }
+
+  if (scope.kind === "workspace") {
+    const separator = scope.rootPath.includes("\\") ? "\\" : "/";
+    const sentinelPath = `${scope.rootPath.replace(/[\\/]+$/, "")}${separator}.document-save-scope`;
+    const ownership = resolveOwnership(scope.rootPath, sentinelPath);
+    if (!ownership) {
+      return null;
+    }
+    if ("canonicalRoot" in ownership) {
+      return { kind: "workspace", canonicalRoot: ownership.canonicalRoot };
+    }
+
+    return scope;
+  }
+
+  const ownership = resolveOwnership(scope.rootPath, scope.path);
+  if (!ownership) {
+    return null;
+  }
+
+  return { kind: scope.kind, ...ownership };
+}
+
+function documentSaveOwnershipResolutionError(
+  scope: DocumentSaveInvalidationScope,
+): Error {
+  return new Error(`Cannot resolve document save ${scope.kind} ownership.`);
 }

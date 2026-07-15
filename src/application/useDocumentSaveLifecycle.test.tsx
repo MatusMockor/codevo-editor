@@ -301,6 +301,107 @@ describe("useDocumentSaveLifecycle", () => {
     harness.unmount();
   });
 
+  it("shares a canonical save lane while writing each selected alias", async () => {
+    const aliasPath = `${ROOT}/src/Alias.php`;
+    const firstWrite = deferred<void>();
+    const writeTextFile = vi
+      .fn()
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValue(undefined);
+    const resolveDocumentSaveOwnership = vi.fn(() => ({
+      canonicalRoot: "/real/workspace",
+      workspaceRelativePath: "src/User.php",
+    }));
+    const harness = renderLifecycle({
+      resolveDocumentSaveOwnership,
+      workspaceFiles: workspaceFiles({ writeTextFile }),
+    });
+    const aliasDocument = {
+      ...document("alias edited"),
+      name: "Alias.php",
+      path: aliasPath,
+    };
+    harness.documentsRef.current = {
+      ...harness.documentsRef.current,
+      [aliasPath]: aliasDocument,
+    };
+
+    const selectedSave = harness.lifecycle().saveDocument(PATH);
+    await vi.waitFor(() => expect(writeTextFile).toHaveBeenCalledOnce());
+    const aliasSave = harness.lifecycle().saveDocument(aliasPath);
+    firstWrite.resolve();
+
+    await act(async () => {
+      await Promise.all([selectedSave, aliasSave]);
+    });
+
+    expect(resolveDocumentSaveOwnership).toHaveBeenCalledTimes(2);
+    expect(resolveDocumentSaveOwnership).toHaveBeenNthCalledWith(1, ROOT, PATH);
+    expect(resolveDocumentSaveOwnership).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      aliasPath,
+    );
+    expect(writeTextFile).toHaveBeenNthCalledWith(1, PATH, "edited");
+    expect(writeTextFile).toHaveBeenNthCalledWith(
+      2,
+      aliasPath,
+      "alias edited",
+    );
+    expect(harness.localHistoryGateway.recordSnapshot).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      "src/Alias.php",
+      "alias edited",
+    );
+    expect(harness.syncSavedDocument).toHaveBeenNthCalledWith(
+      2,
+      ROOT,
+      expect.objectContaining({ path: aliasPath }),
+      expect.any(Function),
+    );
+    expect(harness.setMessage).toHaveBeenLastCalledWith("Saved Alias.php");
+    harness.unmount();
+  });
+
+  it("rejects a save without canonical ownership", async () => {
+    const outsidePath = "/outside/User.php";
+    const resolveDocumentSaveOwnership = vi.fn(() => null);
+    const harness = renderLifecycle({ resolveDocumentSaveOwnership });
+    harness.documentsRef.current[outsidePath] = {
+      ...document("outside edited"),
+      path: outsidePath,
+    };
+
+    await expect(
+      harness.lifecycle().saveDocument(outsidePath),
+    ).resolves.toEqual({ status: "stale" });
+
+    expect(resolveDocumentSaveOwnership).toHaveBeenCalledOnce();
+    expect(resolveDocumentSaveOwnership).toHaveBeenCalledWith(
+      ROOT,
+      outsidePath,
+    );
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("safely rejects an outside-root save through the legacy fallback", async () => {
+    const outsidePath = "/outside/User.php";
+    const harness = renderLifecycle();
+    harness.documentsRef.current[outsidePath] = {
+      ...document("outside edited"),
+      path: outsidePath,
+    };
+
+    await expect(
+      harness.lifecycle().saveDocument(outsidePath),
+    ).resolves.toEqual({ status: "stale" });
+
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it.each(["readOnly", "conflict", "failed"] as const)(
     "returns the latest %s result to a coalesced request",
     async (terminalStatus) => {
@@ -609,6 +710,85 @@ describe("useDocumentSaveLifecycle", () => {
     expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
     harness.unmount();
   });
+
+  it("invalidates a pending prepare through an equivalent workspace alias", async () => {
+    const formatting = deferred<string>();
+    const aliasRoot = "/workspace-alias";
+    const aliasPath = `${aliasRoot}/src/User.php`;
+    const resolveDocumentSaveOwnership = vi.fn(() => ({
+      canonicalRoot: "/real/workspace",
+      workspaceRelativePath: "src/User.php",
+    }));
+    const harness = renderLifecycle({
+      formattedContentForSave: vi.fn(() => formatting.promise),
+      resolveDocumentSaveOwnership,
+    });
+
+    const save = harness.lifecycle().saveActiveDocument();
+    await vi.waitFor(() =>
+      expect(
+        harness.dependencies.formattedContentForSave,
+      ).toHaveBeenCalledOnce(),
+    );
+
+    harness.lifecycle().invalidateDocumentSave(aliasRoot, aliasPath);
+    formatting.resolve("formatted");
+    await save;
+
+    expect(resolveDocumentSaveOwnership).toHaveBeenLastCalledWith(
+      aliasRoot,
+      aliasPath,
+    );
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it.each(["file", "workspace"] as const)(
+    "drains an alias %s exclusion before granting a pending write",
+    async (kind) => {
+      const formatting = deferred<string>();
+      const aliasRoot = "/workspace-alias";
+      const aliasPath = `${aliasRoot}/src/User.php`;
+      const events: string[] = [];
+      const resolveDocumentSaveOwnership = vi.fn(() => ({
+        canonicalRoot: "/real/workspace",
+        workspaceRelativePath: "src/User.php",
+      }));
+      const harness = renderLifecycle({
+        formattedContentForSave: vi.fn(async () => {
+          const content = await formatting.promise;
+          events.push("prepared");
+          return content;
+        }),
+        resolveDocumentSaveOwnership,
+      });
+
+      const save = harness.lifecycle().saveActiveDocument();
+      await vi.waitFor(() =>
+        expect(
+          harness.dependencies.formattedContentForSave,
+        ).toHaveBeenCalledOnce(),
+      );
+      const operation = vi.fn(async () => {
+        events.push("operation");
+      });
+      const scope =
+        kind === "file"
+          ? { kind, rootPath: aliasRoot, path: aliasPath }
+          : { kind, rootPath: aliasRoot };
+      const exclusion = harness
+        .lifecycle()
+        .runWithDocumentSaveExclusion(scope, operation);
+
+      expect(operation).not.toHaveBeenCalled();
+      formatting.resolve("formatted");
+      await Promise.all([save, exclusion]);
+
+      expect(events).toEqual(["prepared", "operation"]);
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      harness.unmount();
+    },
+  );
 
   it("keeps the coordinator live through StrictMode effect replay", async () => {
     const harness = renderLifecycle({}, { strictMode: true });

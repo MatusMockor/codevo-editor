@@ -19,6 +19,7 @@ import { callHierarchyRows } from "../domain/callHierarchy";
 import { typeHierarchyRows } from "../domain/typeHierarchy";
 import { referenceRows } from "../domain/referencesView";
 import {
+  resolveAdmittedDocumentSaveOwnership,
   useWorkbenchController,
   withWorkspaceIdentityLease,
   type PhpCodeActionDescriptor,
@@ -70408,6 +70409,88 @@ class PostRepository
       expect(opened).toBe(false);
       expect(getWorkbench().activePath).toBe("/workspace/src/Other.php");
     });
+  });
+
+  it("resolves save ownership from an admitted remembered alias", () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-save-alias", "/selected/workspace"),
+      canonicalRoot: "/real/workspace",
+    };
+    const rememberedRoot = "/remembered/workspace";
+    const rememberedPath = `${rememberedRoot}/src/User.php`;
+    const matchForPath = vi.fn((path: string, workspaceId?: string) => {
+      if (workspaceId && workspaceId !== descriptor.workspaceId) {
+        return null;
+      }
+      if (path === rememberedRoot) {
+        return { descriptor, matchedRoot: rememberedRoot, relativePath: "" };
+      }
+      if (path === rememberedPath) {
+        return {
+          descriptor,
+          matchedRoot: rememberedRoot,
+          relativePath: "src/User.php",
+        };
+      }
+      return null;
+    });
+    const identityGateway = {
+      getDescriptor: vi.fn(),
+      matchForPath,
+      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      unregister: vi.fn(async () => undefined),
+    };
+
+    expect(
+      resolveAdmittedDocumentSaveOwnership(
+        { [descriptor.canonicalRoot]: descriptor },
+        identityGateway,
+        rememberedRoot,
+        rememberedPath,
+      ),
+    ).toEqual({
+      canonicalRoot: descriptor.canonicalRoot,
+      workspaceRelativePath: "src/User.php",
+    });
+    expect(matchForPath).toHaveBeenNthCalledWith(1, rememberedRoot);
+    expect(matchForPath).toHaveBeenNthCalledWith(
+      2,
+      rememberedPath,
+      descriptor.workspaceId,
+    );
+  });
+
+  it("falls back to the admitted descriptor and rejects outside paths", () => {
+    const descriptor = {
+      ...trustedDescriptor("ws-save-map", "/selected/workspace"),
+      canonicalRoot: "/real/workspace",
+    };
+    const identityGateway = {
+      getDescriptor: vi.fn(),
+      openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+      unregister: vi.fn(async () => undefined),
+    };
+    const identities = { [descriptor.selectedPath]: descriptor };
+
+    expect(
+      resolveAdmittedDocumentSaveOwnership(
+        identities,
+        identityGateway,
+        descriptor.selectedPath,
+        `${descriptor.selectedPath}/src/User.php`,
+      ),
+    ).toEqual({
+      canonicalRoot: descriptor.canonicalRoot,
+      workspaceRelativePath: "src/User.php",
+    });
+    expect(
+      resolveAdmittedDocumentSaveOwnership(
+        identities,
+        identityGateway,
+        descriptor.selectedPath,
+        "/outside/User.php",
+      ),
+    ).toBeNull();
   });
 
   it("keeps the active workspace unchanged when the trusted picker is cancelled", async () => {

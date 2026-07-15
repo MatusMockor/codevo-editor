@@ -361,6 +361,109 @@ describe("useWorkbenchFileOperations close intent", () => {
 });
 
 describe("useWorkbenchFileOperations save exclusion", () => {
+  const canonicalOwnership = (
+    rootPath = ROOT,
+    path = `${ROOT}/src/Owned.txt`,
+  ) => ({
+    canonicalRoot: "/real/workspace",
+    workspaceRelativePath: path.slice(rootPath.length + 1),
+  });
+
+  it("uses canonical ownership for active file rename exclusion", async () => {
+    const document = {
+      content: "content",
+      language: "plaintext",
+      name: "Owned.txt",
+      path: `${ROOT}/src/Owned.txt`,
+      savedContent: "content",
+    };
+    const runWithDocumentSaveExclusion = createSaveExclusionMock();
+    const operations = renderHook(makeDependencies("", {
+      activeDocumentRef: { current: document },
+      resolveDocumentSaveOwnership: canonicalOwnership,
+      runWithDocumentSaveExclusion,
+      prompter: { prompt: vi.fn(() => "Renamed.txt"), confirm: vi.fn() },
+    }));
+
+    await act(async () => operations().renameActiveDocument());
+
+    expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+      kind: "file",
+      ...canonicalOwnership(),
+    });
+  });
+
+  it("uses canonical ownership for directory rename exclusion", async () => {
+    const runWithDocumentSaveExclusion = createSaveExclusionMock();
+    const operations = renderHook(makeDependencies("", {
+      applyJavaScriptTypeScriptRenameEdits: vi.fn(async () => true),
+      resolveDocumentSaveOwnership: canonicalOwnership,
+      runWithDocumentSaveExclusion,
+      prompter: { prompt: vi.fn(() => "renamed"), confirm: vi.fn() },
+    }));
+
+    await act(async () => operations().renameEntry({
+      kind: "directory",
+      name: "src",
+      path: `${ROOT}/src`,
+    }));
+
+    expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+      kind: "directory",
+      ...canonicalOwnership(ROOT, `${ROOT}/src`),
+    });
+  });
+
+  it("uses canonical ownership for active file delete exclusion", async () => {
+    const document = {
+      content: "content",
+      language: "plaintext",
+      name: "Owned.txt",
+      path: `${ROOT}/src/Owned.txt`,
+      savedContent: "content",
+    };
+    const runWithDocumentSaveExclusion = createSaveExclusionMock();
+    const operations = renderHook(makeDependencies("", {
+      activeDocumentRef: { current: document },
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+      resolveDocumentSaveOwnership: canonicalOwnership,
+      runWithDocumentSaveExclusion,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+    }));
+
+    await act(async () => operations().deleteActiveDocument());
+
+    expect(runWithDocumentSaveExclusion.mock.calls[0]?.[0]).toEqual({
+      kind: "file",
+      ...canonicalOwnership(),
+    });
+  });
+
+  it("fails closed before destructive work when ownership is rejected", async () => {
+    const document = {
+      content: "content",
+      language: "plaintext",
+      name: "Owned.txt",
+      path: `${ROOT}/src/Owned.txt`,
+      savedContent: "content",
+    };
+    const dependencies = makeDependencies("", {
+      activeDocumentRef: { current: document },
+      applyJavaScriptTypeScriptDeleteEdits: vi.fn(async () => true),
+      resolveDocumentSaveOwnership: () => null,
+      prompter: { prompt: vi.fn(), confirm: vi.fn(() => true) },
+    });
+    const operations = renderHook(dependencies);
+
+    await act(async () => operations().deleteActiveDocument());
+
+    expect(dependencies.runWithDocumentSaveExclusion).not.toHaveBeenCalled();
+    expect(
+      dependencies.applyJavaScriptTypeScriptDeleteEdits,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
+  });
+
   it("runs active file rename with the exact file-save scope", async () => {
     const document = {
       content: "content",

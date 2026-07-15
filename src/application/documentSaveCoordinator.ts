@@ -1,14 +1,19 @@
-import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
+import {
+  createDocumentSaveIdentity,
+  documentSaveIdentitySegments,
+  legacyDocumentSaveIdentity,
+  type DocumentSaveIdentity,
+  type LegacyDocumentSaveOwnership,
+} from "./documentSaveIdentity";
 
 export type DocumentSaveOutcome<TResult> =
   | { status: "saved"; result: TResult }
   | { status: "stale" }
   | { status: "disposed" };
 
-export interface DocumentSaveKey {
-  readonly rootPath: string;
-  readonly path: string;
-}
+export type DocumentSaveKey =
+  | DocumentSaveIdentity
+  | LegacyDocumentSaveOwnership;
 
 export interface DocumentSaveLease {
   readonly path: string;
@@ -35,9 +40,24 @@ export type DocumentSaveOperation<TResult> = (
 ) => Promise<TResult>;
 
 export type DocumentSaveInvalidationScope =
-  | { kind: "workspace"; rootPath: string }
-  | { kind: "file"; rootPath: string; path: string }
-  | { kind: "directory"; rootPath: string; path: string };
+  | { kind: "workspace"; canonicalRoot: string; rootPath?: never }
+  | ({ kind: "file" | "directory"; rootPath?: never } &
+      DocumentSaveIdentity)
+  | LegacyDocumentSaveInvalidationScope;
+
+/** @deprecated Resolve selected paths before calling the coordinator. */
+export type LegacyDocumentSaveInvalidationScope =
+  | { kind: "workspace"; canonicalRoot?: never; rootPath: string }
+  | {
+      kind: "file" | "directory";
+      canonicalRoot?: never;
+      rootPath: string;
+      path: string;
+    };
+
+type CanonicalDocumentSaveInvalidationScope =
+  | { kind: "workspace"; canonicalRoot: string }
+  | ({ kind: "file" | "directory" } & DocumentSaveIdentity);
 
 export type RunWithDocumentSaveExclusion = <T>(
   scope: DocumentSaveInvalidationScope,
@@ -94,7 +114,7 @@ interface SaveLane<TResult> {
   active: ActiveSave | null;
   epoch: number;
   issuedWrites: Set<IssuedWrite>;
-  key: DocumentSaveKey;
+  identity: DocumentSaveIdentity;
   nextSequence: number;
   pending: PendingSave<TResult> | null;
   waiters: SaveWaiter<TResult>[];
@@ -103,7 +123,8 @@ interface SaveLane<TResult> {
 /** Coordinates save operations without owning document or React state. */
 export class DocumentSaveCoordinator<TResult = void> {
   private readonly issuedWriteDrains = new Set<IssuedWriteDrain>();
-  private readonly exclusions = new Set<DocumentSaveInvalidationScope>();
+  private readonly exclusions =
+    new Set<CanonicalDocumentSaveInvalidationScope>();
   private readonly lanes = new Map<string, SaveLane<TResult>>();
   private disposed = false;
   private nextEpoch = 0;
@@ -115,18 +136,19 @@ export class DocumentSaveCoordinator<TResult = void> {
     if (this.disposed) {
       return Promise.resolve({ status: "disposed" });
     }
-    if (this.isExcluded(key)) {
+    const identity = resolveDocumentSaveIdentity(key);
+    if (!identity || this.isExcluded(identity)) {
       return Promise.resolve({ status: "stale" });
     }
 
-    const laneId = documentSaveKeyId(key);
+    const laneId = documentSaveKeyId(identity);
     let lane = this.lanes.get(laneId);
     if (!lane) {
       lane = {
         active: null,
         epoch: ++this.nextEpoch,
         issuedWrites: new Set(),
-        key: { ...key },
+        identity,
         nextSequence: 0,
         pending: null,
         waiters: [],
@@ -163,7 +185,12 @@ export class DocumentSaveCoordinator<TResult = void> {
   }
 
   invalidate(key: DocumentSaveKey): void {
-    const laneId = documentSaveKeyId(key);
+    const identity = resolveDocumentSaveIdentity(key);
+    if (!identity) {
+      return;
+    }
+
+    const laneId = documentSaveKeyId(identity);
     const lane = this.lanes.get(laneId);
     if (!lane) {
       return;
@@ -177,12 +204,15 @@ export class DocumentSaveCoordinator<TResult = void> {
     scope: DocumentSaveInvalidationScope,
     operation: () => Promise<T>,
   ): Promise<T> {
-    const exclusion = { ...scope } as DocumentSaveInvalidationScope;
+    const exclusion = resolveInvalidationScope(scope);
+    if (!exclusion) {
+      return operation();
+    }
     this.exclusions.add(exclusion);
     const active: Promise<unknown>[] = [];
 
     for (const lane of this.lanes.values()) {
-      if (!matchesInvalidationScope(lane.key, exclusion)) {
+      if (!matchesInvalidationScope(lane.identity, exclusion)) {
         continue;
       }
 
@@ -210,7 +240,10 @@ export class DocumentSaveCoordinator<TResult = void> {
       throw new DocumentSaveCoordinatorDisposedError();
     }
 
-    const exclusion = { ...scope } as DocumentSaveInvalidationScope;
+    const exclusion = resolveInvalidationScope(scope);
+    if (!exclusion) {
+      return operation();
+    }
     const drain: IssuedWriteDrain = {
       cancellation: saveBarrier(),
       cancelled: false,
@@ -221,7 +254,7 @@ export class DocumentSaveCoordinator<TResult = void> {
     const issuedWrites: Promise<void>[] = [];
 
     for (const lane of this.lanes.values()) {
-      if (!matchesInvalidationScope(lane.key, exclusion)) {
+      if (!matchesInvalidationScope(lane.identity, exclusion)) {
         continue;
       }
 
@@ -293,9 +326,9 @@ export class DocumentSaveCoordinator<TResult = void> {
     lane.waiters = lane.waiters.filter((waiter) => !waiter.settled);
   }
 
-  private isExcluded(key: DocumentSaveKey): boolean {
+  private isExcluded(identity: DocumentSaveIdentity): boolean {
     for (const scope of this.exclusions) {
-      if (matchesInvalidationScope(key, scope)) {
+      if (matchesInvalidationScope(identity, scope)) {
         return true;
       }
     }
@@ -315,8 +348,8 @@ export class DocumentSaveCoordinator<TResult = void> {
         !this.disposed &&
         this.lanes.get(laneId) === lane &&
         lane.epoch === epoch,
-      path: lane.key.path,
-      rootPath: lane.key.rootPath,
+      path: lane.identity.workspaceRelativePath,
+      rootPath: lane.identity.canonicalRoot,
       tryBeginWrite: () =>
         this.tryBeginWrite(laneId, lane, active, epoch),
     };
@@ -337,7 +370,7 @@ export class DocumentSaveCoordinator<TResult = void> {
     if (this.lanes.get(laneId) !== lane || lane.active !== active) {
       return null;
     }
-    if (lane.epoch !== epoch || this.isExcluded(lane.key)) {
+    if (lane.epoch !== epoch || this.isExcluded(lane.identity)) {
       return null;
     }
 
@@ -530,38 +563,77 @@ function saveBarrier(): SaveBarrier {
   return { promise, resolve };
 }
 
-function documentSaveKeyId(key: DocumentSaveKey): string {
-  return JSON.stringify([normalizedWorkspaceRootKey(key.rootPath), key.path]);
+function documentSaveKeyId(identity: DocumentSaveIdentity): string {
+  return JSON.stringify([
+    identity.canonicalRoot,
+    ...documentSaveIdentitySegments(identity),
+  ]);
 }
 
 function matchesInvalidationScope(
-  key: DocumentSaveKey,
-  scope: DocumentSaveInvalidationScope,
+  identity: DocumentSaveIdentity,
+  scope: CanonicalDocumentSaveInvalidationScope,
 ): boolean {
-  if (
-    normalizedWorkspaceRootKey(key.rootPath) !==
-    normalizedWorkspaceRootKey(scope.rootPath)
-  ) {
+  if (identity.canonicalRoot !== scope.canonicalRoot) {
     return false;
   }
   if (scope.kind === "workspace") {
     return true;
   }
   if (scope.kind === "file") {
-    return key.path === scope.path;
+    return identity.workspaceRelativePath === scope.workspaceRelativePath;
   }
 
-  return isDirectoryOrDescendant(scope.path, key.path);
+  return isDirectoryOrDescendant(
+    documentSaveIdentitySegments(scope),
+    documentSaveIdentitySegments(identity),
+  );
 }
 
-function isDirectoryOrDescendant(directory: string, path: string): boolean {
-  if (path === directory) {
-    return true;
+function isDirectoryOrDescendant(
+  directory: readonly string[],
+  path: readonly string[],
+): boolean {
+  if (path.length < directory.length) {
+    return false;
   }
 
-  if (directory.endsWith("/") || directory.endsWith("\\")) {
-    return path.startsWith(directory);
+  for (let index = 0; index < directory.length; index += 1) {
+    if (directory[index] !== path[index]) {
+      return false;
+    }
   }
 
-  return path.startsWith(`${directory}/`) || path.startsWith(`${directory}\\`);
+  return true;
+}
+
+function resolveDocumentSaveIdentity(
+  key: DocumentSaveKey,
+): DocumentSaveIdentity | null {
+  if ("canonicalRoot" in key) {
+    return createDocumentSaveIdentity(
+      key.canonicalRoot,
+      key.workspaceRelativePath,
+    );
+  }
+
+  return legacyDocumentSaveIdentity(key.rootPath, key.path);
+}
+
+function resolveInvalidationScope(
+  scope: DocumentSaveInvalidationScope,
+): CanonicalDocumentSaveInvalidationScope | null {
+  if (scope.kind === "workspace") {
+    const canonicalRoot =
+      "canonicalRoot" in scope && scope.canonicalRoot !== undefined
+        ? scope.canonicalRoot
+        : scope.rootPath;
+    const sentinel = createDocumentSaveIdentity(canonicalRoot, ".scope");
+    return sentinel
+      ? Object.freeze({ kind: "workspace", canonicalRoot: sentinel.canonicalRoot })
+      : null;
+  }
+
+  const identity = resolveDocumentSaveIdentity(scope);
+  return identity ? Object.freeze({ kind: scope.kind, ...identity }) : null;
 }

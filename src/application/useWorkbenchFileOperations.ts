@@ -42,6 +42,7 @@ import type {
   DocumentSaveInvalidationScope,
   RunWithDocumentSaveExclusion,
 } from "./documentSaveCoordinator";
+import type { ResolveDocumentSaveOwnership } from "./documentSaveIdentity";
 
 const WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS = 120;
 const WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS = 120;
@@ -101,6 +102,7 @@ export interface WorkbenchFileOperationsDependencies {
   forgetRecentFile: (path: string) => void;
   forgetRecentLocationsForPath: (path: string) => void;
   invalidateFrameworkCachesForPath: (rootPath: string, path: string) => void;
+  resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   invalidatePhpFrameworkSourcePath: (
     rootPath: string,
@@ -191,6 +193,7 @@ export function useWorkbenchFileOperations(
     forgetRecentFile,
     forgetRecentLocationsForPath,
     invalidateFrameworkCachesForPath,
+    resolveDocumentSaveOwnership,
     runWithDocumentSaveExclusion,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
@@ -354,6 +357,15 @@ export function useWorkbenchFileOperations(
     const parentPath = getParentPath(document.path);
     const oldPath = document.path;
     const nextPath = joinWorkspacePath(parentPath, nextName);
+    const invalidationScope = resolveDocumentSaveInvalidationScope(
+      "file",
+      requestedRoot,
+      oldPath,
+      resolveDocumentSaveOwnership,
+    );
+    if (!invalidationScope) {
+      return;
+    }
 
     try {
       if (isLanguageServerDocument(document)) {
@@ -374,11 +386,6 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      const invalidationScope: DocumentSaveInvalidationScope = {
-        kind: "file",
-        path: oldPath,
-        rootPath: requestedRoot,
-      };
       await runWithDocumentSaveExclusion(invalidationScope, async () => {
         if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
@@ -471,6 +478,7 @@ export function useWorkbenchFileOperations(
     remapRecentFile,
     remapRecentLocations,
     reportErrorForActiveWorkspaceRoot,
+    resolveDocumentSaveOwnership,
     setActivePath,
     setBookmarks,
     setDocuments,
@@ -508,6 +516,15 @@ export function useWorkbenchFileOperations(
       }
 
       const skipLspRename = isLspExcludedDirectoryPath(requestedRoot, oldPath);
+      const invalidationScope = resolveDocumentSaveInvalidationScope(
+        "directory",
+        requestedRoot,
+        oldPath,
+        resolveDocumentSaveOwnership,
+      );
+      if (!invalidationScope) {
+        return;
+      }
 
       try {
         if (!skipLspRename) {
@@ -531,11 +548,6 @@ export function useWorkbenchFileOperations(
           return;
         }
 
-        const invalidationScope: DocumentSaveInvalidationScope = {
-          kind: "directory",
-          path: oldPath,
-          rootPath: requestedRoot,
-        };
         await runWithDocumentSaveExclusion(invalidationScope, async () => {
           if (
             !workspaceRootKeysEqual(
@@ -690,6 +702,7 @@ export function useWorkbenchFileOperations(
       previewPathRef,
       prompter,
       refreshDirectory,
+      resolveDocumentSaveOwnership,
       reportErrorForActiveWorkspaceRoot,
       setActivePath,
       setDocuments,
@@ -723,6 +736,15 @@ export function useWorkbenchFileOperations(
 
     const parentPath = getParentPath(document.path);
     const deletedPath = document.path;
+    const invalidationScope = resolveDocumentSaveInvalidationScope(
+      "file",
+      requestedRoot,
+      deletedPath,
+      resolveDocumentSaveOwnership,
+    );
+    if (!invalidationScope) {
+      return;
+    }
 
     try {
       const mayDelete = await applyJavaScriptTypeScriptDeleteEdits(deletedPath);
@@ -734,11 +756,6 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      const invalidationScope: DocumentSaveInvalidationScope = {
-        kind: "file",
-        path: deletedPath,
-        rootPath: requestedRoot,
-      };
       await runWithDocumentSaveExclusion(invalidationScope, async () => {
         if (
           !workspaceRootKeysEqual(
@@ -809,6 +826,7 @@ export function useWorkbenchFileOperations(
     prompter,
     refreshDirectory,
     reportErrorForActiveWorkspaceRoot,
+    resolveDocumentSaveOwnership,
     setBookmarks,
     setMessage,
     syncClosedJavaScriptTypeScriptDocument,
@@ -1050,6 +1068,24 @@ export function useWorkbenchFileOperations(
     deleteActiveDocument,
     handleWorkspaceFileChange,
   };
+}
+
+function resolveDocumentSaveInvalidationScope(
+  kind: "file" | "directory",
+  rootPath: string,
+  path: string,
+  resolveOwnership: ResolveDocumentSaveOwnership | undefined,
+): DocumentSaveInvalidationScope | null {
+  if (!resolveOwnership) {
+    return { kind, rootPath, path };
+  }
+
+  const ownership = resolveOwnership(rootPath, path);
+  if (!ownership) {
+    return null;
+  }
+
+  return { kind, ...ownership };
 }
 
 function isPathInDirectory(path: string, directoryPath: string): boolean {

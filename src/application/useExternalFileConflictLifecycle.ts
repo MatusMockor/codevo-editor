@@ -22,8 +22,14 @@ import type {
 import { isDirty, readWorkspaceTextFileSnapshot } from "../domain/workspace";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type {
+  DocumentSaveIdentity,
+  DocumentSaveOwnership,
+  ResolveDocumentSaveOwnership,
+} from "./documentSaveIdentity";
+import { legacyDocumentSaveIdentity } from "./documentSaveIdentity";
 
-type ConflictCache = Record<string, Record<string, ExternalFileConflictState>>;
+type ConflictCache = Record<string, ExternalFileConflictState>;
 type FileChangeHandlingResult = false | "resolved" | "unreadable";
 
 interface ExternalFileConflictLifecycleDependencies {
@@ -32,6 +38,7 @@ interface ExternalFileConflictLifecycleDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
   openPathsRef: MutableRefObject<string[]>;
+  resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
   setActivePath: Dispatch<SetStateAction<string | null>>;
   setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
   setOpenPaths: Dispatch<SetStateAction<string[]>>;
@@ -45,6 +52,7 @@ export function useExternalFileConflictLifecycle({
   currentWorkspaceRootRef,
   documentsRef,
   openPathsRef,
+  resolveDocumentSaveOwnership,
   setActivePath,
   setDocuments,
   setOpenPaths,
@@ -52,26 +60,69 @@ export function useExternalFileConflictLifecycle({
   workspaceRoot,
 }: ExternalFileConflictLifecycleDependencies) {
   const cacheRef = useRef<ConflictCache>({});
+  const ownershipRef = useRef<Record<string, DocumentSaveIdentity>>({});
   const eventSequenceRef = useRef<Record<string, number>>({});
   const retryEventRef = useRef<Record<string, WorkspaceFileChangeEvent>>({});
   const [, forceRender] = useReducer((value: number) => value + 1, 0);
 
-  const stateFor = useCallback((root: string, path: string) => {
-    return cacheRef.current[root]?.[path] ?? createExternalFileConflictState();
-  }, []);
+  const resolveOwnership = useCallback(
+    (root: string, path: string): DocumentSaveIdentity | null => {
+      const ownership: DocumentSaveOwnership | null =
+        resolveDocumentSaveOwnership
+          ? resolveDocumentSaveOwnership(root, path)
+          : legacyDocumentSaveIdentity(root, path);
+      if (!ownership) {
+        return null;
+      }
+      if ("rootPath" in ownership) {
+        return legacyDocumentSaveIdentity(ownership.rootPath, ownership.path);
+      }
+      return ownership;
+    },
+    [resolveDocumentSaveOwnership],
+  );
+
+  const ownershipKey = useCallback(
+    (ownership: DocumentSaveIdentity) =>
+      JSON.stringify([
+        ownership.canonicalRoot,
+        ownership.workspaceRelativePath,
+      ]),
+    [],
+  );
+
+  const stateForOwnership = useCallback(
+    (ownership: DocumentSaveIdentity) =>
+      cacheRef.current[ownershipKey(ownership)] ??
+      createExternalFileConflictState(),
+    [ownershipKey],
+  );
+
+  const stateFor = useCallback(
+    (root: string, path: string) => {
+      const ownership = resolveOwnership(root, path);
+      if (!ownership) {
+        return createExternalFileConflictState();
+      }
+      return stateForOwnership(ownership);
+    },
+    [resolveOwnership, stateForOwnership],
+  );
 
   const publish = useCallback(
-    (root: string, path: string, state: ExternalFileConflictState) => {
-      cacheRef.current[root] = { ...cacheRef.current[root], [path]: state };
+    (ownership: DocumentSaveIdentity, state: ExternalFileConflictState) => {
+      const key = ownershipKey(ownership);
+      ownershipRef.current[key] = ownership;
+      cacheRef.current[key] = state;
       forceRender();
     },
-    [],
+    [ownershipKey],
   );
 
   const handleFileChange = useCallback(
     async (event: WorkspaceFileChangeEvent): Promise<FileChangeHandlingResult> => {
       const root = currentWorkspaceRootRef.current;
-      if (!root || !workspaceRootKeysEqual(root, event.rootPath)) {
+      if (!root) {
         return false;
       }
 
@@ -80,8 +131,26 @@ export function useExternalFileConflictLifecycle({
         return false;
       }
 
-      const document = documentsRef.current[path];
+      const eventOwnership = resolveOwnership(event.rootPath, path);
+      if (!eventOwnership) {
+        return false;
+      }
+
+      const key = ownershipKey(eventOwnership);
+      const document =
+        documentsRef.current[path] ??
+        Object.values(documentsRef.current).find((candidate) => {
+          const candidateOwnership = resolveOwnership(root, candidate.path);
+          return candidateOwnership
+            ? ownershipKey(candidateOwnership) === key
+            : false;
+        });
       if (!document || !isDirty(document)) {
+        return false;
+      }
+
+      const currentOwnership = resolveOwnership(root, document.path);
+      if (!currentOwnership || ownershipKey(currentOwnership) !== key) {
         return false;
       }
 
@@ -93,16 +162,15 @@ export function useExternalFileConflictLifecycle({
         return false;
       }
 
-      const sequenceKey = `${root}\0${path}`;
-      const sequence = (eventSequenceRef.current[sequenceKey] ?? 0) + 1;
-      eventSequenceRef.current[sequenceKey] = sequence;
-      const baseline = { content: document.savedContent, path };
+      const sequence = (eventSequenceRef.current[key] ?? 0) + 1;
+      eventSequenceRef.current[key] = sequence;
+      ownershipRef.current[key] = eventOwnership;
+      const baseline = { content: document.savedContent, path: document.path };
       if (event.kind !== "deleted") {
-        retryEventRef.current[sequenceKey] = event;
+        retryEventRef.current[key] = event;
         publish(
-          root,
-          path,
-          transitionExternalFileConflict(stateFor(root, path), {
+          eventOwnership,
+          transitionExternalFileConflict(stateForOwnership(eventOwnership), {
             type: "detected",
             conflict: {
               kind: "unreadable",
@@ -136,10 +204,17 @@ export function useExternalFileConflictLifecycle({
         }
       }
 
-      const liveDocument = documentsRef.current[path];
+      const liveDocument = Object.values(documentsRef.current).find((candidate) => {
+        const candidateOwnership = resolveOwnership(
+          currentWorkspaceRootRef.current ?? "",
+          candidate.path,
+        );
+        return candidateOwnership
+          ? ownershipKey(candidateOwnership) === key
+          : false;
+      });
       if (
-        eventSequenceRef.current[sequenceKey] !== sequence ||
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, root) ||
+        eventSequenceRef.current[key] !== sequence ||
         !liveDocument ||
         !isDirty(liveDocument)
       ) {
@@ -153,19 +228,26 @@ export function useExternalFileConflictLifecycle({
             ? { kind: "renamed", baseline, disk: disk! }
             : { kind: "modified", baseline, disk: disk! };
 
-      delete retryEventRef.current[sequenceKey];
+      delete retryEventRef.current[key];
 
       publish(
-        root,
-        path,
-        transitionExternalFileConflict(stateFor(root, path), {
+        eventOwnership,
+        transitionExternalFileConflict(stateForOwnership(eventOwnership), {
           type: "detected",
           conflict,
         }),
       );
       return "resolved";
     },
-    [currentWorkspaceRootRef, documentsRef, publish, stateFor, workspaceFiles],
+    [
+      currentWorkspaceRootRef,
+      documentsRef,
+      ownershipKey,
+      publish,
+      resolveOwnership,
+      stateForOwnership,
+      workspaceFiles,
+    ],
   );
 
   const hasConflict = useCallback(
@@ -180,7 +262,12 @@ export function useExternalFileConflictLifecycle({
       document: EditorDocument,
       disk: WorkspaceTextFileSnapshot | null,
     ) => {
-      const sequenceKey = `${root}\0${document.path}`;
+      const ownership = resolveOwnership(root, document.path);
+      if (!ownership) {
+        return;
+      }
+      const sequenceKey = ownershipKey(ownership);
+      ownershipRef.current[sequenceKey] = ownership;
       if (!disk) {
         retryEventRef.current[sequenceKey] = {
           rootPath: root,
@@ -190,9 +277,8 @@ export function useExternalFileConflictLifecycle({
         };
       }
       publish(
-        root,
-        document.path,
-        transitionExternalFileConflict(stateFor(root, document.path), {
+        ownership,
+        transitionExternalFileConflict(stateForOwnership(ownership), {
           type: "detected",
           conflict: disk ? {
             kind: "modified",
@@ -220,7 +306,7 @@ export function useExternalFileConflictLifecycle({
         }),
       );
     },
-    [publish, stateFor],
+    [ownershipKey, publish, resolveOwnership, stateForOwnership],
   );
 
   const clearConflict = useCallback(
@@ -229,42 +315,63 @@ export function useExternalFileConflictLifecycle({
         return;
       }
 
-      const sequenceKey = `${root}\0${path}`;
+      const ownership = resolveOwnership(root, path);
+      if (!ownership) {
+        return;
+      }
+      const sequenceKey = ownershipKey(ownership);
       eventSequenceRef.current[sequenceKey] =
         (eventSequenceRef.current[sequenceKey] ?? 0) + 1;
       delete retryEventRef.current[sequenceKey];
-      const rootCache = cacheRef.current[root];
-      if (!rootCache?.[path]) {
+      if (!cacheRef.current[sequenceKey]) {
         return;
       }
 
-      const nextRootCache = { ...rootCache };
-      delete nextRootCache[path];
-      cacheRef.current[root] = nextRootCache;
+      delete cacheRef.current[sequenceKey];
+      delete ownershipRef.current[sequenceKey];
       forceRender();
     },
-    [],
+    [ownershipKey, resolveOwnership],
+  );
+
+  const ownershipBelongsToRoot = useCallback(
+    (root: string, ownership: DocumentSaveIdentity) => {
+      const separator = root.includes("\\") && !root.includes("/") ? "\\" : "/";
+      const path = `${root.replace(/[\\/]+$/, "")}${separator}${ownership.workspaceRelativePath.replace(/[\\/]+/g, separator)}`;
+      const resolved = resolveOwnership(root, path);
+      return Boolean(
+        resolved &&
+          workspaceRootKeysEqual(resolved.canonicalRoot, ownership.canonicalRoot),
+      );
+    },
+    [resolveOwnership],
   );
 
   const clearRoot = useCallback((root: string) => {
-    const prefix = `${root}\0`;
-    for (const key of Object.keys(eventSequenceRef.current)) {
-      if (!key.startsWith(prefix)) {
+    for (const [key, ownership] of Object.entries(ownershipRef.current)) {
+      if (!ownershipBelongsToRoot(root, ownership)) {
         continue;
       }
-      eventSequenceRef.current[key] += 1;
+      eventSequenceRef.current[key] =
+        (eventSequenceRef.current[key] ?? 0) + 1;
       delete retryEventRef.current[key];
+      delete cacheRef.current[key];
+      delete ownershipRef.current[key];
     }
-    delete cacheRef.current[root];
     forceRender();
-  }, []);
+  }, [ownershipBelongsToRoot]);
 
   const hasConflictsForRoot = useCallback(
     (root: string) =>
-      Object.values(cacheRef.current[root] ?? {}).some(
-        (state) => state.conflict !== null,
-      ),
-    [],
+      Object.entries(cacheRef.current).some(([key, state]) => {
+        const ownership = ownershipRef.current[key];
+        return Boolean(
+          ownership &&
+            ownershipBelongsToRoot(root, ownership) &&
+            state.conflict !== null,
+        );
+      }),
+    [ownershipBelongsToRoot],
   );
 
   const action = useCallback(
@@ -273,7 +380,13 @@ export function useExternalFileConflictLifecycle({
         return;
       }
 
-      const state = stateFor(workspaceRoot, activePath);
+      const actionOwnership = resolveOwnership(workspaceRoot, activePath);
+      if (!actionOwnership) {
+        return;
+      }
+
+      const actionKey = ownershipKey(actionOwnership);
+      const state = stateForOwnership(actionOwnership);
       const conflict = state.conflict;
       if (!conflict) {
         return;
@@ -282,8 +395,7 @@ export function useExternalFileConflictLifecycle({
       const target = externalFileConflictRef(conflict);
       if (requested === "compare") {
         publish(
-          workspaceRoot,
-          activePath,
+          actionOwnership,
           transitionExternalFileConflict(state, { type: "compareOpened", target }),
         );
         return;
@@ -294,13 +406,12 @@ export function useExternalFileConflictLifecycle({
         target,
         action: requested,
       });
-      publish(workspaceRoot, activePath, resolving);
+      publish(actionOwnership, resolving);
 
       const failAction = (message: string) => {
         publish(
-          workspaceRoot,
-          activePath,
-          transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+          actionOwnership,
+          transitionExternalFileConflict(stateForOwnership(actionOwnership), {
             type: "actionFailed",
             target,
             message,
@@ -310,12 +421,26 @@ export function useExternalFileConflictLifecycle({
 
       const resolveStaleAction = () => {
         publish(
-          workspaceRoot,
-          activePath,
-          transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+          actionOwnership,
+          transitionExternalFileConflict(stateForOwnership(actionOwnership), {
             type: "resolved",
             target,
           }),
+        );
+      };
+
+      const actionStillOwnsActiveDocument = () => {
+        const currentRoot = currentWorkspaceRootRef.current;
+        const currentDocument = activeDocumentRef.current;
+        if (!currentRoot || !currentDocument) {
+          return false;
+        }
+        const currentOwnership = resolveOwnership(
+          currentRoot,
+          currentDocument.path,
+        );
+        return Boolean(
+          currentOwnership && ownershipKey(currentOwnership) === actionKey,
         );
       };
 
@@ -323,28 +448,47 @@ export function useExternalFileConflictLifecycle({
         writtenContent: string,
         revision: import("../domain/workspace").WorkspaceFileRevision | null,
       ) => {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+        if (!actionStillOwnsActiveDocument()) {
           resolveStaleAction();
           return;
         }
-        const current = documentsRef.current[activePath];
-        if (!current) {
+        const capturedDocument = documentsRef.current[activePath];
+        const selectedEntry: [string, EditorDocument] | undefined =
+          capturedDocument
+            ? [activePath, capturedDocument]
+            : Object.entries(documentsRef.current).find(([, candidate]) => {
+                const currentRoot = currentWorkspaceRootRef.current;
+                if (!currentRoot) {
+                  return false;
+                }
+                const ownership = resolveOwnership(
+                  currentRoot,
+                  candidate.path,
+                );
+                return Boolean(
+                  ownership && ownershipKey(ownership) === actionKey,
+                );
+              });
+        if (!selectedEntry) {
           return;
         }
+        const [selectedPath, current] = selectedEntry;
         const saved = {
           ...current,
           savedContent: writtenContent,
           revision,
         };
-        documentsRef.current = { ...documentsRef.current, [activePath]: saved };
-        if (activeDocumentRef.current?.path === activePath) {
+        documentsRef.current = {
+          ...documentsRef.current,
+          [selectedPath]: saved,
+        };
+        if (activeDocumentRef.current?.path === selectedPath) {
           activeDocumentRef.current = saved;
         }
         setDocuments(documentsRef.current);
         publish(
-          workspaceRoot,
-          activePath,
-          transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+          actionOwnership,
+          transitionExternalFileConflict(stateForOwnership(actionOwnership), {
             type: "resolved",
             target,
           }),
@@ -364,7 +508,7 @@ export function useExternalFileConflictLifecycle({
             live.content,
             expectedRevision,
           );
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          if (!actionStillOwnsActiveDocument()) {
             resolveStaleAction();
             return;
           }
@@ -378,7 +522,7 @@ export function useExternalFileConflictLifecycle({
           }
           finishWrite(live.content, result.revision);
         } catch (error) {
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          if (!actionStillOwnsActiveDocument()) {
             resolveStaleAction();
             return;
           }
@@ -395,12 +539,12 @@ export function useExternalFileConflictLifecycle({
         }
         try {
           await workspaceFiles.createTextFile(activePath);
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          if (!actionStillOwnsActiveDocument()) {
             resolveStaleAction();
             return;
           }
           const created = await readWorkspaceTextFileSnapshot(workspaceFiles, activePath);
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          if (!actionStillOwnsActiveDocument()) {
             resolveStaleAction();
             return;
           }
@@ -413,7 +557,7 @@ export function useExternalFileConflictLifecycle({
             live.content,
             created.revision,
           );
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          if (!actionStillOwnsActiveDocument()) {
             resolveStaleAction();
             return;
           }
@@ -427,7 +571,7 @@ export function useExternalFileConflictLifecycle({
           }
           finishWrite(live.content, result.revision);
         } catch (error) {
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot)) {
+          if (!actionStillOwnsActiveDocument()) {
             resolveStaleAction();
             return;
           }
@@ -437,11 +581,10 @@ export function useExternalFileConflictLifecycle({
       }
 
       if (requested === "retryRead") {
-        const retryEvent = retryEventRef.current[`${workspaceRoot}\0${activePath}`];
+        const retryEvent = retryEventRef.current[actionKey];
         if (!retryEvent) {
           publish(
-            workspaceRoot,
-            activePath,
+            actionOwnership,
             transitionExternalFileConflict(resolving, {
               type: "actionFailed",
               target,
@@ -453,11 +596,10 @@ export function useExternalFileConflictLifecycle({
 
         const result = await handleFileChange(retryEvent);
         if (result !== "resolved") {
-          const currentConflict = stateFor(workspaceRoot, activePath).conflict;
+          const currentConflict = stateForOwnership(actionOwnership).conflict;
           publish(
-            workspaceRoot,
-            activePath,
-            transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+            actionOwnership,
+            transitionExternalFileConflict(stateForOwnership(actionOwnership), {
               type: "actionFailed",
               target: externalFileConflictRef(currentConflict ?? conflict),
               message:
@@ -469,9 +611,8 @@ export function useExternalFileConflictLifecycle({
           return;
         }
         publish(
-          workspaceRoot,
-          activePath,
-          transitionExternalFileConflict(stateFor(workspaceRoot, activePath), {
+          actionOwnership,
+          transitionExternalFileConflict(stateForOwnership(actionOwnership), {
             type: "resolved",
             target,
           }),
@@ -504,8 +645,7 @@ export function useExternalFileConflictLifecycle({
           (isDirty(targetDocument) || hasConflict(workspaceRoot, nextPath))
         ) {
           publish(
-            workspaceRoot,
-            activePath,
+            actionOwnership,
             transitionExternalFileConflict(resolving, {
               type: "actionFailed",
               target,
@@ -541,8 +681,7 @@ export function useExternalFileConflictLifecycle({
       }
 
       publish(
-        workspaceRoot,
-        activePath,
+        actionOwnership,
         transitionExternalFileConflict(resolving, { type: "resolved", target }),
       );
     },
@@ -553,11 +692,13 @@ export function useExternalFileConflictLifecycle({
       hasConflict,
       handleFileChange,
       openPathsRef,
+      ownershipKey,
       publish,
+      resolveOwnership,
       setActivePath,
       setDocuments,
       setOpenPaths,
-      stateFor,
+      stateForOwnership,
       workspaceFiles,
       workspaceRoot,
     ],
@@ -567,28 +708,36 @@ export function useExternalFileConflictLifecycle({
     if (!workspaceRoot || !activePath) {
       return;
     }
-    const state = stateFor(workspaceRoot, activePath);
+    const ownership = resolveOwnership(workspaceRoot, activePath);
+    if (!ownership) {
+      return;
+    }
+    const state = stateForOwnership(ownership);
     if (!state.conflict) {
       return;
     }
     publish(
-      workspaceRoot,
-      activePath,
+      ownership,
       transitionExternalFileConflict(state, {
         type: "compareClosed",
         target: externalFileConflictRef(state.conflict),
       }),
     );
-  }, [activePath, publish, stateFor, workspaceRoot]);
+  }, [activePath, publish, resolveOwnership, stateForOwnership, workspaceRoot]);
 
   const activeState =
     workspaceRoot && activePath
       ? stateFor(workspaceRoot, activePath)
       : createExternalFileConflictState();
   const conflictCount = workspaceRoot
-    ? Object.values(cacheRef.current[workspaceRoot] ?? {}).filter(
-        (state) => state.conflict,
-      ).length
+    ? Object.entries(cacheRef.current).filter(([key, state]) => {
+        const ownership = ownershipRef.current[key];
+        return Boolean(
+          ownership &&
+            ownershipBelongsToRoot(workspaceRoot, ownership) &&
+            state.conflict,
+        );
+      }).length
     : 0;
 
   return {

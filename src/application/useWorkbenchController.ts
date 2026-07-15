@@ -62,6 +62,11 @@ import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
+import {
+  createDocumentSaveIdentity,
+  legacyDocumentSaveIdentity,
+  type ResolveDocumentSaveOwnership,
+} from "./documentSaveIdentity";
 import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroupCloseLifecycle";
 import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
 import {
@@ -158,8 +163,10 @@ import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand"
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type {
   WorkspaceIdentityDescriptor,
+  WorkspaceIdentityDescriptorResolver,
   WorkspaceIdentityGateway,
 } from "../infrastructure/tauriWorkspaceIdentityGateway";
+import { workspaceRelativePathForDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import {
   registerActiveComposerManifestWorkspace,
 } from "../components/composerManifestMonacoProviders";
@@ -1053,6 +1060,25 @@ export function useWorkbenchController(
   const workspaceIdentityByRootRef = useRef<
     Record<string, WorkspaceIdentityDescriptor>
   >({});
+  const resolveDocumentSaveOwnership = useCallback<ResolveDocumentSaveOwnership>(
+    (rootPath, path) =>
+      resolveAdmittedDocumentSaveOwnership(
+        workspaceIdentityByRootRef.current,
+        workspaceGateways.identity,
+        rootPath,
+        path,
+      ),
+    [workspaceGateways.identity],
+  );
+  const canonicalDocumentSaveRoot = useCallback(
+    (rootPath: string) =>
+      admittedWorkspaceIdentityForRoot(
+        workspaceIdentityByRootRef.current,
+        workspaceGateways.identity,
+        rootPath,
+      )?.canonicalRoot ?? rootPath,
+    [workspaceGateways.identity],
+  );
   const workspaceRuntimeRootByTabRef = useRef<Record<string, string>>({});
   const unregisterWorkspaceIdentityIfUnused = useCallback(
     async (
@@ -3162,7 +3188,10 @@ export function useWorkbenchController(
 
         const switchResult = shouldCachePreviousWorkspace
           ? await runWithIssuedWriteDrainDelegate(
-              { kind: "workspace", rootPath: previousRootPath },
+              {
+                kind: "workspace",
+                canonicalRoot: canonicalDocumentSaveRoot(previousRootPath),
+              },
               captureAndDeactivatePreviousWorkspace,
             )
           : await captureAndDeactivatePreviousWorkspace();
@@ -3676,6 +3705,7 @@ export function useWorkbenchController(
     [
       applyWorkspaceSettings,
       cacheCurrentWorkspaceState,
+      canonicalDocumentSaveRoot,
       loadDirectory,
       loadPackageScripts,
       persistAppSettings,
@@ -4572,6 +4602,7 @@ export function useWorkbenchController(
     currentWorkspaceRootRef,
     documentsRef,
     openPathsRef,
+    resolveDocumentSaveOwnership,
     setActivePath,
     setDocuments,
     setOpenPaths,
@@ -4873,6 +4904,7 @@ export function useWorkbenchController(
     setMessage,
     localHistoryGateway,
     workspaceFiles,
+    resolveDocumentSaveOwnership,
     prompter,
     formattedContentForSave,
     optimizedImportsContentForSave,
@@ -7160,6 +7192,7 @@ export function useWorkbenchController(
     forgetRecentFile,
     forgetRecentLocationsForPath,
     invalidateFrameworkCachesForPath,
+    resolveDocumentSaveOwnership,
     runWithDocumentSaveExclusion,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
@@ -9349,6 +9382,71 @@ function workspaceIdentityAliasPaths(
   }
 
   return [...new Set(aliases)];
+}
+
+function admittedWorkspaceIdentityForRoot(
+  identities: Record<string, WorkspaceIdentityDescriptor>,
+  identityGateway: WorkspaceIdentityGateway,
+  rootPath: string,
+): WorkspaceIdentityDescriptor | null {
+  const admitted = Object.values(identities);
+  const identityResolver = identityGateway as WorkspaceIdentityGateway &
+    Partial<WorkspaceIdentityDescriptorResolver>;
+  const gatewayMatch = identityResolver.matchForPath?.(rootPath);
+  const gatewayAdmittedDescriptor = gatewayMatch
+    ? admitted.find(
+        (descriptor) =>
+          descriptor.workspaceId === gatewayMatch.descriptor.workspaceId,
+      )
+    : null;
+  if (gatewayAdmittedDescriptor) {
+    return gatewayAdmittedDescriptor;
+  }
+
+  const mapped = identities[rootPath];
+  if (mapped) {
+    return mapped;
+  }
+
+  return (
+    admitted.find(
+      (descriptor) =>
+        workspaceRelativePathForDescriptor(descriptor, rootPath) === "",
+    ) ?? null
+  );
+}
+
+export function resolveAdmittedDocumentSaveOwnership(
+  identities: Record<string, WorkspaceIdentityDescriptor>,
+  identityGateway: WorkspaceIdentityGateway,
+  rootPath: string,
+  path: string,
+): ReturnType<ResolveDocumentSaveOwnership> {
+  const descriptor = admittedWorkspaceIdentityForRoot(
+    identities,
+    identityGateway,
+    rootPath,
+  );
+  if (!descriptor) {
+    return legacyDocumentSaveIdentity(rootPath, path);
+  }
+
+  const identityResolver = identityGateway as WorkspaceIdentityGateway &
+    Partial<WorkspaceIdentityDescriptorResolver>;
+  const match = identityResolver.matchForPath?.(path, descriptor.workspaceId);
+  const relativePath =
+    match?.descriptor.workspaceId === descriptor.workspaceId
+      ? match.relativePath
+      : workspaceRelativePathForDescriptor(descriptor, path);
+  if (!relativePath) {
+    return null;
+  }
+
+  return createDocumentSaveIdentity(
+    descriptor.canonicalRoot,
+    relativePath,
+    descriptor.policy,
+  );
 }
 
 function workspaceSettingsIdentity(
