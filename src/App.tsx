@@ -666,9 +666,24 @@ function App() {
         .join(" · ") || null,
     [javaScriptTypeScriptLanguageServerLabel, languageServerLabel],
   );
+  const openWorkspace = useCallback(() => {
+    void workbench.runCommand("workspace.open");
+  }, [workbench.runCommand]);
+  const openSettings = useCallback(() => {
+    void workbench.runCommand("workbench.openSettings");
+  }, [workbench.runCommand]);
+  const showGit = useCallback(() => {
+    void workbench.runCommand("git.show");
+  }, [workbench.runCommand]);
+  const toggleSmartMode = useCallback(() => {
+    void workbench.runCommand("smart.toggle");
+  }, [workbench.runCommand]);
+  const trustWorkspace = useCallback(() => {
+    void workbench.runCommand("workspace.trust");
+  }, [workbench.runCommand]);
   const openRuntimePanel = useCallback(() => {
-    workbench.showBottomPanelView("runtime");
-  }, [workbench.showBottomPanelView]);
+    void workbench.runCommand("runtime.show");
+  }, [workbench.runCommand]);
   const renderNoticeToast = useNoticeToastRenderers({
     intelligenceMode: workbench.intelligenceMode,
     onInstallManagedPhpactor: workbench.installManagedPhpactor,
@@ -805,8 +820,37 @@ function App() {
     [bottomPanelHeight],
   );
   const showProblemsPanel = useCallback(() => {
-    workbench.showBottomPanelView("problems");
-  }, [workbench.showBottomPanelView]);
+    void workbench.runCommand("panel.showProblems");
+  }, [workbench.runCommand]);
+  const showProgressPanel = useCallback(() => {
+    if (ideProgress.state === "problem") {
+      void workbench.runCommand("panel.showProblems");
+      return;
+    }
+
+    void workbench.runCommand("panel.showIndex");
+  }, [ideProgress.state, workbench.runCommand]);
+  const selectBottomPanelView = useCallback(
+    (view: BottomPanelView | "routes" | "testResults") => {
+      if (view === "problems") {
+        void workbench.runCommand("panel.showProblems");
+        return;
+      }
+
+      if (view === "index") {
+        void workbench.runCommand("panel.showIndex");
+        return;
+      }
+
+      if (view === "runtime") {
+        void workbench.runCommand("runtime.show");
+        return;
+      }
+
+      workbench.showBottomPanelView(view as BottomPanelView);
+    },
+    [workbench.runCommand, workbench.showBottomPanelView],
+  );
   const showGoToLine = useCallback(() => {
     editorMenuCommandRunner?.("gotoLine");
   }, [editorMenuCommandRunner]);
@@ -1287,7 +1331,7 @@ function App() {
 
       <aside className="activity-bar" aria-label="Primary navigation">
         <button
-          onClick={workbench.openWorkspace}
+          onClick={openWorkspace}
           title="Open workspace"
           type="button"
         >
@@ -1318,7 +1362,7 @@ function App() {
         </button>
         <button
           className="activity-bar-secondary"
-          onClick={workbench.openSettingsPanel}
+          onClick={openSettings}
           title="Settings"
           type="button"
         >
@@ -1350,7 +1394,7 @@ function App() {
                   : "sidebar-tab"
               }
               disabled={!workbench.workspaceRoot}
-              onClick={() => workbench.setSidebarView("git")}
+              onClick={showGit}
               role="tab"
               type="button"
             >
@@ -1381,7 +1425,7 @@ function App() {
               <RefreshCw aria-hidden="true" size={14} />
             </button>
           ) : workbench.sidebarView === "files" ? (
-            <button onClick={workbench.openWorkspace} type="button">
+            <button onClick={openWorkspace} type="button">
               Open
             </button>
           ) : null}
@@ -1470,7 +1514,7 @@ function App() {
                 : "smart-mode-switch"
             }
             disabled={!workbench.workspaceRoot}
-            onClick={workbench.toggleSmartMode}
+            onClick={toggleSmartMode}
             type="button"
           >
             <span>IDE Mode</span>
@@ -1491,11 +1535,7 @@ function App() {
             <button
               aria-live="polite"
               className={`toolbar-progress ${ideProgress.state}`}
-              onClick={() =>
-                workbench.showBottomPanelView(
-                  ideProgress.state === "problem" ? "problems" : "index",
-                )
-              }
+              onClick={showProgressPanel}
               title={ideProgress.text}
               type="button"
             >
@@ -1519,7 +1559,7 @@ function App() {
           {workbench.workspaceRoot && !workbench.workspaceTrust?.trusted ? (
             <button
               className="toolbar-action"
-              onClick={workbench.toggleWorkspaceTrust}
+              onClick={trustWorkspace}
               type="button"
             >
               Trust
@@ -1611,9 +1651,7 @@ function App() {
             onPhpReindex={workbench.startPhpReindex}
             onRevealDirectoryInTree={workbench.revealDirectoryInTree}
             onResizeStart={startBottomPanelResize}
-            onSelectView={(view) =>
-              workbench.showBottomPanelView(view as BottomPanelView)
-            }
+            onSelectView={selectBottomPanelView}
             onSoftReindex={workbench.startIndexScan}
             gitHistoryGateway={gitHistoryGateway}
             runtimeObservabilityGateway={runtimeObservabilityGateway}
@@ -1621,7 +1659,7 @@ function App() {
             getLatencySnapshot={workbench.getLatencySnapshot}
             onOpenCommitFileDiff={openGitHistoryCommitDiff}
             onTerminalSessionReady={workbench.registerActiveTerminalSession}
-            onTrustWorkspace={workbench.toggleWorkspaceTrust}
+            onTrustWorkspace={trustWorkspace}
             terminalGateway={terminalGateway}
             terminalShellIntegrationEnabled={
               workbench.appSettings.terminalShellIntegrationEnabled
