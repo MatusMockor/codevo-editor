@@ -22,6 +22,10 @@ import { createWorkbenchNotice } from "./workbenchNotice";
 import { createWorkspaceSettingsByRootSnapshot } from "./workspaceSettingsForRoot";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { Dispatch, SetStateAction } from "react";
+import {
+  createWorkspaceRuntimeOwner,
+  transferWorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -96,10 +100,13 @@ function diagnosticEvent(
 function fakeCoalescer(): {
   coalescer: DiagnosticsCoalescer;
   dropRoot: ReturnType<typeof vi.fn>;
+  dropOwner: ReturnType<typeof vi.fn>;
 } {
   const dropRoot = vi.fn();
+  const dropOwner = vi.fn();
   return {
-    coalescer: { dropRoot } as unknown as DiagnosticsCoalescer,
+    coalescer: { dropOwner, dropRoot } as unknown as DiagnosticsCoalescer,
+    dropOwner,
     dropRoot,
   };
 }
@@ -358,6 +365,235 @@ describe("useDiagnostics - PHP language-server diagnostics", () => {
 
     expect(harness.lsByRootRef.current[ROOT]).toBeUndefined();
   });
+
+  it("shares diagnostics across selected aliases with the same owner", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    const selectedAlias = `${ROOT}-selected-alias`;
+    const transferredOwner = transferWorkspaceRuntimeOwner(
+      firstOwner,
+      selectedAlias,
+    );
+    const aliasPath = `${selectedAlias}/app/Alias.php`;
+    harness.lsStatusByRootRef.current = {
+      [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    harness.appSettingsRef.current = {
+      workspaceTabs: [ROOT, selectedAlias],
+    } as AppSettings;
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyLanguageServerDiagnostics(diagnosticEvent(), firstOwner);
+    await flushMicrotasks();
+
+    harness.currentRootRef.current = selectedAlias;
+    api().applyLanguageServerDiagnostics(
+      diagnosticEvent({
+        rootPath: ROOT,
+        uri: fileUriFromPath(aliasPath),
+        version: 2,
+      }),
+      transferredOwner,
+    );
+    await flushMicrotasks();
+
+    expect(Object.keys(harness.lsByRootRef.current)).toEqual(["workspace-id"]);
+    expect(harness.lsByRootRef.current[firstOwner.ownerKey][USER_PATH]).toHaveLength(
+      1,
+    );
+    expect(
+      harness.lsByRootRef.current[firstOwner.ownerKey][aliasPath],
+    ).toHaveLength(1);
+    expect(harness.lsStatusByRootRef.current[firstOwner.ownerKey].rootPath).toBe(
+      selectedAlias,
+    );
+  });
+
+  it("isolates diagnostics for distinct owners of the same execution root", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    harness.lsStatusByRootRef.current = {
+      [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
+      [secondOwner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().applyLanguageServerDiagnostics(diagnosticEvent(), firstOwner);
+    api().applyLanguageServerDiagnostics(diagnosticEvent(), secondOwner);
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[firstOwner.ownerKey][USER_PATH]).toHaveLength(
+      1,
+    );
+    expect(
+      harness.lsByRootRef.current[secondOwner.ownerKey][USER_PATH],
+    ).toHaveLength(1);
+  });
+
+  it("does not let an old-alias async result revive a closed owner", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-id", ROOT);
+    const transferredOwner = transferWorkspaceRuntimeOwner(
+      firstOwner,
+      `${ROOT}-selected-alias`,
+    );
+    harness.lsStatusByRootRef.current = {
+      [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    let releaseFilter = () => {};
+    harness.contextualFilterRef.current = async (_path, diagnostics) => {
+      await new Promise<void>((resolve) => {
+        releaseFilter = resolve;
+      });
+      return diagnostics;
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, firstOwner);
+    api().applyLanguageServerDiagnostics(diagnosticEvent(), firstOwner);
+    await Promise.resolve();
+    api().clearLanguageServerDiagnosticsForRoot(ROOT, transferredOwner);
+    releaseFilter();
+    await flushMicrotasks();
+
+    expect(harness.lsByRootRef.current[firstOwner.ownerKey]).toBeUndefined();
+    expect(harness.lsCoalescer.dropOwner).toHaveBeenCalledWith(
+      firstOwner.ownerKey,
+    );
+  });
+
+  it("keeps owner B visible when owner A finishes a late same-root update", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const secondOwnerDiagnostic = errorDiagnostic({ message: "owner B" });
+    harness.lsStatusByRootRef.current = {
+      [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
+      [secondOwner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    let releaseFilter = () => {};
+    harness.contextualFilterRef.current = async (_path, diagnostics) => {
+      await new Promise<void>((resolve) => {
+        releaseFilter = resolve;
+      });
+      return diagnostics;
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, firstOwner);
+    api().applyLanguageServerDiagnostics(
+      diagnosticEvent({ diagnostics: [errorDiagnostic({ message: "owner A" })] }),
+      firstOwner,
+    );
+    await Promise.resolve();
+
+    harness.lsByRootRef.current[secondOwner.ownerKey] = {
+      [USER_PATH]: [secondOwnerDiagnostic],
+    };
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, secondOwner);
+    harness.notices.value = [
+      createWorkbenchNotice(
+        "error",
+        "PHP",
+        "owner B",
+        `language-server-diagnostics:${USER_URI}`,
+      ),
+    ];
+
+    releaseFilter();
+    await flushMicrotasks();
+
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
+      secondOwnerDiagnostic,
+    ]);
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
+      "owner B",
+    ]);
+  });
+
+  it("keeps owner B visible when owner A clears a path late at the same root", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const secondOwnerDiagnostic = errorDiagnostic({ message: "owner B" });
+    harness.lsStatusByRootRef.current = {
+      [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
+      [secondOwner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    let releaseFilter = () => {};
+    harness.contextualFilterRef.current = async (_path, diagnostics) => {
+      await new Promise<void>((resolve) => {
+        releaseFilter = resolve;
+      });
+      return diagnostics;
+    };
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, firstOwner);
+    api().applyLanguageServerDiagnostics(diagnosticEvent(), firstOwner);
+    await Promise.resolve();
+
+    harness.lsByRootRef.current[secondOwner.ownerKey] = {
+      [USER_PATH]: [secondOwnerDiagnostic],
+    };
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, secondOwner);
+    harness.notices.value = [
+      createWorkbenchNotice(
+        "error",
+        "PHP",
+        "owner B",
+        `language-server-diagnostics:${USER_URI}`,
+      ),
+    ];
+    harness.removedPaths.add(USER_PATH);
+    releaseFilter();
+    await flushMicrotasks();
+
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
+      secondOwnerDiagnostic,
+    ]);
+    expect(harness.lsByRootRef.current[secondOwner.ownerKey][USER_PATH]).toEqual([
+      secondOwnerDiagnostic,
+    ]);
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
+      "owner B",
+    ]);
+  });
+
+  it("suppresses owner A late errors after forgetting it for owner B", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const secondOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    const secondOwnerDiagnostic = errorDiagnostic({ message: "owner B" });
+    harness.lsStatusByRootRef.current = {
+      [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
+      [secondOwner.ownerKey]: runningStatus(ROOT, SESSION),
+    };
+    let rejectFilter: (reason?: unknown) => void = () => {};
+    harness.contextualFilterRef.current = async () =>
+      new Promise<LanguageServerDiagnostic[]>((_resolve, reject) => {
+        rejectFilter = reject;
+      });
+    const { api } = renderDiagnostics(harness.deps);
+
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, firstOwner);
+    api().applyLanguageServerDiagnostics(diagnosticEvent(), firstOwner);
+    await Promise.resolve();
+
+    api().clearLanguageServerDiagnosticsForRoot(ROOT, firstOwner);
+    harness.lsByRootRef.current[secondOwner.ownerKey] = {
+      [USER_PATH]: [secondOwnerDiagnostic],
+    };
+    api().restoreLanguageServerDiagnosticsForRoot(ROOT, secondOwner);
+    rejectFilter(new Error("late owner A failure"));
+    await flushMicrotasks();
+
+    expect(harness.reportError).not.toHaveBeenCalled();
+    expect(harness.languageServerDiagnostics.value[USER_PATH]).toEqual([
+      secondOwnerDiagnostic,
+    ]);
+  });
 });
 
 describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
@@ -560,6 +796,74 @@ describe("useDiagnostics - JavaScript/TypeScript diagnostics", () => {
     await flushMicrotasks();
 
     expect(harness.javaScriptTypeScriptDiagnostics.value[tsPath]).toHaveLength(1);
+  });
+
+  it("shares aliases by owner while isolating a distinct owner", async () => {
+    const harness = createHarness();
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const selectedAlias = `${ROOT}-selected-alias`;
+    const transferredOwner = transferWorkspaceRuntimeOwner(
+      firstOwner,
+      selectedAlias,
+    );
+    const distinctOwner = createWorkspaceRuntimeOwner("workspace-b", selectedAlias);
+    const aliasPath = `${selectedAlias}/src/index.ts`;
+    harness.currentRootRef.current = selectedAlias;
+    harness.appSettingsRef.current = {
+      workspaceTabs: [selectedAlias],
+    } as AppSettings;
+    harness.jstsStatusByRootRef.current = {
+      [firstOwner.ownerKey]: runningStatus(ROOT, SESSION),
+      [distinctOwner.ownerKey]: runningStatus(selectedAlias, SESSION),
+    };
+    const { api } = renderDiagnostics(harness.deps);
+    const event = diagnosticEvent({
+      rootPath: ROOT,
+      uri: fileUriFromPath(aliasPath),
+    });
+
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      event,
+      transferredOwner,
+    );
+    api().applyJavaScriptTypeScriptLanguageServerDiagnostics(
+      event,
+      distinctOwner,
+    );
+    await flushMicrotasks();
+
+    expect(
+      harness.jstsByRootRef.current[firstOwner.ownerKey][aliasPath],
+    ).toHaveLength(1);
+    expect(
+      harness.jstsByRootRef.current[distinctOwner.ownerKey][aliasPath],
+    ).toHaveLength(1);
+
+    api().restoreJavaScriptTypeScriptDiagnosticsForRoot(
+      selectedAlias,
+      distinctOwner,
+    );
+    harness.notices.value = [
+      createWorkbenchNotice(
+        "error",
+        "TypeScript",
+        "owner B",
+        `javascript-typescript-diagnostics:${fileUriFromPath(aliasPath)}`,
+      ),
+    ];
+    api().clearJavaScriptTypeScriptDiagnosticsForRoot(ROOT, transferredOwner);
+
+    expect(harness.jstsByRootRef.current[firstOwner.ownerKey]).toBeUndefined();
+    expect(harness.jstsByRootRef.current[distinctOwner.ownerKey]).toBeDefined();
+    expect(
+      harness.javaScriptTypeScriptDiagnostics.value[aliasPath],
+    ).toHaveLength(1);
+    expect(harness.notices.value.map((notice) => notice.message)).toEqual([
+      "owner B",
+    ]);
+    expect(harness.jstsCoalescer.dropOwner).toHaveBeenCalledWith(
+      firstOwner.ownerKey,
+    );
   });
 });
 

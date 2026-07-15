@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -40,8 +41,12 @@ import {
   languageServerUriSyncKey,
 } from "../domain/languageServerDocumentSync";
 import { pathFromLanguageServerUri } from "../domain/languageServerFeatures";
-import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
+import {
+  cachedLanguageServerRuntimeStatusForOwner,
+  cachedLanguageServerRuntimeStatusForRoot,
+} from "../domain/languageServerRuntimeStatusCache";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   normalizedWorkspaceRootKey,
   workspaceRootKeysEqual,
@@ -159,22 +164,27 @@ export interface Diagnostics {
   clearLanguageServerDiagnostics: () => void;
   restoreLanguageServerDiagnosticsForRoot: (
     rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
   ) => void;
   clearLanguageServerDiagnosticsForRoot: (
     rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
   ) => void;
   clearJavaScriptTypeScriptLanguageServerDiagnostics: () => void;
   clearPhpLocalDiagnostics: () => void;
   restoreJavaScriptTypeScriptDiagnosticsForRoot: (
     rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
   ) => void;
   clearJavaScriptTypeScriptDiagnosticsForRoot: (
     rootPath: string | null | undefined,
+    owner?: WorkspaceRuntimeOwner,
   ) => void;
   clearPhpLocalDiagnosticsForPath: (diagnosticPath: string) => void;
   clearLanguageServerDiagnosticsForPath: (
     rootPath: string | null | undefined,
     diagnosticPath: string,
+    owner?: WorkspaceRuntimeOwner,
   ) => void;
   updateLocalPhpDiagnostics: (
     diagnosticPath: string,
@@ -185,10 +195,66 @@ export interface Diagnostics {
     content: string,
     language: string,
   ) => void;
-  applyLanguageServerDiagnostics: (event: LanguageServerDiagnosticEvent) => void;
+  applyLanguageServerDiagnostics: (
+    event: LanguageServerDiagnosticEvent,
+    owner?: WorkspaceRuntimeOwner,
+  ) => void;
   applyJavaScriptTypeScriptLanguageServerDiagnostics: (
     event: LanguageServerDiagnosticEvent,
+    owner?: WorkspaceRuntimeOwner,
   ) => void;
+}
+
+function diagnosticsOwnerKey(
+  rootPath: string | null | undefined,
+  owner?: WorkspaceRuntimeOwner,
+): string {
+  if (owner) {
+    return owner.ownerKey;
+  }
+
+  return normalizedWorkspaceRootKey(rootPath);
+}
+
+function diagnosticsExecutionRoot(
+  rootPath: string | null | undefined,
+  owner?: WorkspaceRuntimeOwner,
+): string | null | undefined {
+  if (owner) {
+    return owner.executionRoot;
+  }
+
+  return rootPath;
+}
+
+function diagnosticsEventForOwner(
+  event: LanguageServerDiagnosticEvent,
+  owner?: WorkspaceRuntimeOwner,
+): LanguageServerDiagnosticEvent {
+  if (!owner || event.rootPath === owner.executionRoot) {
+    return event;
+  }
+
+  return { ...event, rootPath: owner.executionRoot };
+}
+
+function diagnosticsUriVersionKey(
+  rootPath: string,
+  uri: string,
+  owner?: WorkspaceRuntimeOwner,
+): string {
+  if (owner) {
+    return `${owner.ownerKey}\u0000${uri}`;
+  }
+
+  return languageServerUriSyncKey(rootPath, uri);
+}
+
+function diagnosticsOwnerLifecycleKey(
+  kind: "php" | "typescript",
+  ownerKey: string,
+): string {
+  return `${kind}:${ownerKey}`;
 }
 
 /**
@@ -232,6 +298,52 @@ export function useDiagnostics(
     isLanguageServerSessionCurrentForRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   } = dependencies;
+  const diagnosticsOwnerRevisionRef = useRef<Record<string, number>>({});
+  const closedDiagnosticsOwnerKeysRef = useRef<Set<string>>(new Set());
+  const visibleLanguageServerDiagnosticsOwnerKeyRef = useRef(
+    normalizedWorkspaceRootKey(currentWorkspaceRootRef.current),
+  );
+  const visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef = useRef(
+    normalizedWorkspaceRootKey(currentWorkspaceRootRef.current),
+  );
+
+  const diagnosticsOwnerRevision = useCallback((ownerKey: string) => {
+    return diagnosticsOwnerRevisionRef.current[ownerKey] ?? 0;
+  }, []);
+
+  const isDiagnosticsOwnerRevisionCurrent = useCallback(
+    (ownerKey: string, revision: number) => {
+      return (
+        !closedDiagnosticsOwnerKeysRef.current.has(ownerKey) &&
+        diagnosticsOwnerRevision(ownerKey) === revision
+      );
+    },
+    [diagnosticsOwnerRevision],
+  );
+
+  const closeDiagnosticsOwner = useCallback((ownerKey: string) => {
+    diagnosticsOwnerRevisionRef.current[ownerKey] =
+      (diagnosticsOwnerRevisionRef.current[ownerKey] ?? 0) + 1;
+    closedDiagnosticsOwnerKeysRef.current.add(ownerKey);
+  }, []);
+
+  const restoreDiagnosticsOwner = useCallback((ownerKey: string) => {
+    closedDiagnosticsOwnerKeysRef.current.delete(ownerKey);
+  }, []);
+
+  const isDiagnosticsOwnerVisible = useCallback(
+    (
+      ownerKey: string,
+      executionRoot: string | null | undefined,
+      visibleOwnerKeyRef: MutableRefObject<string>,
+    ) => {
+      return (
+        visibleOwnerKeyRef.current === ownerKey &&
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, executionRoot)
+      );
+    },
+    [],
+  );
   const replaceEslintDiagnostics = useCallback(
     (rootPath: string, notices: WorkbenchNotice[]) => {
       const groupKey = `eslint:${rootPath}`;
@@ -318,14 +430,19 @@ export function useDiagnostics(
   }, []);
 
   const restoreLanguageServerDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      restoreDiagnosticsOwner(diagnosticsOwnerLifecycleKey("php", rootKey));
+      visibleLanguageServerDiagnosticsOwnerKeyRef.current = rootKey;
       const cachedDiagnostics = rootKey
         ? languageServerDiagnosticsByRootRef.current[rootKey] ?? {}
         : {};
       setLanguageServerDiagnosticsByPath({ ...cachedDiagnostics });
     },
-    [],
+    [restoreDiagnosticsOwner],
   );
 
   const updateLanguageServerDiagnosticsForRoot = useCallback(
@@ -333,8 +450,19 @@ export function useDiagnostics(
       rootPath: string,
       diagnosticPath: string,
       diagnostics: LanguageServerDiagnostic[],
+      owner?: WorkspaceRuntimeOwner,
+      ownerRevision?: number,
     ) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("php", rootKey);
+
+      if (
+        ownerRevision !== undefined &&
+        !isDiagnosticsOwnerRevisionCurrent(lifecycleKey, ownerRevision)
+      ) {
+        return;
+      }
+
       const currentByPath =
         languageServerDiagnosticsByRootRef.current[rootKey] ?? {};
       const nextByPath = {
@@ -344,28 +472,55 @@ export function useDiagnostics(
 
       languageServerDiagnosticsByRootRef.current[rootKey] = nextByPath;
 
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (
+        isDiagnosticsOwnerVisible(
+          rootKey,
+          rootPath,
+          visibleLanguageServerDiagnosticsOwnerKeyRef,
+        )
+      ) {
         setLanguageServerDiagnosticsByPath(nextByPath);
       }
     },
-    [],
+    [isDiagnosticsOwnerRevisionCurrent, isDiagnosticsOwnerVisible],
   );
 
   const clearLanguageServerDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
 
       if (rootKey) {
         delete languageServerDiagnosticsByRootRef.current[rootKey];
       }
 
-      languageServerDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
+      if (owner) {
+        closeDiagnosticsOwner(diagnosticsOwnerLifecycleKey("php", rootKey));
+        languageServerDiagnosticsCoalescerRef.current?.dropOwner(owner.ownerKey);
+      }
 
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (!owner) {
+        languageServerDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
+      }
+
+      const executionRoot = diagnosticsExecutionRoot(rootPath, owner);
+      if (
+        isDiagnosticsOwnerVisible(
+          rootKey,
+          executionRoot,
+          visibleLanguageServerDiagnosticsOwnerKeyRef,
+        )
+      ) {
         clearLanguageServerDiagnostics();
       }
     },
-    [clearLanguageServerDiagnostics],
+    [
+      clearLanguageServerDiagnostics,
+      closeDiagnosticsOwner,
+      isDiagnosticsOwnerVisible,
+    ],
   );
 
   const clearJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(() => {
@@ -389,14 +544,21 @@ export function useDiagnostics(
   }, []);
 
   const restoreJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      restoreDiagnosticsOwner(
+        diagnosticsOwnerLifecycleKey("typescript", rootKey),
+      );
+      visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef.current = rootKey;
       const cachedDiagnostics = rootKey
         ? javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] ?? {}
         : {};
       setJavaScriptTypeScriptDiagnosticsByPath({ ...cachedDiagnostics });
     },
-    [],
+    [restoreDiagnosticsOwner],
   );
 
   const updateJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
@@ -404,8 +566,19 @@ export function useDiagnostics(
       rootPath: string,
       diagnosticPath: string,
       diagnostics: LanguageServerDiagnostic[],
+      owner?: WorkspaceRuntimeOwner,
+      ownerRevision?: number,
     ) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("typescript", rootKey);
+
+      if (
+        ownerRevision !== undefined &&
+        !isDiagnosticsOwnerRevisionCurrent(lifecycleKey, ownerRevision)
+      ) {
+        return;
+      }
+
       const currentByPath =
         javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey] ?? {};
       const nextByPath = { ...currentByPath };
@@ -422,28 +595,59 @@ export function useDiagnostics(
         delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
       }
 
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (
+        isDiagnosticsOwnerVisible(
+          rootKey,
+          rootPath,
+          visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef,
+        )
+      ) {
         setJavaScriptTypeScriptDiagnosticsByPath(nextByPath);
       }
     },
-    [],
+    [isDiagnosticsOwnerRevisionCurrent, isDiagnosticsOwnerVisible],
   );
 
   const clearJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
-    (rootPath: string | null | undefined) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
+    (
+      rootPath: string | null | undefined,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
 
       if (rootKey) {
         delete javaScriptTypeScriptDiagnosticsByRootRef.current[rootKey];
       }
 
-      javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
+      if (owner) {
+        closeDiagnosticsOwner(
+          diagnosticsOwnerLifecycleKey("typescript", rootKey),
+        );
+        javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropOwner(
+          owner.ownerKey,
+        );
+      }
 
-      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (!owner) {
+        javaScriptTypeScriptDiagnosticsCoalescerRef.current?.dropRoot(rootPath);
+      }
+
+      const executionRoot = diagnosticsExecutionRoot(rootPath, owner);
+      if (
+        isDiagnosticsOwnerVisible(
+          rootKey,
+          executionRoot,
+          visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef,
+        )
+      ) {
         clearJavaScriptTypeScriptLanguageServerDiagnostics();
       }
     },
-    [clearJavaScriptTypeScriptLanguageServerDiagnostics],
+    [
+      clearJavaScriptTypeScriptLanguageServerDiagnostics,
+      closeDiagnosticsOwner,
+      isDiagnosticsOwnerVisible,
+    ],
   );
 
   const clearPhpLocalDiagnosticsForPath = useCallback((diagnosticPath: string) => {
@@ -464,11 +668,22 @@ export function useDiagnostics(
   }, []);
 
   const clearLanguageServerDiagnosticsForPath = useCallback(
-    (rootPath: string | null | undefined, diagnosticPath: string) => {
-      const rootKey = normalizedWorkspaceRootKey(rootPath);
-      const isActiveRoot = workspaceRootKeysEqual(
-        currentWorkspaceRootRef.current,
-        rootPath,
+    (
+      rootPath: string | null | undefined,
+      diagnosticPath: string,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const rootKey = diagnosticsOwnerKey(rootPath, owner);
+      const executionRoot = diagnosticsExecutionRoot(rootPath, owner);
+      const isPhpOwnerVisible = isDiagnosticsOwnerVisible(
+        rootKey,
+        executionRoot,
+        visibleLanguageServerDiagnosticsOwnerKeyRef,
+      );
+      const isJavaScriptTypeScriptOwnerVisible = isDiagnosticsOwnerVisible(
+        rootKey,
+        executionRoot,
+        visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef,
       );
 
       const removePathFromRootCache = (
@@ -499,11 +714,11 @@ export function useDiagnostics(
         javaScriptTypeScriptDiagnosticsByRootRef.current,
       );
 
-      if (!isActiveRoot) {
+      if (!isPhpOwnerVisible && !isJavaScriptTypeScriptOwnerVisible) {
         return;
       }
 
-      if (phpChanged) {
+      if (phpChanged && isPhpOwnerVisible) {
         setLanguageServerDiagnosticsByPath((current) => {
           if (!(diagnosticPath in current)) {
             return current;
@@ -515,7 +730,10 @@ export function useDiagnostics(
         });
       }
 
-      if (javaScriptTypeScriptChanged) {
+      if (
+        javaScriptTypeScriptChanged &&
+        isJavaScriptTypeScriptOwnerVisible
+      ) {
         setJavaScriptTypeScriptDiagnosticsByPath((current) => {
           if (!(diagnosticPath in current)) {
             return current;
@@ -527,16 +745,18 @@ export function useDiagnostics(
         });
       }
 
-      setFrameworkDiagnosticsByPath((current) => {
-        if (!(diagnosticPath in current)) {
-          return current;
-        }
+      if (isPhpOwnerVisible) {
+        setFrameworkDiagnosticsByPath((current) => {
+          if (!(diagnosticPath in current)) {
+            return current;
+          }
 
-        const next = { ...current };
-        delete next[diagnosticPath];
-        return next;
-      });
-      clearPhpLocalDiagnosticsForPath(diagnosticPath);
+          const next = { ...current };
+          delete next[diagnosticPath];
+          return next;
+        });
+        clearPhpLocalDiagnosticsForPath(diagnosticPath);
+      }
 
       const uri = fileUriFromPath(diagnosticPath);
       const phpGroupKey = languageServerDiagnosticNoticeGroup(uri);
@@ -546,12 +766,13 @@ export function useDiagnostics(
       setNotices((current) =>
         current.filter(
           (notice) =>
-            notice.groupKey !== phpGroupKey &&
-            notice.groupKey !== javaScriptTypeScriptGroupKey,
+            (!isPhpOwnerVisible || notice.groupKey !== phpGroupKey) &&
+            (!isJavaScriptTypeScriptOwnerVisible ||
+              notice.groupKey !== javaScriptTypeScriptGroupKey),
         ),
       );
     },
-    [clearPhpLocalDiagnosticsForPath],
+    [clearPhpLocalDiagnosticsForPath, isDiagnosticsOwnerVisible],
   );
 
   const updateLocalPhpDiagnostics = useCallback(
@@ -784,12 +1005,24 @@ export function useDiagnostics(
   );
 
   const applyLanguageServerDiagnostics = useCallback(
-    (event: LanguageServerDiagnosticEvent) => {
+    (
+      incomingEvent: LanguageServerDiagnosticEvent,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const event = diagnosticsEventForOwner(incomingEvent, owner);
+
       if (!event.rootPath) {
         return;
       }
 
       const diagnosticsRootPath = event.rootPath;
+      const ownerKey = diagnosticsOwnerKey(diagnosticsRootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("php", ownerKey);
+      const ownerRevision = diagnosticsOwnerRevision(lifecycleKey);
+
+      if (owner && closedDiagnosticsOwnerKeysRef.current.has(lifecycleKey)) {
+        return;
+      }
 
       if (
         !workspaceRootKeysEqual(
@@ -803,10 +1036,15 @@ export function useDiagnostics(
         return;
       }
 
-      const runtimeStatus = cachedLanguageServerRuntimeStatusForRoot(
-        languageServerRuntimeStatusByRootRef.current,
-        diagnosticsRootPath,
-      );
+      const runtimeStatus = owner
+        ? cachedLanguageServerRuntimeStatusForOwner(
+            languageServerRuntimeStatusByRootRef.current,
+            owner,
+          )
+        : cachedLanguageServerRuntimeStatusForRoot(
+            languageServerRuntimeStatusByRootRef.current,
+            diagnosticsRootPath,
+          );
       const currentSessionId =
         runtimeStatus?.kind === "running" ? runtimeStatus.sessionId : null;
 
@@ -814,9 +1052,10 @@ export function useDiagnostics(
         return;
       }
 
-      const diagnosticUriSyncKey = languageServerUriSyncKey(
+      const diagnosticUriSyncKey = diagnosticsUriVersionKey(
         diagnosticsRootPath,
         event.uri,
+        owner,
       );
       const lastAppliedDiagnosticVersion =
         lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey];
@@ -834,13 +1073,18 @@ export function useDiagnostics(
 
       const groupKey = languageServerDiagnosticNoticeGroup(event.uri);
       const diagnosticPath = pathFromLanguageServerUri(event.uri);
-      const isActiveRoot = workspaceRootKeysEqual(
-        currentWorkspaceRootRef.current,
+      const isActiveRoot = isDiagnosticsOwnerVisible(
+        ownerKey,
         diagnosticsRootPath,
+        visibleLanguageServerDiagnosticsOwnerKeyRef,
       );
 
       if (diagnosticPath && isExternallyRemovedDocumentPath(diagnosticPath)) {
-        clearLanguageServerDiagnosticsForPath(diagnosticsRootPath, diagnosticPath);
+        clearLanguageServerDiagnosticsForPath(
+          diagnosticsRootPath,
+          diagnosticPath,
+          owner,
+        );
         return;
       }
 
@@ -855,6 +1099,10 @@ export function useDiagnostics(
         const latestAppliedDiagnosticVersion =
           lastAppliedDiagnosticVersionByUriRef.current[diagnosticUriSyncKey];
 
+        if (!isDiagnosticsOwnerRevisionCurrent(lifecycleKey, ownerRevision)) {
+          return;
+        }
+
         if (
           !shouldApplyLanguageServerDiagnostics(
             event,
@@ -866,9 +1114,10 @@ export function useDiagnostics(
           return;
         }
 
-        const isLatestActiveRoot = workspaceRootKeysEqual(
+        const isLatestActiveRoot = isDiagnosticsOwnerVisible(
+          ownerKey,
           diagnosticsRootPath,
-          currentWorkspaceRootRef.current,
+          visibleLanguageServerDiagnosticsOwnerKeyRef,
         );
         if (
           !isLatestActiveRoot &&
@@ -883,6 +1132,7 @@ export function useDiagnostics(
           clearLanguageServerDiagnosticsForPath(
             diagnosticsRootPath,
             diagnosticPath,
+            owner,
           );
           return;
         }
@@ -926,10 +1176,22 @@ export function useDiagnostics(
             diagnosticsRootPath,
             diagnosticPath,
             diagnostics,
+            owner,
+            ownerRevision,
           );
         }
       })().catch((error) => {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, diagnosticsRootPath)) {
+        if (!isDiagnosticsOwnerRevisionCurrent(lifecycleKey, ownerRevision)) {
+          return;
+        }
+
+        if (
+          !isDiagnosticsOwnerVisible(
+            ownerKey,
+            diagnosticsRootPath,
+            visibleLanguageServerDiagnosticsOwnerKeyRef,
+          )
+        ) {
           return;
         }
 
@@ -951,6 +1213,9 @@ export function useDiagnostics(
     },
     [
       clearLanguageServerDiagnosticsForPath,
+      diagnosticsOwnerRevision,
+      isDiagnosticsOwnerRevisionCurrent,
+      isDiagnosticsOwnerVisible,
       isLanguageServerSessionCurrentForRoot,
       isExternallyRemovedDocumentPath,
       reportLanguageServerErrorForActiveWorkspaceRoot,
@@ -959,12 +1224,24 @@ export function useDiagnostics(
   );
 
   const applyJavaScriptTypeScriptLanguageServerDiagnostics = useCallback(
-    (event: LanguageServerDiagnosticEvent) => {
+    (
+      incomingEvent: LanguageServerDiagnosticEvent,
+      owner?: WorkspaceRuntimeOwner,
+    ) => {
+      const event = diagnosticsEventForOwner(incomingEvent, owner);
+
       if (!event.rootPath) {
         return;
       }
 
       const diagnosticsRootPath = event.rootPath;
+      const ownerKey = diagnosticsOwnerKey(diagnosticsRootPath, owner);
+      const lifecycleKey = diagnosticsOwnerLifecycleKey("typescript", ownerKey);
+      const ownerRevision = diagnosticsOwnerRevision(lifecycleKey);
+
+      if (owner && closedDiagnosticsOwnerKeysRef.current.has(lifecycleKey)) {
+        return;
+      }
 
       if (
         !workspaceRootKeysEqual(diagnosticsRootPath, currentWorkspaceRootRef.current) &&
@@ -975,10 +1252,15 @@ export function useDiagnostics(
         return;
       }
 
-      const runtimeStatus = cachedLanguageServerRuntimeStatusForRoot(
-        javaScriptTypeScriptRuntimeStatusByRootRef.current,
-        diagnosticsRootPath,
-      );
+      const runtimeStatus = owner
+        ? cachedLanguageServerRuntimeStatusForOwner(
+            javaScriptTypeScriptRuntimeStatusByRootRef.current,
+            owner,
+          )
+        : cachedLanguageServerRuntimeStatusForRoot(
+            javaScriptTypeScriptRuntimeStatusByRootRef.current,
+            diagnosticsRootPath,
+          );
       const currentSessionId =
         runtimeStatus?.kind === "running" ? runtimeStatus.sessionId : null;
 
@@ -986,9 +1268,10 @@ export function useDiagnostics(
         return;
       }
 
-      const diagnosticUriSyncKey = languageServerUriSyncKey(
+      const diagnosticUriSyncKey = diagnosticsUriVersionKey(
         diagnosticsRootPath,
         event.uri,
+        owner,
       );
       const lastAppliedDiagnosticVersion =
         javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef.current[
@@ -1008,9 +1291,10 @@ export function useDiagnostics(
 
       const groupKey = javaScriptTypeScriptDiagnosticNoticeGroup(event.uri);
       const diagnosticPath = pathFromLanguageServerUri(event.uri);
-      const isActiveRoot = workspaceRootKeysEqual(
-        currentWorkspaceRootRef.current,
+      const isActiveRoot = isDiagnosticsOwnerVisible(
+        ownerKey,
         diagnosticsRootPath,
+        visibleJavaScriptTypeScriptDiagnosticsOwnerKeyRef,
       );
 
       const diagnosticsWorkspaceSettings = workspaceSettingsForRoot(
@@ -1038,6 +1322,8 @@ export function useDiagnostics(
             diagnosticsRootPath,
             diagnosticPath,
             [],
+            owner,
+            ownerRevision,
           );
         }
 
@@ -1074,10 +1360,17 @@ export function useDiagnostics(
           diagnosticsRootPath,
           diagnosticPath,
           event.diagnostics,
+          owner,
+          ownerRevision,
         );
       }
     },
-    [updateJavaScriptTypeScriptDiagnosticsForRoot, workspaceSettingsForRoot],
+    [
+      diagnosticsOwnerRevision,
+      isDiagnosticsOwnerVisible,
+      updateJavaScriptTypeScriptDiagnosticsForRoot,
+      workspaceSettingsForRoot,
+    ],
   );
 
   return {
