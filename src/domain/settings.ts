@@ -255,11 +255,19 @@ export interface StatusBarItemVisibility {
 export interface SettingsGateway {
   loadAppSettings(): Promise<AppSettings>;
   saveAppSettings(settings: AppSettings): Promise<void>;
-  loadWorkspaceSettings(rootPath: string): Promise<WorkspaceSettings>;
+  loadWorkspaceSettings(
+    identity: string | WorkspaceSettingsIdentity,
+  ): Promise<WorkspaceSettings>;
   saveWorkspaceSettings(
-    rootPath: string,
+    identity: string | WorkspaceSettingsIdentity,
     settings: WorkspaceSettings,
   ): Promise<void>;
+}
+
+export interface WorkspaceSettingsIdentity {
+  canonicalKey: string;
+  /** Ordered migration candidates: canonical direct path before selected alias. */
+  legacyRawKeys?: readonly string[];
 }
 
 export function defaultAppSettings(): AppSettings {

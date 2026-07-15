@@ -139,6 +139,22 @@ impl WorkspaceRegistry {
         let root = open_selected_root(selected_root)?;
         post_open()?;
         let canonical_root_path = opened_root_path(&root)?;
+        let mut workspaces = self.workspaces.lock().map_err(lock_error)?;
+        if let Some(existing) = workspaces
+            .values()
+            .find(|workspace| workspace.descriptor.canonical_root_path == canonical_root_path)
+        {
+            return Ok(ManagedWorkspaceDescriptor {
+                workspace_id: existing.descriptor.workspace_id.clone(),
+                selected_root_path: selected_root.to_path_buf(),
+                canonical_root_path,
+                case_sensitive: existing.descriptor.case_sensitive,
+                unicode_normalization_policy: existing
+                    .descriptor
+                    .unicode_normalization_policy
+                    .clone(),
+            });
+        }
         let descriptor = ManagedWorkspaceDescriptor {
             workspace_id: random_workspace_id()?,
             selected_root_path: selected_root.to_path_buf(),
@@ -146,7 +162,7 @@ impl WorkspaceRegistry {
             case_sensitive: detect_case_sensitivity(&root),
             unicode_normalization_policy: detect_unicode_policy(&root),
         };
-        self.workspaces.lock().map_err(lock_error)?.insert(
+        workspaces.insert(
             descriptor.workspace_id.clone(),
             ManagedWorkspace {
                 descriptor: descriptor.clone(),
@@ -523,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn isolates_workspaces_and_allows_same_root_with_separate_ids() {
+    fn isolates_distinct_roots_and_reuses_identity_for_the_same_root() {
         let registry = WorkspaceRegistry::new();
         let a = temp_root("a");
         let b = temp_root("b");
@@ -532,7 +548,8 @@ mod tests {
         let a1 = registry.register(&a).unwrap();
         let a2 = registry.register(&a).unwrap();
         let b = registry.register(&b).unwrap();
-        assert_ne!(a1.workspace_id, a2.workspace_id);
+        assert_eq!(a1.workspace_id, a2.workspace_id);
+        assert_ne!(a1.workspace_id, b.workspace_id);
         let mut value = String::new();
         registry
             .open_descendant(&b.workspace_id, Path::new("value"))
@@ -547,6 +564,76 @@ mod tests {
                 .canonical_root_path,
             fs::canonicalize(a).unwrap()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliases_and_lexical_parent_paths_reuse_the_canonical_identity() {
+        let registry = WorkspaceRegistry::new();
+        let parent = temp_root("identity-aliases");
+        let root = parent.join("workspace");
+        let alias = parent.join("workspace-alias");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("nested")).unwrap();
+        symlink(&root, &alias).unwrap();
+
+        let direct = registry.register(&root).unwrap();
+        let through_alias = registry.register(&alias).unwrap();
+        let through_parent = registry
+            .register(root.join("nested").join("..").as_path())
+            .unwrap();
+
+        assert_eq!(direct.workspace_id, through_alias.workspace_id);
+        assert_eq!(direct.workspace_id, through_parent.workspace_id);
+        assert_eq!(through_alias.selected_root_path, alias);
+        assert_eq!(
+            through_parent.selected_root_path,
+            root.join("nested").join("..")
+        );
+        assert_eq!(registry.workspaces.lock().unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unregistering_a_shared_identity_revokes_every_alias() {
+        let registry = WorkspaceRegistry::new();
+        let root = temp_root("identity-unregister");
+        let alias = root.with_extension("alias");
+        fs::write(root.join("value"), "retained").unwrap();
+        symlink(&root, &alias).unwrap();
+
+        let direct = registry.register(&root).unwrap();
+        let through_alias = registry.register(&alias).unwrap();
+        assert_eq!(direct.workspace_id, through_alias.workspace_id);
+
+        registry.unregister(&direct.workspace_id).unwrap();
+
+        assert_eq!(
+            registry
+                .descriptor(&through_alias.workspace_id)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        assert_eq!(
+            registry
+                .open_descendant(&through_alias.workspace_id, Path::new("value"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn registering_after_unregister_allocates_a_fresh_identity() {
+        let registry = WorkspaceRegistry::new();
+        let root = temp_root("identity-reregister");
+        let first = registry.register(&root).unwrap();
+        registry.unregister(&first.workspace_id).unwrap();
+
+        let second = registry.register(&root).unwrap();
+
+        assert_ne!(first.workspace_id, second.workspace_id);
     }
 
     #[test]

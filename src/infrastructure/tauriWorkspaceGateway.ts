@@ -23,7 +23,6 @@ import type {
   WorkspaceTextFileSnapshot,
 } from "../domain/workspace";
 import type {
-  WorkspaceIdentityDescriptor,
   WorkspaceIdentityDescriptorResolver,
 } from "./tauriWorkspaceIdentityGateway";
 import { workspaceRelativePathForDescriptor } from "./tauriWorkspaceIdentityGateway";
@@ -57,16 +56,20 @@ export class TauriWorkspaceGateway
   ): Promise<number> {
     const target = this.optionalTrustedTarget(rootPath);
     if (target) {
-      const descriptor = this.workspaceIdentities?.descriptorForPath(rootPath);
-      if (!descriptor) {
-        return Promise.reject(new Error("The trusted workspace descriptor is no longer available."));
-      }
       return invoke<WorkspaceEditResult>("workspace_apply_workspace_edit", {
         workspaceId: target.workspaceId,
-        edit: relativeWorkspaceEdit(descriptor, edit),
+        edit: relativeWorkspaceEdit(
+          edit,
+          (path) =>
+            this.optionalTrustedTarget(path, target.workspaceId)?.relativePath ??
+            null,
+        ),
         skippedPaths: skippedPaths.flatMap((path) => {
-          const relativePath = workspaceRelativePathForDescriptor(descriptor, path);
-          return relativePath === null ? [] : [relativePath];
+          const relativePath = this.optionalTrustedTarget(
+            path,
+            target.workspaceId,
+          )?.relativePath;
+          return relativePath === undefined ? [] : [relativePath];
         }),
       }).then(workspaceEditCount);
     }
@@ -267,14 +270,33 @@ export class TauriWorkspaceGateway
     );
   }
 
-  private optionalTrustedTarget(path: string): TrustedWorkspaceTarget | null {
+  private optionalTrustedTarget(
+    path: string,
+    workspaceId?: string,
+  ): TrustedWorkspaceTarget | null {
+    const match = this.workspaceIdentities?.matchForPath?.(path, workspaceId);
+    if (match) {
+      return {
+        workspaceId: match.descriptor.workspaceId,
+        relativePath: match.relativePath,
+      };
+    }
+
     const descriptor = this.workspaceIdentities?.descriptorForPath(path) ?? null;
     if (!descriptor) {
       return null;
     }
 
+    if (workspaceId && descriptor.workspaceId !== workspaceId) {
+      return null;
+    }
+
     const relativePath = workspaceRelativePathForDescriptor(descriptor, path);
     if (relativePath === null) {
+      if (workspaceId) {
+        return null;
+      }
+
       throw new Error("The requested path is outside the active trusted workspace.");
     }
 
@@ -319,20 +341,20 @@ function workspaceEditCount(result: WorkspaceEditResult): number {
 }
 
 function relativeWorkspaceEdit(
-  descriptor: WorkspaceIdentityDescriptor,
   edit: LanguageServerWorkspaceEdit,
+  relativePathForPath: (path: string) => string | null,
 ): LanguageServerWorkspaceEdit {
   const changes = Object.fromEntries(Object.entries(edit.changes).flatMap(([uri, edits]) => {
-    const relativePath = relativePathFromUri(descriptor, uri);
+    const relativePath = relativePathFromUri(relativePathForPath, uri);
     return relativePath === null ? [] : [[relativePath, edits]];
   }));
   const fileOperations = edit.fileOperations?.flatMap((operation) => {
-    const relativeOperation = relativeFileOperation(descriptor, operation);
+    const relativeOperation = relativeFileOperation(relativePathForPath, operation);
     return relativeOperation ? [relativeOperation] : [];
   });
   const documentVersions = edit.documentVersions
     ? Object.fromEntries(Object.entries(edit.documentVersions).flatMap(([uri, version]) => {
-        const relativePath = relativePathFromUri(descriptor, uri);
+        const relativePath = relativePathFromUri(relativePathForPath, uri);
         return relativePath === null ? [] : [[relativePath, version]];
       }))
     : undefined;
@@ -340,24 +362,26 @@ function relativeWorkspaceEdit(
 }
 
 function relativeFileOperation(
-  descriptor: WorkspaceIdentityDescriptor,
+  relativePathForPath: (path: string) => string | null,
   operation: LanguageServerWorkspaceFileOperation,
 ): LanguageServerWorkspaceFileOperation | null {
   if (operation.kind !== "rename") {
-    const uri = relativePathFromUri(descriptor, operation.uri);
+    const uri = relativePathFromUri(relativePathForPath, operation.uri);
     return uri === null ? null : { ...operation, uri };
   }
-  const oldUri = relativePathFromUri(descriptor, operation.oldUri);
-  const newUri = relativePathFromUri(descriptor, operation.newUri);
+  const oldUri = relativePathFromUri(relativePathForPath, operation.oldUri);
+  const newUri = relativePathFromUri(relativePathForPath, operation.newUri);
   if (oldUri === null || newUri === null) return null;
   return { ...operation, oldUri, newUri };
 }
 
-function relativePathFromUri(descriptor: WorkspaceIdentityDescriptor, uri: string): string | null {
+function relativePathFromUri(
+  relativePathForPath: (path: string) => string | null,
+  uri: string,
+): string | null {
   const path = pathFromLanguageServerUri(uri);
   if (path === null) return null;
-  const relativePath = workspaceRelativePathForDescriptor(descriptor, path);
-  return relativePath;
+  return relativePathForPath(path);
 }
 
 function mapReplaceResult(root: string, result: DescriptorReplaceResult): ReplaceInPathResult {

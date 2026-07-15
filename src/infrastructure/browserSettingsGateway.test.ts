@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { BrowserSettingsGateway, type KeyValueStorage } from "./browserSettingsGateway";
+import {
+  BrowserSettingsGateway,
+  type KeyValueStorage,
+} from "./browserSettingsGateway";
 import { defaultKeymapSettings } from "../domain/keymap";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
@@ -70,6 +73,210 @@ describe("BrowserSettingsGateway", () => {
     expect(JSON.parse(storage.getItem(key) ?? "{}").session).toEqual(
       settings.session,
     );
+  });
+
+  it("keeps raw trailing-slash keys backward compatible", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+    const settings = {
+      ...defaultWorkspaceSettings(),
+      defaultTabSize: 2,
+    };
+
+    await gateway.saveWorkspaceSettings("/project/", settings);
+
+    await expect(gateway.loadWorkspaceSettings("/project/")).resolves.toEqual(
+      settings,
+    );
+    await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual(
+      defaultWorkspaceSettings(),
+    );
+  });
+
+  it("migrates direct-path settings when an alias is selected", async () => {
+    const storage = memoryStorage();
+    const directKey = "editor.settings.workspace:%2Freal%2Fproject";
+    const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
+    const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
+    const legacyValue =
+      '{"defaultTabSize":2,"futureSetting":{"enabled":true}}';
+    storage.setItem(directKey, legacyValue);
+    const gateway = new BrowserSettingsGateway(storage);
+
+    const settings = await gateway.loadWorkspaceSettings({
+      canonicalKey: "workspace-1",
+      legacyRawKeys: ["/real/project", "/alias/project"],
+    });
+
+    expect(settings.defaultTabSize).toBe(2);
+    expect(storage.getItem(canonicalKey)).toBe(legacyValue);
+    expect(storage.getItem(directKey)).toBeNull();
+    expect(storage.getItem(aliasKey)).toBeNull();
+  });
+
+  it("migrates alias settings when the direct path is selected", async () => {
+    const storage = memoryStorage();
+    const directKey = "editor.settings.workspace:%2Freal%2Fproject";
+    const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
+    const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
+    const legacyValue = '{"defaultTabSize":2,"unknown":true}';
+    storage.setItem(aliasKey, legacyValue);
+    const gateway = new BrowserSettingsGateway(storage);
+
+    const settings = await gateway.loadWorkspaceSettings({
+      canonicalKey: "workspace-1",
+      legacyRawKeys: ["/real/project", "/alias/project"],
+    });
+
+    expect(settings.defaultTabSize).toBe(2);
+    expect(storage.getItem(canonicalKey)).toBe(legacyValue);
+    expect(storage.getItem(directKey)).toBeNull();
+    expect(storage.getItem(aliasKey)).toBeNull();
+  });
+
+  it("persists identity-aware saves under the canonical key", async () => {
+    const storage = memoryStorage();
+    const legacyKey = "editor.settings.workspace:%2Falias%2Fproject";
+    const canonicalKey =
+      "editor.settings.workspace:canonical:workspace-1";
+    storage.setItem(legacyKey, JSON.stringify({ defaultTabSize: 8 }));
+    const gateway = new BrowserSettingsGateway(storage);
+    const settings = {
+      ...defaultWorkspaceSettings(),
+      defaultTabSize: 2,
+    };
+
+    await gateway.saveWorkspaceSettings(
+      {
+        canonicalKey: "workspace-1",
+        legacyRawKeys: ["/real/project", "/alias/project"],
+      },
+      settings,
+    );
+
+    expect(JSON.parse(storage.getItem(canonicalKey) ?? "{}")).toEqual(settings);
+    expect(storage.getItem(legacyKey)).toBeNull();
+  });
+
+  it("keeps legacy keys untouched when canonical settings already exist", async () => {
+    const storage = memoryStorage();
+    const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
+    const directKey = "editor.settings.workspace:%2Freal%2Fproject";
+    const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
+    storage.setItem(canonicalKey, JSON.stringify({ defaultTabSize: 2 }));
+    storage.setItem(directKey, JSON.stringify({ defaultTabSize: 8 }));
+    storage.setItem(aliasKey, JSON.stringify({ defaultTabSize: 6 }));
+    const gateway = new BrowserSettingsGateway(storage);
+
+    const settings = await gateway.loadWorkspaceSettings({
+      canonicalKey: "workspace-1",
+      legacyRawKeys: ["/real/project", "/alias/project"],
+    });
+
+    expect(settings.defaultTabSize).toBe(2);
+    expect(storage.getItem(directKey)).not.toBeNull();
+    expect(storage.getItem(aliasKey)).not.toBeNull();
+  });
+
+  it("uses deterministic legacy precedence without deleting the collision loser", async () => {
+    const storage = memoryStorage();
+    const directKey = "editor.settings.workspace:%2Freal%2Fproject";
+    const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
+    storage.setItem(directKey, JSON.stringify({ defaultTabSize: 2 }));
+    storage.setItem(aliasKey, JSON.stringify({ defaultTabSize: 8 }));
+    const gateway = new BrowserSettingsGateway(storage);
+
+    const settings = await gateway.loadWorkspaceSettings({
+      canonicalKey: "workspace-1",
+      legacyRawKeys: ["/real/project", "/alias/project"],
+    });
+
+    expect(settings.defaultTabSize).toBe(2);
+    expect(storage.getItem(directKey)).toBeNull();
+    expect(storage.getItem(aliasKey)).not.toBeNull();
+  });
+
+  it("leaves malformed legacy settings untouched and migrates the next valid key", async () => {
+    const storage = memoryStorage();
+    const directKey = "editor.settings.workspace:%2Freal%2Fproject";
+    const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
+    const malformedValue = '{"defaultTabSize":2';
+    const aliasValue = JSON.stringify({ defaultTabSize: 8 });
+    storage.setItem(directKey, malformedValue);
+    storage.setItem(aliasKey, aliasValue);
+    const gateway = new BrowserSettingsGateway(storage);
+
+    const settings = await gateway.loadWorkspaceSettings({
+      canonicalKey: "workspace-1",
+      legacyRawKeys: ["/real/project", "/alias/project"],
+    });
+
+    expect(settings.defaultTabSize).toBe(8);
+    expect(storage.getItem(directKey)).toBe(malformedValue);
+    expect(storage.getItem(aliasKey)).toBeNull();
+    expect(storage.getItem("editor.settings.workspace:canonical:workspace-1"))
+      .toBe(aliasValue);
+  });
+
+  it("does not delete any legacy settings when the canonical migration write fails", async () => {
+    const values = new Map<string, string>([
+      [
+        "editor.settings.workspace:%2Freal%2Fproject",
+        JSON.stringify({ defaultTabSize: 2 }),
+      ],
+      [
+        "editor.settings.workspace:%2Falias%2Fproject",
+        JSON.stringify({ defaultTabSize: 8 }),
+      ],
+    ]);
+    const storage: KeyValueStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      removeItem: (key) => values.delete(key),
+      setItem: () => {
+        throw new Error("quota exceeded");
+      },
+    };
+    const gateway = new BrowserSettingsGateway(storage);
+
+    await expect(
+      gateway.loadWorkspaceSettings({
+        canonicalKey: "workspace-1",
+        legacyRawKeys: ["/real/project", "/alias/project"],
+      }),
+    ).rejects.toThrow("quota exceeded");
+    expect(storage.getItem("editor.settings.workspace:%2Freal%2Fproject"))
+      .not.toBeNull();
+    expect(storage.getItem("editor.settings.workspace:%2Falias%2Fproject"))
+      .not.toBeNull();
+  });
+
+  it("does not delete any legacy settings when a canonical save fails", async () => {
+    const directKey = "editor.settings.workspace:%2Freal%2Fproject";
+    const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
+    const values = new Map<string, string>([
+      [directKey, JSON.stringify({ defaultTabSize: 2 })],
+      [aliasKey, JSON.stringify({ defaultTabSize: 8 })],
+    ]);
+    const storage: KeyValueStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      removeItem: (key) => values.delete(key),
+      setItem: () => {
+        throw new Error("quota exceeded");
+      },
+    };
+    const gateway = new BrowserSettingsGateway(storage);
+
+    await expect(
+      gateway.saveWorkspaceSettings(
+        {
+          canonicalKey: "workspace-1",
+          legacyRawKeys: ["/real/project", "/alias/project"],
+        },
+        defaultWorkspaceSettings(),
+      ),
+    ).rejects.toThrow("quota exceeded");
+    expect(storage.getItem(directKey)).not.toBeNull();
+    expect(storage.getItem(aliasKey)).not.toBeNull();
   });
 
   it("returns defaults when settings are missing", async () => {
@@ -472,6 +679,7 @@ function memoryStorage(): KeyValueStorage {
 
   return {
     getItem: (key) => values.get(key) ?? null,
+    removeItem: (key) => values.delete(key),
     setItem: (key, value) => values.set(key, value),
   };
 }

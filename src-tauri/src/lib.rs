@@ -407,6 +407,27 @@ async fn open_workspace_from_picker(
     Ok(NativeWorkspaceOpenResult::Opened { descriptor })
 }
 
+fn register_workspace_path_in_registry(
+    registry: &WorkspaceRegistry,
+    root_path: &str,
+) -> Result<ManagedWorkspaceDescriptor, String> {
+    if !Path::new(root_path).is_absolute() {
+        return Err("Workspace root path must be absolute".to_string());
+    }
+
+    registry
+        .register(root_path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn register_workspace_path(
+    registry: State<'_, WorkspaceRegistry>,
+    root_path: String,
+) -> Result<ManagedWorkspaceDescriptor, String> {
+    register_workspace_path_in_registry(&registry, &root_path)
+}
+
 #[tauri::command]
 fn unregister_workspace(
     registry: State<'_, WorkspaceRegistry>,
@@ -6266,8 +6287,8 @@ mod tests {
         lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
-        rename_git_branch, reveal_path_in_workspace, reword_git_commit,
-        run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
+        register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
+        reword_git_commit, run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
         run_php_tests_junit_with_trust, run_phpstan_analysis_with_trust,
         run_pint_format_with_trust, save_git_stash, search_files, stage_git_files, stage_git_hunk,
         stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
@@ -6305,6 +6326,61 @@ mod tests {
         path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn register_workspace_path_preserves_alias_and_returns_canonical_identity() {
+        use std::os::unix::fs::symlink;
+
+        let registry = WorkspaceRegistry::new();
+        let root = temp_workspace("register-alias");
+        let alias = root.with_extension(format!("alias-{}", unique_suffix()));
+        symlink(&root, &alias).expect("workspace alias");
+
+        let descriptor = register_workspace_path_in_registry(
+            &registry,
+            alias.to_str().expect("UTF-8 alias path"),
+        )
+        .expect("register aliased workspace");
+
+        assert_eq!(descriptor.selected_root_path, alias);
+        assert_eq!(descriptor.canonical_root_path, root);
+        assert_eq!(
+            registry
+                .descriptor(&descriptor.workspace_id)
+                .expect("registered descriptor"),
+            descriptor
+        );
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn register_workspace_path_preserves_lexical_parent_and_returns_canonical_identity() {
+        let registry = WorkspaceRegistry::new();
+        let root = temp_workspace("register-lexical-parent");
+        let child = root.join("child");
+        fs::create_dir(&child).expect("workspace child");
+        let selected = child.join("..");
+
+        let descriptor = register_workspace_path_in_registry(
+            &registry,
+            selected.to_str().expect("UTF-8 selected path"),
+        )
+        .expect("register lexical workspace path");
+
+        assert_eq!(descriptor.selected_root_path, selected);
+        assert_eq!(descriptor.canonical_root_path, root);
+    }
+
+    #[test]
+    fn register_workspace_path_rejects_relative_roots() {
+        let registry = WorkspaceRegistry::new();
+
+        let error = register_workspace_path_in_registry(&registry, "relative/workspace")
+            .expect_err("relative workspace root must be rejected");
+
+        assert_eq!(error, "Workspace root path must be absolute");
+    }
 
     #[test]
     fn index_path_guard_accepts_workspace_paths() {
@@ -9471,6 +9547,7 @@ pub fn run() {
             install_managed_phpactor,
             install_managed_typescript_language_server,
             open_workspace_from_picker,
+            register_workspace_path,
             unregister_workspace,
             get_workspace_descriptor,
             workspace_read_text_file,
