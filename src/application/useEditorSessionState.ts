@@ -35,6 +35,7 @@ import {
   openExistingDocumentInSession,
   pinDocumentTabSessionPath,
   refreshCleanDocumentInSession,
+  removeDocumentFromSession,
   synchronizeSnapshotView,
   type DocumentTabSessionPort,
   type DocumentTabSessionSnapshot,
@@ -341,6 +342,14 @@ export function useEditorSessionState(): EditorSessionState {
 
         commitDocumentTabs(transition.snapshot);
         return transition.document;
+      },
+      removeDocument: (path) => {
+        const transition = removeDocumentFromSession(
+          liveDocumentTabSnapshot(),
+          path,
+        );
+        commitDocumentTabs(transition.snapshot);
+        return transition.result;
       },
       snapshot: snapshotDocumentTabs,
     }),

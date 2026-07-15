@@ -1,5 +1,6 @@
 import {
   activateEditorGroupPath,
+  closeEditorGroupPath,
   editorGroupVisiblePaths,
   type EditorGroup,
   type EditorGroupsState,
@@ -40,6 +41,12 @@ export interface DocumentTabSessionCommitResult {
   replacedDocument: EditorDocument | null;
 }
 
+export interface DocumentTabSessionRemoveResult {
+  closedActiveDocument: boolean;
+  nextActivePath: string | null;
+  removedDocument: EditorDocument | null;
+}
+
 export interface ExistingDocumentOpenInput {
   path: string;
   pin: boolean;
@@ -72,6 +79,7 @@ export interface DocumentTabSessionPort {
     path: string,
     content: string,
   ): EditorDocument | null;
+  removeDocument(path: string): DocumentTabSessionRemoveResult;
   snapshot(): DocumentTabSessionView;
 }
 
@@ -332,6 +340,55 @@ export function refreshCleanDocumentInSession(
       ...snapshot,
       documents: { ...snapshot.documents, [path]: document },
     }),
+  };
+}
+
+export function removeDocumentFromSession(
+  snapshot: DocumentTabSessionSnapshot,
+  path: string,
+): {
+  result: DocumentTabSessionRemoveResult;
+  snapshot: DocumentTabSessionSnapshot;
+} {
+  const removedDocument = snapshot.documents[path] ?? null;
+  const currentActivePath = activeGroup(snapshot.editorGroups).activePath;
+
+  if (!removedDocument) {
+    return {
+      result: {
+        closedActiveDocument: false,
+        nextActivePath: currentActivePath,
+        removedDocument: null,
+      },
+      snapshot,
+    };
+  }
+
+  const documents = { ...snapshot.documents };
+  delete documents[path];
+
+  const editorGroups = {
+    ...snapshot.editorGroups,
+    groups: Object.fromEntries(
+      Object.entries(snapshot.editorGroups.groups).map(([groupId, group]) => [
+        groupId,
+        closeEditorGroupPath(group, path),
+      ]),
+    ),
+  };
+  const nextSnapshot = synchronizeSnapshotView({
+    ...snapshot,
+    documents,
+    editorGroups,
+  });
+
+  return {
+    result: {
+      closedActiveDocument: currentActivePath === path,
+      nextActivePath: nextSnapshot.activePath,
+      removedDocument,
+    },
+    snapshot: nextSnapshot,
   };
 }
 

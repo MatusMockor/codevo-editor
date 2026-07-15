@@ -33,6 +33,14 @@ const DOCUMENT_B: EditorDocument = {
   savedContent: "export {};",
 };
 
+const DOCUMENT_C: EditorDocument = {
+  content: "const c = true;",
+  language: "typescript",
+  name: "c.ts",
+  path: "/workspace/c.ts",
+  savedContent: "const c = true;",
+};
+
 const FOREIGN_DOCUMENT: EditorDocument = {
   ...DOCUMENT_B,
   name: "foreign.ts",
@@ -329,6 +337,253 @@ describe("useEditorSessionState", () => {
       expect(session.documentsRef.current[cleanPreview.path]).toBe(cleanPreview);
       expect(session.editorGroupsRef.current.groups["editor-1"])
         .toEqual(groups.groups["editor-1"]);
+    });
+
+    harness.unmount();
+  });
+
+  it.each([
+    {
+      group: {
+        activePath: DOCUMENT_A.path,
+        openPaths: [DOCUMENT_B.path, DOCUMENT_A.path],
+        previewPath: null,
+      },
+      label: "pinned",
+    },
+    {
+      group: {
+        activePath: DOCUMENT_A.path,
+        openPaths: [DOCUMENT_B.path],
+        previewPath: DOCUMENT_A.path,
+      },
+      label: "preview",
+    },
+  ])("globally removes an active $label document", ({ group }) => {
+    const harness = renderEditorSessionState();
+    let result: ReturnType<
+      EditorSessionState["documentTabSession"]["removeDocument"]
+    >;
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DOCUMENT_A.path]: DOCUMENT_A,
+        [DOCUMENT_B.path]: DOCUMENT_B,
+      });
+      session.setImageTabs({ [IMAGE.path]: IMAGE });
+      session.updateEditorGroups(() =>
+        createInitialEditorGroupsState("editor-main", group),
+      );
+
+      result = session.documentTabSession.removeDocument(DOCUMENT_A.path);
+
+      expect(result).toEqual({
+        closedActiveDocument: true,
+        nextActivePath: DOCUMENT_B.path,
+        removedDocument: DOCUMENT_A,
+      });
+      expect(session.documentsRef.current).toEqual({
+        [DOCUMENT_B.path]: DOCUMENT_B,
+      });
+      expect(session.imageTabsRef.current).toEqual({ [IMAGE.path]: IMAGE });
+      expect(session.editorGroupsRef.current.groups["editor-main"]).toEqual({
+        activePath: DOCUMENT_B.path,
+        openPaths: [DOCUMENT_B.path],
+        previewPath: null,
+      });
+      expect(session.activeDocumentRef.current).toBe(DOCUMENT_B);
+    });
+
+    expect(harness.session().activePath).toBe(DOCUMENT_B.path);
+    harness.unmount();
+  });
+
+  it("removes a non-active document without changing the active tab", () => {
+    const harness = renderEditorSessionState();
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DOCUMENT_A.path]: DOCUMENT_A,
+        [DOCUMENT_B.path]: DOCUMENT_B,
+      });
+      session.updateEditorGroups(() =>
+        createInitialEditorGroupsState("editor-main", {
+          activePath: DOCUMENT_B.path,
+          openPaths: [DOCUMENT_A.path, DOCUMENT_B.path],
+          previewPath: null,
+        }),
+      );
+
+      expect(session.documentTabSession.removeDocument(DOCUMENT_A.path))
+        .toEqual({
+          closedActiveDocument: false,
+          nextActivePath: DOCUMENT_B.path,
+          removedDocument: DOCUMENT_A,
+        });
+      expect(session.editorGroupsRef.current.groups["editor-main"]).toEqual({
+        activePath: DOCUMENT_B.path,
+        openPaths: [DOCUMENT_B.path],
+        previewPath: null,
+      });
+    });
+
+    harness.unmount();
+  });
+
+  it("removes dirty documents after caller confirmation and uses ordinary fallback", () => {
+    const harness = renderEditorSessionState();
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DOCUMENT_A.path]: DOCUMENT_A,
+        [DOCUMENT_B.path]: DOCUMENT_B,
+      });
+      session.updateEditorGroups(() =>
+        createInitialEditorGroupsState("editor-main", {
+          activePath: DOCUMENT_A.path,
+          openPaths: [DOCUMENT_B.path, DOCUMENT_A.path],
+          previewPath: null,
+        }),
+      );
+
+      const result = session.documentTabSession.removeDocument(DOCUMENT_A.path);
+
+      expect(result.removedDocument).toBe(DOCUMENT_A);
+      expect(result.nextActivePath).toBe(DOCUMENT_B.path);
+      expect(session.documentsRef.current[DOCUMENT_A.path]).toBeUndefined();
+    });
+
+    harness.unmount();
+  });
+
+  it("closes a document in every group with independent fallbacks", () => {
+    const harness = renderEditorSessionState();
+    let groups = createInitialEditorGroupsState("editor-main", {
+      activePath: DOCUMENT_A.path,
+      openPaths: [DOCUMENT_B.path, DOCUMENT_A.path],
+      previewPath: null,
+    });
+    groups = editorGroupsReducer(groups, {
+      direction: "right",
+      newGroupId: "editor-1",
+      type: "split-group",
+    });
+    groups = {
+      ...groups,
+      activeGroupId: "editor-main",
+      groups: {
+        ...groups.groups,
+        "editor-1": {
+          activePath: DOCUMENT_A.path,
+          openPaths: [DOCUMENT_C.path, DOCUMENT_A.path],
+          previewPath: null,
+        },
+      },
+    };
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DOCUMENT_A.path]: DOCUMENT_A,
+        [DOCUMENT_B.path]: DOCUMENT_B,
+        [DOCUMENT_C.path]: DOCUMENT_C,
+      });
+      session.updateEditorGroups(() => groups);
+
+      const result = session.documentTabSession.removeDocument(DOCUMENT_A.path);
+
+      expect(result.nextActivePath).toBe(DOCUMENT_B.path);
+      expect(session.editorGroupsRef.current.layout).toBe(groups.layout);
+      expect(session.editorGroupsRef.current.groups).toEqual({
+        "editor-main": {
+          activePath: DOCUMENT_B.path,
+          openPaths: [DOCUMENT_B.path],
+          previewPath: null,
+        },
+        "editor-1": {
+          activePath: DOCUMENT_C.path,
+          openPaths: [DOCUMENT_C.path],
+          previewPath: null,
+        },
+      });
+    });
+
+    harness.unmount();
+  });
+
+  it("preserves an unrelated preview and falls back to it", () => {
+    const harness = renderEditorSessionState();
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DOCUMENT_A.path]: DOCUMENT_A,
+        [DOCUMENT_B.path]: DOCUMENT_B,
+      });
+      session.updateEditorGroups(() =>
+        createInitialEditorGroupsState("editor-main", {
+          activePath: DOCUMENT_A.path,
+          openPaths: [DOCUMENT_A.path],
+          previewPath: DOCUMENT_B.path,
+        }),
+      );
+
+      const result = session.documentTabSession.removeDocument(DOCUMENT_A.path);
+
+      expect(result.nextActivePath).toBe(DOCUMENT_B.path);
+      expect(session.editorGroupsRef.current.groups["editor-main"]).toEqual({
+        activePath: DOCUMENT_B.path,
+        openPaths: [],
+        previewPath: DOCUMENT_B.path,
+      });
+      expect(session.documentsRef.current[DOCUMENT_B.path]).toBe(DOCUMENT_B);
+    });
+
+    harness.unmount();
+  });
+
+  it("no-ops for missing paths and globally removes foreign documents", () => {
+    const harness = renderEditorSessionState();
+
+    act(() => {
+      const session = harness.session();
+      session.setDocuments({
+        [DOCUMENT_B.path]: DOCUMENT_B,
+        [FOREIGN_DOCUMENT.path]: FOREIGN_DOCUMENT,
+      });
+      session.updateEditorGroups(() =>
+        createInitialEditorGroupsState("editor-main", {
+          activePath: DOCUMENT_B.path,
+          openPaths: [DOCUMENT_B.path, FOREIGN_DOCUMENT.path],
+          previewPath: null,
+        }),
+      );
+      const documentsBeforeMissing = session.documentsRef.current;
+      const groupsBeforeMissing = session.editorGroupsRef.current;
+
+      expect(session.documentTabSession.removeDocument("/workspace/missing.ts"))
+        .toEqual({
+          closedActiveDocument: false,
+          nextActivePath: DOCUMENT_B.path,
+          removedDocument: null,
+        });
+      expect(session.documentsRef.current).toBe(documentsBeforeMissing);
+      expect(session.editorGroupsRef.current).toBe(groupsBeforeMissing);
+
+      expect(
+        session.documentTabSession.removeDocument(FOREIGN_DOCUMENT.path),
+      ).toEqual({
+        closedActiveDocument: false,
+        nextActivePath: DOCUMENT_B.path,
+        removedDocument: FOREIGN_DOCUMENT,
+      });
+      expect(session.documentsRef.current).toEqual({
+        [DOCUMENT_B.path]: DOCUMENT_B,
+      });
+      expect(session.openPathsRef.current).toEqual([DOCUMENT_B.path]);
     });
 
     harness.unmount();

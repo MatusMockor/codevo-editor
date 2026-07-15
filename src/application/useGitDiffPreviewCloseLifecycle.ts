@@ -1,28 +1,13 @@
-import {
-  useCallback,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, type MutableRefObject } from "react";
 import type { GitChangedFile } from "../domain/git";
-import {
-  nextActiveEditorPathAfterClose,
-  type EditorDocument,
-} from "../domain/workspace";
+import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 
 export interface GitDiffPreviewCloseLifecycleDependencies {
   gitStatusChanges: GitChangedFile[];
   selectedGitChange: GitChangedFile | null;
 
-  documentsRef: MutableRefObject<Record<string, EditorDocument>>;
-  openPathsRef: MutableRefObject<string[]>;
-  previewPathRef: MutableRefObject<string | null>;
+  documentTabSession: DocumentTabSessionPort;
   selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
-
-  setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
-  setOpenPaths: Dispatch<SetStateAction<string[]>>;
-  setPreviewPath: Dispatch<SetStateAction<string | null>>;
-  setActivePath: Dispatch<SetStateAction<string | null>>;
 
   clearGitDiffPreviewState: () => void;
   gitDiffDocumentPath: (change: GitChangedFile) => string;
@@ -44,14 +29,8 @@ export function useGitDiffPreviewCloseLifecycle(
   const {
     gitStatusChanges,
     selectedGitChange,
-    documentsRef,
-    openPathsRef,
-    previewPathRef,
+    documentTabSession,
     selectedGitChangeRef,
-    setDocuments,
-    setOpenPaths,
-    setPreviewPath,
-    setActivePath,
     clearGitDiffPreviewState,
     gitDiffDocumentPath,
     gitChangeForDiffDocumentPath,
@@ -72,55 +51,30 @@ export function useGitDiffPreviewCloseLifecycle(
         return;
       }
 
-      const nextActivePath = nextActiveEditorPathAfterClose(
-        documentPath,
-        openPathsRef.current,
-        previewPathRef.current,
-      );
-      const nextDocumentsRef = { ...documentsRef.current };
-      delete nextDocumentsRef[documentPath];
-      documentsRef.current = nextDocumentsRef;
-      openPathsRef.current = openPathsRef.current.filter(
-        (path) => path !== documentPath,
-      );
-      if (previewPathRef.current === documentPath) {
-        previewPathRef.current = null;
-      }
-      setDocuments((current) => {
-        const next = { ...current };
-        delete next[documentPath];
-        return next;
-      });
-      setOpenPaths((current) => current.filter((path) => path !== documentPath));
-      setPreviewPath((current) => (current === documentPath ? null : current));
+      const { closedActiveDocument, nextActivePath } =
+        documentTabSession.removeDocument(documentPath);
 
-      const nextGitChange = nextActivePath
-        ? gitChangeForDiffDocumentPath(nextActivePath, changes)
-        : null;
-
-      if (nextActivePath && nextGitChange) {
-        loadGitDiffDocument(nextActivePath, nextGitChange);
+      if (!closedActiveDocument || !nextActivePath) {
         return;
       }
 
-      setActivePath((current) =>
-        current === documentPath ? nextActivePath : current,
+      const nextGitChange = gitChangeForDiffDocumentPath(
+        nextActivePath,
+        changes,
       );
+
+      if (nextGitChange) {
+        loadGitDiffDocument(nextActivePath, nextGitChange);
+      }
     },
     [
       clearGitDiffPreviewState,
-      documentsRef,
+      documentTabSession,
       gitChangeForDiffDocumentPath,
       gitDiffDocumentPath,
       loadGitDiffDocument,
-      openPathsRef,
-      previewPathRef,
       selectedGitChange,
       selectedGitChangeRef,
-      setActivePath,
-      setDocuments,
-      setOpenPaths,
-      setPreviewPath,
     ],
   );
 

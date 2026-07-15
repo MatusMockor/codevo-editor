@@ -742,6 +742,13 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().selectedGitChange).toBeNull();
     expect(getWorkbench().gitDiffPreview).toBeNull();
     expect(getWorkbench().activePath).toBe(file.path);
+    expect(Object.values(getWorkbench().editorGroups.groups)).toEqual([
+      expect.objectContaining({
+        activePath: file.path,
+        openPaths: [file.path],
+        previewPath: null,
+      }),
+    ]);
   });
 
   it("opens file history for the active document and loads a commit diff", async () => {
@@ -2236,6 +2243,25 @@ describe("useWorkbenchController preview tabs", () => {
         originalContent: "old src/Second.php",
       }),
     );
+
+    await act(async () => {
+      getWorkbench().closeGitDiffPreview();
+      await Promise.resolve();
+    });
+
+    expect(getWorkbench().activePath).toBe(firstDiffPath);
+    expect(getWorkbench().selectedGitChange).toEqual(firstChange);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({
+        change: firstChange,
+        modifiedContent: "new src/First.php",
+        originalContent: "old src/First.php",
+      }),
+    );
+    expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([
+      firstDiffPath,
+    ]);
+    expect(gitGateway.getDiff).toHaveBeenCalledTimes(3);
   });
 
   it("closes an open Git diff tab when a status refresh no longer contains that diff", async () => {
@@ -2275,6 +2301,12 @@ describe("useWorkbenchController preview tabs", () => {
         originalContent: "<?php\nfinal class User {}\n",
       }),
     );
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+    expect(
+      Object.values(getWorkbench().editorGroups.groups).filter((group) =>
+        group.openPaths.includes(diffPath),
+      ),
+    ).toHaveLength(2);
 
     statusChanges = [];
     await act(async () => {
@@ -2287,6 +2319,14 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().gitDiffLoading).toBe(false);
     expect(getWorkbench().openDocuments).toEqual([]);
     expect(getWorkbench().activePath).toBeNull();
+    expect(
+      Object.values(getWorkbench().editorGroups.groups).some(
+        (group) =>
+          group.activePath === diffPath ||
+          group.previewPath === diffPath ||
+          group.openPaths.includes(diffPath),
+      ),
+    ).toBe(false);
   });
 
   it("clears the active Git diff tab state when opening a real file", async () => {

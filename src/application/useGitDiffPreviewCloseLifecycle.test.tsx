@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { GitChangedFile } from "../domain/git";
-import type { EditorDocument } from "../domain/workspace";
+import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 import {
   useGitDiffPreviewCloseLifecycle,
   type GitDiffPreviewCloseLifecycle,
@@ -25,17 +25,6 @@ function changedFile(path: string): GitChangedFile {
 
 function gitDiffDocumentPath(change: GitChangedFile): string {
   return `mockor-git-diff:worktree:${change.path}`;
-}
-
-function editorDocument(path: string): EditorDocument {
-  return {
-    content: "",
-    language: "plaintext",
-    name: path,
-    path,
-    readOnly: true,
-    savedContent: "",
-  };
 }
 
 function renderLifecycle(
@@ -77,25 +66,18 @@ function createDependencies(
 ): GitDiffPreviewCloseLifecycleDependencies {
   const firstChange = changedFile("/workspace/src/First.php");
   const secondChange = changedFile("/workspace/src/Second.php");
-  const firstPath = gitDiffDocumentPath(firstChange);
   const secondPath = gitDiffDocumentPath(secondChange);
+  const removeDocument = vi.fn(() => ({
+    closedActiveDocument: true,
+    nextActivePath: secondPath,
+    removedDocument: null,
+  }));
 
   return {
     gitStatusChanges: [firstChange, secondChange],
     selectedGitChange: firstChange,
-    documentsRef: {
-      current: {
-        [firstPath]: editorDocument(firstPath),
-        [secondPath]: editorDocument(secondPath),
-      },
-    },
-    openPathsRef: { current: [firstPath, secondPath] },
-    previewPathRef: { current: firstPath },
+    documentTabSession: { removeDocument } as unknown as DocumentTabSessionPort,
     selectedGitChangeRef: { current: firstChange },
-    setDocuments: vi.fn(),
-    setOpenPaths: vi.fn(),
-    setPreviewPath: vi.fn(),
-    setActivePath: vi.fn(),
     clearGitDiffPreviewState: vi.fn(),
     gitDiffDocumentPath,
     gitChangeForDiffDocumentPath: (path, changes) =>
@@ -106,23 +88,20 @@ function createDependencies(
 }
 
 describe("useGitDiffPreviewCloseLifecycle", () => {
-  it("removes the selected git diff pseudo-document and loads the next git diff tab", () => {
+  it("loads the next git diff after closing the active preview", () => {
     const firstChange = changedFile("/workspace/src/First.php");
     const secondChange = changedFile("/workspace/src/Second.php");
     const firstPath = gitDiffDocumentPath(firstChange);
     const secondPath = gitDiffDocumentPath(secondChange);
+    const removeDocument = vi.fn(() => ({
+      closedActiveDocument: true,
+      nextActivePath: secondPath,
+      removedDocument: null,
+    }));
     const deps = createDependencies({
-      gitStatusChanges: [firstChange, secondChange],
-      selectedGitChange: firstChange,
-      selectedGitChangeRef: { current: firstChange },
-      documentsRef: {
-        current: {
-          [firstPath]: editorDocument(firstPath),
-          [secondPath]: editorDocument(secondPath),
-        },
-      },
-      openPathsRef: { current: [firstPath, secondPath] },
-      previewPathRef: { current: firstPath },
+      documentTabSession: {
+        removeDocument,
+      } as unknown as DocumentTabSessionPort,
     });
     const harness = renderLifecycle(deps);
 
@@ -131,16 +110,81 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
     });
 
     expect(deps.clearGitDiffPreviewState).toHaveBeenCalledTimes(1);
-    expect(deps.documentsRef.current).toEqual({
-      [secondPath]: editorDocument(secondPath),
-    });
-    expect(deps.openPathsRef.current).toEqual([secondPath]);
-    expect(deps.previewPathRef.current).toBeNull();
+    expect(removeDocument).toHaveBeenCalledWith(firstPath);
+    expect(vi.mocked(deps.clearGitDiffPreviewState).mock.invocationCallOrder[0])
+      .toBeLessThan(removeDocument.mock.invocationCallOrder[0]);
     expect(deps.loadGitDiffDocument).toHaveBeenCalledWith(
       secondPath,
       secondChange,
     );
-    expect(deps.setActivePath).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it.each(["/workspace/src/Ordinary.php", null])(
+    "does not reload for an ordinary or null fallback (%s)",
+    (nextActivePath) => {
+      const deps = createDependencies({
+        documentTabSession: {
+          removeDocument: vi.fn(() => ({
+            closedActiveDocument: true,
+            nextActivePath,
+            removedDocument: null,
+          })),
+        } as unknown as DocumentTabSessionPort,
+      });
+      const harness = renderLifecycle(deps);
+
+      act(() => {
+        harness.lifecycle().closeGitDiffPreview();
+      });
+
+      expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
+
+      harness.unmount();
+    },
+  );
+
+  it("does not reload a git fallback when closing a nonactive preview", () => {
+    const secondChange = changedFile("/workspace/src/Second.php");
+    const deps = createDependencies({
+      documentTabSession: {
+        removeDocument: vi.fn(() => ({
+          closedActiveDocument: false,
+          nextActivePath: gitDiffDocumentPath(secondChange),
+          removedDocument: null,
+        })),
+      } as unknown as DocumentTabSessionPort,
+    });
+    const harness = renderLifecycle(deps);
+
+    act(() => {
+      harness.lifecycle().closeGitDiffPreview();
+    });
+
+    expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("clears git state without removing a document when no change is selected", () => {
+    const removeDocument = vi.fn();
+    const deps = createDependencies({
+      selectedGitChange: null,
+      selectedGitChangeRef: { current: null },
+      documentTabSession: {
+        removeDocument,
+      } as unknown as DocumentTabSessionPort,
+    });
+    const harness = renderLifecycle(deps);
+
+    act(() => {
+      harness.lifecycle().closeGitDiffPreview();
+    });
+
+    expect(deps.clearGitDiffPreviewState).toHaveBeenCalledTimes(1);
+    expect(removeDocument).not.toHaveBeenCalled();
+    expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
 
     harness.unmount();
   });
