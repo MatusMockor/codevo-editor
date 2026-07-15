@@ -5,6 +5,7 @@ export type NavigationLocation = EditorRevealTarget;
 export interface NavigationHistory {
   backStack: NavigationLocation[];
   forwardStack: NavigationLocation[];
+  ownerKey?: string;
 }
 
 const MAX_STACK_DEPTH = 100;
@@ -50,6 +51,7 @@ export function navigateBack(
       forwardStack: current
         ? [current, ...history.forwardStack].slice(0, MAX_STACK_DEPTH)
         : history.forwardStack,
+      ...(history.ownerKey ? { ownerKey: history.ownerKey } : {}),
     },
     target,
   };
@@ -71,6 +73,7 @@ export function navigateForward(
         ? [...history.backStack, current].slice(-MAX_STACK_DEPTH)
         : history.backStack,
       forwardStack: rest,
+      ...(history.ownerKey ? { ownerKey: history.ownerKey } : {}),
     },
     target,
   };

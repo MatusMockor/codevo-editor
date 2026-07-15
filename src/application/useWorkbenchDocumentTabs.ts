@@ -29,6 +29,31 @@ import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 
 const FILE_PREFETCH_HOVER_DELAY_MS = 80;
 
+function replaceOpeningFileOwner(
+  ownerRef: MutableRefObject<number | null>,
+  setIsOpeningFile: Dispatch<SetStateAction<boolean>>,
+  nextOwner: number | null,
+): void {
+  if (ownerRef.current === nextOwner) {
+    return;
+  }
+
+  ownerRef.current = nextOwner;
+  setIsOpeningFile(nextOwner !== null);
+}
+
+function releaseOpeningFileOwner(
+  ownerRef: MutableRefObject<number | null>,
+  setIsOpeningFile: Dispatch<SetStateAction<boolean>>,
+  owner: number,
+): void {
+  if (ownerRef.current !== owner) {
+    return;
+  }
+
+  replaceOpeningFileOwner(ownerRef, setIsOpeningFile, null);
+}
+
 export interface OpenFileOptions {
   pin?: boolean;
   readOnly?: boolean;
@@ -199,6 +224,11 @@ export function useWorkbenchDocumentTabs(
     async (entry: FileEntry, options: OpenFileOptions = {}) => {
       const requestToken = openFileRequestTokenRef.current + 1;
       openFileRequestTokenRef.current = requestToken;
+      replaceOpeningFileOwner(
+        openingFileFlagOwnerTokenRef,
+        setIsOpeningFile,
+        null,
+      );
       forgetExternallyRemovedDocumentPath(entry.path);
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
       const shouldRecordNavigation = options.recordNavigation !== false;
@@ -426,12 +456,11 @@ export function useWorkbenchDocumentTabs(
       }
 
       const clearOpeningFileForRequest = () => {
-        if (openingFileFlagOwnerTokenRef.current !== requestToken) {
-          return;
-        }
-
-        openingFileFlagOwnerTokenRef.current = null;
-        setIsOpeningFile(false);
+        releaseOpeningFileOwner(
+          openingFileFlagOwnerTokenRef,
+          setIsOpeningFile,
+          requestToken,
+        );
       };
 
       try {
@@ -443,8 +472,11 @@ export function useWorkbenchDocumentTabs(
           prefetchedContent !== null && prefetchedContent !== "";
 
         if (!hasUsablePrefetchedContent) {
-          openingFileFlagOwnerTokenRef.current = requestToken;
-          setIsOpeningFile(true);
+          replaceOpeningFileOwner(
+            openingFileFlagOwnerTokenRef,
+            setIsOpeningFile,
+            requestToken,
+          );
         }
 
         const snapshot =

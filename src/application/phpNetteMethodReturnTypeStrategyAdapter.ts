@@ -103,6 +103,10 @@ function selectionMethodType(
     return `${types.activeRowType}|false|null`;
   }
 
+  if (methodName === "fetchall") {
+    return `${types.activeRowType}[]`;
+  }
+
   if (
     [
       "alias",
@@ -143,6 +147,14 @@ function replaceGenericNetteReturnType(
 
   if (/^(?:\\?Nette\\Database\\Table\\)?Selection$|^Selection$/i.test(returnType)) {
     return inferred === types.selectionType ? inferred : null;
+  }
+
+  if (
+    /^(?:array|(?:\\?Nette\\Database\\Table\\)?ActiveRow\[\])$/i.test(
+      returnType,
+    )
+  ) {
+    return inferred === `${types.activeRowType}[]` ? inferred : null;
   }
 
   return null;

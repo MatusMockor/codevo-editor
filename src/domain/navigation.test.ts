@@ -51,6 +51,22 @@ describe("navigation history", () => {
       forwardStack: [],
     });
   });
+
+  it("preserves the history owner through back and forward playback", () => {
+    const first = location("/project/A.php", 1, 1);
+    const current = location("/project/B.php", 2, 3);
+    const ownerKey = "workspace-owner";
+    const back = navigateBack(
+      { backStack: [first], forwardStack: [], ownerKey },
+      current,
+    );
+
+    expect(back.history.ownerKey).toBe(ownerKey);
+
+    const forward = navigateForward(back.history, first);
+
+    expect(forward.history.ownerKey).toBe(ownerKey);
+  });
 });
 
 function location(path: string, lineNumber: number, column: number) {

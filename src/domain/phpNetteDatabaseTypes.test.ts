@@ -86,6 +86,89 @@ final class UsersRepository { protected string $tableName = 'users'; }`;
     ).toBeNull();
   });
 
+  it("parses only the structural outer relation call", () => {
+    expect(
+      phpNetteLiteralTableArgument(
+        "$user->ref('users')->related('user_roles.user_id')",
+      ),
+    ).toBe("user_roles");
+    expect(
+      phpNetteLiteralTableArgument(
+        "$user->related($repository->ref('user_statuses'))",
+      ),
+    ).toBeNull();
+    expect(
+      phpNetteLiteralTableArgument(
+        "decorate($user->related('user_statuses'))",
+      ),
+    ).toBeNull();
+    expect(
+      phpNetteLiteralTableArgument("$user->ref('users.id')"),
+    ).toBeNull();
+  });
+
+  it("ignores comments while parsing the outer literal argument", () => {
+    expect(
+      phpNetteLiteralTableArgument(
+        "$row->related(/* misleading: ) */ 'orders')",
+      ),
+    ).toBe("orders");
+    expect(
+      phpNetteLiteralTableArgument(
+        "$row->related(// misleading: (,\n'order_items.order_id')",
+      ),
+    ).toBe("order_items");
+    expect(
+      phpNetteLiteralTableArgument(
+        "$row->related(/* ( */ $repository->ref('orders'))",
+      ),
+    ).toBeNull();
+  });
+
+  it("normalizes nullable and false carriers with one generated object type", () => {
+    const carrier =
+      "false|\\Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow|null";
+
+    expect(phpNetteDatabaseTypeKind(carrier)).toBe("activeRow");
+    expect(
+      phpNetteSiblingDatabaseType(carrier, "selection", "user_roles"),
+    ).toBe(
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UserRolesSelection",
+    );
+    expect(
+      phpNetteDatabaseTypeKind(
+        "App\\UsersActiveRow|App\\AdminsActiveRow|null",
+      ),
+    ).toBeNull();
+  });
+
+  it("handles generated family markers case-insensitively", () => {
+    expect(
+      phpNetteDatabaseTypeKind(
+        "efabrica\\crm\\activerowtypes\\activerow\\usersactiverow",
+      ),
+    ).toBe("activeRow");
+    expect(
+      phpNetteDatabaseTypeKind("Crm\\UsersModule\\USERSREPOSITORY"),
+    ).toBe("repository");
+  });
+
+  it("deduplicates equivalent family FQNs and preserves canonical casing", () => {
+    const carrier = [
+      "efabrica\\crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow",
+      "\\Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow",
+      "false",
+      "NULL",
+    ].join("|");
+
+    expect(phpNetteDatabaseTypeKind(carrier)).toBe("activeRow");
+    expect(
+      phpNetteSiblingDatabaseType(carrier, "selection", "orders"),
+    ).toBe(
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
+    );
+  });
+
   it("does not classify unrelated application classes", () => {
     expect(phpNetteDatabaseTypeKind("App\\UsersRepositoryService")).toBeNull();
     expect(

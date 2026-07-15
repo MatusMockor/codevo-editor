@@ -81,6 +81,131 @@ export interface UsePhpMethodReturnTypeResolverOptions {
   workspaceRoot: string | null;
 }
 
+type PhpNetteRelationMethod = "ref" | "related";
+
+function phpNetteRelationMethod(
+  methodName: string,
+): PhpNetteRelationMethod | null {
+  const normalizedMethodName = methodName.toLowerCase();
+
+  if (normalizedMethodName === "ref" || normalizedMethodName === "related") {
+    return normalizedMethodName;
+  }
+
+  return null;
+}
+
+function isGeneratedPhpNetteRelationReturnType(
+  returnType: string | null,
+  relationMethod: PhpNetteRelationMethod,
+  carrierClassName: string,
+  resolveMappedType: (mappedType: string) => string | null,
+): boolean {
+  const normalizedReturnType = returnType?.trim() ?? "";
+  const normalizedCarrierClassName = carrierClassName
+    .trim()
+    .replace(/^\\+/, "");
+  const activeRowMarker = "\\ActiveRow\\";
+  const activeRowMarkerIndex = normalizedCarrierClassName
+    .toLowerCase()
+    .indexOf(activeRowMarker.toLowerCase());
+
+  if (
+    !normalizedReturnType.startsWith("(") ||
+    !/\$[A-Za-z_][A-Za-z0-9_]*\s+is\s+/i.test(normalizedReturnType) ||
+    activeRowMarkerIndex < 0 ||
+    !/ActiveRow$/i.test(normalizedCarrierClassName)
+  ) {
+    return false;
+  }
+
+  const familyPrefix = normalizedCarrierClassName.slice(
+    0,
+    activeRowMarkerIndex,
+  );
+  const familyMarker =
+    relationMethod === "ref" ? "\\ActiveRow\\" : "\\Selection\\";
+  const familySuffix = relationMethod === "ref" ? "ActiveRow" : "Selection";
+  const mappedTypes = [
+    ...normalizedReturnType.matchAll(
+      /\?\s*(\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*)(?:\|null)?\s*:/g,
+    ),
+  ].flatMap((match) => (match[1] ? [match[1].replace(/^\\+/, "")] : []));
+
+  if (mappedTypes.length === 0) {
+    return false;
+  }
+
+  const expectedFamilyPrefix = `${familyPrefix}${familyMarker}`.toLowerCase();
+  const hasOnlyGeneratedFamilyMappings = mappedTypes.every((mappedType) => {
+    const resolvedMappedType = resolveMappedType(mappedType)?.replace(
+      /^\\+/,
+      "",
+    );
+
+    if (!resolvedMappedType?.includes("\\")) {
+      return false;
+    }
+
+    return (
+      resolvedMappedType.toLowerCase().startsWith(expectedFamilyPrefix) &&
+      resolvedMappedType.toLowerCase().endsWith(familySuffix.toLowerCase())
+    );
+  });
+
+  if (!hasOnlyGeneratedFamilyMappings) {
+    return false;
+  }
+
+  if (relationMethod === "ref") {
+    return /:\s*\\?Nette\\Database\\Table\\ActiveRow(?:\|null)?\s*\)+(?:\|null)?$/i.test(
+      normalizedReturnType,
+    );
+  }
+
+  return /:\s*\\?Nette\\Database\\Table\\Selection\s*\)+(?:\|null)?$/i.test(
+    normalizedReturnType,
+  );
+}
+
+function isGenericPhpNetteRelationReturnType(
+  returnType: string | null,
+  relationMethod: PhpNetteRelationMethod,
+  resolveDeclaredType: (declaredType: string) => string | null,
+): boolean {
+  const normalizedReturnType = (returnType ?? "").replace(/\s+/g, "");
+  const expandedReturnType = normalizedReturnType.startsWith("?")
+    ? `${normalizedReturnType.slice(1)}|null`
+    : normalizedReturnType;
+  const declaredTypes = expandedReturnType
+    .split("|")
+    .filter((typeName) => typeName.toLowerCase() !== "null");
+
+  if (declaredTypes.length !== 1 || !declaredTypes[0]) {
+    return false;
+  }
+
+  const resolvedDeclaredType = resolveDeclaredType(declaredTypes[0])
+    ?.replace(/^\\+/, "")
+    .toLowerCase();
+  const expectedDeclaredType =
+    relationMethod === "ref"
+      ? "nette\\database\\table\\activerow"
+      : "nette\\database\\table\\selection";
+
+  return resolvedDeclaredType === expectedDeclaredType;
+}
+
+function genericPhpNetteRelationReturnType(
+  relationMethod: PhpNetteRelationMethod,
+): string {
+  if (relationMethod === "ref") {
+    return "Nette\\Database\\Table\\ActiveRow";
+  }
+
+  return "Nette\\Database\\Table\\Selection";
+}
+
 export function usePhpMethodReturnTypeResolver({
   currentWorkspaceRootRef,
   frameworkRuntime,
@@ -161,6 +286,11 @@ export function usePhpMethodReturnTypeResolver({
       const normalizedLateStaticClassName = lateStaticClassName
         .trim()
         .replace(/^\\+/, "");
+      const netteRelationMethod = frameworkRuntime.supports(
+        "netteDatabaseSemantics",
+      )
+        ? phpNetteRelationMethod(methodName)
+        : null;
 
       if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
         return null;
@@ -384,10 +514,30 @@ export function usePhpMethodReturnTypeResolver({
               return strategyReturnType;
             }
 
+            const isConditionalNetteRelationDeclaration = Boolean(
+              netteRelationMethod &&
+                isGeneratedPhpNetteRelationReturnType(
+                  method?.returnType ?? null,
+                  netteRelationMethod,
+                  normalizedLateStaticClassName || normalizedClassName,
+                  (mappedType) =>
+                    resolvePhpClassReference(content, mappedType),
+                ),
+            );
+            const isGenericNetteRelationDeclaration = Boolean(
+              netteRelationMethod &&
+                isGenericPhpNetteRelationReturnType(
+                  method?.returnType ?? null,
+                  netteRelationMethod,
+                  (declaredType) =>
+                    resolvePhpClassReference(content, declaredType),
+                ),
+            );
+
             if (
-              isInheritedDeclaration &&
-              frameworkRuntime.supports("netteDatabaseSemantics") &&
-              callExpression
+              callExpression &&
+              (isConditionalNetteRelationDeclaration ||
+                isGenericNetteRelationDeclaration)
             ) {
               const knownReturnType = await resolveKnownFrameworkReturnType();
 
@@ -398,6 +548,13 @@ export function usePhpMethodReturnTypeResolver({
               if (knownReturnType) {
                 return knownReturnType;
               }
+            }
+
+            if (
+              isConditionalNetteRelationDeclaration &&
+              netteRelationMethod
+            ) {
+              return genericPhpNetteRelationReturnType(netteRelationMethod);
             }
 
             return returnType;

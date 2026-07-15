@@ -111,6 +111,16 @@ export interface WorkbenchLanguageNavigationDependencies {
     offset: number,
     request?: NavigationRequest,
   ) => Promise<LatteDefinitionOutcome>;
+  provideNeonDefinition: (
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ) => Promise<boolean>;
+  providePhpFrameworkDefinition: (
+    source: string,
+    offset: number,
+    request?: NavigationRequest,
+  ) => Promise<boolean>;
   reportErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
     source: string,
@@ -201,6 +211,8 @@ export function useWorkbenchLanguageNavigation(
     openPathForNavigation,
     provideBladeDefinition,
     provideLatteDefinitionOutcome,
+    provideNeonDefinition,
+    providePhpFrameworkDefinition,
     reportErrorForActiveWorkspaceRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     currentNavigationLocation,
@@ -811,6 +823,22 @@ export function useWorkbenchLanguageNavigation(
       }
     }
 
+    if (document?.path.endsWith(".neon") && editorPosition) {
+      const openedNeonTarget = await provideNeonDefinition(
+        document.content,
+        documentOffsetAtEditorPosition(document.content, editorPosition),
+        { canNavigate: ownerFence.isCurrent },
+      );
+
+      if (!ownerFence.isCurrent()) {
+        return;
+      }
+
+      if (openedNeonTarget) {
+        return;
+      }
+    }
+
     const openedJavaScriptTypeScriptTarget =
       await goToJavaScriptTypeScriptLanguageServerLocation(
         "definition",
@@ -836,6 +864,22 @@ export function useWorkbenchLanguageNavigation(
 
     if (openedContextualPhpTarget) {
       return;
+    }
+
+    if (document?.language === "php" && editorPosition) {
+      const openedPhpFrameworkTarget = await providePhpFrameworkDefinition(
+        document.content,
+        documentOffsetAtEditorPosition(document.content, editorPosition),
+        { canNavigate: ownerFence.isCurrent },
+      );
+
+      if (!ownerFence.isCurrent()) {
+        return;
+      }
+
+      if (openedPhpFrameworkTarget) {
+        return;
+      }
     }
 
     const openedLanguageServerTarget = await goToLanguageServerLocation(
@@ -865,6 +909,8 @@ export function useWorkbenchLanguageNavigation(
     goToLanguageServerLocation,
     provideBladeDefinition,
     provideLatteDefinitionOutcome,
+    provideNeonDefinition,
+    providePhpFrameworkDefinition,
     resolveCurrentWorkspaceRuntimeOwner,
   ]);
 

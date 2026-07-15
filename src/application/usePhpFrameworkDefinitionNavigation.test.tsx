@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type {
@@ -40,6 +41,13 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
     matchedProviderIds: [],
     profile: "generic",
     providers: [],
+  }),
+);
+const NETTE_RUNTIME = createPhpFrameworkRuntimeContext(
+  createPhpFrameworkIntelligence({
+    matchedProviderIds: ["nette"],
+    profile: "nette",
+    providers: [phpNetteFrameworkProvider],
   }),
 );
 const ROUTE_CAPABLE_PROVIDER: PhpFrameworkProvider = {
@@ -149,6 +157,7 @@ function makeDeps(
     openNavigationTarget: vi.fn(async () => true),
     openPhpClassTarget: vi.fn(async () => true),
     readNavigationFileContent: vi.fn(async () => ""),
+    resolvePhpExpressionType: vi.fn(async () => null),
     resolvePhpClassSourcePaths: vi.fn(async () => []),
     textSearch: makeTextSearch(),
     workspaceDescriptor: makeDescriptor(),
@@ -209,6 +218,95 @@ function deferred<T>() {
 }
 
 describe("usePhpFrameworkDefinitionNavigation", () => {
+  it("opens the real ebox dotted relation from suffix cursors and full-selection endpoints", async () => {
+    const targetType =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\ScenariosElementElementsSelection";
+    const openPhpClassTarget = vi.fn(async () => true);
+    const resolvePhpExpressionType = vi.fn(
+      async (_source: string, _position: EditorPosition, expression: string) =>
+        expression === "$element"
+          ? "Nette\\Database\\Table\\ActiveRow"
+          : "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\ScenariosElementsActiveRow",
+    );
+    const deps = makeDeps({
+      frameworkRuntime: NETTE_RUNTIME,
+      openPhpClassTarget,
+      resolvePhpClassSourcePaths: vi.fn(async (className) =>
+        className === targetType ? [`${ROOT}/generated/${className}.php`] : [],
+      ),
+      resolvePhpExpressionType,
+    });
+    const harness = renderHook(deps);
+    const source = `<?php
+use Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\ScenariosElementsActiveRow;
+/** @param ScenariosElementsActiveRow $element */
+private function getElementDescendants(ActiveRow $element): array
+{
+    foreach ($element->related('scenarios_element_elements.parent_element_id')->where('kind', 'descendant')->fetchAll() as $descendant) {}
+}`;
+    const key = "scenarios_element_elements.parent_element_id";
+    const keyStart = source.indexOf(key);
+    const offsets = [
+      source.indexOf("parent_element_id") + 5,
+      keyStart + key.length,
+      keyStart,
+    ];
+
+    for (const offset of offsets) {
+      await expect(
+        harness.api().providePhpFrameworkDefinition(source, offset),
+      ).resolves.toBe(true);
+    }
+
+    expect(openPhpClassTarget).toHaveBeenCalledTimes(offsets.length);
+    expect(openPhpClassTarget).toHaveBeenLastCalledWith(
+      targetType,
+      "ScenariosElementElementsSelection",
+    );
+
+    harness.unmount();
+  });
+
+  it("opens generated Nette database declarations before generic literal fallback", async () => {
+    const findViewTarget = vi.fn(async () => null);
+    const openPhpClassTarget = vi.fn(async () => true);
+    const source = "$user->related('orders.user_id')";
+    const deps = makeDeps({
+      frameworkRuntime: NETTE_RUNTIME,
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget,
+      },
+      openPhpClassTarget,
+      resolvePhpClassSourcePaths: vi.fn(async (className) =>
+        className === "Generated\\Selection\\OrdersSelection"
+          ? [`${ROOT}/generated/OrdersSelection.php`]
+          : [],
+      ),
+      resolvePhpExpressionType: vi.fn(async () =>
+        "Generated\\ActiveRow\\UsersActiveRow"
+      ),
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness.api().providePhpFrameworkDefinition(
+        source,
+        source.indexOf("orders") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(openPhpClassTarget).toHaveBeenCalledWith(
+      "Generated\\Selection\\OrdersSelection",
+      "OrdersSelection",
+    );
+    expect(findViewTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("opens Laravel dispatch handlers before falling back to plain class navigation", async () => {
     const jobPath = `${ROOT}/app/Jobs/SyncOrder.php`;
     const openNavigationTarget = vi.fn(async () => true);
@@ -233,8 +331,46 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
       jobPath,
       position(1, 41),
       "SyncOrder",
+      { shouldCommit: expect.any(Function) },
     );
     expect(openPhpClassTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("blocks a handler commit when the workspace changes during open", async () => {
+    const jobPath = `${ROOT}/app/Jobs/SyncOrder.php`;
+    const currentWorkspaceRootRef = { current: ROOT };
+    const openNavigationTarget = vi.fn(
+      async (
+        _path: string,
+        _position: EditorPosition,
+        _label: string,
+        options?: { shouldCommit?: () => boolean },
+      ) => {
+        currentWorkspaceRootRef.current = OTHER_ROOT;
+        return options?.shouldCommit?.() ?? true;
+      },
+    );
+    const deps = makeDeps({
+      currentWorkspaceRootRef,
+      openNavigationTarget,
+      readNavigationFileContent: vi.fn(
+        async () => "<?php class SyncOrder { public function handle() {} }",
+      ),
+      resolvePhpClassSourcePaths: vi.fn(async () => [jobPath]),
+    });
+    const harness = renderHook(deps);
+    const source = `<?php\nuse App\\Jobs\\SyncOrder;\ndispatch(new SyncOrder());`;
+
+    await expect(
+      harness.api().providePhpFrameworkDefinition(
+        source,
+        source.indexOf("SyncOrder());"),
+      ),
+    ).resolves.toBe(false);
+    const options = openNavigationTarget.mock.calls[0]?.[3];
+    expect(options?.shouldCommit?.()).toBe(false);
 
     harness.unmount();
   });
@@ -311,6 +447,7 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
       jobPath,
       position(1, 41),
       "SyncOrder",
+      { shouldCommit: expect.any(Function) },
     );
     expect(openPhpClassTarget).not.toHaveBeenCalled();
 
@@ -526,6 +663,57 @@ describe("usePhpFrameworkDefinitionNavigation", () => {
 
     await expect(navigationPromise).resolves.toBe(false);
     expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("blocks a literal commit when the workspace changes during open", async () => {
+    const currentWorkspaceRootRef = { current: ROOT };
+    const openNavigationTarget = vi.fn(
+      async (
+        _path: string,
+        _position: EditorPosition,
+        _label: string,
+        options?: { shouldCommit?: () => boolean },
+      ) => {
+        currentWorkspaceRootRef.current = OTHER_ROOT;
+        return options?.shouldCommit?.() ?? true;
+      },
+    );
+    const activeDocument: EditorDocument = {
+      content: "",
+      language: "php",
+      name: "Controller.php",
+      path: `${ROOT}/app/Http/Controllers/Controller.php`,
+      savedContent: "",
+    };
+    const deps = makeDeps({
+      activeDocument,
+      currentWorkspaceRootRef,
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(async () => ({
+          name: "orders.show",
+          path: `${ROOT}/resources/views/orders/show.blade.php`,
+          position: position(1, 1),
+        })),
+      },
+      openNavigationTarget,
+    });
+    const harness = renderHook(deps);
+    const source = "<?php view('orders.show');";
+
+    await expect(
+      harness.api().providePhpFrameworkDefinition(
+        source,
+        source.indexOf("orders.show") + 2,
+      ),
+    ).resolves.toBe(false);
+    const options = openNavigationTarget.mock.calls[0]?.[3];
+    expect(options?.shouldCommit?.()).toBe(false);
 
     harness.unmount();
   });

@@ -165,16 +165,31 @@ export function usePhpExpressionTypeResolver({
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
           : null;
-        const boundReceiverReturnType =
-          boundReceiverType &&
-          boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()
-            ? await resolvePhpMethodReturnType(
-                boundReceiverType,
-                methodCall.methodName,
-              )
-            : null;
+        const isNetteRelationCall =
+          frameworkRuntime.supports("netteDatabaseSemantics") &&
+          ["ref", "related"].includes(methodCall.methodName.toLowerCase());
+        if (
+          !boundReceiverType ||
+          boundReceiverType.toLowerCase() === receiverType?.toLowerCase()
+        ) {
+          return null;
+        }
 
-        return boundReceiverReturnType;
+        if (isNetteRelationCall) {
+          return resolvePhpMethodReturnType(
+            boundReceiverType,
+            methodCall.methodName,
+            undefined,
+            undefined,
+            undefined,
+            candidateExpression,
+          );
+        }
+
+        return resolvePhpMethodReturnType(
+          boundReceiverType,
+          methodCall.methodName,
+        );
       };
 
       const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
@@ -390,18 +405,33 @@ export function usePhpExpressionTypeResolver({
         }
 
         const receiverType = await resolveReceiverType();
+        const isNetteRelationCall =
+          frameworkRuntime.supports("netteDatabaseSemantics") &&
+          ["ref", "related"].includes(methodCall.methodName.toLowerCase());
 
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
           : null;
-        const boundReceiverReturnType =
+        let boundReceiverReturnType: string | null = null;
+
+        if (
           boundReceiverType &&
           boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()
+        ) {
+          boundReceiverReturnType = isNetteRelationCall
             ? await resolvePhpMethodReturnType(
                 boundReceiverType,
                 methodCall.methodName,
+                undefined,
+                undefined,
+                undefined,
+                expression,
               )
-            : null;
+            : await resolvePhpMethodReturnType(
+                boundReceiverType,
+                methodCall.methodName,
+              );
+        }
 
         if (boundReceiverReturnType) {
           return boundReceiverReturnType;
@@ -437,11 +467,7 @@ export function usePhpExpressionTypeResolver({
           return null;
         }
 
-        if (
-          frameworkRuntime.supports("netteDatabaseSemantics") &&
-          (methodCall.methodName === "ref" ||
-            methodCall.methodName === "related")
-        ) {
+        if (isNetteRelationCall) {
           return resolvePhpMethodReturnType(
             receiverType,
             methodCall.methodName,

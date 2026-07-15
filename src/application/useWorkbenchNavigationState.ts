@@ -20,6 +20,7 @@ import type { EditorDocument } from "../domain/workspace";
 export interface WorkbenchNavigationState {
   activeEditorPosition: EditorPosition | null;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
+  clearEditorRevealTarget: (handledTarget?: EditorRevealTarget) => void;
   editorRevealTarget: EditorRevealTarget | null;
   navigationHistory: NavigationHistory;
   recentFiles: RecentFileEntry[];
@@ -78,6 +79,19 @@ export function useWorkbenchNavigationState({
     );
   }, []);
 
+  const clearEditorRevealTarget = useCallback(
+    (handledTarget?: EditorRevealTarget) => {
+      setEditorRevealTarget((current) => {
+        if (handledTarget && current !== handledTarget) {
+          return current;
+        }
+
+        return null;
+      });
+    },
+    [],
+  );
+
   // Drop the rendered caret indicator when no document is active (last tab
   // closed). A new/switched tab repopulates it through the editor cursor event.
   useEffect(() => {
@@ -91,6 +105,7 @@ export function useWorkbenchNavigationState({
   return {
     activeEditorPosition,
     activeEditorPositionRef,
+    clearEditorRevealTarget,
     editorRevealTarget,
     navigationHistory,
     recentFiles,

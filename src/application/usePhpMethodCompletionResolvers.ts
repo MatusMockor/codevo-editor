@@ -4,6 +4,7 @@ import {
   phpMethodCompletionsFromSource,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
+import { phpObjectTypeCandidates } from "../domain/phpObjectTypeCandidates";
 import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
 import { createPhpFrameworkMethodCompletionSemanticsAdapters } from "./phpFrameworkMethodCompletionSemanticsAdapters";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -123,15 +124,23 @@ export function usePhpMethodCompletionResolvers(
         position,
         receiverExpression,
       );
-      const receiverMethods = resolvedReceiverType
-        ? await collectPhpMethodsForClass(resolvedReceiverType)
+      const receiverTypeCandidates =
+        phpObjectTypeCandidates(resolvedReceiverType);
+
+      if (receiverTypeCandidates.length > 1) {
+        return [];
+      }
+
+      const receiverType = receiverTypeCandidates[0] ?? null;
+      const receiverMethods = receiverType
+        ? await collectPhpMethodsForClass(receiverType)
         : [];
       const completionGroups = await frameworkSemantics.receiverCompletionGroups({
         collectPhpMethodsForClass,
         position,
         receiverExpression,
         receiverMethods,
-        resolvedReceiverType,
+        resolvedReceiverType: receiverType,
         source,
       });
 

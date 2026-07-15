@@ -47,6 +47,7 @@ import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
  */
 export interface RecentNavigationDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  resolveCurrentWorkspaceRuntimeOwner: () => WorkspaceRuntimeOwner | null;
   activeDocument: EditorDocument | null;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
   documentsRef: MutableRefObject<Record<string, EditorDocument>>;
@@ -94,6 +95,7 @@ export function useRecentNavigation(
 ): RecentNavigation {
   const {
     currentWorkspaceRootRef,
+    resolveCurrentWorkspaceRuntimeOwner,
     activeDocument,
     activeEditorPositionRef,
     documentsRef,
@@ -182,11 +184,18 @@ export function useRecentNavigation(
   const recordNavigationLocationSnapshot = useCallback((
     location: NavigationLocation | null,
   ) => {
+    const owner = resolveCurrentWorkspaceRuntimeOwner();
+
+    if (!owner) {
+      return;
+    }
+
     writeNavigationHistory(
       setNavigationHistory,
-      (current) => recordNavigationLocation(current, location),
+      (current) =>
+        recordOwnedNavigationLocation(current, location, owner.ownerKey),
     );
-  }, [setNavigationHistory]);
+  }, [resolveCurrentWorkspaceRuntimeOwner, setNavigationHistory]);
 
   // Records a visited/edited POSITION in the per-workspace Recent Locations
   // history. Reads documents + workspace root from refs (so it stays stable on
@@ -310,6 +319,36 @@ function writeNavigationHistory(
   setNavigationHistory(next);
 }
 
+function recordOwnedNavigationLocation(
+  history: NavigationHistory,
+  location: NavigationLocation | null,
+  ownerKey: string,
+): NavigationHistory {
+  if (!location) {
+    return history;
+  }
+
+  const ownedHistory =
+    history.ownerKey && history.ownerKey !== ownerKey
+      ? createOwnedNavigationHistory(ownerKey)
+      : history;
+  const next = recordNavigationLocation(ownedHistory, location);
+
+  if (next === ownedHistory && next.ownerKey === ownerKey) {
+    return next;
+  }
+
+  return { ...next, ownerKey };
+}
+
+function createOwnedNavigationHistory(ownerKey: string): NavigationHistory {
+  return {
+    backStack: [],
+    forwardStack: [],
+    ownerKey,
+  };
+}
+
 function compareAndSetNavigationHistory(
   transaction: NavigationHistoryTransaction,
   setNavigationHistory: NavigationHistorySetter,
@@ -353,6 +392,7 @@ export function useNavigationHistory(
   const {
     currentWorkspaceRootRef,
     resolveCurrentWorkspaceRuntimeOwner,
+    workspaceRoot,
     navigationHistory,
     setNavigationHistory,
     setRecentLocationsPanelOpen,
@@ -364,8 +404,21 @@ export function useNavigationHistory(
     shouldOpenNavigationTargetReadOnly,
   } = dependencies;
   const navigationHistoryTransaction = useRef<NavigationHistory | null>(null);
+  const currentOwnerKey =
+    resolveCurrentWorkspaceRuntimeOwner()?.ownerKey ?? null;
 
   useLayoutEffect(() => {
+    if (
+      currentOwnerKey &&
+      navigationHistory.ownerKey &&
+      navigationHistory.ownerKey !== currentOwnerKey
+    ) {
+      const next = createOwnedNavigationHistory(currentOwnerKey);
+      navigationHistoryTransaction.current = next;
+      setNavigationHistory(next);
+      return;
+    }
+
     navigationHistoryTransaction.current = navigationHistory;
     navigationHistoryTransactions.set(
       setNavigationHistory,
@@ -382,7 +435,12 @@ export function useNavigationHistory(
 
       navigationHistoryTransactions.delete(setNavigationHistory);
     };
-  }, [navigationHistory, setNavigationHistory]);
+  }, [
+    navigationHistory,
+    currentOwnerKey,
+    setNavigationHistory,
+    workspaceRoot,
+  ]);
 
   const applyNavigationLocation = useCallback(
     async (
@@ -447,6 +505,13 @@ export function useNavigationHistory(
       return;
     }
 
+    if (
+      navigationHistory.ownerKey &&
+      navigationHistory.ownerKey !== requestedOwner.ownerKey
+    ) {
+      return;
+    }
+
     const next = navigateBack(navigationHistory, currentNavigationLocation());
 
     if (!next.target) {
@@ -491,6 +556,13 @@ export function useNavigationHistory(
     const requestedHistory = navigationHistory;
 
     if (!requestedRoot || !requestedOwner) {
+      return;
+    }
+
+    if (
+      navigationHistory.ownerKey &&
+      navigationHistory.ownerKey !== requestedOwner.ownerKey
+    ) {
       return;
     }
 

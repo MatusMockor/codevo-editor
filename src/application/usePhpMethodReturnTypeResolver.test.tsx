@@ -8,7 +8,10 @@ import {
   phpLaravelFrameworkProvider,
   phpNetteFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
-import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import {
+  phpMethodCompletionsFromSource,
+  type PhpMethodCompletion,
+} from "../domain/phpMethodCompletions";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -595,7 +598,22 @@ class ActiveRow
 }`,
           },
         },
-        { frameworkRuntime: NETTE_RUNTIME },
+        {
+          frameworkRuntime: NETTE_RUNTIME,
+          resolvePhpClassReference: (_source, className) => {
+            const normalizedClassName = className.replace(/^\\+/, "");
+
+            if (normalizedClassName === "ActiveRow") {
+              return "Nette\\Database\\Table\\ActiveRow";
+            }
+
+            if (normalizedClassName === "Selection") {
+              return "Nette\\Database\\Table\\Selection";
+            }
+
+            return normalizedClassName || null;
+          },
+        },
       ),
     );
 
@@ -632,4 +650,411 @@ class ActiveRow
 
     harness.unmount();
   });
+
+  it("refines generated conditional Nette relation declarations and keeps safe dynamic fallbacks", async () => {
+    const usersRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const usersSelection =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
+    const userStatusesRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UserStatusesActiveRow";
+    const ordersSelection =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection";
+    const usersSource = `<?php
+namespace Efabrica\\Crm\\ActiveRowTypes\\ActiveRow;
+/**
+ * @method ($key is 'user_statuses' ? UserStatusesActiveRow|null : \\Nette\\Database\\Table\\ActiveRow|null) REF(string $key)
+ * @method ($key is 'orders' ? \\Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection : \\Nette\\Database\\Table\\Selection) Related(string $key)
+ */
+abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
+    const harness = renderHook(
+      makeOptions(
+        {
+          [usersRow]: {
+            members: phpMethodCompletionsFromSource(usersSource, usersRow),
+            source: usersSource,
+          },
+          [usersSelection]: {
+            source: "<?php abstract class UsersSelection {}",
+          },
+          [userStatusesRow]: {
+            source: "<?php abstract class UserStatusesActiveRow {}",
+          },
+          [ordersSelection]: {
+            source: "<?php abstract class OrdersSelection {}",
+          },
+        },
+        {
+          frameworkRuntime: NETTE_RUNTIME,
+          resolvePhpClassReference: (_source, className) => {
+            const normalizedClassName = className.replace(/^\\+/, "");
+
+            if (normalizedClassName === "UserStatusesActiveRow") {
+              return userStatusesRow;
+            }
+
+            return normalizedClassName || null;
+          },
+        },
+      ),
+    );
+
+    await expect(
+      harness.api().resolvePhpMethodReturnType(
+        usersRow,
+        "REF",
+        new Set(),
+        usersRow,
+        new Map(),
+        "$row?->\n    REF(\n        'user_statuses',\n    )",
+      ),
+    ).resolves.toBe(userStatusesRow);
+    await expect(
+      harness.api().resolvePhpMethodReturnType(
+        usersRow,
+        "Related",
+        new Set(),
+        usersRow,
+        new Map(),
+        "$row?->REF('users')?->\n    RELATED('orders')",
+      ),
+    ).resolves.toBe(ordersSelection);
+    await expect(
+      harness.api().resolvePhpMethodReturnType(
+        usersRow,
+        "ref",
+        new Set(),
+        usersRow,
+        new Map(),
+        "$row->ref($table)",
+      ),
+    ).resolves.toBe("Nette\\Database\\Table\\ActiveRow");
+    await expect(
+      harness.api().resolvePhpMethodReturnType(
+        usersRow,
+        "related",
+        new Set(),
+        usersRow,
+        new Map(),
+        "$row->related($table)",
+      ),
+    ).resolves.toBe("Nette\\Database\\Table\\Selection");
+
+    harness.unmount();
+  });
+
+  it("preserves an explicit concrete Nette relation return declaration", async () => {
+    const usersRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const usersSelection =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
+    const customRow = "App\\Database\\CustomUserActiveRow";
+    const usersSource = `<?php
+namespace Efabrica\\Crm\\ActiveRowTypes\\ActiveRow;
+/** @method \\App\\Database\\CustomUserActiveRow ref(string $key) */
+abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
+    const harness = renderHook(
+      makeOptions(
+        {
+          [usersRow]: {
+            members: phpMethodCompletionsFromSource(usersSource, usersRow),
+            source: usersSource,
+          },
+          [usersSelection]: {
+            source: "<?php abstract class UsersSelection {}",
+          },
+          [customRow]: {
+            source: "<?php class CustomUserActiveRow {}",
+          },
+        },
+        {
+          frameworkRuntime: NETTE_RUNTIME,
+          resolvePhpMethodDeclaredReturnType: (_source, typeName) =>
+            typeName?.replace(/^\\+/, "") ?? null,
+        },
+      ),
+    );
+
+    await expect(
+      harness.api().resolvePhpMethodReturnType(
+        usersRow,
+        "ref",
+        new Set(),
+        usersRow,
+        new Map(),
+        "$row->ref('user_statuses')",
+      ),
+    ).resolves.toBe(customRow);
+
+    harness.unmount();
+  });
+
+  it.each([true, false])(
+    "preserves a custom conditional with a generic Nette fallback when the convention class is %s",
+    async (hasConventionClass) => {
+      const usersRow =
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+      const usersSelection =
+        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
+      const conventionalRow =
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\BillingActiveRow";
+      const customRow = "App\\Database\\CustomBillingRow";
+      const conditionalReturnType =
+        "($key is 'billing' ? \\App\\Database\\CustomBillingRow : \\Nette\\Database\\Table\\ActiveRow|null)";
+      const usersSource = `<?php
+namespace Efabrica\\Crm\\ActiveRowTypes\\ActiveRow;
+/** @method ${conditionalReturnType} ref(string $key) */
+abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
+      const classes: Record<string, ClassSource> = {
+        [usersRow]: {
+          members: phpMethodCompletionsFromSource(usersSource, usersRow),
+          source: usersSource,
+        },
+        [usersSelection]: {
+          source: "<?php abstract class UsersSelection {}",
+        },
+        [customRow]: {
+          source: "<?php class CustomBillingRow {}",
+        },
+      };
+
+      if (hasConventionClass) {
+        classes[conventionalRow] = {
+          source: "<?php abstract class BillingActiveRow {}",
+        };
+      }
+
+      const harness = renderHook(
+        makeOptions(classes, {
+          frameworkRuntime: NETTE_RUNTIME,
+          resolvePhpMethodDeclaredReturnType: (_source, typeName) =>
+            typeName === conditionalReturnType ? customRow : typeName,
+        }),
+      );
+
+      await expect(
+        harness.api().resolvePhpMethodReturnType(
+          usersRow,
+          "ref",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row->ref('billing')",
+        ),
+      ).resolves.toBe(customRow);
+
+      harness.unmount();
+    },
+  );
+
+  it.each([
+    {
+      alias: "BillingActiveRow",
+      conventionType:
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\BillingActiveRow",
+      customType: "App\\Database\\CustomBillingActiveRow",
+      fallbackType: "\\Nette\\Database\\Table\\ActiveRow|null",
+      literal: "billing",
+      methodName: "ref",
+    },
+    {
+      alias: "OrdersSelection",
+      conventionType:
+        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
+      customType: "App\\Database\\CustomOrdersSelection",
+      fallbackType: "\\Nette\\Database\\Table\\Selection",
+      literal: "orders",
+      methodName: "related",
+    },
+  ])(
+    "preserves an imported custom $methodName alias ending in a generated family suffix",
+    async ({
+      alias,
+      conventionType,
+      customType,
+      fallbackType,
+      literal,
+      methodName,
+    }) => {
+      const usersRow =
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+      const usersSelection =
+        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
+      const conditionalReturnType =
+        `($key is '${literal}' ? ${alias} : ${fallbackType})`;
+      const customTypeParts = customType.split("\\");
+      const customShortName =
+        customTypeParts[customTypeParts.length - 1] ?? alias;
+      const usersSource = `<?php
+namespace Efabrica\\Crm\\ActiveRowTypes\\ActiveRow;
+use ${customType} as ${alias};
+/** @method ${conditionalReturnType} ${methodName}(string $key) */
+abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
+      const harness = renderHook(
+        makeOptions(
+          {
+            [usersRow]: {
+              members: phpMethodCompletionsFromSource(usersSource, usersRow),
+              source: usersSource,
+            },
+            [usersSelection]: {
+              source: "<?php abstract class UsersSelection {}",
+            },
+            [conventionType]: {
+              source: `<?php abstract class ${alias} {}`,
+            },
+            [customType]: {
+              source: `<?php class ${customShortName} {}`,
+            },
+          },
+          {
+            frameworkRuntime: NETTE_RUNTIME,
+            resolvePhpClassReference: (_source, className) => {
+              const normalizedClassName = className.replace(/^\\+/, "");
+
+              if (normalizedClassName === alias) {
+                return customType;
+              }
+
+              return normalizedClassName || null;
+            },
+            resolvePhpMethodDeclaredReturnType: (_source, typeName) =>
+              typeName === conditionalReturnType ? customType : typeName,
+          },
+        ),
+      );
+
+      await expect(
+        harness.api().resolvePhpMethodReturnType(
+          usersRow,
+          methodName,
+          new Set(),
+          usersRow,
+          new Map(),
+          `$row->${methodName}('${literal}')`,
+        ),
+      ).resolves.toBe(customType);
+
+      harness.unmount();
+    },
+  );
+
+  it.each([
+    {
+      conventionType:
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\BillingActiveRow",
+      declaredResolvedType: "App\\Database\\CustomActiveRow",
+      declaredType: "ActiveRow|null",
+      expectedType: "App\\Database\\CustomActiveRow",
+      importSource: "use App\\Database\\CustomActiveRow as ActiveRow;",
+      literal: "billing",
+      methodName: "ref",
+      shortType: "ActiveRow",
+    },
+    {
+      conventionType:
+        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
+      declaredResolvedType: "App\\Database\\CustomSelection",
+      declaredType: "Selection",
+      expectedType: "App\\Database\\CustomSelection",
+      importSource: "use App\\Database\\CustomSelection as Selection;",
+      literal: "orders",
+      methodName: "related",
+      shortType: "Selection",
+    },
+    {
+      conventionType:
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\BillingActiveRow",
+      declaredResolvedType: "Nette\\Database\\Table\\ActiveRow",
+      declaredType: "ActiveRow|null",
+      expectedType:
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\BillingActiveRow",
+      importSource: "use Nette\\Database\\Table\\ActiveRow;",
+      literal: "billing",
+      methodName: "ref",
+      shortType: "ActiveRow",
+    },
+    {
+      conventionType:
+        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
+      declaredResolvedType: "Nette\\Database\\Table\\Selection",
+      declaredType: "\\Nette\\Database\\Table\\Selection",
+      expectedType:
+        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
+      importSource: "",
+      literal: "orders",
+      methodName: "related",
+      shortType: "Selection",
+    },
+  ])(
+    "resolves standalone $methodName declaration provenance for $declaredType",
+    async ({
+      conventionType,
+      declaredResolvedType,
+      declaredType,
+      expectedType,
+      importSource,
+      literal,
+      methodName,
+      shortType,
+    }) => {
+      const usersRow =
+        "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+      const usersSelection =
+        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
+      const usersSource = `<?php
+namespace Efabrica\\Crm\\ActiveRowTypes\\ActiveRow;
+${importSource}
+/** @method ${declaredType} ${methodName}(string $key) */
+abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
+      const classes: Record<string, ClassSource> = {
+        [usersRow]: {
+          members: phpMethodCompletionsFromSource(usersSource, usersRow),
+          source: usersSource,
+        },
+        [usersSelection]: {
+          source: "<?php abstract class UsersSelection {}",
+        },
+        [conventionType]: {
+          source: "<?php abstract class ConventionType {}",
+        },
+      };
+
+      if (declaredResolvedType.startsWith("App\\")) {
+        classes[declaredResolvedType] = {
+          source: "<?php class CustomType {}",
+        };
+      }
+
+      const harness = renderHook(
+        makeOptions(classes, {
+          frameworkRuntime: NETTE_RUNTIME,
+          resolvePhpClassReference: (_source, className) => {
+            const normalizedClassName = className.replace(/^\\+/, "");
+
+            if (normalizedClassName === shortType) {
+              return declaredResolvedType;
+            }
+
+            return normalizedClassName || null;
+          },
+          resolvePhpMethodDeclaredReturnType: (_source, typeName) =>
+            typeName === declaredType ? declaredResolvedType : typeName,
+        }),
+      );
+
+      await expect(
+        harness.api().resolvePhpMethodReturnType(
+          usersRow,
+          methodName,
+          new Set(),
+          usersRow,
+          new Map(),
+          `$row->${methodName}('${literal}')`,
+        ),
+      ).resolves.toBe(expectedType);
+
+      harness.unmount();
+    },
+  );
 });

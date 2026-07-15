@@ -1399,6 +1399,7 @@ export function useWorkbenchController(
   const {
     activeEditorPosition,
     activeEditorPositionRef,
+    clearEditorRevealTarget,
     editorRevealTarget,
     navigationHistory,
     recentFiles,
@@ -2002,6 +2003,7 @@ export function useWorkbenchController(
     activeEditorPositionRef,
     currentWorkspaceRootRef,
     documentsRef,
+    resolveCurrentWorkspaceRuntimeOwner,
     setClassOpenOpen,
     setNavigationHistory,
     setQuickOpenOpen,
@@ -7073,6 +7075,7 @@ export function useWorkbenchController(
     openNavigationTarget,
     openPhpClassTarget,
     readNavigationFileContent,
+    resolvePhpExpressionType,
     resolvePhpClassSourcePaths,
     textSearch,
     workspaceDescriptor,
@@ -7236,6 +7239,7 @@ export function useWorkbenchController(
     collectCompleteLatteTemplateRelativePaths,
     provideLattePresenterLinkDiagnostics,
     provideLatteDefinitionOutcome,
+    provideNeonDefinition,
   } = workbenchFrameworkIntelligence;
 
   usePhpFrameworkActiveDocumentDiagnostics({
@@ -7453,6 +7457,8 @@ export function useWorkbenchController(
     openPathForNavigation,
     provideBladeDefinition,
     provideLatteDefinitionOutcome,
+    provideNeonDefinition,
+    providePhpFrameworkDefinition,
     recordNavigationLocationSnapshot,
     reportErrorForActiveWorkspaceRoot,
     reportLanguageServerErrorForActiveWorkspaceRoot,
@@ -9119,7 +9125,7 @@ export function useWorkbenchController(
     isActiveDocumentPhpTest,
     registerActiveTerminalSession,
     runTestAt,
-    clearEditorRevealTarget: () => setEditorRevealTarget(null),
+    clearEditorRevealTarget,
     closeFloatingSurface,
     bottomPanelVisible,
     bottomPanelView,

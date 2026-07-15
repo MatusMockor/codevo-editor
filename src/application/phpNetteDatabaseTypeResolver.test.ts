@@ -79,6 +79,25 @@ class UsersRepository {}`,
     ).resolves.toBeNull();
   });
 
+  it("resolves an ebox-style nullable generated carrier family", async () => {
+    const activeRowType =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\SubscriptionsActiveRow";
+    const selectionType =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\SubscriptionsSelection";
+    const resolver = createPhpNetteDatabaseTypeResolver({
+      isActive: () => true,
+      readClassSource: async () => "",
+      resolveClassSourcePaths: async (className) =>
+        className === activeRowType || className === selectionType
+          ? [`/${className}.php`]
+          : [],
+    });
+
+    await expect(
+      resolver.resolveClassTypes(`${selectionType}|false|null`),
+    ).resolves.toEqual({ activeRowType, selectionType });
+  });
+
   it("keeps caches isolated per project runtime and retries negative discoveries", async () => {
     const className = "App\\UsersRepository";
     const firstTypes = {

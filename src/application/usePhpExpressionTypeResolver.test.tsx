@@ -1025,6 +1025,100 @@ $reporter->table('events');
     harness.unmount();
   });
 
+  it("propagates multiline nullsafe Nette relation calls through a recursive chain", async () => {
+    const expression = `$row?->
+    REF(
+        'users',
+    )?->
+    Related(
+        'orders',
+    )`;
+    const accountsContract = "App\\Database\\AccountsRow";
+    const source = `<?php
+/** @var ${accountsContract} $row */
+${expression};
+`;
+    const position = positionAfter(source, "'orders'");
+    const accountsRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\AccountsActiveRow";
+    const usersRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const ordersSelection =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection";
+    const resolvePhpFrameworkBoundConcrete = vi.fn(
+      async (className: string) =>
+        className === accountsContract ? accountsRow : null,
+    );
+    const resolvePhpMethodReturnType = vi.fn(
+      async (
+        className: string,
+        methodName: string,
+        _visitedClassNames?: Set<string>,
+        _lateStaticClassName?: string,
+        _templateTypes?: ReadonlyMap<string, string>,
+        callExpression?: string,
+      ) => {
+        if (
+          className === accountsRow &&
+          methodName.toLowerCase() === "ref" &&
+          callExpression === `$row?->REF(
+        'users',
+    )`
+        ) {
+          return usersRow;
+        }
+
+        if (
+          className === usersRow &&
+          methodName.toLowerCase() === "related" &&
+          callExpression === expression
+        ) {
+          return ordersSelection;
+        }
+
+        return null;
+      },
+    );
+    const harness = renderHook(
+      netteResolverOptions({
+        resolvePhpFrameworkBoundConcrete,
+        resolvePhpMethodReturnType,
+      }),
+    );
+
+    const resolvedType = await harness
+      .api()
+      .resolvePhpExpressionType(source, position, expression);
+
+    expect(resolvePhpMethodReturnType).toHaveBeenCalled();
+    expect(resolvedType).toBe(ordersSelection);
+    expect(resolvePhpFrameworkBoundConcrete).toHaveBeenCalledWith(
+      accountsContract,
+    );
+    expect(resolvePhpMethodReturnType).toHaveBeenNthCalledWith(
+      1,
+      accountsRow,
+      "REF",
+      undefined,
+      undefined,
+      undefined,
+      `$row?->REF(
+        'users',
+    )`,
+    );
+    expect(resolvePhpMethodReturnType).toHaveBeenNthCalledWith(
+      2,
+      usersRow,
+      "Related",
+      undefined,
+      undefined,
+      undefined,
+      expression,
+    );
+
+    harness.unmount();
+  });
+
   it.each([
     [
       "typed property",

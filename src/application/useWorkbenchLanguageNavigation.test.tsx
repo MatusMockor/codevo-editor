@@ -154,6 +154,8 @@ function renderNavigation(
       handled: false,
       shouldBlockFallback: false,
     })),
+    provideNeonDefinition: vi.fn(async () => false),
+    providePhpFrameworkDefinition: vi.fn(async () => false),
     recordNavigationLocationSnapshot: vi.fn(),
     resolveCurrentWorkspaceRuntimeOwner: () => owner,
     reportErrorForActiveWorkspaceRoot: vi.fn(),
@@ -219,6 +221,165 @@ describe("useWorkbenchLanguageNavigation Latte definition fallback", () => {
     expect(goToIndexedSymbolDefinition).toHaveBeenCalledTimes(1);
 
     root.unmount();
+  });
+});
+
+describe("useWorkbenchLanguageNavigation app-owned definition providers", () => {
+  it("runs PHP framework definitions after contextual and before indexed fallbacks", async () => {
+    const calls: string[] = [];
+    const source = "<?php $user->related('orders');";
+    const providePhpFrameworkDefinition = vi.fn(async () => {
+      calls.push("framework");
+      return false;
+    });
+    const goToContextualPhpDefinition = vi.fn(async () => {
+      calls.push("contextual");
+      return false;
+    });
+    const goToIndexedSymbolDefinition = vi.fn(async () => {
+      calls.push("indexed");
+      return false;
+    });
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "php",
+          name: "Users.php",
+          path: `${ROOT}/src/Users.php`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: {
+        current: positionAtNeedle(source, "orders"),
+      },
+      goToContextualPhpDefinition,
+      goToIndexedSymbolDefinition,
+      providePhpFrameworkDefinition,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(calls).toEqual(["contextual", "framework", "indexed"]);
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(
+      source,
+      source.indexOf("orders"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+
+    harness.root.unmount();
+  });
+
+  it("lets NEON definitions handle Cmd+B before generic fallbacks", async () => {
+    const source = "services:\n    mailer: App\\Mailer";
+    const provideNeonDefinition = vi.fn(async () => true);
+    const goToIndexedSymbolDefinition = vi.fn(async () => false);
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "neon",
+          name: "services.neon",
+          path: `${ROOT}/config/services.neon`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: {
+        current: positionAtNeedle(source, "Mailer"),
+      },
+      goToIndexedSymbolDefinition,
+      provideNeonDefinition,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(provideNeonDefinition).toHaveBeenCalledWith(
+      source,
+      source.indexOf("Mailer"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+    expect(goToIndexedSymbolDefinition).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("stops later fallbacks after a framework provider replaces the workspace owner", async () => {
+    const firstOwner = createWorkspaceRuntimeOwner("workspace-a", ROOT);
+    const replacementOwner = createWorkspaceRuntimeOwner("workspace-b", ROOT);
+    let currentOwner = firstOwner;
+    const source = "<?php view('users');";
+    const goToContextualPhpDefinition = vi.fn(async () => false);
+    const goToIndexedSymbolDefinition = vi.fn(async () => false);
+    const providePhpFrameworkDefinition = vi.fn(async () => {
+      currentOwner = replacementOwner;
+      return false;
+    });
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "php",
+          name: "Users.php",
+          path: `${ROOT}/src/Users.php`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: {
+        current: positionAtNeedle(source, "users"),
+      },
+      goToContextualPhpDefinition,
+      goToIndexedSymbolDefinition,
+      providePhpFrameworkDefinition,
+      resolveCurrentWorkspaceRuntimeOwner: () => currentOwner,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(goToContextualPhpDefinition).toHaveBeenCalledTimes(1);
+    expect(goToIndexedSymbolDefinition).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("uses the displayed PHP source while preserving diff-tab fallback", async () => {
+    const source = "<?php config('app.name');";
+    const providePhpFrameworkDefinition = vi.fn(async () => false);
+    const goToContextualPhpDefinition = vi.fn(async () => false);
+    const harness = renderNavigation({
+      activeDocumentRef: {
+        current: {
+          content: source,
+          language: "php",
+          name: "app.php (Diff)",
+          path: `mockor-git-diff:worktree:${ROOT}/config/app.php`,
+          savedContent: source,
+        },
+      },
+      activeEditorPositionRef: {
+        current: positionAtNeedle(source, "app.name"),
+      },
+      goToContextualPhpDefinition,
+      providePhpFrameworkDefinition,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(providePhpFrameworkDefinition).toHaveBeenCalledWith(
+      source,
+      source.indexOf("app.name"),
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
+    );
+    expect(goToContextualPhpDefinition).toHaveBeenCalledTimes(1);
+
+    harness.root.unmount();
   });
 });
 

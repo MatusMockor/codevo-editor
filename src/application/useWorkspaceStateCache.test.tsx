@@ -458,6 +458,7 @@ describe("useWorkspaceStateCache", () => {
           },
         ],
         forwardStack: [],
+        ownerKey: "owner-a",
       },
       recentLocations: [
         {
@@ -488,6 +489,7 @@ describe("useWorkspaceStateCache", () => {
             position: { column: 1, lineNumber: 8 },
           },
         ],
+        ownerKey: "owner-b",
       },
       recentLocations: [
         {
@@ -522,6 +524,7 @@ describe("useWorkspaceStateCache", () => {
     expect(resolvedA?.editorSurface.activePath).toBe(DIRTY_DOC_A.path);
     expect(resolvedA?.bookmarks).toEqual([BOOKMARK_A]);
     expect(resolvedA?.navigationHistory.backStack).toHaveLength(1);
+    expect(resolvedA?.navigationHistory.ownerKey).toBe("owner-a");
     expect(resolvedA?.recentLocations[0].snippet).toBe("owner a");
     expect(resolvedB?.editorSurface.documents).toEqual({
       [DOC_A_SECOND.path]: DOC_A_SECOND,
@@ -529,6 +532,7 @@ describe("useWorkspaceStateCache", () => {
     expect(resolvedB?.editorSurface.activePath).toBe(DOC_A_SECOND.path);
     expect(resolvedB?.bookmarks).toEqual([]);
     expect(resolvedB?.navigationHistory.forwardStack).toHaveLength(1);
+    expect(resolvedB?.navigationHistory.ownerKey).toBe("owner-b");
     expect(resolvedB?.recentLocations[0].snippet).toBe("owner b");
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
       [workspaceIdentityStateCacheKey(identityA.workspaceId)]: ownerAState,

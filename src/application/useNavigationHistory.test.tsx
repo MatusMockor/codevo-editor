@@ -56,6 +56,7 @@ interface Harness {
   shouldOpenNavigationTargetReadOnly: ReturnType<typeof vi.fn>;
   setActiveDocument: (document: EditorDocument | null) => void;
   setWorkspaceRuntimeOwner: (owner: WorkspaceRuntimeOwner | null) => void;
+  refreshWorkspaceRuntimeOwner: () => void;
   setWorkspaceRoot: (root: string | null) => void;
   resetNavigationHistory: () => void;
   interruptNavigationHistoryReset: () => void;
@@ -131,6 +132,7 @@ function renderNavigationHistory(
   let setWorkspaceRootState: (rootPath: string | null) => void = () => {};
   let triggerOpenOverlays: () => void = () => {};
   let resetNavigationHistoryState: () => void = () => {};
+  let refreshWorkspaceRuntimeOwnerState: () => void = () => {};
   let suspendOnEmptyNavigationHistory = false;
   const suspendedRender = new Promise<void>(() => {});
 
@@ -158,6 +160,7 @@ function renderNavigationHistory(
     const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(
       initialWorkspaceRoot,
     );
+    const [, setWorkspaceRuntimeOwnerRevision] = useState(0);
 
     setActiveDocumentState = setActiveDocument;
     setWorkspaceRootState = setWorkspaceRoot;
@@ -167,6 +170,9 @@ function renderNavigationHistory(
       setWorkspaceSymbolsOpen(true);
     };
     resetNavigationHistoryState = resetHistory;
+    refreshWorkspaceRuntimeOwnerState = () => {
+      setWorkspaceRuntimeOwnerRevision((current) => current + 1);
+    };
 
     captured.recentFiles = recentFiles;
     captured.recentLocations = recentLocations;
@@ -183,6 +189,7 @@ function renderNavigationHistory(
       activeEditorPositionRef,
       currentWorkspaceRootRef,
       documentsRef,
+      resolveCurrentWorkspaceRuntimeOwner,
       setClassOpenOpen,
       setNavigationHistory,
       setQuickOpenOpen,
@@ -259,6 +266,11 @@ function renderNavigationHistory(
       });
     },
     quickOpenOpen: () => captured.quickOpenOpen,
+    refreshWorkspaceRuntimeOwner: () => {
+      act(() => {
+        refreshWorkspaceRuntimeOwnerState();
+      });
+    },
     recentFiles: () => captured.recentFiles,
     recentFilesSwitcherOpen: () => captured.recentFilesSwitcherOpen,
     resetNavigationHistory: () => {
@@ -580,6 +592,67 @@ describe("useRecentNavigation", () => {
 });
 
 describe("useNavigationHistory", () => {
+  it("isolates NEON/framework Back from a normal PHP history in another project", async () => {
+    const paAiRoot = "/projects/pa-ai-be";
+    const eboxRoot = "/projects/ebox-crm";
+    const stalePhpOrigin = `${paAiRoot}/src/baseRouter.ts`;
+    const neonOrigin = `${eboxRoot}/app/modules/baseModule/config.neon`;
+    const frameworkTarget = `${eboxRoot}/app/DI/ConfigExtension.php`;
+    const harness = renderNavigationHistory(paAiRoot);
+
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("pa-ai-be", paAiRoot),
+    );
+    act(() => {
+      harness.recentNavigation().recordNavigationLocationSnapshot({
+        path: stalePhpOrigin,
+        position: { column: 9, lineNumber: 21 },
+      });
+    });
+
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("ebox-crm", eboxRoot),
+    );
+    harness.setWorkspaceRoot(eboxRoot);
+
+    expect(harness.navigationHistory().backStack).toEqual([]);
+
+    harness.setActiveDocument(editorDocument(frameworkTarget));
+    harness.activeEditorPositionRef.current = { column: 7, lineNumber: 14 };
+    act(() => {
+      harness.recentNavigation().recordNavigationLocationSnapshot({
+        path: neonOrigin,
+        position: { column: 18, lineNumber: 6 },
+      });
+    });
+
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    expect(harness.openPathForNavigation).toHaveBeenCalledOnce();
+    expect(harness.openPathForNavigation).toHaveBeenCalledWith(
+      neonOrigin,
+      expect.objectContaining({ shouldCommit: expect.any(Function) }),
+    );
+    expect(harness.openPathForNavigation).not.toHaveBeenCalledWith(
+      stalePhpOrigin,
+      expect.anything(),
+    );
+    expect(harness.editorRevealTarget()).toEqual({
+      path: neonOrigin,
+      position: { column: 18, lineNumber: 6 },
+    });
+    expect(harness.navigationHistory().forwardStack).toEqual([
+      {
+        path: frameworkTarget,
+        position: { column: 7, lineNumber: 14 },
+      },
+    ]);
+
+    harness.unmount();
+  });
+
   it("does nothing navigating backward with an empty back stack", async () => {
     const harness = renderNavigationHistory();
 
@@ -661,6 +734,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [previousLocation],
       forwardStack: [],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toBeNull();
 
@@ -700,6 +774,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [previousLocation],
       forwardStack: [],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toBeNull();
 
@@ -750,6 +825,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [previousLocation],
       forwardStack: [],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toBeNull();
 
@@ -799,6 +875,7 @@ describe("useNavigationHistory", () => {
           position: { column: 1, lineNumber: 1 },
         },
       ],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toEqual(previousLocation);
 
@@ -846,6 +923,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [previousLocation, newerLocation],
       forwardStack: [],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toBeNull();
 
@@ -891,6 +969,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [previousLocation, newerLocation],
       forwardStack: [],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toBeNull();
 
@@ -1029,6 +1108,101 @@ describe("useNavigationHistory", () => {
     harness.unmount();
   });
 
+  it("does not expose Forward to a project switched in after successful Back", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(`${ROOT}/b.ts`));
+
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    expect(harness.navigationHistory().ownerKey).toBe("workspace-a");
+    expect(harness.navigationHistory().forwardStack).toHaveLength(1);
+
+    const otherRoot = "/other-workspace";
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-b", otherRoot),
+    );
+    harness.setWorkspaceRoot(otherRoot);
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [],
+      forwardStack: [],
+      ownerKey: "workspace-b",
+    });
+
+    await act(async () => {
+      await harness.navigation().navigateForwardInHistory();
+    });
+
+    expect(harness.openPathForNavigation).toHaveBeenCalledOnce();
+
+    harness.unmount();
+  });
+
+  it("does not expose Back after Forward to a same-root replacement owner", async () => {
+    const harness = renderNavigationHistory();
+    const previousLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 1, lineNumber: 1 },
+    };
+    const currentLocation = {
+      path: `${ROOT}/b.ts`,
+      position: { column: 2, lineNumber: 5 },
+    };
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(previousLocation);
+    });
+    harness.setActiveDocument(editorDocument(currentLocation.path));
+    harness.activeEditorPositionRef.current = currentLocation.position;
+
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    harness.setActiveDocument(editorDocument(previousLocation.path));
+    harness.activeEditorPositionRef.current = previousLocation.position;
+
+    await act(async () => {
+      await harness.navigation().navigateForwardInHistory();
+    });
+
+    expect(harness.navigationHistory().ownerKey).toBe("workspace-a");
+    expect(harness.navigationHistory().backStack).toHaveLength(1);
+
+    harness.setWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-b", ROOT),
+    );
+    harness.refreshWorkspaceRuntimeOwner();
+
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [],
+      forwardStack: [],
+      ownerKey: "workspace-b",
+    });
+
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+
+    expect(harness.openPathForNavigation).toHaveBeenCalledTimes(2);
+
+    harness.unmount();
+  });
+
   it("preserves forward history when the target fails to open", async () => {
     const harness = renderNavigationHistory();
     const previousLocation: NavigationLocation = {
@@ -1062,6 +1236,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [],
       forwardStack: [currentLocation],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toEqual(previousLocation);
 
@@ -1111,6 +1286,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [],
       forwardStack: [currentLocation],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toEqual(previousLocation);
 
@@ -1172,6 +1348,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [],
       forwardStack: [currentLocation],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toEqual(previousLocation);
 
@@ -1229,6 +1406,7 @@ describe("useNavigationHistory", () => {
     expect(harness.navigationHistory()).toEqual({
       backStack: [newerLocation],
       forwardStack: [],
+      ownerKey: "workspace-a",
     });
     expect(harness.editorRevealTarget()).toEqual(previousLocation);
 

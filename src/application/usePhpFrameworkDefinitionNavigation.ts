@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject } from "react";
 import {
   phpFrameworkDispatchTargetAt,
   phpFrameworkEventListenerMapFromSource,
@@ -27,9 +27,12 @@ import {
 } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import { createPhpNetteDatabaseDefinitionNavigation } from "./phpNetteDatabaseDefinitionNavigation";
+import { createPhpNetteDatabaseTypeResolver } from "./phpNetteDatabaseTypeResolver";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
+  shouldCommit?: () => boolean;
 }
 
 export interface PhpFrameworkDefinitionNavigationDependencies {
@@ -49,6 +52,11 @@ export interface PhpFrameworkDefinitionNavigationDependencies {
     request?: NavigationRequest,
   ): Promise<boolean>;
   readNavigationFileContent(path: string): Promise<string>;
+  resolvePhpExpressionType(
+    source: string,
+    position: EditorPosition,
+    expression: string,
+  ): Promise<string | null>;
   resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
   textSearch: TextSearchGateway;
   workspaceDescriptor: WorkspaceDescriptor | null;
@@ -71,6 +79,7 @@ export function usePhpFrameworkDefinitionNavigation({
   openNavigationTarget,
   openPhpClassTarget,
   readNavigationFileContent,
+  resolvePhpExpressionType,
   resolvePhpClassSourcePaths,
   textSearch,
   workspaceDescriptor,
@@ -83,6 +92,35 @@ export function usePhpFrameworkDefinitionNavigation({
     frameworkRuntime.supports("dispatch");
   const supportsFrameworkStringLiteralDefinitionNavigation =
     frameworkRuntime.supports("stringLiterals");
+  const supportsNetteDatabaseDefinitionNavigation = frameworkRuntime.supports(
+    "netteDatabaseSemantics",
+  );
+  const phpNetteDatabaseDefinitionNavigation = useMemo(() => {
+    const isActive = () =>
+      Boolean(workspaceRoot) &&
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot);
+    const databaseTypeResolver = createPhpNetteDatabaseTypeResolver({
+      isActive,
+      readClassSource: (path) => readNavigationFileContent(path),
+      resolveClassSourcePaths: async (className) => [
+        ...(await resolvePhpClassSourcePaths(className)),
+      ],
+    });
+
+    return createPhpNetteDatabaseDefinitionNavigation({
+      databaseTypeResolver,
+      isActive,
+      openPhpClassTarget,
+      resolvePhpExpressionType,
+    });
+  }, [
+    currentWorkspaceRootRef,
+    openPhpClassTarget,
+    readNavigationFileContent,
+    resolvePhpClassSourcePaths,
+    resolvePhpExpressionType,
+    workspaceRoot,
+  ]);
 
   const openPhpFrameworkHandlerTarget = useCallback(
     async (
@@ -93,6 +131,8 @@ export function usePhpFrameworkDefinitionNavigation({
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const isNavigationActive = () =>
+        isRequestedRootActive() && canNavigate(request);
 
       if (!requestedRoot) {
         return false;
@@ -131,7 +171,14 @@ export function usePhpFrameworkDefinitionNavigation({
           return false;
         }
 
-        return openNavigationTarget(path, methodPosition, `${shortName}`);
+        const opened = await openNavigationTarget(
+          path,
+          methodPosition,
+          `${shortName}`,
+          { shouldCommit: isNavigationActive },
+        );
+
+        return isNavigationActive() && opened;
       }
 
       if (!isRequestedRootActive()) {
@@ -422,6 +469,8 @@ export function usePhpFrameworkDefinitionNavigation({
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const isNavigationActive = () =>
+        isRequestedRootActive() && canNavigate(request);
 
       if (!requestedRoot) {
         return false;
@@ -548,6 +597,23 @@ export function usePhpFrameworkDefinitionNavigation({
         }
       }
 
+      if (supportsNetteDatabaseDefinitionNavigation) {
+        const handledNetteDatabaseTarget =
+          await phpNetteDatabaseDefinitionNavigation.provideDefinition(
+            source,
+            offset,
+            request,
+          );
+
+        if (!isRequestedRootActive() || !canNavigate(request)) {
+          return false;
+        }
+
+        if (handledNetteDatabaseTarget) {
+          return true;
+        }
+      }
+
       const literalTarget = await resolvePhpFrameworkLiteralNavigationTarget(
         {
           activeDocument: activeDocument
@@ -571,13 +637,18 @@ export function usePhpFrameworkDefinitionNavigation({
         return false;
       }
 
-      return literalTarget
-        ? openNavigationTarget(
-            literalTarget.path,
-            literalTarget.position,
-            literalTarget.label,
-          )
-        : false;
+      if (!literalTarget) {
+        return false;
+      }
+
+      const opened = await openNavigationTarget(
+        literalTarget.path,
+        literalTarget.position,
+        literalTarget.label,
+        { shouldCommit: isNavigationActive },
+      );
+
+      return isNavigationActive() && opened;
     },
     [
       activeDocument,
@@ -586,11 +657,13 @@ export function usePhpFrameworkDefinitionNavigation({
       goToPhpFrameworkDispatchDefinition,
       openNavigationTarget,
       openPhpClassTarget,
+      phpNetteDatabaseDefinitionNavigation,
       activePhpFrameworkProviders,
       resolvePhpFrameworkExplicitRouteModelBindingClassName,
       supportsFrameworkDispatchDefinitionNavigation,
       supportsFrameworkRouteDefinitionNavigation,
       supportsFrameworkStringLiteralDefinitionNavigation,
+      supportsNetteDatabaseDefinitionNavigation,
       workspaceDescriptor,
       workspaceRoot,
     ],

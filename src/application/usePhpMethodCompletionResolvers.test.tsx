@@ -288,6 +288,152 @@ class ReportRepository
     harness.unmount();
   });
 
+  it.each([
+    "GeneratedActiveRow|null",
+    "GeneratedActiveRow|false|null",
+  ])("collects members for the sole object in %s", async (resolvedType) => {
+    const source = "<?php\n$row->";
+    const collectPhpMethodsForClass = vi.fn(async () => [method("update")]);
+    const deps = makeDeps({
+      collectPhpMethodsForClass,
+      frameworkRuntime: GENERIC_RUNTIME,
+      resolvePhpExpressionType: vi.fn(async () => resolvedType),
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        source,
+        { column: source.length + 1, lineNumber: 2 },
+        "$row",
+      );
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "update",
+    ]);
+    expect(collectPhpMethodsForClass).toHaveBeenCalledOnce();
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
+      "GeneratedActiveRow",
+    );
+
+    harness.unmount();
+  });
+
+  it.each([
+    "GeneratedActiveRow|GeneratedSelection|null",
+    "Collection<GeneratedActiveRow>|Fallback|null",
+    "callable(GeneratedActiveRow|GeneratedSelection): Result|Fallback|null",
+  ])(
+    "abstains from ambiguous or unsupported carrier %s",
+    async (resolvedType) => {
+      const collectPhpMethodsForClass = vi.fn(async () => [method("update")]);
+      const deps = makeDeps({
+        collectPhpMethodsForClass,
+        frameworkRuntime: GENERIC_RUNTIME,
+        resolvePhpExpressionType: vi.fn(async () => resolvedType),
+      });
+      const harness = renderHook(deps);
+
+      const completions = await harness
+        .api()
+        .resolvePhpReceiverMethodCompletions(
+          "<?php\n$value->",
+          { column: 9, lineNumber: 2 },
+          "$value",
+        );
+
+      expect(completions).toEqual([]);
+      expect(collectPhpMethodsForClass).not.toHaveBeenCalled();
+
+      harness.unmount();
+    },
+  );
+
+  it("preserves Laravel builder recovery when no base object type resolves", async () => {
+    const source = "<?php\n$query->";
+    const collectPhpMethodsForClass = vi.fn(async (className: string) => [
+      method("scopePublished", {
+        declaringClassName: className,
+        parameters: "$query",
+      }),
+    ]);
+    const deps = makeDeps({
+      collectPhpMethodsForClass,
+      resolvePhpExpressionType: vi.fn(async () => null),
+      resolvePhpFrameworkBuilderModelType: vi.fn(
+        async () => "App\\Models\\Post",
+      ),
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        source,
+        { column: source.length + 1, lineNumber: 2 },
+        "$query",
+      );
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "published",
+    ]);
+    expect(collectPhpMethodsForClass).toHaveBeenCalledOnce();
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
+      "App\\Models\\Post",
+    );
+
+    harness.unmount();
+  });
+
+  it("keeps union member collection isolated per resolver instance", async () => {
+    const source = "<?php\n$row->";
+    const firstCollector = vi.fn(async () => [method("firstProjectMethod")]);
+    const secondCollector = vi.fn(async () => [method("secondProjectMethod")]);
+    const receiverType = "GeneratedActiveRow|null";
+    const firstHarness = renderHook(
+      makeDeps({
+        collectPhpMethodsForClass: firstCollector,
+        frameworkRuntime: GENERIC_RUNTIME,
+        resolvePhpExpressionType: vi.fn(async () => receiverType),
+      }),
+    );
+    const secondHarness = renderHook(
+      makeDeps({
+        collectPhpMethodsForClass: secondCollector,
+        frameworkRuntime: GENERIC_RUNTIME,
+        resolvePhpExpressionType: vi.fn(async () => receiverType),
+      }),
+    );
+
+    const firstCompletions = await firstHarness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        source,
+        { column: source.length + 1, lineNumber: 2 },
+        "$row",
+      );
+    const secondCompletions = await secondHarness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        source,
+        { column: source.length + 1, lineNumber: 2 },
+        "$row",
+      );
+
+    expect(firstCompletions.map((completion) => completion.name)).toEqual([
+      "firstProjectMethod",
+    ]);
+    expect(secondCompletions.map((completion) => completion.name)).toEqual([
+      "secondProjectMethod",
+    ]);
+    expect(firstCollector).toHaveBeenCalledWith("GeneratedActiveRow");
+    expect(secondCollector).toHaveBeenCalledWith("GeneratedActiveRow");
+
+    firstHarness.unmount();
+    secondHarness.unmount();
+  });
+
   it("keeps Laravel static model completions wired to scopes and dynamic where methods", async () => {
     const source = "<?php\nuse App\\Models\\Post;\nPost::";
     const deps = makeDeps({

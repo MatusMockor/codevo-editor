@@ -56,15 +56,15 @@ export function phpNetteDatabaseTypeKind(
     return null;
   }
 
-  if (/\\ActiveRow\\[^\\]+ActiveRow$/.test(normalized)) {
+  if (/\\ActiveRow\\[^\\]+ActiveRow$/i.test(normalized)) {
     return "activeRow";
   }
 
-  if (/\\Selection\\[^\\]+Selection$/.test(normalized)) {
+  if (/\\Selection\\[^\\]+Selection$/i.test(normalized)) {
     return "selection";
   }
 
-  if (/Repository(?:Interface)?$/.test(normalized)) {
+  if (/Repository(?:Interface)?$/i.test(normalized)) {
     return "repository";
   }
 
@@ -100,9 +100,10 @@ export function phpNetteSiblingDatabaseType(
 
   const activeRowMarker = "\\ActiveRow\\";
   const selectionMarker = "\\Selection\\";
-  const marker = normalized.includes(activeRowMarker)
+  const normalizedLowerCase = normalized.toLowerCase();
+  const marker = normalizedLowerCase.includes(activeRowMarker.toLowerCase())
     ? activeRowMarker
-    : normalized.includes(selectionMarker)
+    : normalizedLowerCase.includes(selectionMarker.toLowerCase())
       ? selectionMarker
       : null;
 
@@ -110,11 +111,12 @@ export function phpNetteSiblingDatabaseType(
     return null;
   }
 
-  const namespacePrefix = normalized.slice(0, normalized.indexOf(marker));
+  const markerIndex = normalizedLowerCase.indexOf(marker.toLowerCase());
+  const namespacePrefix = normalized.slice(0, markerIndex);
   const sourceShortName = normalized.slice(
-    normalized.indexOf(marker) + marker.length,
+    markerIndex + marker.length,
   );
-  const sourceStem = sourceShortName.replace(/(?:ActiveRow|Selection)$/, "");
+  const sourceStem = sourceShortName.replace(/(?:ActiveRow|Selection)$/i, "");
   const targetStem = tableName ? phpNetteTableTypeStem(tableName) : sourceStem;
 
   if (!targetStem) {
@@ -144,26 +146,264 @@ export function phpNetteLiteralTableArgument(
     return null;
   }
 
-  const matches = [
-    ...callExpression.matchAll(
-      /(?:->|\?->)\s*(?:ref|related)\s*\(\s*([^,)]*)/g,
-    ),
-  ];
-  const match = matches[matches.length - 1];
-  const argument = match?.[1]?.trim() ?? "";
-  const literal = /^(['"])([A-Za-z_][A-Za-z0-9_]*)\1$/.exec(argument);
+  const outerCall = outerRelationCall(callExpression);
 
-  return literal?.[2] ?? null;
-}
-
-function normalizedSingleType(typeName: string | null): string | null {
-  const normalized = typeName?.trim().replace(/^\\+/, "") ?? "";
-
-  if (!normalized || normalized.includes("|") || normalized.includes("&")) {
+  if (!outerCall) {
     return null;
   }
 
-  return normalized;
+  const argument = maskPhpComments(
+    firstTopLevelArgument(outerCall.arguments),
+  ).trim();
+  const literal = /^(['"])([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\1$/.exec(
+    argument,
+  );
+
+  if (!literal) {
+    return null;
+  }
+
+  if (outerCall.method === "ref" && literal[2].includes(".")) {
+    return null;
+  }
+
+  return literal[2].split(".", 1)[0] ?? null;
+}
+
+function normalizedSingleType(typeName: string | null): string | null {
+  const normalized = typeName?.trim() ?? "";
+
+  if (!normalized || normalized.includes("&")) {
+    return null;
+  }
+
+  const expanded = normalized.startsWith("?")
+    ? `${normalized.slice(1)}|null`
+    : normalized;
+  const objectTypes = expanded
+    .split("|")
+    .map((part) => part.trim().replace(/^\\+/, ""))
+    .filter((part) => !/^(?:false|null)$/i.test(part));
+  const objectFamilies = new Map<string, string[]>();
+
+  for (const objectType of objectTypes) {
+    const family = objectType.toLowerCase();
+    const spellings = objectFamilies.get(family) ?? [];
+    spellings.push(objectType);
+    objectFamilies.set(family, spellings);
+  }
+
+  if (objectFamilies.size !== 1) {
+    return null;
+  }
+
+  const spellings = objectFamilies.values().next().value;
+
+  if (!spellings || spellings.length === 0) {
+    return null;
+  }
+
+  return preferredPhpTypeSpelling(spellings);
+}
+
+function outerRelationCall(
+  expression: string,
+): { arguments: string; method: "ref" | "related" } | null {
+  const source = expression.trim();
+  const code = maskPhpComments(source);
+
+  if (!code.endsWith(")")) {
+    return null;
+  }
+
+  const parentheses: number[] = [];
+  let outerOpen = -1;
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < code.length; index += 1) {
+    const char = code[index];
+
+    if (quote) {
+      if (char === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+
+    if (char === "(") {
+      parentheses.push(index);
+      continue;
+    }
+
+    if (char !== ")") {
+      continue;
+    }
+
+    const open = parentheses.pop();
+
+    if (open === undefined) {
+      return null;
+    }
+
+    if (index === code.length - 1) {
+      outerOpen = open;
+    }
+  }
+
+  if (quote || parentheses.length > 0 || outerOpen < 0) {
+    return null;
+  }
+
+  const call = /(?:->|\?->)\s*(ref|related)\s*$/i.exec(
+    code.slice(0, outerOpen),
+  );
+
+  if (!call) {
+    return null;
+  }
+
+  return {
+    arguments: source.slice(outerOpen + 1, -1),
+    method: call[1].toLowerCase() as "ref" | "related",
+  };
+}
+
+function firstTopLevelArgument(argumentsSource: string): string {
+  const code = maskPhpComments(argumentsSource);
+  const delimiters: string[] = [];
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < code.length; index += 1) {
+    const char = code[index];
+
+    if (quote) {
+      if (char === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+
+    if (char === "(" || char === "[" || char === "{") {
+      delimiters.push(char);
+      continue;
+    }
+
+    if (char === ")" || char === "]" || char === "}") {
+      delimiters.pop();
+      continue;
+    }
+
+    if (char === "," && delimiters.length === 0) {
+      return argumentsSource.slice(0, index).trim();
+    }
+  }
+
+  return argumentsSource.trim();
+}
+
+function preferredPhpTypeSpelling(spellings: readonly string[]): string | null {
+  let preferred = spellings[0] ?? null;
+
+  if (!preferred) {
+    return null;
+  }
+
+  for (const spelling of spellings.slice(1)) {
+    if (phpTypeCasingScore(spelling) <= phpTypeCasingScore(preferred)) {
+      continue;
+    }
+
+    preferred = spelling;
+  }
+
+  return preferred;
+}
+
+function phpTypeCasingScore(typeName: string): number {
+  return typeName
+    .split("\\")
+    .filter((part) => /^[A-Z][A-Za-z0-9_]*$/.test(part) && /[a-z]/.test(part))
+    .length;
+}
+
+function maskPhpComments(source: string): string {
+  const masked = [...source];
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+
+    if (quote) {
+      if (char === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      masked[index] = " ";
+      masked[index + 1] = " ";
+      index += 2;
+
+      while (index < source.length) {
+        const isEnd = source[index] === "*" && source[index + 1] === "/";
+        masked[index] = " ";
+
+        if (isEnd) {
+          masked[index + 1] = " ";
+          index += 1;
+          break;
+        }
+
+        index += 1;
+      }
+
+      continue;
+    }
+
+    if ((char === "/" && next === "/") || char === "#") {
+      while (index < source.length && source[index] !== "\n") {
+        masked[index] = " ";
+        index += 1;
+      }
+    }
+  }
+
+  return masked.join("");
 }
 
 function firstMatch(pattern: RegExp, source: string): RegExpExecArray | null {

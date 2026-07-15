@@ -8,6 +8,7 @@ import {
   type WorkbenchNavigationState,
 } from "./useWorkbenchNavigationState";
 import type { NavigationHistory } from "../domain/navigation";
+import type { EditorRevealTarget } from "../domain/languageServerFeatures";
 import type { EditorDocument } from "../domain/workspace";
 
 function editorDocument(path: string): EditorDocument {
@@ -75,6 +76,35 @@ function renderWorkbenchNavigationState(
 }
 
 describe("useWorkbenchNavigationState", () => {
+  it("does not let a stale reveal acknowledgement clear a newer request", () => {
+    const harness = renderWorkbenchNavigationState(
+      editorDocument("/workspace/a.ts"),
+    );
+    const first: EditorRevealTarget = {
+      path: "/workspace/a.ts",
+      position: { column: 1, lineNumber: 2 },
+    };
+    const second: EditorRevealTarget = {
+      path: "/workspace/b.ts",
+      position: { column: 3, lineNumber: 4 },
+    };
+
+    act(() => {
+      harness.navigationState().setEditorRevealTarget(first);
+      harness.navigationState().setEditorRevealTarget(second);
+      harness.navigationState().clearEditorRevealTarget(first);
+    });
+
+    expect(harness.navigationState().editorRevealTarget).toBe(second);
+
+    act(() => {
+      harness.navigationState().clearEditorRevealTarget(second);
+    });
+
+    expect(harness.navigationState().editorRevealTarget).toBeNull();
+    harness.unmount();
+  });
+
   it("clears the active editor position when the active document becomes null", () => {
     const harness = renderWorkbenchNavigationState(
       editorDocument("/workspace/a.ts"),

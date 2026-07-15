@@ -457,6 +457,22 @@ function App() {
     workbench.openDocuments,
     workbench.openTabs,
   ]);
+  const editorContentReadyPaths = useMemo(() => {
+    const tabs = Array.isArray(workbench.openTabs)
+      ? workbench.openTabs
+      : workbench.openDocuments;
+    const paths = new Set(tabs.map((document) => document.path));
+
+    if (workbench.activeDocument) {
+      paths.add(workbench.activeDocument.path);
+    }
+
+    return paths;
+  }, [
+    workbench.activeDocument,
+    workbench.openDocuments,
+    workbench.openTabs,
+  ]);
   const editorGroupsState = useMemo(
     () => {
       const candidate: unknown = workbench.editorGroups;
@@ -1084,6 +1100,9 @@ function App() {
       return (
         <ScopedEditorSurface
           activeDocument={document}
+          activeDocumentContentReady={
+            !document || editorContentReadyPaths.has(document.path)
+          }
           embeddedInGroupPanel
           editorConfig={groupIsActive ? workbench.activeEditorConfig : {}}
           editorFontFamily={workbench.appSettings.editorFontFamily}
@@ -1220,6 +1239,7 @@ function App() {
     [
       activeBookmarkedLineNumbers,
       activeEditorChangeHunks,
+      editorContentReadyPaths,
       editorGroupsState,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerRefreshGateway,

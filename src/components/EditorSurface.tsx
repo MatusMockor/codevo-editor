@@ -225,6 +225,7 @@ function shouldTriggerLatteMemberSuggest(
 
 export interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
+  activeDocumentContentReady?: boolean;
   /**
    * Resolved `.editorconfig` settings for the active document. Empty `{}` (the
    * default) means no `.editorconfig` matched, so the editor keeps its own
@@ -344,7 +345,7 @@ export interface EditorSurfaceProps {
     path: string,
     diagnostics: LanguageServerDiagnostic[],
   ): void;
-  onRevealTargetHandled(): void;
+  onRevealTargetHandled(target: EditorRevealTarget): void;
   onRevertChangeHunk(hunk: EditorChangeHunk): void;
   phpSyntaxDiagnosticsGateway: PhpSyntaxDiagnosticsGateway;
   frameworkIntelligenceProviders?: EditorSurfaceFrameworkIntelligenceProviders;
@@ -426,6 +427,7 @@ function provideGuardedQaDefinition(
 
 function EditorSurfaceComponent({
   activeDocument,
+  activeDocumentContentReady = true,
   editorConfig,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
@@ -3161,34 +3163,77 @@ function EditorSurfaceComponent({
   }, [activeDocument, editorApi, onCursorPositionChange]);
 
   useEffect(() => {
-    if (!editorApi) {
-      return;
-    }
-
-    if (!activeDocument) {
-      return;
-    }
-
     if (!editorRevealTarget) {
       return;
     }
 
-    if (editorRevealTarget.path !== activeDocument.path) {
+    if (!activeDocument) {
+      onRevealTargetHandled(editorRevealTarget);
       return;
     }
 
-    // A reveal is a programmatic jump (Back/Forward, go-to-definition, breadcrumb,
-    // etc). Monaco's content hover widget is mouse/keyboard driven and is NOT
-    // dismissed by setPosition/reveal, so a hover that was still resolving when the
-    // jump fired (e.g. the 700ms "Loading…" placeholder over a method) would stay
-    // pinned to the old spot and never update - looking permanently stuck. Hide it
-    // before the jump so navigation always lands on a clean surface.
-    dismissTransientEditorWidgets(editorApi, "navigation");
-    editorApi.setPosition(editorRevealTarget.position);
-    editorApi.revealPositionInCenter(editorRevealTarget.position);
-    editorApi.focus();
-    onRevealTargetHandled();
-  }, [activeDocument, editorApi, editorRevealTarget, onRevealTargetHandled]);
+    if (editorRevealTarget.path !== activeDocument.path) {
+      onRevealTargetHandled(editorRevealTarget);
+      return;
+    }
+
+    if (!editorApi) {
+      return;
+    }
+
+    if (!activeDocumentContentReady || isOpeningFile) {
+      return;
+    }
+
+    const reveal = (): boolean => {
+      const model = synchronizeActiveDocumentModel(
+        editorApi,
+        workspaceRoot,
+        activeDocument,
+      );
+
+      if (!model) {
+        return false;
+      }
+
+      // A reveal is a programmatic jump (Back/Forward, go-to-definition,
+      // breadcrumb, etc). Clear transient widgets before moving the caret so
+      // an in-flight hover cannot remain pinned to the previous location.
+      dismissTransientEditorWidgets(editorApi, "navigation");
+      editorApi.setPosition(editorRevealTarget.position);
+      editorApi.revealPositionInCenter(editorRevealTarget.position);
+      editorApi.focus();
+      onRevealTargetHandled(editorRevealTarget);
+      return true;
+    };
+
+    if (reveal()) {
+      return;
+    }
+
+    // @monaco-editor/react swaps models in its own post-render lifecycle. Back
+    // can therefore publish a reveal while the editor still exposes the model
+    // being replaced. Keep the target pending and retry only when Monaco reports
+    // the replacement instead of asking a stale/disposed model to validate the
+    // position.
+    const disposable = editorApi.onDidChangeModel(() => {
+      if (!reveal()) {
+        return;
+      }
+
+      disposable.dispose();
+    });
+
+    return () => disposable.dispose();
+  }, [
+    activeDocument,
+    activeDocumentContentReady,
+    editorApi,
+    editorRevealTarget,
+    isOpeningFile,
+    onRevealTargetHandled,
+    workspaceRoot,
+  ]);
 
   // Deterministic content sync: guarantee the live model buffer matches the
   // active document's content after every open / content change.
@@ -3208,23 +3253,17 @@ function EditorSurfaceComponent({
   // content into another's buffer. Idempotent: typing keeps content equal to the
   // model value, so this never re-applies during editing or fights live input.
   useEffect(() => {
-    if (!editorApi || !activeDocument) {
+    if (
+      !editorApi ||
+      !activeDocument ||
+      !activeDocumentContentReady ||
+      isOpeningFile
+    ) {
       return;
     }
 
-    const syncActiveModelContent = () => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
-        return;
-      }
-
-      if (model.getValue() === activeDocument.content) {
-        return;
-      }
-
-      model.setValue(activeDocument.content);
-    };
+    const syncActiveModelContent = () =>
+      synchronizeActiveDocumentModel(editorApi, workspaceRoot, activeDocument);
 
     syncActiveModelContent();
 
@@ -3233,7 +3272,13 @@ function EditorSurfaceComponent({
     });
 
     return () => modelChangeDisposable.dispose();
-  }, [activeDocument, editorApi, workspaceRoot]);
+  }, [
+    activeDocument,
+    activeDocumentContentReady,
+    editorApi,
+    isOpeningFile,
+    workspaceRoot,
+  ]);
 
   const appliedRestoredViewStateKeysRef = useRef(new Set<string>());
 
@@ -4027,7 +4072,11 @@ function EditorSurfaceComponent({
             : PLACEHOLDER_PATH
         }
         theme={monacoTheme}
-        value={activeDocument ? activeDocument.content : ""}
+        value={
+          activeDocument && activeDocumentContentReady && !isOpeningFile
+            ? activeDocument.content
+            : undefined
+        }
       />
       {overlay}
       {activeDocument && changePreview ? (
@@ -5753,6 +5802,32 @@ function modelMatchesProject(
   return workspaceRoot
     ? modelMatchesWorkspacePath(model, workspaceRoot, path)
     : modelPath(model) === path;
+}
+
+function synchronizeActiveDocumentModel(
+  editor: Monaco.editor.IStandaloneCodeEditor,
+  workspaceRoot: string | null,
+  document: EditorDocument,
+): Monaco.editor.ITextModel | null {
+  const model = editor.getModel();
+
+  if (!model || model.isDisposed?.()) {
+    return null;
+  }
+
+  if (!modelMatchesProject(model, workspaceRoot, document.path)) {
+    return null;
+  }
+
+  if (model.getValue() !== document.content) {
+    model.setValue(document.content);
+  }
+
+  if (model.isDisposed?.() || editor.getModel() !== model) {
+    return null;
+  }
+
+  return model;
 }
 
 async function foldingModelForEditor(

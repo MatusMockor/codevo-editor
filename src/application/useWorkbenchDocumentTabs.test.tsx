@@ -226,6 +226,90 @@ function renderHarness(options: HarnessOptions = {}) {
 }
 
 describe("useWorkbenchDocumentTabs", () => {
+  it("releases a hung open owner when a newer retained document opens", async () => {
+    const hungRead = deferred<string>();
+    const retainedPath = `${ROOT_A}/retained.ts`;
+    const retainedDocument = document(retainedPath, "retained content");
+    const harness = renderHarness({
+      documents: { [retainedPath]: retainedDocument },
+      openPaths: [retainedPath],
+      readText: () => hungRead.promise,
+    });
+    let hungOpen!: Promise<boolean>;
+    act(() => {
+      hungOpen = harness.api().openFile(entry(`${ROOT_A}/hung.ts`));
+    });
+
+    expect(harness.state().isOpeningFile).toBe(true);
+
+    let retainedOpened = false;
+    await act(async () => {
+      retainedOpened = await harness.api().openFile(entry(retainedPath));
+    });
+
+    expect(retainedOpened).toBe(true);
+    expect(harness.state().isOpeningFile).toBe(false);
+    expect(harness.state().activePath).toBe(retainedPath);
+    void hungOpen;
+    harness.unmount();
+  });
+
+  it("releases a hung open owner when a newer prefetched document opens", async () => {
+    const hungPath = `${ROOT_A}/hung.ts`;
+    const prefetchedPath = `${ROOT_A}/prefetched.ts`;
+    const hungRead = deferred<WorkspaceTextFileSnapshot>();
+    const harness = renderHarness({
+      readSnapshot: (path) =>
+        path === hungPath
+          ? hungRead.promise
+          : Promise.resolve({ content: "prefetched", revision: null }),
+    });
+    harness.filePrefetchCache.set(ROOT_A, prefetchedPath, "prefetched");
+    let hungOpen!: Promise<boolean>;
+    act(() => {
+      hungOpen = harness.api().openFile(entry(hungPath));
+    });
+
+    expect(harness.state().isOpeningFile).toBe(true);
+
+    let prefetchedOpened = false;
+    await act(async () => {
+      prefetchedOpened = await harness.api().openFile(entry(prefetchedPath));
+    });
+
+    expect(prefetchedOpened).toBe(true);
+    expect(harness.state().isOpeningFile).toBe(false);
+    expect(harness.state().documents[prefetchedPath]?.content).toBe(
+      "prefetched",
+    );
+    void hungOpen;
+    harness.unmount();
+  });
+
+  it("releases a hung open owner when a newer request targets another workspace", async () => {
+    const hungRead = deferred<string>();
+    const harness = renderHarness({ readText: () => hungRead.promise });
+    let hungOpen!: Promise<boolean>;
+    act(() => {
+      hungOpen = harness.api().openFile(entry(`${ROOT_A}/hung.ts`));
+    });
+
+    expect(harness.state().isOpeningFile).toBe(true);
+
+    let foreignOpened = true;
+    await act(async () => {
+      foreignOpened = await harness.api().openFile(
+        entry(`${ROOT_B}/foreign.ts`),
+      );
+    });
+
+    expect(foreignOpened).toBe(false);
+    expect(harness.state().isOpeningFile).toBe(false);
+    expect(harness.state().documents).toEqual({});
+    void hungOpen;
+    harness.unmount();
+  });
+
   it("does not let a slower open override a newer open", async () => {
     const reads = new Map<string, Deferred<string>>();
     const harness = renderHarness({

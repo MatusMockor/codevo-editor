@@ -11,6 +11,7 @@ import type {
 } from "../application/commandRegistry";
 import type {
   EditorPosition,
+  EditorRevealTarget,
   LanguageServerDocumentSymbol,
 } from "../domain/languageServerFeatures";
 import {
@@ -13155,6 +13156,478 @@ class Foo
       lineNumber: 2,
       column: 1,
     });
+  });
+
+  it("waits for the live replacement model before revealing Back after the prior model is disposed", async () => {
+    const activeDocument: EditorDocument = {
+      content: "extensions:\n  service: App\\ConfigExtension\n  enabled: true\n",
+      language: "neon",
+      name: "config.neon",
+      path: "/workspace/app/config/config.neon",
+      savedContent: "extensions:\n  service: App\\ConfigExtension\n  enabled: true\n",
+    };
+    const disposedModel: FakeModel = {
+      isDisposed: vi.fn(() => true),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const lifecycleCalls: string[] = [];
+    let replacementContent = "";
+    const replacementModel: FakeModel = {
+      getValue: vi.fn(() => replacementContent),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn((content: string) => {
+        lifecycleCalls.push("setValue");
+        replacementContent = content;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(disposedModel);
+    editor.setPosition.mockImplementation(() => {
+      lifecycleCalls.push("setPosition");
+    });
+    const onRevealTargetHandled = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(replacementModel);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorRevealTarget: {
+            path: activeDocument.path,
+            position: { lineNumber: 3, column: 3 },
+          },
+          onRevealTargetHandled,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.setPosition).not.toHaveBeenCalled();
+    expect(onRevealTargetHandled).not.toHaveBeenCalled();
+
+    editor.getModel.mockReturnValue(replacementModel);
+    await act(async () => {
+      editor.modelChangeHandler?.();
+      await Promise.resolve();
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledOnce();
+    expect(editor.setPosition).toHaveBeenCalledWith({
+      lineNumber: 3,
+      column: 3,
+    });
+    expect(replacementContent).toBe(activeDocument.content);
+    expect(lifecycleCalls).toEqual(["setValue", "setPosition"]);
+    expect(onRevealTargetHandled).toHaveBeenCalledOnce();
+  });
+
+  it("retires a pending reveal when the active document closes so reopening cannot apply it", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "plaintext",
+      name: "config.neon",
+      path: "/workspace/config.neon",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const revealTarget = {
+      path: activeDocument.path,
+      position: { lineNumber: 3, column: 1 },
+    };
+    const disposedModel: FakeModel = {
+      isDisposed: vi.fn(() => true),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const replacementModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => activeDocument.content),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(disposedModel);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(replacementModel);
+    let closeDocument = () => {};
+    let reopenDocument = () => {};
+
+    function RevealLifecycleHarness() {
+      const [document, setDocument] = useState<EditorDocument | null>(
+        activeDocument,
+      );
+      const [target, setTarget] = useState<EditorRevealTarget | null>(
+        revealTarget,
+      );
+      closeDocument = () => setDocument(null);
+      reopenDocument = () => setDocument(activeDocument);
+
+      return createElement(EditorSurface, {
+        ...memoGuardProps(activeDocument),
+        activeDocument: document,
+        editorRevealTarget: target,
+        onRevealTargetHandled: (handledTarget) => {
+          setTarget((current) =>
+            current === handledTarget ? null : current,
+          );
+        },
+        workspaceRoot: "/workspace",
+      });
+    }
+
+    await act(async () => {
+      root.render(createElement(RevealLifecycleHarness));
+      await Promise.resolve();
+    });
+    expect(editor.setPosition).not.toHaveBeenCalled();
+
+    await act(async () => {
+      closeDocument();
+      await Promise.resolve();
+    });
+
+    editor.getModel.mockReturnValue(replacementModel);
+    await act(async () => {
+      reopenDocument();
+      editor.modelChangeHandler?.();
+      await Promise.resolve();
+    });
+
+    expect(editor.setPosition).not.toHaveBeenCalled();
+  });
+
+  it("reveals only the newest target during rapid model-replacing navigation", async () => {
+    const firstDocument: EditorDocument = {
+      content: "first\n",
+      language: "plaintext",
+      name: "first.neon",
+      path: "/workspace/first.neon",
+      savedContent: "first\n",
+    };
+    const secondDocument: EditorDocument = {
+      content: "first\nsecond\nthird\n",
+      language: "plaintext",
+      name: "second.neon",
+      path: "/workspace/second.neon",
+      savedContent: "first\nsecond\nthird\n",
+    };
+    const firstTarget: EditorRevealTarget = {
+      path: firstDocument.path,
+      position: { lineNumber: 1, column: 1 },
+    };
+    const secondTarget: EditorRevealTarget = {
+      path: secondDocument.path,
+      position: { lineNumber: 3, column: 2 },
+    };
+    const disposedModel: FakeModel = {
+      isDisposed: vi.fn(() => true),
+      uri: { fsPath: firstDocument.path, path: firstDocument.path },
+    };
+    const secondModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => secondDocument.content),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn(),
+      uri: { fsPath: secondDocument.path, path: secondDocument.path },
+    };
+    const editor = createEditor(disposedModel);
+    const onRevealTargetHandled = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(secondModel);
+
+    const renderNavigation = async (
+      document: EditorDocument,
+      target: EditorRevealTarget,
+    ) => {
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(document),
+            editorRevealTarget: target,
+            onRevealTargetHandled,
+            workspaceRoot: "/workspace",
+          }),
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderNavigation(firstDocument, firstTarget);
+    await renderNavigation(secondDocument, secondTarget);
+    editor.getModel.mockReturnValue(secondModel);
+
+    await act(async () => {
+      editor.modelChangeHandler?.();
+      await Promise.resolve();
+    });
+
+    expect(editor.setPosition).toHaveBeenCalledOnce();
+    expect(editor.setPosition).toHaveBeenCalledWith(secondTarget.position);
+    expect(onRevealTargetHandled).toHaveBeenCalledOnce();
+    expect(onRevealTargetHandled).toHaveBeenCalledWith(secondTarget);
+  });
+
+  it("keeps retained model content correct through repeated Back and Forward loading cycles", async () => {
+    const configDocument: EditorDocument = {
+      content: "extensions:\n  local: App\\ConfigExtension\n",
+      language: "neon",
+      name: "config.neon",
+      path: "/workspace/config.neon",
+      savedContent: "extensions:\n  local: App\\ConfigExtension\n",
+    };
+    const phpDocument: EditorDocument = {
+      content: "<?php\nclass ConfigExtension\n{\n}\n",
+      language: "php",
+      name: "ConfigExtension.php",
+      path: "/workspace/ConfigExtension.php",
+      savedContent: "<?php\nclass ConfigExtension\n{\n}\n",
+    };
+    const pendingPhpDocument: EditorDocument = {
+      content: "",
+      language: "plaintext",
+      name: phpDocument.name,
+      path: phpDocument.path,
+      readOnly: true,
+      savedContent: "",
+    };
+    let configValue = configDocument.content;
+    let phpValue = phpDocument.content;
+    const configModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => configValue),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn((value: string) => {
+        configValue = value;
+      }),
+      uri: { fsPath: configDocument.path, path: configDocument.path },
+    };
+    const phpModel: FakeModel = {
+      dispose: vi.fn(),
+      getValue: vi.fn(() => phpValue),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn((value: string) => {
+        phpValue = value;
+      }),
+      uri: { fsPath: phpDocument.path, path: phpDocument.path },
+    };
+    const editor = createEditor(configModel);
+    const onRevealTargetHandled = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(configModel);
+
+    const renderDocument = async (
+      document: EditorDocument,
+      target: EditorRevealTarget,
+      options: {
+        contentReady: boolean;
+        opening: boolean;
+      },
+    ) => {
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(document),
+            activeDocumentContentReady: options.contentReady,
+            editorRevealTarget: target,
+            isOpeningFile: options.opening,
+            onRevealTargetHandled,
+            workspaceRoot: "/workspace",
+          }),
+        );
+        await Promise.resolve();
+      });
+    };
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      const forwardTarget: EditorRevealTarget = {
+        path: phpDocument.path,
+        position: { lineNumber: 2, column: 7 },
+      };
+      const handledBeforePending = onRevealTargetHandled.mock.calls.length;
+      editor.getModel.mockReturnValue(phpModel);
+      await renderDocument(pendingPhpDocument, forwardTarget, {
+        contentReady: false,
+        opening: true,
+      });
+
+      expect(phpValue).toBe(phpDocument.content);
+      expect(
+        (editorSurfaceMocks.props as { value?: string } | null)?.value,
+      ).toBeUndefined();
+      expect(onRevealTargetHandled).toHaveBeenCalledTimes(
+        handledBeforePending,
+      );
+
+      await renderDocument(phpDocument, forwardTarget, {
+        contentReady: true,
+        opening: false,
+      });
+      expect(phpValue).toBe(phpDocument.content);
+      expect(onRevealTargetHandled).toHaveBeenCalledWith(forwardTarget);
+
+      const backTarget: EditorRevealTarget = {
+        path: configDocument.path,
+        position: { lineNumber: 2, column: 10 },
+      };
+      editor.getModel.mockReturnValue(configModel);
+      await renderDocument(configDocument, backTarget, {
+        contentReady: true,
+        opening: false,
+      });
+      expect(configValue).toBe(configDocument.content);
+      expect(phpValue).toBe(phpDocument.content);
+      expect(onRevealTargetHandled).toHaveBeenCalledWith(backTarget);
+    }
+
+    expect(configModel.setValue).not.toHaveBeenCalled();
+    expect(phpModel.setValue).not.toHaveBeenCalled();
+    expect(editor.setPosition.mock.calls.map(([position]) => position)).toEqual(
+      Array.from({ length: 3 }).flatMap(() => [
+        { lineNumber: 2, column: 7 },
+        { lineNumber: 2, column: 10 },
+      ]),
+    );
+  });
+
+  it("populates a cold empty model before acknowledging its initial loading reveal", async () => {
+    const loadingDocument: EditorDocument = {
+      content: "",
+      language: "plaintext",
+      name: "ConfigExtension.php",
+      path: "/workspace/ConfigExtension.php",
+      readOnly: true,
+      savedContent: "",
+    };
+    const loadedDocument: EditorDocument = {
+      ...loadingDocument,
+      content: "<?php\nclass ConfigExtension {}\n",
+      language: "php",
+      readOnly: undefined,
+      savedContent: "<?php\nclass ConfigExtension {}\n",
+    };
+    const target: EditorRevealTarget = {
+      path: loadedDocument.path,
+      position: { lineNumber: 2, column: 7 },
+    };
+    let modelValue = "";
+    const model: FakeModel = {
+      getValue: vi.fn(() => modelValue),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn((value: string) => {
+        modelValue = value;
+      }),
+      uri: { fsPath: loadedDocument.path, path: loadedDocument.path },
+    };
+    const editor = createEditor(model);
+    const onRevealTargetHandled = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(loadingDocument),
+          activeDocumentContentReady: false,
+          editorRevealTarget: target,
+          isOpeningFile: true,
+          onRevealTargetHandled,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(modelValue).toBe("");
+    expect(onRevealTargetHandled).not.toHaveBeenCalled();
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(loadedDocument),
+          activeDocumentContentReady: true,
+          editorRevealTarget: target,
+          isOpeningFile: false,
+          onRevealTargetHandled,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(modelValue).toBe(loadedDocument.content);
+    expect(model.setValue).toHaveBeenCalledWith(loadedDocument.content);
+    expect(editor.setPosition).toHaveBeenCalledWith(target.position);
+    expect(onRevealTargetHandled).toHaveBeenCalledWith(target);
+  });
+
+  it("does not rewrite an authoritative dirty buffer during reveal", async () => {
+    const document: EditorDocument = {
+      content: "dirty editor content\n",
+      language: "plaintext",
+      name: "notes.txt",
+      path: "/workspace/notes.txt",
+      savedContent: "saved disk content\n",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => document.content),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn(),
+      uri: { fsPath: document.path, path: document.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(document),
+          editorRevealTarget: {
+            path: document.path,
+            position: { lineNumber: 1, column: 6 },
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(model.setValue).not.toHaveBeenCalled();
+  });
+
+  it("clears stale model text for an authoritative empty file after loading completes", async () => {
+    const document: EditorDocument = {
+      content: "",
+      language: "plaintext",
+      name: "empty.txt",
+      path: "/workspace/empty.txt",
+      savedContent: "",
+    };
+    let modelValue = "stale text";
+    const model: FakeModel = {
+      getValue: vi.fn(() => modelValue),
+      isDisposed: vi.fn(() => false),
+      setValue: vi.fn((value: string) => {
+        modelValue = value;
+      }),
+      uri: { fsPath: document.path, path: document.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(document),
+          activeDocumentContentReady: true,
+          isOpeningFile: false,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(modelValue).toBe("");
+    expect(model.setValue).toHaveBeenCalledWith("");
   });
 
   it("dismisses transient Monaco widgets when the active document changes", async () => {
