@@ -76,6 +76,7 @@ import {
   useWorkspaceStateCache,
   type CachedWorkspaceWorkbenchState,
 } from "./useWorkspaceStateCache";
+import { captureWorkspaceBeforeSwitch } from "./workspaceSessionSwitchLifecycle";
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
@@ -2831,21 +2832,28 @@ export function useWorkbenchController(
         resetFilePrefetchState();
       }
 
-      if (switchingWorkspace && shouldCachePreviousWorkspace) {
-        openFileRequestTokenRef.current += 1;
-        try {
-          await persistCurrentWorkspaceSession(previousRootPath);
-        } catch (error) {
-          reportErrorForActiveWorkspaceRoot(previousRootPath, "Session", error);
-        }
+      if (switchingWorkspace) {
+        const captureResult = await captureWorkspaceBeforeSwitch(
+          {
+            rootPath: previousRootPath,
+            cacheWorkspace: shouldCachePreviousWorkspace,
+            isRequestCurrent: isCurrentOpenWorkspaceRequest,
+          },
+          {
+            invalidatePendingFileOpen: () => {
+              openFileRequestTokenRef.current += 1;
+            },
+            persistWorkspaceSession: persistCurrentWorkspaceSession,
+            cacheWorkspaceState: cacheCurrentWorkspaceState,
+            reportPersistenceError: (rootPath, error) => {
+              reportErrorForActiveWorkspaceRoot(rootPath, "Session", error);
+            },
+          },
+        );
 
-        if (!isCurrentOpenWorkspaceRequest()) {
+        if (captureResult === "stale" || !isCurrentOpenWorkspaceRequest()) {
           return;
         }
-
-        cacheCurrentWorkspaceState(previousRootPath);
-      } else if (switchingWorkspace) {
-        openFileRequestTokenRef.current += 1;
       }
 
       if (switchingWorkspace) {

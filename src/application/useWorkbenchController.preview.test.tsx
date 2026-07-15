@@ -2377,6 +2377,72 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().previewPath).toBeNull();
   });
 
+  it("restores a dirty text tab without Git diffs or documents from another project", async () => {
+    const firstRoot = "/workspace-a";
+    const secondRoot = "/workspace-b";
+    const firstFile = fileEntry(`${firstRoot}/src/Dirty.php`, "Dirty.php");
+    const secondFile = fileEntry(`${secondRoot}/src/Other.php`, "Other.php");
+    const savedContent = `// ${firstFile.path}\n`;
+    const dirtyContent = "<?php\n// dirty\n";
+    const change: GitChangedFile = {
+      isStaged: false,
+      isUnversioned: false,
+      oldPath: null,
+      oldRelativePath: null,
+      path: `${firstRoot}/src/Changed.php`,
+      relativePath: "src/Changed.php",
+      status: "modified",
+    };
+    const diffPath = `mockor-git-diff:worktree:${change.path}`;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: firstRoot,
+        workspaceTabs: [firstRoot, secondRoot],
+      },
+      gitGateway: fileHistoryGitGateway({}),
+      readTextFile: vi.fn(async (path: string) => `// ${path}\n`),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(firstFile);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument(dirtyContent);
+    });
+    await act(async () => {
+      await getWorkbench().openGitChange(change);
+    });
+    expect(getWorkbench().activePath).toBe(diffPath);
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(secondRoot);
+    });
+    await act(async () => {
+      await getWorkbench().openPinnedFile(secondFile);
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab(firstRoot);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe(firstRoot);
+    expect(getWorkbench().openDocuments).toEqual([
+      expect.objectContaining({
+        content: dirtyContent,
+        path: firstFile.path,
+        savedContent,
+      }),
+    ]);
+    expect(getWorkbench().openDocuments).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: secondFile.path })]),
+    );
+    expect(getWorkbench().openDocuments.map((document) => document.path)).not.toContain(
+      diffPath,
+    );
+  });
+
   it("ignores inactive workspace runtime dispose errors after switching project tabs", async () => {
     const workspaceRuntimeLifecycleGateway: WorkspaceRuntimeLifecycleGateway = {
       disposeWorkspace: vi.fn(async (rootPath) => {
@@ -21342,6 +21408,95 @@ describe("useWorkbenchController preview tabs", () => {
           notice.message.includes("stale session save"),
       ),
     ).toBe(false);
+  });
+
+  it("reports active session persistence failures during overlapping project switches", async () => {
+    const sessionSave = createDeferred<void>();
+    const workspaceCSettings = createDeferred<
+      ReturnType<typeof defaultWorkspaceSettings>
+    >();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b", "/workspace-c"],
+      },
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.settingsGateway.loadWorkspaceSettings).mockClear();
+    vi.mocked(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).mockClear();
+    vi.mocked(
+      dependencies.settingsGateway.saveWorkspaceSettings,
+    ).mockImplementationOnce(async () => sessionSave.promise);
+    vi.mocked(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).mockImplementation(async (path) =>
+      path === "/workspace-c"
+        ? workspaceCSettings.promise
+        : defaultWorkspaceSettings(),
+    );
+
+    let switchToB: Promise<void> = Promise.resolve();
+    act(() => {
+      getWorkbench().splitActiveEditorGroup("right");
+      switchToB = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.settingsGateway.saveWorkspaceSettings,
+      ).toHaveBeenCalledWith("/workspace-a", expect.any(Object));
+    });
+    const persistedSession = vi.mocked(
+      dependencies.settingsGateway.saveWorkspaceSettings,
+    ).mock.calls[0]?.[1].session;
+    expect(Object.keys(persistedSession.editor.groups)).toHaveLength(2);
+
+    let switchToC: Promise<void> = Promise.resolve();
+    act(() => {
+      switchToC = getWorkbench().activateWorkspaceTab("/workspace-c");
+    });
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    await act(async () => {
+      sessionSave.reject(new Error("A session persistence failed"));
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.settingsGateway.loadWorkspaceSettings,
+      ).toHaveBeenCalledWith("/workspace-c");
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Session" &&
+          notice.message.includes("A session persistence failed"),
+      ),
+    ).toBe(true);
+
+    await act(async () => {
+      workspaceCSettings.resolve(defaultWorkspaceSettings());
+      await Promise.all([switchToB, switchToC]);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-c");
+    expect(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).not.toHaveBeenCalledWith("/workspace-b");
+    expect(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).toHaveBeenCalledWith("/workspace-c");
+    expect(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).not.toHaveBeenCalledWith("/workspace-b");
+    expect(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).toHaveBeenCalledWith("/workspace-c");
   });
 
   it("restarts JavaScript and TypeScript language service with current settings", async () => {
