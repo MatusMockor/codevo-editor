@@ -1261,6 +1261,7 @@ function App() {
               diff={historyDiff}
               isLoading={historyDiffLoading}
               monacoTheme={monacoTheme}
+              previewIdentity={path}
               editorFontFamily={workbench.appSettings.editorFontFamily}
               editorFontLigatures={workbench.appSettings.editorFontLigatures}
               editorFontSize={workbench.appSettings.editorFontSize}
@@ -1279,6 +1280,7 @@ function App() {
               diff={workbench.gitDiffPreview}
               isLoading={workbench.gitDiffLoading}
               monacoTheme={monacoTheme}
+              previewIdentity={path}
               editorFontFamily={workbench.appSettings.editorFontFamily}
               editorFontLigatures={workbench.appSettings.editorFontLigatures}
               editorFontSize={workbench.appSettings.editorFontSize}

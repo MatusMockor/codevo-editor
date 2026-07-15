@@ -1,6 +1,15 @@
 import { DiffEditor } from "@monaco-editor/react";
 import { ChevronDown, ChevronUp, Minus, Plus, RotateCcw, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type * as Monaco from "monaco-editor";
 import {
   defaultEditorFontFamily,
@@ -24,6 +33,7 @@ interface GitDiffPreviewProps {
   diff: GitFileDiff | null;
   isLoading: boolean;
   monacoTheme: MonacoAppTheme;
+  previewIdentity?: string;
   editorFontFamily?: string;
   editorFontLigatures?: boolean;
   editorFontSize?: number;
@@ -45,6 +55,7 @@ export function GitDiffPreview({
   diff,
   isLoading,
   monacoTheme,
+  previewIdentity,
   editorFontFamily = defaultEditorFontFamily,
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
@@ -65,6 +76,7 @@ export function GitDiffPreview({
   );
   const requestedThemeRef = useRef<MonacoAppTheme | null>(null);
   const themeRequestRef = useRef(0);
+  const previewInstanceId = useId();
   const changeRelativePath = diff?.change.relativePath ?? null;
   const changeIsStaged = diff?.change.isStaged ?? false;
   const changeStatus = diff?.change.status ?? null;
@@ -81,8 +93,19 @@ export function GitDiffPreview({
     changeStatus !== "untracked" &&
     changeStatus !== "conflicted";
   const modelPaths = useMemo(
-    () => gitDiffModelPaths(diff?.change ?? null),
-    [changeIsStaged, changeRelativePath, diff?.change.path],
+    () =>
+      gitDiffModelPaths(
+        diff?.change ?? null,
+        previewInstanceId,
+        previewIdentity,
+      ),
+    [
+      changeIsStaged,
+      changeRelativePath,
+      diff?.change.path,
+      previewIdentity,
+      previewInstanceId,
+    ],
   );
   const fontLigatures = monacoFontLigaturesForEditorSetting(
     editorFontLigatures,
@@ -208,6 +231,19 @@ export function GitDiffPreview({
     [refreshLineChanges],
   );
 
+  const onDiffEditorRelease = useCallback(
+    (editor: Monaco.editor.IStandaloneDiffEditor) => {
+      if (diffEditorRef.current !== editor) {
+        return;
+      }
+
+      diffListenerRef.current?.dispose();
+      diffListenerRef.current = null;
+      diffEditorRef.current = null;
+    },
+    [],
+  );
+
   const goToChange = useCallback(
     (target: DiffNavigationTarget) => {
       const editor = diffEditorRef.current;
@@ -314,7 +350,7 @@ export function GitDiffPreview({
         {fallbackReason ? (
           <GitDiffFallback change={diff.change} reason={fallbackReason} />
         ) : (
-          <DiffEditor
+          <ManagedGitDiffEditor
             beforeMount={(monaco) => requestThemeSetup(monaco, monacoTheme)}
             height="100%"
             key={`${modelPaths.original}:${modelPaths.modified}`}
@@ -322,6 +358,7 @@ export function GitDiffPreview({
             modified={modifiedContent}
             modifiedModelPath={modelPaths.modified}
             onMount={onDiffEditorMount}
+            onRelease={onDiffEditorRelease}
             options={{
               automaticLayout: true,
               diffAlgorithm: "advanced",
@@ -351,6 +388,80 @@ export function GitDiffPreview({
       </div>
     </section>
   );
+}
+
+interface ManagedGitDiffEditorProps
+  extends ComponentProps<typeof DiffEditor> {
+  onRelease(editor: Monaco.editor.IStandaloneDiffEditor): void;
+}
+
+function ManagedGitDiffEditor({
+  onMount,
+  onRelease,
+  ...props
+}: ManagedGitDiffEditorProps) {
+  const editorRef = useRef<Monaco.editor.IStandaloneDiffEditor | null>(null);
+  const onReleaseRef = useRef(onRelease);
+  onReleaseRef.current = onRelease;
+
+  const handleMount = useCallback<NonNullable<ManagedGitDiffEditorProps["onMount"]>>(
+    (editor, monaco) => {
+      if (!editorRef.current) {
+        editorRef.current = editor;
+      }
+
+      onMount?.(editor, monaco);
+    },
+    [onMount],
+  );
+
+  useLayoutEffect(
+    () => () => {
+      const editor = editorRef.current;
+      editorRef.current = null;
+      if (!editor) {
+        return;
+      }
+
+      onReleaseRef.current(editor);
+      resetAndDisposeGitDiffModels(editor);
+    },
+    [],
+  );
+
+  return (
+    <DiffEditor
+      {...props}
+      keepCurrentModifiedModel
+      keepCurrentOriginalModel
+      onMount={handleMount}
+    />
+  );
+}
+
+function resetAndDisposeGitDiffModels(
+  editor: Monaco.editor.IStandaloneDiffEditor,
+): void {
+  const models = editor.getModel();
+  editor.setModel(null);
+  if (!models) {
+    return;
+  }
+
+  disposeTextModel(models.original);
+  if (models.modified === models.original) {
+    return;
+  }
+
+  disposeTextModel(models.modified);
+}
+
+function disposeTextModel(model: Monaco.editor.ITextModel): void {
+  if (model.isDisposed()) {
+    return;
+  }
+
+  model.dispose();
 }
 
 function EmptyDiff({ message }: { message: string }) {
@@ -460,19 +571,25 @@ function revealLogicalChange(
   modifiedEditor.focus();
 }
 
-function gitDiffModelPaths(change: GitChangedFile | null): { modified: string; original: string } {
+function gitDiffModelPaths(
+  change: GitChangedFile | null,
+  previewInstanceId: string,
+  previewIdentity?: string,
+): { modified: string; original: string } {
+  const owner = encodeURIComponent(previewInstanceId);
+  const revision = encodeURIComponent(previewIdentity ?? "current");
   if (!change) {
     return {
-      modified: "codevo-git-diff:///empty/modified",
-      original: "codevo-git-diff:///empty/original",
+      modified: `codevo-git-diff:///empty/modified/${owner}/${revision}`,
+      original: `codevo-git-diff:///empty/original/${owner}/${revision}`,
     };
   }
 
   const scope = encodeURIComponent(change.path || change.relativePath);
   const surface = change.isStaged ? "staged" : "worktree";
   return {
-    modified: `codevo-git-diff:///${surface}/modified/${scope}`,
-    original: `codevo-git-diff:///${surface}/original/${scope}`,
+    modified: `codevo-git-diff:///${surface}/modified/${owner}/${revision}/${scope}`,
+    original: `codevo-git-diff:///${surface}/original/${owner}/${revision}/${scope}`,
   };
 }
 

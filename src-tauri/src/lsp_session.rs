@@ -38,10 +38,40 @@ pub const JAVASCRIPT_TYPESCRIPT_REFRESH_EVENT: &str =
     "javascript-typescript-language-server://refresh";
 pub const JAVASCRIPT_TYPESCRIPT_WORKSPACE_EDIT_EVENT: &str =
     "javascript-typescript-language-server://workspace-edit";
-type PendingRequestResult = Result<Value, String>;
+type PendingRequestResult = Result<Value, LanguageServerRequestError>;
 type PendingRequestSender = mpsc::Sender<PendingRequestResult>;
 type PendingRequests = Arc<Mutex<HashMap<u64, PendingRequestSender>>>;
 type RuntimeLog = Arc<Mutex<String>>;
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum LanguageServerRequestError {
+    Response { code: i64, message: String },
+    Message(String),
+}
+
+impl std::fmt::Display for LanguageServerRequestError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Response { message, .. } | Self::Message(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for LanguageServerRequestError {}
+
+impl From<String> for LanguageServerRequestError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<&str> for LanguageServerRequestError {
+    fn from(message: &str) -> Self {
+        Self::Message(message.to_string())
+    }
+}
+
 const RUNTIME_LOG_MAX_BYTES: usize = 128 * 1024;
 
 /// Number of most-recent LSP requests retained per runtime for the diagnostic
@@ -1395,7 +1425,9 @@ impl LanguageServerRegistry {
             return Ok(None);
         };
 
-        supervisor.send_request(method, params)
+        supervisor
+            .send_request(method, params)
+            .map_err(|error| error.to_string())
     }
 
     /// Off-main-thread variant of [`send_request`](Self::send_request). The supervisor for the
@@ -1415,6 +1447,18 @@ impl LanguageServerRegistry {
         method: &str,
         params: Value,
     ) -> impl std::future::Future<Output = Result<Option<Value>, String>> + 'static {
+        let request = self.send_request_async_preserving_response_error(root_path, method, params);
+
+        async move { request.await.map_err(|error| error.to_string()) }
+    }
+
+    pub fn send_request_async_preserving_response_error(
+        &self,
+        root_path: &str,
+        method: &str,
+        params: Value,
+    ) -> impl std::future::Future<Output = Result<Option<Value>, LanguageServerRequestError>> + 'static
+    {
         let supervisor = self.existing_supervisor(root_path);
         let method = method.to_string();
 
@@ -1425,7 +1469,11 @@ impl LanguageServerRegistry {
 
             tauri::async_runtime::spawn_blocking(move || supervisor.send_request(&method, params))
                 .await
-                .map_err(|error| format!("Language server request task failed: {error}"))?
+                .map_err(|error| {
+                    LanguageServerRequestError::from(format!(
+                        "Language server request task failed: {error}"
+                    ))
+                })?
         }
     }
 
@@ -1890,7 +1938,11 @@ impl LanguageServerSupervisor {
         Ok(())
     }
 
-    pub fn send_request(&self, method: &str, params: Value) -> Result<Option<Value>, String> {
+    pub fn send_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Option<Value>, LanguageServerRequestError> {
         self.send_request_with_timeout(method, params, REQUEST_TIMEOUT)
     }
 
@@ -1899,7 +1951,7 @@ impl LanguageServerSupervisor {
         method: &str,
         params: Value,
         timeout: Duration,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, LanguageServerRequestError> {
         if !matches!(self.status(), LanguageServerRuntimeStatus::Running { .. }) {
             return Ok(None);
         }
@@ -1914,12 +1966,15 @@ impl LanguageServerSupervisor {
             method: method.to_string(),
             params,
         };
-        let bytes = serde_json::to_vec(&request)
-            .map_err(|error| format!("Failed to serialize LSP request: {error}"))?;
+        let bytes = serde_json::to_vec(&request).map_err(|error| {
+            LanguageServerRequestError::from(format!("Failed to serialize LSP request: {error}"))
+        })?;
         let (tx, rx) = mpsc::channel();
 
         {
-            let mut pending = pending_requests.lock().map_err(|error| error.to_string())?;
+            let mut pending = pending_requests
+                .lock()
+                .map_err(|error| LanguageServerRequestError::from(error.to_string()))?;
             pending.insert(id, tx);
         }
 
@@ -1932,7 +1987,9 @@ impl LanguageServerSupervisor {
         if let Err(error) = write_with_session_stdin(&stdin, &bytes) {
             remove_pending_request(&pending_requests, id);
             self.record_request_outcome(method, started_at, false);
-            return Err(format!("Failed to send LSP request `{method}`: {error}"));
+            return Err(LanguageServerRequestError::from(format!(
+                "Failed to send LSP request `{method}`: {error}"
+            )));
         }
 
         match rx.recv_timeout(timeout) {
@@ -1947,11 +2004,15 @@ impl LanguageServerSupervisor {
             Err(RecvTimeoutError::Timeout) => {
                 remove_pending_request(&pending_requests, id);
                 self.record_request_outcome(method, started_at, false);
-                Err(format!("Language server request `{method}` timed out."))
+                Err(LanguageServerRequestError::from(format!(
+                    "Language server request `{method}` timed out."
+                )))
             }
             Err(RecvTimeoutError::Disconnected) => {
                 self.record_request_outcome(method, started_at, false);
-                Err(format!("Language server request `{method}` was cancelled."))
+                Err(LanguageServerRequestError::from(format!(
+                    "Language server request `{method}` was cancelled."
+                )))
             }
         }
     }
@@ -2308,7 +2369,7 @@ fn reject_pending_requests(pending_requests: &PendingRequests, message: &str) {
     };
 
     for sender in pending.drain().map(|(_, sender)| sender) {
-        let _ = sender.send(Err(message.to_string()));
+        let _ = sender.send(Err(LanguageServerRequestError::from(message)));
     }
 }
 
@@ -2332,15 +2393,24 @@ fn parse_response_result(value: &Value) -> PendingRequestResult {
         return Ok(result.clone());
     }
 
-    if let Some(message) = value
-        .get("error")
-        .and_then(|error| error.get("message"))
-        .and_then(Value::as_str)
-    {
-        return Err(message.to_string());
-    }
+    let Some(error) = value.get("error") else {
+        return Err(LanguageServerRequestError::from(
+            "Language server returned a malformed response.",
+        ));
+    };
+    let Some(message) = error.get("message").and_then(Value::as_str) else {
+        return Err(LanguageServerRequestError::from(
+            "Language server returned a malformed response.",
+        ));
+    };
+    let Some(code) = error.get("code").and_then(Value::as_i64) else {
+        return Err(LanguageServerRequestError::from(message));
+    };
 
-    Err("Language server returned a malformed response.".to_string())
+    Err(LanguageServerRequestError::Response {
+        code,
+        message: message.to_string(),
+    })
 }
 
 fn is_active_status(status: &LanguageServerRuntimeStatus) -> bool {
@@ -3569,14 +3639,14 @@ mod tests {
     #[cfg(unix)]
     use super::ChildKiller;
     use super::{
-        cancellable_backoff, parse_capabilities, workspace_runtime_id, ChildServerProcessSpawner,
-        DiagnosticsSink, JavaScriptTypeScriptLanguageServerRegistry, LanguageServerCapabilities,
-        LanguageServerRefreshEvent, LanguageServerRefreshFeature, LanguageServerRegistry,
-        LanguageServerRuntimeStatus, LanguageServerSupervisor, LanguageServerWorkspaceEditEvent,
-        NoopRefreshSink, NoopWorkspaceEditSink, PhpLanguageServerRegistry, ProcessKiller,
-        RefreshSink, RestartController, RestartDecision, RestartOutcome, RestartPolicy,
-        SemanticTokensLegend, ServerProcessSpawner, SpawnedServer, StartKind, StatusSink,
-        WorkspaceEditSink,
+        cancellable_backoff, parse_capabilities, parse_response_result, workspace_runtime_id,
+        ChildServerProcessSpawner, DiagnosticsSink, JavaScriptTypeScriptLanguageServerRegistry,
+        LanguageServerCapabilities, LanguageServerRefreshEvent, LanguageServerRefreshFeature,
+        LanguageServerRegistry, LanguageServerRequestError, LanguageServerRuntimeStatus,
+        LanguageServerSupervisor, LanguageServerWorkspaceEditEvent, NoopRefreshSink,
+        NoopWorkspaceEditSink, PhpLanguageServerRegistry, ProcessKiller, RefreshSink,
+        RestartController, RestartDecision, RestartOutcome, RestartPolicy, SemanticTokensLegend,
+        ServerProcessSpawner, SpawnedServer, StartKind, StatusSink, WorkspaceEditSink,
     };
     use crate::lsp::{file_uri, JsonRpcNotification, JsonRpcRequest, LanguageServerCommand};
     use crate::lsp_diagnostics::LanguageServerDiagnosticEvent;
@@ -3590,6 +3660,49 @@ mod tests {
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant, SystemTime};
+
+    #[test]
+    fn response_error_preserves_json_rpc_code_for_command_serialization() {
+        let error = parse_response_result(&json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "error": {
+                "code": -32802,
+                "message": "Server cancelled obsolete code action"
+            }
+        }))
+        .expect_err("response should be an error");
+
+        assert_eq!(
+            error,
+            LanguageServerRequestError::Response {
+                code: -32802,
+                message: "Server cancelled obsolete code action".to_string(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(error).expect("serialize command error"),
+            json!({
+                "code": -32802,
+                "message": "Server cancelled obsolete code action"
+            })
+        );
+    }
+
+    #[test]
+    fn response_error_without_code_keeps_legacy_string_serialization() {
+        let error = parse_response_result(&json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "error": { "message": "PHPactor request failed" }
+        }))
+        .expect_err("response should be an error");
+
+        assert_eq!(
+            serde_json::to_value(error).expect("serialize command error"),
+            json!("PHPactor request failed")
+        );
+    }
 
     #[cfg(unix)]
     #[test]
@@ -3806,10 +3919,20 @@ mod tests {
                 "error": { "code": -32603, "message": "boom" },
             }),
         );
-        let _ = request.join().expect("request thread");
+        let error = request
+            .join()
+            .expect("request thread")
+            .expect_err("request should preserve the server error");
 
         let recent = supervisor.recent_requests();
 
+        assert_eq!(
+            error,
+            LanguageServerRequestError::Response {
+                code: -32603,
+                message: "boom".to_string(),
+            }
+        );
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].method, "textDocument/hover");
         assert!(!recent[0].success);
@@ -6612,7 +6735,7 @@ mod tests {
             .send_request_with_timeout("textDocument/hover", json!({}), Duration::from_millis(10))
             .expect_err("request should time out");
 
-        assert!(error.contains("timed out"));
+        assert!(error.to_string().contains("timed out"));
         assert_eq!(supervisor.pending_request_count(), 0);
     }
 
@@ -6649,7 +6772,7 @@ mod tests {
             .join()
             .expect("request thread")
             .expect_err("request should be rejected");
-        assert!(error.contains("stopped"));
+        assert!(error.to_string().contains("stopped"));
     }
 
     #[test]

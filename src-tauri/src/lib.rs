@@ -105,8 +105,9 @@ use lsp_features::{
 };
 use lsp_session::{
     language_server_status_payload, AppHandleEventSink, ChildServerProcessSpawner, DiagnosticsSink,
-    JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRuntimeStatus,
-    PhpLanguageServerRegistry, RefreshSink, RestartController, StatusSink, WorkspaceEditSink,
+    JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRequestError,
+    LanguageServerRuntimeStatus, PhpLanguageServerRegistry, RefreshSink, RestartController,
+    StatusSink, WorkspaceEditSink,
 };
 use php_file_outline::{
     build_php_file_outline, PhpFileOutline, PhpFileOutlineNodeKind, PhpFileOutlineParameter,
@@ -4228,20 +4229,23 @@ async fn text_document_code_actions(
     range: LanguageServerRange,
     context: LanguageServerCodeActionContext,
     registry: State<'_, PhpLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerCodeAction>, String> {
+) -> Result<Vec<LanguageServerCodeAction>, LanguageServerRequestError> {
     ensure_lsp_path_in_workspace(&root_path, &path)?;
     ensure_lsp_code_action_context_payloads_in_workspace(&root_path, &context)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_preserving_response_error(&root_path, &request.method, request.params)
         .await?
     else {
         return Ok(Vec::new());
     };
 
-    filter_lsp_code_actions_to_workspace(&root_path, parse_code_action_result(&result)?)
+    Ok(filter_lsp_code_actions_to_workspace(
+        &root_path,
+        parse_code_action_result(&result)?,
+    )?)
 }
 
 #[tauri::command]
@@ -4251,20 +4255,23 @@ async fn javascript_typescript_text_document_code_actions(
     range: LanguageServerRange,
     context: LanguageServerCodeActionContext,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Vec<LanguageServerCodeAction>, String> {
+) -> Result<Vec<LanguageServerCodeAction>, LanguageServerRequestError> {
     ensure_lsp_path_in_workspace(&root_path, &path)?;
     ensure_lsp_code_action_context_payloads_in_workspace(&root_path, &context)?;
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.code_actions(&TextDocumentRange { path, range }, &context);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_preserving_response_error(&root_path, &request.method, request.params)
         .await?
     else {
         return Ok(Vec::new());
     };
 
-    filter_lsp_code_actions_to_workspace(&root_path, parse_code_action_result(&result)?)
+    Ok(filter_lsp_code_actions_to_workspace(
+        &root_path,
+        parse_code_action_result(&result)?,
+    )?)
 }
 
 /// Whether the running server advertises `codeActionProvider.resolveProvider`.

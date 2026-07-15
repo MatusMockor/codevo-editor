@@ -6,6 +6,10 @@ import {
 import {
   languageServerDocumentSyncKey,
 } from "../domain/languageServerDocumentSync";
+import {
+  isBenignLanguageServerRequestError,
+  languageServerErrorMessage,
+} from "../domain/languageServerErrorClassification";
 import { pathFromLanguageServerUri } from "../domain/languageServerFeatures";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
@@ -83,12 +87,13 @@ export function useLanguageServerFeatureErrorReporting({
       // through unchanged.
       if (
         isBenignError(error) ||
+        isBenignLanguageServerRequestError(error) ||
         isUnknownDocumentForUnsyncedPath(currentWorkspaceRootRef.current, error)
       ) {
         return;
       }
 
-      const nextMessage = String(error);
+      const nextMessage = languageServerErrorMessage(error);
       setMessage(nextMessage);
 
       if (lastLanguageServerCrashRef.current === nextMessage) {

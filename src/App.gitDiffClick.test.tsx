@@ -32,7 +32,9 @@ vi.mock("@monaco-editor/react", async () => {
           | undefined;
         onMount?.({
           getLineChanges: () => [],
+          getModel: () => null,
           onDidUpdateDiff: () => ({ dispose: vi.fn() }),
+          setModel: vi.fn(),
         });
       }, []);
 

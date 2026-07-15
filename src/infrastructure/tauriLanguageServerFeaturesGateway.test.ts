@@ -14,6 +14,42 @@ type FeaturesGatewayConstructor = ConstructorParameters<
 type InvokeCommand = NonNullable<FeaturesGatewayConstructor[0]>;
 
 describe("TauriLanguageServerFeaturesGateway", () => {
+  it("preserves a structured JSON-RPC code-action rejection", async () => {
+    const responseError = {
+      code: -32802,
+      message: "Server cancelled obsolete code action",
+    };
+    const invokeCommand = vi.fn<InvokeCommand>().mockRejectedValue(responseError);
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+    );
+
+    await expect(
+      gateway.codeActions("/project", "/project/src/User.php", range(), {
+        diagnostics: [],
+        only: ["quickfix"],
+      }),
+    ).rejects.toBe(responseError);
+  });
+
+  it("preserves legacy string code-action rejections", async () => {
+    const invokeCommand = vi
+      .fn<InvokeCommand>()
+      .mockRejectedValue("PHPactor request failed");
+    const gateway = new TauriLanguageServerFeaturesGateway(
+      invokeCommand,
+      () => true,
+    );
+
+    await expect(
+      gateway.codeActions("/project", "/project/src/User.php", range(), {
+        diagnostics: [],
+        only: ["quickfix"],
+      }),
+    ).rejects.toBe("PHPactor request failed");
+  });
+
   it("returns empty feature results outside Tauri", async () => {
     const invokeCommand = vi.fn<InvokeCommand>();
     const gateway = new TauriLanguageServerFeaturesGateway(

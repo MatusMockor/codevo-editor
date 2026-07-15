@@ -125,6 +125,89 @@ describe("useLanguageServerFeatureErrorReporting", () => {
     });
   });
 
+  it("suppresses a cancelled textDocument/codeAction while the workspace remains active", () => {
+    const harness = renderHook();
+
+    act(() => {
+      harness.api.reportLanguageServerError(
+        "Language server request `textDocument/codeAction` was cancelled.",
+      );
+    });
+
+    expect(harness.currentWorkspaceRootRef.current).toBe(ROOT);
+    expect(harness.message.value).toBeNull();
+    expect(harness.lastLanguageServerCrashRef.current).toBeNull();
+    expect(harness.notices.value).toEqual([]);
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
+  it("suppresses a structured ServerCancelled code-action response", () => {
+    const harness = renderHook();
+
+    act(() => {
+      harness.api.reportLanguageServerError({
+        code: -32802,
+        message: "Server cancelled obsolete code action",
+      });
+    });
+
+    expect(harness.message.value).toBeNull();
+    expect(harness.lastLanguageServerCrashRef.current).toBeNull();
+    expect(harness.notices.value).toEqual([]);
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
+  it.each([
+    "Language server exited unexpectedly.",
+    "Language server request `textDocument/codeAction` timed out.",
+    "Internal error: code action failed",
+  ])("reports actual crashes and other request failures", (error) => {
+    const harness = renderHook();
+
+    act(() => {
+      harness.api.reportLanguageServerError(error);
+    });
+
+    expect(harness.message.value).toBe(error);
+    expect(harness.notices.value[0]).toMatchObject({
+      groupKey: "language-server-crash:/workspace",
+      message: error,
+      severity: "error",
+      source: "Language Server",
+    });
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
+  it("reports a structured non-cancellation response with its server message", () => {
+    const harness = renderHook();
+
+    act(() => {
+      harness.api.reportLanguageServerError({
+        code: -32603,
+        message: "PHPactor code action failed",
+      });
+    });
+
+    expect(harness.message.value).toBe("PHPactor code action failed");
+    expect(harness.notices.value[0]).toMatchObject({
+      message: "PHPactor code action failed",
+      severity: "error",
+    });
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
   it("suppresses UnknownDocument only when neither synced set contains the document", () => {
     const harness = renderHook();
 

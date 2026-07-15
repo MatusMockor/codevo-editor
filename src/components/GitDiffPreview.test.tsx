@@ -1,22 +1,33 @@
 // @vitest-environment jsdom
 
-import { act, useEffect } from "react";
+import { act, StrictMode, useEffect, useLayoutEffect, useRef } from "react";
 import type { ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitDiffHunk, GitFileDiff } from "../domain/git";
 import { GitDiffPreview } from "./GitDiffPreview";
 
+interface MockTextModel {
+  attach(): void;
+  detach(): void;
+  dispose(): void;
+  isDisposed(): boolean;
+}
+
+interface MockModelLifecycle {
+  disposed: boolean;
+  events: string[];
+  modifiedPath: string;
+  originalPath: string;
+}
+
 const gitDiffPreviewMocks = vi.hoisted(() => ({
   diffEditorProps: [] as Array<Record<string, unknown>>,
   diffEditorMounted: vi.fn(),
   focus: vi.fn(),
   modifiedReveal: vi.fn(),
-  modelLifecycles: [] as Array<{
-    disposed: boolean;
-    modifiedPath: string;
-    originalPath: string;
-  }>,
+  modelLifecycles: [] as MockModelLifecycle[],
+  modelRegistry: new Map<string, MockTextModel>(),
   originalReveal: vi.fn(),
   setPosition: vi.fn(),
   setupShikiTokenization: vi.fn(async (..._args: unknown[]) => {}),
@@ -26,17 +37,92 @@ vi.mock("@monaco-editor/react", () => ({
   DiffEditor: function DiffEditorMock(props: Record<string, unknown>) {
     gitDiffPreviewMocks.diffEditorProps.push(props);
     gitDiffPreviewMocks.diffEditorMounted();
+    const lifecycleRef = useRef<MockModelLifecycle | null>(null);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
+      const events: string[] = [];
+      let attached = true;
+      const acquireModel = (path: string, side: string): MockTextModel => {
+        const existing = gitDiffPreviewMocks.modelRegistry.get(path);
+        if (existing) {
+          existing.attach();
+          return existing;
+        }
+
+        let disposed = false;
+        let attachmentCount = 0;
+        const model: MockTextModel = {
+          attach: () => {
+            attachmentCount += 1;
+          },
+          detach: () => {
+            attachmentCount -= 1;
+          },
+          dispose: () => {
+            if (attachmentCount > 0) {
+              throw new Error(
+                "TextModel got disposed before DiffEditorWidget model got reset",
+              );
+            }
+
+            events.push(`${side}-dispose`);
+            disposed = true;
+            gitDiffPreviewMocks.modelRegistry.delete(path);
+          },
+          isDisposed: () => disposed,
+        };
+        gitDiffPreviewMocks.modelRegistry.set(path, model);
+        model.attach();
+        return model;
+      };
       const lifecycle = {
         disposed: false,
+        events,
         modifiedPath: String(props.modifiedModelPath),
         originalPath: String(props.originalModelPath),
       };
-      gitDiffPreviewMocks.modelLifecycles.push(lifecycle);
+      lifecycleRef.current = lifecycle;
+      const originalModel = acquireModel(lifecycle.originalPath, "original");
+      const modifiedModel = acquireModel(lifecycle.modifiedPath, "modified");
+      const editor = {
+        getLineChanges: () => [],
+        getModel: () => attached
+          ? { modified: modifiedModel, original: originalModel }
+          : null,
+        onDidUpdateDiff: () => ({ dispose: vi.fn() }),
+        setModel: (next: unknown) => {
+          if (next !== null) {
+            return;
+          }
 
+          events.push("reset");
+          attached = false;
+          originalModel.detach();
+          modifiedModel.detach();
+        },
+      };
+      gitDiffPreviewMocks.modelLifecycles.push(lifecycle);
+      const onMount = props.onMount as ((editor: unknown, monaco: object) => void) | undefined;
+      onMount?.(editor, {});
+
+      return undefined;
+    }, []);
+
+    useEffect(() => {
+      const lifecycle = lifecycleRef.current;
       return () => {
-        lifecycle.disposed = true;
+        lifecycle?.events.push("editor-dispose");
+        if (!props.keepCurrentOriginalModel || !props.keepCurrentModifiedModel) {
+          throw new Error("DiffEditor wrapper retained model ownership");
+        }
+
+        if (!lifecycle?.events.includes("reset")) {
+          throw new Error("DiffEditorWidget model was not reset before disposal");
+        }
+
+        if (lifecycle) {
+          lifecycle.disposed = true;
+        }
       };
     }, []);
 
@@ -71,6 +157,7 @@ describe("GitDiffPreview", () => {
     gitDiffPreviewMocks.focus.mockReset();
     gitDiffPreviewMocks.modifiedReveal.mockReset();
     gitDiffPreviewMocks.modelLifecycles.length = 0;
+    gitDiffPreviewMocks.modelRegistry.clear();
     gitDiffPreviewMocks.originalReveal.mockReset();
     gitDiffPreviewMocks.setPosition.mockReset();
     gitDiffPreviewMocks.setupShikiTokenization.mockReset();
@@ -140,6 +227,36 @@ describe("GitDiffPreview", () => {
     expect(lastDiffEditorProps().modifiedModelPath).toContain("/staged/modified/");
   });
 
+  it("isolates model URIs for concurrent previews of the same path", async () => {
+    await renderConcurrentPreviews(true);
+    const firstLifecycle = gitDiffPreviewMocks.modelLifecycles[0];
+    const secondLifecycle = gitDiffPreviewMocks.modelLifecycles[1];
+
+    expect(firstLifecycle?.originalPath).not.toBe(secondLifecycle?.originalPath);
+    expect(firstLifecycle?.modifiedPath).not.toBe(secondLifecycle?.modifiedPath);
+    expect(gitDiffPreviewMocks.modelRegistry.size).toBe(4);
+
+    await renderConcurrentPreviews(false);
+
+    expect(firstLifecycle?.disposed).toBe(true);
+    expect(secondLifecycle?.disposed).toBe(false);
+    expect(gitDiffPreviewMocks.modelRegistry.size).toBe(2);
+  });
+
+  it("includes commit history identity in model URIs", async () => {
+    const firstIdentity = "mockor-git-history-diff:abc123:src/example.ts";
+    await renderPreview(diff(), { previewIdentity: firstIdentity });
+    const firstPath = gitDiffPreviewMocks.modelLifecycles[0]?.originalPath;
+
+    const secondIdentity = "mockor-git-history-diff:def456:src/example.ts";
+    await renderPreview(diff(), { previewIdentity: secondIdentity });
+    const secondPath = gitDiffPreviewMocks.modelLifecycles[1]?.originalPath;
+
+    expect(firstPath).toContain(encodeURIComponent(firstIdentity));
+    expect(secondPath).toContain(encodeURIComponent(secondIdentity));
+    expect(secondPath).not.toBe(firstPath);
+  });
+
   it("disposes prior Monaco models when model paths change without losing hunk UI", async () => {
     const loadFileHunks = vi.fn(async () => [
       { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
@@ -166,6 +283,80 @@ describe("GitDiffPreview", () => {
       encodeURIComponent("/workspace/src/other.ts"),
     );
     expect(hunkCheckboxes()).toHaveLength(1);
+  });
+
+  it("resets the diff widget before disposing replaced worktree models", async () => {
+    await renderPreview(diff());
+    const worktreeLifecycle = gitDiffPreviewMocks.modelLifecycles[0];
+
+    await renderPreview({
+      ...diff(),
+      change: { ...diff().change, isStaged: true },
+    });
+
+    expect(worktreeLifecycle?.events).toEqual([
+      "reset",
+      "original-dispose",
+      "modified-dispose",
+      "editor-dispose",
+    ]);
+    expect(worktreeLifecycle?.disposed).toBe(true);
+    expect(gitDiffPreviewMocks.modelLifecycles[1]?.disposed).toBe(false);
+    expect(lastDiffEditorProps()).toMatchObject({
+      keepCurrentModifiedModel: true,
+      keepCurrentOriginalModel: true,
+    });
+  });
+
+  it("reacquires private models across repeated worktree and staged switches", async () => {
+    await renderPreview(diff());
+    const firstWorktree = gitDiffPreviewMocks.modelLifecycles[0];
+
+    await renderPreview({
+      ...diff(),
+      change: { ...diff().change, isStaged: true },
+    });
+    const staged = gitDiffPreviewMocks.modelLifecycles[1];
+
+    await renderPreview(diff());
+    const secondWorktree = gitDiffPreviewMocks.modelLifecycles[2];
+
+    expect(firstWorktree?.disposed).toBe(true);
+    expect(staged?.disposed).toBe(true);
+    expect(secondWorktree?.disposed).toBe(false);
+    expect(secondWorktree?.originalPath).toBe(firstWorktree?.originalPath);
+    expect(secondWorktree?.modifiedPath).toBe(firstWorktree?.modifiedPath);
+    expect(gitDiffPreviewMocks.modelRegistry.size).toBe(2);
+  });
+
+  it("keeps reset-before-dispose ordering through StrictMode unmounts", async () => {
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <GitDiffPreview
+            diff={diff()}
+            isLoading={false}
+            monacoTheme="calm-dark"
+            onClose={vi.fn()}
+          />
+        </StrictMode>,
+      );
+      await Promise.resolve();
+    });
+
+    act(() => root.unmount());
+
+    expect(gitDiffPreviewMocks.modelLifecycles.length).toBeGreaterThanOrEqual(2);
+    expect(gitDiffPreviewMocks.modelRegistry.size).toBe(0);
+    for (const lifecycle of gitDiffPreviewMocks.modelLifecycles) {
+      expect(lifecycle.disposed).toBe(true);
+      expect(lifecycle.events.indexOf("reset")).toBeLessThan(
+        lifecycle.events.indexOf("original-dispose"),
+      );
+      expect(lifecycle.events.indexOf("modified-dispose")).toBeLessThan(
+        lifecycle.events.indexOf("editor-dispose"),
+      );
+    }
   });
 
   it("prevents stale Shiki setup from overwriting a newer theme", async () => {
@@ -611,6 +802,34 @@ describe("GitDiffPreview", () => {
     expect(host.textContent).toContain("too large");
     expect(loadFileHunks).not.toHaveBeenCalled();
   });
+
+  async function renderConcurrentPreviews(showFirst: boolean): Promise<void> {
+    await act(async () => {
+      root.render(
+        <>
+          {showFirst ? (
+            <GitDiffPreview
+              diff={diff()}
+              isLoading={false}
+              key="first"
+              monacoTheme="calm-dark"
+              onClose={vi.fn()}
+              previewIdentity="worktree:src/example.ts"
+            />
+          ) : null}
+          <GitDiffPreview
+            diff={diff()}
+            isLoading={false}
+            key="second"
+            monacoTheme="calm-dark"
+            onClose={vi.fn()}
+            previewIdentity="worktree:src/example.ts"
+          />
+        </>,
+      );
+      await Promise.resolve();
+    });
+  }
 
   async function renderPreview(
     current: GitFileDiff | null,
