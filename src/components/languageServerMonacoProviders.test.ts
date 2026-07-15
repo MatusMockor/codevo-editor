@@ -1896,9 +1896,12 @@ describe("registerLanguageServerMonacoProviders", () => {
             detail:
               "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
             documentation: null,
+            filterText: "forceDestroy",
             insertText: "forceDestroy",
             kind: 2,
             label: "forceDestroy(...)",
+            preselect: true,
+            sortText: "0001",
           },
         ],
       },
@@ -1941,14 +1944,120 @@ describe("registerLanguageServerMonacoProviders", () => {
       expect.objectContaining({
         detail:
           "Illuminate\\Database\\Eloquent\\Model::forceDestroy(array|int $ids): int",
+        filterText: "forceDestroy",
         insertText: "forceDestroy(${1:ids})$0",
         label: {
           description: "method - Illuminate\\Database\\Eloquent\\Model",
           detail: "()",
           label: "forceDestroy",
         },
+        preselect: true,
+        sortText: "0_0000",
       }),
     );
+  });
+
+  it("preserves PHP LSP completion metadata and snippet insertion", async () => {
+    const registered = createRegisteredProviders();
+    const context = providerContext({
+      activeDocument: { ...document(), content: "<?php\ncol\n" },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: true,
+          items: [{
+            deprecated: true,
+            detail: "function collect(iterable $value): Collection",
+            documentation: "Creates a **collection**.",
+            documentationKind: "markdown",
+            filterText: "collect helper",
+            insertText: "collect(${1:value})$0",
+            insertTextFormat: 2,
+            kind: 3,
+            label: "collect",
+            labelDetails: {
+              description: "Illuminate\\Support",
+              detail: "(iterable $value)",
+            },
+            preselect: true,
+            sortText: "0007",
+            tags: [1],
+          }],
+        },
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "col",
+        word: { endColumn: 4, startColumn: 1 },
+      }),
+      { column: 4, lineNumber: 2 },
+    );
+
+    expect(result.incomplete).toBe(true);
+    expect(result.suggestions).toEqual([
+      expect.objectContaining({
+        documentation: { value: "Creates a **collection**." },
+        filterText: "collect helper",
+        insertText: "collect(${1:value})$0",
+        insertTextRules: 4,
+        label: {
+          description: "Illuminate\\Support",
+          detail: "(iterable $value)",
+          label: "collect",
+        },
+        preselect: true,
+        sortText: "1_0007",
+        tags: [1],
+      }),
+    ]);
+  });
+
+  it("filters private PHP LSP members on foreign receivers", async () => {
+    const registered = createRegisteredProviders();
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\nclass User { function run(User $other) {\n$other->r;\n} }\n",
+      },
+      featuresGateway: featuresGateway({
+        completion: {
+          isIncomplete: false,
+          items: [
+            {
+              detail: "private function rotateSecret(): void",
+              documentation: null,
+              insertText: "rotateSecret",
+              kind: 2,
+              label: "rotateSecret",
+            },
+            {
+              detail: "public function refresh(): void",
+              documentation: "Protected against replay attacks.",
+              insertText: "refresh",
+              kind: 2,
+              label: "refresh",
+            },
+          ],
+        },
+      }),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({
+        lineContent: "$other->r;",
+        word: { endColumn: 10, startColumn: 9 },
+      }),
+      { column: 10, lineNumber: 3 },
+    );
+    const labels = result.suggestions.map(
+      (item: { label: string }) => item.label,
+    );
+
+    expect(labels).toContain("refresh");
+    expect(labels).not.toContain("rotateSecret");
   });
 
   it("deduplicates typed PHP methods against plain LSP method labels", async () => {
@@ -3743,6 +3852,176 @@ function store($request): void
       },
     });
     expect(providePhpMethodSignature).toHaveBeenCalled();
+  });
+
+  it("returns local PHP signature help without waiting for a hung LSP", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const registered = createRegisteredProviders();
+      const gateway = featuresGateway();
+      gateway.signatureHelp = vi.fn(
+        () => new Promise<never>(() => undefined),
+      );
+      const context = providerContext({
+        activeDocument: {
+          ...document(),
+          content: "<?php\n$request->get('id');\n",
+        },
+        featuresGateway: gateway,
+        providePhpMethodSignature: vi.fn(async () => ({
+          argumentIndex: 0,
+          method: {
+            declaringClassName: "Request",
+            name: "get",
+            parameters: "string $key",
+            returnType: "mixed",
+          },
+          parameters: [{
+            defaultValue: null,
+            name: "$key",
+            optional: false,
+            raw: "string $key",
+            type: "string",
+          }],
+        })),
+      });
+      registerLanguageServerMonacoProviders(registered.monaco, context);
+
+      const pending = registered.signatureProvider.provideSignatureHelp(
+        model(),
+        { column: 19, lineNumber: 2 },
+      );
+      await vi.advanceTimersByTimeAsync(21);
+
+      await expect(pending).resolves.toEqual(
+        expect.objectContaining({
+          value: expect.objectContaining({
+            signatures: [
+              expect.objectContaining({ label: "get(string $key): mixed" }),
+            ],
+          }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("merges PHP LSP overloads with local signature help", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway({
+      signatureHelp: {
+        activeParameter: 1,
+        activeSignature: 1,
+        signatures: [
+          {
+            documentation: "String lookup",
+            label: "get(string $key, mixed $default = null): mixed",
+            parameters: [
+              { documentation: null, label: "string $key" },
+              { documentation: null, label: "mixed $default = null" },
+            ],
+          },
+          {
+            documentation: "Array lookup",
+            label: "get(array $keys): array",
+            parameters: [{ documentation: null, label: "array $keys" }],
+          },
+        ],
+      },
+    });
+    const context = providerContext({
+      activeDocument: {
+        ...document(),
+        content: "<?php\n$request->get(key: 'id', default: null);\n",
+      },
+      featuresGateway: gateway,
+      providePhpMethodSignature: vi.fn(async () => ({
+        argumentIndex: 1,
+        method: {
+          declaringClassName: "Request",
+          name: "get",
+          parameters: "string $key, mixed $default = null",
+          returnType: "mixed",
+        },
+        parameters: [
+          {
+            defaultValue: null,
+            name: "$key",
+            optional: false,
+            raw: "string $key",
+            type: "string",
+          },
+          {
+            defaultValue: "null",
+            name: "$default",
+            optional: true,
+            raw: "mixed $default = null",
+            type: "mixed",
+          },
+        ],
+      })),
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const result = await registered.signatureProvider.provideSignatureHelp(
+      model(),
+      { column: 39, lineNumber: 2 },
+      { isCancellationRequested: false },
+      { isRetrigger: true, triggerCharacter: ",", triggerKind: 3 },
+    );
+
+    expect(result?.value.activeSignature).toBe(1);
+    expect(result?.value.signatures.map(
+      (signature: { label: string }) => signature.label,
+    )).toEqual([
+      "get(string $key, mixed $default = null): mixed",
+      "get(array $keys): array",
+    ]);
+    expect(gateway.signatureHelp).toHaveBeenCalledWith(
+      "/project",
+      expect.any(Object),
+      expect.objectContaining({
+        isRetrigger: true,
+        triggerCharacter: ",",
+        triggerKind: 3,
+      }),
+    );
+  });
+
+  it("drops stale PHP LSP signature help after a project switch", async () => {
+    const registered = createRegisteredProviders();
+    let activeRoot = "/project";
+    const signature = createDeferred<
+      Awaited<ReturnType<LanguageServerFeaturesGateway["signatureHelp"]>>
+    >();
+    const gateway = featuresGateway();
+    gateway.signatureHelp = vi.fn(async () => signature.promise);
+    const context = providerContext({
+      activeDocument: { ...document(), content: "<?php\ncollect($items);\n" },
+      featuresGateway: gateway,
+      getWorkspaceRoot: () => activeRoot,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const pending = registered.signatureProvider.provideSignatureHelp(
+      model(),
+      { column: 15, lineNumber: 2 },
+    );
+    await Promise.resolve();
+    activeRoot = "/other";
+    signature.resolve({
+      activeParameter: 0,
+      activeSignature: 0,
+      signatures: [{
+        documentation: null,
+        label: "collect(iterable $value): Collection",
+        parameters: [{ documentation: null, label: "iterable $value" }],
+      }],
+    });
+
+    await expect(pending).resolves.toBeNull();
   });
 
   it("drops in-flight PHP signature help when no project tab is active", async () => {
@@ -12934,6 +13213,7 @@ function createRegisteredProviders() {
     languages: {
       CodeActionTriggerType: { Invoke: 1 },
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
+      CompletionItemTag: { Deprecated: 1 },
       CompletionItemKind: {
         Class: 7,
         Constant: 21,

@@ -23,6 +23,9 @@ import {
   type LanguageServerRefreshGateway,
   type LanguageServerSelectionRange,
   type LanguageServerSemanticTokens,
+  type LanguageServerSignature,
+  type LanguageServerSignatureHelp,
+  type LanguageServerSignatureHelpContext,
   type LanguageServerTextEdit,
   type LanguageServerTextDocumentPosition,
   type LanguageServerWorkspaceEdit,
@@ -242,7 +245,11 @@ const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
  * navigation/references/completion requests keep the longer budget.
  */
 const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
+const PHP_SIGNATURE_MERGE_WINDOW_MS = 20;
 const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
+const PHP_SIGNATURE_MERGE_WINDOW_EXPIRED = Symbol(
+  "phpSignatureMergeWindowExpired",
+);
 const PHP_SEMANTIC_TOKENS_LEGEND = {
   tokenModifiers: [
     "declaration",
@@ -724,8 +731,15 @@ export function registerLanguageServerMonacoProviders(
   const signature = monaco.languages.registerSignatureHelpProvider("php", {
     signatureHelpRetriggerCharacters: [","],
     signatureHelpTriggerCharacters: ["(", ","],
-    provideSignatureHelp: (model, position) =>
-      provideSignatureHelp(monaco, context, model, position),
+    provideSignatureHelp: (model, position, token, signatureContext) =>
+      provideSignatureHelp(
+        monaco,
+        context,
+        model,
+        position,
+        token,
+        signatureContext,
+      ),
   });
   const codeActions = monaco.languages.registerCodeActionProvider(
     "php",
@@ -4002,8 +4016,6 @@ async function provideCompletionItems(
   }
 
   const completion = resolution.completion;
-  const localSemanticShadowNames =
-    localSemanticCompletionShadowNames(monaco, localSuggestions);
   const lspSuggestions = completion.items.flatMap((item, index) => {
     const kind = monacoCompletionKindFromLspKind(monaco, item.kind);
 
@@ -4019,12 +4031,11 @@ async function provideCompletionItems(
       return [];
     }
 
-    if (
-      lspCompletionShadowedByLocalSemanticCompletion(
-        item,
-        localSemanticShadowNames,
-      )
-    ) {
+    if (!phpLspCompletionVisibleForReceiver(
+      item,
+      memberAccessCompletionContext?.receiverExpression ?? null,
+      staticAccessCompletionContext?.className ?? null,
+    )) {
       return [];
     }
 
@@ -4036,17 +4047,39 @@ async function provideCompletionItems(
 
     return [{
       ...(additionalTextEdits ? { additionalTextEdits } : {}),
+      ...(item.commitCharacters && item.commitCharacters.length > 0
+        ? { commitCharacters: item.commitCharacters }
+        : {}),
       detail: item.detail || undefined,
-      documentation: item.documentation || undefined,
+      documentation: phpLspCompletionDocumentation(item),
+      filterText: item.filterText || undefined,
       insertText: insert.insertText,
-      ...(insert.command ? { command: insert.command } : {}),
+      ...(item.command
+        ? {
+            command: toMonacoLanguageServerCommand(
+              resolution.rootPath,
+              resolution.sessionId,
+              item.command,
+              item.label,
+              resolution.sourcePath,
+            ),
+          }
+        : insert.command
+          ? { command: insert.command }
+          : {}),
       ...(insert.insertTextRules
         ? { insertTextRules: insert.insertTextRules }
         : {}),
       kind,
-      label: item.label,
+      label: phpLspCompletionLabel(item),
+      ...(item.preselect ? { preselect: true } : {}),
       range,
-      sortText: `1_${String(index).padStart(4, "0")}`,
+      sortText: item.sortText
+        ? `1_${item.sortText}`
+        : `1_${String(index).padStart(4, "0")}`,
+      ...(phpLspCompletionIsDeprecated(item)
+        ? { tags: [monaco.languages.CompletionItemTag.Deprecated] }
+        : {}),
     }];
   });
 
@@ -4065,35 +4098,59 @@ async function provideCompletionItems(
   };
 }
 
-function localSemanticCompletionShadowNames(
-  monaco: MonacoApi,
-  items: readonly Monaco.languages.CompletionItem[],
-): Set<string> {
-  const names = new Set<string>();
+function phpLspCompletionVisibleForReceiver(
+  item: LanguageServerCompletionList["items"][number],
+  memberReceiver: string | null,
+  staticReceiver: string | null,
+): boolean {
+  const visibility = /^\s*(private|protected|public)\b/i
+    .exec(item.detail ?? "")?.[1]
+    ?.toLowerCase();
 
-  for (const item of items) {
-    if (
-      item.kind !== monaco.languages.CompletionItemKind.Field &&
-      item.kind !== monaco.languages.CompletionItemKind.Function &&
-      item.kind !== monaco.languages.CompletionItemKind.Event
-    ) {
-      continue;
-    }
-
-    names.add(completionItemLabelText(item.label).toLowerCase());
+  if (!visibility || visibility === "public") {
+    return true;
   }
 
-  return names;
+  if (memberReceiver?.trim() === "$this") {
+    return true;
+  }
+
+  const normalizedStaticReceiver = staticReceiver?.trim().toLowerCase();
+
+  return normalizedStaticReceiver === "self" ||
+    normalizedStaticReceiver === "static" ||
+    normalizedStaticReceiver === "parent";
 }
 
-function lspCompletionShadowedByLocalSemanticCompletion(
+function phpLspCompletionLabel(
   item: LanguageServerCompletionList["items"][number],
-  localSemanticShadowNames: ReadonlySet<string>,
-): boolean {
-  const callableName = phpCallableCompletionName(item.label);
-  const name = callableName ?? item.label;
+): Monaco.languages.CompletionItemLabel | string {
+  const detail = item.labelDetails?.detail || undefined;
+  const description = item.labelDetails?.description || undefined;
 
-  return localSemanticShadowNames.has(name.toLowerCase());
+  if (!detail && !description) {
+    return item.label;
+  }
+
+  return { ...(description ? { description } : {}), ...(detail ? { detail } : {}), label: item.label };
+}
+
+function phpLspCompletionDocumentation(
+  item: LanguageServerCompletionList["items"][number],
+): Monaco.IMarkdownString | string | undefined {
+  if (!item.documentation) {
+    return undefined;
+  }
+
+  return item.documentationKind === "markdown"
+    ? { value: item.documentation }
+    : item.documentation;
+}
+
+function phpLspCompletionIsDeprecated(
+  item: LanguageServerCompletionList["items"][number],
+): boolean {
+  return item.deprecated === true || item.tags?.includes(1) === true;
 }
 
 type PhpLanguageServerCompletionResolution =
@@ -4101,7 +4158,13 @@ type PhpLanguageServerCompletionResolution =
   | { kind: "timedOut" }
   | { kind: "inactive" }
   | { kind: "error"; error: unknown }
-  | { kind: "completion"; completion: LanguageServerCompletionList };
+  | {
+      kind: "completion";
+      completion: LanguageServerCompletionList;
+      rootPath: string;
+      sessionId: number;
+      sourcePath: string;
+    };
 
 /**
  * Runs the PHP language-server completion request behind the shared interactive
@@ -4152,7 +4215,13 @@ async function requestPhpLanguageServerCompletion(
       return { kind: "inactive" };
     }
 
-    return { kind: "completion", completion };
+    return {
+      kind: "completion",
+      completion,
+      rootPath: request.rootPath,
+      sessionId: request.sessionId,
+      sourcePath: request.path,
+    };
   } catch (error) {
     if (isFeatureRequestActive(context, request)) {
       return { kind: "error", error };
@@ -4368,14 +4437,116 @@ async function provideSignatureHelp(
   context: LanguageServerMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
+  token?: Monaco.CancellationToken,
+  signatureContext?: Monaco.languages.SignatureHelpContext,
 ): Promise<Monaco.languages.SignatureHelpResult | null> {
   const documentContext = activePhpDocumentContext(context, model);
 
-  if (!documentContext || !context.providePhpMethodSignature) {
+  if (!documentContext) {
     return null;
   }
 
   if (isLargePhpDocumentContext(context, documentContext)) {
+    return null;
+  }
+
+  const lspSignaturePromise = requestPhpLanguageServerSignatureHelp(
+    context,
+    model,
+    position,
+    signatureContext,
+  );
+  const localSignature = await requestLocalPhpSignatureHelp(
+    context,
+    model,
+    position,
+    documentContext,
+  );
+
+  if (localSignature) {
+    const lspResolution = await resolvePhpSignatureWithinMergeWindow(
+      lspSignaturePromise,
+    );
+
+    if (token?.isCancellationRequested) {
+      return null;
+    }
+
+    if (!isPhpDocumentContextActive(context, documentContext)) {
+      return null;
+    }
+
+    if (lspResolution === PHP_SIGNATURE_MERGE_WINDOW_EXPIRED) {
+      return toMonacoPhpSignatureHelp(localSignature);
+    }
+
+    return phpSignatureHelpFromResolution(
+      context,
+      lspResolution,
+      localSignature,
+    );
+  }
+
+  const lspResolution = await lspSignaturePromise;
+
+  if (token?.isCancellationRequested) {
+    return null;
+  }
+
+  if (!isPhpDocumentContextActive(context, documentContext)) {
+    return null;
+  }
+
+  return phpSignatureHelpFromResolution(context, lspResolution, null);
+}
+
+async function resolvePhpSignatureWithinMergeWindow(
+  lspSignaturePromise: Promise<PhpLanguageServerSignatureResolution>,
+): Promise<
+  | PhpLanguageServerSignatureResolution
+  | typeof PHP_SIGNATURE_MERGE_WINDOW_EXPIRED
+> {
+  return Promise.race([
+    lspSignaturePromise,
+    new Promise<typeof PHP_SIGNATURE_MERGE_WINDOW_EXPIRED>((resolve) => {
+      setTimeout(() => resolve(PHP_SIGNATURE_MERGE_WINDOW_EXPIRED),
+        PHP_SIGNATURE_MERGE_WINDOW_MS);
+    }),
+  ]);
+}
+
+function phpSignatureHelpFromResolution(
+  context: LanguageServerMonacoProviderContext,
+  resolution: PhpLanguageServerSignatureResolution,
+  localSignature: LanguageServerSignatureHelp | null,
+): Monaco.languages.SignatureHelpResult | null {
+  if (resolution.kind === "inactive") {
+    return null;
+  }
+
+  if (resolution.kind === "error") {
+    context.reportError(resolution.error);
+  }
+
+  const lspSignature = resolution.kind === "signature"
+    ? resolution.signatureHelp
+    : null;
+  const merged = mergePhpSignatureHelp(lspSignature, localSignature);
+
+  return merged ? toMonacoPhpSignatureHelp(merged) : null;
+}
+
+async function requestLocalPhpSignatureHelp(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  documentContext: {
+    activeDocument: EditorDocument;
+    rootPath: string;
+    sessionId: number | null;
+  },
+): Promise<LanguageServerSignatureHelp | null> {
+  if (!context.providePhpMethodSignature) {
     return null;
   }
 
@@ -4385,39 +4556,198 @@ async function provideSignatureHelp(
       position,
     );
 
-    if (!isPhpDocumentContextActive(context, documentContext)) {
-      return null;
-    }
-
-    if (!signature) {
+    if (!isPhpDocumentContextActive(context, documentContext) || !signature) {
       return null;
     }
 
     return {
-      dispose: () => undefined,
-      value: {
-        activeParameter: Math.min(
-          signature.argumentIndex,
-          Math.max(0, signature.parameters.length - 1),
-        ),
-        activeSignature: 0,
-        signatures: [
-          {
-            documentation: signature.method.declaringClassName,
-            label: phpMethodSignatureLabel(signature.method),
-            parameters: signature.parameters.map((parameter) => ({
-              label: phpParameterLabel(parameter),
-            })),
-          },
-        ],
-      },
+      activeParameter: Math.min(
+        signature.argumentIndex,
+        Math.max(0, signature.parameters.length - 1),
+      ),
+      activeSignature: 0,
+      signatures: [{
+        documentation: signature.method.declaringClassName,
+        label: phpMethodSignatureLabel(signature.method),
+        parameters: signature.parameters.map((parameter) => ({
+          documentation: null,
+          label: phpParameterLabel(parameter),
+        })),
+      }],
     };
   } catch (error) {
     if (isPhpDocumentContextActive(context, documentContext)) {
       context.reportError(error);
     }
+
     return null;
   }
+}
+
+type PhpLanguageServerSignatureResolution =
+  | { kind: "noRequest" }
+  | { kind: "timedOut" }
+  | { kind: "inactive" }
+  | { kind: "error"; error: unknown }
+  | { kind: "signature"; signatureHelp: LanguageServerSignatureHelp | null };
+
+async function requestPhpLanguageServerSignatureHelp(
+  context: LanguageServerMonacoProviderContext,
+  model: MonacoModel,
+  position: MonacoPosition,
+  signatureContext?: Monaco.languages.SignatureHelpContext,
+): Promise<PhpLanguageServerSignatureResolution> {
+  const request = featureRequestContext(context, model, position, "signatureHelp");
+
+  if (!request) {
+    return { kind: "noRequest" };
+  }
+
+  try {
+    if (!(await flushPendingDocumentChangeForActiveRequest(context, request))) {
+      return { kind: "inactive" };
+    }
+
+    const lspContext = toPhpLanguageServerSignatureHelpContext(signatureContext);
+    const signatureHelp = await raceInteractiveFeatureRequest(
+      lspContext
+        ? context.featuresGateway.signatureHelp(
+            request.rootPath,
+            request.position,
+            lspContext,
+          )
+        : context.featuresGateway.signatureHelp(
+            request.rootPath,
+            request.position,
+          ),
+    );
+
+    if (signatureHelp === FEATURE_REQUEST_TIMED_OUT) {
+      return { kind: "timedOut" };
+    }
+
+    if (!isFeatureRequestActive(context, request)) {
+      return { kind: "inactive" };
+    }
+
+    return { kind: "signature", signatureHelp };
+  } catch (error) {
+    return isFeatureRequestActive(context, request)
+      ? { kind: "error", error }
+      : { kind: "inactive" };
+  }
+}
+
+function toPhpLanguageServerSignatureHelpContext(
+  context: Monaco.languages.SignatureHelpContext | undefined,
+): LanguageServerSignatureHelpContext | undefined {
+  if (!context) {
+    return undefined;
+  }
+
+  return {
+    ...(context.activeSignatureHelp
+      ? {
+          activeSignatureHelp: {
+            activeParameter: context.activeSignatureHelp.activeParameter,
+            activeSignature: context.activeSignatureHelp.activeSignature,
+            signatures: context.activeSignatureHelp.signatures.map(
+              toPhpLanguageServerSignature,
+            ),
+          },
+        }
+      : {}),
+    isRetrigger: context.isRetrigger,
+    ...(context.triggerCharacter
+      ? { triggerCharacter: context.triggerCharacter }
+      : {}),
+    triggerKind:
+      context.triggerKind as LanguageServerSignatureHelpContext["triggerKind"],
+  };
+}
+
+function toPhpLanguageServerSignature(
+  signature: Monaco.languages.SignatureInformation,
+): LanguageServerSignature {
+  return {
+    documentation: monacoDocumentationText(signature.documentation),
+    label: signature.label,
+    parameters: signature.parameters.map((parameter) => ({
+      documentation: monacoDocumentationText(parameter.documentation),
+      label: monacoSignatureParameterLabel(signature.label, parameter.label),
+    })),
+  };
+}
+
+function monacoDocumentationText(
+  documentation: string | Monaco.IMarkdownString | undefined,
+): string | null {
+  return typeof documentation === "string"
+    ? documentation
+    : documentation?.value ?? null;
+}
+
+function monacoSignatureParameterLabel(
+  signatureLabel: string,
+  label: string | [number, number],
+): string {
+  return typeof label === "string"
+    ? label
+    : signatureLabel.slice(label[0], label[1]);
+}
+
+function mergePhpSignatureHelp(
+  lsp: LanguageServerSignatureHelp | null,
+  local: LanguageServerSignatureHelp | null,
+): LanguageServerSignatureHelp | null {
+  if (!lsp) {
+    return local;
+  }
+
+  if (!local) {
+    return lsp;
+  }
+
+  const signatures = [...lsp.signatures];
+  const labels = new Set(signatures.map((signature) => signature.label));
+
+  for (const signature of local.signatures) {
+    if (labels.has(signature.label)) {
+      continue;
+    }
+
+    labels.add(signature.label);
+    signatures.push(signature);
+  }
+
+  return {
+    activeParameter: lsp.activeParameter,
+    activeSignature: Math.min(
+      lsp.activeSignature,
+      Math.max(0, signatures.length - 1),
+    ),
+    signatures,
+  };
+}
+
+function toMonacoPhpSignatureHelp(
+  signatureHelp: LanguageServerSignatureHelp,
+): Monaco.languages.SignatureHelpResult {
+  return {
+    dispose: () => undefined,
+    value: {
+      activeParameter: signatureHelp.activeParameter,
+      activeSignature: signatureHelp.activeSignature,
+      signatures: signatureHelp.signatures.map((signature) => ({
+        documentation: signature.documentation || undefined,
+        label: signature.label,
+        parameters: signature.parameters.map((parameter) => ({
+          documentation: parameter.documentation || undefined,
+          label: parameter.label,
+        })),
+      })),
+    },
+  };
 }
 
 async function provideSelectionRanges(
@@ -5041,21 +5371,53 @@ function dedupeCompletionItems(
   monaco: MonacoApi,
   items: Monaco.languages.CompletionItem[],
 ): Monaco.languages.CompletionItem[] {
-  const seen = new Set<string>();
+  const indexByKey = new Map<string, number>();
   const unique: Monaco.languages.CompletionItem[] = [];
 
   for (const item of items) {
     const key = completionItemDedupeKey(monaco, item);
+    const existingIndex = indexByKey.get(key);
 
-    if (seen.has(key)) {
+    if (existingIndex != null) {
+      unique[existingIndex] = mergePhpCompletionItemMetadata(
+        unique[existingIndex],
+        item,
+      );
       continue;
     }
 
-    seen.add(key);
+    indexByKey.set(key, unique.length);
     unique.push(item);
   }
 
   return unique;
+}
+
+function mergePhpCompletionItemMetadata(
+  primary: Monaco.languages.CompletionItem,
+  metadata: Monaco.languages.CompletionItem,
+): Monaco.languages.CompletionItem {
+  const tags = Array.from(
+    new Set([...(primary.tags ?? []), ...(metadata.tags ?? [])]),
+  );
+
+  return {
+    ...metadata,
+    ...primary,
+    ...(metadata.commitCharacters
+      ? { commitCharacters: metadata.commitCharacters }
+      : {}),
+    ...(metadata.detail && !primary.detail ? { detail: metadata.detail } : {}),
+    ...(metadata.documentation && !primary.documentation
+      ? { documentation: metadata.documentation }
+      : {}),
+    ...(metadata.filterText ? { filterText: metadata.filterText } : {}),
+    ...(metadata.preselect ? { preselect: true } : {}),
+    ...(metadata.sortText && !primary.sortText
+      ? { sortText: metadata.sortText }
+      : {}),
+    ...(tags.length > 0 ? { tags } : {}),
+  };
 }
 
 function completionItemDedupeKey(
@@ -5164,6 +5526,7 @@ function featureRequestContext(
     | "prepareRename"
     | "references"
     | "rename"
+    | "signatureHelp"
     | "typeDefinition",
 ) {
   const request = featureDocumentRequestContext(context, model, feature);
@@ -5203,6 +5566,7 @@ function featureDocumentRequestContext(
     | "rename"
     | "selectionRange"
     | "semanticTokens"
+    | "signatureHelp"
     | "typeDefinition",
 ) {
   const activeDocument = context.getActiveDocument();
