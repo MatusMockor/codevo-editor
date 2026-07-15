@@ -83,24 +83,20 @@ interface FakeEditor {
   getSelection: ReturnType<typeof vi.fn>;
   getScrollTop: ReturnType<typeof vi.fn>;
   getTopForLineNumber: ReturnType<typeof vi.fn>;
-  cursorPositionHandler:
-    | ((event: { position: EditorPosition }) => void)
-    | null;
+  cursorPositionHandler: ((event: { position: EditorPosition }) => void) | null;
   focusEditorWidgetHandler: (() => void) | null;
   keyDownHandler: ((event: FakeKeyDownEvent) => void) | null;
   mouseDownHandler: ((event: FakeMouseDownEvent) => void) | null;
   mouseMoveHandler: ((event: FakeMouseDownEvent) => void) | null;
   modelContentChangeHandler:
-    | ((
-        event: {
-          changes: Array<{
-            range?: {
-              startLineNumber: number;
-            };
-            text: string;
-          }>;
-        },
-      ) => void)
+    | ((event: {
+        changes: Array<{
+          range?: {
+            startLineNumber: number;
+          };
+          text: string;
+        }>;
+      }) => void)
     | null;
   modelContentChangeHandlers: Array<
     (event: {
@@ -256,7 +252,10 @@ vi.mock("@monaco-editor/react", async () => {
 
   return {
     default: function MonacoEditorMock(props: {
-      onMount(editor: FakeEditor, monaco: ReturnType<typeof createMonaco>): void;
+      onMount(
+        editor: FakeEditor,
+        monaco: ReturnType<typeof createMonaco>,
+      ): void;
       options?: Record<string, unknown>;
     }) {
       const editorRef = React.useRef<FakeEditor | null>(null);
@@ -598,9 +597,7 @@ describe("EditorSurface", () => {
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
-    const foldingModel = createFoldingModel([
-      { collapsed: false, start: 1 },
-    ]);
+    const foldingModel = createFoldingModel([{ collapsed: false, start: 1 }]);
     editor.getContribution.mockImplementation((id?: string) => {
       if (id === "editor.contrib.folding") {
         return { getFoldingModel: vi.fn(async () => foldingModel) };
@@ -652,9 +649,7 @@ describe("EditorSurface", () => {
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
-    const foldingModel = createFoldingModel([
-      { collapsed: false, start: 2 },
-    ]);
+    const foldingModel = createFoldingModel([{ collapsed: false, start: 2 }]);
     editor.getContribution.mockImplementation((id?: string) => {
       if (id === "editor.contrib.folding") {
         return { getFoldingModel: vi.fn(async () => foldingModel) };
@@ -732,9 +727,7 @@ describe("EditorSurface", () => {
       uri: { fsPath: secondDocument.path, path: secondDocument.path },
     };
     const editor = createEditor(firstModel);
-    const foldingModel = createFoldingModel([
-      { collapsed: false, start: 1 },
-    ]);
+    const foldingModel = createFoldingModel([{ collapsed: false, start: 1 }]);
     let resolveFoldingModel: ((model: FakeFoldingModel) => void) | null = null;
     const foldingModelPromise = new Promise<FakeFoldingModel>((resolve) => {
       resolveFoldingModel = resolve;
@@ -1075,8 +1068,7 @@ describe("EditorSurface", () => {
 
   it("registers language-agnostic conflict actions and refreshes conflict decorations on edits", async () => {
     const activeDocument: EditorDocument = {
-      content:
-        "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
+      content: "<<<<<<< ours\ncurrent\n=======\nincoming\n>>>>>>> theirs\n",
       language: "plaintext",
       name: "notes.txt",
       path: "/workspace/notes.txt",
@@ -1164,13 +1156,11 @@ describe("EditorSurface", () => {
       path: "/workspace/templates/template.latte",
       savedContent: "",
     };
-    const lines = [
-      "{varType App\\Model\\Group $group}",
-      "",
-      "{$group->i}",
-    ];
+    const lines = ["{varType App\\Model\\Group $group}", "", "{$group->i}"];
     const model: FakeModel = {
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       uri: {
         fsPath: activeDocument.path,
         path: activeDocument.path,
@@ -1448,7 +1438,9 @@ describe("EditorSurface", () => {
 
     const context = editorSurfaceMocks.registeredContext;
 
-    expect(context?.providePhpFrameworkDefinition).toEqual(expect.any(Function));
+    expect(context?.providePhpFrameworkDefinition).toEqual(
+      expect.any(Function),
+    );
 
     await context?.providePhpFrameworkDefinition?.(
       "<?php\n$value = config('app.name');\n",
@@ -3251,7 +3243,10 @@ describe("EditorSurface", () => {
 
     editor.getModel.mockReturnValueOnce({
       ...model,
-      uri: { fsPath: "/workspace/src/other.ts", path: "/workspace/src/other.ts" },
+      uri: {
+        fsPath: "/workspace/src/other.ts",
+        path: "/workspace/src/other.ts",
+      },
     });
     expect(runner(content, 1, ["rule-a"])).toBeNull();
     model.getValue?.mockReturnValueOnce("dirty");
@@ -4099,7 +4094,8 @@ class InvoiceServiceTest extends TestCase
       ([, decorations]) =>
         decorations.some(
           (decoration: any) =>
-            decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
+            decoration.options?.glyphMarginClassName ===
+            "test-run-gutter-glyph",
         ),
     );
     expect(testDecorationCall?.[1]).toEqual(
@@ -4529,7 +4525,8 @@ class InvoiceServiceTest extends TestCase
           },
           target: {
             position,
-            type: editorSurfaceMocks.monaco!.editor.MouseTargetType.CONTENT_TEXT,
+            type: editorSurfaceMocks.monaco!.editor.MouseTargetType
+              .CONTENT_TEXT,
           },
         });
         await Promise.resolve();
@@ -6356,8 +6353,7 @@ class Foo
       ([, owner]) => owner === "php-syntax",
     );
     const markers = syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as
-      | any[]
-      | undefined;
+      any[] | undefined;
 
     expect(markers?.[0]).toMatchObject({
       message: "syntax error, unexpected end of file",
@@ -6414,7 +6410,10 @@ class Foo
           isLanguageServerDocumentSynced={vi.fn(() => true)}
           languageServerFeaturesGateway={gateway}
           languageServerRuntimeStatus={null}
-          largeSmartDocumentPolicy={{ characterLimit: 16 * 1024, lineLimit: 500 }}
+          largeSmartDocumentPolicy={{
+            characterLimit: 16 * 1024,
+            lineLimit: 500,
+          }}
           keymap={defaultKeymapSettings()}
           monacoTheme="calm-dark"
           onChange={vi.fn()}
@@ -6738,8 +6737,7 @@ class Foo
       );
 
       return syntaxMarkerCalls[syntaxMarkerCalls.length - 1]?.[2] as
-        | any[]
-        | undefined;
+        any[] | undefined;
     };
 
     await renderWith(activeDocument);
@@ -6932,7 +6930,10 @@ class Foo
 
     // Simulate a keystroke: new activeDocument object, same path + same
     // bookmarked-line identity. Bookmark gutter decorations must NOT re-map.
-    await renderWith({ ...activeDocument, content: "const one = 12;\nconst two = 2;\nconst three = 3;\n" });
+    await renderWith({
+      ...activeDocument,
+      content: "const one = 12;\nconst two = 2;\nconst three = 3;\n",
+    });
 
     expect(bookmarkDecorationCalls()).toHaveLength(0);
   });
@@ -7014,7 +7015,10 @@ class Foo
 
     // Simulate a keystroke: new activeDocument object, same path + same hunk
     // identity. Change-hunk decorations must NOT be re-mapped.
-    await renderWith({ ...activeDocument, content: "const one = 11;\nconst two = 2;\n" });
+    await renderWith({
+      ...activeDocument,
+      content: "const one = 11;\nconst two = 2;\n",
+    });
 
     expect(changeDecorationCalls()).toHaveLength(0);
   });
@@ -7205,9 +7209,7 @@ class Foo
     editorSurfaceMocks.editor = createEditor(model);
     editorSurfaceMocks.monaco = monaco;
 
-    const renderWith = async (
-      diagnostics: Record<string, unknown[]>,
-    ) => {
+    const renderWith = async (diagnostics: Record<string, unknown[]>) => {
       await act(async () => {
         root.render(
           <EditorSurface
@@ -7358,11 +7360,10 @@ class Foo
     openModels = [firstModel, secondModel];
     await renderWith(secondDocument);
 
-    const secondModelMarkerCall =
-      monaco.editor.setModelMarkers.mock.calls.find(
-        ([target, owner]) =>
-          target === secondModel && owner === "php-language-server",
-      );
+    const secondModelMarkerCall = monaco.editor.setModelMarkers.mock.calls.find(
+      ([target, owner]) =>
+        target === secondModel && owner === "php-language-server",
+    );
     expect(secondModelMarkerCall?.[2]).toHaveLength(1);
   });
 
@@ -7415,9 +7416,7 @@ class Foo
       [secondDocument.path]: unchangedSecondDiagnostics,
     });
 
-    const renderWith = async (
-      diagnostics: Record<string, unknown[]>,
-    ) => {
+    const renderWith = async (diagnostics: Record<string, unknown[]>) => {
       await act(async () => {
         root.render(
           <EditorSurface
@@ -7477,12 +7476,8 @@ class Foo
     const markerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
       ([, owner]) => owner === "php-language-server",
     );
-    expect(
-      markerCalls.some(([target]) => target === firstModel),
-    ).toBe(true);
-    expect(
-      markerCalls.some(([target]) => target === secondModel),
-    ).toBe(false);
+    expect(markerCalls.some(([target]) => target === firstModel)).toBe(true);
+    expect(markerCalls.some(([target]) => target === secondModel)).toBe(false);
   });
 
   it("re-applies markers to a model recreated for a reopened path with unchanged diagnostics", async () => {
@@ -7638,7 +7633,10 @@ class Foo
         detail: null,
         kind: 5,
         name: "Closing",
-        range: { start: { line: 0, character: 0 }, end: { line: 2, character: 1 } },
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 2, character: 1 },
+        },
         selectionRange: {
           start: { line: 0, character: 13 },
           end: { line: 0, character: 20 },
@@ -7714,7 +7712,8 @@ class Foo
     // the breadcrumb can only show stale cached symbols. If the cache was
     // pruned on close, no stale "Closing" segment is rendered.
     documentSymbolsMock.mockImplementation(
-      () => new Promise(() => undefined) as Promise<LanguageServerDocumentSymbol[]>,
+      () =>
+        new Promise(() => undefined) as Promise<LanguageServerDocumentSymbol[]>,
     );
     openModels = [closingModel];
     editorSurfaceMocks.editor = createEditor(closingModel);
@@ -7905,7 +7904,9 @@ class Foo
     expect(monaco.editor.setModelMarkers).toHaveBeenCalledWith(
       nestedModel,
       "php-language-server",
-      expect.arrayContaining([expect.objectContaining({ message: "shared warning" })]),
+      expect.arrayContaining([
+        expect.objectContaining({ message: "shared warning" }),
+      ]),
     );
     expect(editor.deltaDecorations).toHaveBeenCalledWith(expect.any(Array), []);
   });
@@ -8536,7 +8537,11 @@ class Foo
     );
 
     foldAll.run();
-    expect(editor.trigger).toHaveBeenCalledWith("keyboard", "editor.foldAll", {});
+    expect(editor.trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.foldAll",
+      {},
+    );
 
     editor.trigger.mockClear();
     unfoldAll.run();
@@ -8680,7 +8685,10 @@ class Foo
     );
 
     // From inside the first hunk, Next advances to the second hunk.
-    editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
+    editor.getPosition.mockReturnValue({
+      column: 1,
+      lineNumber: firstHunkLine,
+    });
     editor.setPosition.mockClear();
     nextChange.run();
     expect(editor.setPosition).toHaveBeenCalledWith(
@@ -8688,7 +8696,10 @@ class Foo
     );
 
     // From the second (last) hunk, Next wraps around to the first hunk.
-    editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
+    editor.getPosition.mockReturnValue({
+      column: 1,
+      lineNumber: secondHunkLine,
+    });
     editor.setPosition.mockClear();
     nextChange.run();
     expect(editor.setPosition).toHaveBeenCalledWith(
@@ -8696,7 +8707,10 @@ class Foo
     );
 
     // From the first hunk, Previous wraps around to the last hunk.
-    editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
+    editor.getPosition.mockReturnValue({
+      column: 1,
+      lineNumber: firstHunkLine,
+    });
     editor.setPosition.mockClear();
     previousChange.run();
     expect(editor.setPosition).toHaveBeenCalledWith(
@@ -8704,7 +8718,10 @@ class Foo
     );
 
     // From the last hunk, Previous steps back to the first hunk.
-    editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
+    editor.getPosition.mockReturnValue({
+      column: 1,
+      lineNumber: secondHunkLine,
+    });
     editor.setPosition.mockClear();
     previousChange.run();
     expect(editor.setPosition).toHaveBeenCalledWith(
@@ -8849,7 +8866,9 @@ class Foo
 
       expect(action).toEqual(
         expect.objectContaining({
-          keybindings: [harness.monaco.KeyMod.Alt | harness.monaco.KeyCode.Slash],
+          keybindings: [
+            harness.monaco.KeyMod.Alt | harness.monaco.KeyCode.Slash,
+          ],
           label: "Cyclic Expand Word",
         }),
       );
@@ -8901,7 +8920,10 @@ class Foo
 
       // Reflect the inserted edit + caret at the end of the inserted word, then
       // press Alt+/ again immediately: it must cycle to "fooOne".
-      harness.setBuffer("fooOne\nfooTwo\nfooTwo", "fooOne\nfooTwo\nfooTwo".length);
+      harness.setBuffer(
+        "fooOne\nfooTwo\nfooTwo",
+        "fooOne\nfooTwo\nfooTwo".length,
+      );
       harness.run();
       expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
         2,
@@ -8910,7 +8932,10 @@ class Foo
       );
 
       // After the last candidate it wraps back to the originally typed prefix.
-      harness.setBuffer("fooOne\nfooTwo\nfooOne", "fooOne\nfooTwo\nfooOne".length);
+      harness.setBuffer(
+        "fooOne\nfooTwo\nfooOne",
+        "fooOne\nfooTwo\nfooOne".length,
+      );
       harness.run();
       expect(harness.editor.executeEdits).toHaveBeenNthCalledWith(
         3,
@@ -9172,12 +9197,18 @@ class Foo
     };
     const model: FakeModel = {
       getEOL: vi.fn(() => "\n"),
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       getLineMaxColumn: vi.fn(
         (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
       ),
-      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getOptions: vi.fn(() => ({
+        indentSize: 4,
+        insertSpaces: true,
+        tabSize: 4,
+      })),
       getValueInRange: vi.fn(() => "doStuff();"),
       uri: {
         fsPath: activeDocument.path,
@@ -9242,7 +9273,9 @@ class Foo
 
     expect(surroundWithAction).toEqual(
       expect.objectContaining({
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyT],
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyT,
+        ],
         label: "Surround With",
       }),
     );
@@ -9295,12 +9328,18 @@ class Foo
     };
     const model: FakeModel = {
       getEOL: vi.fn(() => "\n"),
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       getLineMaxColumn: vi.fn(
         (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
       ),
-      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getOptions: vi.fn(() => ({
+        indentSize: 4,
+        insertSpaces: true,
+        tabSize: 4,
+      })),
       getValueInRange: vi.fn(() => "  doStuff();"),
       uri: {
         fsPath: activeDocument.path,
@@ -9410,12 +9449,18 @@ class Foo
     };
     const model: FakeModel = {
       getEOL: vi.fn(() => "\n"),
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       getLineMaxColumn: vi.fn(
         (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
       ),
-      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getOptions: vi.fn(() => ({
+        indentSize: 4,
+        insertSpaces: true,
+        tabSize: 4,
+      })),
       getValueInRange: vi.fn(() => "doStuff();"),
       uri: {
         fsPath: activeDocument.path,
@@ -9510,7 +9555,7 @@ class Foo
   });
 
   it("inserts unescaped wrapped text when the snippet controller is unavailable", async () => {
-    const lines = ['$total = $price * $qty;'];
+    const lines = ["$total = $price * $qty;"];
     const activeDocument: EditorDocument = {
       content: `${lines.join("\n")}\n`,
       language: "php",
@@ -9520,13 +9565,19 @@ class Foo
     };
     const model: FakeModel = {
       getEOL: vi.fn(() => "\n"),
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       getLineMaxColumn: vi.fn(
         (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
       ),
-      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
-      getValueInRange: vi.fn(() => '$total = $price * $qty;'),
+      getOptions: vi.fn(() => ({
+        indentSize: 4,
+        insertSpaces: true,
+        tabSize: 4,
+      })),
+      getValueInRange: vi.fn(() => "$total = $price * $qty;"),
       uri: {
         fsPath: activeDocument.path,
         path: activeDocument.path,
@@ -9538,7 +9589,7 @@ class Foo
     // and insert plain, UN-escaped text (no leftover snippet escaping).
     editor.getContribution.mockReturnValue(null);
     editor.getSelection.mockReturnValue({
-      endColumn: '$total = $price * $qty;'.length + 1,
+      endColumn: "$total = $price * $qty;".length + 1,
       endLineNumber: 1,
       startColumn: 1,
       startLineNumber: 1,
@@ -9603,18 +9654,13 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.surroundWith",
-      [
-        expect.objectContaining({
-          text: [
-            "if (condition) {",
-            "    $total = $price * $qty;",
-            "}",
-          ].join("\n"),
-        }),
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.surroundWith", [
+      expect.objectContaining({
+        text: ["if (condition) {", "    $total = $price * $qty;", "}"].join(
+          "\n",
+        ),
+      }),
+    ]);
   });
 
   it("preserves literal snippet markers in the fallback wrapped text", async () => {
@@ -9632,12 +9678,18 @@ class Foo
     };
     const model: FakeModel = {
       getEOL: vi.fn(() => "\n"),
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       getLineMaxColumn: vi.fn(
         (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
       ),
-      getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+      getOptions: vi.fn(() => ({
+        indentSize: 4,
+        insertSpaces: true,
+        tabSize: 4,
+      })),
       getValueInRange: vi.fn(() => selected),
       uri: {
         fsPath: activeDocument.path,
@@ -9713,18 +9765,11 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith(
-      "mockor.surroundWith",
-      [
-        expect.objectContaining({
-          text: [
-            "if (condition) {",
-            `    ${selected}`,
-            "}",
-          ].join("\n"),
-        }),
-      ],
-    );
+    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.surroundWith", [
+      expect.objectContaining({
+        text: ["if (condition) {", `    ${selected}`, "}"].join("\n"),
+      }),
+    ]);
   });
 
   it("appends a semicolon and moves the caret on Complete Current Statement", async () => {
@@ -9743,12 +9788,15 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.completeStatement", [
-      expect.objectContaining({
-        range: expect.objectContaining({ startLineNumber: 1 }),
-        text: "        $total = $price * $qty;",
-      }),
-    ]);
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "mockor.completeStatement",
+      [
+        expect.objectContaining({
+          range: expect.objectContaining({ startLineNumber: 1 }),
+          text: "        $total = $price * $qty;",
+        }),
+      ],
+    );
     expect(editor.setPosition).toHaveBeenCalledWith({
       column: "        $total = $price * $qty;".length + 1,
       lineNumber: 1,
@@ -9771,9 +9819,10 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.executeEdits).toHaveBeenCalledWith("mockor.completeStatement", [
-      expect.objectContaining({ text: "$this->repo->save(1, 2);" }),
-    ]);
+    expect(editor.executeEdits).toHaveBeenCalledWith(
+      "mockor.completeStatement",
+      [expect.objectContaining({ text: "$this->repo->save(1, 2);" })],
+    );
   });
 
   it("opens a brace block via the snippet controller for a control header", async () => {
@@ -9806,7 +9855,11 @@ class Foo
 
   it("does nothing on Complete Current Statement for a non-PHP document", async () => {
     const lines = ["const total = price * qty"];
-    const { editor } = await mountCompleteStatementSurface(root, lines, "typescript");
+    const { editor } = await mountCompleteStatementSurface(
+      root,
+      lines,
+      "typescript",
+    );
 
     editor.getPosition.mockReturnValue({
       column: lines[0].length + 1,
@@ -9883,12 +9936,9 @@ class Foo
           startLineNumber: 1,
           endLineNumber: 4,
         }),
-        text: [
-          "if ($ready) {",
-          "    doStuff();",
-          "}",
-          "$before = 1;",
-        ].join("\n"),
+        text: ["if ($ready) {", "    doStuff();", "}", "$before = 1;"].join(
+          "\n",
+        ),
       }),
     ]);
     expect(editor.setPosition).toHaveBeenCalledWith({
@@ -10067,6 +10117,168 @@ class Foo
     );
   });
 
+  it("registers reference shortcuts and preserves Monaco fallbacks without a command runner", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          keymap: defaultKeymapSettings("mac"),
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const findReferencesAction = actions.find(
+      (action) => action.id === "mockor.findReferences",
+    );
+    const findFileReferencesAction = actions.find(
+      (action) => action.id === "mockor.findFileReferences",
+    );
+
+    expect(findReferencesAction).toEqual(
+      expect.objectContaining({
+        keybindingContext:
+          "!referenceSearchVisible && !inReferenceSearchEditor",
+        keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F12],
+      }),
+    );
+    expect(findFileReferencesAction).toEqual(
+      expect.objectContaining({
+        keybindings: [
+          monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.F12,
+        ],
+      }),
+    );
+
+    findReferencesAction?.run();
+    findFileReferencesAction?.run();
+
+    expect(editor.trigger).toHaveBeenNthCalledWith(
+      1,
+      "keyboard",
+      "editor.action.goToReferences",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenNthCalledWith(
+      2,
+      "keyboard",
+      "editor.action.peekImplementation",
+      {},
+    );
+  });
+
+  it.each<CommandExecutionOutcome>(["executed", "disabled"])(
+    "suppresses reference fallbacks when registry commands are %s",
+    async (outcome) => {
+      const activeDocument: EditorDocument = {
+        content: "const value = 1;\n",
+        language: "typescript",
+        name: "example.ts",
+        path: "/workspace/src/example.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: { fsPath: activeDocument.path, path: activeDocument.path },
+      };
+      const editor = createEditor(model);
+      const runCommand = vi.fn(
+        (_commandId: string): CommandExecutionOutcome => outcome,
+      );
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = createMonaco(model);
+
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(activeDocument),
+            runCommand,
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      const actions = editor.addAction.mock.calls.map(([action]) => action);
+      actions.find((action) => action.id === "mockor.findReferences")?.run();
+      actions
+        .find((action) => action.id === "mockor.findFileReferences")
+        ?.run();
+
+      expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
+        "editor.findReferences",
+        "editor.findFileReferences",
+      ]);
+      expect(editor.trigger).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves reference fallbacks when registry commands are missing", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const runCommand = vi.fn(
+      (_commandId: string): CommandExecutionOutcome => "missing",
+    );
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          runCommand,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    actions.find((action) => action.id === "mockor.findReferences")?.run();
+    actions.find((action) => action.id === "mockor.findFileReferences")?.run();
+
+    expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
+      "editor.findReferences",
+      "editor.findFileReferences",
+    ]);
+    expect(editor.trigger).toHaveBeenNthCalledWith(
+      1,
+      "keyboard",
+      "editor.action.goToReferences",
+      {},
+    );
+    expect(editor.trigger).toHaveBeenNthCalledWith(
+      2,
+      "keyboard",
+      "editor.action.peekImplementation",
+      {},
+    );
+  });
+
   it("falls back only for missing registry outcomes", async () => {
     stubNavigatorPlatform("MacIntel");
 
@@ -10084,9 +10296,8 @@ class Foo
     const editor = createEditor(model);
     const onCloseActiveTab = vi.fn();
     const onGoBack = vi.fn();
-    const runCommand = vi.fn(
-      (commandId: string): CommandExecutionOutcome =>
-        commandId === "editor.closeTab" ? "disabled" : "missing",
+    const runCommand = vi.fn((commandId: string): CommandExecutionOutcome =>
+      commandId === "editor.closeTab" ? "disabled" : "missing",
     );
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = monaco;
@@ -11006,9 +11217,9 @@ class Foo
     });
 
     act(() => {
-      host.querySelector<HTMLElement>(".editor-panel")?.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true }),
-      );
+      host
+        .querySelector<HTMLElement>(".editor-panel")
+        ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     });
 
     expect(onEditorFocused).toHaveBeenCalled();
@@ -11035,7 +11246,9 @@ class Foo
       savedContent: "",
     };
     const model: FakeModel = {
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       uri: {
         fsPath: activeDocument.path,
@@ -11134,7 +11347,9 @@ class Foo
       savedContent: "",
     };
     const model: FakeModel = {
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       uri: {
         fsPath: activeDocument.path,
@@ -11234,7 +11449,9 @@ class Foo
       savedContent: "",
     };
     const model: FakeModel = {
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       uri: {
         fsPath: activeDocument.path,
@@ -11342,7 +11559,9 @@ class Foo
       savedContent: "",
     };
     const model: FakeModel = {
-      getLineContent: vi.fn((lineNumber: number) => lines[lineNumber - 1] ?? ""),
+      getLineContent: vi.fn(
+        (lineNumber: number) => lines[lineNumber - 1] ?? "",
+      ),
       getLineCount: vi.fn(() => lines.length),
       uri: {
         fsPath: activeDocument.path,
@@ -11535,8 +11754,12 @@ class Foo
     expect(popover.classList.contains("editor-change-popover-modified")).toBe(
       true,
     );
-    expect(popover.querySelector(".editor-change-popover-code-removed")).not.toBeNull();
-    expect(popover.querySelector(".editor-change-popover-code-added")).not.toBeNull();
+    expect(
+      popover.querySelector(".editor-change-popover-code-removed"),
+    ).not.toBeNull();
+    expect(
+      popover.querySelector(".editor-change-popover-code-added"),
+    ).not.toBeNull();
     expect(popover.style.left).toBe("92px");
     expect(popover.style.top).toBe("56px");
 
@@ -12087,7 +12310,10 @@ class Foo
           languageServerDiagnosticsByPath={{}}
           languageServerFeaturesGateway={languageServerFeaturesGateway()}
           languageServerRuntimeStatus={null}
-          largeSmartDocumentPolicy={{ characterLimit: 16 * 1024, lineLimit: 500 }}
+          largeSmartDocumentPolicy={{
+            characterLimit: 16 * 1024,
+            lineLimit: 500,
+          }}
           keymap={defaultKeymapSettings()}
           monacoTheme="calm-dark"
           onChange={vi.fn()}
@@ -12554,9 +12780,8 @@ class Foo
       await Promise.resolve();
     });
 
-    const loading = (
-      editorSurfaceMocks.props as { loading?: unknown } | null
-    )?.loading;
+    const loading = (editorSurfaceMocks.props as { loading?: unknown } | null)
+      ?.loading;
     expect(loading).not.toBeNull();
     expect(loading).toBeDefined();
   });
@@ -12614,7 +12839,7 @@ class Foo
   });
 
   it.each([1, 2, 4])(
-    "keeps 43 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
+    "keeps 45 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
     async (paneCount) => {
       const activeDocument: EditorDocument = {
         content: "const value = 1;\n",
@@ -12658,8 +12883,7 @@ class Foo
               key: `pane-${paneIndex}`,
               keymap,
               onGoBack: () => goBack(revision, paneIndex),
-              onGoToDefinition: () =>
-                goToDefinition(revision, paneIndex),
+              onGoToDefinition: () => goToDefinition(revision, paneIndex),
             }),
           ),
         );
@@ -12671,7 +12895,7 @@ class Foo
       });
 
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(43);
+        expect(editor.addAction).toHaveBeenCalledTimes(45);
       });
 
       await act(async () => {
@@ -12681,7 +12905,7 @@ class Foo
       });
 
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(43);
+        expect(editor.addAction).toHaveBeenCalledTimes(45);
       });
       for (const [paneIndex, editor] of editors.entries()) {
         const actions = editor.addAction.mock.calls.map(([action]) => action);
@@ -12707,7 +12931,7 @@ class Foo
       });
 
       actionDisposersByPane.forEach((actionDisposers) => {
-        expect(actionDisposers).toHaveLength(43);
+        expect(actionDisposers).toHaveLength(45);
         actionDisposers.forEach((dispose) => {
           expect(dispose).toHaveBeenCalledTimes(1);
         });
@@ -12755,7 +12979,7 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(43);
+    expect(editor.addAction).toHaveBeenCalledTimes(45);
 
     await act(async () => {
       root.render(
@@ -12765,11 +12989,11 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(86);
-    actionDisposers.slice(0, 43).forEach((dispose) => {
+    expect(editor.addAction).toHaveBeenCalledTimes(90);
+    actionDisposers.slice(0, 45).forEach((dispose) => {
       expect(dispose).toHaveBeenCalledTimes(1);
     });
-    actionDisposers.slice(43).forEach((dispose) => {
+    actionDisposers.slice(45).forEach((dispose) => {
       expect(dispose).not.toHaveBeenCalled();
     });
 
@@ -12831,7 +13055,10 @@ class Foo
     };
     let modelValue = "";
     const placeholderModel: FakeModel = {
-      uri: { fsPath: "/workspace/.placeholder", path: "/workspace/.placeholder" },
+      uri: {
+        fsPath: "/workspace/.placeholder",
+        path: "/workspace/.placeholder",
+      },
     };
     const activeModel: FakeModel = {
       getValue: vi.fn(() => modelValue),
@@ -12893,18 +13120,18 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(
-      (editorSurfaceMocks.props as { value?: string } | null)?.value,
-    ).toBe(initialDocument.content);
+    expect((editorSurfaceMocks.props as { value?: string } | null)?.value).toBe(
+      initialDocument.content,
+    );
 
     await act(async () => {
       renderSurface(updatedDocument);
       await Promise.resolve();
     });
 
-    expect(
-      (editorSurfaceMocks.props as { value?: string } | null)?.value,
-    ).toBe(updatedDocument.content);
+    expect((editorSurfaceMocks.props as { value?: string } | null)?.value).toBe(
+      updatedDocument.content,
+    );
   });
 
   it("invokes the focus handler the parent supplies for the active file reveal signal", async () => {
@@ -13169,9 +13396,7 @@ class Foo
     });
 
     const optionsBefore = editorSurfaceMocks.props?.options;
-    expect(optionsBefore).toEqual(
-      expect.objectContaining({ fontSize: 14 }),
-    );
+    expect(optionsBefore).toEqual(expect.objectContaining({ fontSize: 14 }));
 
     await act(async () => {
       root.render(
@@ -13589,7 +13814,12 @@ class Foo
     editorSurfaceMocks.monaco = monaco;
     const now = Math.floor(Date.now() / 1000);
     const provideGitBlame = vi.fn(async () => [
-      { author: "Alice", lineNumber: 1, sha: "1a2b3c4", timestamp: now - 86400 },
+      {
+        author: "Alice",
+        lineNumber: 1,
+        sha: "1a2b3c4",
+        timestamp: now - 86400,
+      },
       { author: "Bob", lineNumber: 2, sha: "f0e1d2c", timestamp: now - 7200 },
     ]);
 
@@ -13636,7 +13866,8 @@ class Foo
       ([, decorations]) =>
         decorations.some(
           (decoration: any) =>
-            decoration.options?.before?.inlineClassName === "git-blame-annotation",
+            decoration.options?.before?.inlineClassName ===
+            "git-blame-annotation",
         ),
     );
     expect(blameCall?.[1]).toEqual(
@@ -13718,7 +13949,8 @@ class Foo
       ([, decorations]) =>
         decorations.some(
           (decoration: any) =>
-            decoration.options?.before?.inlineClassName === "git-blame-annotation",
+            decoration.options?.before?.inlineClassName ===
+            "git-blame-annotation",
         ),
     );
     expect(blameCall).toBeUndefined();
@@ -13859,7 +14091,14 @@ class Foo
     const now = Math.floor(Date.now() / 1000);
     const provideGitBlame = vi.fn(async (path: string) =>
       path === first.path
-        ? [{ author: "Stale", lineNumber: 1, sha: "1111111", timestamp: now - 60 }]
+        ? [
+            {
+              author: "Stale",
+              lineNumber: 1,
+              sha: "1111111",
+              timestamp: now - 60,
+            },
+          ]
         : [],
     );
 
@@ -14126,7 +14365,10 @@ function memoGuardSurface(
     onEditorFocused: () => void;
   }> = {},
 ): ReactNode {
-  return createElement(EditorSurface, memoGuardProps(activeDocument, overrides));
+  return createElement(
+    EditorSurface,
+    memoGuardProps(activeDocument, overrides),
+  );
 }
 
 // A single, referentially stable prop bag so that an unrelated parent re-render
@@ -14160,7 +14402,11 @@ async function mountCompleteStatementSurface(
     getLineMaxColumn: vi.fn(
       (lineNumber: number) => (lines[lineNumber - 1]?.length ?? 0) + 1,
     ),
-    getOptions: vi.fn(() => ({ indentSize: 4, insertSpaces: true, tabSize: 4 })),
+    getOptions: vi.fn(() => ({
+      indentSize: 4,
+      insertSpaces: true,
+      tabSize: 4,
+    })),
     getValue: vi.fn(() => `${lines.join("\n")}\n`),
     getValueInRange: vi.fn(() => ""),
     uri: { fsPath: path, path },
@@ -14271,8 +14517,7 @@ function captureIdleCallbacks() {
     pending: () => queue.size,
     runNext: () => {
       const entry = queue.entries().next().value as
-        | [number, () => void]
-        | undefined;
+        [number, () => void] | undefined;
       if (!entry) {
         return;
       }
@@ -14357,19 +14602,17 @@ function createEditor(model: FakeModel): FakeEditor {
     onDidChangeContent?: (handler: () => void) => { dispose(): void };
   };
   if (!contentObservableModel.onDidChangeContent) {
-    contentObservableModel.onDidChangeContent = vi.fn(
-      (handler: () => void) => {
-        modelContentHandlers.push(handler);
-        return {
-          dispose: vi.fn(() => {
-            const index = modelContentHandlers.indexOf(handler);
-            if (index >= 0) {
-              modelContentHandlers.splice(index, 1);
-            }
-          }),
-        };
-      },
-    );
+    contentObservableModel.onDidChangeContent = vi.fn((handler: () => void) => {
+      modelContentHandlers.push(handler);
+      return {
+        dispose: vi.fn(() => {
+          const index = modelContentHandlers.indexOf(handler);
+          if (index >= 0) {
+            modelContentHandlers.splice(index, 1);
+          }
+        }),
+      };
+    });
   }
 
   let selection: {
@@ -14391,8 +14634,8 @@ function createEditor(model: FakeModel): FakeEditor {
   // navigation via `gotoDefinitionContributionNavigate`. After the surface
   // patches it, invoking the method must NOT record a navigation.
   const gotoDefinitionContributionDispose = vi.fn();
-  const gotoDefinitionContributionNavigate = vi.fn(
-    (..._args: unknown[]) => Promise.resolve(),
+  const gotoDefinitionContributionNavigate = vi.fn((..._args: unknown[]) =>
+    Promise.resolve(),
   );
   const gotoDefinitionContribution: {
     dispose: typeof gotoDefinitionContributionDispose;
@@ -14586,6 +14829,7 @@ function createMonaco(model: FakeModel) {
       Equal: 86,
       F2: 60,
       F5: 63,
+      F12: 69,
       KeyB: 1,
       KeyD: 12,
       KeyF: 10,
@@ -14728,7 +14972,9 @@ function deferred<T>(): {
   return { promise, reject, resolve };
 }
 
-function latestTypeScriptModeConfiguration(monaco: ReturnType<typeof createMonaco>) {
+function latestTypeScriptModeConfiguration(
+  monaco: ReturnType<typeof createMonaco>,
+) {
   const calls =
     monaco.languages.typescript.typescriptDefaults.setModeConfiguration.mock
       .calls;

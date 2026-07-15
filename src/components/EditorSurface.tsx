@@ -54,9 +54,7 @@ import type {
   LanguageServerWorkspaceEdit,
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
-import {
-  breadcrumbPathFromCursorAndSymbols,
-} from "../domain/breadcrumbs";
+import { breadcrumbPathFromCursorAndSymbols } from "../domain/breadcrumbs";
 import {
   BackgroundTokenizer,
   idleCallbackScheduler,
@@ -141,9 +139,7 @@ import {
   type MonacoAppTheme,
   type WorkspaceSessionViewState,
 } from "../domain/settings";
-import {
-  type JavaScriptTypeScriptWorkspaceEditApplicationContext,
-} from "./javascriptTypescriptLanguageServerMonacoProviders";
+import { type JavaScriptTypeScriptWorkspaceEditApplicationContext } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
   type PhpCodeActionDescriptor,
   type PhpCodeActionNewFile,
@@ -291,7 +287,9 @@ export interface EditorSurfaceProps {
     path: string,
     viewState: WorkspaceSessionViewState,
   ): void;
-  onEditorMenuCommandRunnerChange?(runner: EditorMenuCommandRunner | null): void;
+  onEditorMenuCommandRunnerChange?(
+    runner: EditorMenuCommandRunner | null,
+  ): void;
   onEditorSurfaceCommandRunnerChange?(
     runner: EditorSurfaceCommandRunner | null,
   ): void;
@@ -443,7 +441,8 @@ function EditorSurfaceComponent({
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
   changeHunks,
   editorRevealTarget,
-  flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
+  flushPendingJavaScriptTypeScriptLanguageServerDocument = async () =>
+    undefined,
   flushPendingLanguageServerDocument,
   formatOnPaste = false,
   gitBlameEnabled = false,
@@ -595,7 +594,9 @@ function EditorSurfaceComponent({
   const previousActiveDocumentPathRef = useRef<string | null>(
     activeDocument?.path ?? null,
   );
-  const previousTransientWidgetDismissKeyRef = useRef(transientWidgetDismissKey);
+  const previousTransientWidgetDismissKeyRef = useRef(
+    transientWidgetDismissKey,
+  );
   // Warms TextMate tokens for the active model on idle, off the synchronous
   // reveal/jump path, so a far Cmd+B / click / scroll after open reads cached
   // tokens instead of forcing a main-thread tokenization burst (cold-start lag).
@@ -648,7 +649,9 @@ function EditorSurfaceComponent({
   // waiting for the debounced recompute, which would otherwise leave stale glyphs
   // or duplicate them when revisiting a file. null means no glyphs are applied.
   const implementationGutterDecoratedPathRef = useRef<string | null>(null);
-  const implementationGutterTargetsRef = useRef(new Map<number, EditorPosition>());
+  const implementationGutterTargetsRef = useRef(
+    new Map<number, EditorPosition>(),
+  );
   const testGutterDecorationIdsRef = useRef<string[]>([]);
   // The path whose glyphs currently occupy testGutterDecorationIdsRef (see the
   // implementation-gutter counterpart for why the debounced recompute needs a
@@ -870,7 +873,8 @@ function EditorSurfaceComponent({
   }, [isLanguageServerDocumentSynced]);
 
   useEffect(() => {
-    languageServerDiagnosticsByPathRef.current = languageServerDiagnosticsByPath;
+    languageServerDiagnosticsByPathRef.current =
+      languageServerDiagnosticsByPath;
   }, [languageServerDiagnosticsByPath]);
 
   useEffect(() => {
@@ -926,22 +930,30 @@ function EditorSurfaceComponent({
     const model = editorApi.getModel();
     const position = editorApi.getPosition();
 
-    if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !position ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
     const source = model.getValue();
     const isPhpCompletionContext = Boolean(
       phpMemberAccessCompletionContextAt(source, position) ||
-        phpStaticAccessCompletionContextAt(source, position) ||
-        phpFrameworkStringCompletionContextRef.current(source, position),
+      phpStaticAccessCompletionContextAt(source, position) ||
+      phpFrameworkStringCompletionContextRef.current(source, position),
     );
 
     if (!isPhpCompletionContext) {
       return;
     }
 
-    editorApi.trigger("mockor.phpIdeReadiness", "editor.action.triggerSuggest", {});
+    editorApi.trigger(
+      "mockor.phpIdeReadiness",
+      "editor.action.triggerSuggest",
+      {},
+    );
     // Re-key on the active document's *path* + *language* (stable strings), not
     // its object identity. `activeDocument` is replaced with a fresh
     // `{ ...doc, content }` on every keystroke; depending on the whole object
@@ -991,7 +1003,12 @@ function EditorSurfaceComponent({
     return () => {
       onEditorMenuCommandRunnerChange(null);
     };
-  }, [activeDocument?.path, editorApi, onEditorMenuCommandRunnerChange, workspaceRoot]);
+  }, [
+    activeDocument?.path,
+    editorApi,
+    onEditorMenuCommandRunnerChange,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!onEditorSurfaceCommandRunnerChange) {
@@ -1020,7 +1037,12 @@ function EditorSurfaceComponent({
     return () => {
       onEditorSurfaceCommandRunnerChange(null);
     };
-  }, [activeDocument?.path, editorApi, onEditorSurfaceCommandRunnerChange, workspaceRoot]);
+  }, [
+    activeDocument?.path,
+    editorApi,
+    onEditorSurfaceCommandRunnerChange,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!onEditorSurfaceBufferFixRunnerChange) {
@@ -1212,11 +1234,7 @@ function EditorSurfaceComponent({
 
   const recoverVisibleLocalPhpDiagnostics = useCallback(
     (uris: readonly Monaco.Uri[] = []) => {
-      if (
-        !activeDocument ||
-        activeDocument.language !== "php" ||
-        !monacoApi
-      ) {
+      if (!activeDocument || activeDocument.language !== "php" || !monacoApi) {
         return;
       }
 
@@ -1412,8 +1430,7 @@ function EditorSurfaceComponent({
       getActiveDocument: () => activeDocumentRef.current,
       getWorkspaceRoot: () => workspaceRootRef.current,
       openWorkspaceFile: (path, request) =>
-        openWorkspaceFileRef.current?.(path, request) ??
-        Promise.resolve(false),
+        openWorkspaceFileRef.current?.(path, request) ?? Promise.resolve(false),
       openWorkspaceRoot: (path) =>
         openWorkspaceRootRef.current?.(path) ?? Promise.resolve(false),
       provideBladeDefinition: (source, offset, request) =>
@@ -1535,7 +1552,10 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
@@ -1694,14 +1714,14 @@ function EditorSurfaceComponent({
         }
 
         const symbols = await load();
-          if (!active) {
-            return;
-          }
+        if (!active) {
+          return;
+        }
 
-          setBreadcrumbSymbolsByPath((current) => ({
-            ...current,
-            [requestedPath]: symbols,
-          }));
+        setBreadcrumbSymbolsByPath((current) => ({
+          ...current,
+          [requestedPath]: symbols,
+        }));
       } catch (error) {
         if (active) {
           errorReporterRef.current(error);
@@ -1767,7 +1787,11 @@ function EditorSurfaceComponent({
       const model = editorApi.getModel();
       const position = editorApi.getPosition();
 
-      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocumentPath)) {
+      if (
+        !model ||
+        !position ||
+        !modelMatchesProject(model, workspaceRoot, activeDocumentPath)
+      ) {
         return;
       }
 
@@ -1790,7 +1814,12 @@ function EditorSurfaceComponent({
     });
 
     return () => disposable.dispose();
-  }, [activeDocument?.language, activeDocument?.path, editorApi, workspaceRoot]);
+  }, [
+    activeDocument?.language,
+    activeDocument?.path,
+    editorApi,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!activeDocument || !editorApi || !monacoApi) {
@@ -1816,7 +1845,11 @@ function EditorSurfaceComponent({
       const model = editorApi.getModel();
       const position = editorApi.getPosition();
 
-      if (!model || !position || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (
+        !model ||
+        !position ||
+        !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+      ) {
         return;
       }
 
@@ -1924,6 +1957,35 @@ function EditorSurfaceComponent({
             commandExecutionRunnerRef,
             "editor.goToSuperMethod",
             () => editorActionCommandPortRef.current.goToSuperMethod(),
+          ),
+      }),
+      editorApi.addAction({
+        id: "mockor.findReferences",
+        label: "Find All References",
+        keybindingContext:
+          "!referenceSearchVisible && !inReferenceSearchEditor",
+        keybindings: keybinding("editor.findReferences"),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.findReferences",
+            () =>
+              triggerEditorAction(editorApi, "editor.action.goToReferences"),
+          ),
+      }),
+      editorApi.addAction({
+        id: "mockor.findFileReferences",
+        label: "Find File References",
+        keybindings: keybinding("editor.findFileReferences"),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.findFileReferences",
+            () =>
+              triggerEditorAction(
+                editorApi,
+                "editor.action.peekImplementation",
+              ),
           ),
       }),
       editorApi.addAction({
@@ -2077,7 +2139,8 @@ function EditorSurfaceComponent({
             return;
           }
 
-          columnSelectionEnabledRef.current = !columnSelectionEnabledRef.current;
+          columnSelectionEnabledRef.current =
+            !columnSelectionEnabledRef.current;
           editorApi.updateOptions({
             columnSelection: columnSelectionEnabledRef.current,
           });
@@ -2148,8 +2211,7 @@ function EditorSurfaceComponent({
         id: "mockor.deleteLine",
         label: "Delete Line",
         keybindings: keybinding("editor.deleteLine"),
-        run: () =>
-          triggerEditorAction(editorApi, "editor.action.deleteLines"),
+        run: () => triggerEditorAction(editorApi, "editor.action.deleteLines"),
       }),
       editorApi.addAction({
         id: "mockor.joinLines",
@@ -2280,8 +2342,7 @@ function EditorSurfaceComponent({
         id: "mockor.nextChange",
         label: "Go to Next Change",
         keybindings: keybinding("editor.nextChange"),
-        run: () =>
-          jumpToChangeHunk(editorApi, changeHunksRef.current, "next"),
+        run: () => jumpToChangeHunk(editorApi, changeHunksRef.current, "next"),
       }),
       editorApi.addAction({
         id: "mockor.previousChange",
@@ -2302,10 +2363,14 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const disposables = registerConflictMarkerCodeActions(monacoApi, editorApi, {
-      shouldInspectModel: (model) =>
-        !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current),
-    });
+    const disposables = registerConflictMarkerCodeActions(
+      monacoApi,
+      editorApi,
+      {
+        shouldInspectModel: (model) =>
+          !isLargeSmartModel(model, largeSmartDocumentPolicyRef.current),
+      },
+    );
 
     return () => {
       disposables.forEach((disposable) => disposable.dispose());
@@ -2445,11 +2510,7 @@ function EditorSurfaceComponent({
         (isLeftClick && definitionModifierPressed) || isMiddleClick;
       const contentPosition = event.target.position;
 
-      if (
-        isContentText &&
-        shouldNavigateToDefinition &&
-        contentPosition
-      ) {
+      if (isContentText && shouldNavigateToDefinition && contentPosition) {
         event.event.preventDefault();
         event.event.stopPropagation();
         editorApi.setPosition(contentPosition);
@@ -2593,7 +2654,10 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
@@ -2627,7 +2691,10 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
@@ -2670,7 +2737,10 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
@@ -2717,9 +2787,7 @@ function EditorSurfaceComponent({
         gitBlameLinesRef.current = blameLines;
         gitBlameDecorationIdsRef.current = editorApi.deltaDecorations(
           gitBlameDecorationIdsRef.current,
-          blameLines.map((line) =>
-            toGitBlameDecoration(monacoApi, line, now),
-          ),
+          blameLines.map((line) => toGitBlameDecoration(monacoApi, line, now)),
         );
         gitBlameDecoratedPathRef.current = requestedPath;
       })
@@ -2832,18 +2900,16 @@ function EditorSurfaceComponent({
                 inspectionDiagnostics: immediateInspectionDiagnostics,
                 syntaxDiagnostics: immediateSyntaxDiagnostics,
               },
-              result: phpSyntaxDiagnosticsGateway.validate(content).then(
-                (diagnostics) => ({
+              result: phpSyntaxDiagnosticsGateway
+                .validate(content)
+                .then((diagnostics) => ({
                   inspectionDiagnostics: immediateInspectionDiagnostics,
                   syntaxDiagnostics: [
                     ...diagnostics,
-                    ...(diagnostics.length === 0
-                      ? structuralDiagnostics
-                      : []),
+                    ...(diagnostics.length === 0 ? structuralDiagnostics : []),
                     ...suspiciousDiagnostics,
                   ],
-                }),
-              ),
+                })),
             };
           },
         );
@@ -2915,7 +2981,10 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
@@ -2952,7 +3021,10 @@ function EditorSurfaceComponent({
 
     const liveModel = editorApi.getModel();
 
-    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)) {
+    if (
+      !liveModel ||
+      !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)
+    ) {
       return;
     }
 
@@ -3004,7 +3076,10 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
@@ -3045,7 +3120,10 @@ function EditorSurfaceComponent({
 
     const liveModel = editorApi.getModel();
 
-    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)) {
+    if (
+      !liveModel ||
+      !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)
+    ) {
       return;
     }
 
@@ -3112,8 +3190,7 @@ function EditorSurfaceComponent({
     }
 
     if (
-      previousTransientWidgetDismissKeyRef.current ===
-      transientWidgetDismissKey
+      previousTransientWidgetDismissKeyRef.current === transientWidgetDismissKey
     ) {
       return;
     }
@@ -3191,7 +3268,10 @@ function EditorSurfaceComponent({
     const syncActiveModelContent = () => {
       const model = editorApi.getModel();
 
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (
+        !model ||
+        !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+      ) {
         return;
       }
 
@@ -3237,7 +3317,10 @@ function EditorSurfaceComponent({
     const activeModel = () => {
       const model = editorApi.getModel();
 
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (
+        !model ||
+        !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+      ) {
         return null;
       }
 
@@ -3400,7 +3483,10 @@ function EditorSurfaceComponent({
     const captureViewState = async () => {
       const model = editorApi.getModel();
 
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (
+        !model ||
+        !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+      ) {
         return;
       }
 
@@ -3492,7 +3578,10 @@ function EditorSurfaceComponent({
 
       const model = editorApi.getModel();
 
-      if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      if (
+        !model ||
+        !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+      ) {
         return;
       }
 
@@ -3566,7 +3655,9 @@ function EditorSurfaceComponent({
         .getModels()
         .filter((model) => {
           const path = modelPath(model);
-          return Boolean(path && modelMatchesProject(model, workspaceRoot, path));
+          return Boolean(
+            path && modelMatchesProject(model, workspaceRoot, path),
+          );
         })
         .map((model) => modelPath(model))
         .filter((path): path is string => path !== null),
@@ -3620,7 +3711,10 @@ function EditorSurfaceComponent({
 
     const model = editorApi.getModel();
 
-    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+    if (
+      !model ||
+      !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+    ) {
       return;
     }
 
@@ -3628,11 +3722,11 @@ function EditorSurfaceComponent({
       languageServerDiagnosticsByPath[activeDocument.path] ?? [];
     const syntaxDiagnostics =
       activeDocument.language === "php"
-        ? syntaxDiagnosticsByPath[activeDocument.path] ?? []
+        ? (syntaxDiagnosticsByPath[activeDocument.path] ?? [])
         : [];
     const phpInspectionDiagnosticCount =
       activeDocument.language === "php"
-        ? phpInspectionDiagnosticCountsByPath[activeDocument.path] ?? 0
+        ? (phpInspectionDiagnosticCountsByPath[activeDocument.path] ?? 0)
         : 0;
 
     // Monaco's content hover widget is mouse-driven and is NOT dismissed when its
@@ -3713,10 +3807,7 @@ function EditorSurfaceComponent({
       return;
     }
 
-    if (
-      activeDocument.language === "php" &&
-      !activeDocumentIsLargeSmart
-    ) {
+    if (activeDocument.language === "php" && !activeDocumentIsLargeSmart) {
       return;
     }
 
@@ -3784,7 +3875,7 @@ function EditorSurfaceComponent({
   }, [applyLocalPhpDiagnostics, monacoApi, phpEditTick]);
 
   const breadcrumbSymbols = activeDocument
-    ? breadcrumbSymbolsByPath[activeDocument.path] ?? EMPTY_BREADCRUMB_SYMBOLS
+    ? (breadcrumbSymbolsByPath[activeDocument.path] ?? EMPTY_BREADCRUMB_SYMBOLS)
     : EMPTY_BREADCRUMB_SYMBOLS;
   // Recomputed only when the cursor actually moves (line OR column) or the
   // symbols change, so a re-render that leaves all three stable hands the same
@@ -3893,65 +3984,66 @@ function EditorSurfaceComponent({
   // moves keeps @monaco-editor/react's memo intact, so it stops calling
   // editor.updateOptions (deep clone + ~170 comparisons) on each cursor event,
   // while a genuine settings/font change still recomputes and is applied.
-  const editorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(
-    () => ({
-      autoIndent: "full",
-      automaticLayout: true,
-      bracketPairColorization: { enabled: true },
-      detectIndentation: true,
-      domReadOnly: isReadOnly,
-      formatOnPaste,
-      fontFamily: editorFontFamily,
-      fontLigatures: monacoFontLigatures,
-      fontSize: editorFontSize,
-      glyphMargin: true,
-      insertSpaces: true,
-      // Skip memory- and CPU-intensive features (including per-line
-      // tokenization) on extreme lines. Monaco's default, kept explicit so the
-      // scroll-performance guards live together.
-      largeFileOptimizations: true,
-      lineHeight: 20,
-      // Lines longer than this are not tokenized. Monaco tokenizes the visible
-      // viewport synchronously while scrolling, so a viewport full of very long
-      // lines blows the frame budget and makes fast scrolling lag. Mirrors the
-      // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
-      maxTokenizationLineLength: 2000,
-      minimap: { enabled: minimapEnabled },
-      wordWrap: wordWrapEnabled ? "on" : "off",
-      // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so Cmd/Ctrl+Click
-      // stays bound to go-to-definition (same as Cmd+B). Add a cursor with Alt+Click;
-      // toggle persistent column/box selection with the `editor.toggleColumnSelection`
-      // action below.
-      multiCursorModifier: "alt",
-      padding: { top: 14, bottom: 14 },
-      parameterHints: { enabled: true, cycle: true },
-      quickSuggestions: { other: true, comments: false, strings: true },
-      quickSuggestionsDelay: 10,
-      readOnly: isReadOnly,
-      scrollBeyondLastLine: false,
-      "semanticHighlighting.enabled": true,
-      // Smooth scrolling animates every fling into many onDidScrollChange
-      // events, each driving a synchronous viewport tokenization pass. Disabling
-      // it keeps fast scrolling of large files responsive (trade-off: the scroll
-      // animation is gone, but the lag is too).
-      smoothScrolling: false,
-      stickyScroll: { enabled: true },
-      // Stop rendering a line after this many characters. Monaco's default, kept
-      // explicit alongside the other large-file scroll guards.
-      stopRenderingLineAfter: 10000,
-      suggestOnTriggerCharacters: true,
-      tabSize: 2,
-    }),
-    [
-      editorFontFamily,
-      editorFontSize,
-      formatOnPaste,
-      isReadOnly,
-      minimapEnabled,
-      monacoFontLigatures,
-      wordWrapEnabled,
-    ],
-  );
+  const editorOptions =
+    useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(
+      () => ({
+        autoIndent: "full",
+        automaticLayout: true,
+        bracketPairColorization: { enabled: true },
+        detectIndentation: true,
+        domReadOnly: isReadOnly,
+        formatOnPaste,
+        fontFamily: editorFontFamily,
+        fontLigatures: monacoFontLigatures,
+        fontSize: editorFontSize,
+        glyphMargin: true,
+        insertSpaces: true,
+        // Skip memory- and CPU-intensive features (including per-line
+        // tokenization) on extreme lines. Monaco's default, kept explicit so the
+        // scroll-performance guards live together.
+        largeFileOptimizations: true,
+        lineHeight: 20,
+        // Lines longer than this are not tokenized. Monaco tokenizes the visible
+        // viewport synchronously while scrolling, so a viewport full of very long
+        // lines blows the frame budget and makes fast scrolling lag. Mirrors the
+        // Shiki `tokenizeMaxLineLength` cap so both tokenization paths agree.
+        maxTokenizationLineLength: 2000,
+        minimap: { enabled: minimapEnabled },
+        wordWrap: wordWrapEnabled ? "on" : "off",
+        // Alt is the multi-cursor modifier (VS Code/PhpStorm default) so Cmd/Ctrl+Click
+        // stays bound to go-to-definition (same as Cmd+B). Add a cursor with Alt+Click;
+        // toggle persistent column/box selection with the `editor.toggleColumnSelection`
+        // action below.
+        multiCursorModifier: "alt",
+        padding: { top: 14, bottom: 14 },
+        parameterHints: { enabled: true, cycle: true },
+        quickSuggestions: { other: true, comments: false, strings: true },
+        quickSuggestionsDelay: 10,
+        readOnly: isReadOnly,
+        scrollBeyondLastLine: false,
+        "semanticHighlighting.enabled": true,
+        // Smooth scrolling animates every fling into many onDidScrollChange
+        // events, each driving a synchronous viewport tokenization pass. Disabling
+        // it keeps fast scrolling of large files responsive (trade-off: the scroll
+        // animation is gone, but the lag is too).
+        smoothScrolling: false,
+        stickyScroll: { enabled: true },
+        // Stop rendering a line after this many characters. Monaco's default, kept
+        // explicit alongside the other large-file scroll guards.
+        stopRenderingLineAfter: 10000,
+        suggestOnTriggerCharacters: true,
+        tabSize: 2,
+      }),
+      [
+        editorFontFamily,
+        editorFontSize,
+        formatOnPaste,
+        isReadOnly,
+        minimapEnabled,
+        monacoFontLigatures,
+        wordWrapEnabled,
+      ],
+    );
 
   const overlay = activeDocument ? null : isOpeningFile ? (
     <div className="editor-empty-overlay" data-testid="editor-opening">
@@ -3965,13 +4057,17 @@ function EditorSurfaceComponent({
 
   return (
     <div
-      aria-labelledby={!embeddedInGroupPanel && activeDocument
-        ? getTabId(activeDocument.path, groupId)
-        : undefined}
+      aria-labelledby={
+        !embeddedInGroupPanel && activeDocument
+          ? getTabId(activeDocument.path, groupId)
+          : undefined
+      }
       className="editor-panel"
-      id={!embeddedInGroupPanel && activeDocument
-        ? getTabPanelId(activeDocument.path, groupId)
-        : undefined}
+      id={
+        !embeddedInGroupPanel && activeDocument
+          ? getTabPanelId(activeDocument.path, groupId)
+          : undefined
+      }
       onFocusCapture={() => {
         activateEditorGroupFromInteraction();
       }}
@@ -3992,14 +4088,16 @@ function EditorSurfaceComponent({
         beforeMount={handleBeforeMount}
         height="100%"
         keepCurrentModel
-        language={activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE}
+        language={
+          activeDocument ? activeDocument.language : PLACEHOLDER_LANGUAGE
+        }
         loading={EDITOR_LOADING_PLACEHOLDER}
         onMount={handleMount}
         options={editorOptions}
         path={
           activeDocument && workspaceRoot
-            ? workspaceModelUri(workspaceRoot, activeDocument.path) ??
-              activeDocument.path
+            ? (workspaceModelUri(workspaceRoot, activeDocument.path) ??
+              activeDocument.path)
             : PLACEHOLDER_PATH
         }
         theme={monacoTheme}
@@ -4150,7 +4248,9 @@ function editorActionForMenuCommand(command: EditorMenuCommand): string {
   }
 }
 
-function editorActionForSurfaceCommand(commandId: EditorSurfaceCommandId): string {
+function editorActionForSurfaceCommand(
+  commandId: EditorSurfaceCommandId,
+): string {
   switch (commandId) {
     case "editor.formatDocument":
       return "editor.action.formatDocument";
@@ -4386,9 +4486,7 @@ function isLiveHippieSession(
     return false;
   }
 
-  return (
-    documentText.slice(session.anchorOffset, expectedEnd) === session.word
-  );
+  return documentText.slice(session.anchorOffset, expectedEnd) === session.word;
 }
 
 // The offset where the text being replaced ends. On a fresh expansion the caret
@@ -4405,7 +4503,10 @@ function currentHippieEndOffset(
   return session.anchorOffset + session.prefix.length;
 }
 
-function hippiePrefixBefore(documentText: string, cursorOffset: number): string {
+function hippiePrefixBefore(
+  documentText: string,
+  cursorOffset: number,
+): string {
   let start = cursorOffset;
 
   while (start > 0 && HIPPIE_WORD_CHAR.test(documentText[start - 1])) {
@@ -4544,9 +4645,8 @@ function insertStatementBlock(
   const eol = model.getEOL();
   const unit = indentUnitFromModel(model);
   const bodyIndent = completion.indent + unit;
-  const snippetController = editor.getContribution<SnippetInsertingContribution>(
-    "snippetController2",
-  );
+  const snippetController =
+    editor.getContribution<SnippetInsertingContribution>("snippetController2");
 
   if (snippetController) {
     editor.setSelection(
@@ -4625,9 +4725,8 @@ function applySurroundWith(
     ),
   );
 
-  const snippetController = editor.getContribution<SnippetInsertingContribution>(
-    "snippetController2",
-  );
+  const snippetController =
+    editor.getContribution<SnippetInsertingContribution>("snippetController2");
 
   if (snippetController) {
     snippetController.insert(snippet);
@@ -4667,7 +4766,8 @@ function plainSnippetText(snippet: string): string {
     .replace(/\\([$}\\])/g, "$1");
 }
 
-interface SnippetInsertingContribution extends Monaco.editor.IEditorContribution {
+interface SnippetInsertingContribution
+  extends Monaco.editor.IEditorContribution {
   insert(template: string): void;
 }
 
@@ -4929,7 +5029,8 @@ function smartBlankLineIndent(
     return null;
   }
 
-  const previousLine = lineNumber > 1 ? model.getLineContent(lineNumber - 1) : "";
+  const previousLine =
+    lineNumber > 1 ? model.getLineContent(lineNumber - 1) : "";
   const previousLineIndent = leadingWhitespace(previousLine);
 
   if (
@@ -4949,7 +5050,9 @@ function smartBlankLineIndent(
   const previousIndent = leadingWhitespace(previous.content);
 
   if (opensIndentedBlock(previous.content)) {
-    return previousIndent + indentationUnitNear(model, lineNumber, previousIndent);
+    return (
+      previousIndent + indentationUnitNear(model, lineNumber, previousIndent)
+    );
   }
 
   return previousIndent;
@@ -4966,7 +5069,8 @@ function smartBlankLineIndentTargetLineNumber(
   }
 
   return (
-    newLineChange.range.startLineNumber + countOccurrences(newLineChange.text, "\n")
+    newLineChange.range.startLineNumber +
+    countOccurrences(newLineChange.text, "\n")
   );
 }
 
@@ -5016,7 +5120,10 @@ function indentationUnitNear(
   if (next) {
     const nextIndent = leadingWhitespace(next.content);
 
-    if (nextIndent.startsWith(baseIndent) && nextIndent.length > baseIndent.length) {
+    if (
+      nextIndent.startsWith(baseIndent) &&
+      nextIndent.length > baseIndent.length
+    ) {
       return nextIndent.slice(baseIndent.length);
     }
   }
@@ -5027,7 +5134,10 @@ function indentationUnitNear(
     const currentIndent = leadingWhitespace(model.getLineContent(candidate));
     const nextIndent = leadingWhitespace(model.getLineContent(candidate + 1));
 
-    if (nextIndent.startsWith(currentIndent) && nextIndent.length > currentIndent.length) {
+    if (
+      nextIndent.startsWith(currentIndent) &&
+      nextIndent.length > currentIndent.length
+    ) {
       return nextIndent.slice(currentIndent.length);
     }
   }
@@ -5112,12 +5222,7 @@ function toEditorChangeDecoration(
         monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
       zIndex: 15,
     },
-    range: new monaco.Range(
-      hunk.startLineNumber,
-      1,
-      hunk.endLineNumber,
-      1,
-    ),
+    range: new monaco.Range(hunk.startLineNumber, 1, hunk.endLineNumber, 1),
   };
 }
 
@@ -5188,8 +5293,7 @@ function findChangeHunkAtLine(
   return (
     hunks.find(
       (hunk) =>
-        lineNumber >= hunk.startLineNumber &&
-        lineNumber <= hunk.endLineNumber,
+        lineNumber >= hunk.startLineNumber && lineNumber <= hunk.endLineNumber,
     ) ?? null
   );
 }
@@ -5716,9 +5820,11 @@ function modelForPath(
   workspaceRoot: string | null,
   path: string,
 ): Monaco.editor.ITextModel | null {
-  return monaco.editor
-    .getModels()
-    .find((model) => modelMatchesProject(model, workspaceRoot, path)) ?? null;
+  return (
+    monaco.editor
+      .getModels()
+      .find((model) => modelMatchesProject(model, workspaceRoot, path)) ?? null
+  );
 }
 
 function modelMatchesProject(
@@ -5810,7 +5916,11 @@ function monacoKeybindingsForShortcut(
 
 function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
   if (/^[a-z]$/.test(key)) {
-    return monaco.KeyCode[`Key${key.toUpperCase()}` as keyof typeof monaco.KeyCode] ?? null;
+    return (
+      monaco.KeyCode[
+        `Key${key.toUpperCase()}` as keyof typeof monaco.KeyCode
+      ] ?? null
+    );
   }
 
   const specialKeyCodes: Record<string, keyof typeof monaco.KeyCode> = {
@@ -5828,10 +5938,11 @@ function monacoKeyCode(monaco: typeof Monaco, key: string): number | null {
     arrowup: "UpArrow",
     enter: "Enter",
     escape: "Escape",
+    f12: "F12",
     f2: "F2",
     f5: "F5",
   };
   const keyCodeName = specialKeyCodes[key];
 
-  return keyCodeName ? monaco.KeyCode[keyCodeName] ?? null : null;
+  return keyCodeName ? (monaco.KeyCode[keyCodeName] ?? null) : null;
 }
