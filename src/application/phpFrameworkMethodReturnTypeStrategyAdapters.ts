@@ -8,6 +8,8 @@ import {
 import {
   createPhpLaravelMethodReturnTypeStrategyAdapter,
 } from "./phpLaravelMethodReturnTypeStrategyAdapter";
+import { createPhpNetteMethodReturnTypeStrategyAdapter } from "./phpNetteMethodReturnTypeStrategyAdapter";
+import type { PhpNetteDatabaseTypeResolver } from "./phpNetteDatabaseTypeResolver";
 
 export interface PhpFrameworkMethodReturnTypeStrategyAdapterDependencies {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
@@ -17,10 +19,12 @@ export interface PhpFrameworkMethodReturnTypeStrategyAdapterDependencies {
     expression: string,
   ): Promise<string | null>;
   resolvePhpFrameworkProjectMorphMapModelType(): Promise<string | null>;
+  netteDatabaseTypeResolver: PhpNetteDatabaseTypeResolver;
 }
 
 export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
   frameworkRuntime,
+  netteDatabaseTypeResolver,
   resolvePhpFrameworkBuilderModelType,
   resolvePhpFrameworkProjectMorphMapModelType,
 }: PhpFrameworkMethodReturnTypeStrategyAdapterDependencies): PhpMethodReturnTypeStrategy {
@@ -36,6 +40,13 @@ export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
             resolvePhpFrameworkProjectMorphMapModelType:
               resolvePhpFrameworkProjectMorphMapModelType,
           }),
+      },
+      {
+        capability: "netteDatabaseSemantics",
+        createAdapter: () =>
+          createPhpNetteMethodReturnTypeStrategyAdapter(
+            netteDatabaseTypeResolver,
+          ),
       },
     ],
     genericPhpMethodReturnTypeStrategy,

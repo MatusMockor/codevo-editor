@@ -38,6 +38,10 @@ import {
   usePhpClassMemberCollectors,
   type PhpClassMemberCollectors,
 } from "./usePhpClassMemberCollectors";
+import {
+  usePhpMethodReturnTypeResolver,
+  type UsePhpMethodReturnTypeResolverOptions,
+} from "./usePhpMethodReturnTypeResolver";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -359,6 +363,32 @@ function renderPhpClassMemberCollectors(options: ClassMemberCollectorOptions) {
   };
 }
 
+function renderPhpMethodResolver(options: UsePhpMethodReturnTypeResolverOptions) {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const captured: {
+    api: ReturnType<typeof usePhpMethodReturnTypeResolver> | null;
+  } = { api: null };
+
+  function Harness({ hookOptions }: { hookOptions: UsePhpMethodReturnTypeResolverOptions }) {
+    captured.api = usePhpMethodReturnTypeResolver(hookOptions);
+    return null;
+  }
+
+  act(() => root.render(<Harness hookOptions={options} />));
+
+  return {
+    api: () => {
+      if (!captured.api) {
+        throw new Error("method resolver hook not mounted");
+      }
+
+      return captured.api;
+    },
+    unmount: () => act(() => root.unmount()),
+  };
+}
+
 function makePhpClassMemberCollectorOptions(
   frameworkSources: readonly string[],
   classSourcePaths: ReadonlyMap<string, string>,
@@ -394,6 +424,159 @@ function makePhpClassMemberCollectorOptions(
 }
 
 describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
+  it("infers UsersRepository rows through presenter view data into Latte members", async () => {
+    const repositoryPath =
+      "app/modules/usersModule/Models/Repositories/UsersRepository.php";
+    const baseRepositoryPath =
+      "app/modules/applicationModule/Models/Repository/Repository.php";
+    const repositoryTraitPath =
+      "app/modules/activeRowTypeModule/Generated/Repository/UsersRepositoryTrait.php";
+    const activeRowPath =
+      "app/modules/activeRowTypeModule/Generated/ActiveRow/UsersActiveRow.php";
+    const selectionPath =
+      "app/modules/activeRowTypeModule/Generated/Selection/UsersSelection.php";
+    const presenterPath =
+      "app/modules/usersModule/Presenters/UsersAdminPresenter.php";
+    const templatePath =
+      "app/modules/usersModule/templates/UsersAdmin/show.latte";
+    const paths = [
+      repositoryPath,
+      baseRepositoryPath,
+      repositoryTraitPath,
+      activeRowPath,
+      selectionPath,
+      presenterPath,
+    ];
+    const sources = await Promise.all(
+      paths.map((relativePath) =>
+        readFileContent(joinPath(EBOX_CRM_ROOT, relativePath)),
+      ),
+    );
+    const [repository, baseRepository, repositoryTrait, activeRow, selection] =
+      sources;
+    const classSourcePaths = new Map<string, string>([
+      ["UsersRepository.php", joinPath(EBOX_CRM_ROOT, repositoryPath)],
+      ["Repository.php", joinPath(EBOX_CRM_ROOT, baseRepositoryPath)],
+      ["UsersRepositoryTrait.php", joinPath(EBOX_CRM_ROOT, repositoryTraitPath)],
+      ["UsersActiveRow.php", joinPath(EBOX_CRM_ROOT, activeRowPath)],
+      ["UsersSelection.php", joinPath(EBOX_CRM_ROOT, selectionPath)],
+      ["UsersAdminPresenter.php", joinPath(EBOX_CRM_ROOT, presenterPath)],
+    ]);
+    const activeRowType =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const selectionType =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
+    classSourcePaths.set(
+      "Crm\\UsersModule\\Repository\\UsersRepository",
+      joinPath(EBOX_CRM_ROOT, repositoryPath),
+    );
+    classSourcePaths.set(activeRowType, joinPath(EBOX_CRM_ROOT, activeRowPath));
+    classSourcePaths.set(selectionType, joinPath(EBOX_CRM_ROOT, selectionPath));
+    const classNamesByPath = new Map<string, string>([
+      [joinPath(EBOX_CRM_ROOT, repositoryPath), "Crm\\UsersModule\\Repository\\UsersRepository"],
+      [joinPath(EBOX_CRM_ROOT, baseRepositoryPath), "Crm\\ApplicationModule\\Repository"],
+      [joinPath(EBOX_CRM_ROOT, repositoryTraitPath), "Efabrica\\Crm\\ActiveRowTypes\\Repository\\UsersRepositoryTrait"],
+      [joinPath(EBOX_CRM_ROOT, activeRowPath), activeRowType],
+      [joinPath(EBOX_CRM_ROOT, selectionPath), selectionType],
+    ]);
+    const sourcesByClassName = new Map(
+      [...classNamesByPath].map(([filePath, className]) => [
+        className,
+        { filePath, source: sources[paths.indexOf(toRelativePath(EBOX_CRM_ROOT, filePath))] ?? "" },
+      ]),
+    );
+    const methodResolver = renderPhpMethodResolver({
+      currentWorkspaceRootRef: { current: EBOX_CRM_ROOT },
+      frameworkRuntime: createPhpFrameworkRuntimeContext(NETTE_FRAMEWORK),
+      readPhpClassMembersFromPath: async (filePath) => ({
+        content: sourcesByClassName.get(classNamesByPath.get(filePath) ?? "")?.source ?? "",
+        members: [],
+      }),
+      resolvePhpClassReference: (source, className) =>
+        resolvePhpClassName(source, className),
+      resolvePhpClassSourcePaths: async (className) => {
+        const entry = sourcesByClassName.get(className.trim().replace(/^\\+/, ""));
+        return entry ? [entry.filePath] : [];
+      },
+      resolvePhpEloquentBuilderModelTypeRef: { current: vi.fn(async () => null) },
+      resolvePhpFrameworkBoundConcrete: vi.fn(async () => null),
+      resolvePhpFrameworkReturnTypeReference: (source, typeName) =>
+        typeName ? resolvePhpClassName(source, typeName) : null,
+      resolvePhpGenericTemplateTypesForInheritedClass: vi.fn(async () => new Map()),
+      resolvePhpGenericTemplateTypesForMixinClass: vi.fn(async () => new Map()),
+      resolvePhpFrameworkProjectMorphMapModelType: vi.fn(async () => null),
+      resolvePhpMethodDeclaredReturnType: (source, typeName) =>
+        typeName ? resolvePhpClassName(source, typeName) : null,
+      workspaceDescriptor: eboxPhpDescriptor(),
+      workspaceRoot: EBOX_CRM_ROOT,
+    });
+
+    await expect(
+      methodResolver.api().resolvePhpMethodReturnType(
+        "Crm\\UsersModule\\Repository\\UsersRepository",
+        "find",
+      ),
+    ).resolves.toBe(`${activeRowType}|null`);
+    await expect(
+      methodResolver.api().resolvePhpMethodReturnType(selectionType, "where"),
+    ).resolves.toBe(selectionType);
+
+    const collectors = renderPhpClassMemberCollectors(
+      makePhpClassMemberCollectorOptions(
+        sources,
+        classSourcePaths,
+        vi.fn(async () => null),
+      ),
+    );
+    const rowMembers = await collectors.api().collectPhpMethodsForClass(activeRowType);
+
+    expect(rowMembers).toContainEqual(
+      expect.objectContaining({ kind: "property", name: "email" }),
+    );
+    await expect(
+      methodResolver.api().resolvePhpMethodReturnType(selectionType, "fetch"),
+    ).resolves.toBe(`${activeRowType}|null`);
+
+    const resolvePhpReceiverCompletions = vi.fn(async () => rowMembers);
+    const latteDeps = makeLatteDeps(templatePath, {
+      resolveExpressionType: vi.fn(async (_source, _position, expression) =>
+        expression.includes("usersRepository->find") || expression === "$user"
+          ? methodResolver
+              .api()
+              .resolvePhpMethodReturnType(
+                "Crm\\UsersModule\\Repository\\UsersRepository",
+                "find",
+              )
+          : null,
+      ),
+      resolvePhpReceiverCompletions,
+      searchText: vi.fn(async () => [
+        { path: joinPath(EBOX_CRM_ROOT, presenterPath) },
+      ]),
+    });
+    const latte = createLatteIntelligence(() => latteDeps);
+    const template = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
+    const completions = await latte.provideLatteCompletions(
+      template,
+      positionAtOffset(template, offsetAfter(template, "$detailUser->")),
+    );
+
+    expect(resolvePhpReceiverCompletions).toHaveBeenCalledWith(
+      expect.stringContaining(activeRowType),
+      expect.any(Object),
+      "$detailUser",
+    );
+    expect(completions.map((item) => item.label)).toContain("email");
+
+    collectors.unmount();
+    methodResolver.unmount();
+    expect(repository).toContain("use UsersRepositoryTrait");
+    expect(repositoryTrait).toContain("@method UsersActiveRow|null find");
+    expect(activeRow).toContain("@property-read string $email");
+    expect(selection).toContain("@method UsersActiveRow|null fetch");
+    expect(baseRepository).toContain("public function find");
+  });
+
   it("resolves real getByType IRecencyStorage autowiring to RedisRecencyStorage", async () => {
     const profileSelectPath = "tests/Api/Pack1/ProfileSelectApiCest.php";
     const configPath = "app/modules/baseModule/config.neon";

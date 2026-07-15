@@ -433,9 +433,26 @@ export function usePhpExpressionTypeResolver({
           return strategyReceiverReturnType;
         }
 
-        return receiverType
-          ? resolvePhpMethodReturnType(receiverType, methodCall.methodName)
-          : null;
+        if (!receiverType) {
+          return null;
+        }
+
+        if (
+          frameworkRuntime.supports("netteDatabaseSemantics") &&
+          (methodCall.methodName === "ref" ||
+            methodCall.methodName === "related")
+        ) {
+          return resolvePhpMethodReturnType(
+            receiverType,
+            methodCall.methodName,
+            undefined,
+            undefined,
+            undefined,
+            expression,
+          );
+        }
+
+        return resolvePhpMethodReturnType(receiverType, methodCall.methodName);
       }
 
       const staticCall = phpStaticCallExpression(expression);
@@ -461,6 +478,7 @@ export function usePhpExpressionTypeResolver({
     },
     [
       expressionTypeStrategy,
+      frameworkRuntime,
       frameworkProviders,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,

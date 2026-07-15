@@ -12,6 +12,10 @@ function makeDeps(
       hasProvider: (providerId) => providerId === "laravel",
       supports: (capability) => capability === "eloquentModelSemantics",
     },
+    netteDatabaseTypeResolver: {
+      resolveClassTypes: vi.fn(async () => null),
+      resolveTableType: vi.fn(async () => null),
+    },
     resolvePhpFrameworkBuilderModelType: vi.fn(
       async () => null as string | null,
     ),
@@ -44,6 +48,9 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
 
     expect(frameworkRuntime.supports).toHaveBeenCalledWith(
       "eloquentModelSemantics",
+    );
+    expect(frameworkRuntime.supports).toHaveBeenCalledWith(
+      "netteDatabaseSemantics",
     );
     expect(frameworkRuntime.hasProvider).not.toHaveBeenCalled();
     expect(
@@ -123,6 +130,35 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
       }),
     ).resolves.toBe(
       "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Post>",
+    );
+  });
+
+  it("delegates concrete repository returns to the Nette database strategy", async () => {
+    const netteDatabaseTypeResolver = {
+      resolveClassTypes: vi.fn(async () => ({
+        activeRowType: "App\\Generated\\ActiveRow\\UsersActiveRow",
+        selectionType: "App\\Generated\\Selection\\UsersSelection",
+      })),
+      resolveTableType: vi.fn(async () => null),
+    };
+    const adapter = createPhpFrameworkMethodReturnTypeStrategyAdapters(
+      makeDeps({
+        frameworkRuntime: {
+          hasProvider: () => true,
+          supports: (capability) => capability === "netteDatabaseSemantics",
+        },
+        netteDatabaseTypeResolver,
+      }),
+    );
+
+    await expect(
+      adapter.knownClassMethodReturnType({
+        className: "App\\UsersRepository",
+        methodName: "findBy",
+      }),
+    ).resolves.toBe("App\\Generated\\ActiveRow\\UsersActiveRow|null");
+    expect(netteDatabaseTypeResolver.resolveClassTypes).toHaveBeenCalledWith(
+      "App\\UsersRepository",
     );
   });
 });

@@ -1149,6 +1149,8 @@ export interface PhpFrameworkProvider {
      * tying dispatch to the Laravel provider id.
      */
     supportsEloquentModelSemantics?: true;
+    /** Provider-owned opt-in for concrete Nette Database row/selection types. */
+    supportsNetteDatabaseSemantics?: true;
   };
 }
 
@@ -1177,6 +1179,7 @@ export type PhpFrameworkProviderCapability =
   | "latteTemplateIntelligence"
   | "middlewareAliases"
   | "neonConfigIntelligence"
+  | "netteDatabaseSemantics"
   | "netteRedrawControlSnippetCompletions"
   | "newFiles"
   | "phpPresenterLinks"
@@ -2183,6 +2186,11 @@ function phpFrameworkProvidersSupportCapability(
       return providers.some(
         (provider) =>
           provider.semantics?.supportsEloquentModelSemantics === true,
+      );
+    case "netteDatabaseSemantics":
+      return providers.some(
+        (provider) =>
+          provider.semantics?.supportsNetteDatabaseSemantics === true,
       );
     case "env":
       return providers.some((provider) => provider.env !== undefined);

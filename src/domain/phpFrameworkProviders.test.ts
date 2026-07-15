@@ -2004,6 +2004,9 @@ Route::model('user', AdminUser::class);
       expect(laravelRegistry.supports("eloquentModelSemantics")).toBe(true);
       expect(netteRegistry.supports("eloquentModelSemantics")).toBe(false);
       expect(genericRegistry.supports("eloquentModelSemantics")).toBe(false);
+      expect(laravelRegistry.supports("netteDatabaseSemantics")).toBe(false);
+      expect(netteRegistry.supports("netteDatabaseSemantics")).toBe(true);
+      expect(genericRegistry.supports("netteDatabaseSemantics")).toBe(false);
       expect(
         laravelRegistry.supports("netteRedrawControlSnippetCompletions"),
       ).toBe(false);

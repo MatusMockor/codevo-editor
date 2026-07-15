@@ -31,6 +31,9 @@ export function createPhpLaravelMethodReturnTypeStrategyAdapter({
       );
     },
     facadeTargetClassName: laravelFacadeTargetClassName,
+    async knownClassMethodReturnType() {
+      return null;
+    },
     async methodCallReturnType({
       methodName,
       ownerSource,

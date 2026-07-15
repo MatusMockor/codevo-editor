@@ -209,6 +209,7 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       nettePresenterLinkCompletionContextAt(source, offset, "php"),
   },
   semantics: {
+    supportsNetteDatabaseSemantics: true,
     containerExpressionClassName: ({ expression }) =>
       phpNetteContainerExpressionClassName(expression),
     containerBindingsFromSource: ({ source }) =>

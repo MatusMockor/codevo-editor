@@ -3,6 +3,9 @@ export interface PhpMethodReturnTypeStrategy {
     context: PhpDeclaredReturnTypeStrategyContext,
   ): Promise<string | null>;
   facadeTargetClassName(className: string): string | null;
+  knownClassMethodReturnType(
+    context: PhpKnownClassMethodReturnTypeStrategyContext,
+  ): Promise<string | null>;
   methodCallReturnType(
     context: PhpMethodCallReturnTypeStrategyContext,
   ): Promise<string | null>;
@@ -12,8 +15,16 @@ export interface PhpMethodReturnTypeStrategy {
 }
 
 export interface PhpDeclaredReturnTypeStrategyContext {
+  lateStaticClassName?: string;
+  methodName?: string;
   methodReturnExpressions: readonly string[];
   returnType: string;
+}
+
+export interface PhpKnownClassMethodReturnTypeStrategyContext {
+  callExpression?: string;
+  className: string;
+  methodName: string;
 }
 
 export interface PhpMethodCallReturnTypeStrategyContext {
@@ -33,6 +44,9 @@ export const genericPhpMethodReturnTypeStrategy: PhpMethodReturnTypeStrategy = {
     return null;
   },
   facadeTargetClassName() {
+    return null;
+  },
+  async knownClassMethodReturnType() {
     return null;
   },
   async methodCallReturnType() {
