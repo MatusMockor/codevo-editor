@@ -984,6 +984,40 @@ describe("useDocumentLifecycle", () => {
       harness.unmount();
     });
 
+    it("exposes the issued-write drain through the composition facade", async () => {
+      const formatting = createDeferred<string>();
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
+      const formattedContentForSave = vi.fn(() => formatting.promise);
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        formattedContentForSave,
+      });
+
+      const save = harness.lifecycle().saveActiveDocument();
+      await vi.waitFor(() =>
+        expect(formattedContentForSave).toHaveBeenCalledOnce(),
+      );
+      const callback = vi.fn(async () => "drained");
+
+      await expect(
+        harness.lifecycle().runWithIssuedWriteDrain(
+          { kind: "workspace", rootPath: ROOT },
+          callback,
+        ),
+      ).resolves.toBe("drained");
+      expect(callback).toHaveBeenCalledOnce();
+
+      formatting.resolve("formatted");
+      await save;
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
     it("drops a pending save when an exclusion starts", async () => {
       const firstWrite = createDeferred<void>();
       const writeTextFile = vi.fn(() => firstWrite.promise);

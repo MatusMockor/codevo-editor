@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DocumentSaveCoordinator,
+  DocumentSaveCoordinatorDisposedError,
   type DocumentSaveKey,
   type DocumentSaveLease,
+  type DocumentSaveWritePermit,
 } from "./documentSaveCoordinator";
 
 const rootA = "/workspace-a";
@@ -379,6 +381,266 @@ describe("DocumentSaveCoordinator", () => {
       "callback:end",
       "after",
     ]);
+  });
+
+  it("denies a file write when issued-write exclusion wins without waiting for preparation", async () => {
+    const coordinator = new DocumentSaveCoordinator<string>();
+    const preparation = deferred();
+    const callback = deferred();
+    const calls: string[] = [];
+
+    const save = coordinator.request(key("/a.php"), async (lease) => {
+      calls.push("prepare:start");
+      await preparation.promise;
+      calls.push(lease.tryBeginWrite() ? "write:issued" : "write:denied");
+      return "prepared";
+    });
+    const droppedSave = coordinator.request(key("/a.php"), async () => {
+      calls.push("pending:ran");
+      return "pending";
+    });
+
+    const exclusion = coordinator.runWithIssuedWriteDrain(
+      { kind: "file", path: "/a.php", rootPath: rootA },
+      async () => {
+        calls.push("callback:start");
+        await callback.promise;
+        calls.push("callback:end");
+        return 42;
+      },
+    );
+
+    expect(calls).toEqual(["prepare:start", "callback:start"]);
+    await flushPromises();
+    expect(calls).toEqual(["prepare:start", "callback:start"]);
+    await expect(droppedSave).resolves.toEqual({ status: "stale" });
+    await expect(
+      coordinator.request(key("/a.php"), async () => {
+        calls.push("excluded:ran");
+        return "excluded";
+      }),
+    ).resolves.toEqual({ status: "stale" });
+
+    preparation.resolve();
+    await expect(save).resolves.toEqual({
+      status: "saved",
+      result: "prepared",
+    });
+    expect(calls).toEqual([
+      "prepare:start",
+      "callback:start",
+      "write:denied",
+    ]);
+
+    callback.resolve();
+    await expect(exclusion).resolves.toBe(42);
+    expect(calls).toEqual([
+      "prepare:start",
+      "callback:start",
+      "write:denied",
+      "callback:end",
+    ]);
+  });
+
+  it("waits for a workspace write permit through acknowledgement settlement", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const write = deferred();
+    const postAcknowledgement = deferred();
+    const calls: string[] = [];
+
+    const save = coordinator.request(key("/a.php"), async (lease) => {
+      const permit = lease.tryBeginWrite();
+      expect(permit).toMatchObject({ granted: true });
+      expect(lease.tryBeginWrite()).toBe(permit);
+      calls.push("write:start");
+      await write.promise;
+      calls.push("write:settled");
+      calls.push("write:acknowledged");
+      permit?.settle();
+      await postAcknowledgement.promise;
+      calls.push("save:complete");
+    });
+
+    const exclusion = coordinator.runWithIssuedWriteDrain(
+      { kind: "workspace", rootPath: rootA },
+      async () => {
+        calls.push("callback");
+        return "switched";
+      },
+    );
+
+    await flushPromises();
+    expect(calls).toEqual(["write:start"]);
+    write.resolve();
+    await flushPromises();
+    await expect(exclusion).resolves.toBe("switched");
+    expect(calls).toEqual([
+      "write:start",
+      "write:settled",
+      "write:acknowledged",
+      "callback",
+    ]);
+
+    postAcknowledgement.resolve();
+    await expect(save).resolves.toEqual({ status: "saved" });
+    expect(calls[calls.length - 1]).toBe("save:complete");
+  });
+
+  it("denies reacquisition after a settled permit while a zero-barrier drain runs", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const retry = deferred();
+    const retryAfterDrain = deferred();
+    const callback = deferred();
+    const calls: string[] = [];
+
+    const save = coordinator.request(key("/a.php"), async (lease) => {
+      const permit = lease.tryBeginWrite();
+      expect(lease.tryBeginWrite()).toBe(permit);
+      calls.push("write:issued");
+      permit?.settle();
+      calls.push("write:settled");
+      await retry.promise;
+      calls.push(
+        lease.tryBeginWrite() ? "write:reissued" : "write:denied-during-drain",
+      );
+      await retryAfterDrain.promise;
+      calls.push(
+        lease.tryBeginWrite() ? "write:reissued" : "write:denied-after-drain",
+      );
+    });
+
+    const exclusion = coordinator.runWithIssuedWriteDrain(
+      { kind: "file", path: "/a.php", rootPath: rootA },
+      async () => {
+        calls.push("callback:start");
+        await callback.promise;
+        calls.push("callback:end");
+      },
+    );
+
+    await flushPromises();
+    expect(calls).toEqual([
+      "write:issued",
+      "write:settled",
+      "callback:start",
+    ]);
+
+    retry.resolve();
+    await flushPromises();
+    expect(calls[calls.length - 1]).toBe("write:denied-during-drain");
+
+    callback.resolve();
+    await expect(exclusion).resolves.toBeUndefined();
+    retryAfterDrain.resolve();
+    await expect(save).resolves.toEqual({ status: "saved" });
+    expect(calls).toEqual([
+      "write:issued",
+      "write:settled",
+      "callback:start",
+      "write:denied-during-drain",
+      "callback:end",
+      "write:denied-after-drain",
+    ]);
+  });
+
+  it("does not let directory-scoped preparation block a drain or escape later", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const preparation = deferred();
+    const calls: string[] = [];
+
+    const save = coordinator.request(
+      key("/project/src/nested/a.php"),
+      async (lease) => {
+        await preparation.promise;
+        calls.push(lease.tryBeginWrite() ? "issued" : "denied");
+      },
+    );
+
+    await expect(
+      coordinator.runWithIssuedWriteDrain(
+        { kind: "directory", path: "/project/src", rootPath: rootA },
+        async () => {
+          calls.push("callback");
+        },
+      ),
+    ).resolves.toBeUndefined();
+    expect(calls).toEqual(["callback"]);
+
+    preparation.resolve();
+    await expect(save).resolves.toEqual({ status: "saved" });
+    expect(calls).toEqual(["callback", "denied"]);
+  });
+
+  it("settles a failed issued write before running the drain operation", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const write = deferred();
+    const error = new Error("write failed");
+    const calls: string[] = [];
+
+    const save = coordinator.request(key("/a.php"), async (lease) => {
+      expect(lease.tryBeginWrite()).not.toBeNull();
+      await write.promise;
+    });
+    void save.catch(() => calls.push("write:rejected"));
+
+    const exclusion = coordinator.runWithIssuedWriteDrain(
+      { kind: "workspace", rootPath: rootA },
+      async () => {
+        calls.push("callback");
+      },
+    );
+
+    write.reject(error);
+    await expect(save).rejects.toBe(error);
+    await expect(exclusion).resolves.toBeUndefined();
+    expect(calls).toEqual(expect.arrayContaining(["write:rejected", "callback"]));
+  });
+
+  it("cancels a waiting issued-write drain on dispose without touching the issued write", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const operationFinished = deferred();
+    const callback = vi.fn(async () => "switched");
+    const captured: { permit: DocumentSaveWritePermit | null } = {
+      permit: null,
+    };
+
+    const save = coordinator.request(key("/a.php"), async (lease) => {
+      captured.permit = lease.tryBeginWrite();
+      await operationFinished.promise;
+    });
+    const drain = coordinator.runWithIssuedWriteDrain(
+      { kind: "workspace", rootPath: rootA },
+      callback,
+    );
+
+    expect(callback).not.toHaveBeenCalled();
+    coordinator.dispose();
+
+    await expect(drain).rejects.toBeInstanceOf(
+      DocumentSaveCoordinatorDisposedError,
+    );
+    expect(callback).not.toHaveBeenCalled();
+    await expect(save).resolves.toEqual({ status: "disposed" });
+    const internals = coordinator as unknown as {
+      exclusions: Set<unknown>;
+      issuedWriteDrains: Set<unknown>;
+    };
+    expect(internals.exclusions.size).toBe(0);
+    expect(internals.issuedWriteDrains.size).toBe(0);
+
+    expect(() => captured.permit?.settle()).not.toThrow();
+    expect(() => captured.permit?.settle()).not.toThrow();
+    operationFinished.resolve();
+    await flushPromises();
+
+    const afterDispose = vi.fn(async () => "unexpected");
+    await expect(
+      coordinator.runWithIssuedWriteDrain(
+        { kind: "workspace", rootPath: rootA },
+        afterDispose,
+      ),
+    ).rejects.toBeInstanceOf(DocumentSaveCoordinatorDisposedError);
+    expect(afterDispose).not.toHaveBeenCalled();
   });
 
   it("normalizes roots and respects file and directory boundaries", async () => {

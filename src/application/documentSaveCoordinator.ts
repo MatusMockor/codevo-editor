@@ -15,6 +15,19 @@ export interface DocumentSaveLease {
   readonly rootPath: string;
   readonly epoch: number;
   isCurrent(): boolean;
+  tryBeginWrite(): DocumentSaveWritePermit | null;
+}
+
+export interface DocumentSaveWritePermit {
+  readonly granted: true;
+  settle(): void;
+}
+
+export class DocumentSaveCoordinatorDisposedError extends Error {
+  constructor() {
+    super("Document save coordinator disposed while draining issued writes");
+    this.name = "DocumentSaveCoordinatorDisposedError";
+  }
 }
 
 export type DocumentSaveOperation<TResult> = (
@@ -52,14 +65,35 @@ interface SaveWaiter<TResult> {
   terminalSequence: number;
 }
 
+interface SaveBarrier {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
 interface ActiveSave {
-  promise: Promise<unknown>;
+  issuedWrite: IssuedWrite | null;
+  operation: Promise<unknown> | null;
+  operationBarrier: SaveBarrier;
   sequence: number;
+  writeDenied: boolean;
+}
+
+interface IssuedWrite {
+  barrier: SaveBarrier;
+  permit: DocumentSaveWritePermit;
+  settled: boolean;
+}
+
+interface IssuedWriteDrain {
+  cancellation: SaveBarrier;
+  cancelled: boolean;
+  waiting: boolean;
 }
 
 interface SaveLane<TResult> {
   active: ActiveSave | null;
   epoch: number;
+  issuedWrites: Set<IssuedWrite>;
   key: DocumentSaveKey;
   nextSequence: number;
   pending: PendingSave<TResult> | null;
@@ -68,6 +102,7 @@ interface SaveLane<TResult> {
 
 /** Coordinates save operations without owning document or React state. */
 export class DocumentSaveCoordinator<TResult = void> {
+  private readonly issuedWriteDrains = new Set<IssuedWriteDrain>();
   private readonly exclusions = new Set<DocumentSaveInvalidationScope>();
   private readonly lanes = new Map<string, SaveLane<TResult>>();
   private disposed = false;
@@ -90,6 +125,7 @@ export class DocumentSaveCoordinator<TResult = void> {
       lane = {
         active: null,
         epoch: ++this.nextEpoch,
+        issuedWrites: new Set(),
         key: { ...key },
         nextSequence: 0,
         pending: null,
@@ -152,7 +188,9 @@ export class DocumentSaveCoordinator<TResult = void> {
 
       this.dropPending(lane);
       if (lane.active) {
-        active.push(lane.active.promise);
+        active.push(
+          lane.active.operation ?? lane.active.operationBarrier.promise,
+        );
       }
     }
 
@@ -164,12 +202,72 @@ export class DocumentSaveCoordinator<TResult = void> {
     }
   }
 
+  async runWithIssuedWriteDrain<T>(
+    scope: DocumentSaveInvalidationScope,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    if (this.disposed) {
+      throw new DocumentSaveCoordinatorDisposedError();
+    }
+
+    const exclusion = { ...scope } as DocumentSaveInvalidationScope;
+    const drain: IssuedWriteDrain = {
+      cancellation: saveBarrier(),
+      cancelled: false,
+      waiting: true,
+    };
+    this.issuedWriteDrains.add(drain);
+    this.exclusions.add(exclusion);
+    const issuedWrites: Promise<void>[] = [];
+
+    for (const lane of this.lanes.values()) {
+      if (!matchesInvalidationScope(lane.key, exclusion)) {
+        continue;
+      }
+
+      this.dropPending(lane);
+      if (lane.active && !lane.active.issuedWrite) {
+        lane.active.writeDenied = true;
+      }
+      for (const issuedWrite of lane.issuedWrites) {
+        issuedWrites.push(issuedWrite.barrier.promise);
+      }
+    }
+
+    try {
+      if (issuedWrites.length > 0) {
+        await Promise.race([
+          Promise.allSettled(issuedWrites),
+          drain.cancellation.promise,
+        ]);
+      }
+      if (drain.cancelled || this.disposed) {
+        throw new DocumentSaveCoordinatorDisposedError();
+      }
+
+      drain.waiting = false;
+      return await operation();
+    } finally {
+      drain.waiting = false;
+      this.exclusions.delete(exclusion);
+      this.issuedWriteDrains.delete(drain);
+    }
+  }
+
   dispose(): void {
     if (this.disposed) {
       return;
     }
 
     this.disposed = true;
+    for (const drain of this.issuedWriteDrains) {
+      if (!drain.waiting) {
+        continue;
+      }
+
+      drain.cancelled = true;
+      drain.cancellation.resolve();
+    }
     for (const lane of this.lanes.values()) {
       lane.epoch = ++this.nextEpoch;
       lane.pending = null;
@@ -209,6 +307,7 @@ export class DocumentSaveCoordinator<TResult = void> {
     laneId: string,
     lane: SaveLane<TResult>,
     epoch: number,
+    active: ActiveSave,
   ): DocumentSaveLease {
     return {
       epoch,
@@ -218,7 +317,69 @@ export class DocumentSaveCoordinator<TResult = void> {
         lane.epoch === epoch,
       path: lane.key.path,
       rootPath: lane.key.rootPath,
+      tryBeginWrite: () =>
+        this.tryBeginWrite(laneId, lane, active, epoch),
     };
+  }
+
+  private tryBeginWrite(
+    laneId: string,
+    lane: SaveLane<TResult>,
+    active: ActiveSave,
+    epoch: number,
+  ): DocumentSaveWritePermit | null {
+    if (active.issuedWrite) {
+      return active.issuedWrite.permit;
+    }
+    if (this.disposed || active.writeDenied) {
+      return null;
+    }
+    if (this.lanes.get(laneId) !== lane || lane.active !== active) {
+      return null;
+    }
+    if (lane.epoch !== epoch || this.isExcluded(lane.key)) {
+      return null;
+    }
+
+    const issuedWrite = this.createIssuedWrite(lane, active);
+    active.issuedWrite = issuedWrite;
+    lane.issuedWrites.add(issuedWrite);
+    return issuedWrite.permit;
+  }
+
+  private createIssuedWrite(
+    lane: SaveLane<TResult>,
+    active: ActiveSave,
+  ): IssuedWrite {
+    let issuedWrite!: IssuedWrite;
+    const permit: DocumentSaveWritePermit = {
+      granted: true,
+      settle: () => this.settleIssuedWrite(lane, active, issuedWrite),
+    };
+    issuedWrite = {
+      barrier: saveBarrier(),
+      permit,
+      settled: false,
+    };
+    return issuedWrite;
+  }
+
+  private settleIssuedWrite(
+    lane: SaveLane<TResult>,
+    active: ActiveSave,
+    issuedWrite: IssuedWrite,
+  ): void {
+    if (issuedWrite.settled) {
+      return;
+    }
+
+    issuedWrite.settled = true;
+    if (active.issuedWrite === issuedWrite) {
+      active.issuedWrite = null;
+      active.writeDenied = true;
+    }
+    lane.issuedWrites.delete(issuedWrite);
+    issuedWrite.barrier.resolve();
   }
 
   private async drain(
@@ -228,17 +389,29 @@ export class DocumentSaveCoordinator<TResult = void> {
     while (lane.pending) {
       const pending = lane.pending;
       lane.pending = null;
+      const active: ActiveSave = {
+        issuedWrite: null,
+        operation: null,
+        operationBarrier: saveBarrier(),
+        sequence: pending.sequence,
+        writeDenied: false,
+      };
+      lane.active = active;
 
       try {
         const promise = pending.operation(
-          this.createLease(laneId, lane, pending.epoch),
+          this.createLease(laneId, lane, pending.epoch, active),
         );
-        lane.active = { promise, sequence: pending.sequence };
+        active.operation = promise;
         const result = await promise;
         this.recordResult(lane, pending, result);
       } catch (error) {
         this.recordFailure(lane, pending, error);
       } finally {
+        if (active.issuedWrite) {
+          this.settleIssuedWrite(lane, active, active.issuedWrite);
+        }
+        active.operationBarrier.resolve();
         lane.active = null;
       }
     }
@@ -346,6 +519,15 @@ export class DocumentSaveCoordinator<TResult = void> {
     waiter.settled = true;
     waiter.resolve(outcome);
   }
+}
+
+function saveBarrier(): SaveBarrier {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+
+  return { promise, resolve };
 }
 
 function documentSaveKeyId(key: DocumentSaveKey): string {

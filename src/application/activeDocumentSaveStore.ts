@@ -8,6 +8,12 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 export interface ActiveDocumentSaveLease {
   isCurrent(): boolean;
+  tryBeginWrite(): ActiveDocumentSaveWritePermit | null;
+}
+
+export interface ActiveDocumentSaveWritePermit {
+  readonly granted: true;
+  settle(): void;
 }
 
 export interface DocumentSaveTarget {
@@ -26,9 +32,14 @@ export interface DocumentSaveAcknowledgement {
 
 export interface ActiveDocumentSaveStorePort {
   current(target: DocumentSaveTarget): EditorDocument | null;
-  acknowledge(
+  acknowledgeIssuedWrite(
     target: DocumentSaveTarget,
     acknowledgement: DocumentSaveAcknowledgement,
+  ): void;
+  updateRevisionForIssuedWrite(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+    revision: EditorDocument["revision"],
   ): void;
   updateRevision(
     target: DocumentSaveTarget,
@@ -57,11 +68,15 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
     return this.dependencies.documentsRef.current[target.path] ?? null;
   }
 
-  acknowledge(
+  acknowledgeIssuedWrite(
     target: DocumentSaveTarget,
     acknowledgement: DocumentSaveAcknowledgement,
   ): void {
-    const liveDocument = this.current(target);
+    const requestIsCurrent = this.isCurrent(target);
+    const liveDocument = this.issuedWriteDocument(
+      target,
+      acknowledgement.expectedDocument,
+    );
     if (!liveDocument) {
       return;
     }
@@ -70,32 +85,93 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
       liveDocument,
       acknowledgement,
     );
+    if (acknowledgedDocument === liveDocument) {
+      return;
+    }
+
     this.dependencies.documentsRef.current = {
       ...this.dependencies.documentsRef.current,
       [target.path]: acknowledgedDocument,
     };
-    if (!this.isCurrent(target)) {
-      return;
-    }
-    if (this.dependencies.activeDocumentRef.current?.path === target.path) {
+    if (this.dependencies.activeDocumentRef.current === liveDocument) {
       this.dependencies.activeDocumentRef.current = acknowledgedDocument;
     }
-    if (!this.isCurrent(target)) {
+    if (!this.isSameRoot(target)) {
       return;
     }
 
     this.dependencies.setDocuments((current) => {
-      if (!this.isCurrent(target)) {
+      if (requestIsCurrent && !this.isCurrent(target)) {
         return current;
       }
       const existing = current[target.path];
       if (!existing) {
         return current;
       }
+      if (
+        !requestIsCurrent &&
+        existing !== acknowledgedDocument &&
+        !this.isSameDocumentIncarnation(
+          existing,
+          acknowledgement.expectedDocument,
+        )
+      ) {
+        return current;
+      }
 
       return {
         ...current,
         [target.path]: this.acknowledgedDocument(existing, acknowledgement),
+      };
+    });
+  }
+
+  updateRevisionForIssuedWrite(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+    revision: EditorDocument["revision"],
+  ): void {
+    const requestIsCurrent = this.isCurrent(target);
+    const liveDocument = this.issuedWriteDocument(target, expectedDocument);
+    if (!liveDocument || liveDocument.revision === revision) {
+      return;
+    }
+
+    const revisedDocument = { ...liveDocument, revision };
+    this.dependencies.documentsRef.current = {
+      ...this.dependencies.documentsRef.current,
+      [target.path]: revisedDocument,
+    };
+    if (this.dependencies.activeDocumentRef.current === liveDocument) {
+      this.dependencies.activeDocumentRef.current = revisedDocument;
+    }
+    if (!this.isSameRoot(target)) {
+      return;
+    }
+
+    this.dependencies.setDocuments((current) => {
+      if (requestIsCurrent && !this.isCurrent(target)) {
+        return current;
+      }
+      const existing = current[target.path];
+      if (!existing) {
+        return current;
+      }
+      if (
+        !requestIsCurrent &&
+        existing !== revisedDocument &&
+        existing !== liveDocument &&
+        !this.isSameDocumentIncarnation(existing, expectedDocument)
+      ) {
+        return current;
+      }
+      if (existing.revision === revision) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [target.path]: { ...existing, revision },
       };
     });
   }
@@ -142,17 +218,74 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
     );
   }
 
+  private issuedWriteDocument(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+  ): EditorDocument | null {
+    const liveDocument =
+      this.dependencies.documentsRef.current[target.path] ?? null;
+    if (!liveDocument) {
+      return null;
+    }
+    if (this.isCurrent(target)) {
+      return liveDocument;
+    }
+    if (!target.lease.isCurrent()) {
+      return null;
+    }
+    if (!this.isSameRoot(target)) {
+      return null;
+    }
+    if (
+      !this.isSameDocumentIncarnation(liveDocument, expectedDocument)
+    ) {
+      return null;
+    }
+
+    return liveDocument;
+  }
+
+  private isSameRoot(target: DocumentSaveTarget): boolean {
+    return workspaceRootKeysEqual(
+      this.dependencies.currentWorkspaceRootRef.current,
+      target.rootPath,
+    );
+  }
+
+  private isSameDocumentIncarnation(
+    liveDocument: EditorDocument,
+    expectedDocument: EditorDocument,
+  ): boolean {
+    if (liveDocument === expectedDocument) {
+      return true;
+    }
+
+    return (
+      liveDocument.savedContent === expectedDocument.savedContent &&
+      liveDocument.revision === expectedDocument.revision
+    );
+  }
+
   private acknowledgedDocument(
     liveDocument: EditorDocument,
     acknowledgement: DocumentSaveAcknowledgement,
   ): EditorDocument {
+    const content =
+      liveDocument === acknowledgement.expectedDocument &&
+      liveDocument.content === acknowledgement.startingContent
+        ? acknowledgement.savedDocument.content
+        : liveDocument.content;
+    if (
+      content === liveDocument.content &&
+      acknowledgement.savedDocument.content === liveDocument.savedContent &&
+      acknowledgement.revision === liveDocument.revision
+    ) {
+      return liveDocument;
+    }
+
     return {
       ...liveDocument,
-      content:
-        liveDocument === acknowledgement.expectedDocument &&
-        liveDocument.content === acknowledgement.startingContent
-          ? acknowledgement.savedDocument.content
-          : liveDocument.content,
+      content,
       savedContent: acknowledgement.savedDocument.content,
       revision: acknowledgement.revision,
     };

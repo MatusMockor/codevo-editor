@@ -17,6 +17,15 @@ import type {
 const ROOT = "/workspace";
 const PATH = `${ROOT}/src/User.php`;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+
+  return { promise, resolve };
+}
+
 function document(
   path = PATH,
   content = "edited",
@@ -70,11 +79,16 @@ function createHarness(options: {
   const documents =
     options.documents ?? ({ [PATH]: document() } as Record<string, EditorDocument>);
   let current = true;
+  let writeAllowed = true;
+  const settleWrite = vi.fn();
+  const tryBeginWrite = vi.fn(() =>
+    writeAllowed ? { granted: true as const, settle: settleWrite } : null,
+  );
   const target: DocumentSaveTarget = {
     rootPath: ROOT,
     path: options.targetPath ?? PATH,
     workspaceRequestToken: 1,
-    lease: { isCurrent: () => current },
+    lease: { isCurrent: () => current, tryBeginWrite },
   };
   const acknowledgeSavedDocument = vi.fn(
     (
@@ -111,7 +125,17 @@ function createHarness(options: {
 
       return documents[saveTarget.path] ?? null;
     },
-    acknowledge: acknowledgeSavedDocument,
+    acknowledgeIssuedWrite: acknowledgeSavedDocument,
+    updateRevisionForIssuedWrite: (
+      saveTarget,
+      _expectedDocument,
+      nextRevision,
+    ) => {
+      const live = documents[saveTarget.path];
+      if (live) {
+        documents[saveTarget.path] = { ...live, revision: nextRevision };
+      }
+    },
     updateRevision: (saveTarget, nextRevision) => {
       const live = documents[saveTarget.path];
       if (live) {
@@ -157,9 +181,14 @@ function createHarness(options: {
     setCurrent: (value: boolean) => {
       current = value;
     },
+    setWriteAllowed: (value: boolean) => {
+      writeAllowed = value;
+    },
+    settleWrite,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     target,
+    tryBeginWrite,
   };
 }
 
@@ -174,6 +203,7 @@ describe("DocumentSaveService", () => {
       events,
       workspaceFiles: workspaceFiles({ writeTextFile }),
     });
+    harness.settleWrite.mockImplementation(() => events.push("settle"));
 
     const result = await harness.save();
 
@@ -187,6 +217,7 @@ describe("DocumentSaveService", () => {
       "editorconfig",
       "write",
       "ack",
+      "settle",
       "prefetch",
       "history",
       "php",
@@ -283,6 +314,81 @@ describe("DocumentSaveService", () => {
     expect(partial.documents[PATH].revision).toEqual(partialRevision);
   });
 
+  it("reconciles a partial revision after the save token expires", async () => {
+    const partialRevision = revision(4);
+    const write = deferred<{
+      status: "partial";
+      message: string;
+      revision: WorkspaceFileRevision;
+    }>();
+    const harness = createHarness({
+      workspaceFiles: workspaceFiles({
+        writeTextFile: vi.fn(() => write.promise),
+      }),
+    });
+    const save = harness.save();
+    await vi.waitFor(() => expect(harness.tryBeginWrite).toHaveBeenCalledOnce());
+    harness.setCurrent(false);
+
+    write.resolve({
+      status: "partial",
+      message: "directory sync failed",
+      revision: partialRevision,
+    });
+
+    await expect(save).resolves.toEqual({ status: "stale" });
+    expect(harness.documents[PATH]).toEqual(
+      expect.objectContaining({
+        content: "edited",
+        savedContent: "saved",
+        revision: partialRevision,
+      }),
+    );
+    expect(harness.settleWrite).toHaveBeenCalledOnce();
+    expect(harness.events).not.toContain("prefetch");
+    expect(harness.events).not.toContain("history");
+  });
+
+  it("settles the write barrier before reading a slow conflict snapshot", async () => {
+    const diskRevision = revision(9);
+    const snapshot = deferred<{
+      content: string;
+      revision: WorkspaceFileRevision;
+    }>();
+    const events: string[] = [];
+    const harness = createHarness({
+      events,
+      workspaceFiles: workspaceFiles({
+        readTextFileSnapshot: vi.fn(() => {
+          events.push("read");
+          return snapshot.promise;
+        }),
+        writeTextFile: vi.fn(async () => ({
+          status: "conflict" as const,
+          message: "changed",
+        })),
+      }),
+    });
+    harness.settleWrite.mockImplementation(() => events.push("settle"));
+    const save = harness.save();
+
+    await vi.waitFor(() => expect(harness.settleWrite).toHaveBeenCalledOnce());
+
+    expect(events.indexOf("settle")).toBeLessThan(events.indexOf("read"));
+    const completed = vi.fn();
+    void save.then(completed);
+    await Promise.resolve();
+    expect(completed).not.toHaveBeenCalled();
+
+    snapshot.resolve({ content: "disk", revision: diskRevision });
+
+    await expect(save).resolves.toEqual({
+      status: "conflict",
+      document: harness.documents[PATH],
+      snapshot: { content: "disk", revision: diskRevision },
+    });
+  });
+
   it("returns stale when its root-explicit target guard expires", async () => {
     let release!: (value: string) => void;
     const formatted = new Promise<string>((resolve) => {
@@ -298,6 +404,19 @@ describe("DocumentSaveService", () => {
 
     await expect(save).resolves.toEqual({ status: "stale" });
     expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("returns stale when the lease denies the write permit", async () => {
+    const harness = createHarness();
+    harness.setWriteAllowed(false);
+
+    await expect(harness.save()).resolves.toEqual({ status: "stale" });
+
+    expect(harness.tryBeginWrite).toHaveBeenCalledOnce();
+    expect(
+      harness.dependencies.workspaceFiles.writeTextFile,
+    ).not.toHaveBeenCalled();
+    expect(harness.settleWrite).not.toHaveBeenCalled();
   });
 
   it("blocks without writing when the live document becomes read-only during formatting", async () => {
@@ -362,4 +481,49 @@ describe("DocumentSaveService", () => {
     expect(harness.events).not.toContain("php");
     expect(harness.events).not.toContain("js");
   });
+
+  it("acknowledges an issued write but suppresses stale side effects", async () => {
+    let release!: () => void;
+    const write = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const harness = createHarness({
+      workspaceFiles: workspaceFiles({ writeTextFile: vi.fn(() => write) }),
+    });
+    const save = harness.save();
+    await vi.waitFor(() => expect(harness.tryBeginWrite).toHaveBeenCalledOnce());
+    harness.setCurrent(false);
+
+    release();
+
+    await expect(save).resolves.toEqual({ status: "stale" });
+    expect(harness.documents[PATH].savedContent).toBe(
+      "edited:formatted:optimized:organized",
+    );
+    expect(harness.settleWrite).toHaveBeenCalledOnce();
+    expect(harness.events).not.toContain("prefetch");
+    expect(harness.events).not.toContain("history");
+    expect(harness.events).not.toContain("php");
+    expect(harness.events).not.toContain("js");
+  });
+
+  it.each(["failure", "conflict"] as const)(
+    "settles the issued write after a %s",
+    async (outcome) => {
+      const harness = createHarness({
+        workspaceFiles: workspaceFiles({
+          writeTextFile: vi.fn(async () =>
+            outcome === "conflict"
+              ? { status: "conflict" as const, message: "changed" }
+              : { status: "error" as const, message: "denied" },
+          ),
+        }),
+      });
+
+      await harness.save();
+
+      expect(harness.settleWrite).toHaveBeenCalledOnce();
+      expect(harness.acknowledgeSavedDocument).not.toHaveBeenCalled();
+    },
+  );
 });

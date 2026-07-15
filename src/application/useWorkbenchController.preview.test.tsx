@@ -9012,14 +9012,16 @@ describe("useWorkbenchController preview tabs", () => {
       ).toHaveBeenCalledWith(path, "<?php\nfinal class User {}\n");
     });
 
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    let switchPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
     await flushAsyncTurns();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
 
     await act(async () => {
       save.reject(new Error("stale save"));
-      await savePromise;
+      await Promise.all([savePromise, switchPromise]);
     });
     await flushAsyncTurns();
 
@@ -9033,9 +9035,20 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
-  it("ignores stale save completions after switching project tabs", async () => {
+  it("waits for an issued save before caching and restores the clean revision", async () => {
     const path = "/workspace-a/src/User.php";
-    const save = createDeferred<void>();
+    const savedRevision = {
+      device: 1,
+      inode: 2,
+      size: 27,
+      modifiedSeconds: 3,
+      modifiedNanoseconds: 4,
+      contentHash: 5,
+    };
+    const save = createDeferred<{
+      status: "success";
+      revision: typeof savedRevision;
+    }>();
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -9056,7 +9069,7 @@ describe("useWorkbenchController preview tabs", () => {
     });
     vi.mocked(
       dependencies.workspaceGateways.files.writeTextFile,
-    ).mockImplementationOnce(async () => save.promise);
+    ).mockImplementationOnce(() => save.promise);
 
     const command = getWorkbench().commands.find(
       (candidate) => candidate.id === "editor.save",
@@ -9072,19 +9085,172 @@ describe("useWorkbenchController preview tabs", () => {
       ).toHaveBeenCalledWith(path, "<?php\nfinal class User {}\n");
     });
 
-    await act(async () => {
-      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    let switchPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
     });
     await flushAsyncTurns();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
 
     await act(async () => {
-      save.resolve(undefined);
-      await savePromise;
+      save.resolve({ status: "success", revision: savedRevision });
+      await Promise.all([savePromise, switchPromise]);
     });
     await flushAsyncTurns();
 
     expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
     expect(getWorkbench().message).not.toBe("Saved User.php");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument).toMatchObject({
+      content: "<?php\nfinal class User {}\n",
+      path,
+      revision: savedRevision,
+      savedContent: "<?php\nfinal class User {}\n",
+    });
+  });
+
+  it("cancels a drain-blocked workspace switch when the visible tab is reactivated", async () => {
+    const path = "/workspace-a/src/User.php";
+    const write = createDeferred<void>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) => `<?php\n// ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nfinal class User {}\n");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).mockImplementationOnce(() => write.promise);
+    vi.mocked(dependencies.settingsGateway.loadWorkspaceSettings).mockClear();
+    vi.mocked(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).mockClear();
+
+    let savePromise: Promise<void> = Promise.resolve();
+    act(() => {
+      savePromise = getWorkbench().saveActiveDocument();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, "<?php\nfinal class User {}\n");
+    });
+
+    let switchToB: Promise<void> = Promise.resolve();
+    act(() => {
+      switchToB = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await flushAsyncTurns();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+
+    await act(async () => {
+      write.resolve();
+      await Promise.all([savePromise, switchToB]);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    expect(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("preserves an edit made during an issued save as dirty in the workspace cache", async () => {
+    const path = "/workspace-a/src/User.php";
+    const savedRevision = {
+      device: 1,
+      inode: 2,
+      size: 2,
+      modifiedSeconds: 3,
+      modifiedNanoseconds: 4,
+      contentHash: 5,
+    };
+    const save = createDeferred<{
+      status: "success";
+      revision: typeof savedRevision;
+    }>();
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      readTextFile: vi.fn(
+        async (requestedPath: string) => `C0 // ${requestedPath}\n`,
+      ),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("C1");
+    });
+    vi.mocked(
+      dependencies.workspaceGateways.files.writeTextFile,
+    ).mockImplementationOnce(() => save.promise);
+
+    let savePromise: Promise<void> = Promise.resolve();
+    act(() => {
+      savePromise = getWorkbench().saveActiveDocument();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, "C1");
+    });
+
+    let switchPromise: Promise<void> = Promise.resolve();
+    act(() => {
+      switchPromise = getWorkbench().activateWorkspaceTab("/workspace-b");
+      getWorkbench().updateActiveDocument("C2");
+    });
+    await flushAsyncTurns();
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+
+    await act(async () => {
+      save.resolve({ status: "success", revision: savedRevision });
+      await Promise.all([savePromise, switchPromise]);
+    });
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().activeDocument).toMatchObject({
+      content: "C2",
+      path,
+      revision: savedRevision,
+      savedContent: "C1",
+    });
   });
 
   describe("format on save", () => {

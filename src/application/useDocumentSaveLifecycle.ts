@@ -105,6 +105,7 @@ export interface DocumentSaveLifecycle {
   saveDocument: (path: string) => Promise<DocumentSaveResult>;
   saveActiveDocument: () => Promise<void>;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
+  runWithIssuedWriteDrain: RunWithDocumentSaveExclusion;
   invalidateDocumentSave: (rootPath: string, path: string) => void;
 }
 
@@ -347,6 +348,22 @@ export function useDocumentSaveLifecycle(
         hasExternalFileConflict,
       });
       const result = await service.saveDocument(target);
+      if (!lease.isCurrent()) {
+        return result;
+      }
+      if (
+        workspaceRequestTokenRef.current !== identity.workspaceRequestToken
+      ) {
+        return result;
+      }
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          identity.requestedRoot,
+        )
+      ) {
+        return result;
+      }
       presentSaveResult(identity.requestedRoot, result);
       return result;
     },
@@ -360,9 +377,11 @@ export function useDocumentSaveLifecycle(
       organizedImportsContentForSave,
       presentSaveResult,
       resolveEditorConfigForFile,
+      currentWorkspaceRootRef,
       syncSavedDocument,
       syncSavedJavaScriptTypeScriptDocument,
       workspaceFiles,
+      workspaceRequestTokenRef,
     ],
   );
 
@@ -411,6 +430,12 @@ export function useDocumentSaveLifecycle(
       [documentSaveCoordinator],
     );
 
+  const runWithIssuedWriteDrain = useCallback<RunWithDocumentSaveExclusion>(
+    (scope, operation) =>
+      documentSaveCoordinator.runWithIssuedWriteDrain(scope, operation),
+    [documentSaveCoordinator],
+  );
+
   const invalidateDocumentSave = useCallback(
     (rootPath: string, path: string): void => {
       documentSaveCoordinator.invalidate({ rootPath, path });
@@ -443,6 +468,7 @@ export function useDocumentSaveLifecycle(
     saveDocument,
     saveActiveDocument,
     runWithDocumentSaveExclusion,
+    runWithIssuedWriteDrain,
     invalidateDocumentSave,
   };
 }

@@ -798,6 +798,7 @@ export function useWorkbenchController(
   );
   const openWorkspaceRequestTokenRef = useRef(0);
   const openWorkspaceRequestPathRef = useRef<string | null>(null);
+  const openWorkspaceRequestInFlightTokenRef = useRef<number | null>(null);
   const inFlightDirectoryLoadsRef = useRef(
     new Map<string, InFlightDirectoryLoad>(),
   );
@@ -2839,7 +2840,18 @@ export function useWorkbenchController(
     [updateEditorGroups, updateLocalPhpDiagnostics, workspaceFiles],
   );
 
-  const openWorkspacePath = useCallback(
+  const runWithIssuedWriteDrainRef =
+    useRef<RunWithDocumentSaveExclusion>(async (_scope, operation) =>
+      operation(),
+    );
+  const runWithIssuedWriteDrainDelegate =
+    useCallback<RunWithDocumentSaveExclusion>(
+      (scope, operation) =>
+        runWithIssuedWriteDrainRef.current(scope, operation),
+      [],
+    );
+
+  const performOpenWorkspacePath = useCallback(
     async (path: string, options: OpenWorkspacePathOptions = {}) => {
       const shouldCachePreviousWorkspace =
         options.cachePreviousWorkspace !== false;
@@ -2865,45 +2877,56 @@ export function useWorkbenchController(
       }
 
       if (switchingWorkspace) {
-        const captureResult = await captureWorkspaceBeforeSwitch(
-          {
-            rootPath: previousRootPath,
-            cacheWorkspace: shouldCachePreviousWorkspace,
-            isRequestCurrent: isCurrentOpenWorkspaceRequest,
-          },
-          {
-            invalidatePendingFileOpen: () => {
-              openFileRequestTokenRef.current += 1;
+        const captureAndDeactivatePreviousWorkspace = async () => {
+          if (!isCurrentOpenWorkspaceRequest()) {
+            return "stale" as const;
+          }
+
+          const captureResult = await captureWorkspaceBeforeSwitch(
+            {
+              rootPath: previousRootPath,
+              cacheWorkspace: shouldCachePreviousWorkspace,
+              isRequestCurrent: isCurrentOpenWorkspaceRequest,
             },
-            persistWorkspaceSession: persistCurrentWorkspaceSession,
-            cacheWorkspaceState: cacheCurrentWorkspaceState,
-            reportPersistenceError: (rootPath, error) => {
-              reportErrorForActiveWorkspaceRoot(rootPath, "Session", error);
+            {
+              invalidatePendingFileOpen: () => {
+                openFileRequestTokenRef.current += 1;
+              },
+              persistWorkspaceSession: persistCurrentWorkspaceSession,
+              cacheWorkspaceState: cacheCurrentWorkspaceState,
+              reportPersistenceError: (rootPath, error) => {
+                reportErrorForActiveWorkspaceRoot(rootPath, "Session", error);
+              },
             },
-          },
-        );
+          );
 
-        if (captureResult === "stale" || !isCurrentOpenWorkspaceRequest()) {
-          return;
-        }
-      }
+          if (captureResult === "stale" || !isCurrentOpenWorkspaceRequest()) {
+            return "stale" as const;
+          }
 
-      if (switchingWorkspace) {
-        const closeResult = await closeWorkspaceDocumentsBeforeSwitch(
-          {
-            rootPath: previousRootPath,
-            isRequestCurrent: isCurrentOpenWorkspaceRequest,
-          },
-          {
-            closeLanguageServerDocuments:
-              closeSyncedLanguageServerDocumentsForRoot,
-            closeJavaScriptTypeScriptDocuments:
-              closeSyncedJavaScriptTypeScriptDocumentsForRoot,
-          },
-          workspaceDocumentCloseCoordinatorRef.current,
-        );
+          return closeWorkspaceDocumentsBeforeSwitch(
+            {
+              rootPath: previousRootPath,
+              isRequestCurrent: isCurrentOpenWorkspaceRequest,
+            },
+            {
+              closeLanguageServerDocuments:
+                closeSyncedLanguageServerDocumentsForRoot,
+              closeJavaScriptTypeScriptDocuments:
+                closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+            },
+            workspaceDocumentCloseCoordinatorRef.current,
+          );
+        };
 
-        if (closeResult === "stale") {
+        const switchResult = shouldCachePreviousWorkspace
+          ? await runWithIssuedWriteDrainDelegate(
+              { kind: "workspace", rootPath: previousRootPath },
+              captureAndDeactivatePreviousWorkspace,
+            )
+          : await captureAndDeactivatePreviousWorkspace();
+
+        if (switchResult === "stale" || !isCurrentOpenWorkspaceRequest()) {
           return;
         }
       }
@@ -3342,6 +3365,7 @@ export function useWorkbenchController(
       resetTextSearchState,
       resetJavaScriptTypeScriptLanguageServerDocuments,
       resetLanguageServerDocuments,
+      runWithIssuedWriteDrainDelegate,
       restoreIndexRoot,
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
       clearLanguageServerDiagnostics,
@@ -3358,6 +3382,26 @@ export function useWorkbenchController(
       workspaceTrustGateway,
       refreshJavaScriptTypeScriptLanguageServerPlan,
     ],
+  );
+
+  const openWorkspacePath = useCallback(
+    (
+      path: string,
+      options: OpenWorkspacePathOptions = {},
+    ): Promise<void> => {
+      const request = performOpenWorkspacePath(path, options);
+      const requestToken = openWorkspaceRequestTokenRef.current;
+      openWorkspaceRequestInFlightTokenRef.current = requestToken;
+
+      return request.finally(() => {
+        if (openWorkspaceRequestInFlightTokenRef.current !== requestToken) {
+          return;
+        }
+
+        openWorkspaceRequestInFlightTokenRef.current = null;
+      });
+    },
+    [performOpenWorkspacePath],
   );
 
   const openWorkspace = useCallback(async () => {
@@ -3389,6 +3433,16 @@ export function useWorkbenchController(
   const activateWorkspaceTab = useCallback(
     async (path: string) => {
       if (workspaceRootKeysEqual(path, workspaceRoot)) {
+        const inFlightToken = openWorkspaceRequestInFlightTokenRef.current;
+        if (
+          inFlightToken === openWorkspaceRequestTokenRef.current &&
+          openWorkspaceRequestPathRef.current &&
+          !workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, path)
+        ) {
+          openWorkspaceRequestTokenRef.current += 1;
+          openWorkspaceRequestPathRef.current = path;
+          openWorkspaceRequestInFlightTokenRef.current = null;
+        }
         return;
       }
 
@@ -4196,6 +4250,7 @@ export function useWorkbenchController(
     captureLocalHistorySnapshot,
     saveActiveDocument,
     runWithDocumentSaveExclusion,
+    runWithIssuedWriteDrain,
     closeDocument: closeTextDocument,
     closeActiveSurface: closeTextSurface,
     reopenClosedDocument,
@@ -4262,6 +4317,7 @@ export function useWorkbenchController(
     onRecentlyClosedTabsChange,
   });
   runWithDocumentSaveExclusionRef.current = runWithDocumentSaveExclusion;
+  runWithIssuedWriteDrainRef.current = runWithIssuedWriteDrain;
 
   const {
     closeDocument,

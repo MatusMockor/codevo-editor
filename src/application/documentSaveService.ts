@@ -8,6 +8,7 @@ import type {
 import { readWorkspaceTextFileSnapshot } from "../domain/workspace";
 import type {
   ActiveDocumentSaveStorePort,
+  ActiveDocumentSaveWritePermit,
   DocumentSaveTarget,
 } from "./activeDocumentSaveStore";
 
@@ -279,6 +280,40 @@ export class DocumentSaveService {
       };
     }
 
+    const writePermit = this.tryBeginWrite(target);
+    if (!writePermit) {
+      return { status: "stale" };
+    }
+    let writePermitSettled = false;
+    const settleWritePermit = () => {
+      if (writePermitSettled) {
+        return;
+      }
+
+      writePermitSettled = true;
+      writePermit.settle();
+    };
+
+    try {
+      return await this.writeIssuedDocument(
+        target,
+        expectedDocument,
+        savedDocument,
+        currentDocument,
+        settleWritePermit,
+      );
+    } finally {
+      settleWritePermit();
+    }
+  }
+
+  private async writeIssuedDocument(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+    savedDocument: EditorDocument,
+    currentDocument: () => EditorDocument | null,
+    settleWritePermit: () => void,
+  ): Promise<DocumentSaveResult> {
     const writeResult = expectedDocument.revision
       ? await this.dependencies.workspaceFiles.writeTextFile(
           savedDocument.path,
@@ -291,16 +326,23 @@ export class DocumentSaveService {
         );
 
     if (writeResult?.status === "conflict") {
+      settleWritePermit();
       return await this.readConflict(target, currentDocument);
     }
     if (writeResult?.status === "error") {
+      settleWritePermit();
       return { status: "failed", error: new Error(writeResult.message) };
     }
     if (writeResult?.status === "partial") {
+      this.dependencies.saveStore.updateRevisionForIssuedWrite(
+        target,
+        expectedDocument,
+        writeResult.revision,
+      );
+      settleWritePermit();
       if (!currentDocument()) {
         return { status: "stale" };
       }
-      this.dependencies.saveStore.updateRevision(target, writeResult.revision);
       return {
         status: "partial",
         error: new Error(
@@ -309,11 +351,8 @@ export class DocumentSaveService {
       };
     }
 
-    const liveDocument = currentDocument();
-    if (!liveDocument) {
-      return { status: "stale" };
-    }
     if (this.hasExternalConflict(target)) {
+      settleWritePermit();
       return {
         status: "blocked",
         reason: "external",
@@ -321,15 +360,16 @@ export class DocumentSaveService {
       };
     }
 
-    this.dependencies.saveStore.acknowledge(target, {
+    this.dependencies.saveStore.acknowledgeIssuedWrite(target, {
       expectedDocument,
       revision:
         writeResult?.status === "success"
           ? writeResult.revision
-          : liveDocument.revision,
+          : expectedDocument.revision,
       savedDocument,
       startingContent: expectedDocument.content,
     });
+    settleWritePermit();
     if (!currentDocument()) {
       return { status: "stale" };
     }
@@ -382,6 +422,12 @@ export class DocumentSaveService {
       document: savedDocument,
       contentIsCurrent: true,
     };
+  }
+
+  private tryBeginWrite(
+    target: DocumentSaveTarget,
+  ): ActiveDocumentSaveWritePermit | null {
+    return target.lease.tryBeginWrite();
   }
 
   private async readConflict(

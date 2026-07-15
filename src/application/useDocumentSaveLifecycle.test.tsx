@@ -435,6 +435,47 @@ describe("useDocumentSaveLifecycle", () => {
     },
   );
 
+  it("reconciles an issued write without stale UI or save side effects", async () => {
+    const write = deferred<void>();
+    const harness = renderLifecycle({
+      workspaceFiles: workspaceFiles({
+        writeTextFile: vi.fn(() => write.promise),
+      }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        phpstanAnalyseOnSave: true,
+      },
+    });
+    const invalidatePrefetch = vi.spyOn(
+      harness.dependencies.filePrefetchCacheRef.current,
+      "invalidate",
+    );
+    const save = harness.lifecycle().saveDocument(PATH);
+    await vi.waitFor(() =>
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce(),
+    );
+    harness.replaceDocument(document("C2", "saved"));
+    harness.workspaceRequestTokenRef.current += 1;
+
+    write.resolve();
+
+    await expect(save).resolves.toEqual({ status: "stale" });
+    expect(harness.documentsRef.current[PATH]).toEqual(
+      expect.objectContaining({ content: "C2", savedContent: "edited" }),
+    );
+    expect(invalidatePrefetch).not.toHaveBeenCalled();
+    expect(
+      harness.localHistoryGateway.recordSnapshot,
+    ).not.toHaveBeenCalled();
+    expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+    expect(
+      harness.syncSavedJavaScriptTypeScriptDocument,
+    ).not.toHaveBeenCalled();
+    expect(harness.setMessage).not.toHaveBeenCalled();
+    expect(harness.runPhpstanAnalysisOnSave).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("finishes an active save before entering an exclusion", async () => {
     const write = deferred<void>();
     const events: string[] = [];
@@ -477,6 +518,48 @@ describe("useDocumentSaveLifecycle", () => {
       "done",
     ]);
     expect(events).toEqual(["write", "history", "didSave", "operation"]);
+    harness.unmount();
+  });
+
+  it("enters an issued-write drain after acknowledgement without waiting for post-write work", async () => {
+    const write = deferred<void>();
+    const history = deferred<void>();
+    const operation = vi.fn(async () => "done");
+    const harness = renderLifecycle({
+      workspaceFiles: workspaceFiles({
+        writeTextFile: vi.fn(() => write.promise),
+      }),
+      localHistoryGateway: localHistoryGateway({
+        recordSnapshot: vi.fn(async () => {
+          await history.promise;
+          return null;
+        }),
+      }),
+    });
+    let saveSettled = false;
+    const save = harness
+      .lifecycle()
+      .saveActiveDocument()
+      .finally(() => {
+        saveSettled = true;
+      });
+    await vi.waitFor(() =>
+      expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledOnce(),
+    );
+
+    const drain = harness.lifecycle().runWithIssuedWriteDrain(
+      { kind: "workspace", rootPath: ROOT },
+      operation,
+    );
+    expect(operation).not.toHaveBeenCalled();
+
+    write.resolve();
+    await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
+    await expect(drain).resolves.toBe("done");
+    expect(saveSettled).toBe(false);
+
+    history.resolve();
+    await save;
     harness.unmount();
   });
 
