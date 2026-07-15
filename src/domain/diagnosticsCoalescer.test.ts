@@ -207,6 +207,69 @@ describe("DiagnosticsCoalescer", () => {
     ]);
   });
 
+  it("coalesces root aliases that share an explicit owner key", () => {
+    const sink = vi.fn();
+    const { scheduler, fire } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+
+    coalescer.enqueueForOwner(
+      "workspace-owner",
+      diagnosticEvent({ rootPath: "/selected-alias-a", version: 1 }),
+    );
+    coalescer.enqueueForOwner(
+      "workspace-owner",
+      diagnosticEvent({ rootPath: "/selected-alias-b", version: 2 }),
+    );
+
+    fire();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0][0].rootPath).toBe("/selected-alias-b");
+    expect(sink.mock.calls[0][0].version).toBe(2);
+  });
+
+  it("isolates explicit owners even when their event roots and uris match", () => {
+    const sink = vi.fn();
+    const { scheduler, fire } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+    const event = diagnosticEvent({ uri: "file:///shared" });
+
+    coalescer.enqueue(event, "owner-a");
+    coalescer.enqueue({ ...event, version: 2 }, "owner-b");
+
+    fire();
+
+    expect(sink).toHaveBeenCalledTimes(2);
+    expect(sink.mock.calls.map(([queued]) => queued.version)).toEqual([1, 2]);
+  });
+
+  it("drops only buffered events belonging to a closed owner", () => {
+    const sink = vi.fn();
+    const { scheduler, fire } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+
+    coalescer.enqueue(diagnosticEvent({ uri: "file:///a" }), "owner-a");
+    coalescer.enqueue(diagnosticEvent({ uri: "file:///b" }), "owner-b");
+
+    coalescer.dropOwner("owner-a");
+    fire();
+
+    expect(sink).toHaveBeenCalledTimes(1);
+    expect(sink.mock.calls[0][0].uri).toBe("file:///b");
+  });
+
+  it("accepts an explicit owner independently of the event root", () => {
+    const sink = vi.fn();
+    const { scheduler, fire, pending } = manualScheduler();
+    const coalescer = new DiagnosticsCoalescer(sink, scheduler);
+
+    coalescer.enqueue(diagnosticEvent({ rootPath: "" }), "workspace-owner");
+
+    expect(pending()).toBe(true);
+    fire();
+    expect(sink).toHaveBeenCalledTimes(1);
+  });
+
   it("drops buffered events for a root that is discarded before flush", () => {
     const sink = vi.fn();
     const { scheduler, fire } = manualScheduler();

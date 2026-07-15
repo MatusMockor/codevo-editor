@@ -46,25 +46,27 @@ export function animationFrameDiagnosticsFlushScheduler(): DiagnosticsFlushSched
   };
 }
 
-function bufferKey(event: LanguageServerDiagnosticEvent): string {
-  return `${normalizedWorkspaceRootKey(event.rootPath)}\u0000${event.uri}`;
-}
-
 /**
  * Coalesces `publishDiagnostics` events that arrive as separate Tauri listener
  * callbacks (each its own macrotask, so React 19 cannot batch them). During an
  * indexing burst on a large project the server can emit hundreds of per-file
  * publications back to back; replaying each one individually triggers N
  * un-batched renders, each O(total notices/paths). This buffers events keyed by
- * `root\0uri` (retaining the latest version per key) and replays them through
- * the sink once per scheduled frame, collapsing the burst into a single batch.
+ * `owner -> uri` (retaining the latest version per key) and replays them
+ * through the sink once per scheduled frame, collapsing the burst into a
+ * single batch. Callers that manage root aliases can provide a stable owner key
+ * independently of the event's currently selected root.
  *
- * Isolation is preserved end to end: the buffer is keyed by normalized root,
- * `dropRoot` discards a closed/switched root before it can flush, and the sink
- * itself re-checks the active root/session/version after every `await`.
+ * Isolation is preserved end to end: distinct owners have separate buffers,
+ * `dropOwner` discards a closed owner before it can flush, and the sink itself
+ * re-checks the active root/session/version after every `await`. The legacy
+ * root API derives a normalized owner from the event root.
  */
 export class DiagnosticsCoalescer {
-  private readonly buffer = new Map<string, LanguageServerDiagnosticEvent>();
+  private readonly buffersByOwner = new Map<
+    string,
+    Map<string, LanguageServerDiagnosticEvent>
+  >();
   private handle: number | null = null;
   private disposed = false;
 
@@ -73,23 +75,45 @@ export class DiagnosticsCoalescer {
     private readonly scheduler: DiagnosticsFlushScheduler,
   ) {}
 
-  enqueue(event: LanguageServerDiagnosticEvent): void {
+  enqueue(
+    event: LanguageServerDiagnosticEvent,
+    explicitOwnerKey?: string | null,
+  ): void {
+    if (explicitOwnerKey !== undefined) {
+      this.enqueueForOwner(explicitOwnerKey, event);
+      return;
+    }
+
+    const ownerKey = normalizedWorkspaceRootKey(event.rootPath);
+
+    if (!ownerKey) {
+      return;
+    }
+
+    this.enqueueForOwner(ownerKey, event);
+  }
+
+  enqueueForOwner(
+    ownerKey: string | null | undefined,
+    event: LanguageServerDiagnosticEvent,
+  ): void {
     if (this.disposed) {
       return;
     }
 
-    if (!event.rootPath) {
+    if (!ownerKey) {
       return;
     }
 
-    const key = bufferKey(event);
-    const buffered = this.buffer.get(key);
+    const ownerBuffer = this.buffersByOwner.get(ownerKey) ?? new Map();
+    const buffered = ownerBuffer.get(event.uri);
 
     if (buffered && !isNewerOrEqual(event, buffered)) {
       return;
     }
 
-    this.buffer.set(key, event);
+    ownerBuffer.set(event.uri, event);
+    this.buffersByOwner.set(ownerKey, ownerBuffer);
     this.arm();
   }
 
@@ -100,17 +124,24 @@ export class DiagnosticsCoalescer {
       return;
     }
 
-    const prefix = `${rootKey}\u0000`;
-    this.buffer.forEach((_event, key) => {
-      if (key.startsWith(prefix)) {
-        this.buffer.delete(key);
-      }
-    });
+    this.dropOwner(rootKey);
+  }
+
+  dropOwner(ownerKey: string | null | undefined): void {
+    if (!ownerKey) {
+      return;
+    }
+
+    this.buffersByOwner.delete(ownerKey);
+
+    if (this.buffersByOwner.size === 0) {
+      this.disarm();
+    }
   }
 
   dispose(): void {
     this.disposed = true;
-    this.buffer.clear();
+    this.buffersByOwner.clear();
     this.disarm();
   }
 
@@ -139,12 +170,14 @@ export class DiagnosticsCoalescer {
       return;
     }
 
-    if (this.buffer.size === 0) {
+    if (this.buffersByOwner.size === 0) {
       return;
     }
 
-    const batch = Array.from(this.buffer.values());
-    this.buffer.clear();
+    const batch = Array.from(this.buffersByOwner.values()).flatMap((buffer) =>
+      Array.from(buffer.values()),
+    );
+    this.buffersByOwner.clear();
 
     batch.forEach((event) => {
       this.sink(event);
