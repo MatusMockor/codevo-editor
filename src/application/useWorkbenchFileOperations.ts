@@ -38,6 +38,10 @@ import {
 } from "../domain/bookmarks";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type {
+  DocumentSaveInvalidationScope,
+  InvalidateAndWaitForDocumentSaves,
+} from "./documentSaveCoordinator";
 
 const WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS = 120;
 const WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS = 120;
@@ -52,6 +56,7 @@ interface OpenFileOptions {
 
 interface CloseDocumentOptions {
   recordRecentlyClosed?: boolean;
+  skipConfirmation?: boolean;
 }
 
 export interface WorkbenchFileOperationsDependencies {
@@ -96,6 +101,7 @@ export interface WorkbenchFileOperationsDependencies {
   forgetRecentFile: (path: string) => void;
   forgetRecentLocationsForPath: (path: string) => void;
   invalidateFrameworkCachesForPath: (rootPath: string, path: string) => void;
+  invalidateAndWaitForDocumentSaves: InvalidateAndWaitForDocumentSaves;
   invalidatePhpFrameworkSourcePath: (
     rootPath: string,
     path: string,
@@ -185,6 +191,7 @@ export function useWorkbenchFileOperations(
     forgetRecentFile,
     forgetRecentLocationsForPath,
     invalidateFrameworkCachesForPath,
+    invalidateAndWaitForDocumentSaves,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
     markExternallyRemovedDocumentPath,
@@ -367,7 +374,13 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      await workspaceFiles.renamePath(document.path, nextPath);
+      const invalidationScope: DocumentSaveInvalidationScope = {
+        kind: "file",
+        path: oldPath,
+        rootPath: requestedRoot,
+      };
+      await invalidateAndWaitForDocumentSaves(invalidationScope);
+      await workspaceFiles.renamePath(oldPath, nextPath);
       filePrefetchCacheRef.current.invalidate(document.path);
       filePrefetchCacheRef.current.invalidate(nextPath);
       if (isLanguageServerDocument(document)) {
@@ -434,6 +447,7 @@ export function useWorkbenchFileOperations(
     clearLanguageServerDiagnosticsForPath,
     currentWorkspaceRootRef,
     filePrefetchCacheRef,
+    invalidateAndWaitForDocumentSaves,
     notifyJavaScriptTypeScriptFileRenamed,
     notifyPhpFileRenamed,
     prompter,
@@ -490,14 +504,20 @@ export function useWorkbenchFileOperations(
           if (!mayRename) {
             return;
           }
-
-          if (
-            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-          ) {
-            return;
-          }
         }
 
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+        ) {
+          return;
+        }
+
+        const invalidationScope: DocumentSaveInvalidationScope = {
+          kind: "directory",
+          path: oldPath,
+          rootPath: requestedRoot,
+        };
+        await invalidateAndWaitForDocumentSaves(invalidationScope);
         await workspaceFiles.renamePath(oldPath, nextPath);
         filePrefetchCacheRef.current.invalidate(oldPath);
         filePrefetchCacheRef.current.invalidate(nextPath);
@@ -610,6 +630,7 @@ export function useWorkbenchFileOperations(
       currentWorkspaceRootRef,
       documentsRef,
       filePrefetchCacheRef,
+      invalidateAndWaitForDocumentSaves,
       javaScriptTypeScriptDiagnosticsByPath,
       languageServerDiagnosticsByPath,
       notifyJavaScriptTypeScriptFileRenamed,
@@ -663,6 +684,12 @@ export function useWorkbenchFileOperations(
         return;
       }
 
+      const invalidationScope: DocumentSaveInvalidationScope = {
+        kind: "file",
+        path: deletedPath,
+        rootPath: requestedRoot,
+      };
+      await invalidateAndWaitForDocumentSaves(invalidationScope);
       await workspaceFiles.deletePath(deletedPath);
       filePrefetchCacheRef.current.invalidate(deletedPath);
       if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
@@ -677,7 +704,10 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      closeDocument(deletedPath, { recordRecentlyClosed: false });
+      closeDocument(deletedPath, {
+        recordRecentlyClosed: false,
+        skipConfirmation: true,
+      });
       forgetRecentFile(deletedPath);
       forgetRecentLocationsForPath(deletedPath);
       setBookmarks((current) => removeBookmarksForPath(current, deletedPath));
@@ -700,6 +730,7 @@ export function useWorkbenchFileOperations(
     filePrefetchCacheRef,
     forgetRecentFile,
     forgetRecentLocationsForPath,
+    invalidateAndWaitForDocumentSaves,
     notifyJavaScriptTypeScriptFileDeleted,
     prompter,
     refreshDirectory,
