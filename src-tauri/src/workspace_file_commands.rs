@@ -882,7 +882,7 @@ impl<'a> WorkspaceFileRepository<'a> {
         let root = self.registry.clone_root(id)?;
         let descriptor = self.registry.descriptor(id)?;
         let display_root = descriptor.canonical_root_path;
-        let local_history_root = descriptor.selected_root_path;
+        let local_history_root = display_root.clone();
         let exact_file = open_regular(root.as_raw_fd(), scope, libc::O_RDONLY).is_ok();
         let candidates = if exact_file {
             vec![scope.to_path_buf()]
@@ -3414,24 +3414,21 @@ mod tests {
             }
         ));
         for (path, expected) in [("a.txt", "needle one\n"), ("src/b.txt", "needle two\n")] {
-            let versions = store.list_versions(&workspace_a, path).unwrap();
+            let versions = store.list_versions(&canonical_workspace_a, path).unwrap();
             assert_eq!(versions.len(), 1);
             assert_eq!(
                 store
-                    .read_version(&workspace_a, path, &versions[0].id)
+                    .read_version(&canonical_workspace_a, path, &versions[0].id)
                     .unwrap(),
                 expected
             );
             assert!(store.list_versions(&workspace_b, path).unwrap().is_empty());
             if workspace_a != canonical_workspace_a {
-                assert!(store
-                    .list_versions(&canonical_workspace_a, path)
-                    .unwrap()
-                    .is_empty());
+                assert!(store.list_versions(&workspace_a, path).unwrap().is_empty());
             }
         }
         assert!(store
-            .list_versions(&workspace_a, "unchanged.txt")
+            .list_versions(&canonical_workspace_a, "unchanged.txt")
             .unwrap()
             .is_empty());
 
@@ -3450,14 +3447,73 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(store.list_versions(&workspace_a, "a.txt").unwrap().len(), 1);
         assert_eq!(
             store
-                .list_versions(&workspace_a, "src/b.txt")
+                .list_versions(&canonical_workspace_a, "a.txt")
                 .unwrap()
                 .len(),
             1
         );
+        assert_eq!(
+            store
+                .list_versions(&canonical_workspace_a, "src/b.txt")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn alias_opened_replace_records_history_under_the_canonical_workspace() {
+        let root = std::env::temp_dir().join(format!(
+            "mockor-file-commands-replace-alias-root-{}-{}",
+            std::process::id(),
+            rand_suffix()
+        ));
+        let alias_parent = std::env::temp_dir().join(format!(
+            "mockor-file-commands-replace-alias-parent-{}-{}",
+            std::process::id(),
+            rand_suffix()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&alias_parent).unwrap();
+        let alias = alias_parent.join("workspace-alias");
+        symlink(&root, &alias).unwrap();
+        fs::write(root.join("invoice.txt"), "needle\n").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry.register(&alias).unwrap();
+        let store = history_store("alias-canonical");
+
+        let result = WorkspaceFileRepository::new(&registry).replace_in_path_with_snapshot_sink(
+            &descriptor.workspace_id,
+            Path::new("invoice.txt"),
+            "needle",
+            "thread",
+            &TextSearchOptions::default(),
+            &store,
+        );
+
+        assert!(matches!(
+            result,
+            WorkspaceReplaceResult::Success {
+                total_replacements: 1,
+                ..
+            }
+        ));
+        let canonical_root = descriptor.canonical_root_path.to_string_lossy();
+        let selected_alias = descriptor.selected_root_path.to_string_lossy();
+        let versions = store.list_versions(&canonical_root, "invoice.txt").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(
+            store
+                .read_version(&canonical_root, "invoice.txt", &versions[0].id)
+                .unwrap(),
+            "needle\n"
+        );
+        assert!(store
+            .list_versions(&selected_alias, "invoice.txt")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
