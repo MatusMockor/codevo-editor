@@ -35,6 +35,10 @@ export function NoticeToastHost({
   const previousGroupNoticeKeys = useRef<Set<string>>(new Set());
 
   const getNoticeDismissKey = useCallback((notice: WorkbenchNotice) => {
+    if (notice.toastDismissKey) {
+      return `notice:${notice.toastDismissKey}`;
+    }
+
     return notice.groupKey ? `group:${notice.groupKey}` : `id:${notice.id}`;
   }, []);
 
@@ -48,17 +52,18 @@ export function NoticeToastHost({
   };
 
   useEffect(() => {
-    const activeTransientNoticeKeys = new Set(
-      notices
-        .filter((notice) => notice.groupKey === undefined)
-        .map(getNoticeDismissKey),
-    );
+    const activeNoticeKeys = new Set(notices.map(getNoticeDismissKey));
     const activeGroupNoticeKeys = new Set(
       notices
-        .filter((notice) => notice.groupKey !== undefined)
+        .filter(
+          (notice) =>
+            notice.groupKey !== undefined &&
+            notice.toastDismissKey === undefined,
+        )
         .map(getNoticeDismissKey),
     );
 
+    const previouslyActiveGroupNoticeKeys = previousGroupNoticeKeys.current;
     previousGroupNoticeKeys.current = activeGroupNoticeKeys;
 
     setDismissedNoticeKeys((current) => {
@@ -68,14 +73,14 @@ export function NoticeToastHost({
       const next = new Set<string>();
 
       for (const key of current) {
-        const previouslyActive = previousGroupNoticeKeys.current.has(key);
+        const previouslyActive = previouslyActiveGroupNoticeKeys.has(key);
         const currentlyActive = activeGroupNoticeKeys.has(key);
 
         if (
           (key.startsWith("group:") &&
             previouslyActive &&
             currentlyActive) ||
-          activeTransientNoticeKeys.has(key)
+          (!key.startsWith("group:") && activeNoticeKeys.has(key))
         ) {
           next.add(key);
         }
@@ -117,7 +122,13 @@ export function NoticeToastHost({
     }
 
     return rendered;
-  }, [dismissedNoticeKeys, getNoticeDismissKey, maxVisible, notices, renderNotice]);
+  }, [
+    dismissedNoticeKeys,
+    getNoticeDismissKey,
+    maxVisible,
+    notices,
+    renderNotice,
+  ]);
 
   if (renderedNotices.length === 0) {
     return null;

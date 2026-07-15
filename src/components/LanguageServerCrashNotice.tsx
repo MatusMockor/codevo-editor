@@ -1,5 +1,8 @@
 import type { ReactElement, ReactNode } from "react";
-import { languageServerCrashNoticeGroupKey } from "../application/workbenchNotice";
+import {
+  languageServerCrashNoticeGroupKey,
+  languageServerRequestErrorNoticeGroupKey,
+} from "../application/workbenchNotice";
 import { ToastNotification } from "./ToastNotification";
 import type { NoticeToastRenderer } from "./NoticeToastHost";
 
@@ -47,7 +50,34 @@ export function languageServerCrashNoticeToastRenderer(
   ];
 }
 
-export { languageServerCrashNoticeGroupKey };
+export function languageServerRequestErrorNoticeToastRenderer(
+  context: Pick<LanguageServerCrashNoticeToastContext, "workspaceRoot">,
+): LanguageServerCrashNoticeToastRendererFactoryResult | null {
+  const groupKey = languageServerRequestErrorNoticeGroupKey(
+    context.workspaceRoot,
+  );
+
+  if (!groupKey) {
+    return null;
+  }
+
+  return [
+    groupKey,
+    (notice, actions): ReactNode => (
+      <ToastNotification
+        description={notice.message}
+        onClose={actions.dismiss}
+        template="error"
+        title="PHP IDE request failed"
+      />
+    ),
+  ];
+}
+
+export {
+  languageServerCrashNoticeGroupKey,
+  languageServerRequestErrorNoticeGroupKey,
+};
 
 interface LanguageServerCrashNoticeProps {
   message: string;

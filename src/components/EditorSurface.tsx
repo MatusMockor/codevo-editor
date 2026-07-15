@@ -257,6 +257,10 @@ export interface EditorSurfaceProps {
     path: string,
   ): Promise<void>;
   flushPendingLanguageServerDocument(path: string): Promise<void>;
+  getLanguageServerDocumentLifecycleIdentity?(
+    rootPath: string,
+    path: string,
+  ): number | null;
   formatOnPaste?: boolean;
   gitBlameEnabled?: boolean;
   isLanguageServerDocumentSynced?(path: string): boolean;
@@ -447,6 +451,7 @@ function EditorSurfaceComponent({
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
+  getLanguageServerDocumentLifecycleIdentity,
   formatOnPaste = false,
   gitBlameEnabled = false,
   isActiveDocumentPhpTest = false,
@@ -615,6 +620,9 @@ function EditorSurfaceComponent({
     javaScriptTypeScriptLanguageServerRuntimeStatus,
   );
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
+  const getLanguageServerDocumentLifecycleIdentityRef = useRef(
+    getLanguageServerDocumentLifecycleIdentity,
+  );
   const flushPendingJavaScriptTypeScriptRef = useRef(
     flushPendingJavaScriptTypeScriptLanguageServerDocument,
   );
@@ -832,6 +840,10 @@ function EditorSurfaceComponent({
   useEffect(() => {
     flushPendingRef.current = flushPendingLanguageServerDocument;
   }, [flushPendingLanguageServerDocument]);
+  useEffect(() => {
+    getLanguageServerDocumentLifecycleIdentityRef.current =
+      getLanguageServerDocumentLifecycleIdentity;
+  }, [getLanguageServerDocumentLifecycleIdentity]);
 
   useEffect(() => {
     flushPendingJavaScriptTypeScriptRef.current =
@@ -1270,6 +1282,7 @@ function EditorSurfaceComponent({
     clearLanguageServerDiagnosticsForPathRef,
     errorReporterRef,
     flushPendingRef,
+    getLanguageServerDocumentLifecycleIdentityRef,
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
     phpCodeActionsRef,

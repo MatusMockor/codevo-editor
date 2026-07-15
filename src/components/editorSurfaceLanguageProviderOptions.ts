@@ -73,6 +73,9 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
   clearLanguageServerDiagnosticsForPathRef: CallbackRef<(path: string) => void>;
   errorReporterRef: CallbackRef<(error: unknown) => void>;
   flushPendingRef: CallbackRef<(path: string) => Promise<void>>;
+  getLanguageServerDocumentLifecycleIdentityRef?: MutableRefObject<
+    ((rootPath: string, path: string) => number | null) | undefined
+  >;
   isLanguageServerDocumentSyncedRef: MutableRefObject<
     ((path: string) => boolean) | undefined
   >;
@@ -136,6 +139,7 @@ export function createEditorSurfaceLanguageProviderOptions({
     clearLanguageServerDiagnosticsForPathRef,
     errorReporterRef,
     flushPendingRef,
+    getLanguageServerDocumentLifecycleIdentityRef,
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
     phpCodeActionsRef,
@@ -164,6 +168,15 @@ export function createEditorSurfaceLanguageProviderOptions({
     coordinatePhpDocumentSymbols,
     featuresGateway,
     flushPendingDocumentChange: (path) => flushPendingRef.current(path),
+    ...(getLanguageServerDocumentLifecycleIdentityRef
+      ? {
+          getDocumentLifecycleIdentity: (rootPath: string, path: string) =>
+            getLanguageServerDocumentLifecycleIdentityRef.current?.(
+              rootPath,
+              path,
+            ) ?? null,
+        }
+      : {}),
     getActiveDocument: () => activeDocumentRef.current,
     getDocumentForModel: (model: import("monaco-editor").editor.ITextModel) =>
       resolveDocumentForModelRef?.current(model) ?? activeDocumentRef.current,

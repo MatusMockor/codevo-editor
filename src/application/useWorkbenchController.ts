@@ -1627,6 +1627,7 @@ export function useWorkbenchController(
   });
 
   const {
+    reportLanguageServerCrash,
     reportLanguageServerError,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   } = useLanguageServerFeatureErrorReporting({
@@ -2524,6 +2525,7 @@ export function useWorkbenchController(
     resetJavaScriptTypeScriptLanguageServerDocuments,
     isLanguageServerSessionCurrentForRoot,
     reportError,
+    reportLanguageServerCrash,
     reportLanguageServerError,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
@@ -2685,6 +2687,7 @@ export function useWorkbenchController(
     flushPendingJavaScriptTypeScriptDocumentChange,
     flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
     isLanguageServerDocumentSynced,
+    getLanguageServerDocumentLifecycleIdentity,
     syncSavedDocument: syncSavedDocumentForRoot,
     syncSavedJavaScriptTypeScriptDocument:
       syncSavedJavaScriptTypeScriptDocumentForRoot,
@@ -9114,6 +9117,7 @@ export function useWorkbenchController(
     fileStructureOpen,
     fileStructureScope,
     flushPendingLanguageServerDocument: flushPendingDocumentChange,
+    getLanguageServerDocumentLifecycleIdentity,
     flushPendingJavaScriptTypeScriptLanguageServerDocument:
       flushPendingJavaScriptTypeScriptDocumentChange,
     isLanguageServerDocumentSynced,

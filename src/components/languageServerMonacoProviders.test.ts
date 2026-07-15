@@ -1158,6 +1158,272 @@ describe("registerLanguageServerMonacoProviders", () => {
     );
   });
 
+  it("drops a lifecycle-1 completion after the same path reopens in lifecycle 2", async () => {
+    const registered = createRegisteredProviders();
+    let lifecycleIdentity = 1;
+    const completion = createDeferred<LanguageServerCompletionList>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    const getDocumentLifecycleIdentity = vi.fn(
+      () => lifecycleIdentity,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({ featuresGateway: gateway, getDocumentLifecycleIdentity }),
+    );
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: phpCompletionFixtureSource() }),
+        position(),
+      );
+
+    await vi.waitFor(() => expect(gateway.completion).toHaveBeenCalledTimes(1));
+    expect(getDocumentLifecycleIdentity).toHaveBeenCalledWith(
+      "/project",
+      "/project/src/User.php",
+    );
+
+    lifecycleIdentity = 2;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: null,
+          documentation: null,
+          insertText: "stale",
+          kind: 7,
+          label: "stale",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+  });
+
+  it("captures the document lifecycle before flushing pending changes", async () => {
+    const registered = createRegisteredProviders();
+    let lifecycleIdentity = 1;
+    const gateway = featuresGateway();
+    const flushPendingDocumentChange = vi.fn(async () => {
+      lifecycleIdentity = 2;
+    });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        flushPendingDocumentChange,
+        getDocumentLifecycleIdentity: () => lifecycleIdentity,
+      }),
+    );
+
+    await expect(
+      registered.completionProvider.provideCompletionItems(
+        model({ content: phpCompletionFixtureSource() }),
+        position(),
+      ),
+    ).resolves.toEqual({ suggestions: [] });
+
+    expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+      "/project/src/User.php",
+    );
+    expect(gateway.completion).not.toHaveBeenCalled();
+  });
+
+  it("does not report a lifecycle-1 rejection after the same path reopens", async () => {
+    const registered = createRegisteredProviders();
+    let lifecycleIdentity = 1;
+    const completion = createDeferred<LanguageServerCompletionList>();
+    const gateway = featuresGateway();
+    const reportError = vi.fn();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getDocumentLifecycleIdentity: () => lifecycleIdentity,
+        reportError,
+      }),
+    );
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: phpCompletionFixtureSource() }),
+        position(),
+      );
+
+    await vi.waitFor(() => expect(gateway.completion).toHaveBeenCalledTimes(1));
+    lifecycleIdentity = 2;
+    completion.reject(new Error("stale lifecycle"));
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it("does not resolve a lifecycle-1 CodeLens after the same path reopens", async () => {
+    const registered = createRegisteredProviders();
+    let lifecycleIdentity = 1;
+    const sourceLens: LanguageServerCodeLens = {
+      command: null,
+      data: { id: "references" },
+      range: range(1, 0, 1, 12),
+    };
+    const gateway = featuresGateway({ codeLenses: [sourceLens] });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getDocumentLifecycleIdentity: () => lifecycleIdentity,
+      }),
+    );
+
+    const provided = await registered.codeLensProvider.provideCodeLenses(model());
+    expect(provided.lenses).toHaveLength(1);
+
+    lifecycleIdentity = 2;
+    const backedLens = provided.lenses[0];
+    await expect(
+      registered.codeLensProvider.resolveCodeLens(model(), backedLens),
+    ).resolves.toBe(backedLens);
+    expect(gateway.resolveCodeLens).not.toHaveBeenCalled();
+  });
+
+  it("does not run a stored resolve-and-apply action after the document reopens", async () => {
+    const registered = createRegisteredProviders();
+    let lifecycleIdentity = 1;
+    const unresolvedAction = {
+      command: null,
+      data: { id: "add-import" },
+      edit: null,
+      isPreferred: true,
+      kind: "quickfix",
+      title: "Import User",
+    };
+    const gateway = featuresGateway({ codeActions: [unresolvedAction] });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getDocumentLifecycleIdentity: () => lifecycleIdentity,
+      }),
+    );
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model(),
+      new registered.monaco.Range(1, 1, 1, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const payload = actions.actions[0].command?.arguments?.[0];
+    const runResolveAndApply =
+      registered.commandRunsById["mockor.php.resolveAndApplyCodeAction"];
+
+    expect(payload).toMatchObject({
+      lifecycleIdentity: 1,
+      path: "/project/src/User.php",
+    });
+    lifecycleIdentity = 2;
+    await runResolveAndApply?.(null, payload);
+
+    expect(gateway.resolveCodeAction).not.toHaveBeenCalled();
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects stored code-action, CodeLens, and inlay-label commands after reopen", async () => {
+    const registered = createRegisteredProviders();
+    let lifecycleIdentity = 1;
+    const command = {
+      arguments: ["unused"],
+      command: "phpactor.fixAll",
+      title: "Fix all",
+    };
+    const gateway = featuresGateway({
+      codeActions: [
+        {
+          command,
+          data: null,
+          edit: null,
+          isPreferred: false,
+          kind: "source.fixAll",
+          title: "Fix all",
+        },
+      ],
+      codeLenses: [
+        {
+          command,
+          data: null,
+          range: range(1, 0, 1, 4),
+        },
+      ],
+      inlayHints: [
+        {
+          data: null,
+          kind: 2,
+          label: [{ command, label: "hint" }],
+          paddingLeft: false,
+          paddingRight: false,
+          position: { character: 4, line: 1 },
+          tooltip: null,
+        },
+      ],
+    });
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        getDocumentLifecycleIdentity: () => lifecycleIdentity,
+      }),
+    );
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      model(),
+      new registered.monaco.Range(1, 1, 1, 1),
+      {
+        markers: [],
+        only: "quickfix",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const lenses = await registered.codeLensProvider.provideCodeLenses(model());
+    const hints = await registered.inlayHintsProvider.provideInlayHints(
+      model(),
+      new registered.monaco.Range(1, 1, 2, 8),
+    );
+    const payloads = [
+      actions.actions[0].command?.arguments?.[0],
+      lenses.lenses[0].command?.arguments?.[0],
+      hints.hints[0].label[0].command?.arguments?.[0],
+    ];
+
+    expect(payloads).toEqual([
+      expect.objectContaining({
+        lifecycleIdentity: 1,
+        path: "/project/src/User.php",
+      }),
+      expect.objectContaining({
+        lifecycleIdentity: 1,
+        path: "/project/src/User.php",
+      }),
+      expect.objectContaining({
+        lifecycleIdentity: 1,
+        path: "/project/src/User.php",
+      }),
+    ]);
+    lifecycleIdentity = 2;
+    for (const payload of payloads) {
+      await registered.commandRun?.(null, payload);
+    }
+
+    expect(gateway.executeCommand).not.toHaveBeenCalled();
+  });
+
   it("does not request completion when the PHP runtime status belongs to another workspace root", async () => {
     const registered = createRegisteredProviders();
     const source = phpCompletionFixtureSource();
@@ -4254,6 +4520,7 @@ function store($request): void
           arguments: [
             {
               command: commandAction.command,
+              path: "/project/src/User.php",
               rootPath: "/project",
               sessionId: 1,
             },
@@ -10691,6 +10958,7 @@ function store($request): void
           arguments: [
             {
               command: sourceLens.command,
+              path: "/project/src/User.php",
               rootPath: "/project",
               sessionId: 1,
             },
@@ -13481,6 +13749,7 @@ function providerContext(
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
     getLargeSmartDocumentPolicy(): { characterLimit: number; lineLimit: number };
+    getDocumentLifecycleIdentity(rootPath: string, path: string): number | null;
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
     getUserSnippets(): UserSnippet[];
@@ -13555,6 +13824,7 @@ function providerContext(
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
+    getDocumentLifecycleIdentity: overrides.getDocumentLifecycleIdentity,
     getActiveDocument: () => activeDocument,
     getLargeSmartDocumentPolicy: overrides.getLargeSmartDocumentPolicy,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),

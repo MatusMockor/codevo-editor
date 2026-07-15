@@ -180,6 +180,7 @@ function renderLifecycle(
     resetJavaScriptTypeScriptLanguageServerDocuments: vi.fn(),
     isLanguageServerSessionCurrentForRoot: vi.fn(() => false),
     reportError: vi.fn(),
+    reportLanguageServerCrash: vi.fn(),
     reportLanguageServerError: vi.fn(),
     reportLanguageServerErrorForActiveWorkspaceRoot: vi.fn(),
     reportErrorForActiveWorkspaceRoot: vi.fn(),
@@ -233,6 +234,26 @@ async function flushEffects(): Promise<void> {
 }
 
 describe("useLanguageServerRuntimeLifecycle ownership", () => {
+  it("reports a PHP crashed runtime status through the crash reporter", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const harness = renderLifecycle(owner);
+    await flushEffects();
+
+    act(() => {
+      latestStatusListener(harness.dependencies.languageServerRuntimeGateway)(
+        crashed(FIRST_ROOT, "phpactor exited with code 1"),
+      );
+    });
+
+    expect(harness.dependencies.reportLanguageServerCrash).toHaveBeenCalledWith(
+      "phpactor exited with code 1",
+    );
+    expect(
+      harness.dependencies.reportLanguageServerError,
+    ).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("uses transient resets for PHP and TS starting-to-running transitions", async () => {
     const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
     const harness = renderLifecycle(owner);

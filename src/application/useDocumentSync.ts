@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useRef, type MutableRefObject } from "react";
 import type { EditorDocument } from "../domain/workspace";
 import {
   createLanguageServerTextDocument,
@@ -182,6 +182,10 @@ export interface DocumentSync {
     path: string,
   ) => Promise<void>;
   isLanguageServerDocumentSynced: (path: string) => boolean;
+  getLanguageServerDocumentLifecycleIdentity: (
+    rootPath: string,
+    path: string,
+  ) => number | null;
   syncSavedDocument: (
     requestedRoot: string,
     document: EditorDocument,
@@ -273,6 +277,21 @@ export function useDocumentSync(
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
   } = dependencies;
+  const nextDocumentLifecycleIdentityRef = useRef(0);
+  const documentLifecycleIdentitiesRef = useRef<Record<string, number>>({});
+
+  const getLanguageServerDocumentLifecycleIdentity = useCallback(
+    (rootPath: string, path: string): number | null => {
+      const syncKey = languageServerDocumentSyncKey(rootPath, path);
+
+      if (!syncedDocumentPathsRef.current.has(syncKey)) {
+        return null;
+      }
+
+      return documentLifecycleIdentitiesRef.current[syncKey] ?? null;
+    },
+    [syncedDocumentPathsRef],
+  );
 
   const syncOpenDocument = useCallback(
     async (document: EditorDocument) => {
@@ -302,6 +321,18 @@ export function useDocumentSync(
         return;
       }
 
+      for (const activeSyncKey of Object.keys(
+        documentLifecycleIdentitiesRef.current,
+      )) {
+        if (!syncedDocumentPathsRef.current.has(activeSyncKey)) {
+          delete documentLifecycleIdentitiesRef.current[activeSyncKey];
+        }
+      }
+
+      nextDocumentLifecycleIdentityRef.current += 1;
+      documentLifecycleIdentitiesRef.current[syncKey] =
+        nextDocumentLifecycleIdentityRef.current;
+
       const version = nextDocumentVersion(rootPath, document.path);
       const syncedDocument = createLanguageServerTextDocument(document, version);
       syncedDocumentPathsRef.current.add(syncKey);
@@ -318,6 +349,7 @@ export function useDocumentSync(
         }
 
         syncedDocumentPathsRef.current.delete(syncKey);
+        delete documentLifecycleIdentitiesRef.current[syncKey];
         delete syncedDocumentContentRef.current[syncKey];
         delete pendingDocumentOpenSyncAttemptsRef.current[syncKey];
         delete documentVersionsRef.current[syncKey];
@@ -1220,6 +1252,7 @@ export function useDocumentSync(
 
       clearDocumentChangeTimer(syncKey);
       syncedDocumentPathsRef.current.delete(syncKey);
+      delete documentLifecycleIdentitiesRef.current[syncKey];
       delete syncedDocumentContentRef.current[syncKey];
       delete pendingDocumentChangesRef.current[syncKey];
       delete pendingDocumentOpenSyncAttemptsRef.current[syncKey];
@@ -1363,6 +1396,7 @@ export function useDocumentSync(
         syncedDocuments.map(async ({ key, path }) => {
           clearDocumentChangeTimer(key);
           syncedDocumentPathsRef.current.delete(key);
+          delete documentLifecycleIdentitiesRef.current[key];
           delete syncedDocumentContentRef.current[key];
           delete pendingDocumentChangesRef.current[key];
           delete pendingDocumentOpenSyncAttemptsRef.current[key];
@@ -1392,6 +1426,7 @@ export function useDocumentSync(
       );
 
       if (syncedDocumentPathsRef.current.size === 0) {
+        documentLifecycleIdentitiesRef.current = {};
         resetLanguageServerDocuments();
       }
     },
@@ -1503,6 +1538,7 @@ export function useDocumentSync(
     flushPendingJavaScriptTypeScriptDocumentChange,
     flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
     isLanguageServerDocumentSynced,
+    getLanguageServerDocumentLifecycleIdentity,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     syncClosedDocument,

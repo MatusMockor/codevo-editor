@@ -17,6 +17,7 @@ export interface WorkbenchNotice {
   severity: WorkbenchNoticeSeverity;
   source: string;
   message: string;
+  toastDismissKey?: string;
 }
 
 export interface WorkbenchNoticeNavigationTarget {
@@ -61,6 +62,21 @@ export function languageServerCrashNoticeGroupKey(
   workspaceRoot: string | null,
 ): string | null {
   return workspaceRoot ? `language-server-crash:${workspaceRoot}` : null;
+}
+
+export function languageServerRequestErrorNoticeGroupKey(
+  workspaceRoot: string | null,
+): string | null {
+  return workspaceRoot ? `language-server-request-error:${workspaceRoot}` : null;
+}
+
+export function languageServerRequestErrorToastDismissKey(
+  workspaceRoot: string | null,
+  message: string,
+): string | null {
+  return workspaceRoot
+    ? JSON.stringify(["language-server-request-error", workspaceRoot, message])
+    : null;
 }
 
 export function replaceWorkbenchNoticeGroup(

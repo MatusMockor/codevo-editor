@@ -1,7 +1,10 @@
 import { useCallback, useMemo } from "react";
 import type { WorkbenchNotice } from "./workbenchNotice";
 import type { IntelligenceMode } from "../domain/workspace";
-import { languageServerCrashNoticeToastRenderer } from "../components/LanguageServerCrashNotice";
+import {
+  languageServerCrashNoticeToastRenderer,
+  languageServerRequestErrorNoticeToastRenderer,
+} from "../components/LanguageServerCrashNotice";
 import { managedPhpactorSetupNoticeToastRenderer } from "../components/ManagedPhpactorSetupNotice";
 import type { NoticeToastRenderer } from "../components/NoticeToastHost";
 
@@ -26,6 +29,10 @@ const noticeToastRendererFactories: NoticeToastRendererFactory[] = [
   (context) =>
     languageServerCrashNoticeToastRenderer({
       onOpenRuntimePanel: context.onOpenRuntimePanel,
+      workspaceRoot: context.workspaceRoot,
+    }),
+  (context) =>
+    languageServerRequestErrorNoticeToastRenderer({
       workspaceRoot: context.workspaceRoot,
     }),
 ];

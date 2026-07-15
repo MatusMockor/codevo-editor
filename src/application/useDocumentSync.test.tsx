@@ -425,6 +425,60 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.warmUp).toHaveBeenCalledWith(ROOT, document.path, SESSION);
   });
 
+  it("assigns a new lifecycle identity when the same path closes and reopens", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument();
+
+    await api().syncOpenDocument(document);
+    const firstLifecycle = api().getLanguageServerDocumentLifecycleIdentity(
+      ROOT,
+      document.path,
+    );
+
+    await api().syncClosedDocument(document);
+    expect(
+      api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path),
+    ).toBeNull();
+
+    await api().syncOpenDocument(document);
+    const secondLifecycle = api().getLanguageServerDocumentLifecycleIdentity(
+      ROOT,
+      document.path,
+    );
+
+    expect(firstLifecycle).toBe(1);
+    expect(secondLifecycle).toBe(2);
+    expect(
+      api().getLanguageServerDocumentLifecycleIdentity(
+        `${ROOT}-neighbor`,
+        document.path,
+      ),
+    ).toBeNull();
+  });
+
+  it("does not reuse lifecycle identities across document paths", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const firstDocument = phpDocument({ path: `${ROOT}/src/First.php` });
+    const secondDocument = phpDocument({ path: `${ROOT}/src/Second.php` });
+
+    await api().syncOpenDocument(firstDocument);
+    const firstLifecycle = api().getLanguageServerDocumentLifecycleIdentity(
+      ROOT,
+      firstDocument.path,
+    );
+    await api().syncClosedDocument(firstDocument);
+    await api().syncOpenDocument(secondDocument);
+    const secondLifecycle = api().getLanguageServerDocumentLifecycleIdentity(
+      ROOT,
+      secondDocument.path,
+    );
+
+    expect(firstLifecycle).toBe(1);
+    expect(secondLifecycle).toBe(2);
+  });
+
   it("does not sync huge PHP documents to phpactor", async () => {
     const harness = createHarness();
     const { api } = renderDocumentSync(harness.deps);

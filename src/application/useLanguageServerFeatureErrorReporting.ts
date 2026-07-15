@@ -16,6 +16,9 @@ import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import {
   createWorkbenchNotice,
   languageServerCrashNoticeGroupKey,
+  languageServerRequestErrorNoticeGroupKey,
+  languageServerRequestErrorToastDismissKey,
+  replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
 
@@ -31,6 +34,7 @@ export interface LanguageServerFeatureErrorReportingDependencies {
 }
 
 export interface LanguageServerFeatureErrorReporting {
+  reportLanguageServerCrash: (error: unknown) => void;
   reportLanguageServerError: (error: unknown) => void;
   reportLanguageServerErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
@@ -48,7 +52,7 @@ export function useLanguageServerFeatureErrorReporting({
 }: LanguageServerFeatureErrorReportingDependencies): LanguageServerFeatureErrorReporting {
   const isUnknownDocumentForUnsyncedPath = useCallback(
     (rootPath: string | null | undefined, error: unknown): boolean => {
-      const message = String(error);
+      const message = languageServerErrorMessage(error);
 
       if (!message.includes("UnknownDocument")) {
         return false;
@@ -96,6 +100,45 @@ export function useLanguageServerFeatureErrorReporting({
       const nextMessage = languageServerErrorMessage(error);
       setMessage(nextMessage);
 
+      const groupKey = languageServerRequestErrorNoticeGroupKey(
+        currentWorkspaceRootRef.current,
+      );
+      const notice: WorkbenchNotice = {
+        ...createWorkbenchNotice(
+          "error",
+          "Language Server",
+          nextMessage,
+          groupKey ?? undefined,
+        ),
+        toastDismissKey:
+          languageServerRequestErrorToastDismissKey(
+            currentWorkspaceRootRef.current,
+            nextMessage,
+          ) ?? undefined,
+      };
+
+      if (!groupKey) {
+        setNotices((current) => [notice, ...current]);
+        return;
+      }
+
+      setNotices((current) =>
+        replaceWorkbenchNoticeGroup(current, groupKey, [notice]),
+      );
+    },
+    [
+      currentWorkspaceRootRef,
+      isUnknownDocumentForUnsyncedPath,
+      setMessage,
+      setNotices,
+    ],
+  );
+
+  const reportLanguageServerCrash = useCallback(
+    (error: unknown) => {
+      const nextMessage = languageServerErrorMessage(error);
+      setMessage(nextMessage);
+
       if (lastLanguageServerCrashRef.current === nextMessage) {
         return;
       }
@@ -114,7 +157,6 @@ export function useLanguageServerFeatureErrorReporting({
     },
     [
       currentWorkspaceRootRef,
-      isUnknownDocumentForUnsyncedPath,
       lastLanguageServerCrashRef,
       setMessage,
       setNotices,
@@ -141,6 +183,7 @@ export function useLanguageServerFeatureErrorReporting({
   );
 
   return {
+    reportLanguageServerCrash,
     reportLanguageServerError,
     reportLanguageServerErrorForActiveWorkspaceRoot,
   };

@@ -158,13 +158,16 @@ export type PhpWorkspaceEditApplier = (
   | void;
 
 interface LanguageServerBackedCodeAction extends Monaco.languages.CodeAction {
+  __documentLifecycleIdentity?: number;
   __languageServerAction?: LanguageServerCodeAction;
   __languageServerSessionId?: number;
+  __sourcePath?: string;
   __workspaceEditContext?: WorkspaceEditContext;
   __workspaceRoot?: string;
 }
 
 interface LanguageServerBackedLink extends Monaco.languages.ILink {
+  __documentLifecycleIdentity?: number;
   __languageServerLink?: LanguageServerDocumentLink;
   __languageServerSessionId?: number;
   __sourcePath?: string;
@@ -172,6 +175,7 @@ interface LanguageServerBackedLink extends Monaco.languages.ILink {
 }
 
 interface LanguageServerBackedCodeLens extends Monaco.languages.CodeLens {
+  __documentLifecycleIdentity?: number;
   __languageServerLens?: LanguageServerCodeLens;
   __languageServerSessionId?: number;
   __sourcePath?: string;
@@ -179,6 +183,7 @@ interface LanguageServerBackedCodeLens extends Monaco.languages.CodeLens {
 }
 
 interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
+  __documentLifecycleIdentity?: number;
   __languageServerInlayHint?: LanguageServerInlayHint;
   __languageServerSessionId?: number;
   __sourcePath?: string;
@@ -187,6 +192,7 @@ interface LanguageServerBackedInlayHint extends Monaco.languages.InlayHint {
 
 interface ExecuteCommandPayload {
   command: LanguageServerCodeActionCommand;
+  lifecycleIdentity?: number;
   path?: string;
   rootPath: string;
   sessionId: number;
@@ -195,6 +201,8 @@ interface ExecuteCommandPayload {
 interface ResolveAndApplyCodeActionPayload {
   action: LanguageServerCodeAction;
   editContext: WorkspaceEditContext;
+  lifecycleIdentity?: number;
+  path?: string;
   rootPath: string;
   sessionId: number;
 }
@@ -322,6 +330,10 @@ export interface LanguageServerMonacoProviderContext
   ): ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
+  getDocumentLifecycleIdentity?(
+    rootPath: string,
+    path: string,
+  ): number | null;
   /**
    * Reports whether `path` has already been opened on the language server (its
    * `didOpen` was sent) for `rootPath`. Used to gate the `documentSymbol`
@@ -497,11 +509,7 @@ export function registerLanguageServerMonacoProviders(
 
       if (
         payload.sessionId == null ||
-        !isStoredLanguageServerPayloadActive(
-          context,
-          payload.rootPath,
-          payload.sessionId,
-        )
+        !isExecuteCommandPayloadActive(context, payload)
       ) {
         return;
       }
@@ -511,11 +519,7 @@ export function registerLanguageServerMonacoProviders(
           await context.flushPendingDocumentChange(payload.path);
 
           if (
-            !isStoredLanguageServerPayloadActive(
-              context,
-              payload.rootPath,
-              payload.sessionId,
-            )
+            !isExecuteCommandPayloadActive(context, payload)
           ) {
             return;
           }
@@ -527,11 +531,7 @@ export function registerLanguageServerMonacoProviders(
         );
 
         if (
-          !isStoredLanguageServerPayloadActive(
-            context,
-            payload.rootPath,
-            payload.sessionId,
-          )
+          !isExecuteCommandPayloadActive(context, payload)
         ) {
           return;
         }
@@ -546,11 +546,7 @@ export function registerLanguageServerMonacoProviders(
         }
       } catch (error) {
         if (
-          isStoredLanguageServerPayloadActive(
-            context,
-            payload.rootPath,
-            payload.sessionId,
-          )
+          isExecuteCommandPayloadActive(context, payload)
         ) {
           context.reportError(error);
         }
@@ -566,10 +562,12 @@ export function registerLanguageServerMonacoProviders(
       if (
         !payload ||
         payload.sessionId == null ||
-        !isStoredLanguageServerPayloadActive(
+        !isDocumentLifecyclePayloadActive(
           context,
           payload.rootPath,
           payload.sessionId,
+          payload.path,
+          payload.lifecycleIdentity,
         )
       ) {
         return;
@@ -580,10 +578,12 @@ export function registerLanguageServerMonacoProviders(
           await context.flushPendingDocumentChange(payload.editContext.path);
 
           if (
-            !isStoredLanguageServerPayloadActive(
+            !isDocumentLifecyclePayloadActive(
               context,
               payload.rootPath,
               payload.sessionId,
+              payload.path,
+              payload.lifecycleIdentity,
             )
           ) {
             return;
@@ -598,10 +598,12 @@ export function registerLanguageServerMonacoProviders(
             );
 
         if (
-          !isStoredLanguageServerPayloadActive(
+          !isDocumentLifecyclePayloadActive(
             context,
             payload.rootPath,
             payload.sessionId,
+            payload.path,
+            payload.lifecycleIdentity,
           )
         ) {
           return;
@@ -624,10 +626,12 @@ export function registerLanguageServerMonacoProviders(
 
           if (
             edit &&
-            isStoredLanguageServerPayloadActive(
+            isDocumentLifecyclePayloadActive(
               context,
               payload.rootPath,
               payload.sessionId,
+              payload.path,
+              payload.lifecycleIdentity,
             )
           ) {
             await applyWorkspaceEditWithOpenModels(
@@ -641,10 +645,12 @@ export function registerLanguageServerMonacoProviders(
       } catch (error) {
         if (
           !isUnsupportedCodeActionResolveError(error) &&
-          isStoredLanguageServerPayloadActive(
+          isDocumentLifecyclePayloadActive(
             context,
             payload.rootPath,
             payload.sessionId,
+            payload.path,
+            payload.lifecycleIdentity,
           )
         ) {
           context.reportError(error);
@@ -1521,6 +1527,7 @@ async function provideDocumentLinks(
           request.rootPath,
           request.path,
           request.sessionId,
+          request.lifecycleIdentity,
           link,
         ),
       ),
@@ -1543,10 +1550,12 @@ async function resolveDocumentLink(
     !backedLink.__sourcePath ||
     !backedLink.__workspaceRoot ||
     backedLink.__languageServerSessionId == null ||
-    !isStoredLanguageServerPayloadActive(
+    !isDocumentLifecyclePayloadActive(
       context,
       backedLink.__workspaceRoot,
       backedLink.__languageServerSessionId,
+      backedLink.__sourcePath,
+      backedLink.__documentLifecycleIdentity,
     )
   ) {
     return link;
@@ -1556,10 +1565,12 @@ async function resolveDocumentLink(
     await context.flushPendingDocumentChange(backedLink.__sourcePath);
 
     if (
-      !isStoredLanguageServerPayloadActive(
+      !isDocumentLifecyclePayloadActive(
         context,
         backedLink.__workspaceRoot,
         backedLink.__languageServerSessionId,
+        backedLink.__sourcePath,
+        backedLink.__documentLifecycleIdentity,
       )
     ) {
       return link;
@@ -1571,10 +1582,12 @@ async function resolveDocumentLink(
     );
 
     if (
-      !isStoredLanguageServerPayloadActive(
+      !isDocumentLifecyclePayloadActive(
         context,
         backedLink.__workspaceRoot,
         backedLink.__languageServerSessionId,
+        backedLink.__sourcePath,
+        backedLink.__documentLifecycleIdentity,
       )
     ) {
       return link;
@@ -1587,15 +1600,18 @@ async function resolveDocumentLink(
         backedLink.__workspaceRoot,
         backedLink.__sourcePath,
         backedLink.__languageServerSessionId,
+        backedLink.__documentLifecycleIdentity,
         resolved,
       ),
     };
   } catch (error) {
     if (
-      isStoredLanguageServerPayloadActive(
+      isDocumentLifecyclePayloadActive(
         context,
         backedLink.__workspaceRoot,
         backedLink.__languageServerSessionId,
+        backedLink.__sourcePath,
+        backedLink.__documentLifecycleIdentity,
       )
     ) {
       context.reportError(error);
@@ -1637,6 +1653,7 @@ async function provideCodeLenses(
           request.rootPath,
           request.path,
           request.sessionId,
+          request.lifecycleIdentity,
           lens,
         ),
       ),
@@ -1660,10 +1677,12 @@ async function resolveCodeLens(
     !backedLens.__sourcePath ||
     !backedLens.__workspaceRoot ||
     backedLens.__languageServerSessionId == null ||
-    !isStoredLanguageServerPayloadActive(
+    !isDocumentLifecyclePayloadActive(
       context,
       backedLens.__workspaceRoot,
       backedLens.__languageServerSessionId,
+      backedLens.__sourcePath,
+      backedLens.__documentLifecycleIdentity,
     )
   ) {
     return lens;
@@ -1673,10 +1692,12 @@ async function resolveCodeLens(
     await context.flushPendingDocumentChange(backedLens.__sourcePath);
 
     if (
-      !isStoredLanguageServerPayloadActive(
+      !isDocumentLifecyclePayloadActive(
         context,
         backedLens.__workspaceRoot,
         backedLens.__languageServerSessionId,
+        backedLens.__sourcePath,
+        backedLens.__documentLifecycleIdentity,
       )
     ) {
       return lens;
@@ -1688,10 +1709,12 @@ async function resolveCodeLens(
     );
 
     if (
-      !isStoredLanguageServerPayloadActive(
+      !isDocumentLifecyclePayloadActive(
         context,
         backedLens.__workspaceRoot,
         backedLens.__languageServerSessionId,
+        backedLens.__sourcePath,
+        backedLens.__documentLifecycleIdentity,
       )
     ) {
       return lens;
@@ -1704,15 +1727,18 @@ async function resolveCodeLens(
         backedLens.__workspaceRoot,
         backedLens.__sourcePath,
         backedLens.__languageServerSessionId,
+        backedLens.__documentLifecycleIdentity,
         resolved,
       ),
     };
   } catch (error) {
     if (
-      isStoredLanguageServerPayloadActive(
+      isDocumentLifecyclePayloadActive(
         context,
         backedLens.__workspaceRoot,
         backedLens.__languageServerSessionId,
+        backedLens.__sourcePath,
+        backedLens.__documentLifecycleIdentity,
       )
     ) {
       context.reportError(error);
@@ -1762,6 +1788,7 @@ async function provideInlayHints(
         request.rootPath,
         request.path,
         request.sessionId,
+        request.lifecycleIdentity,
         hint,
       ),
     );
@@ -1882,10 +1909,12 @@ async function resolveInlayHint(
     !backedHint.__sourcePath ||
     !backedHint.__workspaceRoot ||
     backedHint.__languageServerSessionId == null ||
-    !isStoredLanguageServerPayloadActive(
+    !isDocumentLifecyclePayloadActive(
       context,
       backedHint.__workspaceRoot,
       backedHint.__languageServerSessionId,
+      backedHint.__sourcePath,
+      backedHint.__documentLifecycleIdentity,
     )
   ) {
     return hint;
@@ -1895,10 +1924,12 @@ async function resolveInlayHint(
     await context.flushPendingDocumentChange(backedHint.__sourcePath);
 
     if (
-      !isStoredLanguageServerPayloadActive(
+      !isDocumentLifecyclePayloadActive(
         context,
         backedHint.__workspaceRoot,
         backedHint.__languageServerSessionId,
+        backedHint.__sourcePath,
+        backedHint.__documentLifecycleIdentity,
       )
     ) {
       return hint;
@@ -1910,10 +1941,12 @@ async function resolveInlayHint(
     );
 
     if (
-      !isStoredLanguageServerPayloadActive(
+      !isDocumentLifecyclePayloadActive(
         context,
         backedHint.__workspaceRoot,
         backedHint.__languageServerSessionId,
+        backedHint.__sourcePath,
+        backedHint.__documentLifecycleIdentity,
       )
     ) {
       return hint;
@@ -1924,14 +1957,17 @@ async function resolveInlayHint(
       backedHint.__workspaceRoot,
       backedHint.__sourcePath,
       backedHint.__languageServerSessionId,
+      backedHint.__documentLifecycleIdentity,
       resolved,
     );
   } catch (error) {
     if (
-      isStoredLanguageServerPayloadActive(
+      isDocumentLifecyclePayloadActive(
         context,
         backedHint.__workspaceRoot,
         backedHint.__languageServerSessionId,
+        backedHint.__sourcePath,
+        backedHint.__documentLifecycleIdentity,
       )
     ) {
       context.reportError(error);
@@ -2084,6 +2120,8 @@ async function provideCodeActions(
             workspaceEditContext(model),
             request.rootPath,
             request.sessionId,
+            request.path,
+            request.lifecycleIdentity,
             action,
             actionContext,
           ),
@@ -2477,10 +2515,12 @@ async function resolveCodeAction(
     !backedAction.__languageServerAction ||
     !backedAction.__workspaceRoot ||
     backedAction.__languageServerSessionId == null ||
-    !isStoredLanguageServerPayloadActive(
+    !isDocumentLifecyclePayloadActive(
       context,
       backedAction.__workspaceRoot,
       backedAction.__languageServerSessionId,
+      backedAction.__sourcePath,
+      backedAction.__documentLifecycleIdentity,
     )
   ) {
     return action;
@@ -2497,10 +2537,12 @@ async function resolveCodeAction(
     );
 
     if (
-      !isStoredLanguageServerPayloadActive(
+      !isDocumentLifecyclePayloadActive(
         context,
         backedAction.__workspaceRoot,
         backedAction.__languageServerSessionId,
+        backedAction.__sourcePath,
+        backedAction.__documentLifecycleIdentity,
       )
     ) {
       return action;
@@ -2515,6 +2557,8 @@ async function resolveCodeAction(
       },
       backedAction.__workspaceRoot,
       backedAction.__languageServerSessionId,
+      backedAction.__sourcePath,
+      backedAction.__documentLifecycleIdentity,
       resolved,
       {
         markers: action.diagnostics ?? [],
@@ -2530,10 +2574,12 @@ async function resolveCodeAction(
     }
 
     if (
-      isStoredLanguageServerPayloadActive(
+      isDocumentLifecyclePayloadActive(
         context,
         backedAction.__workspaceRoot,
         backedAction.__languageServerSessionId,
+        backedAction.__sourcePath,
+        backedAction.__documentLifecycleIdentity,
       )
     ) {
       context.reportError(error);
@@ -3024,6 +3070,8 @@ function toMonacoCodeAction(
   editContext: WorkspaceEditContext,
   rootPath: string,
   sessionId: number,
+  sourcePath: string | undefined,
+  lifecycleIdentity: number | null | undefined,
   action: LanguageServerCodeAction,
   context: Monaco.languages.CodeActionContext,
 ): Monaco.languages.CodeAction[] {
@@ -3032,8 +3080,12 @@ function toMonacoCodeAction(
   }
 
   const codeAction: LanguageServerBackedCodeAction = {
+    ...(lifecycleIdentity == null
+      ? {}
+      : { __documentLifecycleIdentity: lifecycleIdentity }),
     __languageServerAction: action,
     __languageServerSessionId: sessionId,
+    ...(sourcePath ? { __sourcePath: sourcePath } : {}),
     __workspaceEditContext: editContext,
     __workspaceRoot: rootPath,
     diagnostics: context.markers,
@@ -3044,6 +3096,8 @@ function toMonacoCodeAction(
               {
                 action,
                 editContext,
+                ...(lifecycleIdentity == null ? {} : { lifecycleIdentity }),
+                ...(sourcePath ? { path: sourcePath } : {}),
                 rootPath,
                 sessionId,
               } satisfies ResolveAndApplyCodeActionPayload,
@@ -3059,6 +3113,8 @@ function toMonacoCodeAction(
               sessionId,
               action.command,
               action.title,
+              sourcePath,
+              lifecycleIdentity,
             ),
           }
         : !action.edit && action.data != null && !action.disabled
@@ -3068,6 +3124,8 @@ function toMonacoCodeAction(
                   {
                     action,
                     editContext,
+                    ...(lifecycleIdentity == null ? {} : { lifecycleIdentity }),
+                    ...(sourcePath ? { path: sourcePath } : {}),
                     rootPath,
                     sessionId,
                   } satisfies ResolveAndApplyCodeActionPayload,
@@ -3106,11 +3164,13 @@ function toMonacoLanguageServerCommand(
   command: LanguageServerCodeActionCommand,
   fallbackTitle: string,
   path?: string,
+  lifecycleIdentity?: number | null,
 ): Monaco.languages.Command {
   return {
     arguments: [
       {
         command,
+        ...(lifecycleIdentity == null ? {} : { lifecycleIdentity }),
         ...(path ? { path } : {}),
         rootPath,
         sessionId,
@@ -3126,9 +3186,13 @@ function toMonacoCodeLens(
   rootPath: string,
   sourcePath: string,
   sessionId: number,
+  lifecycleIdentity: number | null | undefined,
   lens: LanguageServerCodeLens,
 ): LanguageServerBackedCodeLens {
   return {
+    ...(lifecycleIdentity == null
+      ? {}
+      : { __documentLifecycleIdentity: lifecycleIdentity }),
     __languageServerLens: lens,
     __languageServerSessionId: sessionId,
     __sourcePath: sourcePath,
@@ -3139,6 +3203,8 @@ function toMonacoCodeLens(
             monaco,
             rootPath,
             sessionId,
+            sourcePath,
+            lifecycleIdentity,
             lens.command,
           ),
         }
@@ -3152,6 +3218,7 @@ function toMonacoInlayHint(
   rootPath: string,
   sourcePath: string,
   sessionId: number,
+  lifecycleIdentity: number | null | undefined,
   hint: LanguageServerInlayHint,
 ): LanguageServerBackedInlayHint {
   const kind = monacoInlayHintKindFromLspKind(monaco, hint.kind);
@@ -3161,6 +3228,7 @@ function toMonacoInlayHint(
       rootPath,
       sourcePath,
       sessionId,
+      lifecycleIdentity,
       hint.label,
     ),
     paddingLeft: hint.paddingLeft,
@@ -3181,6 +3249,13 @@ function toMonacoInlayHint(
   };
 
   Object.defineProperties(monacoHint, {
+    ...(lifecycleIdentity == null
+      ? {}
+      : {
+          __documentLifecycleIdentity: {
+            value: lifecycleIdentity,
+          },
+        }),
     __languageServerInlayHint: {
       value: hint,
     },
@@ -3203,6 +3278,7 @@ function toMonacoInlayHintLabel(
   rootPath: string,
   sourcePath: string,
   sessionId: number,
+  lifecycleIdentity: number | null | undefined,
   label: LanguageServerInlayHint["label"],
 ): Monaco.languages.InlayHint["label"] {
   if (typeof label === "string") {
@@ -3223,6 +3299,7 @@ function toMonacoInlayHintLabel(
               part.command,
               part.command.title,
               sourcePath,
+              lifecycleIdentity,
             ),
           }
         : {}),
@@ -3252,13 +3329,22 @@ function toMonacoCodeLensCommand(
   monaco: MonacoApi,
   rootPath: string,
   sessionId: number,
+  sourcePath: string,
+  lifecycleIdentity: number | null | undefined,
   command: LanguageServerCodeActionCommand,
 ): Monaco.languages.Command | undefined {
   if (command.command === "editor.action.showReferences") {
     return toMonacoShowReferencesCommand(monaco, rootPath, command);
   }
 
-  return toMonacoLanguageServerCommand(rootPath, sessionId, command, command.title);
+  return toMonacoLanguageServerCommand(
+    rootPath,
+    sessionId,
+    command,
+    command.title,
+    sourcePath,
+    lifecycleIdentity,
+  );
 }
 
 function toMonacoShowReferencesCommand(
@@ -3449,9 +3535,13 @@ function toMonacoDocumentLink(
   rootPath: string,
   sourcePath: string,
   sessionId: number,
+  lifecycleIdentity: number | null | undefined,
   link: LanguageServerDocumentLink,
 ): LanguageServerBackedLink {
   return {
+    ...(lifecycleIdentity == null
+      ? {}
+      : { __documentLifecycleIdentity: lifecycleIdentity }),
     __languageServerLink: link,
     __languageServerSessionId: sessionId,
     __sourcePath: sourcePath,
@@ -4011,7 +4101,9 @@ async function provideCompletionItems(
   }
 
   if (resolution.kind === "error") {
-    context.reportError(resolution.error);
+    if (isFeatureRequestActive(context, resolution)) {
+      context.reportError(resolution.error);
+    }
     return { suggestions };
   }
 
@@ -4062,6 +4154,7 @@ async function provideCompletionItems(
               item.command,
               item.label,
               resolution.sourcePath,
+              resolution.lifecycleIdentity,
             ),
           }
         : insert.command
@@ -4157,10 +4250,18 @@ type PhpLanguageServerCompletionResolution =
   | { kind: "noRequest" }
   | { kind: "timedOut" }
   | { kind: "inactive" }
-  | { kind: "error"; error: unknown }
+  | {
+      kind: "error";
+      error: unknown;
+      lifecycleIdentity: number | null;
+      path: string;
+      rootPath: string;
+      sessionId: number;
+    }
   | {
       kind: "completion";
       completion: LanguageServerCompletionList;
+      lifecycleIdentity: number | null;
       rootPath: string;
       sessionId: number;
       sourcePath: string;
@@ -4218,13 +4319,21 @@ async function requestPhpLanguageServerCompletion(
     return {
       kind: "completion",
       completion,
+      lifecycleIdentity: request.lifecycleIdentity,
       rootPath: request.rootPath,
       sessionId: request.sessionId,
       sourcePath: request.path,
     };
   } catch (error) {
     if (isFeatureRequestActive(context, request)) {
-      return { kind: "error", error };
+      return {
+        kind: "error",
+        error,
+        lifecycleIdentity: request.lifecycleIdentity,
+        path: request.path,
+        rootPath: request.rootPath,
+        sessionId: request.sessionId,
+      };
     }
 
     return { kind: "inactive" };
@@ -5599,7 +5708,12 @@ function featureDocumentRequestContext(
     return null;
   }
 
-  return { path, rootPath, sessionId: status.sessionId };
+  return {
+    lifecycleIdentity: null as number | null,
+    path,
+    rootPath,
+    sessionId: status.sessionId,
+  };
 }
 
 function shouldSkipLargePhpSmartProviders(
@@ -5666,8 +5780,24 @@ function workspaceSymbolRequestContext(
 
 async function flushPendingDocumentChangeForActiveRequest(
   context: LanguageServerMonacoProviderContext,
-  request: { path: string; rootPath: string; sessionId: number },
+  request: {
+    lifecycleIdentity: number | null;
+    path: string;
+    rootPath: string;
+    sessionId: number;
+  },
 ): Promise<boolean> {
+  if (context.getDocumentLifecycleIdentity) {
+    request.lifecycleIdentity = context.getDocumentLifecycleIdentity(
+      request.rootPath,
+      request.path,
+    );
+
+    if (request.lifecycleIdentity === null) {
+      return false;
+    }
+  }
+
   await context.flushPendingDocumentChange(request.path);
 
   return isFeatureRequestActive(context, request);
@@ -5718,12 +5848,74 @@ function raceInteractiveFeatureRequest<T>(
 
 function isFeatureRequestActive(
   context: LanguageServerMonacoProviderContext,
-  request: { rootPath: string; sessionId: number },
+  request: {
+    lifecycleIdentity?: number | null;
+    path?: string;
+    rootPath: string;
+    sessionId: number;
+  },
 ): boolean {
-  return isStoredLanguageServerPayloadActive(
+  if (
+    !isStoredLanguageServerPayloadActive(
+      context,
+      request.rootPath,
+      request.sessionId,
+    )
+  ) {
+    return false;
+  }
+
+  if (request.lifecycleIdentity == null || !request.path) {
+    return true;
+  }
+
+  return (
+    context.getDocumentLifecycleIdentity?.(request.rootPath, request.path) ===
+    request.lifecycleIdentity
+  );
+}
+
+function isDocumentLifecyclePayloadActive(
+  context: LanguageServerMonacoProviderContext,
+  rootPath: string,
+  sessionId: number,
+  path: string | undefined,
+  lifecycleIdentity: number | undefined,
+): boolean {
+  if (!context.getDocumentLifecycleIdentity) {
+    return isStoredLanguageServerPayloadActive(context, rootPath, sessionId);
+  }
+
+  if (!path || lifecycleIdentity == null) {
+    return false;
+  }
+
+  return isFeatureRequestActive(context, {
+    lifecycleIdentity,
+    path,
+    rootPath,
+    sessionId,
+  });
+}
+
+function isExecuteCommandPayloadActive(
+  context: LanguageServerMonacoProviderContext,
+  payload: ExecuteCommandPayload,
+): boolean {
+  if (payload.lifecycleIdentity == null || !payload.path) {
+    return isStoredLanguageServerPayloadActive(
+      context,
+      payload.rootPath,
+      payload.sessionId,
+    );
+  }
+
+  return isDocumentLifecyclePayloadActive(
     context,
-    request.rootPath,
-    request.sessionId,
+    payload.rootPath,
+    payload.sessionId,
+    payload.path,
+    payload.lifecycleIdentity,
   );
 }
 

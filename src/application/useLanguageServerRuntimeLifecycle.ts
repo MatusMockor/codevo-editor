@@ -154,6 +154,7 @@ export interface LanguageServerRuntimeLifecycleDependencies {
     sessionId: number,
   ) => boolean;
   reportError: (source: string, error: unknown) => void;
+  reportLanguageServerCrash: (error: unknown) => void;
   reportLanguageServerError: (error: unknown) => void;
   reportLanguageServerErrorForActiveWorkspaceRoot: (
     rootPath: string | null | undefined,
@@ -287,6 +288,7 @@ export function useLanguageServerRuntimeLifecycle(
     resetJavaScriptTypeScriptLanguageServerDocuments,
     isLanguageServerSessionCurrentForRoot,
     reportError,
+    reportLanguageServerCrash,
     reportLanguageServerError,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
@@ -973,7 +975,7 @@ export function useLanguageServerRuntimeLifecycle(
         return;
       }
 
-      reportLanguageServerError(crash);
+      reportLanguageServerCrash(crash);
     },
     [
       cachePhpLanguageServerRuntimeStatus,
@@ -984,7 +986,7 @@ export function useLanguageServerRuntimeLifecycle(
       isOwnerRevisionCurrent,
       lastLanguageServerCrashRef,
       latestRuntimeOwner,
-      reportLanguageServerError,
+      reportLanguageServerCrash,
       resetLanguageServerDiagnosticsForRoot,
       runtimeOwnerForRoot,
       setLanguageServerRuntimeStatus,

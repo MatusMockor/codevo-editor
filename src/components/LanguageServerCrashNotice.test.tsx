@@ -7,6 +7,8 @@ import { createWorkbenchNotice } from "../application/workbenchNotice";
 import {
   languageServerCrashNoticeGroupKey,
   languageServerCrashNoticeToastRenderer,
+  languageServerRequestErrorNoticeGroupKey,
+  languageServerRequestErrorNoticeToastRenderer,
 } from "./LanguageServerCrashNotice";
 
 describe("languageServerCrashNoticeGroupKey", () => {
@@ -70,6 +72,7 @@ describe("languageServerCrashNoticeToastRenderer", () => {
     });
 
     expect(host.textContent).toContain("phpactor exited with code 1");
+    expect(host.textContent).toContain("PHP IDE engine crashed");
 
     const openButton = Array.from(
       host.querySelectorAll("button"),
@@ -85,5 +88,34 @@ describe("languageServerCrashNoticeToastRenderer", () => {
 
     expect(onOpenRuntimePanel).toHaveBeenCalledTimes(1);
     expect(dismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders request errors without presenting them as runtime crashes", async () => {
+    const dismiss = vi.fn();
+    const entry = languageServerRequestErrorNoticeToastRenderer({
+      workspaceRoot: "/workspace",
+    });
+
+    expect(entry).not.toBeNull();
+    const [groupKey, renderer] = entry!;
+    expect(groupKey).toBe(
+      languageServerRequestErrorNoticeGroupKey("/workspace"),
+    );
+    expect(groupKey).not.toBe(languageServerCrashNoticeGroupKey("/workspace"));
+
+    const notice = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "UnknownDocument: still-open document is desynced",
+      groupKey,
+    );
+
+    await act(async () => {
+      root.render(<>{renderer(notice, { dismiss })}</>);
+    });
+
+    expect(host.textContent).toContain("PHP IDE request failed");
+    expect(host.textContent).not.toContain("PHP IDE engine crashed");
+    expect(host.textContent).not.toContain("Open Runtime panel");
   });
 });

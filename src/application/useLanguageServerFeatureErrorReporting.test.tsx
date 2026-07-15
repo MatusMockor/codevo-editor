@@ -164,10 +164,9 @@ describe("useLanguageServerFeatureErrorReporting", () => {
   });
 
   it.each([
-    "Language server exited unexpectedly.",
     "Language server request `textDocument/codeAction` timed out.",
     "Internal error: code action failed",
-  ])("reports actual crashes and other request failures", (error) => {
+  ])("reports request failures separately from runtime crashes", (error) => {
     const harness = renderHook();
 
     act(() => {
@@ -175,8 +174,9 @@ describe("useLanguageServerFeatureErrorReporting", () => {
     });
 
     expect(harness.message.value).toBe(error);
+    expect(harness.lastLanguageServerCrashRef.current).toBeNull();
     expect(harness.notices.value[0]).toMatchObject({
-      groupKey: "language-server-crash:/workspace",
+      groupKey: "language-server-request-error:/workspace",
       message: error,
       severity: "error",
       source: "Language Server",
@@ -199,6 +199,7 @@ describe("useLanguageServerFeatureErrorReporting", () => {
 
     expect(harness.message.value).toBe("PHPactor code action failed");
     expect(harness.notices.value[0]).toMatchObject({
+      groupKey: "language-server-request-error:/workspace",
       message: "PHPactor code action failed",
       severity: "error",
     });
@@ -223,6 +224,24 @@ describe("useLanguageServerFeatureErrorReporting", () => {
     });
   });
 
+  it("suppresses a structured UnknownDocument only for an unsynced document", () => {
+    const harness = renderHook();
+
+    act(() => {
+      harness.api.reportLanguageServerError({
+        code: -32603,
+        message: unknownDocumentError(),
+      });
+    });
+
+    expect(harness.message.value).toBeNull();
+    expect(harness.notices.value).toEqual([]);
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
   it("reports UnknownDocument when the PHP synced set contains the document", () => {
     const harness = renderHook();
     const error = unknownDocumentError();
@@ -236,10 +255,33 @@ describe("useLanguageServerFeatureErrorReporting", () => {
 
     expect(harness.message.value).toBe(error);
     expect(harness.notices.value[0]).toMatchObject({
-      groupKey: "language-server-crash:/workspace",
+      groupKey: "language-server-request-error:/workspace",
       message: error,
       severity: "error",
       source: "Language Server",
+    });
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
+  it("reports a structured UnknownDocument for a synced document as a request failure", () => {
+    const harness = renderHook();
+    const error = unknownDocumentError();
+    harness.syncedDocumentPathsRef.current.add(
+      languageServerDocumentSyncKey(ROOT, PATH),
+    );
+
+    act(() => {
+      harness.api.reportLanguageServerError({ code: -32603, message: error });
+    });
+
+    expect(harness.lastLanguageServerCrashRef.current).toBeNull();
+    expect(harness.notices.value[0]).toMatchObject({
+      groupKey: "language-server-request-error:/workspace",
+      message: error,
+      severity: "error",
     });
 
     act(() => {
@@ -284,13 +326,41 @@ describe("useLanguageServerFeatureErrorReporting", () => {
     });
   });
 
-  it("deduplicates repeated crash notices while preserving the latest message", () => {
+  it("replaces the grouped request notice without marking the runtime as crashed", () => {
     const harness = renderHook();
     const error = "Internal error: completion crashed";
 
     act(() => {
       harness.api.reportLanguageServerError(error);
       harness.api.reportLanguageServerError(error);
+    });
+
+    expect(harness.message.value).toBe(error);
+    expect(harness.lastLanguageServerCrashRef.current).toBeNull();
+    expect(harness.notices.value).toHaveLength(1);
+    expect(harness.notices.value[0]).toMatchObject({
+      groupKey: "language-server-request-error:/workspace",
+      message: error,
+      source: "Language Server",
+      toastDismissKey: JSON.stringify([
+        "language-server-request-error",
+        "/workspace",
+        error,
+      ]),
+    });
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
+  it("groups and deduplicates actual runtime crashes separately", () => {
+    const harness = renderHook();
+    const error = "Language server exited unexpectedly.";
+
+    act(() => {
+      harness.api.reportLanguageServerCrash(error);
+      harness.api.reportLanguageServerCrash(error);
     });
 
     expect(harness.message.value).toBe(error);

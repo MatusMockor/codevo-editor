@@ -1126,6 +1126,9 @@ function App() {
           flushPendingLanguageServerDocument={
             workbench.flushPendingLanguageServerDocument
           }
+          getLanguageServerDocumentLifecycleIdentity={
+            workbench.getLanguageServerDocumentLifecycleIdentity
+          }
           flushPendingJavaScriptTypeScriptLanguageServerDocument={
             workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
           }
