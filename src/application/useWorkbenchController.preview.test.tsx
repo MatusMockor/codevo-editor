@@ -10951,6 +10951,137 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
+  it("coalesces overlapping workspace switches while the first didClose is pending", async () => {
+    const workspaceAFirstPath = "/workspace-a/src/First.ts";
+    const workspaceASecondPath = "/workspace-a/src/Second.ts";
+    const workspaceBPath = "/workspace-b/src/App.ts";
+    const workspaceCPath = "/workspace-c/src/App.ts";
+    const firstDidClose = createDeferred<void>();
+    const readTextFile = vi.fn(
+      async (path: string) =>
+        `export const path = ${JSON.stringify(path)};\n`,
+    );
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 363,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b", "/workspace-c"],
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(
+        fileEntry(workspaceAFirstPath, "First.ts"),
+      );
+      await getWorkbench().openPinnedFile(
+        fileEntry(workspaceASecondPath, "Second.ts"),
+      );
+    });
+    await flushAsyncTurns(24);
+
+    const syncGateway =
+      dependencies.javaScriptTypeScriptLanguageServerDocumentSyncGateway;
+    vi.mocked(syncGateway.didClose).mockClear();
+    vi.mocked(syncGateway.didClose).mockImplementationOnce(
+      () => firstDidClose.promise,
+    );
+    vi.mocked(dependencies.settingsGateway.loadWorkspaceSettings).mockClear();
+    vi.mocked(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).mockClear();
+    vi.mocked(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).mockImplementation(async (rootPath) => ({
+      ...defaultWorkspaceSettings(),
+      session: normalizeWorkspaceSession({
+        activePath: rootPath === "/workspace-c" ? workspaceCPath : workspaceBPath,
+        bottomPanelView: "problems",
+        openPaths: [
+          rootPath === "/workspace-c" ? workspaceCPath : workspaceBPath,
+        ],
+        sidebarView: "files",
+      }),
+    }));
+
+    let switchToB: Promise<void> = Promise.resolve();
+    act(() => {
+      switchToB = getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await vi.waitFor(() => {
+      expect(syncGateway.didClose).toHaveBeenCalled();
+    });
+
+    let switchToC: Promise<void> = Promise.resolve();
+    act(() => {
+      switchToC = getWorkbench().activateWorkspaceTab("/workspace-c");
+    });
+    await act(async () => {
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    expect(getWorkbench().activePath).toBe(workspaceASecondPath);
+    expect(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).not.toHaveBeenCalledWith("/workspace-c");
+    expect(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).not.toHaveBeenCalledWith("/workspace-c");
+    expect(readTextFile).not.toHaveBeenCalledWith(workspaceCPath);
+    expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
+      "/workspace-c",
+      expect.objectContaining({ path: workspaceCPath }),
+    );
+
+    await act(async () => {
+      firstDidClose.resolve(undefined);
+      await Promise.all([switchToB, switchToC]);
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-c");
+    expect(getWorkbench().activePath).toBe(workspaceCPath);
+    expect(readTextFile).toHaveBeenCalledWith(workspaceCPath);
+    expect(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).not.toHaveBeenCalledWith("/workspace-b");
+    expect(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).not.toHaveBeenCalledWith("/workspace-b");
+    expect(
+      dependencies.settingsGateway.loadWorkspaceSettings,
+    ).toHaveBeenCalledWith("/workspace-c");
+    expect(
+      dependencies.workspaceGateways.detection.detectWorkspace,
+    ).toHaveBeenCalledWith("/workspace-c");
+    expect(vi.mocked(syncGateway.didClose).mock.calls).toEqual(
+      expect.arrayContaining([
+        ["/workspace-a", workspaceAFirstPath],
+        ["/workspace-a", workspaceASecondPath],
+      ]),
+    );
+    expect(syncGateway.didClose).toHaveBeenCalledTimes(2);
+    expect(syncGateway.didClose).not.toHaveBeenCalledWith(
+      expect.anything(),
+      workspaceBPath,
+    );
+    expect(syncGateway.didClose).not.toHaveBeenCalledWith(
+      expect.anything(),
+      workspaceCPath,
+    );
+  });
+
   it("does not send queued JavaScript and TypeScript didOpen after switching project tabs while didClose is pending", async () => {
     const path = "/workspace-a/src/App.ts";
     const didClose = createDeferred<void>();

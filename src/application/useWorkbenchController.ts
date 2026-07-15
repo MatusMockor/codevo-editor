@@ -76,7 +76,11 @@ import {
   useWorkspaceStateCache,
   type CachedWorkspaceWorkbenchState,
 } from "./useWorkspaceStateCache";
-import { captureWorkspaceBeforeSwitch } from "./workspaceSessionSwitchLifecycle";
+import {
+  captureWorkspaceBeforeSwitch,
+  closeWorkspaceDocumentsBeforeSwitch,
+  WorkspaceDocumentCloseCoordinator,
+} from "./workspaceSessionSwitchLifecycle";
 import { useWorkbenchCloseLifecycle } from "./useWorkbenchCloseLifecycle";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 import { useWorkbenchDocumentTabs } from "./useWorkbenchDocumentTabs";
@@ -787,6 +791,9 @@ export function useWorkbenchController(
   const [, setRecentlyClosedTabsVersion] = useState(0);
   const lastLanguageServerCrashRef = useRef<string | null>(null);
   const lastPhpIdeReadinessSignatureRef = useRef<string | null>(null);
+  const workspaceDocumentCloseCoordinatorRef = useRef(
+    new WorkspaceDocumentCloseCoordinator(),
+  );
   const openWorkspaceRequestTokenRef = useRef(0);
   const openWorkspaceRequestPathRef = useRef<string | null>(null);
   const inFlightDirectoryLoadsRef = useRef(
@@ -2857,12 +2864,21 @@ export function useWorkbenchController(
       }
 
       if (switchingWorkspace) {
-        await Promise.allSettled([
-          closeSyncedLanguageServerDocumentsForRoot(previousRootPath),
-          closeSyncedJavaScriptTypeScriptDocumentsForRoot(previousRootPath),
-        ]);
+        const closeResult = await closeWorkspaceDocumentsBeforeSwitch(
+          {
+            rootPath: previousRootPath,
+            isRequestCurrent: isCurrentOpenWorkspaceRequest,
+          },
+          {
+            closeLanguageServerDocuments:
+              closeSyncedLanguageServerDocumentsForRoot,
+            closeJavaScriptTypeScriptDocuments:
+              closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+          },
+          workspaceDocumentCloseCoordinatorRef.current,
+        );
 
-        if (!isCurrentOpenWorkspaceRequest()) {
+        if (closeResult === "stale") {
           return;
         }
       }
