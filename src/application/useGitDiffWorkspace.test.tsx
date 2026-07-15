@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createInitialEditorGroupsState,
   editorGroupsReducer,
-  type EditorGroupsState,
 } from "../domain/editorGroups";
 import type { GitChangedFile, GitFileDiff, GitGateway } from "../domain/git";
 import type { EditorDocument } from "../domain/workspace";
@@ -18,41 +17,37 @@ import {
   type GitDiffWorkspace,
   type GitDiffWorkspaceDependencies,
 } from "./useGitDiffWorkspace";
+import {
+  useEditorSessionState,
+  type EditorSessionState,
+} from "./useEditorSessionState";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const ROOT = "/workspace";
 
 interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
-  reject: (reason?: unknown) => void;
-}
-
-interface HarnessState {
-  activePath: string | null;
-  documents: Record<string, EditorDocument>;
-  message: string | null;
-  openPaths: string[];
-  previewPath: string | null;
 }
 
 interface Harness {
-  activeDocumentRef: { current: EditorDocument | null };
   currentWorkspaceRootRef: { current: string | null };
   git: () => GitDiffWorkspace;
+  onDocumentReplaced: ReturnType<typeof vi.fn>;
   recordCurrentNavigationLocation: ReturnType<typeof vi.fn>;
   reportError: ReturnType<typeof vi.fn>;
-  state: () => HarnessState;
+  session: () => EditorSessionState;
+  message: () => string | null;
   unmount: () => void;
 }
 
 function createDeferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
+  const promise = new Promise<T>((res) => {
     resolve = res;
-    reject = rej;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve };
 }
 
 function changedFile(
@@ -80,6 +75,22 @@ function diff(change: GitChangedFile): GitFileDiff {
   };
 }
 
+function document(
+  path: string,
+  content = "saved",
+  savedContent = content,
+): EditorDocument {
+  const pathSegments = path.split("/");
+
+  return {
+    content,
+    language: "typescript",
+    name: pathSegments[pathSegments.length - 1] ?? path,
+    path,
+    savedContent,
+  };
+}
+
 function createFakeGitGateway(
   getDiff: GitGateway["getDiff"] = vi.fn(async (_root, change) => diff(change)),
 ): GitGateway {
@@ -89,72 +100,35 @@ function createFakeGitGateway(
 function renderGitDiffWorkspace(
   overrides: Partial<GitDiffWorkspaceDependencies> = {},
 ): Harness {
-  const container = document.createElement("div");
+  const container = window.document.createElement("div");
   const root = createRoot(container);
-  const captured: {
-    git: GitDiffWorkspace | null;
-    state: HarnessState | null;
-  } = { git: null, state: null };
   const currentWorkspaceRootRef = { current: ROOT };
-  const activeDocumentRef: { current: EditorDocument | null } = {
-    current: null,
-  };
-  const documentsRef: { current: Record<string, EditorDocument> } = {
-    current: {},
-  };
-  const openPathsRef: { current: string[] } = { current: [] };
-  const previewPathRef: { current: string | null } = { current: null };
-  const editorGroupsRef: { current: EditorGroupsState } = {
-    current: createInitialEditorGroupsState("editor-main"),
-  };
   const recordCurrentNavigationLocation = vi.fn();
   const reportError = vi.fn();
+  const onDocumentReplaced = vi.fn();
+  const gitGateway = createFakeGitGateway();
+  const captured: {
+    git: GitDiffWorkspace | null;
+    message: string | null;
+    session: EditorSessionState | null;
+  } = { git: null, message: null, session: null };
 
   function HarnessComponent() {
-    const [documents, setDocuments] = useState<Record<string, EditorDocument>>(
-      {},
-    );
-    const [openPaths, setOpenPaths] = useState<string[]>([]);
-    const [previewPath, setPreviewPath] = useState<string | null>(null);
-    const [activePath, setActivePath] = useState<string | null>(null);
+    const session = useEditorSessionState();
     const [message, setMessage] = useState<string | null>(null);
-    editorGroupsRef.current = {
-      ...editorGroupsRef.current,
-      groups: {
-        ...editorGroupsRef.current.groups,
-        [editorGroupsRef.current.activeGroupId]: {
-          activePath,
-          openPaths,
-          previewPath,
-        },
-      },
-    };
-
+    captured.session = session;
     captured.git = useGitDiffWorkspace({
       workspaceRoot: ROOT,
-      gitGateway: createFakeGitGateway(),
+      gitGateway,
       currentWorkspaceRootRef,
-      activeDocumentRef,
-      documentsRef,
-      editorGroupsRef,
-      openPathsRef,
-      previewPathRef,
-      setDocuments,
-      setOpenPaths,
-      setPreviewPath,
-      setActivePath,
+      documentTabSession: session.documentTabSession,
       setMessage,
       recordCurrentNavigationLocation,
       reportError,
+      onDocumentReplaced,
       ...overrides,
     });
-    captured.state = {
-      activePath,
-      documents,
-      message,
-      openPaths,
-      previewPath,
-    };
+    captured.message = message;
     return null;
   }
 
@@ -162,29 +136,38 @@ function renderGitDiffWorkspace(
     root.render(<HarnessComponent />);
   });
 
+  const required = <Value,>(value: Value | null, name: string): Value => {
+    if (!value) {
+      throw new Error(`${name} not mounted`);
+    }
+    return value;
+  };
+
   return {
-    activeDocumentRef,
     currentWorkspaceRootRef,
-    git: () => {
-      if (!captured.git) {
-        throw new Error("hook not mounted");
-      }
-      return captured.git;
-    },
+    git: () => required(captured.git, "hook"),
+    onDocumentReplaced,
     recordCurrentNavigationLocation,
     reportError,
-    state: () => {
-      if (!captured.state) {
-        throw new Error("hook not mounted");
-      }
-      return captured.state;
-    },
+    session: () => required(captured.session, "session"),
+    message: () => captured.message,
     unmount: () => {
-      act(() => {
-        root.unmount();
-      });
+      act(() => root.unmount());
     },
   };
+}
+
+function seedPreview(harness: Harness, preview: EditorDocument): void {
+  act(() => {
+    harness.session().setDocuments({ [preview.path]: preview });
+    harness.session().updateEditorGroups(() =>
+      createInitialEditorGroupsState("editor-main", {
+        activePath: preview.path,
+        openPaths: [],
+        previewPath: preview.path,
+      }),
+    );
+  });
 }
 
 describe("git diff workspace helpers", () => {
@@ -198,9 +181,8 @@ describe("git diff workspace helpers", () => {
     expect(gitDiffDocumentPath(stagedChange)).toBe(
       "mockor-git-diff:staged:/workspace/src/App.tsx",
     );
-    const stagedPath = gitDiffDocumentPath(stagedChange);
     expect(
-      gitChangeForDiffDocumentPath(stagedPath, [
+      gitChangeForDiffDocumentPath(gitDiffDocumentPath(stagedChange), [
         worktreeChange,
         stagedChange,
       ]),
@@ -210,119 +192,171 @@ describe("git diff workspace helpers", () => {
 });
 
 describe("useGitDiffWorkspace", () => {
-  it("replaces the previous unpinned git diff preview document", async () => {
-    const firstChange = changedFile("src/First.ts");
-    const secondChange = changedFile("src/Second.ts");
+  it("replaces a clean preview and reports the replaced document", async () => {
+    const cleanPreview = document(`${ROOT}/src/Preview.ts`);
+    const change = changedFile("src/App.tsx");
+    const harness = renderGitDiffWorkspace();
+    seedPreview(harness, cleanPreview);
+
+    await act(async () => {
+      await harness.git().previewGitChange(change);
+    });
+
+    const path = gitDiffDocumentPath(change);
+    expect(harness.session().documents[cleanPreview.path]).toBeUndefined();
+    expect(harness.session().documents[path]).toMatchObject({
+      path,
+      readOnly: true,
+    });
+    expect(harness.session().activePath).toBe(path);
+    expect(harness.session().previewPath).toBe(path);
+    expect(harness.onDocumentReplaced).toHaveBeenCalledOnce();
+    expect(harness.onDocumentReplaced).toHaveBeenCalledWith(cleanPreview);
+
+    harness.unmount();
+  });
+
+  it("preserves a dirty preview when opening a git diff preview", async () => {
+    const dirtyPreview = document(`${ROOT}/src/Dirty.ts`, "changed", "saved");
+    const change = changedFile("src/App.tsx");
+    const harness = renderGitDiffWorkspace();
+    seedPreview(harness, dirtyPreview);
+
+    await act(async () => {
+      await harness.git().previewGitChange(change);
+    });
+
+    expect(harness.session().documents[dirtyPreview.path]).toBe(dirtyPreview);
+    expect(harness.session().openPaths).toEqual([dirtyPreview.path]);
+    expect(harness.session().previewPath).toBe(gitDiffDocumentPath(change));
+    expect(harness.onDocumentReplaced).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("opens a pinned read-only diff without replacing an unrelated preview", async () => {
+    const cleanPreview = document(`${ROOT}/src/Preview.ts`);
+    const change = changedFile("src/App.tsx");
+    const harness = renderGitDiffWorkspace();
+    seedPreview(harness, cleanPreview);
+
+    await act(async () => {
+      await harness.git().openGitChange(change);
+    });
+
+    const path = gitDiffDocumentPath(change);
+    expect(harness.session().documents[cleanPreview.path]).toBe(cleanPreview);
+    expect(harness.session().documents[path]).toMatchObject({ readOnly: true });
+    expect(harness.session().activePath).toBe(path);
+    expect(harness.session().openPaths).toEqual([path]);
+    expect(harness.session().previewPath).toBe(cleanPreview.path);
+    expect(harness.onDocumentReplaced).not.toHaveBeenCalled();
+    expect(harness.git().selectedGitChange).toBe(change);
+    expect(harness.git().gitDiffPreview).toEqual(diff(change));
+    expect(harness.message()).toBe("Diff src/App.tsx");
+
+    harness.unmount();
+  });
+
+  it("promotes the same preview path to pinned without duplicating it", async () => {
+    const change = changedFile("src/App.tsx");
     const harness = renderGitDiffWorkspace();
 
     await act(async () => {
-      await harness.git().previewGitChange(firstChange);
+      await harness.git().previewGitChange(change);
     });
+    await act(async () => {
+      await harness.git().openGitChange(change);
+    });
+
+    const path = gitDiffDocumentPath(change);
+    expect(harness.session().activePath).toBe(path);
+    expect(harness.session().openPaths).toEqual([path]);
+    expect(harness.session().previewPath).toBeNull();
+    expect(Object.keys(harness.session().documents)).toEqual([path]);
+    expect(harness.onDocumentReplaced).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("retains a replaced preview that remains visible in another group", async () => {
+    const firstChange = changedFile("src/First.ts");
+    const secondChange = changedFile("src/Second.ts");
+    const firstPath = gitDiffDocumentPath(firstChange);
+    const firstDocument: EditorDocument = {
+      content: "",
+      language: "plaintext",
+      name: "Diff: First.ts",
+      path: firstPath,
+      readOnly: true,
+      savedContent: "",
+    };
+    const harness = renderGitDiffWorkspace();
+    let groups = editorGroupsReducer(
+      createInitialEditorGroupsState("editor-main", {
+        activePath: firstPath,
+        openPaths: [],
+        previewPath: firstPath,
+      }),
+      {
+        type: "split-group",
+        groupId: "editor-main",
+        newGroupId: "editor-side",
+        direction: "right",
+      },
+    );
+    groups = {
+      ...groups,
+      activeGroupId: "editor-main",
+      groups: {
+        ...groups.groups,
+        "editor-side": {
+          activePath: firstPath,
+          openPaths: [firstPath],
+          previewPath: null,
+        },
+      },
+    };
+    act(() => {
+      harness.session().setDocuments({ [firstPath]: firstDocument });
+      harness.session().updateEditorGroups(() => groups);
+    });
+
     await act(async () => {
       await harness.git().previewGitChange(secondChange);
     });
 
-    const firstPath = gitDiffDocumentPath(firstChange);
-    const secondPath = gitDiffDocumentPath(secondChange);
-    expect(harness.state()).toMatchObject({
-      activePath: secondPath,
-      openPaths: [],
-      previewPath: secondPath,
-    });
-    expect(harness.state().documents[firstPath]).toBeUndefined();
-    expect(Object.keys(harness.state().documents)).toEqual([secondPath]);
-    expect(harness.activeDocumentRef.current?.path).toBe(secondPath);
+    expect(harness.session().documents[firstPath]).toBe(firstDocument);
+    expect(
+      harness.session().documents[gitDiffDocumentPath(secondChange)],
+    ).toBeDefined();
+    expect(harness.onDocumentReplaced).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 
-  it.each(["pinned", "preview"] as const)(
-    "preserves a previous diff %s in another editor group",
-    async (membership) => {
-      const firstChange = changedFile("src/First.ts");
-      const secondChange = changedFile("src/Second.ts");
-      const firstPath = gitDiffDocumentPath(firstChange);
-      const splitGroups = editorGroupsReducer(
-        createInitialEditorGroupsState("editor-main"),
-        {
-          type: "split-group",
-          groupId: "editor-main",
-          newGroupId: "editor-side",
-          direction: "right",
-        },
-      );
-      const editorGroupsRef = {
-        current: {
-          ...splitGroups,
-          activeGroupId: "editor-main",
-          groups: {
-            ...splitGroups.groups,
-            "editor-side": {
-              activePath: firstPath,
-              openPaths: membership === "pinned" ? [firstPath] : [],
-              previewPath: membership === "preview" ? firstPath : null,
-            },
-          },
-        },
-      };
-      const harness = renderGitDiffWorkspace({ editorGroupsRef });
-
-      await act(async () => {
-        await harness.git().previewGitChange(firstChange);
-      });
-      await act(async () => {
-        await harness.git().previewGitChange(secondChange);
-      });
-
-      const secondPath = gitDiffDocumentPath(secondChange);
-      expect(harness.state()).toMatchObject({
-        activePath: secondPath,
-        openPaths: [],
-        previewPath: secondPath,
-      });
-      expect(harness.state().documents[firstPath]).toBeDefined();
-      expect(harness.state().documents[secondPath]).toBeDefined();
-
-      harness.unmount();
-    },
-  );
-
-  it("preserves pinned diffs while replacing staged and worktree previews", async () => {
-    const pinnedChange = changedFile("src/Pinned.ts");
-    const worktreeChange = changedFile("src/App.tsx");
-    const stagedChange = changedFile("src/App.tsx", { isStaged: true });
+  it("activates an existing diff document before loading it", async () => {
+    const change = changedFile("src/App.tsx");
+    const path = gitDiffDocumentPath(change);
+    const existing = document(path);
     const harness = renderGitDiffWorkspace();
-
-    await act(async () => {
-      await harness.git().openGitChange(pinnedChange);
-    });
-    await act(async () => {
-      await harness.git().previewGitChange(worktreeChange);
-    });
-    await act(async () => {
-      await harness.git().previewGitChange(stagedChange);
+    act(() => {
+      harness.session().setDocuments({ [path]: existing });
     });
 
-    const pinnedPath = gitDiffDocumentPath(pinnedChange);
-    const worktreePath = gitDiffDocumentPath(worktreeChange);
-    const stagedPath = gitDiffDocumentPath(stagedChange);
-    expect(harness.state()).toMatchObject({
-      activePath: stagedPath,
-      openPaths: [pinnedPath],
-      previewPath: stagedPath,
+    await act(async () => {
+      harness.git().loadGitDiffDocument(path, change);
     });
-    expect(harness.state().documents[pinnedPath]).toBeDefined();
-    expect(harness.state().documents[worktreePath]).toBeUndefined();
-    expect(harness.state().documents[stagedPath]).toBeDefined();
-    expect(Object.keys(harness.state().documents)).toEqual([
-      pinnedPath,
-      stagedPath,
-    ]);
+
+    expect(harness.session().activePath).toBe(path);
+    expect(harness.git().selectedGitChange).toBe(change);
+    expect(harness.git().gitDiffPreview).toEqual(diff(change));
+    expect(harness.recordCurrentNavigationLocation).toHaveBeenCalledOnce();
 
     harness.unmount();
   });
 
-  it("does not replace previews through a stale project callback", async () => {
+  it("does not mutate the tab session through a stale-root preview callback", async () => {
     const firstChange = changedFile("src/First.ts");
     const staleChange = changedFile("src/Stale.ts");
     const harness = renderGitDiffWorkspace();
@@ -330,53 +364,21 @@ describe("useGitDiffWorkspace", () => {
     await act(async () => {
       await harness.git().previewGitChange(firstChange);
     });
+    const before = harness.session().documentTabSession.snapshot();
     harness.currentWorkspaceRootRef.current = "/other-workspace";
 
     await act(async () => {
       await harness.git().previewGitChange(staleChange);
     });
 
-    const firstPath = gitDiffDocumentPath(firstChange);
-    expect(harness.state().previewPath).toBe(firstPath);
-    expect(Object.keys(harness.state().documents)).toEqual([firstPath]);
-    expect(harness.recordCurrentNavigationLocation).toHaveBeenCalledTimes(1);
+    expect(harness.session().documentTabSession.snapshot()).toEqual(before);
+    expect(harness.recordCurrentNavigationLocation).toHaveBeenCalledOnce();
+    expect(harness.onDocumentReplaced).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 
-  it("opens a pinned read-only pseudo-document for a git change", async () => {
-    const change = changedFile("src/App.tsx");
-    const harness = renderGitDiffWorkspace();
-
-    await act(async () => {
-      await harness.git().openGitChange(change);
-    });
-
-    const documentPath = gitDiffDocumentPath(change);
-    expect(harness.git().selectedGitChange).toBe(change);
-    expect(harness.git().gitDiffPreview).toEqual(diff(change));
-    expect(harness.git().gitDiffLoading).toBe(false);
-    expect(harness.activeDocumentRef.current).toMatchObject({
-      path: documentPath,
-      readOnly: true,
-    });
-    expect(harness.state()).toMatchObject({
-      activePath: documentPath,
-      message: "Diff src/App.tsx",
-      openPaths: [documentPath],
-      previewPath: null,
-    });
-    expect(harness.state().documents[documentPath]).toMatchObject({
-      name: "Diff: App.tsx",
-      readOnly: true,
-    });
-    expect(harness.recordCurrentNavigationLocation).toHaveBeenCalledTimes(1);
-    expect(harness.reportError).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("ignores stale diff responses after a newer git change is selected", async () => {
+  it("ignores stale diff responses after a newer change is selected", async () => {
     const firstChange = changedFile("src/First.ts");
     const secondChange = changedFile("src/Second.ts");
     const firstDiff = createDeferred<GitFileDiff>();
@@ -412,7 +414,7 @@ describe("useGitDiffWorkspace", () => {
     });
     expect(harness.git().selectedGitChange).toBe(secondChange);
     expect(harness.git().gitDiffPreview).toEqual(diff(secondChange));
-    expect(harness.state().message).toBe("Diff src/Second.ts");
+    expect(harness.message()).toBe("Diff src/Second.ts");
 
     harness.unmount();
   });

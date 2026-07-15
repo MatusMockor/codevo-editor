@@ -1680,6 +1680,16 @@ export function useWorkbenchController(
     setWorkspaceSymbolsOpen,
   });
 
+  const closeReplacedGitDiffDocumentRef = useRef<
+    (document: EditorDocument) => void
+  >(() => {});
+  const closeReplacedGitDiffDocument = useCallback(
+    (document: EditorDocument) => {
+      closeReplacedGitDiffDocumentRef.current(document);
+    },
+    [],
+  );
+
   const {
     gitDiffLoading,
     selectedGitChange,
@@ -1698,18 +1708,11 @@ export function useWorkbenchController(
     workspaceRoot,
     gitGateway,
     currentWorkspaceRootRef,
-    activeDocumentRef,
-    documentsRef,
-    editorGroupsRef,
-    openPathsRef,
-    previewPathRef,
-    setDocuments,
-    setOpenPaths,
-    setPreviewPath,
-    setActivePath,
+    documentTabSession,
     setMessage,
     recordCurrentNavigationLocation,
     reportError,
+    onDocumentReplaced: closeReplacedGitDiffDocument,
   });
 
   const closeGitDiffPreviewForGitStatusSurfaceRef = useRef<() => void>(
@@ -2348,6 +2351,19 @@ export function useWorkbenchController(
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
   });
+  closeReplacedGitDiffDocumentRef.current = (document) => {
+    const requestedRoot = currentWorkspaceRootRef.current;
+    void syncClosedDocument(document).catch((error) =>
+      reportLanguageServerErrorForActiveWorkspaceRoot(requestedRoot, error),
+    );
+    void syncClosedJavaScriptTypeScriptDocument(document).catch((error) =>
+      reportErrorForActiveWorkspaceRoot(
+        requestedRoot,
+        "JavaScript/TypeScript",
+        error,
+      ),
+    );
+  };
 
   const openSymbolPanelNavigationTargetRef = useRef<
     (

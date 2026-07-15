@@ -1662,6 +1662,144 @@ describe("useWorkbenchController preview tabs", () => {
     );
   });
 
+  it("closes PHP sync once when a Git diff replaces a clean preview and drops a stale old-root rejection", async () => {
+    const path = "/workspace-a/src/User.php";
+    const change: GitChangedFile = {
+      ...gitChangedFile("src/User.php", false),
+      path,
+    };
+    const didClose = createDeferred<void>();
+    const phpDocumentSyncGateway = documentSyncGatewayMock();
+    const javaScriptTypeScriptDocumentSyncGateway = documentSyncGatewayMock();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace-a",
+      sessionId: 901,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      gitGateway: fileHistoryGitGateway({}),
+      javaScriptTypeScriptLanguageServerDocumentSyncGateway:
+        javaScriptTypeScriptDocumentSyncGateway,
+      languageServerDocumentSyncGateway: phpDocumentSyncGateway,
+      readTextFile: vi.fn(async () => "<?php\nfinal class User {}\n"),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().previewFile(fileEntry(path, "User.php"));
+    });
+    await vi.waitFor(() => {
+      expect(phpDocumentSyncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace-a",
+        expect.objectContaining({ path }),
+      );
+    });
+    vi.mocked(phpDocumentSyncGateway.didClose).mockImplementationOnce(
+      () => didClose.promise,
+    );
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+    await vi.waitFor(() => {
+      expect(phpDocumentSyncGateway.didClose).toHaveBeenCalledOnce();
+    });
+    expect(phpDocumentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace-a",
+      path,
+    );
+    expect(
+      javaScriptTypeScriptDocumentSyncGateway.didClose,
+    ).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    act(() => {
+      didClose.reject(new Error("stale replaced PHP preview close"));
+    });
+    await flushAsyncTurns(24);
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "Language Server" &&
+          notice.message.includes("stale replaced PHP preview close"),
+      ),
+    ).toBe(false);
+  });
+
+  it("closes JavaScript TypeScript sync once when a Git diff replaces a clean preview and absorbs rejection", async () => {
+    const path = "/workspace/src/App.ts";
+    const change = gitChangedFile("src/App.ts", false);
+    const phpDocumentSyncGateway = documentSyncGatewayMock();
+    const javaScriptTypeScriptDocumentSyncGateway = documentSyncGatewayMock();
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 902,
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway: fileHistoryGitGateway({}),
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerDocumentSyncGateway:
+        javaScriptTypeScriptDocumentSyncGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      languageServerDocumentSyncGateway: phpDocumentSyncGateway,
+      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().previewFile(fileEntry(path, "App.ts"));
+    });
+    await vi.waitFor(() => {
+      expect(javaScriptTypeScriptDocumentSyncGateway.didOpen).toHaveBeenCalledWith(
+        "/workspace",
+        expect.objectContaining({ path }),
+      );
+    });
+    vi.mocked(
+      javaScriptTypeScriptDocumentSyncGateway.didClose,
+    ).mockRejectedValueOnce(
+      new Error("replaced TypeScript preview close failed"),
+    );
+
+    await act(async () => {
+      await getWorkbench().previewGitChange(change);
+    });
+    await flushAsyncTurns(24);
+
+    expect(javaScriptTypeScriptDocumentSyncGateway.didClose).toHaveBeenCalledOnce();
+    expect(javaScriptTypeScriptDocumentSyncGateway.didClose).toHaveBeenCalledWith(
+      "/workspace",
+      path,
+    );
+    expect(phpDocumentSyncGateway.didClose).not.toHaveBeenCalled();
+    expect(
+      getWorkbench().notices.some(
+        (notice) =>
+          notice.source === "JavaScript/TypeScript" &&
+          notice.message.includes("replaced TypeScript preview close failed"),
+      ),
+    ).toBe(true);
+  });
+
   it("opens a read-only synthetic document as a pinned editor tab", async () => {
     const { getWorkbench } = renderController({
       appSettings: {
@@ -70170,6 +70308,7 @@ class PostRepository
     javaScriptTypeScriptInitialRuntimeStatus = { kind: "stopped" as const },
     indexProgressGateway,
     javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+    javaScriptTypeScriptLanguageServerDocumentSyncGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerPlan,
     javaScriptTypeScriptLanguageServerRuntimeGateway,
@@ -70177,6 +70316,7 @@ class PostRepository
     languageServerGateway,
     languageServerPlan,
     languageServerDiagnosticsGateway,
+    languageServerDocumentSyncGateway,
     languageServerFeaturesGateway,
     languageServerRuntimeGateway,
     phpToolGateway,
@@ -70207,6 +70347,7 @@ class PostRepository
     indexProgressGateway?: IndexProgressGateway;
     javaScriptTypeScriptInitialRuntimeStatus?: LanguageServerRuntimeStatus;
     javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
+    javaScriptTypeScriptLanguageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
     javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
     javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
@@ -70214,6 +70355,7 @@ class PostRepository
     languageServerGateway?: LanguageServerGateway;
     languageServerPlan?: LanguageServerPlan;
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
+    languageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
@@ -70260,6 +70402,7 @@ class PostRepository
       indexProgressGateway,
       javaScriptTypeScriptInitialRuntimeStatus,
       javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+      javaScriptTypeScriptLanguageServerDocumentSyncGateway,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
       javaScriptTypeScriptLanguageServerPlan,
       javaScriptTypeScriptLanguageServerRuntimeGateway,
@@ -70267,6 +70410,7 @@ class PostRepository
       languageServerGateway,
       languageServerPlan,
       languageServerDiagnosticsGateway,
+      languageServerDocumentSyncGateway,
       languageServerFeaturesGateway,
       languageServerRuntimeGateway,
       phpToolGateway,
@@ -70676,6 +70820,7 @@ function createControllerDependencies({
   indexProgressGateway,
   javaScriptTypeScriptInitialRuntimeStatus,
   javaScriptTypeScriptLanguageServerDiagnosticsGateway,
+  javaScriptTypeScriptLanguageServerDocumentSyncGateway,
   javaScriptTypeScriptLanguageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerPlan,
   javaScriptTypeScriptLanguageServerRuntimeGateway,
@@ -70684,6 +70829,7 @@ function createControllerDependencies({
   languageServerPlan,
   languageServerFeaturesGateway,
   languageServerDiagnosticsGateway,
+  languageServerDocumentSyncGateway,
   languageServerRuntimeGateway,
   phpToolGateway,
   projectSymbols,
@@ -70711,6 +70857,7 @@ function createControllerDependencies({
   indexProgressGateway?: IndexProgressGateway;
   javaScriptTypeScriptInitialRuntimeStatus: LanguageServerRuntimeStatus;
   javaScriptTypeScriptLanguageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
+  javaScriptTypeScriptLanguageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
   javaScriptTypeScriptLanguageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerPlan?: LanguageServerPlan;
   javaScriptTypeScriptLanguageServerRuntimeGateway?: LanguageServerRuntimeGateway;
@@ -70718,6 +70865,7 @@ function createControllerDependencies({
   languageServerGateway?: LanguageServerGateway;
   languageServerPlan?: LanguageServerPlan;
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
+  languageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
@@ -70754,12 +70902,17 @@ function createControllerDependencies({
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
   workspaceTrustGateway?: WorkspaceTrustGateway;
 }): ControllerDependencies {
-  const documentSyncGateway: LanguageServerDocumentSyncGateway = {
+  const defaultDocumentSyncGateway: LanguageServerDocumentSyncGateway = {
     didChange: vi.fn(async () => undefined),
     didClose: vi.fn(async () => undefined),
     didOpen: vi.fn(async () => undefined),
     didSave: vi.fn(async () => undefined),
   };
+  const phpDocumentSyncGateway =
+    languageServerDocumentSyncGateway ?? defaultDocumentSyncGateway;
+  const javaScriptTypeScriptDocumentSyncGateway =
+    javaScriptTypeScriptLanguageServerDocumentSyncGateway ??
+    defaultDocumentSyncGateway;
   const controllerOptions: WorkbenchControllerOptions = {
     diagnosticsFlushScheduler: microtaskDiagnosticsFlushScheduler,
   };
@@ -70820,7 +70973,7 @@ function createControllerDependencies({
 
   return {
     controllerOptions,
-    documentSyncGateway,
+    documentSyncGateway: phpDocumentSyncGateway,
     gitGateway: gitGateway ?? {
       blame: vi.fn(async () => []),
       fileHistory: vi.fn(async () => []),
@@ -70889,7 +71042,7 @@ function createControllerDependencies({
       languageServerDiagnosticsGateway ?? {
         subscribeDiagnostics: vi.fn(async () => () => undefined),
       },
-    languageServerDocumentSyncGateway: documentSyncGateway,
+    languageServerDocumentSyncGateway: phpDocumentSyncGateway,
     languageServerFeaturesGateway:
       languageServerFeaturesGateway ?? featuresGateway(),
     languageServerGateway:
@@ -70933,7 +71086,8 @@ function createControllerDependencies({
       javaScriptTypeScriptLanguageServerDiagnosticsGateway ?? {
         subscribeDiagnostics: vi.fn(async () => () => undefined),
       },
-    javaScriptTypeScriptLanguageServerDocumentSyncGateway: documentSyncGateway,
+    javaScriptTypeScriptLanguageServerDocumentSyncGateway:
+      javaScriptTypeScriptDocumentSyncGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway:
       javaScriptTypeScriptLanguageServerFeaturesGateway ?? featuresGateway(),
     javaScriptTypeScriptLanguageServerRuntimeGateway:
@@ -71128,6 +71282,15 @@ function createDeferred<T>(): Deferred<T> {
     resolve(value: T) {
       resolveValue?.(value);
     },
+  };
+}
+
+function documentSyncGatewayMock(): LanguageServerDocumentSyncGateway {
+  return {
+    didChange: vi.fn(async () => undefined),
+    didClose: vi.fn(async () => undefined),
+    didOpen: vi.fn(async () => undefined),
+    didSave: vi.fn(async () => undefined),
   };
 }
 

@@ -12,9 +12,9 @@ import {
   isGitDiffDocumentPath,
 } from "../domain/editorDocumentSchemes";
 import type { GitChangedFile, GitFileDiff, GitGateway } from "../domain/git";
-import type { EditorGroupsState } from "../domain/editorGroups";
 import { getFileName, type EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 
 export { isGitDiffDocumentPath };
 
@@ -26,18 +26,11 @@ export interface GitDiffWorkspaceDependencies {
   workspaceRoot: string | null;
   gitGateway: GitGateway;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
-  activeDocumentRef: MutableRefObject<EditorDocument | null>;
-  documentsRef: MutableRefObject<Record<string, EditorDocument>>;
-  editorGroupsRef: MutableRefObject<EditorGroupsState>;
-  openPathsRef: MutableRefObject<string[]>;
-  previewPathRef: MutableRefObject<string | null>;
-  setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
-  setOpenPaths: Dispatch<SetStateAction<string[]>>;
-  setPreviewPath: Dispatch<SetStateAction<string | null>>;
-  setActivePath: Dispatch<SetStateAction<string | null>>;
+  documentTabSession: DocumentTabSessionPort;
   setMessage: Dispatch<SetStateAction<string | null>>;
   recordCurrentNavigationLocation: () => void;
   reportError: (source: string, error: unknown) => void;
+  onDocumentReplaced: (document: EditorDocument) => void;
 }
 
 export interface GitDiffWorkspace {
@@ -66,18 +59,11 @@ export function useGitDiffWorkspace(
     workspaceRoot,
     gitGateway,
     currentWorkspaceRootRef,
-    activeDocumentRef,
-    documentsRef,
-    editorGroupsRef,
-    openPathsRef,
-    previewPathRef,
-    setDocuments,
-    setOpenPaths,
-    setPreviewPath,
-    setActivePath,
+    documentTabSession,
     setMessage,
     recordCurrentNavigationLocation,
     reportError,
+    onDocumentReplaced,
   } = dependencies;
 
   const [gitDiffLoading, setGitDiffLoading] = useState(false);
@@ -120,7 +106,7 @@ export function useGitDiffWorkspace(
       setSelectedGitChange(gitChange);
       setGitDiffPreview(null);
       setGitDiffLoading(true);
-      setActivePath(path);
+      documentTabSession.activate(path);
 
       void gitGateway
         .getDiff(requestedRoot, gitChange)
@@ -168,10 +154,10 @@ export function useGitDiffWorkspace(
     },
     [
       currentWorkspaceRootRef,
+      documentTabSession,
       gitGateway,
       recordCurrentNavigationLocation,
       reportError,
-      setActivePath,
       setMessage,
       workspaceRoot,
     ],
@@ -191,65 +177,20 @@ export function useGitDiffWorkspace(
 
       const requestedRoot = workspaceRoot;
       const requestToken = gitDiffRequestTokenRef.current + 1;
-      const documentPath = gitDiffDocumentPath(change);
       const document = gitDiffDocument(change);
-      const replacedPreviewPath = replaceableGitDiffPreviewPath(
-        previewPathRef.current,
-        documentPath,
-        editorGroupsRef.current,
-      );
       gitDiffRequestTokenRef.current = requestToken;
       recordCurrentNavigationLocation();
-      const nextDocuments = {
-        ...documentsRef.current,
-        [documentPath]: documentsRef.current[documentPath] ?? document,
-      };
-
-      if (replacedPreviewPath) {
-        delete nextDocuments[replacedPreviewPath];
-      }
-
-      documentsRef.current = nextDocuments;
-      activeDocumentRef.current = documentsRef.current[documentPath] ?? document;
-      setDocuments((current) => {
-        const next = {
-          ...current,
-          [documentPath]: current[documentPath] ?? document,
-        };
-
-        if (replacedPreviewPath) {
-          delete next[replacedPreviewPath];
-        }
-
-        return next;
-      });
-      if (options.pin === true) {
-        openPathsRef.current = openPathsRef.current.includes(documentPath)
-          ? openPathsRef.current
-          : [...openPathsRef.current, documentPath];
-        previewPathRef.current =
-          previewPathRef.current === documentPath ||
-            previewPathRef.current === replacedPreviewPath
-            ? null
-            : previewPathRef.current;
-        setOpenPaths((current) =>
-          current.includes(documentPath) ? current : [...current, documentPath],
-        );
-        setPreviewPath((current) =>
-          current === documentPath || current === replacedPreviewPath
-            ? null
-            : current,
-        );
-      }
-      if (options.pin !== true) {
-        previewPathRef.current = documentPath;
-        setPreviewPath(documentPath);
+      const commit = documentTabSession.openReadOnlyDocument(
+        document,
+        options.pin === true,
+      );
+      if (commit.replacedDocument) {
+        onDocumentReplaced(commit.replacedDocument);
       }
       selectedGitChangeRef.current = change;
       setSelectedGitChange(change);
       setGitDiffPreview(null);
       setGitDiffLoading(true);
-      setActivePath(documentPath);
 
       try {
         const diff = await gitGateway.getDiff(requestedRoot, change);
@@ -294,20 +235,13 @@ export function useGitDiffWorkspace(
       }
     },
     [
-      activeDocumentRef,
       currentWorkspaceRootRef,
-      documentsRef,
-      editorGroupsRef,
+      documentTabSession,
       gitGateway,
-      openPathsRef,
-      previewPathRef,
+      onDocumentReplaced,
       recordCurrentNavigationLocation,
       reportError,
-      setActivePath,
-      setDocuments,
       setMessage,
-      setOpenPaths,
-      setPreviewPath,
       workspaceRoot,
     ],
   );
@@ -361,44 +295,6 @@ export function gitDiffDocument(change: GitChangedFile): EditorDocument {
     readOnly: true,
     savedContent: "",
   };
-}
-
-function replaceableGitDiffPreviewPath(
-  previewPath: string | null,
-  nextPath: string,
-  editorGroups: EditorGroupsState,
-): string | null {
-  if (!previewPath || previewPath === nextPath) {
-    return null;
-  }
-
-  if (!isGitDiffDocumentPath(previewPath)) {
-    return null;
-  }
-
-  const activeGroup = editorGroups.groups[editorGroups.activeGroupId];
-  if (activeGroup?.openPaths.includes(previewPath)) {
-    return null;
-  }
-
-  const isReferencedByAnotherGroup = Object.entries(editorGroups.groups).some(
-    ([groupId, group]) => {
-      if (groupId === editorGroups.activeGroupId) {
-        return false;
-      }
-
-      return (
-        group.activePath === previewPath ||
-        group.previewPath === previewPath ||
-        group.openPaths.includes(previewPath)
-      );
-    },
-  );
-  if (isReferencedByAnotherGroup) {
-    return null;
-  }
-
-  return previewPath;
 }
 
 export function gitChangeForDiffDocumentPath(
