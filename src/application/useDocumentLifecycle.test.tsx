@@ -9,7 +9,6 @@ import {
   type DocumentLifecycleDependencies,
 } from "./useDocumentLifecycle";
 import type { GitChangedFile } from "../domain/git";
-import { emptyGitStatus } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import { defaultWorkspaceSettings } from "../domain/settings";
 import {
@@ -130,6 +129,7 @@ interface Harness {
   syncClosedJavaScriptTypeScriptDocument: ReturnType<typeof vi.fn>;
   clearPhpLocalDiagnosticsForPath: ReturnType<typeof vi.fn>;
   clearLanguageServerDiagnosticsForPath: ReturnType<typeof vi.fn>;
+  cancelGitDiffDocument: ReturnType<typeof vi.fn>;
   loadGitDiffDocument: ReturnType<typeof vi.fn>;
   closeGitDiffPreview: ReturnType<typeof vi.fn>;
   closeEmptyWorkbenchSurface: ReturnType<typeof vi.fn>;
@@ -188,10 +188,6 @@ function renderLifecycle(
   const externallyRemovedDocumentRootByPathRef: {
     current: Record<string, string>;
   } = { current: {} };
-  const gitDiffRequestTokenRef = { current: 0 };
-  const selectedGitChangeRef: { current: GitChangedFile | null } = {
-    current: null,
-  };
   const recentlyClosedTabsRef = { current: emptyRecentlyClosedTabs() };
 
   const localHistoryGateway = createFakeLocalHistoryGateway();
@@ -252,10 +248,8 @@ function renderLifecycle(
     },
   );
   const setActivePath = vi.fn();
-  const setGitDiffLoading = vi.fn();
-  const setSelectedGitChange = vi.fn();
-  const setGitDiffPreview = vi.fn();
   const setMessage = vi.fn();
+  const cancelGitDiffDocument = vi.fn();
   const reportErrorForActiveWorkspaceRoot = vi.fn();
   const runEslintAnalysisOnSave = vi.fn();
   const runPhpstanAnalysisOnSave = vi.fn();
@@ -320,9 +314,6 @@ function renderLifecycle(
     openPaths: initialOpenPaths,
     activePath: initialActivePath,
     previewPath: initialPreviewPath,
-    gitStatus: emptyGitStatus(),
-    selectedGitChange: null,
-    gitDiffLoading: false,
     documentTabSession,
     workspaceSettings: defaultWorkspaceSettings(),
     currentWorkspaceRootRef: rootRef,
@@ -333,16 +324,11 @@ function renderLifecycle(
     previewPathRef,
     filePrefetchCacheRef,
     externallyRemovedDocumentRootByPathRef,
-    gitDiffRequestTokenRef,
-    selectedGitChangeRef,
     setDocuments:
       setDocuments as unknown as DocumentLifecycleDependencies["setDocuments"],
     setPreviewPath,
     setOpenPaths,
     setActivePath,
-    setGitDiffLoading,
-    setSelectedGitChange,
-    setGitDiffPreview,
     setMessage,
     localHistoryGateway,
     workspaceFiles,
@@ -357,12 +343,12 @@ function renderLifecycle(
     syncClosedJavaScriptTypeScriptDocument,
     clearPhpLocalDiagnosticsForPath,
     clearLanguageServerDiagnosticsForPath,
+    cancelGitDiffDocument,
     loadGitDiffDocument,
     closeGitDiffPreview,
     closeEmptyWorkbenchSurface,
     isGitDiffDocumentPath: (path: string) =>
       path.startsWith("mockor-git-diff:"),
-    gitChangeForDiffDocumentPath: () => null,
     reportErrorForActiveWorkspaceRoot,
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
@@ -417,6 +403,7 @@ function renderLifecycle(
     syncClosedJavaScriptTypeScriptDocument,
     clearPhpLocalDiagnosticsForPath,
     clearLanguageServerDiagnosticsForPath,
+    cancelGitDiffDocument,
     loadGitDiffDocument,
     closeGitDiffPreview,
     closeEmptyWorkbenchSurface,
@@ -2220,13 +2207,6 @@ describe("useDocumentLifecycle", () => {
         },
         openPaths: [firstPath, secondPath],
         activePath: firstPath,
-        gitStatus: {
-          ...emptyGitStatus(),
-          changes: [firstChange, secondChange],
-        },
-        gitChangeForDiffDocumentPath: (path, changes) =>
-          changes.find((change) => gitDiffDocumentPath(change) === path) ??
-          null,
       });
       harness.activeDocumentRef.current = firstDocument;
 
@@ -2234,21 +2214,25 @@ describe("useDocumentLifecycle", () => {
         harness.lifecycle().closeDocument(firstPath);
       });
 
-      expect(harness.loadGitDiffDocument).toHaveBeenCalledWith(
-        secondPath,
-        secondChange,
-      );
+      expect(harness.loadGitDiffDocument).toHaveBeenCalledWith(secondPath);
       expect(harness.documentsRef.current[firstPath]).toBeUndefined();
       expect(harness.openPathsRef.current).toEqual([secondPath]);
-      expect(harness.setMessage).toHaveBeenCalledWith(null);
+      expect(harness.cancelGitDiffDocument).toHaveBeenCalledWith(firstPath);
       harness.unmount();
     });
   });
 
   describe("closeActiveSurface", () => {
     it("closes the git-diff preview first when one is selected", () => {
-      const change = { path: "src/A.php" } as unknown as GitChangedFile;
-      const harness = renderLifecycle({ selectedGitChange: change });
+      const change = gitChangedFile(`${ROOT}/src/A.php`);
+      const path = gitDiffDocumentPath(change);
+      const active = { ...editorDocument(path), readOnly: true };
+      const harness = renderLifecycle({
+        activeDocument: active,
+        documents: { [path]: active },
+        openPaths: [path],
+        activePath: path,
+      });
 
       act(() => {
         harness.lifecycle().closeActiveSurface();

@@ -1183,6 +1183,38 @@ describe("GitChangesPanel", () => {
     expect(host.textContent).not.toContain("No changes");
   });
 
+  it("routes nested preview and open actions with their repository root", async () => {
+    const nested = nestedGitChange(
+      "workbench/lcsk/attendance",
+      "modified",
+      "src/Attendance.php",
+      true,
+    );
+    const onOpenChange = vi.fn();
+    const onPreviewChange = vi.fn();
+
+    await renderPanel({
+      onOpenChange,
+      onPreviewChange,
+      repositoryStatuses: [
+        repositoryStatus("", "main", []),
+        repositoryStatus("workbench/lcsk/attendance", "develop", [nested]),
+      ],
+      status: gitStatus([]),
+    });
+
+    const row = host.querySelector<HTMLButtonElement>(".git-change-row");
+    expect(row).toBeTruthy();
+    act(() => {
+      row?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      row?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+    });
+
+    const repositoryRoot = "/workspace/workbench/lcsk/attendance";
+    expect(onPreviewChange).toHaveBeenCalledWith(nested, repositoryRoot);
+    expect(onOpenChange).toHaveBeenCalledWith(nested, repositoryRoot);
+  });
+
   it("toggles a nested change with its repository-qualified key", async () => {
     const primary = gitChange("modified", "app/Kernel.php", true);
     const nested = nestedGitChange(

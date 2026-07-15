@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type MutableRefObject,
 } from "react";
@@ -29,6 +30,7 @@ import {
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { gitChangesReferToSameDiff } from "./useGitDiffWorkspace";
+import type { GitDiffDocumentState } from "./useGitDiffWorkspace";
 
 export interface GitRepositoryTarget {
   repositoryRoot: string;
@@ -40,6 +42,7 @@ export interface GitStatusSurfaceDependencies {
   activePath: string | null;
   closeGitDiffPreview: () => void;
   closeSelectedGitDiffPreviewForChanges: (changes: GitChangedFile[]) => void;
+  getSelectedGitDiffDocument: () => GitDiffDocumentState | null;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   editorGitBaselineRequestTokenRef: MutableRefObject<number>;
   gitGateway: GitGateway;
@@ -51,7 +54,6 @@ export interface GitStatusSurfaceDependencies {
     error: unknown,
   ) => void;
   selectedGitChange: GitChangedFile | null;
-  selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
   setMessage: (message: null) => void;
   workspaceRoot: string | null;
 }
@@ -61,6 +63,7 @@ export function useGitStatusSurface({
   activePath,
   closeGitDiffPreview,
   closeSelectedGitDiffPreviewForChanges,
+  getSelectedGitDiffDocument,
   currentWorkspaceRootRef,
   editorGitBaselineRequestTokenRef,
   gitGateway,
@@ -68,7 +71,6 @@ export function useGitStatusSurface({
   reportError,
   reportErrorForActiveWorkspaceRoot,
   selectedGitChange,
-  selectedGitChangeRef,
   setMessage,
   workspaceRoot,
 }: GitStatusSurfaceDependencies) {
@@ -85,11 +87,13 @@ export function useGitStatusSurface({
     GitRepositoryStatus[]
   >([]);
   const [gitLoading, setGitLoading] = useState(false);
+  const gitStatusRequestGenerationRef = useRef(0);
   const [editorGitBaselinesByPath, setEditorGitBaselinesByPath] = useState<
     Record<string, string | null>
   >({});
 
   const resetGitStatusSurface = useCallback((rootPath?: string) => {
+    gitStatusRequestGenerationRef.current += 1;
     setGitStatus(rootPath ? emptyGitStatus(rootPath) : emptyGitStatus());
     setGitRepositoryStatuses([]);
     setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
@@ -187,6 +191,9 @@ export function useGitStatusSurface({
   );
 
   const refreshGitStatus = useCallback(async () => {
+    const requestGeneration = gitStatusRequestGenerationRef.current + 1;
+    gitStatusRequestGenerationRef.current = requestGeneration;
+
     if (!workspaceRoot) {
       setGitStatus(emptyGitStatus());
       setGitRepositoryStatuses([]);
@@ -195,6 +202,9 @@ export function useGitStatusSurface({
     }
 
     const requestedRoot = workspaceRoot;
+    const isCurrentRequest = () =>
+      gitStatusRequestGenerationRef.current === requestGeneration &&
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
     setGitLoading(true);
 
     try {
@@ -207,7 +217,7 @@ export function useGitStatusSurface({
         (root) => gitGateway.getStatus(root),
       );
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (!isCurrentRequest()) {
         return;
       }
 
@@ -216,18 +226,23 @@ export function useGitStatusSurface({
       // and the diff-preview reconciliation below.
       const status = primaryGitStatus(statuses, requestedRoot);
       setGitStatus(status);
-      const currentSelectedGitChange = selectedGitChangeRef.current;
-      if (
-        currentSelectedGitChange &&
-        !status.changes.some((change) =>
-          gitChangesReferToSameDiff(change, currentSelectedGitChange),
-        )
-      ) {
-        closeSelectedGitDiffPreviewForChanges(status.changes);
+      const selectedDiffDocument = getSelectedGitDiffDocument();
+      const selectedRepositoryStatus = selectedDiffDocument
+        ? statuses.find((entry) =>
+            workspaceRootKeysEqual(
+              entry.root,
+              selectedDiffDocument.repositoryRoot,
+            )
+          )
+        : null;
+      if (selectedRepositoryStatus && !selectedRepositoryStatus.failed) {
+        closeSelectedGitDiffPreviewForChanges(
+          selectedRepositoryStatus.status.changes,
+        );
       }
       setMessage(null);
     } catch (error) {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (!isCurrentRequest()) {
         return;
       }
 
@@ -235,7 +250,7 @@ export function useGitStatusSurface({
       setGitRepositoryStatuses([]);
       reportError("Git", error);
     } finally {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+      if (!isCurrentRequest()) {
         return;
       }
 
@@ -246,8 +261,8 @@ export function useGitStatusSurface({
     currentWorkspaceRootRef,
     gitGateway,
     gitRepositoryMappings,
+    getSelectedGitDiffDocument,
     reportError,
-    selectedGitChangeRef,
     setMessage,
     workspaceRoot,
   ]);

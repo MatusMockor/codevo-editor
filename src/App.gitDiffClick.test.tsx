@@ -160,6 +160,16 @@ vi.mock("./application/useWorkbenchController", async () => {
 
       return createWorkbench({
         ...state,
+        gitDiffDocuments: state.activePath && state.selectedGitChange
+          ? {
+              [state.activePath]: {
+                change: state.selectedGitChange,
+                diff: state.gitDiffPreview,
+                isLoading: state.gitDiffLoading,
+                repositoryRoot: "/workspace",
+              },
+            }
+          : {},
         gitStatus: {
           branch: "main",
           changes,

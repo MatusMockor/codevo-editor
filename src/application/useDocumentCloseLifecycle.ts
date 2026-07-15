@@ -1,5 +1,4 @@
 import { useCallback, type MutableRefObject } from "react";
-import type { GitChangedFile, GitFileDiff, GitStatus } from "../domain/git";
 import {
   hasRecentlyClosedTabs,
   popRecentlyClosedTab,
@@ -26,23 +25,13 @@ export interface DocumentCloseOptions {
 
 export interface DocumentCloseLifecycleDependencies {
   workspaceRoot: string | null;
-  gitStatus: GitStatus;
-  selectedGitChange: GitChangedFile | null;
-  gitDiffLoading: boolean;
   documentTabSession: DocumentCloseSessionPort;
 
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   externallyRemovedDocumentRootByPathRef: MutableRefObject<
     Record<string, string>
   >;
-  gitDiffRequestTokenRef: MutableRefObject<number>;
-  selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
   recentlyClosedTabsRef: MutableRefObject<RecentlyClosedTabs>;
-
-  setGitDiffLoading: (loading: boolean) => void;
-  setSelectedGitChange: (change: GitChangedFile | null) => void;
-  setGitDiffPreview: (diff: GitFileDiff | null) => void;
-  setMessage: (message: string | null) => void;
 
   prompter: WorkbenchPrompter;
   invalidateDocumentSave: (rootPath: string, path: string) => void;
@@ -58,14 +47,11 @@ export interface DocumentCloseLifecycleDependencies {
   hasExternalFileConflict?: (rootPath: string | null, path: string) => boolean;
   clearExternalFileConflict?: (rootPath: string | null, path: string) => void;
 
-  loadGitDiffDocument: (path: string, gitChange: GitChangedFile) => void;
+  cancelGitDiffDocument: (path: string) => void;
+  loadGitDiffDocument: (path: string) => void;
   closeGitDiffPreview: () => void;
   closeEmptyWorkbenchSurface: () => void;
   isGitDiffDocumentPath: (path: string) => boolean;
-  gitChangeForDiffDocumentPath: (
-    path: string,
-    changes: GitChangedFile[],
-  ) => GitChangedFile | null;
 
   recentlyClosedDocumentViewState: (
     rootPath: string,
@@ -95,19 +81,10 @@ export function useDocumentCloseLifecycle(
 ): DocumentCloseLifecycle {
   const {
     workspaceRoot,
-    gitStatus,
-    selectedGitChange,
-    gitDiffLoading,
     documentTabSession,
     currentWorkspaceRootRef,
     externallyRemovedDocumentRootByPathRef,
-    gitDiffRequestTokenRef,
-    selectedGitChangeRef,
     recentlyClosedTabsRef,
-    setGitDiffLoading,
-    setSelectedGitChange,
-    setGitDiffPreview,
-    setMessage,
     prompter,
     invalidateDocumentSave,
     syncClosedDocument,
@@ -116,11 +93,11 @@ export function useDocumentCloseLifecycle(
     clearLanguageServerDiagnosticsForPath,
     hasExternalFileConflict = () => false,
     clearExternalFileConflict = () => {},
+    cancelGitDiffDocument,
     loadGitDiffDocument,
     closeGitDiffPreview,
     closeEmptyWorkbenchSurface,
     isGitDiffDocumentPath,
-    gitChangeForDiffDocumentPath,
     recentlyClosedDocumentViewState,
     openRecentlyClosedDocument,
     restoreRecentlyClosedDocumentViewState,
@@ -179,12 +156,7 @@ export function useDocumentCloseLifecycle(
       }
 
       if (isGitDiffDocumentPath(path)) {
-        gitDiffRequestTokenRef.current += 1;
-        setGitDiffLoading(false);
-        selectedGitChangeRef.current = null;
-        setSelectedGitChange(null);
-        setGitDiffPreview(null);
-        setMessage(null);
+        cancelGitDiffDocument(path);
       }
 
       const removal = documentTabSession.removeDocument(path);
@@ -193,25 +165,19 @@ export function useDocumentCloseLifecycle(
         return;
       }
 
-      const nextGitChange = gitChangeForDiffDocumentPath(
-        removal.nextActivePath,
-        gitStatus.changes,
-      );
-      if (nextGitChange) {
-        loadGitDiffDocument(removal.nextActivePath, nextGitChange);
+      if (isGitDiffDocumentPath(removal.nextActivePath)) {
+        loadGitDiffDocument(removal.nextActivePath);
         return;
       }
     },
     [
+      cancelGitDiffDocument,
       clearExternalFileConflict,
       clearLanguageServerDiagnosticsForPath,
       clearPhpLocalDiagnosticsForPath,
       currentWorkspaceRootRef,
       documentTabSession,
       externallyRemovedDocumentRootByPathRef,
-      gitChangeForDiffDocumentPath,
-      gitDiffRequestTokenRef,
-      gitStatus.changes,
       hasExternalFileConflict,
       invalidateDocumentSave,
       isGitDiffDocumentPath,
@@ -220,11 +186,6 @@ export function useDocumentCloseLifecycle(
       prompter,
       recentlyClosedDocumentViewState,
       recentlyClosedTabsRef,
-      selectedGitChangeRef,
-      setGitDiffLoading,
-      setGitDiffPreview,
-      setMessage,
-      setSelectedGitChange,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
     ],
@@ -232,12 +193,12 @@ export function useDocumentCloseLifecycle(
 
   const closeActiveSurface = useCallback(
     (options: DocumentCloseOptions = {}) => {
-      if (selectedGitChangeRef.current || selectedGitChange || gitDiffLoading) {
+      const currentActivePath = documentTabSession.getActivePath();
+      if (currentActivePath && isGitDiffDocumentPath(currentActivePath)) {
         closeGitDiffPreview();
         return;
       }
 
-      const currentActivePath = documentTabSession.getActivePath();
       if (currentActivePath) {
         closeDocument(currentActivePath, options);
         return;
@@ -249,9 +210,7 @@ export function useDocumentCloseLifecycle(
       closeDocument,
       closeEmptyWorkbenchSurface,
       closeGitDiffPreview,
-      gitDiffLoading,
-      selectedGitChange,
-      selectedGitChangeRef,
+      isGitDiffDocumentPath,
       documentTabSession,
     ],
   );

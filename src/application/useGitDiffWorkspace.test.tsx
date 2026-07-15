@@ -356,6 +356,121 @@ describe("useGitDiffWorkspace", () => {
     harness.unmount();
   });
 
+  it("retains each pinned diff payload while simultaneous requests resolve", async () => {
+    const firstChange = changedFile("src/First.ts");
+    const secondChange = changedFile("src/Second.ts");
+    const firstDeferred = createDeferred<GitFileDiff>();
+    const secondDeferred = createDeferred<GitFileDiff>();
+    const getDiff = vi
+      .fn<GitGateway["getDiff"]>()
+      .mockReturnValueOnce(firstDeferred.promise)
+      .mockReturnValueOnce(secondDeferred.promise);
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+    let firstOpen!: Promise<void>;
+    let secondOpen!: Promise<void>;
+
+    act(() => {
+      firstOpen = harness.git().openGitChange(firstChange);
+      secondOpen = harness.git().openGitChange(secondChange);
+    });
+
+    await act(async () => {
+      secondDeferred.resolve(diff(secondChange));
+      firstDeferred.resolve(diff(firstChange));
+      await Promise.all([firstOpen, secondOpen]);
+    });
+
+    expect(harness.git().gitDiffDocuments).toMatchObject({
+      [gitDiffDocumentPath(firstChange)]: {
+        change: firstChange,
+        diff: diff(firstChange),
+        isLoading: false,
+        repositoryRoot: ROOT,
+      },
+      [gitDiffDocumentPath(secondChange)]: {
+        change: secondChange,
+        diff: diff(secondChange),
+        isLoading: false,
+        repositoryRoot: ROOT,
+      },
+    });
+    expect(harness.git().gitDiffPreview).toEqual(diff(secondChange));
+
+    harness.unmount();
+  });
+
+  it("uses and retains the nested repository root when reactivating a diff", async () => {
+    const repositoryRoot = `${ROOT}/packages/nested`;
+    const change = changedFile("packages/nested/src/App.ts", {
+      path: `${repositoryRoot}/src/App.ts`,
+      relativePath: "src/App.ts",
+    });
+    const getDiff = vi.fn<GitGateway["getDiff"]>(async (_root, selected) =>
+      diff(selected),
+    );
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+
+    await act(async () => {
+      await harness.git().openGitChange(change, repositoryRoot);
+    });
+    act(() => {
+      harness.git().setGitDiffPreview(null);
+      harness.git().setSelectedGitChange(null);
+    });
+    await act(async () => {
+      harness.git().loadGitDiffDocument(gitDiffDocumentPath(change), change);
+    });
+
+    expect(getDiff).toHaveBeenNthCalledWith(1, repositoryRoot, change);
+    expect(getDiff).toHaveBeenNthCalledWith(2, repositoryRoot, change);
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(change)]).toEqual({
+      change,
+      diff: diff(change),
+      documentPath: gitDiffDocumentPath(change),
+      isLoading: false,
+      repositoryRoot,
+    });
+
+    harness.unmount();
+  });
+
+  it("keeps document payloads when the active diff closes and another reactivates", async () => {
+    const firstChange = changedFile("src/First.ts");
+    const secondChange = changedFile("src/Second.ts");
+    const harness = renderGitDiffWorkspace();
+
+    await act(async () => {
+      await harness.git().openGitChange(firstChange);
+      await harness.git().openGitChange(secondChange);
+    });
+    act(() => {
+      harness.git().clearGitDiffPreviewState();
+    });
+
+    expect(harness.git().selectedGitChange).toBeNull();
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff)
+      .toEqual(diff(firstChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff)
+      .toEqual(diff(secondChange));
+
+    await act(async () => {
+      harness.git().loadGitDiffDocument(
+        gitDiffDocumentPath(firstChange),
+        firstChange,
+      );
+    });
+
+    expect(harness.git().gitDiffPreview).toEqual(diff(firstChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff)
+      .toEqual(diff(secondChange));
+
+    harness.unmount();
+  });
+
   it("does not mutate the tab session through a stale-root preview callback", async () => {
     const firstChange = changedFile("src/First.ts");
     const staleChange = changedFile("src/Stale.ts");
@@ -415,7 +530,127 @@ describe("useGitDiffWorkspace", () => {
     expect(harness.git().selectedGitChange).toBe(secondChange);
     expect(harness.git().gitDiffPreview).toEqual(diff(secondChange));
     expect(harness.message()).toBe("Diff src/Second.ts");
+    expect(
+      harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff,
+    ).toEqual(diff(firstChange));
 
+    harness.unmount();
+  });
+
+  it("does not reuse request identity after a same-root reset", async () => {
+    const staleChange = changedFile("src/App.tsx");
+    const currentChange = { ...staleChange, status: "renamed" as const };
+    const staleRequest = createDeferred<GitFileDiff>();
+    const currentRequest = createDeferred<GitFileDiff>();
+    const getDiff = vi
+      .fn<GitGateway["getDiff"]>()
+      .mockReturnValueOnce(staleRequest.promise)
+      .mockReturnValueOnce(currentRequest.promise);
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+    let staleOpen!: Promise<void>;
+    let currentOpen!: Promise<void>;
+
+    act(() => {
+      staleOpen = harness.git().openGitChange(staleChange);
+    });
+    const firstOwnerGeneration = harness.git().gitDiffRequestTokenRef.current;
+    act(() => {
+      harness.git().resetGitDiffWorkspaceState();
+      currentOpen = harness.git().openGitChange(currentChange);
+    });
+
+    expect(harness.git().gitDiffRequestTokenRef.current).toBeGreaterThan(
+      firstOwnerGeneration,
+    );
+
+    await act(async () => {
+      currentRequest.resolve(diff(currentChange));
+      await currentOpen;
+      staleRequest.resolve(diff(staleChange));
+      await staleOpen;
+    });
+
+    expect(harness.git().selectedGitChange).toBe(currentChange);
+    expect(harness.git().gitDiffPreview).toEqual(diff(currentChange));
+    expect(
+      harness.git().gitDiffDocuments[gitDiffDocumentPath(currentChange)]?.change,
+    ).toBe(currentChange);
+    harness.unmount();
+  });
+
+  it("cancels one diff without stranding another split loader", async () => {
+    const firstChange = changedFile("src/First.ts");
+    const secondChange = changedFile("src/Second.ts");
+    const firstRequest = createDeferred<GitFileDiff>();
+    const secondRequest = createDeferred<GitFileDiff>();
+    const getDiff = vi
+      .fn<GitGateway["getDiff"]>()
+      .mockReturnValueOnce(firstRequest.promise)
+      .mockReturnValueOnce(secondRequest.promise);
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+    let firstOpen!: Promise<void>;
+    let secondOpen!: Promise<void>;
+
+    act(() => {
+      firstOpen = harness.git().openGitChange(firstChange);
+      secondOpen = harness.git().openGitChange(secondChange);
+      harness.git().cancelGitDiffDocument(gitDiffDocumentPath(firstChange));
+    });
+
+    await act(async () => {
+      secondRequest.resolve(diff(secondChange));
+      await secondOpen;
+      firstRequest.resolve(diff(firstChange));
+      await firstOpen;
+    });
+
+    expect(
+      harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)],
+    ).toBeUndefined();
+    expect(
+      harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff,
+    ).toEqual(diff(secondChange));
+    expect(harness.git().gitDiffLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("lets retained split loaders finish after diff focus is released", async () => {
+    const firstChange = changedFile("src/First.ts");
+    const secondChange = changedFile("src/Second.ts");
+    const firstRequest = createDeferred<GitFileDiff>();
+    const secondRequest = createDeferred<GitFileDiff>();
+    const getDiff = vi
+      .fn<GitGateway["getDiff"]>()
+      .mockReturnValueOnce(firstRequest.promise)
+      .mockReturnValueOnce(secondRequest.promise);
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+    let firstOpen!: Promise<void>;
+    let secondOpen!: Promise<void>;
+
+    act(() => {
+      firstOpen = harness.git().openGitChange(firstChange);
+      secondOpen = harness.git().openGitChange(secondChange);
+      harness.git().clearGitDiffPreviewState();
+    });
+
+    await act(async () => {
+      firstRequest.resolve(diff(firstChange));
+      secondRequest.resolve(diff(secondChange));
+      await Promise.all([firstOpen, secondOpen]);
+    });
+
+    expect(harness.git().selectedGitChange).toBeNull();
+    expect(harness.git().gitDiffPreview).toBeNull();
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff)
+      .toEqual(diff(firstChange));
+    expect(harness.git().gitDiffDocuments[gitDiffDocumentPath(secondChange)]?.diff)
+      .toEqual(diff(secondChange));
     harness.unmount();
   });
 });

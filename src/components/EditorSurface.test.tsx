@@ -3911,119 +3911,137 @@ describe("EditorSurface", () => {
     });
   });
 
-  it("renders clickable implementation gutter icons for PHP interface methods", async () => {
-    const activeDocument: EditorDocument = {
-      content: `<?php
+  it.each<CommandExecutionOutcome>(["executed", "disabled"])(
+    "routes implementation gutter clicks through a %s registry command",
+    async (outcome) => {
+      const activeDocument: EditorDocument = {
+        content: `<?php
 
 interface ParserFactory
 {
     public function getParser(string $apiVersion): ParserInterface;
 }
 `,
-      language: "php",
-      name: "ParserFactory.php",
-      path: "/workspace/src/ParserFactory.php",
-      savedContent: "",
-    };
-    const model: FakeModel = {
-      uri: {
-        fsPath: activeDocument.path,
-        path: activeDocument.path,
-      },
-    };
-    const monaco = createMonaco(model);
-    const editor = createEditor(model);
-    const onGoToImplementationAt = vi.fn();
-    const runCommand = vi.fn(
-      (_commandId: string): CommandExecutionOutcome => "executed",
-    );
-    editorSurfaceMocks.editor = editor;
-    editorSurfaceMocks.monaco = monaco;
-
-    await act(async () => {
-      root.render(
-        <EditorSurface
-          activeDocument={activeDocument}
-          changeHunks={[]}
-          editorRevealTarget={null}
-          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
-          languageServerDiagnosticsByPath={{}}
-          languageServerFeaturesGateway={languageServerFeaturesGateway()}
-          languageServerRuntimeStatus={null}
-          keymap={defaultKeymapSettings()}
-          monacoTheme="calm-dark"
-          onChange={vi.fn()}
-          onCloseActiveTab={vi.fn()}
-          onCursorPositionChange={vi.fn()}
-          onGoBack={vi.fn()}
-          onGoForward={vi.fn()}
-          onGoToDefinition={vi.fn()}
-          onGoToImplementationAt={onGoToImplementationAt}
-          onGoToSuperMethod={vi.fn()}
-          onEditorFocused={vi.fn()}
-          onLanguageServerError={vi.fn()}
-          onOpenClass={vi.fn()}
-          onOpenFile={vi.fn()}
-          onOpenFileStructure={vi.fn()}
-          runCommand={runCommand}
-          onRevealTargetHandled={vi.fn()}
-          onRevertChangeHunk={vi.fn()}
-          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
-          providePhpMethodCompletions={vi.fn(async () => [])}
-          providePhpMethodSignature={vi.fn(async () => null)}
-        />,
+        language: "php",
+        name: "ParserFactory.php",
+        path: "/workspace/src/ParserFactory.php",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: {
+          fsPath: activeDocument.path,
+          path: activeDocument.path,
+        },
+      };
+      const monaco = createMonaco(model);
+      const editor = createEditor(model);
+      const onGoToImplementationAt = vi.fn();
+      let positionAtCommand: EditorPosition | null = null;
+      const runCommand = vi.fn(
+        (_commandId: string): CommandExecutionOutcome => {
+          positionAtCommand = (
+            editor.getPosition as () => EditorPosition | null
+          )();
+          return outcome;
+        },
       );
-      await Promise.resolve();
-    });
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = monaco;
 
-    await flushGutterDebounce();
-
-    const decorationCall = editor.deltaDecorations.mock.calls.find(
-      ([, decorations]) => decorations.length === 1,
-    );
-    expect(decorationCall?.[1]).toEqual([
-      {
-        options: expect.objectContaining({
-          glyphMargin: {
-            position: monaco.editor.GlyphMarginLane.Center,
-          },
-          glyphMarginClassName: "implementation-gutter-glyph",
-        }),
-        range: expect.objectContaining({
-          endColumn: 1,
-          endLineNumber: 5,
-          startColumn: 1,
-          startLineNumber: 5,
-        }),
-      },
-    ]);
-
-    const preventDefault = vi.fn();
-    const stopPropagation = vi.fn();
-    act(() => {
-      editor.mouseDownHandler?.({
-        event: {
-          preventDefault,
-          stopPropagation,
-        },
-        target: {
-          position: {
-            column: 1,
-            lineNumber: 5,
-          },
-          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
-        },
+      await act(async () => {
+        root.render(
+          <EditorSurface
+            activeDocument={activeDocument}
+            changeHunks={[]}
+            editorRevealTarget={null}
+            flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+            languageServerDiagnosticsByPath={{}}
+            languageServerFeaturesGateway={languageServerFeaturesGateway()}
+            languageServerRuntimeStatus={null}
+            keymap={defaultKeymapSettings()}
+            monacoTheme="calm-dark"
+            onChange={vi.fn()}
+            onCloseActiveTab={vi.fn()}
+            onCursorPositionChange={vi.fn()}
+            onGoBack={vi.fn()}
+            onGoForward={vi.fn()}
+            onGoToDefinition={vi.fn()}
+            onGoToImplementationAt={onGoToImplementationAt}
+            onGoToSuperMethod={vi.fn()}
+            onEditorFocused={vi.fn()}
+            onLanguageServerError={vi.fn()}
+            onOpenClass={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenFileStructure={vi.fn()}
+            runCommand={runCommand}
+            onRevealTargetHandled={vi.fn()}
+            onRevertChangeHunk={vi.fn()}
+            phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+            providePhpMethodCompletions={vi.fn(async () => [])}
+            providePhpMethodSignature={vi.fn(async () => null)}
+          />,
+        );
+        await Promise.resolve();
       });
-    });
 
-    expect(preventDefault).toHaveBeenCalled();
-    expect(stopPropagation).toHaveBeenCalled();
-    expect(onGoToImplementationAt).toHaveBeenCalledWith({
-      column: 21,
-      lineNumber: 5,
-    });
-    expect(runCommand).not.toHaveBeenCalled();
-  });
+      await flushGutterDebounce();
+
+      const decorationCall = editor.deltaDecorations.mock.calls.find(
+        ([, decorations]) => decorations.length === 1,
+      );
+      expect(decorationCall?.[1]).toEqual([
+        {
+          options: expect.objectContaining({
+            glyphMargin: {
+              position: monaco.editor.GlyphMarginLane.Center,
+            },
+            glyphMarginClassName: "implementation-gutter-glyph",
+          }),
+          range: expect.objectContaining({
+            endColumn: 1,
+            endLineNumber: 5,
+            startColumn: 1,
+            startLineNumber: 5,
+          }),
+        },
+      ]);
+
+      const preventDefault = vi.fn();
+      const stopPropagation = vi.fn();
+      act(() => {
+        editor.mouseDownHandler?.({
+          event: {
+            preventDefault,
+            stopPropagation,
+          },
+          target: {
+            position: {
+              column: 1,
+              lineNumber: 5,
+            },
+            type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+          },
+        });
+      });
+
+      expect(preventDefault).toHaveBeenCalled();
+      expect(stopPropagation).toHaveBeenCalled();
+      expect(editor.setPosition).toHaveBeenCalledWith({
+        column: 21,
+        lineNumber: 5,
+      });
+      expect(positionAtCommand).toEqual({
+        column: 21,
+        lineNumber: 5,
+      });
+      expect(runCommand).toHaveBeenCalledWith("editor.goToImplementation", {
+        activeDocumentDirty: true,
+        hasActiveDocument: true,
+        hasWorkspace: false,
+      });
+      expect(onGoToImplementationAt).not.toHaveBeenCalled();
+    },
+  );
 
   it("renders a run-test gutter glyph and runs the test on a Right-lane click", async () => {
     const activeDocument: EditorDocument = {
@@ -10302,7 +10320,76 @@ class Foo
     expect(onGoBack).toHaveBeenCalledOnce();
   });
 
-  it("routes duplicated argument-free Monaco actions through the command runner", async () => {
+  it.each<CommandExecutionOutcome>(["executed", "disabled"])(
+    "routes duplicated argument-free Monaco actions through the %s command runner",
+    async (outcome) => {
+      const activeDocument: EditorDocument = {
+        content: "const value = 1;\n",
+        language: "typescript",
+        name: "example.ts",
+        path: "/workspace/src/example.ts",
+        savedContent: "",
+      };
+      const model: FakeModel = {
+        uri: { fsPath: activeDocument.path, path: activeDocument.path },
+      };
+      const editor = createEditor(model);
+      const props = memoGuardProps(activeDocument);
+      const runCommand = vi.fn(
+        (_commandId: string): CommandExecutionOutcome => outcome,
+      );
+      editorSurfaceMocks.editor = editor;
+      editorSurfaceMocks.monaco = createMonaco(model);
+
+      await act(async () => {
+        root.render(createElement(EditorSurface, { ...props, runCommand }));
+        await Promise.resolve();
+      });
+
+      const commandByActionId = new Map([
+        ["mockor.goToDefinition", "editor.goToDefinition"],
+        ["mockor.quickDefinition", "editor.quickDefinition"],
+        ["mockor.goToSourceDefinition", "editor.goToSourceDefinition"],
+        ["mockor.goToDeclaration", "editor.goToDeclaration"],
+        ["mockor.goToTypeDefinition", "editor.goToTypeDefinition"],
+        ["mockor.goToImplementation", "editor.goToImplementation"],
+        ["mockor.goToSuperMethod", "editor.goToSuperMethod"],
+        ["mockor.openClass", "class.quickOpen"],
+        ["mockor.openFile", "file.quickOpen"],
+        ["mockor.fileStructure", "editor.fileStructure"],
+        ["mockor.gotoLine", "editor.gotoLine"],
+        ["mockor.rename", "editor.rename"],
+        ["mockor.toggleGitBlame", "editor.toggleGitBlame"],
+        ["mockor.formatDocument", "editor.formatDocument"],
+        ["mockor.formatSelection", "editor.formatSelection"],
+        ["mockor.quickFix", "editor.quickFix"],
+        ["mockor.closeTab", "editor.closeTab"],
+        ["mockor.goBack", "navigation.back"],
+        ["mockor.goForward", "navigation.forward"],
+      ]);
+      const actions = editor.addAction.mock.calls.map(([action]) => action);
+
+      commandByActionId.forEach((_commandId, actionId) => {
+        actions.find((action) => action.id === actionId)?.run();
+      });
+
+      expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
+        ...commandByActionId.values(),
+      ]);
+      expect(props.onCloseActiveTab).not.toHaveBeenCalled();
+      expect(props.onGoBack).not.toHaveBeenCalled();
+      expect(props.onGoForward).not.toHaveBeenCalled();
+      expect(props.onGoToDefinition).not.toHaveBeenCalled();
+      expect(props.onGoToImplementationAt).not.toHaveBeenCalled();
+      expect(props.onGoToSuperMethod).not.toHaveBeenCalled();
+      expect(props.onOpenClass).not.toHaveBeenCalled();
+      expect(props.onOpenFile).not.toHaveBeenCalled();
+      expect(props.onOpenFileStructure).not.toHaveBeenCalled();
+      expect(editor.trigger).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves Monaco language-provider fallbacks when navigation registry commands are missing", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",
@@ -10314,54 +10401,42 @@ class Foo
       uri: { fsPath: activeDocument.path, path: activeDocument.path },
     };
     const editor = createEditor(model);
-    const props = memoGuardProps(activeDocument);
     const runCommand = vi.fn(
-      (_commandId: string): CommandExecutionOutcome => "executed",
+      (_commandId: string): CommandExecutionOutcome => "missing",
     );
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = createMonaco(model);
 
     await act(async () => {
-      root.render(createElement(EditorSurface, { ...props, runCommand }));
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          runCommand,
+        }),
+      );
       await Promise.resolve();
     });
 
-    const commandByActionId = new Map([
-      ["mockor.goToDefinition", "editor.goToDefinition"],
-      ["mockor.goToImplementation", "editor.goToImplementation"],
-      ["mockor.goToSuperMethod", "editor.goToSuperMethod"],
-      ["mockor.openClass", "class.quickOpen"],
-      ["mockor.openFile", "file.quickOpen"],
-      ["mockor.fileStructure", "editor.fileStructure"],
-      ["mockor.gotoLine", "editor.gotoLine"],
-      ["mockor.rename", "editor.rename"],
-      ["mockor.toggleGitBlame", "editor.toggleGitBlame"],
-      ["mockor.formatDocument", "editor.formatDocument"],
-      ["mockor.formatSelection", "editor.formatSelection"],
-      ["mockor.quickFix", "editor.quickFix"],
-      ["mockor.closeTab", "editor.closeTab"],
-      ["mockor.goBack", "navigation.back"],
-      ["mockor.goForward", "navigation.forward"],
-    ]);
     const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const actionById = (id: string) =>
+      actions.find((action) => action.id === id);
 
-    commandByActionId.forEach((_commandId, actionId) => {
-      actions.find((action) => action.id === actionId)?.run();
-    });
+    actionById("mockor.quickDefinition")?.run();
+    actionById("mockor.goToSourceDefinition")?.run();
+    actionById("mockor.goToDeclaration")?.run();
+    actionById("mockor.goToTypeDefinition")?.run();
 
     expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
-      ...commandByActionId.values(),
+      "editor.quickDefinition",
+      "editor.goToSourceDefinition",
+      "editor.goToDeclaration",
+      "editor.goToTypeDefinition",
     ]);
-    expect(props.onCloseActiveTab).not.toHaveBeenCalled();
-    expect(props.onGoBack).not.toHaveBeenCalled();
-    expect(props.onGoForward).not.toHaveBeenCalled();
-    expect(props.onGoToDefinition).not.toHaveBeenCalled();
-    expect(props.onGoToImplementationAt).not.toHaveBeenCalled();
-    expect(props.onGoToSuperMethod).not.toHaveBeenCalled();
-    expect(props.onOpenClass).not.toHaveBeenCalled();
-    expect(props.onOpenFile).not.toHaveBeenCalled();
-    expect(props.onOpenFileStructure).not.toHaveBeenCalled();
-    expect(editor.trigger).not.toHaveBeenCalled();
+    expect(editor.trigger.mock.calls).toEqual([
+      ["keyboard", "editor.action.peekDefinition", {}],
+      ["keyboard", "editor.action.revealDeclaration", {}],
+      ["keyboard", "editor.action.goToTypeDefinition", {}],
+    ]);
   });
 
   it("routes editor-focused Escape through the floating-surface closer", async () => {
@@ -12781,7 +12856,7 @@ class Foo
   });
 
   it.each([1, 2, 4])(
-    "keeps 45 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
+    "keeps 48 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
     async (paneCount) => {
       const activeDocument: EditorDocument = {
         content: "const value = 1;\n",
@@ -12838,7 +12913,7 @@ class Foo
       });
 
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(45);
+        expect(editor.addAction).toHaveBeenCalledTimes(48);
       });
 
       await act(async () => {
@@ -12848,7 +12923,7 @@ class Foo
       });
 
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(45);
+        expect(editor.addAction).toHaveBeenCalledTimes(48);
       });
       for (const [paneIndex, editor] of editors.entries()) {
         const actions = editor.addAction.mock.calls.map(([action]) => action);
@@ -12874,7 +12949,7 @@ class Foo
       });
 
       actionDisposersByPane.forEach((actionDisposers) => {
-        expect(actionDisposers).toHaveLength(45);
+        expect(actionDisposers).toHaveLength(48);
         actionDisposers.forEach((dispose) => {
           expect(dispose).toHaveBeenCalledTimes(1);
         });
@@ -12922,7 +12997,7 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(45);
+    expect(editor.addAction).toHaveBeenCalledTimes(48);
 
     await act(async () => {
       root.render(
@@ -12932,11 +13007,11 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(90);
-    actionDisposers.slice(0, 45).forEach((dispose) => {
+    expect(editor.addAction).toHaveBeenCalledTimes(96);
+    actionDisposers.slice(0, 48).forEach((dispose) => {
       expect(dispose).toHaveBeenCalledTimes(1);
     });
-    actionDisposers.slice(45).forEach((dispose) => {
+    actionDisposers.slice(48).forEach((dispose) => {
       expect(dispose).not.toHaveBeenCalled();
     });
 

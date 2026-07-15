@@ -81,7 +81,10 @@ import {
 import { createInitialEditorGroupsState } from "../domain/editorGroups";
 import { defaultKeymapSettings } from "../domain/keymap";
 import type { TerminalGateway } from "../domain/terminal";
-import type { WorkspaceTrustGateway } from "../domain/trust";
+import type {
+  WorkspaceTrustGateway,
+  WorkspaceTrustState,
+} from "../domain/trust";
 import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import {
@@ -70955,6 +70958,301 @@ MissingClass::class;
       defaultPhpLanguageServerOptions(),
     );
     expect(getWorkbench().languageServerPlan?.status).toBe("ready");
+  });
+
+  it("rejects same-path owner A hydration after owner B becomes current", async () => {
+    const selectedRoot = "/selected/shared-hydration";
+    const firstOwner = trustedDescriptor("ws-hydration-owner-a", selectedRoot);
+    const secondOwner = trustedDescriptor("ws-hydration-owner-b", selectedRoot);
+    const firstTrust = createDeferred<WorkspaceTrustState>();
+    const firstDetection = createDeferred<WorkspaceDescriptor>();
+    const firstManifest = createDeferred<string>();
+    const descriptors = [firstOwner, secondOwner];
+    let trustRequest = 0;
+    let detectionRequest = 0;
+    let directoryRequest = 0;
+    let manifestRequest = 0;
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(async () => ({
+        intelephense: null,
+        phpactor: null,
+      })),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const { getWorkbench } = renderController({
+      phpToolGateway,
+      readDirectory: vi.fn(async () => {
+        directoryRequest += 1;
+        return [
+          fileEntry(`${selectedRoot}/package.json`, "package.json"),
+        ];
+      }),
+      readTextFile: vi.fn(async () => {
+        manifestRequest += 1;
+        if (manifestRequest === 1) {
+          return firstManifest.promise;
+        }
+
+        return '{"scripts":{"owner-b":"vite"}}';
+      }),
+      workspaceDetectionGateway: {
+        detectWorkspace: vi.fn(async () => {
+          detectionRequest += 1;
+          if (detectionRequest === 1) {
+            return firstDetection.promise;
+          }
+
+          return {
+            javaScriptTypeScript: null,
+            php: null,
+            rootPath: selectedRoot,
+          };
+        }),
+      },
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+      workspaceTrustGateway: {
+        getTrust: vi.fn(async () => {
+          trustRequest += 1;
+          if (trustRequest === 1) {
+            return firstTrust.promise;
+          }
+
+          return { rootPath: selectedRoot, trusted: false };
+        }),
+        setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
+      },
+    });
+
+    let firstOpen: Promise<unknown> | null = null;
+    await act(async () => {
+      firstOpen = getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(directoryRequest).toBe(1);
+    expect(manifestRequest).toBe(1);
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(getWorkbench().workspaceTrust).toEqual({
+      rootPath: selectedRoot,
+      trusted: false,
+    });
+    expect(
+      getWorkbench().commands.some(
+        (command) => command.id === "script.npm.owner-b",
+      ),
+    ).toBe(true);
+
+    await act(async () => {
+      firstTrust.resolve({ rootPath: selectedRoot, trusted: true });
+      firstDetection.resolve({
+        ...phpWorkspaceDescriptor(),
+        rootPath: selectedRoot,
+      });
+      firstManifest.resolve('{"scripts":{"owner-a":"phpunit"}}');
+      await firstOpen;
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    expect(getWorkbench().workspaceDescriptor).toEqual({
+      javaScriptTypeScript: null,
+      php: null,
+      rootPath: selectedRoot,
+    });
+    expect(
+      getWorkbench().commands.some(
+        (command) => command.id === "script.npm.owner-a",
+      ),
+    ).toBe(false);
+    expect(phpToolGateway.detectPhpTools).not.toHaveBeenCalled();
+  });
+
+  it("waits for owner B session hydration after replacing owner A at the same path", async () => {
+    const selectedRoot = "/selected/shared-session";
+    const firstPath = `${selectedRoot}/src/OwnerA.ts`;
+    const secondPath = `${selectedRoot}/src/OwnerB.ts`;
+    const firstOwner = trustedDescriptor("ws-session-owner-a", selectedRoot);
+    const secondOwner = trustedDescriptor("ws-session-owner-b", selectedRoot);
+    const firstDocument = createDeferred<string>();
+    const secondDocument = createDeferred<string>();
+    const descriptors = [firstOwner, secondOwner];
+    let settingsLoad = 0;
+    const settingsGateway: SettingsGateway = {
+      loadAppSettings: vi.fn(async () => defaultAppSettings()),
+      loadWorkspaceSettings: vi.fn(async () => {
+        settingsLoad += 1;
+        const activePath = settingsLoad === 1 ? firstPath : secondPath;
+        return {
+          ...defaultWorkspaceSettings(),
+          session: normalizeWorkspaceSession({
+            activePath,
+            bottomPanelView: "problems" as const,
+            openPaths: [activePath],
+            sidebarView: "files" as const,
+          }),
+        };
+      }),
+      saveAppSettings: vi.fn(async () => undefined),
+      saveWorkspaceSettings: vi.fn(async () => undefined),
+    };
+    const readTextFile = vi.fn((path: string) => {
+      if (path === firstPath) {
+        return firstDocument.promise;
+      }
+
+      return secondDocument.promise;
+    });
+    const { getWorkbench } = renderController({
+      readTextFile,
+      settingsGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    let firstOpen: Promise<unknown> | null = null;
+    await act(async () => {
+      firstOpen = getWorkbench().openWorkspaceRoot(selectedRoot);
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(firstPath);
+      });
+    });
+
+    let secondOpen: Promise<unknown> | null = null;
+    await act(async () => {
+      secondOpen = getWorkbench().openWorkspaceRoot(selectedRoot);
+      await vi.waitFor(() => {
+        expect(readTextFile).toHaveBeenCalledWith(secondPath);
+      });
+    });
+    vi.mocked(settingsGateway.saveWorkspaceSettings).mockClear();
+
+    await act(async () => {
+      firstDocument.resolve("export const owner = 'a';\n");
+      await firstOpen;
+      getWorkbench().setSidebarView("git");
+      await flushAsyncTurns(24);
+    });
+
+    expect(settingsGateway.saveWorkspaceSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      secondDocument.resolve("export const owner = 'b';\n");
+      await secondOpen;
+      await flushAsyncTurns(24);
+    });
+    expect(getWorkbench().activePath).toBe(secondPath);
+    expect(settingsGateway.saveWorkspaceSettings).not.toHaveBeenCalled();
+
+    act(() => {
+      getWorkbench().setSidebarView("git");
+    });
+    await vi.waitFor(() => {
+      expect(settingsGateway.saveWorkspaceSettings).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("rejects an in-flight PHP probe from a replaced owner at the same path", async () => {
+    const selectedRoot = "/selected/shared-php-probe";
+    const firstOwner = trustedDescriptor("ws-php-probe-owner-a", selectedRoot);
+    const secondOwner = trustedDescriptor("ws-php-probe-owner-b", selectedRoot);
+    const firstTrust = createDeferred<WorkspaceTrustState>();
+    const tools = createDeferred<
+      Awaited<
+        ReturnType<WorkbenchWorkspaceGateways["phpTools"]["detectPhpTools"]>
+      >
+    >();
+    const descriptors = [firstOwner, secondOwner];
+    let trustRequest = 0;
+    let detectionRequest = 0;
+    const phpToolGateway: WorkbenchWorkspaceGateways["phpTools"] = {
+      detectPhpTools: vi.fn(() => tools.promise),
+      installManagedPhpactor: vi.fn(async () => undefined),
+      subscribeManagedPhpactorInstall: vi.fn(async () => () => undefined),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      phpToolGateway,
+      workspaceDetectionGateway: {
+        detectWorkspace: vi.fn(async () => {
+          detectionRequest += 1;
+          return detectionRequest === 1
+            ? { ...phpWorkspaceDescriptor(), rootPath: selectedRoot }
+            : {
+                javaScriptTypeScript: null,
+                php: null,
+                rootPath: selectedRoot,
+              };
+        }),
+      },
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "fullSmart",
+      },
+      workspaceTrustGateway: {
+        getTrust: vi.fn(async () => {
+          trustRequest += 1;
+          if (trustRequest === 1) {
+            return firstTrust.promise;
+          }
+
+          return { rootPath: selectedRoot, trusted: true };
+        }),
+        setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
+      },
+    });
+
+    let firstOpen: Promise<unknown> | null = null;
+    await act(async () => {
+      firstOpen = getWorkbench().openWorkspaceRoot(selectedRoot);
+      await vi.waitFor(() => {
+        expect(phpToolGateway.detectPhpTools).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+
+    await act(async () => {
+      tools.resolve({ intelephense: null, phpactor: null });
+      firstTrust.resolve({ rootPath: selectedRoot, trusted: true });
+      await firstOpen;
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(getWorkbench().phpTools).toBe(null);
+    expect(getWorkbench().languageServerPlan).toBe(null);
+    expect(
+      getWorkbench().notices.some(
+        (notice) => notice.groupKey === `phpactor-setup:${selectedRoot}`,
+      ),
+    ).toBe(false);
+    expect(
+      dependencies.languageServerGateway.planPhpLanguageServer,
+    ).not.toHaveBeenCalled();
   });
 
   it("keeps a direct admission current through the open-time TypeScript probe", async () => {

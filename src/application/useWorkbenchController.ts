@@ -15,7 +15,6 @@ import { useFloatingSurfaces } from "./useFloatingSurfaces";
 import { useGitWorkspace } from "./useGitWorkspace";
 import {
   gitChangeForDiffDocumentPath,
-  gitDiffDocumentPath,
   isGitDiffDocumentPath,
   useGitDiffWorkspace,
 } from "./useGitDiffWorkspace";
@@ -2026,17 +2025,18 @@ export function useWorkbenchController(
   );
 
   const {
+    gitDiffDocuments,
     gitDiffLoading,
     selectedGitChange,
     gitDiffPreview,
     gitDiffRequestTokenRef,
-    selectedGitChangeRef,
-    setGitDiffLoading,
-    setSelectedGitChange,
-    setGitDiffPreview,
     resetGitDiffWorkspaceState,
     clearGitDiffPreviewState,
+    cancelGitDiffDocument,
+    getGitDiffDocument,
+    getSelectedGitDiffDocument,
     loadGitDiffDocument,
+    reconcileGitDiffDocument,
     previewGitChange,
     openGitChange,
   } = useGitDiffWorkspace({
@@ -2085,6 +2085,7 @@ export function useWorkbenchController(
     closeGitDiffPreview: closeGitDiffPreviewForGitStatusSurface,
     closeSelectedGitDiffPreviewForChanges:
       closeSelectedGitDiffPreviewForGitStatusSurface,
+    getSelectedGitDiffDocument,
     currentWorkspaceRootRef,
     editorGitBaselineRequestTokenRef,
     gitGateway,
@@ -2092,7 +2093,6 @@ export function useWorkbenchController(
     reportError,
     reportErrorForActiveWorkspaceRoot,
     selectedGitChange,
-    selectedGitChangeRef,
     setMessage,
     workspaceRoot,
   });
@@ -3002,6 +3002,7 @@ export function useWorkbenchController(
       path: string,
       options: {
         clearMessage?: boolean;
+        isMutationOwnerCurrent?: () => boolean;
         requireActiveRoot?: boolean;
       } = {},
     ): Promise<FileEntry[] | undefined> => {
@@ -3009,6 +3010,7 @@ export function useWorkbenchController(
       const generation = openWorkspaceRequestTokenRef.current;
       const normalizedPath = normalizedWorkspaceRootKey(path);
       const clearMessage = options.clearMessage !== false;
+      const isMutationOwnerCurrent = options.isMutationOwnerCurrent;
       const requireActiveRoot = options.requireActiveRoot === true;
       const requestKey = JSON.stringify([
         normalizedWorkspaceRootKey(rootPath),
@@ -3025,6 +3027,7 @@ export function useWorkbenchController(
       const isActiveRoot = () =>
         openWorkspaceRequestTokenRef.current === generation &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+        (!isMutationOwnerCurrent || isMutationOwnerCurrent()) &&
         (requireActiveRoot
           ? workspaceRootKeysEqual(
               currentWorkspaceRootRef.current,
@@ -3144,7 +3147,11 @@ export function useWorkbenchController(
   );
 
   const loadPackageScripts = useCallback(
-    async (rootPath: string, entries: readonly FileEntry[]) => {
+    async (
+      rootPath: string,
+      entries: readonly FileEntry[],
+      isMutationOwnerCurrent?: () => boolean,
+    ) => {
       const hasComposerManifest = entries.some(
         (entry) => entry.kind === "file" && entry.name === "composer.json",
       );
@@ -3163,7 +3170,10 @@ export function useWorkbenchController(
           : null,
       ]);
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+        (isMutationOwnerCurrent && !isMutationOwnerCurrent())
+      ) {
         return;
       }
 
@@ -3182,9 +3192,16 @@ export function useWorkbenchController(
   );
 
   const restoreWorkspaceSession = useCallback(
-    async (rootPath: string, session: WorkspaceSessionState) => {
+    async (
+      rootPath: string,
+      session: WorkspaceSessionState,
+      isMutationOwnerCurrent?: () => boolean,
+    ) => {
       if (editorGroupsUniquePaths(session.editor).length === 0) {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+          (isMutationOwnerCurrent && !isMutationOwnerCurrent())
+        ) {
           return;
         }
         workspaceEditorViewStatesRef.current[rootPath] = session.viewStates ?? {};
@@ -3212,7 +3229,10 @@ export function useWorkbenchController(
         },
       );
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+        (isMutationOwnerCurrent && !isMutationOwnerCurrent())
+      ) {
         return;
       }
       if (openFileRequestTokenRef.current !== openFileRequestToken) {
@@ -3658,6 +3678,21 @@ export function useWorkbenchController(
         ? admittedRuntimeOwner
         : undefined;
       workspaceRuntimeOwnerRef.current = admittedRuntimeOwner;
+      const isCurrentOpenWorkspaceOwnerRequest = () => {
+        if (!isCurrentOpenWorkspaceRequest()) {
+          return false;
+        }
+
+        const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
+        if (!currentOwner || currentOwner.ownerKey !== admittedRuntimeOwner.ownerKey) {
+          return false;
+        }
+
+        return workspaceRootKeysEqual(
+          currentOwner.executionRoot,
+          admittedRuntimeOwner.executionRoot,
+        );
+      };
       if (identityDescriptor) {
         registerWorkspaceRuntimeOwnerClaim(
           workspaceRuntimeOwnerClaimsRef.current,
@@ -3852,32 +3887,41 @@ export function useWorkbenchController(
       // Directory load, workspace trust, workspace detection and session
       // restore are all independent of one another, so they run concurrently.
       // Each sub-task keeps its own try/catch plus a post-await isolation guard
-      // (workspaceRootKeysEqual against the live root) so that switching to
-      // another project mid-flight never lets stale results mutate the active
-      // workspace state.
+      // against the admitted owner and open request so that replacing a
+      // workspace mid-flight, including at the same selected path, never lets
+      // stale results mutate the active workspace state.
       const loadDirectoryTask = async (): Promise<void> => {
         const cachedEntries = cachedWorkspaceState?.entriesByDirectory[path];
         const entries = cachedEntries ?? (await loadDirectory(path, {
+          isMutationOwnerCurrent: isCurrentOpenWorkspaceOwnerRequest,
           requireActiveRoot: true,
         }));
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+        if (!isCurrentOpenWorkspaceOwnerRequest()) {
           return;
         }
 
-        await loadPackageScripts(path, entries ?? []);
+        await loadPackageScripts(
+          path,
+          entries ?? [],
+          isCurrentOpenWorkspaceOwnerRequest,
+        );
       };
 
       const loadTrustTask = async (): Promise<void> => {
         try {
           const trust = await workspaceTrustGateway.getTrust(path);
 
-          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+          if (!isCurrentOpenWorkspaceOwnerRequest()) {
             return;
           }
 
           setWorkspaceTrust(trust);
         } catch (error) {
+          if (!isCurrentOpenWorkspaceOwnerRequest()) {
+            return;
+          }
+
           reportErrorForActiveWorkspaceRoot(path, "Workspace Trust", error);
         }
       };
@@ -3890,16 +3934,16 @@ export function useWorkbenchController(
       // mode we fire the probe in parallel with the directory load and session
       // restore instead of serializing it behind them. The handshake then warms
       // up in the background while the user navigates. This is gated to IDE mode
-      // (preserving the basic/light-mode defer) and is per-root isolated: the
-      // probe captures `path` and re-checks the active root after its own
-      // awaits, and detection itself drops stale results before triggering it.
+      // (preserving the basic/light-mode defer) and is owner-isolated: the probe
+      // captures the admitted runtime owner and re-checks it after its own
+      // awaits, and detection drops stale requests before triggering it.
       let warmedUpPhpProbe = false;
       const detectWorkspaceTask =
         async (): Promise<WorkspaceDescriptor | null> => {
           try {
             const detected = await workspaceDetection.detectWorkspace(path);
 
-            if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+            if (!isCurrentOpenWorkspaceOwnerRequest()) {
               // Stale: the active workspace changed while detection was in
               // flight. Return null (never the stale descriptor) so the PHP
               // setup branch only ever sees the descriptor of the still-active
@@ -3914,11 +3958,15 @@ export function useWorkbenchController(
               shouldStartLanguageServer(resolvedIntelligenceMode)
             ) {
               warmedUpPhpProbe = true;
-              void runPhpWorkspaceProbe(path, explicitRuntimeOwner);
+              void runPhpWorkspaceProbe(path, admittedRuntimeOwner);
             }
 
             return detected;
           } catch (error) {
+            if (!isCurrentOpenWorkspaceOwnerRequest()) {
+              return null;
+            }
+
             reportErrorForActiveWorkspaceRoot(
               path,
               "Workspace Detection",
@@ -3930,13 +3978,21 @@ export function useWorkbenchController(
 
       const restoreSessionTask = async (): Promise<void> => {
         if (cachedWorkspaceState) {
+          if (!isCurrentOpenWorkspaceOwnerRequest()) {
+            return;
+          }
+
           workspaceSessionRestoredRef.current = true;
           return;
         }
 
-        await restoreWorkspaceSession(path, workspaceSettings.session);
+        await restoreWorkspaceSession(
+          path,
+          workspaceSettings.session,
+          isCurrentOpenWorkspaceOwnerRequest,
+        );
 
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)) {
+        if (!isCurrentOpenWorkspaceOwnerRequest()) {
           return;
         }
 
@@ -3971,7 +4027,7 @@ export function useWorkbenchController(
         discoverGitRepositoriesTask(),
       ]);
 
-      if (!isCurrentOpenWorkspaceRequest()) {
+      if (!isCurrentOpenWorkspaceOwnerRequest()) {
         return;
       }
 
@@ -4002,7 +4058,11 @@ export function useWorkbenchController(
         return;
       }
 
-      await runPhpWorkspaceProbe(path, explicitRuntimeOwner);
+      if (!isCurrentOpenWorkspaceOwnerRequest()) {
+        return;
+      }
+
+      await runPhpWorkspaceProbe(path, admittedRuntimeOwner);
     },
     [
       applyWorkspaceSettings,
@@ -4016,6 +4076,7 @@ export function useWorkbenchController(
       reportError,
       reportErrorForActiveWorkspaceRoot,
       releaseOwnedWorkspaceIdentity,
+      resolveCurrentWorkspaceRuntimeOwner,
       retireWorkspaceRuntimeOwnerClaim,
       restoreLanguageServerDiagnosticsForRoot,
       coalesceWorkspaceStateCache,
@@ -4344,25 +4405,20 @@ export function useWorkbenchController(
     cancelFilePrefetch,
   } = useWorkbenchDocumentTabs({
     workspaceRoot,
-    gitStatus,
     documentTabSession,
     appSettingsRef,
     currentWorkspaceRootRef,
+    resolveCurrentWorkspaceRuntimeOwner,
     openFileRequestTokenRef,
     openingFileFlagOwnerTokenRef,
     emptyDocumentRefreshTimeoutsRef,
     filePrefetchCacheRef,
     filePrefetchTimersRef,
-    gitDiffRequestTokenRef,
-    selectedGitChangeRef,
     setIsOpeningFile,
-    setSelectedGitChange,
-    setGitDiffPreview,
-    setGitDiffLoading,
-    setMessage,
     workspaceFiles,
     forgetExternallyRemovedDocumentPath,
-    gitChangeForDiffDocumentPath,
+    clearGitDiffPreviewState,
+    isGitDiffDocumentPath,
     loadGitDiffDocument,
     recordCurrentNavigationLocation,
     recordRecentFile,
@@ -4527,14 +4583,13 @@ export function useWorkbenchController(
     closeGitDiffPreview,
     closeSelectedGitDiffPreviewForChanges,
   } = useGitDiffPreviewCloseLifecycle({
-    gitStatusChanges: gitStatus.changes,
-    selectedGitChange,
     documentTabSession,
-    selectedGitChangeRef,
-    clearGitDiffPreviewState,
-    gitDiffDocumentPath,
+    cancelGitDiffDocument,
+    getGitDiffDocument,
+    getSelectedGitDiffDocument,
     gitChangeForDiffDocumentPath,
     loadGitDiffDocument,
+    reconcileGitDiffDocument,
   });
   closeGitDiffPreviewForGitStatusSurfaceRef.current = closeGitDiffPreview;
   closeSelectedGitDiffPreviewForGitStatusSurfaceRef.current =
@@ -5209,9 +5264,6 @@ export function useWorkbenchController(
     openPaths,
     activePath,
     previewPath,
-    gitStatus,
-    selectedGitChange,
-    gitDiffLoading,
     workspaceSettings,
     currentWorkspaceRootRef,
     workspaceRequestTokenRef: openWorkspaceRequestTokenRef,
@@ -5221,16 +5273,11 @@ export function useWorkbenchController(
     previewPathRef,
     filePrefetchCacheRef,
     externallyRemovedDocumentRootByPathRef,
-    gitDiffRequestTokenRef,
-    selectedGitChangeRef,
     recentlyClosedTabsRef,
     setDocuments,
     setPreviewPath,
     setOpenPaths,
     setActivePath,
-    setGitDiffLoading,
-    setSelectedGitChange,
-    setGitDiffPreview,
     setMessage,
     localHistoryGateway,
     workspaceFiles,
@@ -5247,11 +5294,11 @@ export function useWorkbenchController(
     syncClosedJavaScriptTypeScriptDocument,
     clearPhpLocalDiagnosticsForPath,
     clearLanguageServerDiagnosticsForPath,
+    cancelGitDiffDocument,
     loadGitDiffDocument,
     closeGitDiffPreview,
     closeEmptyWorkbenchSurface: closeApplicationWindow,
     isGitDiffDocumentPath,
-    gitChangeForDiffDocumentPath,
     reportErrorForActiveWorkspaceRoot,
     hasExternalFileConflict: externalFileConflicts.hasConflict,
     clearExternalFileConflict: externalFileConflicts.clearConflict,
@@ -9135,6 +9182,7 @@ export function useWorkbenchController(
     bottomPanelView,
     editorRevealTarget,
     gitDiffLoading,
+    gitDiffDocuments,
     gitDiffPreview,
     gitCommitMessage,
     gitCommitMessageHistory,

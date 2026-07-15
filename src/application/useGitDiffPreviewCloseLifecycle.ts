@@ -1,21 +1,20 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback } from "react";
 import type { GitChangedFile } from "../domain/git";
 import type { DocumentTabSessionPort } from "./documentTabSessionPort";
+import type { GitDiffDocumentState } from "./useGitDiffWorkspace";
 
 export interface GitDiffPreviewCloseLifecycleDependencies {
-  gitStatusChanges: GitChangedFile[];
-  selectedGitChange: GitChangedFile | null;
-
   documentTabSession: DocumentTabSessionPort;
-  selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
 
-  clearGitDiffPreviewState: () => void;
-  gitDiffDocumentPath: (change: GitChangedFile) => string;
+  cancelGitDiffDocument: (path: string) => void;
+  getGitDiffDocument: (path: string) => GitDiffDocumentState | null;
+  getSelectedGitDiffDocument: () => GitDiffDocumentState | null;
   gitChangeForDiffDocumentPath: (
     path: string,
     changes: GitChangedFile[],
   ) => GitChangedFile | null;
-  loadGitDiffDocument: (path: string, gitChange: GitChangedFile) => void;
+  loadGitDiffDocument: (path: string) => void;
+  reconcileGitDiffDocument: (path: string, change: GitChangedFile) => void;
 }
 
 export interface GitDiffPreviewCloseLifecycle {
@@ -27,30 +26,32 @@ export function useGitDiffPreviewCloseLifecycle(
   dependencies: GitDiffPreviewCloseLifecycleDependencies,
 ): GitDiffPreviewCloseLifecycle {
   const {
-    gitStatusChanges,
-    selectedGitChange,
     documentTabSession,
-    selectedGitChangeRef,
-    clearGitDiffPreviewState,
-    gitDiffDocumentPath,
+    cancelGitDiffDocument,
+    getGitDiffDocument,
+    getSelectedGitDiffDocument,
     gitChangeForDiffDocumentPath,
     loadGitDiffDocument,
+    reconcileGitDiffDocument,
   } = dependencies;
 
   const closeSelectedGitDiffPreviewForChanges = useCallback(
     (changes: GitChangedFile[]) => {
-      const currentSelectedGitChange =
-        selectedGitChangeRef.current ?? selectedGitChange;
-      const documentPath = currentSelectedGitChange
-        ? gitDiffDocumentPath(currentSelectedGitChange)
-        : null;
+      const selectedDiffDocument = getSelectedGitDiffDocument();
 
-      clearGitDiffPreviewState();
-
-      if (!documentPath) {
+      if (!selectedDiffDocument) {
         return;
       }
 
+      const documentPath = selectedDiffDocument.documentPath;
+      const refreshedChange = gitChangeForDiffDocumentPath(documentPath, changes);
+
+      if (refreshedChange) {
+        reconcileGitDiffDocument(documentPath, refreshedChange);
+        return;
+      }
+
+      cancelGitDiffDocument(documentPath);
       const { closedActiveDocument, nextActivePath } =
         documentTabSession.removeDocument(documentPath);
 
@@ -58,29 +59,24 @@ export function useGitDiffPreviewCloseLifecycle(
         return;
       }
 
-      const nextGitChange = gitChangeForDiffDocumentPath(
-        nextActivePath,
-        changes,
-      );
-
-      if (nextGitChange) {
-        loadGitDiffDocument(nextActivePath, nextGitChange);
+      if (getGitDiffDocument(nextActivePath)) {
+        loadGitDiffDocument(nextActivePath);
       }
     },
     [
-      clearGitDiffPreviewState,
+      cancelGitDiffDocument,
       documentTabSession,
+      getGitDiffDocument,
+      getSelectedGitDiffDocument,
       gitChangeForDiffDocumentPath,
-      gitDiffDocumentPath,
       loadGitDiffDocument,
-      selectedGitChange,
-      selectedGitChangeRef,
+      reconcileGitDiffDocument,
     ],
   );
 
   const closeGitDiffPreview = useCallback(() => {
-    closeSelectedGitDiffPreviewForChanges(gitStatusChanges);
-  }, [closeSelectedGitDiffPreviewForChanges, gitStatusChanges]);
+    closeSelectedGitDiffPreviewForChanges([]);
+  }, [closeSelectedGitDiffPreviewForChanges]);
 
   return {
     closeGitDiffPreview,

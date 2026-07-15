@@ -177,6 +177,14 @@ function createWorkbench() {
       gitBranchPanelOpen: false,
       gitCommitMessage: "",
       gitDiffLoading: false,
+      gitDiffDocuments: {
+        "mockor-git-diff:worktree:/workspace/README.md": {
+          change: diff.change,
+          diff,
+          isLoading: false,
+          repositoryRoot: "/workspace",
+        },
+      },
       gitDiffPreview: diff,
       gitLoading: false,
       gitOperationLoading: false,

@@ -23,7 +23,7 @@ import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { usePhpTestResults } from "./application/usePhpTestResults";
 import { useScopedEditorSurfaceRunners } from "./application/useScopedEditorSurfaceRunners";
 import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort";
-import { gitDiffDocumentPath } from "./application/useGitDiffWorkspace";
+import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
 import { BookmarksPanel } from "./components/BookmarksPanel";
 import { BottomPanel } from "./components/BottomPanel";
@@ -1271,9 +1271,7 @@ function App() {
         (path === gitHistoryDiffDocumentPath ? gitHistoryDiff : null);
       const historyDiffLoading = path === gitHistoryDiffDocumentPath &&
         gitHistoryDiffLoading;
-      const worktreeDiffPath = workbench.selectedGitChange
-        ? gitDiffDocumentPath(workbench.selectedGitChange)
-        : null;
+      const worktreeDiff = workbench.gitDiffDocuments[path] ?? null;
       if (
         isGitHistoryDiffDocumentPath(path) &&
         (historyDiffLoading || historyDiff)
@@ -1294,14 +1292,14 @@ function App() {
         );
       }
       if (
-        path === worktreeDiffPath &&
-        (workbench.selectedGitChange || workbench.gitDiffLoading)
+        isGitDiffDocumentPath(path) &&
+        worktreeDiff
       ) {
         return (
           <ErrorBoundary title="Could not render this diff" resetKeys={[path]}>
             <GitDiffPreview
-              diff={workbench.gitDiffPreview}
-              isLoading={workbench.gitDiffLoading}
+              diff={worktreeDiff.diff}
+              isLoading={worktreeDiff.isLoading}
               monacoTheme={monacoTheme}
               previewIdentity={path}
               editorFontFamily={workbench.appSettings.editorFontFamily}
@@ -1470,7 +1468,9 @@ function App() {
             onCommitAndPush={workbench.commitAndPushGitChanges}
             onCommitMessageChange={workbench.setGitCommitMessage}
             onOpenChange={workbench.openGitChange}
-            onPreviewChange={workbench.previewGitChange}
+            onPreviewChange={(change, repositoryRoot) =>
+              workbench.previewGitChange(change, { repositoryRoot })
+            }
             onRefresh={workbench.refreshGitStatus}
             onRevertChanges={workbench.revertGitChanges}
             onStageChanges={workbench.stageGitChanges}

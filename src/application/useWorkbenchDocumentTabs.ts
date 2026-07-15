@@ -4,17 +4,13 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type {
-  GitChangedFile,
-  GitFileDiff,
-  GitStatus,
-} from "../domain/git";
 import type { FilePrefetchCache } from "../domain/filePrefetchCache";
 import {
   isPrefetchableContentSize,
   shouldPrefetchFileContent,
 } from "../domain/filePrefetchCache";
 import type { AppSettings } from "../domain/settings";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   detectLanguage,
   getFileName,
@@ -68,11 +64,11 @@ export interface OpenReadOnlyDocumentOptions {
 export interface WorkbenchDocumentTabsDependencies {
   // Shared workspace + tab state (shell-owned).
   workspaceRoot: string | null;
-  gitStatus: GitStatus;
   documentTabSession: DocumentTabSessionPort;
 
   appSettingsRef: MutableRefObject<AppSettings>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  resolveCurrentWorkspaceRuntimeOwner: () => WorkspaceRuntimeOwner | null;
   openFileRequestTokenRef: MutableRefObject<number>;
   openingFileFlagOwnerTokenRef: MutableRefObject<number | null>;
   emptyDocumentRefreshTimeoutsRef: MutableRefObject<Set<number>>;
@@ -80,25 +76,17 @@ export interface WorkbenchDocumentTabsDependencies {
   filePrefetchTimersRef: MutableRefObject<
     Map<string, ReturnType<typeof setTimeout>>
   >;
-  gitDiffRequestTokenRef: MutableRefObject<number>;
-  selectedGitChangeRef: MutableRefObject<GitChangedFile | null>;
 
   setIsOpeningFile: Dispatch<SetStateAction<boolean>>;
-  setSelectedGitChange: Dispatch<SetStateAction<GitChangedFile | null>>;
-  setGitDiffPreview: Dispatch<SetStateAction<GitFileDiff | null>>;
-  setGitDiffLoading: Dispatch<SetStateAction<boolean>>;
-  setMessage: Dispatch<SetStateAction<string | null>>;
 
   // Gateways.
   workspaceFiles: WorkspaceFileGateway;
 
   // Shell-owned collaborators.
   forgetExternallyRemovedDocumentPath: (path: string) => void;
-  gitChangeForDiffDocumentPath: (
-    path: string,
-    changes: GitChangedFile[],
-  ) => GitChangedFile | null;
-  loadGitDiffDocument: (path: string, gitChange: GitChangedFile) => void;
+  clearGitDiffPreviewState: () => void;
+  isGitDiffDocumentPath: (path: string) => boolean;
+  loadGitDiffDocument: (path: string) => void;
   recordCurrentNavigationLocation: () => void;
   recordRecentFile: (entry: { name: string; path: string }) => void;
   refreshLocalPhpDiagnosticsForContent: (
@@ -147,25 +135,20 @@ export function useWorkbenchDocumentTabs(
 ): WorkbenchDocumentTabs {
   const {
     workspaceRoot,
-    gitStatus,
     documentTabSession,
     appSettingsRef,
     currentWorkspaceRootRef,
+    resolveCurrentWorkspaceRuntimeOwner,
     openFileRequestTokenRef,
     openingFileFlagOwnerTokenRef,
     emptyDocumentRefreshTimeoutsRef,
     filePrefetchCacheRef,
     filePrefetchTimersRef,
-    gitDiffRequestTokenRef,
-    selectedGitChangeRef,
     setIsOpeningFile,
-    setSelectedGitChange,
-    setGitDiffPreview,
-    setGitDiffLoading,
-    setMessage,
     workspaceFiles,
     forgetExternallyRemovedDocumentPath,
-    gitChangeForDiffDocumentPath,
+    clearGitDiffPreviewState,
+    isGitDiffDocumentPath,
     loadGitDiffDocument,
     recordCurrentNavigationLocation,
     recordRecentFile,
@@ -177,23 +160,23 @@ export function useWorkbenchDocumentTabs(
     reportErrorForActiveWorkspaceRoot,
   } = dependencies;
 
+  const leaveGitDiff = useCallback(() => {
+    clearGitDiffPreviewState();
+  }, [clearGitDiffPreviewState]);
+
   const activateDocument = useCallback(
     (path: string) => {
       if (documentTabSession.getActivePath() === path) {
         return;
       }
 
-      const gitChange = gitChangeForDiffDocumentPath(path, gitStatus.changes);
-
-      if (gitChange) {
-        loadGitDiffDocument(path, gitChange);
+      if (isGitDiffDocumentPath(path)) {
+        loadGitDiffDocument(path);
         return;
       }
 
       recordCurrentNavigationLocation();
-      selectedGitChangeRef.current = null;
-      setSelectedGitChange(null);
-      setGitDiffPreview(null);
+      leaveGitDiff();
       documentTabSession.activate(path);
       recordRecentFile({
         name: documentTabSession.getTabDisplayName(path) ?? getFileName(path),
@@ -202,14 +185,11 @@ export function useWorkbenchDocumentTabs(
     },
     [
       documentTabSession,
-      gitChangeForDiffDocumentPath,
-      gitStatus.changes,
+      isGitDiffDocumentPath,
+      leaveGitDiff,
       loadGitDiffDocument,
       recordCurrentNavigationLocation,
       recordRecentFile,
-      selectedGitChangeRef,
-      setGitDiffPreview,
-      setSelectedGitChange,
     ],
   );
 
@@ -231,6 +211,10 @@ export function useWorkbenchDocumentTabs(
       );
       forgetExternallyRemovedDocumentPath(entry.path);
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
+      const requestedOwnerStillCurrent = () =>
+        requestedOwner?.ownerKey ===
+        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey;
       const shouldRecordNavigation = options.recordNavigation !== false;
       const shouldPin = options.pin === true;
       const readTextFileForEmptyDocumentRefresh = async (
@@ -252,6 +236,8 @@ export function useWorkbenchDocumentTabs(
         return false;
       }
 
+      leaveGitDiff();
+
       if (isImagePath(entry.path)) {
         try {
           if (!workspaceFiles.readImageFile) {
@@ -260,6 +246,7 @@ export function useWorkbenchDocumentTabs(
           const payload = await workspaceFiles.readImageFile(entry.path);
           if (
             openFileRequestTokenRef.current !== requestToken ||
+            !requestedOwnerStillCurrent() ||
             (requestedRoot !== null &&
               !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) ||
             options.shouldCommit?.() === false
@@ -279,15 +266,12 @@ export function useWorkbenchDocumentTabs(
               commit.replacedDocument,
             );
           }
-          selectedGitChangeRef.current = null;
-          setSelectedGitChange(null);
-          setGitDiffPreview(null);
-          setMessage(null);
           recordRecentFile({ name: entry.name, path: entry.path });
           return true;
         } catch (error) {
           if (
             openFileRequestTokenRef.current !== requestToken ||
+            !requestedOwnerStillCurrent() ||
             (requestedRoot !== null &&
               !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
           ) {
@@ -307,13 +291,7 @@ export function useWorkbenchDocumentTabs(
           emptyDocumentRefreshTimeoutsRef.current.delete(timeoutId);
 
           const refreshEmptyDocument = async () => {
-            if (
-              requestedRoot !== null &&
-              !workspaceRootKeysEqual(
-                currentWorkspaceRootRef.current,
-                requestedRoot,
-              )
-            ) {
+            if (!requestedOwnerStillCurrent()) {
               return;
             }
 
@@ -337,11 +315,7 @@ export function useWorkbenchDocumentTabs(
 
             if (
               refreshedContent === "" ||
-              (requestedRoot !== null &&
-                !workspaceRootKeysEqual(
-                  currentWorkspaceRootRef.current,
-                  requestedRoot,
-                ))
+              !requestedOwnerStillCurrent()
             ) {
               return;
             }
@@ -386,11 +360,7 @@ export function useWorkbenchDocumentTabs(
         if (refreshedContent !== null) {
           const requestStillActive =
             openFileRequestTokenRef.current === requestToken &&
-            (requestedRoot === null ||
-              workspaceRootKeysEqual(
-                currentWorkspaceRootRef.current,
-                requestedRoot,
-              )) &&
+            requestedOwnerStillCurrent() &&
             options.shouldCommit?.() !== false;
 
           if (!requestStillActive) {
@@ -442,9 +412,6 @@ export function useWorkbenchDocumentTabs(
           void syncClosedJavaScriptTypeScriptDocument(opened.replacedDocument);
         }
 
-        selectedGitChangeRef.current = null;
-        setSelectedGitChange(null);
-        setGitDiffPreview(null);
         const activatedDocument = opened.document;
         refreshLocalPhpDiagnosticsForContent(
           activatedDocument.path,
@@ -490,6 +457,7 @@ export function useWorkbenchDocumentTabs(
 
         if (
           openFileRequestTokenRef.current !== requestToken ||
+          !requestedOwnerStillCurrent() ||
           (requestedRoot !== null &&
             !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) ||
           options.shouldCommit?.() === false
@@ -530,11 +498,7 @@ export function useWorkbenchDocumentTabs(
           document.language,
         );
 
-        selectedGitChangeRef.current = null;
-        setSelectedGitChange(null);
-        setGitDiffPreview(null);
         recordRecentFile({ name: entry.name, path: entry.path });
-        setMessage(null);
         filePrefetchCacheRef.current.invalidate(entry.path);
         if (content === "") {
           scheduleEmptyDocumentRefresh(entry.path);
@@ -544,6 +508,7 @@ export function useWorkbenchDocumentTabs(
       } catch (error) {
         if (
           openFileRequestTokenRef.current !== requestToken ||
+          !requestedOwnerStillCurrent() ||
           (requestedRoot !== null &&
             !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot))
         ) {
@@ -568,18 +533,16 @@ export function useWorkbenchDocumentTabs(
       emptyDocumentRefreshTimeoutsRef,
       filePrefetchCacheRef,
       forgetExternallyRemovedDocumentPath,
+      leaveGitDiff,
       openFileRequestTokenRef,
       openingFileFlagOwnerTokenRef,
       recordCurrentNavigationLocation,
       recordRecentFile,
       refreshLocalPhpDiagnosticsForContent,
+      resolveCurrentWorkspaceRuntimeOwner,
       reportError,
       reportErrorForActiveWorkspaceRoot,
-      selectedGitChangeRef,
-      setGitDiffPreview,
       setIsOpeningFile,
-      setMessage,
-      setSelectedGitChange,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
       workspaceFiles,
@@ -589,7 +552,11 @@ export function useWorkbenchDocumentTabs(
   );
 
   const prefetchFileContentNow = useCallback(
-    async (entry: FileEntry) => {
+    async (
+      entry: FileEntry,
+      requestedRoot: string | null,
+      requestedOwner: WorkspaceRuntimeOwner | null,
+    ) => {
       if (entry.kind === "directory") {
         return;
       }
@@ -598,7 +565,13 @@ export function useWorkbenchDocumentTabs(
         return;
       }
 
-      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const requestedOwnerStillCurrent = () =>
+        requestedOwner?.ownerKey ===
+        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey;
+
+      if (!requestedOwnerStillCurrent()) {
+        return;
+      }
 
       if (documentTabSession.getDocument(entry.path)) {
         return;
@@ -611,9 +584,7 @@ export function useWorkbenchDocumentTabs(
       try {
         const content = await workspaceFiles.readTextFile(entry.path);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!requestedOwnerStillCurrent()) {
           return;
         }
 
@@ -632,11 +603,10 @@ export function useWorkbenchDocumentTabs(
       }
     },
     [
-      currentWorkspaceRootRef,
       documentTabSession,
       filePrefetchCacheRef,
+      resolveCurrentWorkspaceRuntimeOwner,
       workspaceFiles,
-      workspaceRoot,
     ],
   );
 
@@ -656,14 +626,22 @@ export function useWorkbenchDocumentTabs(
         return;
       }
 
+      const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
+      const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
       const timer = setTimeout(() => {
         timers.delete(entry.path);
-        void prefetchFileContentNow(entry);
+        void prefetchFileContentNow(entry, requestedRoot, requestedOwner);
       }, FILE_PREFETCH_HOVER_DELAY_MS);
 
       timers.set(entry.path, timer);
     },
-    [filePrefetchTimersRef, prefetchFileContentNow],
+    [
+      currentWorkspaceRootRef,
+      filePrefetchTimersRef,
+      prefetchFileContentNow,
+      resolveCurrentWorkspaceRuntimeOwner,
+      workspaceRoot,
+    ],
   );
 
   const cancelFilePrefetch = useCallback(
@@ -713,22 +691,12 @@ export function useWorkbenchDocumentTabs(
         void syncClosedDocument(commit.replacedDocument);
         void syncClosedJavaScriptTypeScriptDocument(commit.replacedDocument);
       }
-      selectedGitChangeRef.current = null;
-      setSelectedGitChange(null);
-      setGitDiffPreview(null);
-      setGitDiffLoading(false);
-      gitDiffRequestTokenRef.current += 1;
-      setMessage(null);
+      leaveGitDiff();
     },
     [
       documentTabSession,
-      gitDiffRequestTokenRef,
+      leaveGitDiff,
       recordCurrentNavigationLocation,
-      selectedGitChangeRef,
-      setGitDiffLoading,
-      setGitDiffPreview,
-      setMessage,
-      setSelectedGitChange,
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
     ],

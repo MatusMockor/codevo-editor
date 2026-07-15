@@ -67,8 +67,8 @@ interface GitChangesPanelProps {
   onCommitAndPush(): void;
   onFetch?(): void;
   onCommitMessageChange(message: string): void;
-  onOpenChange(change: GitChangedFile): void;
-  onPreviewChange(change: GitChangedFile): void;
+  onOpenChange(change: GitChangedFile, repositoryRoot?: string): void;
+  onPreviewChange(change: GitChangedFile, repositoryRoot?: string): void;
   onPull?(): void;
   onRefresh(): void;
   onRevertChanges(changes: GitChangedFile[]): void;
@@ -82,6 +82,7 @@ interface GitChangesPanelProps {
 
 /** One repository's changes, resolved for a section header in the panel. */
 interface RepositorySection {
+  repositoryRoot: string;
   rootRelativePath: string;
   label: string;
   branch: string | null;
@@ -104,6 +105,7 @@ function buildRepositorySections(
       (entry) => entry.status.isRepository && entry.status.changes.length > 0,
     )
     .map((entry) => ({
+      repositoryRoot: entry.status.rootPath,
       rootRelativePath: entry.mapping.rootRelativePath,
       label: gitRepositoryDisplayName(
         entry.mapping.rootRelativePath,
@@ -146,6 +148,18 @@ function bindRepositoryToggle(
   }
 
   return (change) => onToggleChangeIncluded(change, repositoryRootRelative);
+}
+
+function bindRepositoryChangeAction(
+  action: (change: GitChangedFile, repositoryRoot?: string) => void,
+  repositoryRoot: string,
+  repositoryRootRelative: string,
+): (change: GitChangedFile) => void {
+  if (repositoryRootRelative === "") {
+    return (change) => action(change);
+  }
+
+  return (change) => action(change, repositoryRoot);
 }
 
 function GitChangesPanelComponent({
@@ -202,6 +216,9 @@ function GitChangesPanelComponent({
     ? singleSection.rootRelativePath
     : "";
   const singleIsRepository = singleSection ? true : status.isRepository;
+  const singleRepositoryRoot = singleSection
+    ? singleSection.repositoryRoot
+    : status.rootPath;
 
   const singleGroups = useMemo(
     () => groupGitChanges(singleChanges),
@@ -219,6 +236,24 @@ function GitChangesPanelComponent({
   const singleToggleChangeIncluded = useMemo(
     () => bindRepositoryToggle(onToggleChangeIncluded, singleRepoRootRelative),
     [onToggleChangeIncluded, singleRepoRootRelative],
+  );
+  const openSingleChange = useMemo(
+    () =>
+      bindRepositoryChangeAction(
+        onOpenChange,
+        singleRepositoryRoot,
+        singleRepoRootRelative,
+      ),
+    [onOpenChange, singleRepoRootRelative, singleRepositoryRoot],
+  );
+  const previewSingleChange = useMemo(
+    () =>
+      bindRepositoryChangeAction(
+        onPreviewChange,
+        singleRepositoryRoot,
+        singleRepoRootRelative,
+      ),
+    [onPreviewChange, singleRepoRootRelative, singleRepositoryRoot],
   );
 
   const onToggleGroupCollapsed = useCallback((collapseKey: string) => {
@@ -374,8 +409,8 @@ function GitChangesPanelComponent({
               `${singleRepoRootRelative}:${group.id}`,
             )}
             key={group.id}
-            onOpenChange={onOpenChange}
-            onPreviewChange={onPreviewChange}
+            onOpenChange={openSingleChange}
+            onPreviewChange={previewSingleChange}
             onToggleChangeIncluded={singleToggleChangeIncluded}
             onToggleCollapsed={onToggleGroupCollapsed}
             repositoryRootRelative={singleRepoRootRelative}
@@ -676,8 +711,8 @@ interface GitRepositorySectionViewProps {
   disabled: boolean;
   includedChangePaths: Set<string>;
   section: RepositorySection;
-  onOpenChange(change: GitChangedFile): void;
-  onPreviewChange(change: GitChangedFile): void;
+  onOpenChange(change: GitChangedFile, repositoryRoot?: string): void;
+  onPreviewChange(change: GitChangedFile, repositoryRoot?: string): void;
   onToggleChangeIncluded(
     change: GitChangedFile,
     repositoryRootRelative?: string,
@@ -706,6 +741,22 @@ function GitRepositorySectionViewComponent({
   const toggleChangeIncluded = useMemo(
     () => bindRepositoryToggle(onToggleChangeIncluded, section.rootRelativePath),
     [onToggleChangeIncluded, section.rootRelativePath],
+  );
+  const openChange = useCallback(
+    bindRepositoryChangeAction(
+      onOpenChange,
+      section.repositoryRoot,
+      section.rootRelativePath,
+    ),
+    [onOpenChange, section.repositoryRoot, section.rootRelativePath],
+  );
+  const previewChange = useCallback(
+    bindRepositoryChangeAction(
+      onPreviewChange,
+      section.repositoryRoot,
+      section.rootRelativePath,
+    ),
+    [onPreviewChange, section.repositoryRoot, section.rootRelativePath],
   );
 
   return (
@@ -736,8 +787,8 @@ function GitRepositorySectionViewComponent({
             includedChangePaths={includedChangePaths}
             isCollapsed={collapsedGroupIds.has(collapseKey)}
             key={collapseKey}
-            onOpenChange={onOpenChange}
-            onPreviewChange={onPreviewChange}
+            onOpenChange={openChange}
+            onPreviewChange={previewChange}
             onToggleChangeIncluded={toggleChangeIncluded}
             onToggleCollapsed={onToggleCollapsed}
             repositoryRootRelative={section.rootRelativePath}

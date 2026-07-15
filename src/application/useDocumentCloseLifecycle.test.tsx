@@ -4,7 +4,6 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { GitChangedFile } from "../domain/git";
-import { emptyGitStatus } from "../domain/git";
 import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import type { EditorDocument } from "../domain/workspace";
 import { nextActiveEditorPathAfterClose } from "../domain/workspace";
@@ -140,9 +139,6 @@ function renderLifecycle(
     workspaceRoot: ROOT,
     activeDocument,
     activePath: activeDocument?.path ?? null,
-    gitStatus: emptyGitStatus(),
-    selectedGitChange: null,
-    gitDiffLoading: false,
     documentTabSession,
     currentWorkspaceRootRef,
     activeDocumentRef,
@@ -150,13 +146,7 @@ function renderLifecycle(
     openPathsRef,
     previewPathRef,
     externallyRemovedDocumentRootByPathRef: { current: {} },
-    gitDiffRequestTokenRef: { current: 0 },
-    selectedGitChangeRef: { current: null },
     recentlyClosedTabsRef,
-    setGitDiffLoading: vi.fn(),
-    setSelectedGitChange: vi.fn(),
-    setGitDiffPreview: vi.fn(),
-    setMessage: vi.fn(),
     prompter: { confirm: vi.fn(() => true), prompt: vi.fn() },
     invalidateDocumentSave: vi.fn(),
     syncClosedDocument: vi.fn(async () => undefined),
@@ -165,11 +155,11 @@ function renderLifecycle(
     clearLanguageServerDiagnosticsForPath: vi.fn(),
     hasExternalFileConflict: vi.fn(() => false),
     clearExternalFileConflict: vi.fn(),
+    cancelGitDiffDocument: vi.fn(),
     loadGitDiffDocument: vi.fn(),
     closeGitDiffPreview: vi.fn(),
     closeEmptyWorkbenchSurface: vi.fn(),
     isGitDiffDocumentPath: (path) => path.startsWith("mockor-git-diff:"),
-    gitChangeForDiffDocumentPath: () => null,
     recentlyClosedDocumentViewState: () => undefined,
     openRecentlyClosedDocument: vi.fn(async () => true),
     restoreRecentlyClosedDocumentViewState: vi.fn(),
@@ -237,7 +227,6 @@ describe("useDocumentCloseLifecycle", () => {
       activeDocumentRef: { current: dirty },
       documentsRef: { current: { [path]: dirty } },
       openPathsRef: { current: [path] },
-      gitStatus: { ...emptyGitStatus(), changes: [change] },
       prompter: { confirm, prompt: vi.fn() },
     });
 
@@ -249,7 +238,7 @@ describe("useDocumentCloseLifecycle", () => {
       harness.dependencies.onRecentlyClosedTabsChange,
       harness.dependencies.syncClosedDocument,
       harness.dependencies.clearPhpLocalDiagnosticsForPath,
-      harness.dependencies.setGitDiffLoading,
+      harness.dependencies.cancelGitDiffDocument,
       harness.dependencies.documentTabSession.removeDocument,
     ].map((mock) => vi.mocked(mock).mock.invocationCallOrder[0]);
     expect(callOrder).toEqual([...callOrder].sort((left, right) => left - right));
@@ -344,24 +333,15 @@ describe("useDocumentCloseLifecycle", () => {
       documentsRef: { current: { [firstPath]: first, [secondPath]: second } },
       openPathsRef: { current: [firstPath, secondPath] },
       previewPathRef: { current: firstPath },
-      gitStatus: {
-        ...emptyGitStatus(),
-        changes: [firstChange, secondChange],
-      },
-      selectedGitChange: firstChange,
-      selectedGitChangeRef: { current: firstChange },
-      gitChangeForDiffDocumentPath: (path, changes) =>
-        changes.find((change) => diffPath(change) === path) ?? null,
     });
 
     act(() => harness.lifecycle().closeDocument(firstPath));
 
-    expect(harness.dependencies.setSelectedGitChange).toHaveBeenCalledWith(
-      null,
+    expect(harness.dependencies.cancelGitDiffDocument).toHaveBeenCalledWith(
+      firstPath,
     );
     expect(harness.dependencies.loadGitDiffDocument).toHaveBeenCalledWith(
       secondPath,
-      secondChange,
     );
     expect(harness.dependencies.activeDocumentRef.current).toBe(second);
     expect(harness.dependencies.openPathsRef.current).toEqual([secondPath]);

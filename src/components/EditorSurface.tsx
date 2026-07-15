@@ -1908,7 +1908,46 @@ function EditorSurfaceComponent({
         label: "Quick Definition",
         keybindings: keybinding("editor.quickDefinition"),
         run: () =>
-          triggerEditorAction(editorApi, "editor.action.peekDefinition"),
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.quickDefinition",
+            () => triggerEditorAction(editorApi, "editor.action.peekDefinition"),
+          ),
+      }),
+      editorApi.addAction({
+        id: "mockor.goToSourceDefinition",
+        label: "Go to Source Definition",
+        keybindings: keybinding("editor.goToSourceDefinition"),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.goToSourceDefinition",
+            () => undefined,
+          ),
+      }),
+      editorApi.addAction({
+        id: "mockor.goToDeclaration",
+        label: "Go to Declaration",
+        keybindings: keybinding("editor.goToDeclaration"),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.goToDeclaration",
+            () =>
+              triggerEditorAction(editorApi, "editor.action.revealDeclaration"),
+          ),
+      }),
+      editorApi.addAction({
+        id: "mockor.goToTypeDefinition",
+        label: "Go to Type Definition",
+        keybindings: keybinding("editor.goToTypeDefinition"),
+        run: () =>
+          runRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.goToTypeDefinition",
+            () =>
+              triggerEditorAction(editorApi, "editor.action.goToTypeDefinition"),
+          ),
       }),
       editorApi.addAction({
         id: "mockor.goToImplementation",
@@ -2552,7 +2591,12 @@ function EditorSurfaceComponent({
       if (target && lane !== monacoApi.editor.GlyphMarginLane.Left) {
         event.event.preventDefault();
         event.event.stopPropagation();
-        onGoToImplementationAt(target);
+        editorApi.setPosition(target);
+        runRegisteredCommand(
+          commandExecutionRunnerRef,
+          "editor.goToImplementation",
+          () => editorActionCommandPortRef.current.goToImplementationAt(target),
+        );
         return;
       }
 
@@ -2572,7 +2616,6 @@ function EditorSurfaceComponent({
     editorApi,
     monacoApi,
     onGoToDefinition,
-    onGoToImplementationAt,
     onRevealGitBlameCommit,
     onRunTestAt,
     onToggleBookmarkAtLine,

@@ -15,8 +15,12 @@ import {
   type EditorGroupsState,
 } from "../domain/editorGroups";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
-import type { GitStatus } from "../domain/git";
+import type { GitChangedFile, GitFileDiff } from "../domain/git";
 import { defaultAppSettings } from "../domain/settings";
+import {
+  createWorkspaceRuntimeOwner,
+  type WorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
 import type {
   EditorDocument,
   FileEntry,
@@ -56,6 +60,12 @@ interface HarnessOptions {
   readImage?: (path: string) => Promise<{ base64: string; byteLength: number }>;
   readSnapshot?: (path: string) => Promise<WorkspaceTextFileSnapshot>;
   readText?: (path: string) => Promise<string>;
+  selectedGitChange?: GitChangedFile | null;
+  gitDiffPreview?: GitFileDiff | null;
+  gitDiffLoading?: boolean;
+  gitDiffRead?: Deferred<GitFileDiff>;
+  gitChanges?: GitChangedFile[];
+  message?: string | null;
 }
 
 interface HarnessState {
@@ -63,8 +73,12 @@ interface HarnessState {
   documents: Record<string, EditorDocument>;
   imageTabs: Record<string, ImageTab>;
   isOpeningFile: boolean;
+  gitDiffLoading: boolean;
+  gitDiffPreview: GitFileDiff | null;
+  message: string | null;
   openPaths: string[];
   previewPath: string | null;
+  selectedGitChange: GitChangedFile | null;
 }
 
 function deferred<Value>(): Deferred<Value> {
@@ -105,11 +119,17 @@ function renderHarness(options: HarnessOptions = {}) {
   const captured: {
     api: WorkbenchDocumentTabs | null;
     currentWorkspaceRootRef: { current: string | null } | null;
+    currentWorkspaceRuntimeOwnerRef: {
+      current: WorkspaceRuntimeOwner | null;
+    } | null;
+    gitDiffRequestTokenRef: { current: number } | null;
     session: EditorSessionState | null;
     state: HarnessState | null;
   } = {
     api: null,
     currentWorkspaceRootRef: null,
+    currentWorkspaceRuntimeOwnerRef: null,
+    gitDiffRequestTokenRef: null,
     session: null,
     state: null,
   };
@@ -126,8 +146,62 @@ function renderHarness(options: HarnessOptions = {}) {
   function Harness() {
     const session = useEditorSessionState();
     const [isOpeningFile, setIsOpeningFile] = useState(false);
+    const [selectedGitChange, setSelectedGitChange] = useState(
+      options.selectedGitChange ?? null,
+    );
+    const [gitDiffPreview, setGitDiffPreview] = useState(
+      options.gitDiffPreview ?? null,
+    );
+    const [gitDiffLoading, setGitDiffLoading] = useState(
+      options.gitDiffLoading ?? false,
+    );
+    const [message, setMessage] = useState(options.message ?? null);
     const initializedRef = useRef(false);
     const currentWorkspaceRootRef = useRef<string | null>(ROOT_A);
+    const currentWorkspaceRuntimeOwnerRef = useRef<WorkspaceRuntimeOwner | null>(
+      createWorkspaceRuntimeOwner("workspace-a", ROOT_A),
+    );
+    const gitDiffRequestTokenRef = useRef(0);
+    const selectedGitChangeRef = useRef<GitChangedFile | null>(
+      options.selectedGitChange ?? null,
+    );
+    const clearGitDiffPreviewState = () => {
+      selectedGitChangeRef.current = null;
+      setSelectedGitChange(null);
+      setGitDiffPreview(null);
+      setGitDiffLoading(false);
+      setMessage(null);
+    };
+    const loadGitDiffDocument = (path: string) => {
+      const change = options.gitChanges?.find(
+        (candidate) => candidate.path === path,
+      );
+
+      if (!change) {
+        return;
+      }
+
+      const requestToken = gitDiffRequestTokenRef.current + 1;
+      gitDiffRequestTokenRef.current = requestToken;
+      selectedGitChangeRef.current = change;
+      setSelectedGitChange(change);
+      setGitDiffPreview(null);
+      setGitDiffLoading(true);
+      session.documentTabSession.activate(path);
+
+      void options.gitDiffRead?.promise.then((diff) => {
+        if (
+          gitDiffRequestTokenRef.current !== requestToken ||
+          selectedGitChangeRef.current !== change
+        ) {
+          return;
+        }
+
+        setGitDiffPreview(diff);
+        setGitDiffLoading(false);
+        setMessage(`Diff ${change.relativePath}`);
+      });
+    };
 
     useLayoutEffect(() => {
       if (initializedRef.current) {
@@ -158,15 +232,17 @@ function renderHarness(options: HarnessOptions = {}) {
         workspaceTabs: [ROOT_A, ROOT_B],
       }),
       currentWorkspaceRootRef,
+      resolveCurrentWorkspaceRuntimeOwner: () =>
+        currentWorkspaceRuntimeOwnerRef.current,
       documentTabSession: session.documentTabSession,
       emptyDocumentRefreshTimeoutsRef: useRef(new Set()),
       filePrefetchCacheRef: useRef(filePrefetchCache),
       filePrefetchTimersRef: useRef(new Map()),
       forgetExternallyRemovedDocumentPath: vi.fn(),
-      gitChangeForDiffDocumentPath: () => null,
-      gitDiffRequestTokenRef: useRef(0),
-      gitStatus: emptyGitStatus(),
-      loadGitDiffDocument: vi.fn(),
+      clearGitDiffPreviewState,
+      loadGitDiffDocument,
+      isGitDiffDocumentPath: (path: string) =>
+        options.gitChanges?.some((change) => change.path === path) === true,
       openFileRequestTokenRef: useRef(0),
       openingFileFlagOwnerTokenRef: useRef(null),
       recordCurrentNavigationLocation,
@@ -174,12 +250,7 @@ function renderHarness(options: HarnessOptions = {}) {
       refreshLocalPhpDiagnosticsForContent: vi.fn(),
       reportError,
       reportErrorForActiveWorkspaceRoot,
-      selectedGitChangeRef: useRef(null),
-      setGitDiffLoading: vi.fn(),
-      setGitDiffPreview: vi.fn(),
       setIsOpeningFile,
-      setMessage: vi.fn(),
-      setSelectedGitChange: vi.fn(),
       syncClosedDocument,
       syncClosedJavaScriptTypeScriptDocument,
       workspaceFiles,
@@ -190,14 +261,21 @@ function renderHarness(options: HarnessOptions = {}) {
 
     captured.api = useWorkbenchDocumentTabs(dependencies);
     captured.currentWorkspaceRootRef = currentWorkspaceRootRef;
+    captured.currentWorkspaceRuntimeOwnerRef =
+      currentWorkspaceRuntimeOwnerRef;
+    captured.gitDiffRequestTokenRef = gitDiffRequestTokenRef;
     captured.session = session;
     captured.state = {
       activePath: session.activePath,
       documents: session.documents,
       imageTabs: session.imageTabs,
       isOpeningFile,
+      gitDiffLoading,
+      gitDiffPreview,
+      message,
       openPaths: session.openPaths,
       previewPath: session.previewPath,
+      selectedGitChange,
     };
     return null;
   }
@@ -208,6 +286,8 @@ function renderHarness(options: HarnessOptions = {}) {
     api: () => captured.api as WorkbenchDocumentTabs,
     currentWorkspaceRootRef: () =>
       captured.currentWorkspaceRootRef as { current: string | null },
+    gitDiffRequestTokenRef: () =>
+      captured.gitDiffRequestTokenRef as { current: number },
     filePrefetchCache,
     mutateDocuments: (
       update: SetStateAction<Record<string, EditorDocument>>,
@@ -218,6 +298,14 @@ function renderHarness(options: HarnessOptions = {}) {
     recordRecentFile,
     reportError,
     reportErrorForActiveWorkspaceRoot,
+    replaceWorkspaceRuntimeOwner: (owner: WorkspaceRuntimeOwner | null) => {
+      const ownerRef = captured.currentWorkspaceRuntimeOwnerRef;
+      if (!ownerRef) {
+        return;
+      }
+
+      ownerRef.current = owner;
+    },
     state: () => captured.state as HarnessState,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
@@ -226,6 +314,82 @@ function renderHarness(options: HarnessOptions = {}) {
 }
 
 describe("useWorkbenchDocumentTabs", () => {
+  it("invalidates a loading Git diff when an ordinary tab is activated", async () => {
+    const diffPath = `${ROOT_A}/changed.ts`;
+    const ordinaryPath = `${ROOT_A}/ordinary.ts`;
+    const change = gitChange(diffPath);
+    const diffRead = deferred<GitFileDiff>();
+    const harness = renderHarness({
+      activePath: ordinaryPath,
+      documents: {
+        [diffPath]: { ...document(diffPath, ""), readOnly: true },
+        [ordinaryPath]: document(ordinaryPath, "ordinary"),
+      },
+      gitChanges: [change],
+      gitDiffRead: diffRead,
+      openPaths: [diffPath, ordinaryPath],
+    });
+
+    act(() => harness.api().activateDocument(diffPath));
+    expect(harness.state()).toMatchObject({
+      activePath: diffPath,
+      gitDiffLoading: true,
+      selectedGitChange: change,
+    });
+    const loadingRequestToken = harness.gitDiffRequestTokenRef().current;
+
+    act(() => harness.api().activateDocument(ordinaryPath));
+    expect(harness.gitDiffRequestTokenRef().current).toBe(loadingRequestToken);
+    expect(harness.state()).toMatchObject({
+      activePath: ordinaryPath,
+      gitDiffLoading: false,
+      gitDiffPreview: null,
+      message: null,
+      selectedGitChange: null,
+    });
+
+    await act(async () => diffRead.resolve(gitDiff(change)));
+    expect(harness.state()).toMatchObject({
+      activePath: ordinaryPath,
+      gitDiffLoading: false,
+      gitDiffPreview: null,
+      message: null,
+      selectedGitChange: null,
+    });
+    harness.unmount();
+  });
+
+  it("clears Git diff ownership before an ordinary file read finishes", async () => {
+    const ordinaryPath = `${ROOT_A}/ordinary.ts`;
+    const read = deferred<string>();
+    const change = gitChange(`${ROOT_A}/changed.ts`);
+    const harness = renderHarness({
+      gitDiffLoading: true,
+      message: "Loading diff",
+      readText: () => read.promise,
+      selectedGitChange: change,
+    });
+    const previousToken = harness.gitDiffRequestTokenRef().current;
+
+    let opening!: Promise<boolean>;
+    act(() => {
+      opening = harness.api().openFile(entry(ordinaryPath));
+    });
+
+    expect(harness.gitDiffRequestTokenRef().current).toBe(previousToken);
+    expect(harness.state()).toMatchObject({
+      gitDiffLoading: false,
+      gitDiffPreview: null,
+      message: null,
+      selectedGitChange: null,
+    });
+
+    await act(async () => read.resolve("ordinary"));
+    await expect(opening).resolves.toBe(true);
+    expect(harness.state().activePath).toBe(ordinaryPath);
+    harness.unmount();
+  });
+
   it("releases a hung open owner when a newer retained document opens", async () => {
     const hungRead = deferred<string>();
     const retainedPath = `${ROOT_A}/retained.ts`;
@@ -403,6 +567,38 @@ describe("useWorkbenchDocumentTabs", () => {
     imageHarness.unmount();
   });
 
+  it("drops a first-time text read after same-path owner replacement", async () => {
+    const path = `${ROOT_A}/slow.ts`;
+    const read = deferred<string>();
+    const harness = renderHarness({ readText: () => read.promise });
+    const opening = harness.api().openFile(entry(path));
+
+    harness.replaceWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT_A),
+    );
+    await act(async () => read.resolve("stale content"));
+    await expect(opening).resolves.toBe(false);
+
+    expect(harness.state().documents).toEqual({});
+    harness.unmount();
+  });
+
+  it("drops a first-time image read after same-path owner replacement", async () => {
+    const path = `${ROOT_A}/slow.png`;
+    const read = deferred<{ base64: string; byteLength: number }>();
+    const harness = renderHarness({ readImage: () => read.promise });
+    const opening = harness.api().openFile(entry(path));
+
+    harness.replaceWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT_A),
+    );
+    await act(async () => read.resolve({ base64: "AAAA", byteLength: 4 }));
+    await expect(opening).resolves.toBe(false);
+
+    expect(harness.state().imageTabs).toEqual({});
+    harness.unmount();
+  });
+
   it("preserves a dirty preview but replaces a clean preview", async () => {
     const dirtyPath = `${ROOT_A}/dirty.ts`;
     const dirtyHarness = renderHarness({
@@ -563,6 +759,9 @@ describe("useWorkbenchDocumentTabs", () => {
     const opening = harness.api().openFile(entry(path));
 
     harness.currentWorkspaceRootRef().current = ROOT_B;
+    harness.replaceWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-b", ROOT_B),
+    );
     await act(async () => read.resolve("foreign content"));
     await expect(opening).resolves.toBe(false);
 
@@ -571,6 +770,106 @@ describe("useWorkbenchDocumentTabs", () => {
       savedContent: "",
     });
     harness.unmount();
+  });
+
+  it("drops an existing empty-document refresh after same-path owner replacement", async () => {
+    const path = `${ROOT_A}/empty.ts`;
+    const read = deferred<string>();
+    const harness = renderHarness({
+      activePath: path,
+      documents: { [path]: document(path, "") },
+      readText: () => read.promise,
+    });
+    const opening = harness.api().openFile(entry(path));
+
+    harness.replaceWorkspaceRuntimeOwner(
+      createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT_A),
+    );
+    await act(async () => read.resolve("stale content"));
+    await expect(opening).resolves.toBe(false);
+
+    expect(harness.state().documents[path]).toMatchObject({
+      content: "",
+      savedContent: "",
+    });
+    harness.unmount();
+  });
+
+  it("drops a delayed empty-document reread after same-path owner replacement", async () => {
+    vi.useFakeTimers();
+    const path = `${ROOT_A}/empty.ts`;
+    const delayedRead = deferred<string>();
+    const readText = vi
+      .fn<(path: string) => Promise<string>>()
+      .mockResolvedValueOnce("")
+      .mockImplementationOnce(() => delayedRead.promise);
+    const harness = renderHarness({ readText });
+
+    try {
+      await act(async () => {
+        await harness.api().openFile(entry(path));
+      });
+      await act(async () => vi.advanceTimersByTime(150));
+      expect(readText).toHaveBeenCalledTimes(2);
+
+      harness.replaceWorkspaceRuntimeOwner(
+        createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT_A),
+      );
+      await act(async () => delayedRead.resolve("stale content"));
+
+      expect(harness.state().documents[path]).toMatchObject({
+        content: "",
+        savedContent: "",
+      });
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a hover prefetch after owner replacement before the timer", async () => {
+    vi.useFakeTimers();
+    const path = `${ROOT_A}/prefetched.ts`;
+    const readText = vi.fn(async () => "stale prefetched content");
+    const harness = renderHarness({ readText });
+
+    try {
+      act(() => harness.api().prefetchFile(entry(path)));
+      harness.replaceWorkspaceRuntimeOwner(
+        createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT_A),
+      );
+      await act(async () => vi.advanceTimersByTime(80));
+
+      expect(readText).not.toHaveBeenCalled();
+      expect(harness.filePrefetchCache.has(ROOT_A, path)).toBe(false);
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a hover prefetch after owner replacement during the read", async () => {
+    vi.useFakeTimers();
+    const path = `${ROOT_A}/prefetched.ts`;
+    const read = deferred<string>();
+    const readText = vi.fn(() => read.promise);
+    const harness = renderHarness({ readText });
+
+    try {
+      act(() => harness.api().prefetchFile(entry(path)));
+      await act(async () => vi.advanceTimersByTime(80));
+      expect(readText).toHaveBeenCalledOnce();
+
+      harness.replaceWorkspaceRuntimeOwner(
+        createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT_A),
+      );
+      await act(async () => read.resolve("stale prefetched content"));
+
+      expect(harness.filePrefetchCache.has(ROOT_A, path)).toBe(false);
+    } finally {
+      harness.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the filesystem revision when prefetched content matches the snapshot", async () => {
@@ -732,12 +1031,24 @@ describe("useWorkbenchDocumentTabs", () => {
   });
 });
 
-function emptyGitStatus(): GitStatus {
+function gitChange(path: string): GitChangedFile {
   return {
-    branch: null,
-    changes: [],
-    isRepository: false,
-    rootPath: ROOT_A,
+    isStaged: false,
+    isUnversioned: false,
+    oldPath: null,
+    oldRelativePath: null,
+    path,
+    relativePath: path.split("/").pop() ?? path,
+    status: "modified",
+  };
+}
+
+function gitDiff(change: GitChangedFile): GitFileDiff {
+  return {
+    change,
+    language: "typescript",
+    modifiedContent: "modified",
+    originalContent: "original",
   };
 }
 

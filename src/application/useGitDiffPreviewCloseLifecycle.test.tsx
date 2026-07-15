@@ -74,15 +74,28 @@ function createDependencies(
   }));
 
   return {
-    gitStatusChanges: [firstChange, secondChange],
-    selectedGitChange: firstChange,
     documentTabSession: { removeDocument } as unknown as DocumentTabSessionPort,
-    selectedGitChangeRef: { current: firstChange },
-    clearGitDiffPreviewState: vi.fn(),
-    gitDiffDocumentPath,
+    cancelGitDiffDocument: vi.fn(),
+    getGitDiffDocument: (path) => path === secondPath
+      ? {
+          change: secondChange,
+          diff: null,
+          documentPath: secondPath,
+          isLoading: false,
+          repositoryRoot: "/workspace",
+        }
+      : null,
+    getSelectedGitDiffDocument: () => ({
+      change: firstChange,
+      diff: null,
+      documentPath: gitDiffDocumentPath(firstChange),
+      isLoading: false,
+      repositoryRoot: "/workspace",
+    }),
     gitChangeForDiffDocumentPath: (path, changes) =>
       changes.find((change) => gitDiffDocumentPath(change) === path) ?? null,
     loadGitDiffDocument: vi.fn(),
+    reconcileGitDiffDocument: vi.fn(),
     ...overrides,
   };
 }
@@ -109,14 +122,11 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
       harness.lifecycle().closeGitDiffPreview();
     });
 
-    expect(deps.clearGitDiffPreviewState).toHaveBeenCalledTimes(1);
+    expect(deps.cancelGitDiffDocument).toHaveBeenCalledWith(firstPath);
     expect(removeDocument).toHaveBeenCalledWith(firstPath);
-    expect(vi.mocked(deps.clearGitDiffPreviewState).mock.invocationCallOrder[0])
+    expect(vi.mocked(deps.cancelGitDiffDocument).mock.invocationCallOrder[0])
       .toBeLessThan(removeDocument.mock.invocationCallOrder[0]);
-    expect(deps.loadGitDiffDocument).toHaveBeenCalledWith(
-      secondPath,
-      secondChange,
-    );
+    expect(deps.loadGitDiffDocument).toHaveBeenCalledWith(secondPath);
 
     harness.unmount();
   });
@@ -125,6 +135,7 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
     "does not reload for an ordinary or null fallback (%s)",
     (nextActivePath) => {
       const deps = createDependencies({
+        getGitDiffDocument: () => null,
         documentTabSession: {
           removeDocument: vi.fn(() => ({
             closedActiveDocument: true,
@@ -170,8 +181,7 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
   it("clears git state without removing a document when no change is selected", () => {
     const removeDocument = vi.fn();
     const deps = createDependencies({
-      selectedGitChange: null,
-      selectedGitChangeRef: { current: null },
+      getSelectedGitDiffDocument: () => null,
       documentTabSession: {
         removeDocument,
       } as unknown as DocumentTabSessionPort,
@@ -182,10 +192,29 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
       harness.lifecycle().closeGitDiffPreview();
     });
 
-    expect(deps.clearGitDiffPreviewState).toHaveBeenCalledTimes(1);
+    expect(deps.cancelGitDiffDocument).not.toHaveBeenCalled();
     expect(removeDocument).not.toHaveBeenCalled();
     expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
 
+    harness.unmount();
+  });
+
+  it("reconciles a retained selected diff without closing it", () => {
+    const selected = changedFile("/workspace/src/First.php");
+    const refreshed = { ...selected, status: "renamed" as const };
+    const deps = createDependencies();
+    const harness = renderLifecycle(deps);
+
+    act(() => {
+      harness.lifecycle().closeSelectedGitDiffPreviewForChanges([refreshed]);
+    });
+
+    expect(deps.reconcileGitDiffDocument).toHaveBeenCalledWith(
+      gitDiffDocumentPath(selected),
+      refreshed,
+    );
+    expect(deps.cancelGitDiffDocument).not.toHaveBeenCalled();
+    expect(deps.documentTabSession.removeDocument).not.toHaveBeenCalled();
     harness.unmount();
   });
 });
