@@ -803,22 +803,30 @@ impl<'a> WorkspaceFileRepository<'a> {
                     continue;
                 }
             }
-            let file = open_regular(root.as_raw_fd(), &relative, libc::O_RDONLY)?;
+            let file = match open_regular(root.as_raw_fd(), &relative, libc::O_RDONLY) {
+                Ok(file) => file,
+                Err(error) => {
+                    if is_skippable_text_search_candidate_error(&error) {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            };
             let mut bytes = Vec::new();
-            if file
-                .take(4 * 1024 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .is_err()
-                || bytes.len() > 4 * 1024 * 1024
-                || bytes.contains(&0)
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "text search encountered an unreadable, binary, or oversized file",
-                ));
+            let read_result = file.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes);
+            if let Err(error) = read_result {
+                if is_skippable_text_search_candidate_error(&error) {
+                    continue;
+                }
+                return Err(error);
             }
-            let content = String::from_utf8(bytes)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            if bytes.len() > 4 * 1024 * 1024 || bytes.contains(&0) {
+                continue;
+            }
+            let content = match String::from_utf8(bytes) {
+                Ok(content) => content,
+                Err(_) => continue,
+            };
             for (index, line) in content.lines().enumerate() {
                 if let Some(found) = matcher.find(line) {
                     results.push(DescriptorTextSearchResult {
@@ -1431,6 +1439,29 @@ impl<'a> WorkspaceFileRepository<'a> {
         }
         Ok(())
     }
+}
+
+fn is_skippable_text_search_candidate_error(error: &io::Error) -> bool {
+    if let Some(code) = error.raw_os_error() {
+        return matches!(
+            code,
+            libc::EACCES
+                | libc::EPERM
+                | libc::ENOENT
+                | libc::ENOTDIR
+                | libc::EISDIR
+                | libc::ELOOP
+                | libc::ESTALE
+        );
+    }
+
+    matches!(
+        error.kind(),
+        io::ErrorKind::PermissionDenied
+            | io::ErrorKind::NotFound
+            | io::ErrorKind::InvalidInput
+            | io::ErrorKind::Unsupported
+    )
 }
 
 pub fn read_image_from_root(
@@ -3268,6 +3299,98 @@ mod tests {
             )
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn text_search_skips_non_text_candidates_and_keeps_readable_results() {
+        let (registry, id, root) = fixture("search-skips-non-text");
+        fs::create_dir_all(root.join("app/modules/adyenModule/Component/Grid")).unwrap();
+        fs::write(root.join("binary.cache"), b"needle\0binary").unwrap();
+        fs::write(root.join("invalid.cache"), [0xff, 0xfe, b'n', b'e']).unwrap();
+        fs::write(
+            root.join("oversized.cache"),
+            vec![b'n'; 4 * 1024 * 1024 + 1],
+        )
+        .unwrap();
+        fs::write(
+            root.join("app/modules/adyenModule/Component/Grid/datagrid.latte"),
+            "{block pagination}\n    needle\n{/block}\n",
+        )
+        .unwrap();
+        let repository = WorkspaceFileRepository::new(&registry);
+
+        let results = repository
+            .search_text(
+                &id,
+                Path::new(""),
+                "needle",
+                20,
+                &TextSearchOptions::default(),
+            )
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].relative_path,
+            "app/modules/adyenModule/Component/Grid/datagrid.latte"
+        );
+        assert_eq!(results[0].line_number, 2);
+    }
+
+    #[test]
+    fn text_search_candidate_error_classifier_skips_only_local_kinds() {
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::NotFound,
+            io::ErrorKind::InvalidInput,
+            io::ErrorKind::Unsupported,
+        ] {
+            assert!(is_skippable_text_search_candidate_error(&io::Error::new(
+                kind,
+                "candidate-local",
+            )));
+        }
+
+        for kind in [
+            io::ErrorKind::OutOfMemory,
+            io::ErrorKind::Other,
+            io::ErrorKind::UnexpectedEof,
+        ] {
+            assert!(!is_skippable_text_search_candidate_error(&io::Error::new(
+                kind, "systemic",
+            )));
+        }
+    }
+
+    #[test]
+    fn text_search_candidate_error_classifier_preserves_systemic_os_errors() {
+        for code in [
+            libc::EACCES,
+            libc::EPERM,
+            libc::ENOENT,
+            libc::ENOTDIR,
+            libc::EISDIR,
+            libc::ELOOP,
+            libc::ESTALE,
+        ] {
+            assert!(is_skippable_text_search_candidate_error(
+                &io::Error::from_raw_os_error(code),
+            ));
+        }
+
+        for code in [libc::EMFILE, libc::ENFILE, libc::ENOMEM, libc::EIO] {
+            assert!(!is_skippable_text_search_candidate_error(
+                &io::Error::from_raw_os_error(code),
+            ));
+        }
+    }
+
+    #[test]
+    fn text_search_candidate_error_classifier_preserves_enosys() {
+        let error = io::Error::from_raw_os_error(libc::ENOSYS);
+
+        assert_eq!(error.raw_os_error(), Some(libc::ENOSYS));
+        assert!(!is_skippable_text_search_candidate_error(&error));
     }
 
     #[test]
