@@ -16,7 +16,9 @@ import {
   type GitGateway,
   type GitStatus,
 } from "../domain/git";
+import type { GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import { useGitOperationCurrency } from "./useGitOperationCurrency";
 
 const ROOT = "/workspace";
 
@@ -114,6 +116,15 @@ function renderGitWorkspace(
 
   const ref: { current: string | null } = { current: ROOT };
   const applyGitOperationStatus = vi.fn();
+  const applyGitOperationStatuses = vi.fn((statuses: GitRepositoryStatus[]) => {
+    const primary = statuses.find((entry) => entry.root === ROOT);
+
+    if (!primary) {
+      return;
+    }
+
+    applyGitOperationStatus(primary.status);
+  });
   const reportError = vi.fn();
   const setMessage = vi.fn();
   const prompter: WorkbenchPrompter = {
@@ -121,12 +132,14 @@ function renderGitWorkspace(
     prompt: vi.fn(() => null),
   };
 
-  let deps: GitWorkspaceDependencies = {
+  let deps: Omit<GitWorkspaceDependencies, "gitOperationCurrency"> & {
+    gitOperationCurrency?: GitWorkspaceDependencies["gitOperationCurrency"];
+  } = {
     gitGateway: createFakeGitGateway(),
     currentWorkspaceRootRef: ref,
     workspaceRoot: ROOT,
     gitStatus: status(ROOT),
-    applyGitOperationStatus,
+    applyGitOperationStatuses,
     reportError,
     setMessage,
     prompter,
@@ -134,7 +147,11 @@ function renderGitWorkspace(
   };
 
   function Harness() {
-    captured.workspace = useGitWorkspace(deps);
+    const defaultCurrency = useGitOperationCurrency(deps.workspaceRoot);
+    captured.workspace = useGitWorkspace({
+      ...deps,
+      gitOperationCurrency: deps.gitOperationCurrency ?? defaultCurrency,
+    });
     return null;
   }
 
@@ -239,6 +256,130 @@ describe("useGitWorkspace", () => {
     harness.unmount();
   });
 
+  it("serializes same-repository mutations and publishes only the newer one", async () => {
+    const older = createDeferred<GitStatus>();
+    const newer = createDeferred<GitStatus>();
+    const stageFiles = vi
+      .fn<GitGateway["stageFiles"]>()
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    const applyGitOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageFiles }),
+      applyGitOperationStatuses,
+    });
+    let olderOperation!: Promise<void>;
+    let newerOperation!: Promise<void>;
+
+    await act(async () => {
+      olderOperation = harness.workspace().stageGitChanges([changedFile("a.ts")]);
+      await Promise.resolve();
+    });
+    expect(stageFiles).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      newerOperation = harness.workspace().stageGitChanges([changedFile("b.ts")]);
+      await Promise.resolve();
+    });
+    expect(stageFiles).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      older.resolve(status(ROOT, [changedFile("older.ts")]));
+      await olderOperation;
+      await Promise.resolve();
+    });
+    expect(stageFiles).toHaveBeenCalledTimes(2);
+    expect(applyGitOperationStatuses).not.toHaveBeenCalled();
+    expect(harness.workspace().gitOperationLoading).toBe(true);
+
+    await act(async () => {
+      newer.resolve(status(ROOT, [changedFile("newer.ts")]));
+      await newerOperation;
+    });
+
+    expect(applyGitOperationStatuses).toHaveBeenCalledTimes(1);
+    expect(applyGitOperationStatuses).toHaveBeenCalledWith([
+      expect.objectContaining({
+        root: ROOT,
+        status: expect.objectContaining({
+          changes: [expect.objectContaining({ relativePath: "newer.ts" })],
+        }),
+      }),
+    ]);
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("publishes independent repository mutations even when they resolve in reverse order", async () => {
+    const nestedRoot = `${ROOT}/workbench/lcsk/x`;
+    const primary = createDeferred<GitStatus>();
+    const nested = createDeferred<GitStatus>();
+    const stageFiles = vi.fn((rootPath: string) =>
+      rootPath === ROOT ? primary.promise : nested.promise,
+    );
+    const applyGitOperationStatuses = vi.fn();
+    const nestedChange = changedFile("src/nested.php", {
+      path: `${nestedRoot}/src/nested.php`,
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageFiles }),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      applyGitOperationStatuses,
+    });
+    let primaryOperation!: Promise<void>;
+    let nestedOperation!: Promise<void>;
+
+    act(() => {
+      primaryOperation = harness.workspace().stageGitChanges([changedFile("app.php")]);
+      nestedOperation = harness.workspace().stageGitChanges([nestedChange]);
+    });
+
+    await act(async () => {
+      nested.resolve(status(nestedRoot, [nestedChange]));
+      await nestedOperation;
+      primary.resolve(status(ROOT, [changedFile("app.php")]));
+      await primaryOperation;
+    });
+
+    expect(applyGitOperationStatuses).toHaveBeenCalledTimes(2);
+    expect(applyGitOperationStatuses).toHaveBeenCalledWith([
+      expect.objectContaining({ root: nestedRoot }),
+    ]);
+    expect(applyGitOperationStatuses).toHaveBeenCalledWith([
+      expect.objectContaining({ root: ROOT }),
+    ]);
+    harness.unmount();
+  });
+
+  it("rejects an A to B to A mutation result from the previous workspace lifecycle", async () => {
+    const pending = createDeferred<GitStatus>();
+    const applyGitOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageFiles: vi.fn(() => pending.promise) }),
+      applyGitOperationStatuses,
+    });
+    let operation!: Promise<void>;
+
+    act(() => {
+      operation = harness.workspace().stageGitChanges([changedFile("old.php")]);
+    });
+    harness.ref.current = "/workspace-b";
+    harness.rerender({ workspaceRoot: "/workspace-b" });
+    harness.ref.current = ROOT;
+    harness.rerender({ workspaceRoot: ROOT });
+    await act(async () => {
+      pending.resolve(status(ROOT, [changedFile("stale.php")]));
+      await operation;
+    });
+
+    expect(applyGitOperationStatuses).not.toHaveBeenCalled();
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
   it("stages and unstages a single hunk with a status-bar message", async () => {
     const stageHunk = vi.fn(async () => status(ROOT));
     const unstageHunk = vi.fn(async () => status(ROOT));
@@ -287,6 +428,88 @@ describe("useGitWorkspace", () => {
     harness.unmount();
   });
 
+  it("keeps only the newest same-file hunk read when requests resolve in reverse order", async () => {
+    const older = createDeferred<GitDiffHunk[]>();
+    const newer = createDeferred<GitDiffHunk[]>();
+    const getFileHunks = vi
+      .fn<GitGateway["getFileHunks"]>()
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ getFileHunks }),
+    });
+    let olderRead!: Promise<GitDiffHunk[]>;
+    let newerRead!: Promise<GitDiffHunk[]>;
+
+    act(() => {
+      olderRead = harness.workspace().loadGitFileHunks(changedFile("a.ts"), false);
+      newerRead = harness.workspace().loadGitFileHunks(changedFile("a.ts"), false);
+    });
+
+    let newerResult: GitDiffHunk[] = [];
+    let olderResult: GitDiffHunk[] = [];
+    await act(async () => {
+      newer.resolve([hunk(2)]);
+      newerResult = await newerRead;
+      older.resolve([hunk(1)]);
+      olderResult = await olderRead;
+    });
+
+    expect(newerResult).toEqual([hunk(2)]);
+    expect(olderResult).toEqual([]);
+    harness.unmount();
+  });
+
+  it("does not let a hunk read invalidate a pending mutation", async () => {
+    const pendingStage = createDeferred<GitStatus>();
+    const applyGitOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({
+        stageFiles: vi.fn(() => pendingStage.promise),
+        getFileHunks: vi.fn(async () => [hunk(0)]),
+      }),
+      applyGitOperationStatuses,
+    });
+    let stageOperation!: Promise<void>;
+
+    act(() => {
+      stageOperation = harness.workspace().stageGitChanges([changedFile("a.ts")]);
+    });
+    await act(async () => {
+      await harness.workspace().loadGitFileHunks(changedFile("a.ts"), false);
+      pendingStage.resolve(status(ROOT, [changedFile("a.ts", { isStaged: true })]));
+      await stageOperation;
+    });
+
+    expect(applyGitOperationStatuses).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("drops an A to B to A hunk read from the previous workspace owner", async () => {
+    const pending = createDeferred<GitDiffHunk[]>();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ getFileHunks: vi.fn(() => pending.promise) }),
+    });
+    let read!: Promise<GitDiffHunk[]>;
+
+    act(() => {
+      read = harness.workspace().loadGitFileHunks(changedFile("a.ts"), false);
+    });
+    harness.ref.current = "/workspace-b";
+    harness.rerender({ workspaceRoot: "/workspace-b" });
+    harness.ref.current = ROOT;
+    harness.rerender({ workspaceRoot: ROOT });
+
+    let result: GitDiffHunk[] = [];
+    await act(async () => {
+      pending.resolve([hunk(0)]);
+      result = await read;
+    });
+
+    expect(result).toEqual([]);
+    harness.unmount();
+  });
+
   it("loads hunks from the owning nested repository (root + repo-relative path)", async () => {
     const nestedRoot = `${ROOT}/workbench/lcsk/x`;
     const nestedHunks = [hunk(0)];
@@ -319,7 +542,7 @@ describe("useGitWorkspace", () => {
     const nestedStatus = status(nestedRoot);
     const stageHunk = vi.fn(async () => nestedStatus);
     const unstageHunk = vi.fn(async () => nestedStatus);
-    const applyRepositoryOperationStatuses = vi.fn();
+    const applyGitOperationStatuses = vi.fn();
     const nestedChange = changedFile("src/foo.php", {
       path: `${nestedRoot}/src/foo.php`,
     });
@@ -329,7 +552,7 @@ describe("useGitWorkspace", () => {
         { rootRelativePath: "" },
         { rootRelativePath: "workbench/lcsk/x" },
       ],
-      applyRepositoryOperationStatuses,
+      applyGitOperationStatuses,
     });
 
     await act(async () => {
@@ -341,7 +564,7 @@ describe("useGitWorkspace", () => {
     );
     // The touched (nested) repository's fresh status is published, and the
     // primary surface is left untouched (the operation never hit the root repo).
-    expect(applyRepositoryOperationStatuses).toHaveBeenCalledWith([
+    expect(applyGitOperationStatuses).toHaveBeenCalledWith([
       expect.objectContaining({ root: nestedRoot, status: nestedStatus }),
     ]);
     expect(harness.applyGitOperationStatus).not.toHaveBeenCalled();
@@ -664,14 +887,14 @@ describe("useGitWorkspace", () => {
 
   it("fetches every mapped repository and reports the aggregated outcome", async () => {
     const fetch = vi.fn(async (rootPath: string) => status(rootPath));
-    const applyRepositoryOperationStatuses = vi.fn();
+    const applyGitOperationStatuses = vi.fn();
     const harness = renderGitWorkspace({
       gitGateway: createFakeGitGateway({ fetch }),
       gitRepositoryMappings: [
         { rootRelativePath: "" },
         { rootRelativePath: "workbench/lcsk/x" },
       ],
-      applyRepositoryOperationStatuses,
+      applyGitOperationStatuses,
     });
 
     await act(async () => {
@@ -681,7 +904,7 @@ describe("useGitWorkspace", () => {
     expect(fetch).toHaveBeenCalledWith(ROOT);
     expect(fetch).toHaveBeenCalledWith("/workspace/workbench/lcsk/x");
     expect(harness.setMessage).toHaveBeenCalledWith("Fetched 2 repositories");
-    expect(applyRepositoryOperationStatuses).toHaveBeenCalled();
+    expect(applyGitOperationStatuses).toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -725,6 +948,92 @@ describe("useGitWorkspace", () => {
       deferred.resolve(status(ROOT));
       await firstPull;
     });
+    harness.unmount();
+  });
+
+  it("keeps loading while a file mutation remains after fetch completes", async () => {
+    const pendingFetch = createDeferred<GitStatus>();
+    const pendingStage = createDeferred<GitStatus>();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({
+        fetch: vi.fn(() => pendingFetch.promise),
+        stageFiles: vi.fn(() => pendingStage.promise),
+      }),
+    });
+    let fetchOperation!: Promise<void>;
+    let stageOperation!: Promise<void>;
+
+    act(() => {
+      fetchOperation = harness.workspace().fetchGitChanges();
+      stageOperation = harness.workspace().stageGitChanges([changedFile("a.ts")]);
+    });
+
+    await act(async () => {
+      pendingFetch.resolve(status(ROOT));
+      await fetchOperation;
+    });
+    expect(harness.workspace().gitOperationLoading).toBe(true);
+
+    await act(async () => {
+      pendingStage.resolve(status(ROOT));
+      await stageOperation;
+    });
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("serializes a later file mutation and drops the stale commit status", async () => {
+    const included = changedFile("commit.php", { isStaged: true });
+    const pendingCommit = createDeferred<GitStatus>();
+    const pendingStage = createDeferred<GitStatus>();
+    const applyGitOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({
+        commit: vi.fn(() => pendingCommit.promise),
+        stageFiles: vi.fn(() => pendingStage.promise),
+      }),
+      gitStatus: status(ROOT, [included]),
+      applyGitOperationStatuses,
+    });
+    let commitOperation!: Promise<void>;
+    let stageOperation!: Promise<void>;
+
+    act(() => {
+      harness.workspace().setGitCommitMessage("currency test");
+      harness.workspace().toggleGitChangeIncluded(included);
+    });
+    act(() => {
+      commitOperation = harness.workspace().commitGitChanges();
+      stageOperation = harness.workspace().stageGitChanges([changedFile("later.php")]);
+    });
+
+    expect(harness.workspace().gitOperationLoading).toBe(true);
+    expect(applyGitOperationStatuses).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pendingCommit.resolve(status(ROOT, []));
+      await commitOperation;
+      await Promise.resolve();
+    });
+    expect(harness.workspace().gitOperationLoading).toBe(true);
+    expect(applyGitOperationStatuses).not.toHaveBeenCalled();
+
+    await act(async () => {
+      pendingStage.resolve(
+        status(ROOT, [changedFile("later.php", { isStaged: true })]),
+      );
+      await stageOperation;
+    });
+
+    expect(applyGitOperationStatuses).toHaveBeenCalledTimes(1);
+    expect(applyGitOperationStatuses).toHaveBeenCalledWith([
+      expect.objectContaining({
+        status: expect.objectContaining({
+          changes: [expect.objectContaining({ relativePath: "later.php" })],
+        }),
+      }),
+    ]);
+    expect(harness.workspace().gitOperationLoading).toBe(false);
     harness.unmount();
   });
 
@@ -888,7 +1197,7 @@ describe("useGitWorkspace", () => {
     const stageFiles = vi.fn(async (root: string) => status(root));
     const primary = changedFile("app.php");
     const nested = nestedChangedFile("lib.php");
-    const applyRepositoryOperationStatuses = vi.fn();
+    const applyGitOperationStatuses = vi.fn();
     const recordGitCommitMessage = vi.fn();
     const harness = renderGitWorkspace({
       gitGateway: createFakeGitGateway({ commit, stageFiles }),
@@ -911,7 +1220,7 @@ describe("useGitWorkspace", () => {
           failed: false,
         },
       ],
-      applyRepositoryOperationStatuses,
+      applyGitOperationStatuses,
       recordGitCommitMessage,
     });
 
@@ -933,7 +1242,7 @@ describe("useGitWorkspace", () => {
       "unified message",
       [nested],
     );
-    expect(applyRepositoryOperationStatuses).toHaveBeenCalled();
+    expect(applyGitOperationStatuses).toHaveBeenCalled();
     expect(harness.workspace().gitCommitMessage).toBe("");
     expect(harness.setMessage).toHaveBeenCalledWith(
       "Committed to 2 repositories",
@@ -968,7 +1277,7 @@ describe("useGitWorkspace", () => {
           failed: false,
         },
       ],
-      applyRepositoryOperationStatuses: vi.fn(),
+      applyGitOperationStatuses: vi.fn(),
     });
 
     act(() => {
@@ -1019,7 +1328,7 @@ describe("useGitWorkspace", () => {
           failed: false,
         },
       ],
-      applyRepositoryOperationStatuses: vi.fn(),
+      applyGitOperationStatuses: vi.fn(),
     });
 
     act(() => {

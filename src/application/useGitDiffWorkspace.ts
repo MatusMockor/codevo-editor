@@ -58,6 +58,7 @@ export interface GitDiffWorkspace {
   getGitDiffDocument: (path: string) => GitDiffDocumentState | null;
   getSelectedGitDiffDocument: () => GitDiffDocumentState | null;
   loadGitDiffDocument: (path: string, gitChange?: GitChangedFile) => void;
+  reloadGitDiffDocument: (path: string) => void;
   reconcileGitDiffDocument: (
     path: string,
     gitChange: GitChangedFile,
@@ -201,8 +202,8 @@ export function useGitDiffWorkspace(
     [updateGitDiffDocuments],
   );
 
-  const loadGitDiffDocument = useCallback(
-    (path: string, gitChange?: GitChangedFile) => {
+  const loadGitDiffDocumentState = useCallback(
+    (path: string, gitChange: GitChangedFile | undefined, activate: boolean) => {
       if (!workspaceRoot) {
         return;
       }
@@ -228,12 +229,19 @@ export function useGitDiffWorkspace(
       const workspaceRequestToken = gitDiffRequestTokenRef.current;
       const requestToken = (requestTokenByDocumentPathRef.current[path] ?? 0) + 1;
       requestTokenByDocumentPathRef.current[path] = requestToken;
-      recordCurrentNavigationLocation();
+      if (activate) {
+        recordCurrentNavigationLocation();
+      }
+
       selectedGitDiffDocumentPathRef.current = path;
       selectedGitChangeRef.current = retainedChange;
       setSelectedGitChange(retainedChange);
       setGitDiffPreview(existing.diff);
       setGitDiffLoading(true);
+
+      if (activate) {
+        documentTabSession.activate(path);
+      }
       updateGitDiffDocuments((current) => ({
         ...current,
         [path]: {
@@ -244,8 +252,6 @@ export function useGitDiffWorkspace(
           repositoryRoot: requestedRoot,
         },
       }));
-      documentTabSession.activate(path);
-
       void gitGateway
         .getDiff(requestedRoot, retainedChange)
         .then((diff) => {
@@ -329,6 +335,20 @@ export function useGitDiffWorkspace(
       updateGitDiffDocuments,
       workspaceRoot,
     ],
+  );
+
+  const loadGitDiffDocument = useCallback(
+    (path: string, gitChange?: GitChangedFile) => {
+      loadGitDiffDocumentState(path, gitChange, true);
+    },
+    [loadGitDiffDocumentState],
+  );
+
+  const reloadGitDiffDocument = useCallback(
+    (path: string) => {
+      loadGitDiffDocumentState(path, undefined, false);
+    },
+    [loadGitDiffDocumentState],
   );
 
   const previewGitChange = useCallback(
@@ -485,6 +505,7 @@ export function useGitDiffWorkspace(
     getGitDiffDocument,
     getSelectedGitDiffDocument,
     loadGitDiffDocument,
+    reloadGitDiffDocument,
     reconcileGitDiffDocument,
     previewGitChange,
     openGitChange,

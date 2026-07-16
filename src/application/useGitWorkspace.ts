@@ -26,6 +26,10 @@ import {
   type ResolvedGitRepository,
 } from "../domain/gitRepositoryMapping";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type {
+  GitOperationCurrency,
+  GitRepositoryOperationReservation,
+} from "./useGitOperationCurrency";
 
 const DEFAULT_GIT_REPOSITORY_MAPPINGS: GitRepositoryMapping[] = [
   WORKSPACE_ROOT_MAPPING,
@@ -133,13 +137,14 @@ async function commitOneRepository(
   message: string,
   requestedRoot: string,
   isActiveRoot: (requestedRoot: string) => boolean,
+  isOperationCurrent: () => boolean,
   amend: boolean,
 ): Promise<CommitOneResult | typeof STALE> {
   try {
     if (group.changes.some((change) => !change.isStaged)) {
       await gitGateway.stageFiles(group.repositoryRoot, group.changes);
 
-      if (!isActiveRoot(requestedRoot)) {
+      if (!isActiveRoot(requestedRoot) || !isOperationCurrent()) {
         return STALE;
       }
     }
@@ -288,6 +293,7 @@ function announcePushOutcome(options: {
  */
 export interface GitWorkspaceDependencies {
   gitGateway: GitGateway;
+  gitOperationCurrency: GitOperationCurrency;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   workspaceRoot: string | null;
   // Read by runGitCommit (to pick the included changes) and by the reconciling
@@ -297,7 +303,7 @@ export interface GitWorkspaceDependencies {
   // Publishes a fresh PRIMARY-repo status after an operation and closes a
   // now-stale diff preview. Lives in the shell because it touches the editor
   // tab lifecycle.
-  applyGitOperationStatus: (status: GitStatus) => void;
+  applyGitOperationStatuses: (statuses: GitRepositoryStatus[]) => void;
   reportError: (source: string, error: unknown) => void;
   setMessage: (message: string | null) => void;
   prompter: WorkbenchPrompter;
@@ -313,8 +319,6 @@ export interface GitWorkspaceDependencies {
   gitRepositoryStatuses?: GitRepositoryStatus[];
   // Publishes fresh per-repository statuses after a multi-repo operation so the
   // shell can update the whole-map view. Optional: when omitted only the
-  // primary status is published (through `applyGitOperationStatus`).
-  applyRepositoryOperationStatuses?: (statuses: GitRepositoryStatus[]) => void;
   gitCommitMessageHistory?: string[];
   recordGitCommitMessage?: (
     workspaceRoot: string,
@@ -356,16 +360,16 @@ export function useGitWorkspace(
 ): GitWorkspace {
   const {
     gitGateway,
+    gitOperationCurrency,
     currentWorkspaceRootRef,
     workspaceRoot,
     gitStatus,
-    applyGitOperationStatus,
+    applyGitOperationStatuses,
     reportError,
     setMessage,
     prompter,
     gitRepositoryMappings,
     gitRepositoryStatuses,
-    applyRepositoryOperationStatuses,
     gitCommitMessageHistory = [],
     recordGitCommitMessage,
   } = dependencies;
@@ -405,8 +409,8 @@ export function useGitWorkspace(
     }));
   }, [gitRepositoryStatuses, gitStatus.changes]);
 
-  const [gitOperationLoading, setGitOperationLoading] = useState(false);
   const gitOperationInFlightRef = useRef(false);
+  const gitExclusiveOperationGenerationRef = useRef(0);
   const [gitAmendEnabled, setGitAmendEnabled] = useState(false);
   const [gitCommitMessage, setGitCommitMessage] = useState("");
   const [includedGitChangePaths, setIncludedGitChangePaths] = useState<
@@ -419,21 +423,39 @@ export function useGitWorkspace(
     [currentWorkspaceRootRef],
   );
 
-  // Publishes the primary repo's fresh status to the pre-multi-repo surface and,
-  // when the shell wired it, the whole per-repo batch to the multi-repo view.
   const publishStatuses = useCallback(
     (statuses: GitRepositoryStatus[]) => {
-      const primary = statuses.find((entry) =>
-        workspaceRootKeysEqual(entry.root, workspaceRoot),
-      );
-
-      if (primary) {
-        applyGitOperationStatus(primary.status);
-      }
-
-      applyRepositoryOperationStatuses?.(statuses);
+      applyGitOperationStatuses(statuses);
     },
-    [applyGitOperationStatus, applyRepositoryOperationStatuses, workspaceRoot],
+    [applyGitOperationStatuses],
+  );
+
+  const isGitMutationCurrent = useCallback(
+    (
+      reservation: GitRepositoryOperationReservation,
+      requestedRoot: string,
+      repositoryRoot: string,
+    ) => {
+      return (
+        gitOperationCurrency.isRepositoryCurrent(
+          reservation,
+          repositoryRoot,
+        ) &&
+        isActiveRoot(requestedRoot)
+      );
+    },
+    [gitOperationCurrency, isActiveRoot],
+  );
+
+  const isGitMutationOwnerCurrent = useCallback(
+    (
+      reservation: GitRepositoryOperationReservation,
+      requestedRoot: string,
+      repositoryRoot: string,
+    ) =>
+      isActiveRoot(requestedRoot) &&
+      gitOperationCurrency.isOperationCurrent(reservation, repositoryRoot),
+    [gitOperationCurrency, isActiveRoot],
   );
 
   // Routes a set of changes into their owning repositories and runs `operation`
@@ -463,52 +485,114 @@ export function useGitWorkspace(
         return;
       }
 
-      setGitOperationLoading(true);
+      const reservation = gitOperationCurrency.reserveOperation(
+        groups.map((group) => group.repositoryRoot),
+      );
 
       const statuses: GitRepositoryStatus[] = [];
-      let failure: unknown = null;
+      const failures: Array<{ error: unknown; repositoryRoot: string }> = [];
 
       try {
         for (const group of groups) {
-          try {
-            const status = await operation(group.repositoryRoot, group.changes);
+          if (
+            !isGitMutationOwnerCurrent(
+              reservation,
+              requestedRoot,
+              group.repositoryRoot,
+            )
+          ) {
+            continue;
+          }
 
-            if (!isActiveRoot(requestedRoot)) {
-              return;
+          try {
+            const execution = await gitOperationCurrency.runRepositoryMutation(
+              reservation,
+              group.repositoryRoot,
+              () => operation(group.repositoryRoot, group.changes),
+            );
+
+            if (!execution.executed) {
+              continue;
+            }
+
+            if (
+              !isGitMutationCurrent(
+                reservation,
+                requestedRoot,
+                group.repositoryRoot,
+              )
+            ) {
+              continue;
             }
 
             statuses.push({
               mapping: group.mapping,
               root: group.repositoryRoot,
-              status,
+              status: execution.value,
               failed: false,
             });
           } catch (error) {
-            failure = failure ?? error;
+            if (
+              isGitMutationCurrent(
+                reservation,
+                requestedRoot,
+                group.repositoryRoot,
+              )
+            ) {
+              failures.push({ error, repositoryRoot: group.repositoryRoot });
+            }
           }
         }
 
-        if (!isActiveRoot(requestedRoot)) {
+        const currentStatuses = statuses.filter((entry) =>
+          isGitMutationCurrent(reservation, requestedRoot, entry.root),
+        );
+        const currentFailure = failures.find((entry) =>
+          isGitMutationCurrent(
+            reservation,
+            requestedRoot,
+            entry.repositoryRoot,
+          ),
+        );
+
+        if (currentStatuses.length > 0) {
+          publishStatuses(currentStatuses);
+        }
+
+        if (currentFailure) {
+          reportError("Git", currentFailure.error);
           return;
         }
 
-        if (statuses.length > 0) {
-          publishStatuses(statuses);
-        }
-
-        if (failure) {
-          reportError("Git", failure);
+        if (
+          !groups.some((group) =>
+            isGitMutationCurrent(
+              reservation,
+              requestedRoot,
+              group.repositoryRoot,
+            ),
+          ) ||
+          !isActiveRoot(requestedRoot)
+        ) {
           return;
         }
 
         setMessage(skippedChangesMessage(unresolved));
       } finally {
-        if (isActiveRoot(requestedRoot)) {
-          setGitOperationLoading(false);
-        }
+        gitOperationCurrency.releaseOperation(reservation);
       }
     },
-    [isActiveRoot, mappings, publishStatuses, reportError, setMessage, workspaceRoot],
+    [
+      isGitMutationCurrent,
+      isGitMutationOwnerCurrent,
+      isActiveRoot,
+      mappings,
+      publishStatuses,
+      gitOperationCurrency,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
   );
 
   const toggleGitChangeIncluded = useCallback(
@@ -573,6 +657,12 @@ export function useGitWorkspace(
         return [];
       }
 
+      const readReservation = gitOperationCurrency.reserveRead(
+        resolved.repositoryRoot,
+        resolved.repositoryRelativePath,
+        staged,
+      );
+
       try {
         const hunks = await gitGateway.getFileHunks(
           resolved.repositoryRoot,
@@ -582,20 +672,33 @@ export function useGitWorkspace(
 
         // Drop stale results: the active workspace may have changed while the
         // diff resolved (per-tab isolation).
-        if (!isActiveRoot(requestedRoot)) {
+        if (
+          !isActiveRoot(requestedRoot) ||
+          !gitOperationCurrency.isReadCurrent(readReservation)
+        ) {
           return [];
         }
 
         return hunks;
       } catch (error) {
-        if (isActiveRoot(requestedRoot)) {
+        if (
+          isActiveRoot(requestedRoot) &&
+          gitOperationCurrency.isReadCurrent(readReservation)
+        ) {
           reportError("Git", error);
         }
 
         return [];
       }
     },
-    [gitGateway, isActiveRoot, mappings, reportError, workspaceRoot],
+    [
+      gitGateway,
+      gitOperationCurrency,
+      isActiveRoot,
+      mappings,
+      reportError,
+      workspaceRoot,
+    ],
   );
 
   const runHunkOperation = useCallback(
@@ -626,36 +729,54 @@ export function useGitWorkspace(
       }
 
       const { mapping, repositoryRoot, repositoryRelativePath } = resolved;
-      setGitOperationLoading(true);
+      const reservation = gitOperationCurrency.reserveOperation([repositoryRoot]);
+      const isCurrentMutation = () =>
+        isGitMutationCurrent(reservation, requestedRoot, repositoryRoot);
 
       try {
-        const status = await operation(
+        const execution = await gitOperationCurrency.runRepositoryMutation(
+          reservation,
           repositoryRoot,
-          repositoryRelativePath,
-          hunkIndex,
+          () =>
+            operation(
+              repositoryRoot,
+              repositoryRelativePath,
+              hunkIndex,
+            ),
         );
 
-        if (!isActiveRoot(requestedRoot)) {
+        if (!execution.executed || !isCurrentMutation()) {
           return;
         }
 
         publishStatuses([
-          { mapping, root: repositoryRoot, status, failed: false },
+          {
+            mapping,
+            root: repositoryRoot,
+            status: execution.value,
+            failed: false,
+          },
         ]);
         setMessage(`${messagePrefix} ${change.relativePath}`);
       } catch (error) {
         // A rejected patch (stale hunk / already staged) fails atomically on
         // the Rust side - the index is untouched, so this is a safe no-op.
-        if (isActiveRoot(requestedRoot)) {
+        if (isCurrentMutation()) {
           reportError("Git", error);
         }
       } finally {
-        if (isActiveRoot(requestedRoot)) {
-          setGitOperationLoading(false);
-        }
+        gitOperationCurrency.releaseOperation(reservation);
       }
     },
-    [isActiveRoot, mappings, publishStatuses, reportError, setMessage, workspaceRoot],
+    [
+      isGitMutationCurrent,
+      mappings,
+      publishStatuses,
+      gitOperationCurrency,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
   );
 
   const stageGitHunk = useCallback(
@@ -739,8 +860,13 @@ export function useGitWorkspace(
       }
 
       const singleRepo = groups.length === 1;
+      const reservation = gitOperationCurrency.reserveOperation(
+        groups.map((group) => group.repositoryRoot),
+      );
+      const exclusiveOperationGeneration =
+        gitExclusiveOperationGenerationRef.current + 1;
+      gitExclusiveOperationGenerationRef.current = exclusiveOperationGeneration;
       gitOperationInFlightRef.current = true;
-      setGitOperationLoading(true);
 
       try {
         const committed: GitRepositoryStatus[] = [];
@@ -750,24 +876,68 @@ export function useGitWorkspace(
         }> = [];
 
         for (const group of groups) {
-          const committedStatus = await commitOneRepository(
-            gitGateway,
-            group,
-            message,
-            requestedRoot,
-            isActiveRoot,
-            amend,
+          if (
+            !isGitMutationOwnerCurrent(
+              reservation,
+              requestedRoot,
+              group.repositoryRoot,
+            )
+          ) {
+            continue;
+          }
+
+          const execution = await gitOperationCurrency.runRepositoryMutation(
+            reservation,
+            group.repositoryRoot,
+            () =>
+              commitOneRepository(
+                gitGateway,
+                group,
+                message,
+                requestedRoot,
+                isActiveRoot,
+                () =>
+                  gitOperationCurrency.isOperationCurrent(
+                    reservation,
+                    group.repositoryRoot,
+                  ),
+                amend,
+              ),
           );
+
+          if (!execution.executed) {
+            continue;
+          }
+
+          const committedStatus = execution.value;
 
           if (committedStatus === STALE) {
             return;
           }
 
           if (committedStatus.failed) {
-            commitFailures.push({
-              mapping: group.mapping,
-              error: committedStatus.error,
-            });
+            if (
+              isGitMutationCurrent(
+                reservation,
+                requestedRoot,
+                group.repositoryRoot,
+              )
+            ) {
+              commitFailures.push({
+                mapping: group.mapping,
+                error: committedStatus.error,
+              });
+            }
+            continue;
+          }
+
+          if (
+            !isGitMutationCurrent(
+              reservation,
+              requestedRoot,
+              group.repositoryRoot,
+            )
+          ) {
             continue;
           }
 
@@ -783,14 +953,25 @@ export function useGitWorkspace(
           return;
         }
 
-        if (committed.length > 0) {
+        const currentCommitted = committed.filter((entry) =>
+          isGitMutationCurrent(reservation, requestedRoot, entry.root),
+        );
+
+        if (currentCommitted.length > 0) {
           await recordGitCommitMessage?.(requestedRoot, message);
 
           if (!isActiveRoot(requestedRoot)) {
             return;
           }
 
-          publishStatuses(committed);
+          const publishableCommitted = currentCommitted.filter((entry) =>
+            isGitMutationCurrent(reservation, requestedRoot, entry.root),
+          );
+          if (publishableCommitted.length === 0) {
+            return;
+          }
+
+          publishStatuses(publishableCommitted);
           setGitAmendEnabled(false);
           setIncludedGitChangePaths(new Set());
           setGitCommitMessage("");
@@ -800,12 +981,12 @@ export function useGitWorkspace(
           setMessage,
           reportError,
           singleRepo,
-          committed,
+          committed: currentCommitted,
           commitFailures,
           pushAfterCommit,
         });
 
-        if (!pushAfterCommit || committed.length === 0) {
+        if (!pushAfterCommit || currentCommitted.length === 0) {
           return;
         }
 
@@ -815,17 +996,39 @@ export function useGitWorkspace(
           error: unknown;
         }> = [];
 
-        for (const entry of committed) {
-          try {
-            const pushStatus = await gitGateway.push(entry.root);
+        for (const entry of currentCommitted) {
+          if (
+            !isGitMutationOwnerCurrent(
+              reservation,
+              requestedRoot,
+              entry.root,
+            )
+          ) {
+            continue;
+          }
 
-            if (!isActiveRoot(requestedRoot)) {
-              return;
+          try {
+            const execution = await gitOperationCurrency.runRepositoryMutation(
+              reservation,
+              entry.root,
+              () => gitGateway.push(entry.root),
+            );
+
+            if (!execution.executed) {
+              continue;
             }
 
-            pushed.push({ ...entry, status: pushStatus });
+            if (!isGitMutationCurrent(reservation, requestedRoot, entry.root)) {
+              continue;
+            }
+
+            pushed.push({ ...entry, status: execution.value });
           } catch (error) {
-            pushFailures.push({ mapping: entry.mapping, error });
+            if (
+              isGitMutationCurrent(reservation, requestedRoot, entry.root)
+            ) {
+              pushFailures.push({ mapping: entry.mapping, error });
+            }
           }
         }
 
@@ -845,9 +1048,12 @@ export function useGitWorkspace(
           pushFailures,
         });
       } finally {
-        if (isActiveRoot(requestedRoot)) {
+        gitOperationCurrency.releaseOperation(reservation);
+        if (
+          gitExclusiveOperationGenerationRef.current ===
+          exclusiveOperationGeneration
+        ) {
           gitOperationInFlightRef.current = false;
-          setGitOperationLoading(false);
         }
       }
     },
@@ -855,7 +1061,10 @@ export function useGitWorkspace(
       committableChanges,
       gitCommitMessage,
       gitGateway,
+      gitOperationCurrency,
       includedGitChangePaths,
+      isGitMutationCurrent,
+      isGitMutationOwnerCurrent,
       isActiveRoot,
       mappings,
       publishStatuses,
@@ -895,25 +1104,53 @@ export function useGitWorkspace(
       const singleRepo = mappings.length === 1;
       const completed: GitRepositoryStatus[] = [];
       const failures: RepositoryFailure[] = [];
+      const repositoryRoots = mappings.map((mapping) =>
+        mapping.rootRelativePath
+          ? `${workspaceRoot.replace(/[\\/]+$/, "")}/${mapping.rootRelativePath}`
+          : workspaceRoot,
+      );
+      const reservation =
+        gitOperationCurrency.reserveOperation(repositoryRoots);
+      const exclusiveOperationGeneration =
+        gitExclusiveOperationGenerationRef.current + 1;
+      gitExclusiveOperationGenerationRef.current = exclusiveOperationGeneration;
       gitOperationInFlightRef.current = true;
-      setGitOperationLoading(true);
 
       try {
-        for (const mapping of mappings) {
-          const root = mapping.rootRelativePath
-            ? `${workspaceRoot.replace(/[\\/]+$/, "")}/${mapping.rootRelativePath}`
-            : workspaceRoot;
+        for (const [index, mapping] of mappings.entries()) {
+          const root = repositoryRoots[index];
+
+          if (
+            !isGitMutationOwnerCurrent(reservation, requestedRoot, root)
+          ) {
+            continue;
+          }
 
           try {
-            const nextStatus = await operation(remoteGateway, root);
+            const execution = await gitOperationCurrency.runRepositoryMutation(
+              reservation,
+              root,
+              () => operation(remoteGateway, root),
+            );
 
-            if (!isActiveRoot(requestedRoot)) {
-              return;
+            if (!execution.executed) {
+              continue;
             }
 
-            completed.push({ mapping, root, status: nextStatus, failed: false });
+            if (!isGitMutationCurrent(reservation, requestedRoot, root)) {
+              continue;
+            }
+
+            completed.push({
+              mapping,
+              root,
+              status: execution.value,
+              failed: false,
+            });
           } catch (error) {
-            failures.push({ mapping, error });
+            if (isGitMutationCurrent(reservation, requestedRoot, root)) {
+              failures.push({ mapping, error });
+            }
           }
         }
 
@@ -921,8 +1158,11 @@ export function useGitWorkspace(
           return;
         }
 
-        if (completed.length > 0) {
-          publishStatuses(completed);
+        const currentCompleted = completed.filter((entry) =>
+          isGitMutationCurrent(reservation, requestedRoot, entry.root),
+        );
+        if (currentCompleted.length > 0) {
+          publishStatuses(currentCompleted);
         }
 
         if (singleRepo && failures.length > 0) {
@@ -941,17 +1181,23 @@ export function useGitWorkspace(
         }
 
         const verb = operationName === "Fetch" ? "Fetched" : "Pulled";
-        setMessage(`${verb} ${pluralRepositories(completed.length)}`);
+        setMessage(`${verb} ${pluralRepositories(currentCompleted.length)}`);
       } finally {
-        if (isActiveRoot(requestedRoot)) {
+        gitOperationCurrency.releaseOperation(reservation);
+        if (
+          gitExclusiveOperationGenerationRef.current ===
+          exclusiveOperationGeneration
+        ) {
           gitOperationInFlightRef.current = false;
-          setGitOperationLoading(false);
         }
       }
     },
     [
       gitGateway,
+      gitOperationCurrency,
       isActiveRoot,
+      isGitMutationCurrent,
+      isGitMutationOwnerCurrent,
       mappings,
       publishStatuses,
       reportError,
@@ -1042,11 +1288,16 @@ export function useGitWorkspace(
   // On workspace switch, reset the commit panel so a switched-to tab never
   // inherits another workspace's draft message / selection / in-flight flag.
   useEffect(() => {
-    setGitOperationLoading(false);
+    gitExclusiveOperationGenerationRef.current += 1;
     gitOperationInFlightRef.current = false;
     setGitAmendEnabled(false);
     setGitCommitMessage("");
     setIncludedGitChangePaths(new Set());
+
+    return () => {
+      gitExclusiveOperationGenerationRef.current += 1;
+      gitOperationInFlightRef.current = false;
+    };
   }, [workspaceRoot]);
 
   return {
@@ -1054,7 +1305,7 @@ export function useGitWorkspace(
     gitCommitMessage,
     gitCommitMessageHistory,
     includedGitChangePaths,
-    gitOperationLoading,
+    gitOperationLoading: gitOperationCurrency.operationLoading,
     setGitAmendEnabled,
     setGitCommitMessage,
     toggleGitChangeIncluded,

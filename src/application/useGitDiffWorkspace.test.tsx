@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useState } from "react";
+import { act, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -18,6 +18,10 @@ import {
   type GitDiffWorkspaceDependencies,
 } from "./useGitDiffWorkspace";
 import {
+  useGitDiffPreviewCloseLifecycle,
+  type GitDiffPreviewCloseLifecycle,
+} from "./useGitDiffPreviewCloseLifecycle";
+import {
   useEditorSessionState,
   type EditorSessionState,
 } from "./useEditorSessionState";
@@ -33,8 +37,10 @@ interface Deferred<T> {
 }
 
 interface Harness {
+  activateDocument: ReturnType<typeof vi.fn>;
   currentWorkspaceRootRef: { current: string | null };
   git: () => GitDiffWorkspace;
+  lifecycle: () => GitDiffPreviewCloseLifecycle;
   onDocumentReplaced: ReturnType<typeof vi.fn>;
   recordCurrentNavigationLocation: ReturnType<typeof vi.fn>;
   reportError: ReturnType<typeof vi.fn>;
@@ -106,30 +112,53 @@ function renderGitDiffWorkspace(
   const container = window.document.createElement("div");
   const root = createRoot(container);
   const currentWorkspaceRootRef = { current: ROOT };
+  const activateDocument = vi.fn();
   const recordCurrentNavigationLocation = vi.fn();
   const reportError = vi.fn();
   const onDocumentReplaced = vi.fn();
   const gitGateway = createFakeGitGateway();
   const captured: {
     git: GitDiffWorkspace | null;
+    lifecycle: GitDiffPreviewCloseLifecycle | null;
     message: string | null;
     session: EditorSessionState | null;
-  } = { git: null, message: null, session: null };
+  } = { git: null, lifecycle: null, message: null, session: null };
 
   function HarnessComponent() {
     const session = useEditorSessionState();
     const [message, setMessage] = useState<string | null>(null);
+    const documentTabSession = useMemo(
+      () => ({
+        ...session.documentTabSession,
+        activate: (path: string) => {
+          activateDocument(path);
+          session.documentTabSession.activate(path);
+        },
+      }),
+      [session.documentTabSession],
+    );
     captured.session = session;
-    captured.git = useGitDiffWorkspace({
+    const git = useGitDiffWorkspace({
       workspaceRoot: ROOT,
       gitGateway,
       currentWorkspaceRootRef,
-      documentTabSession: session.documentTabSession,
+      documentTabSession,
       setMessage,
       recordCurrentNavigationLocation,
       reportError,
       onDocumentReplaced,
       ...overrides,
+    });
+    captured.git = git;
+    captured.lifecycle = useGitDiffPreviewCloseLifecycle({
+      documentTabSession,
+      cancelGitDiffDocument: git.cancelGitDiffDocument,
+      getGitDiffDocument: git.getGitDiffDocument,
+      getSelectedGitDiffDocument: git.getSelectedGitDiffDocument,
+      gitChangeForDiffDocumentPath,
+      loadGitDiffDocument: git.loadGitDiffDocument,
+      reloadGitDiffDocument: git.reloadGitDiffDocument,
+      reconcileGitDiffDocument: git.reconcileGitDiffDocument,
     });
     captured.message = message;
     return null;
@@ -147,8 +176,10 @@ function renderGitDiffWorkspace(
   };
 
   return {
+    activateDocument,
     currentWorkspaceRootRef,
     git: () => required(captured.git, "hook"),
+    lifecycle: () => required(captured.lifecycle, "lifecycle"),
     onDocumentReplaced,
     recordCurrentNavigationLocation,
     reportError,
@@ -355,6 +386,47 @@ describe("useGitDiffWorkspace", () => {
     expect(harness.git().selectedGitChange).toBe(change);
     expect(harness.git().gitDiffPreview).toEqual(diff(change));
     expect(harness.recordCurrentNavigationLocation).toHaveBeenCalledOnce();
+
+    harness.unmount();
+  });
+
+  it("reloads the status fallback without activating it or recording history", async () => {
+    const firstChange = changedFile("src/First.ts");
+    const removedChange = changedFile("src/Removed.ts");
+    const firstPath = gitDiffDocumentPath(firstChange);
+    const removedPath = gitDiffDocumentPath(removedChange);
+    const getDiff = vi.fn<GitGateway["getDiff"]>(async (_root, change) =>
+      diff(change),
+    );
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+
+    await act(async () => {
+      await harness.git().openGitChange(firstChange);
+      await harness.git().openGitChange(removedChange);
+    });
+    harness.activateDocument.mockClear();
+    harness.recordCurrentNavigationLocation.mockClear();
+    getDiff.mockClear();
+
+    await act(async () => {
+      harness.lifecycle().reconcileSelectedGitDiffPreviewForRepository(
+        ROOT,
+        [firstChange],
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.session().activePath).toBe(firstPath);
+    expect(harness.session().documents[removedPath]).toBeUndefined();
+    expect(harness.git().selectedGitChange).toBe(firstChange);
+    expect(harness.git().gitDiffPreview).toEqual(diff(firstChange));
+    expect(getDiff).toHaveBeenCalledOnce();
+    expect(getDiff).toHaveBeenCalledWith(ROOT, firstChange);
+    expect(harness.activateDocument).not.toHaveBeenCalled();
+    expect(harness.recordCurrentNavigationLocation).not.toHaveBeenCalled();
 
     harness.unmount();
   });

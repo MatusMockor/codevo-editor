@@ -10,6 +10,8 @@ import {
   type GitStatusSurfaceDependencies,
 } from "./useGitStatusSurface";
 import { gitDiffDocumentPath } from "./useGitDiffWorkspace";
+import { useGitOperationCurrency } from "./useGitOperationCurrency";
+import type { GitOperationCurrency } from "./useGitOperationCurrency";
 
 const ROOT = "/workspace";
 
@@ -54,7 +56,8 @@ function status(branch: string, changes: GitChangedFile[] = []): GitStatus {
 type GitStatusSurface = ReturnType<typeof useGitStatusSurface>;
 
 interface Harness {
-  closeSelectedGitDiffPreviewForChanges: ReturnType<typeof vi.fn>;
+  currency: () => GitOperationCurrency;
+  reconcileSelectedGitDiffPreviewForRepository: ReturnType<typeof vi.fn>;
   reportError: ReturnType<typeof vi.fn>;
   surface: () => GitStatusSurface;
   unmount: () => void;
@@ -68,13 +71,15 @@ function renderSurface(
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: { surface: GitStatusSurface | null } = { surface: null };
-  const closeSelectedGitDiffPreviewForChanges = vi.fn();
+  const capturedCurrency: { currency: GitOperationCurrency | null } = {
+    currency: null,
+  };
+  const reconcileSelectedGitDiffPreviewForRepository = vi.fn();
   const reportError = vi.fn();
-  const deps: GitStatusSurfaceDependencies = {
+  const deps: Omit<GitStatusSurfaceDependencies, "gitOperationCurrency"> = {
     activeDocument: null,
     activePath: null,
-    closeGitDiffPreview: vi.fn(),
-    closeSelectedGitDiffPreviewForChanges,
+    reconcileSelectedGitDiffPreviewForRepository,
     getSelectedGitDiffDocument: () => selectedGitChange
       ? {
           change: selectedGitChange,
@@ -90,13 +95,14 @@ function renderSurface(
     gitRepositoryDiscoveryRequestTokenRef: { current: 0 },
     reportError,
     reportErrorForActiveWorkspaceRoot: vi.fn(),
-    selectedGitChange,
     setMessage: vi.fn(),
     workspaceRoot: ROOT,
   };
 
   function HookHarness() {
-    captured.surface = useGitStatusSurface(deps);
+    const gitOperationCurrency = useGitOperationCurrency(deps.workspaceRoot);
+    capturedCurrency.currency = gitOperationCurrency;
+    captured.surface = useGitStatusSurface({ ...deps, gitOperationCurrency });
     return null;
   }
 
@@ -105,7 +111,14 @@ function renderSurface(
   });
 
   return {
-    closeSelectedGitDiffPreviewForChanges,
+    currency: () => {
+      if (!capturedCurrency.currency) {
+        throw new Error("currency not mounted");
+      }
+
+      return capturedCurrency.currency;
+    },
+    reconcileSelectedGitDiffPreviewForRepository,
     reportError,
     surface: () => {
       if (!captured.surface) {
@@ -121,6 +134,88 @@ function renderSurface(
 }
 
 describe("useGitStatusSurface", () => {
+  it("drops a refresh issued before a later mutation reservation", async () => {
+    const pending = createDeferred<GitStatus>();
+    const harness = renderSurface(() => pending.promise);
+    let refresh!: Promise<void>;
+
+    act(() => {
+      refresh = harness.surface().refreshGitStatus();
+    });
+    let mutation!: ReturnType<GitOperationCurrency["reserveOperation"]>;
+    act(() => {
+      mutation = harness.currency().reserveOperation([ROOT]);
+    });
+
+    await act(async () => {
+      pending.resolve(status("stale-refresh"));
+      await refresh;
+    });
+
+    expect(harness.surface().gitStatus.branch).toBeNull();
+    expect(harness.surface().gitRepositoryStatuses).toEqual([]);
+    act(() => harness.currency().releaseOperation(mutation));
+    harness.unmount();
+  });
+
+  it("lets a refresh issued after a mutation become the newest status publication", async () => {
+    const pending = createDeferred<GitStatus>();
+    const harness = renderSurface(() => pending.promise);
+    let mutation!: ReturnType<GitOperationCurrency["reserveOperation"]>;
+    act(() => {
+      mutation = harness.currency().reserveOperation([ROOT]);
+    });
+    let refresh!: Promise<void>;
+
+    act(() => {
+      refresh = harness.surface().refreshGitStatus();
+    });
+    expect(harness.currency().isRepositoryCurrent(mutation, ROOT)).toBe(false);
+
+    await act(async () => {
+      pending.resolve(status("newer-refresh"));
+      await refresh;
+      harness.currency().releaseOperation(mutation);
+    });
+
+    expect(harness.surface().gitStatus.branch).toBe("newer-refresh");
+    harness.unmount();
+  });
+
+  it("does not let a stale refresh rejection clear a later mutation status", async () => {
+    const pending = createDeferred<GitStatus>();
+    const harness = renderSurface(() => pending.promise);
+    let refresh!: Promise<void>;
+
+    act(() => {
+      refresh = harness.surface().refreshGitStatus();
+    });
+    let mutation!: ReturnType<GitOperationCurrency["reserveOperation"]>;
+    act(() => {
+      mutation = harness.currency().reserveOperation([ROOT]);
+    });
+    act(() => {
+      harness.surface().applyGitOperationStatuses([
+        {
+          mapping: { rootRelativePath: "" },
+          root: ROOT,
+          status: status("mutation-wins"),
+          failed: false,
+        },
+      ]);
+    });
+
+    await act(async () => {
+      pending.reject(new Error("stale refresh failure"));
+      await refresh;
+      harness.currency().releaseOperation(mutation);
+    });
+
+    expect(harness.surface().gitStatus.branch).toBe("mutation-wins");
+    expect(harness.reportError).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("keeps the newest same-root status and diff reconciliation when the older request resolves last", async () => {
     const first = createDeferred<GitStatus>();
     const second = createDeferred<GitStatus>();
@@ -145,9 +240,9 @@ describe("useGitStatusSurface", () => {
 
     expect(harness.surface().gitStatus.branch).toBe("new");
     expect(harness.surface().gitLoading).toBe(false);
-    expect(harness.closeSelectedGitDiffPreviewForChanges).toHaveBeenCalledWith([
-      selectedChange,
-    ]);
+    expect(
+      harness.reconcileSelectedGitDiffPreviewForRepository,
+    ).toHaveBeenCalledWith(ROOT, [selectedChange]);
 
     await act(async () => {
       first.resolve(status("old"));
@@ -158,7 +253,7 @@ describe("useGitStatusSurface", () => {
     expect(harness.surface().gitRepositoryStatuses[0]?.status.branch).toBe(
       "new",
     );
-    expect(harness.closeSelectedGitDiffPreviewForChanges).toHaveBeenCalledTimes(1);
+    expect(harness.reconcileSelectedGitDiffPreviewForRepository).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 
@@ -241,7 +336,7 @@ describe("useGitStatusSurface", () => {
     expect(harness.surface().gitStatus.branch).toBeNull();
     expect(harness.surface().gitRepositoryStatuses).toEqual([]);
     expect(harness.surface().gitLoading).toBe(false);
-    expect(harness.closeSelectedGitDiffPreviewForChanges).not.toHaveBeenCalled();
+    expect(harness.reconcileSelectedGitDiffPreviewForRepository).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -279,9 +374,37 @@ describe("useGitStatusSurface", () => {
     expect(getStatus).toHaveBeenCalledWith(ROOT);
     expect(getStatus).toHaveBeenCalledWith(nestedRoot);
     expect(harness.surface().gitStatus.branch).toBe("primary");
-    expect(harness.closeSelectedGitDiffPreviewForChanges).toHaveBeenCalledWith([
-      selectedChange,
-    ]);
+    expect(
+      harness.reconcileSelectedGitDiffPreviewForRepository,
+    ).toHaveBeenCalledWith(nestedRoot, [selectedChange]);
+    harness.unmount();
+  });
+
+  it("applies a nested mutation status only to the diff owned by that repository", () => {
+    const nestedRoot = `${ROOT}/packages/nested`;
+    const selectedChange = {
+      ...changedFile("packages/nested/src/App.php"),
+      path: `${nestedRoot}/src/App.php`,
+      relativePath: "src/App.php",
+    };
+    const refreshedChange = { ...selectedChange, status: "renamed" as const };
+    const harness = renderSurface(async () => status("primary"), selectedChange, nestedRoot);
+
+    act(() => {
+      harness.surface().applyGitOperationStatuses([
+        {
+          mapping: { rootRelativePath: "packages/nested" },
+          root: nestedRoot,
+          status: { ...status("nested", [refreshedChange]), rootPath: nestedRoot },
+          failed: false,
+        },
+      ]);
+    });
+
+    expect(harness.surface().gitStatus.branch).toBeNull();
+    expect(
+      harness.reconcileSelectedGitDiffPreviewForRepository,
+    ).toHaveBeenCalledWith(nestedRoot, [refreshedChange]);
     harness.unmount();
   });
 });

@@ -20,6 +20,7 @@ import {
 } from "./useGitDiffWorkspace";
 import { useGitDiffPreviewCloseLifecycle } from "./useGitDiffPreviewCloseLifecycle";
 import { useGitStatusSurface } from "./useGitStatusSurface";
+import { useGitOperationCurrency } from "./useGitOperationCurrency";
 import {
   runEslintDisableAtCursor,
   type EditorSurfaceEslintDisableRunner,
@@ -2167,6 +2168,7 @@ export function useWorkbenchController(
     getGitDiffDocument,
     getSelectedGitDiffDocument,
     loadGitDiffDocument,
+    reloadGitDiffDocument,
     reconcileGitDiffDocument,
     previewGitChange,
     openGitChange,
@@ -2181,26 +2183,23 @@ export function useWorkbenchController(
     onDocumentReplaced: closeReplacedGitDiffDocument,
   });
 
-  const closeGitDiffPreviewForGitStatusSurfaceRef = useRef<() => void>(
-    () => {},
-  );
-  const closeSelectedGitDiffPreviewForGitStatusSurfaceRef = useRef<
-    (changes: GitChangedFile[]) => void
+  const reconcileSelectedGitDiffPreviewForGitStatusSurfaceRef = useRef<
+    (repositoryRoot: string, changes: GitChangedFile[]) => void
   >(() => {});
-  const closeGitDiffPreviewForGitStatusSurface = useCallback(() => {
-    closeGitDiffPreviewForGitStatusSurfaceRef.current();
-  }, []);
-  const closeSelectedGitDiffPreviewForGitStatusSurface = useCallback(
-    (changes: GitChangedFile[]) => {
-      closeSelectedGitDiffPreviewForGitStatusSurfaceRef.current(changes);
+  const reconcileSelectedGitDiffPreviewForGitStatusSurface = useCallback(
+    (repositoryRoot: string, changes: GitChangedFile[]) => {
+      reconcileSelectedGitDiffPreviewForGitStatusSurfaceRef.current(
+        repositoryRoot,
+        changes,
+      );
     },
     [],
   );
   const gitRepositoryDiscoveryRequestTokenRef = useRef(0);
+  const gitOperationCurrency = useGitOperationCurrency(workspaceRoot);
   const {
     activeDocumentGitBaseline,
-    applyGitOperationStatus,
-    applyRepositoryOperationStatuses,
+    applyGitOperationStatuses,
     gitActiveFileBranch,
     gitLoading,
     gitRepositoryMappings,
@@ -2213,17 +2212,16 @@ export function useWorkbenchController(
   } = useGitStatusSurface({
     activeDocument,
     activePath,
-    closeGitDiffPreview: closeGitDiffPreviewForGitStatusSurface,
-    closeSelectedGitDiffPreviewForChanges:
-      closeSelectedGitDiffPreviewForGitStatusSurface,
+    reconcileSelectedGitDiffPreviewForRepository:
+      reconcileSelectedGitDiffPreviewForGitStatusSurface,
     getSelectedGitDiffDocument,
     currentWorkspaceRootRef,
     editorGitBaselineRequestTokenRef,
     gitGateway,
+    gitOperationCurrency,
     gitRepositoryDiscoveryRequestTokenRef,
     reportError,
     reportErrorForActiveWorkspaceRoot,
-    selectedGitChange,
     setMessage,
     workspaceRoot,
   });
@@ -4703,7 +4701,7 @@ export function useWorkbenchController(
 
   const {
     closeGitDiffPreview,
-    closeSelectedGitDiffPreviewForChanges,
+    reconcileSelectedGitDiffPreviewForRepository,
   } = useGitDiffPreviewCloseLifecycle({
     documentTabSession,
     cancelGitDiffDocument,
@@ -4711,11 +4709,11 @@ export function useWorkbenchController(
     getSelectedGitDiffDocument,
     gitChangeForDiffDocumentPath,
     loadGitDiffDocument,
+    reloadGitDiffDocument,
     reconcileGitDiffDocument,
   });
-  closeGitDiffPreviewForGitStatusSurfaceRef.current = closeGitDiffPreview;
-  closeSelectedGitDiffPreviewForGitStatusSurfaceRef.current =
-    closeSelectedGitDiffPreviewForChanges;
+  reconcileSelectedGitDiffPreviewForGitStatusSurfaceRef.current =
+    reconcileSelectedGitDiffPreviewForRepository;
 
   const recordGitCommitMessage = useCallback(
     async (requestedRoot: string, commitMessage: string) => {
@@ -4770,16 +4768,16 @@ export function useWorkbenchController(
     commitAndPushGitChanges,
   } = useGitWorkspace({
     gitGateway,
+    gitOperationCurrency,
     currentWorkspaceRootRef,
     workspaceRoot,
     gitStatus,
-    applyGitOperationStatus,
+    applyGitOperationStatuses,
     reportError,
     setMessage,
     prompter,
     gitRepositoryMappings,
     gitRepositoryStatuses,
-    applyRepositoryOperationStatuses,
     gitCommitMessageHistory: workspaceSettings.gitCommitMessageHistory,
     recordGitCommitMessage,
   });

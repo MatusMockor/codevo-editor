@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { GitChangedFile } from "../domain/git";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { DocumentTabSessionPort } from "./documentTabSessionPort";
 import type { GitDiffDocumentState } from "./useGitDiffWorkspace";
 
@@ -14,12 +15,16 @@ export interface GitDiffPreviewCloseLifecycleDependencies {
     changes: GitChangedFile[],
   ) => GitChangedFile | null;
   loadGitDiffDocument: (path: string) => void;
+  reloadGitDiffDocument: (path: string) => void;
   reconcileGitDiffDocument: (path: string, change: GitChangedFile) => void;
 }
 
 export interface GitDiffPreviewCloseLifecycle {
   closeGitDiffPreview: () => void;
-  closeSelectedGitDiffPreviewForChanges: (changes: GitChangedFile[]) => void;
+  reconcileSelectedGitDiffPreviewForRepository: (
+    repositoryRoot: string,
+    changes: GitChangedFile[],
+  ) => void;
 }
 
 export function useGitDiffPreviewCloseLifecycle(
@@ -31,15 +36,24 @@ export function useGitDiffPreviewCloseLifecycle(
     getGitDiffDocument,
     getSelectedGitDiffDocument,
     gitChangeForDiffDocumentPath,
-    loadGitDiffDocument,
+    reloadGitDiffDocument,
     reconcileGitDiffDocument,
   } = dependencies;
 
-  const closeSelectedGitDiffPreviewForChanges = useCallback(
-    (changes: GitChangedFile[]) => {
+  const reconcileSelectedGitDiffPreviewForRepository = useCallback(
+    (repositoryRoot: string, changes: GitChangedFile[]) => {
       const selectedDiffDocument = getSelectedGitDiffDocument();
 
       if (!selectedDiffDocument) {
+        return;
+      }
+
+      if (
+        !workspaceRootKeysEqual(
+          selectedDiffDocument.repositoryRoot,
+          repositoryRoot,
+        )
+      ) {
         return;
       }
 
@@ -48,6 +62,7 @@ export function useGitDiffPreviewCloseLifecycle(
 
       if (refreshedChange) {
         reconcileGitDiffDocument(documentPath, refreshedChange);
+        reloadGitDiffDocument(documentPath);
         return;
       }
 
@@ -60,7 +75,7 @@ export function useGitDiffPreviewCloseLifecycle(
       }
 
       if (getGitDiffDocument(nextActivePath)) {
-        loadGitDiffDocument(nextActivePath);
+        reloadGitDiffDocument(nextActivePath);
       }
     },
     [
@@ -69,17 +84,26 @@ export function useGitDiffPreviewCloseLifecycle(
       getGitDiffDocument,
       getSelectedGitDiffDocument,
       gitChangeForDiffDocumentPath,
-      loadGitDiffDocument,
+      reloadGitDiffDocument,
       reconcileGitDiffDocument,
     ],
   );
 
   const closeGitDiffPreview = useCallback(() => {
-    closeSelectedGitDiffPreviewForChanges([]);
-  }, [closeSelectedGitDiffPreviewForChanges]);
+    const selectedDiffDocument = getSelectedGitDiffDocument();
+
+    if (!selectedDiffDocument) {
+      return;
+    }
+
+    reconcileSelectedGitDiffPreviewForRepository(
+      selectedDiffDocument.repositoryRoot,
+      [],
+    );
+  }, [getSelectedGitDiffDocument, reconcileSelectedGitDiffPreviewForRepository]);
 
   return {
     closeGitDiffPreview,
-    closeSelectedGitDiffPreviewForChanges,
+    reconcileSelectedGitDiffPreviewForRepository,
   };
 }

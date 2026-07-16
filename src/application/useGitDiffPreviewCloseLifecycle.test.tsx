@@ -95,6 +95,7 @@ function createDependencies(
     gitChangeForDiffDocumentPath: (path, changes) =>
       changes.find((change) => gitDiffDocumentPath(change) === path) ?? null,
     loadGitDiffDocument: vi.fn(),
+    reloadGitDiffDocument: vi.fn(),
     reconcileGitDiffDocument: vi.fn(),
     ...overrides,
   };
@@ -126,7 +127,8 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
     expect(removeDocument).toHaveBeenCalledWith(firstPath);
     expect(vi.mocked(deps.cancelGitDiffDocument).mock.invocationCallOrder[0])
       .toBeLessThan(removeDocument.mock.invocationCallOrder[0]);
-    expect(deps.loadGitDiffDocument).toHaveBeenCalledWith(secondPath);
+    expect(deps.reloadGitDiffDocument).toHaveBeenCalledWith(secondPath);
+    expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
 
     harness.unmount();
   });
@@ -150,7 +152,7 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
         harness.lifecycle().closeGitDiffPreview();
       });
 
-      expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
+      expect(deps.reloadGitDiffDocument).not.toHaveBeenCalled();
 
       harness.unmount();
     },
@@ -173,7 +175,7 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
       harness.lifecycle().closeGitDiffPreview();
     });
 
-    expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
+    expect(deps.reloadGitDiffDocument).not.toHaveBeenCalled();
 
     harness.unmount();
   });
@@ -195,6 +197,7 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
     expect(deps.cancelGitDiffDocument).not.toHaveBeenCalled();
     expect(removeDocument).not.toHaveBeenCalled();
     expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
+    expect(deps.reloadGitDiffDocument).not.toHaveBeenCalled();
 
     harness.unmount();
   });
@@ -206,13 +209,38 @@ describe("useGitDiffPreviewCloseLifecycle", () => {
     const harness = renderLifecycle(deps);
 
     act(() => {
-      harness.lifecycle().closeSelectedGitDiffPreviewForChanges([refreshed]);
+      harness.lifecycle().reconcileSelectedGitDiffPreviewForRepository(
+        "/workspace",
+        [refreshed],
+      );
     });
 
     expect(deps.reconcileGitDiffDocument).toHaveBeenCalledWith(
       gitDiffDocumentPath(selected),
       refreshed,
     );
+    expect(deps.reloadGitDiffDocument).toHaveBeenCalledWith(
+      gitDiffDocumentPath(selected),
+    );
+    expect(deps.cancelGitDiffDocument).not.toHaveBeenCalled();
+    expect(deps.documentTabSession.removeDocument).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("does not reconcile or reload a selected diff owned by another repository", () => {
+    const deps = createDependencies();
+    const harness = renderLifecycle(deps);
+
+    act(() => {
+      harness.lifecycle().reconcileSelectedGitDiffPreviewForRepository(
+        "/workspace/packages/nested",
+        [changedFile("/workspace/src/First.php")],
+      );
+    });
+
+    expect(deps.reconcileGitDiffDocument).not.toHaveBeenCalled();
+    expect(deps.loadGitDiffDocument).not.toHaveBeenCalled();
+    expect(deps.reloadGitDiffDocument).not.toHaveBeenCalled();
     expect(deps.cancelGitDiffDocument).not.toHaveBeenCalled();
     expect(deps.documentTabSession.removeDocument).not.toHaveBeenCalled();
     harness.unmount();
