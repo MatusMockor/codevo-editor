@@ -38,6 +38,7 @@ function context(
     loadViewDataEntries: vi.fn(async () => []),
     maxTypeResolutionDepth: 5,
     resolveExpressionTypeAt,
+    supportsNetteImplicitUser: true,
     viewNames: vi.fn(async () => []),
   } as LatteVariableResolutionContext;
 }
@@ -63,10 +64,95 @@ describe("Latte include argument variable candidates", () => {
       { detail: "include argument", name: "$value" },
       { detail: "Nette template context", name: "$presenter" },
       { detail: "Nette template context", name: "$control" },
+      { detail: "Nette template context", name: "$user" },
     ]);
     expect(candidates.find(({ name }) => name === "$value")?.typeHint).toBe(
       "Invoice",
     );
+    expect(candidates.find(({ name }) => name === "$user")).toEqual({
+      detail: "Nette template context",
+      name: "$user",
+      typeHint: "User",
+    });
+  });
+
+  it("keeps an include user ahead of the implicit Nette user", async () => {
+    const candidates = await collectLatteVariableCandidates(
+      context([includedArgument("user", "App\\Security\\TemplateUser")]),
+      "{$}",
+      2,
+    );
+
+    expect(candidates.find(({ name }) => name === "$user")).toEqual({
+      detail: "include argument",
+      name: "$user",
+      typeHint: "TemplateUser",
+    });
+  });
+
+  it("keeps presenter data user ahead of the implicit Nette user", async () => {
+    const resolutionContext = context([]);
+    resolutionContext.loadViewDataEntries = vi.fn(async () => [
+      {
+        bindings: [
+          {
+            variables: [
+              {
+                detail: "presenter data",
+                name: "$user",
+                typeHint: "App\\Model\\User",
+                valueExpression: null,
+                valueOffset: null,
+              },
+            ],
+            viewName: "Home:default",
+          },
+        ],
+        source: "<?php",
+      },
+    ]);
+    resolutionContext.viewNames = vi.fn(async () => ["Home:default"]);
+
+    const candidates = await collectLatteVariableCandidates(
+      resolutionContext,
+      "{$}",
+      2,
+    );
+
+    expect(candidates.find(({ name }) => name === "$user")).toEqual({
+      detail: "presenter data",
+      name: "$user",
+      typeHint: "User",
+    });
+  });
+
+  it("does not expose implicit user without the Nette capability", async () => {
+    const resolutionContext = context([]);
+    resolutionContext.supportsNetteImplicitUser = false;
+
+    const candidates = await collectLatteVariableCandidates(
+      resolutionContext,
+      "{$}",
+      2,
+    );
+
+    expect(candidates.some(({ name }) => name === "$user")).toBe(false);
+  });
+
+  it("drops implicit candidates when the requested root becomes stale", async () => {
+    let active = true;
+    const resolutionContext = context([]);
+    resolutionContext.isRequestedRootActive = () => active;
+    Object.assign(resolutionContext, {
+      loadIncludedTemplateArguments: vi.fn(async () => {
+        active = false;
+        return [];
+      }),
+    });
+
+    await expect(
+      collectLatteVariableCandidates(resolutionContext, "{$}", 2),
+    ).resolves.toEqual([]);
   });
 
   it("keeps only a type shared by all typed caller sightings", async () => {

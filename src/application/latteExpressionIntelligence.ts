@@ -271,7 +271,7 @@ async function netteReceiverTypeOverride(
   context: LatteExpressionResolutionContext,
   receiverExpression: string,
 ): Promise<LatteReceiverTypeOverride | null> {
-  if (!hasNetteViewDataProvider(context)) {
+  if (!hasNetteProvider(context)) {
     return null;
   }
 
@@ -341,6 +341,7 @@ function latteVariableTypeContext(context: LatteExpressionResolutionContext) {
       offset: number,
       depth: number,
     ) => resolveLatteExpressionTypeAt(context, source, expression, offset, depth),
+    supportsNetteImplicitUser: hasNetteProvider(context),
     viewNames: () => latteCandidateViewNames(context),
   };
 }
@@ -498,7 +499,7 @@ async function loadLatteViewDataEntries(
   });
   const templateRelativePath = context.currentTemplateRelativePath;
 
-  if (!templateRelativePath || !hasNetteViewDataProvider(context)) {
+  if (!templateRelativePath || !hasNetteProvider(context)) {
     return existingEntriesLoad;
   }
 
@@ -608,7 +609,7 @@ function inheritedCacheKeyMatchesRoot(
   return workspaceRootKeysEqual(cachedRoot, requestedRoot);
 }
 
-function hasNetteViewDataProvider(
+function hasNetteProvider(
   context: LatteExpressionResolutionContext,
 ): boolean {
   return context.deps.frameworkIntelligence.providers.some(

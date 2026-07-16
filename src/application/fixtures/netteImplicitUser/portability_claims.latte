@@ -1,0 +1,19 @@
+<h3>{_portability_claims.admin.component.portability_claims.header}</h3>
+
+<div class="row" style="margin-top:30px">
+    <div class="col-md-9">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                {_portability_claims.admin.component.portability_claims.portability_form_header}
+                <a n:if="$user->isAllowed('Admin:AuditLogAdmin', 'default')"
+                        class="pull-right" target="_blank"
+                        href="{plink :Admin:AuditLogAdmin:default, table => 'portability_claims', signature => $userPortability['id']}">
+                    {_portability_claims.admin.component.portability_claims.show_history}
+                </a>
+            </div>
+            <div class="panel-body">
+                {control portabilityClaimsForm}
+            </div>
+        </div>
+    </div>
+</div>

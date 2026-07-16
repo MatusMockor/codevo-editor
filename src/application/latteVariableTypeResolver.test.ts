@@ -67,11 +67,179 @@ function context({
     ),
     maxTypeResolutionDepth: 5,
     resolveExpressionTypeAt,
+    supportsNetteImplicitUser: true,
     viewNames: vi.fn(async () => ["Home:default"]),
   } as LatteVariableResolutionContext;
 }
 
 describe("Latte include argument type resolution", () => {
+  it("resolves the implicit Nette user type", async () => {
+    await expect(
+      resolveLatteVariableType(context(), "{$user}", 3, "user"),
+    ).resolves.toBe("Nette\\Security\\User");
+  });
+
+  it("keeps an include user ahead of the implicit Nette user", async () => {
+    await expect(
+      resolveLatteVariableType(
+        context({ included: [includedArgument("user", "App\\Security\\User")] }),
+        "{$user}",
+        3,
+        "user",
+      ),
+    ).resolves.toBe("App\\Security\\User");
+  });
+
+  it("keeps presenter data user ahead of the implicit Nette user", async () => {
+    const resolutionContext = context();
+    resolutionContext.loadViewDataEntries = vi.fn(async () => [
+      {
+        bindings: [
+          {
+            variables: [
+              {
+                detail: "presenter data",
+                name: "$user",
+                typeHint: "App\\Model\\User",
+                valueExpression: null,
+                valueOffset: null,
+              },
+            ],
+            viewName: "Home:default",
+          },
+        ],
+        source: "<?php",
+      },
+    ]);
+
+    await expect(
+      resolveLatteVariableType(resolutionContext, "{$user}", 3, "user"),
+    ).resolves.toBe("App\\Model\\User");
+  });
+
+  it("does not bypass conflicting explicit template-property user types", async () => {
+    const resolutionContext = context();
+    resolutionContext.loadTemplateTypePropertySightings = vi.fn(async () => [
+      {
+        property: { name: "$user", type: "App\\Model\\CustomerUser" },
+        source: "<?php",
+      },
+      {
+        property: { name: "$user", type: "App\\Security\\AdminUser" },
+        source: "<?php",
+      },
+    ]);
+
+    await expect(
+      resolveLatteVariableType(resolutionContext, "{$user}", 3, "user"),
+    ).resolves.toBeNull();
+    expect(resolutionContext.loadViewDataEntries).not.toHaveBeenCalled();
+  });
+
+  it("does not bypass an unresolved explicit template-property user", async () => {
+    const resolutionContext = context();
+    resolutionContext.loadTemplateTypePropertySightings = vi.fn(async () => [
+      {
+        property: { name: "$user", type: "" },
+        source: "<?php",
+      },
+    ]);
+
+    await expect(
+      resolveLatteVariableType(resolutionContext, "{$user}", 3, "user"),
+    ).resolves.toBeNull();
+    expect(resolutionContext.loadViewDataEntries).not.toHaveBeenCalled();
+  });
+
+  it("does not bypass an explicitly unknown presenter data user", async () => {
+    const resolutionContext = context();
+    resolutionContext.loadViewDataEntries = vi.fn(async () => [
+      {
+        bindings: [
+          {
+            variables: [
+              {
+                detail: "presenter data",
+                name: "$user",
+                typeHint: null,
+                valueExpression: null,
+                valueOffset: null,
+              },
+            ],
+            viewName: "Home:default",
+          },
+        ],
+        source: "<?php",
+      },
+    ]);
+
+    await expect(
+      resolveLatteVariableType(resolutionContext, "{$user}", 3, "user"),
+    ).resolves.toBeNull();
+  });
+
+  it("does not expose implicit user without the Nette capability", async () => {
+    const resolutionContext = context();
+    resolutionContext.supportsNetteImplicitUser = false;
+
+    await expect(
+      resolveLatteVariableType(resolutionContext, "{$user}", 3, "user"),
+    ).resolves.toBeNull();
+  });
+
+  it("keeps declared, template, local, and foreach user shadows ahead of implicit", async () => {
+    const declaredContext = context();
+    const templateContext = context();
+    templateContext.loadTemplateTypePropertySightings = vi.fn(async () => [
+      {
+        property: { name: "$user", type: "App\\Template\\User" },
+        source: "<?php",
+      },
+    ]);
+    const localContext = context();
+    localContext.deps.resolveExpressionType = vi.fn(async () => "App\\Local\\User");
+    const foreachContext = context();
+    foreachContext.loadTemplateTypePropertySightings = vi.fn(async () => [
+      {
+        property: { name: "$users", type: "array<App\\Loop\\User>" },
+        source: "<?php",
+      },
+    ]);
+    foreachContext.deps.resolveExpressionType = vi.fn(
+      async (_source, _position, expression) =>
+        expression === "$users" ? "array<App\\Loop\\User>" : null,
+    );
+
+    await expect(
+      resolveLatteVariableType(
+        declaredContext,
+        "{varType App\\Declared\\User $user}\n{$user}",
+        41,
+        "user",
+      ),
+    ).resolves.toBe("App\\Declared\\User");
+    await expect(
+      resolveLatteVariableType(templateContext, "{$user}", 3, "user"),
+    ).resolves.toBe("App\\Template\\User");
+    await expect(
+      resolveLatteVariableType(
+        localContext,
+        "{var $user = makeUser()}\n{$user}",
+        29,
+        "user",
+      ),
+    ).resolves.toBe("App\\Local\\User");
+    const foreachSource = "{foreach $users as $user}{$user->name}{/foreach}";
+    await expect(
+      resolveLatteVariableType(
+        foreachContext,
+        foreachSource,
+        foreachSource.indexOf("$user->name"),
+        "user",
+      ),
+    ).resolves.toBe("App\\Loop\\User");
+  });
+
   it("uses a merged include type before presenter data", async () => {
     const resolutionContext = context({
       included: [
@@ -149,6 +317,21 @@ describe("Latte include argument type resolution", () => {
       resolveLatteVariableType(resolutionContext, "{$value}", 3, "value"),
     ).resolves.toBeNull();
   });
+
+  it("does not expose the implicit user after the project becomes stale", async () => {
+    let active = true;
+    const resolutionContext = context({ active: () => active });
+    Object.assign(resolutionContext, {
+      loadIncludedTemplateArguments: vi.fn(async () => {
+        active = false;
+        return [];
+      }),
+    });
+
+    await expect(
+      resolveLatteVariableType(resolutionContext, "{$user}", 3, "user"),
+    ).resolves.toBeNull();
+  });
 });
 
 describe("same-document define parameter type resolution", () => {
@@ -197,6 +380,27 @@ describe("same-document define parameter type resolution", () => {
     );
   });
 
+  it("resolves user only when the parameterized define admits it", async () => {
+    const userSource = `{define securedRow, $user}
+  {$user->isAllowed('Admin')}
+{/define}
+{include securedRow $adminUser}`;
+    const resolutionContext = context({
+      resolveExpressionTypeAt: vi.fn(async (_source, expression) =>
+        expression === "$adminUser" ? "App\\Security\\AdminUser" : null,
+      ),
+    });
+
+    await expect(
+      resolveLatteVariableType(
+        resolutionContext,
+        userSource,
+        userSource.indexOf("$user->isAllowed"),
+        "user",
+      ),
+    ).resolves.toBe("App\\Security\\AdminUser");
+  });
+
   it("blocks root, include, implicit, and presenter fallback inside define", async () => {
     const resolutionContext = context({
       included: [includedArgument("presenterOnly", "App\\Included\\Leak")],
@@ -211,6 +415,14 @@ describe("same-document define parameter type resolution", () => {
         source,
         bodyOffset,
         "presenterOnly",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      resolveLatteVariableType(
+        resolutionContext,
+        source,
+        bodyOffset,
+        "user",
       ),
     ).resolves.toBeNull();
     await expect(

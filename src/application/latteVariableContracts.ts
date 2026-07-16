@@ -29,5 +29,7 @@ export interface LatteVariableResolutionContext {
     offset: number,
     depth: number,
   ): Promise<string | null>;
+  /** Absent low-level contexts remain framework-neutral. */
+  supportsNetteImplicitUser?: boolean;
   viewNames(): Promise<string[]>;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
 import {
   latteExpressionCompletions,
@@ -17,6 +18,10 @@ import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 const HOME_TEMPLATE = "app/UI/Home/default.latte";
 const ADMIN_TEMPLATE = "app/UI/Admin/default.latte";
+const CUSTOM_LATTE_PROVIDER: PhpFrameworkProvider = {
+  id: "custom-latte",
+  latte: { supportsTemplateIntelligence: true },
+};
 
 describe("path-aware Latte expression type resolution", () => {
   it("resolves two template paths in one root without consulting the active document", async () => {
@@ -113,6 +118,99 @@ describe("path-aware Latte expression type resolution", () => {
       "App\\Model\\IncludedRecord",
     );
     expect(loadIncludedTemplateArguments).toHaveBeenCalledWith("active.latte");
+  });
+
+  it("completes and defines User::isAllowed in real-shaped Nette template markup", async () => {
+    const context = expressionContext("/workspace", {});
+    context.deps.synthesizeTypedReceiverSource = vi.fn(
+      (variableName, typeName) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `<?php\n/** @var \\${typeName} $${variableName} */\n$${variableName}->`,
+      }),
+    );
+    context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Nette\\Security\\User",
+        name: "isAllowed",
+        parameters: "mixed $resource, mixed $privilege",
+        returnType: "bool",
+      },
+    ]);
+    context.deps.openPhpMethodTarget = vi.fn(async () => true);
+    const fixture = `<div class="panel-heading">
+  <a n:if="$user->isA"
+      class="pull-right" target="_blank"
+      href="{plink :Admin:AuditLogAdmin:default, table => 'portability_claims', signature => $userPortability['id']}">
+    {_portability_claims.admin.component.portability_claims.show_history}
+  </a>
+</div>`;
+    const completionOffset = fixture.indexOf("$user->isA") + "$user->isA".length;
+
+    await expect(
+      latteExpressionCompletions(context, fixture, completionOffset),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        insertText: "isAllowed()",
+        kind: "member",
+        label: "isAllowed",
+      }),
+    ]);
+    expect(context.deps.synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "user",
+      "Nette\\Security\\User",
+    );
+
+    const definitionSource = fixture.replace(
+      "$user->isA",
+      "$user->isAllowed('Admin:AuditLogAdmin', 'default')",
+    );
+    const definitionOffset = definitionSource.indexOf("isAllowed") + 2;
+
+    await expect(
+      resolveLatteMemberDefinition(context, definitionSource, definitionOffset),
+    ).resolves.toBe(true);
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "Nette\\Security\\User",
+      "isAllowed",
+    );
+  });
+
+  it.each([
+    {
+      label: "generic provider set",
+      framework: createPhpFrameworkIntelligence({
+        matchedProviderIds: [],
+        profile: "generic",
+        providers: [],
+      }),
+    },
+    {
+      label: "custom Latte provider",
+      framework: createPhpFrameworkIntelligence({
+        matchedProviderIds: [CUSTOM_LATTE_PROVIDER.id],
+        profile: "generic",
+        providers: [CUSTOM_LATTE_PROVIDER],
+      }),
+    },
+  ])("does not expose implicit user for a $label", async ({ framework }) => {
+    const context = expressionContext("/workspace", {});
+    context.deps.frameworkIntelligence = framework;
+    context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Nette\\Security\\User",
+        name: "isAllowed",
+        parameters: "",
+        returnType: "bool",
+      },
+    ]);
+
+    await expect(
+      resolveLatteExpressionVariableType(context, "{$user}", 3, "user"),
+    ).resolves.toBeNull();
+    await expect(
+      latteExpressionCompletions(context, "{$user->isA}", 11),
+    ).resolves.toEqual([]);
+    expect(context.deps.resolvePhpReceiverCompletions).not.toHaveBeenCalled();
   });
 
   it("completes and defines members through a tableRow formal type", async () => {

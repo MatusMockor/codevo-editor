@@ -174,6 +174,10 @@ export async function collectLatteVariableCandidates(
     add(variable.name, "presenter data", shortTypeName(variable.typeHint));
   }
 
+  if (context.supportsNetteImplicitUser === true) {
+    add("$user", "Nette template context", "User");
+  }
+
   return Array.from(byName.values());
 }
 

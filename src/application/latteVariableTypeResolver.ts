@@ -26,6 +26,7 @@ import type {
 } from "./latteVariableContracts";
 
 const NETTE_TEMPLATE_IMPLICIT_CONTROL_TYPE = "Nette\\Application\\UI\\Control";
+const NETTE_TEMPLATE_IMPLICIT_USER_TYPE = "Nette\\Security\\User";
 
 /**
  * Resolves the receiver type of a Latte variable through the PhpStorm-like
@@ -59,16 +60,16 @@ export async function resolveLatteVariableType(
     return declaredType;
   }
 
-  const templateType = definition
-    ? null
+  const templateResolution = definition
+    ? missingLexicalType()
     : await latteTemplateTypeVariableType(context, source, variableName);
 
   if (!isRequestedRootActive()) {
     return null;
   }
 
-  if (templateType) {
-    return templateType;
+  if (templateResolution.found) {
+    return templateResolution.type;
   }
 
   const localResolution = await latteLocalVariableType(
@@ -152,14 +153,24 @@ export async function resolveLatteVariableType(
     return implicitType;
   }
 
-  const presenterType = await lattePresenterVariableType(context, variableName);
+  const presenterResolution = await lattePresenterVariableType(
+    context,
+    variableName,
+  );
 
   if (!isRequestedRootActive()) {
     return null;
   }
 
-  if (presenterType) {
-    return presenterType;
+  if (presenterResolution.found) {
+    return presenterResolution.type;
+  }
+
+  if (
+    variableName === "user" &&
+    context.supportsNetteImplicitUser === true
+  ) {
+    return NETTE_TEMPLATE_IMPLICIT_USER_TYPE;
   }
 
   return null;
@@ -244,17 +255,25 @@ async function latteTemplateTypeVariableType(
   context: LatteVariableResolutionContext,
   source: string,
   variableName: string,
-): Promise<string | null> {
+): Promise<LexicalTypeResolution> {
   const sightings = await context.loadTemplateTypePropertySightings(source);
 
   if (!context.isRequestedRootActive()) {
-    return null;
+    return missingLexicalType();
   }
 
-  return latteResolvedTypeFromTemplateSightings(
-    context.deps,
-    sightings,
-    variableName,
+  const target = `$${variableName}`;
+
+  if (!sightings.some((sighting) => sighting.property.name === target)) {
+    return missingLexicalType();
+  }
+
+  return foundLexicalType(
+    latteResolvedTypeFromTemplateSightings(
+      context.deps,
+      sightings,
+      variableName,
+    ),
   );
 }
 
@@ -358,18 +377,18 @@ async function latteImplicitVariableType(
 async function lattePresenterVariableType(
   context: LatteVariableResolutionContext,
   variableName: string,
-): Promise<string | null> {
+): Promise<LexicalTypeResolution> {
   const { deps, isRequestedRootActive } = context;
   const entries = await context.loadViewDataEntries();
 
   if (!isRequestedRootActive() || entries.length === 0) {
-    return null;
+    return missingLexicalType();
   }
 
   const viewNames = await context.viewNames();
 
   if (!isRequestedRootActive()) {
-    return null;
+    return missingLexicalType();
   }
 
   const target = `$${variableName}`;
@@ -387,7 +406,7 @@ async function lattePresenterVariableType(
   }
 
   if (sightings.length === 0) {
-    return null;
+    return missingLexicalType();
   }
 
   const resolved: (string | null)[] = [];
@@ -396,11 +415,11 @@ async function lattePresenterVariableType(
     resolved.push(await resolveNetteSightingType(deps, sighting));
 
     if (!isRequestedRootActive()) {
-      return null;
+      return missingLexicalType();
     }
   }
 
-  return mergeLatteResolvedTypes(resolved);
+  return foundLexicalType(mergeLatteResolvedTypes(resolved));
 }
 
 async function latteForeachVariableType(
