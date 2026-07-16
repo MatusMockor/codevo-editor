@@ -1,8 +1,13 @@
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
+import { findNetteFactoryTemplateOwnerMethodSource } from "./netteFactoryTemplateOwnerHierarchy";
+import type { NetteFactoryTemplateOwner } from "./netteFactoryTemplateOwners";
 import type {
   NettePresenterDiscoveryContext,
 } from "./nettePresenterLinkDiscovery";
-import { resolveNettePresenterOwner } from "./nettePresenterResolution";
+import {
+  resolveNettePresenterOwner,
+  type NettePresenterResolutionContext,
+} from "./nettePresenterResolution";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 
 export type {
@@ -15,8 +20,19 @@ export interface NettePresenterLinkDetection {
 
 const NETTE_THIS_ACTION = "this";
 
+export type NettePresenterLinkDefinitionContext = Omit<
+  NettePresenterDiscoveryContext,
+  "cache" | "deps" | "inFlight" | "ttlMs"
+> & {
+  deps: NettePresenterDiscoveryContext["deps"] &
+    NettePresenterResolutionContext["deps"];
+  loadFactoryTemplateOwner(
+    templatePath: string,
+  ): Promise<NetteFactoryTemplateOwner | null>;
+};
+
 export async function resolveNetteLinkDefinition(
-  context: Omit<NettePresenterDiscoveryContext, "cache" | "inFlight" | "ttlMs">,
+  context: NettePresenterLinkDefinitionContext,
   detection: NettePresenterLinkDetection | null,
 ): Promise<boolean> {
   if (!detection) {
@@ -31,7 +47,7 @@ export async function resolveNetteLinkDefinition(
 }
 
 export async function resolveNettePresenterLink(
-  context: Omit<NettePresenterDiscoveryContext, "cache" | "inFlight" | "ttlMs">,
+  context: NettePresenterLinkDefinitionContext,
   parsed: NetteLinkTarget | null,
   label: string,
 ): Promise<boolean> {
@@ -61,10 +77,22 @@ export async function resolveNettePresenterLink(
     return false;
   }
 
-  const position = phpMethodPositionInSource(owner.source, methodNames) ?? {
+  const factoryHierarchy = owner.factoryHierarchy;
+  const methodOwner = factoryHierarchy
+    ? methodNames
+        .map((methodName) =>
+          findNetteFactoryTemplateOwnerMethodSource(
+            factoryHierarchy,
+            methodName,
+          ),
+        )
+        .find((candidate) => candidate !== null)
+    : null;
+  const source = methodOwner?.source ?? owner;
+  const position = phpMethodPositionInSource(source.source, methodNames) ?? {
     column: 1,
     lineNumber: 1,
   };
 
-  return deps.openTarget(owner.path, position, label);
+  return deps.openTarget(source.path, position, label);
 }

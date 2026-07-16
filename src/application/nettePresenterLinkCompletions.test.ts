@@ -16,9 +16,66 @@ import { normalizeNettePresenterMappings } from "../domain/nettePresenterMapping
 const ROOT = "/ws";
 
 describe("lattePresenterLinkCompletions", () => {
+  it("offers trait and inherited DataGrid handlers for a factory-owned template", async () => {
+    const ownerPath = `${ROOT}/app/Components/UblabooDatagrid.php`;
+    const traitPath = `${ROOT}/app/Components/GridSignals.php`;
+    const dataGridPath = `${ROOT}/vendor/ublaboo/datagrid/src/DataGrid.php`;
+    const base = emptyContext("app/Notifications/datagrid.latte");
+    const completions = await lattePresenterLinkCompletions(
+      {
+        ...base,
+        deps: {
+          ...base.deps,
+          readPhpClassSource: vi.fn(async (className) => {
+            if (className === "GridSignals") {
+              return {
+                path: traitPath,
+                source:
+                  "<?php trait GridSignals { public function handleResetFilter(): void {} }",
+              };
+            }
+
+            if (className === "DataGrid") {
+              return {
+                path: dataGridPath,
+                source:
+                  "<?php class DataGrid { public function handlePage(): void {} }",
+              };
+            }
+
+            return null;
+          }),
+          resolveDeclaredType: (_source, typeHint) => typeHint,
+        },
+        loadFactoryTemplateOwner: vi.fn(async () => ({
+          className: "App\\Components\\UblabooDatagrid",
+          dependencyPaths: [ownerPath],
+          factoryPaths: [`${ROOT}/app/Notifications/DatagridFactory.php`],
+          path: ownerPath,
+          source:
+            "<?php class UblabooDatagrid extends DataGrid { use GridSignals; }",
+        })),
+      },
+      { prefix: "", replaceEnd: 0, replaceStart: 0 },
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "page!",
+      "resetFilter!",
+    ]);
+  });
+
   it("includes singular Component signals alongside presenter actions", async () => {
     const componentPath = `${ROOT}/app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php`;
     const presenterPath = `${ROOT}/app/CrossSellAdminPresenter.php`;
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "App\\AmbiguousTimeline",
+      dependencyPaths: [`${ROOT}/app/AmbiguousTimeline.php`],
+      factoryPaths: [`${ROOT}/app/TimelineFactory.php`],
+      path: `${ROOT}/app/AmbiguousTimeline.php`,
+      source:
+        "<?php class AmbiguousTimeline { use FirstSignals, SecondSignals; }",
+    }));
     const completions = await lattePresenterLinkCompletions(
       {
         cache: {},
@@ -58,6 +115,7 @@ describe("lattePresenterLinkCompletions", () => {
         inFlight: new Map(),
         isDirectorySkipped: () => false,
         isRequestedRootActive: () => true,
+        loadFactoryTemplateOwner,
         maxDepth: 1,
         maxPresenters: 10,
         requestedRoot: ROOT,
@@ -69,6 +127,42 @@ describe("lattePresenterLinkCompletions", () => {
     expect(completions.map((completion) => completion.label)).toEqual(
       expect.arrayContaining(["cancel!", "CrossSellAdmin:show"]),
     );
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
+  });
+
+  it("does not use factory handlers when a conventional component exists without signals", async () => {
+    const currentRelativePath =
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte";
+    const componentPath = `${ROOT}/app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php`;
+    const base = emptyContext(currentRelativePath);
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "App\\FactoryTimeline",
+      dependencyPaths: [`${ROOT}/app/FactoryTimeline.php`],
+      factoryPaths: [`${ROOT}/app/TimelineFactory.php`],
+      path: `${ROOT}/app/FactoryTimeline.php`,
+      source:
+        "<?php class FactoryTimeline { public function handleFactoryOnly(): void {} }",
+    }));
+    const completions = await lattePresenterLinkCompletions(
+      {
+        ...base,
+        deps: {
+          ...base.deps,
+          readFileContent: vi.fn(async (path: string) => {
+            if (path === componentPath) {
+              return "<?php class CrossSellTransferTimeline {}";
+            }
+
+            throw new Error(`missing ${path}`);
+          }),
+        },
+        loadFactoryTemplateOwner,
+      },
+      { prefix: "", replaceEnd: 0, replaceStart: 0 },
+    );
+
+    expect(completions).toEqual([]);
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
   });
 
   it("scans presenters once and offers relative targets for the current presenter", async () => {
@@ -114,6 +208,7 @@ class HomePresenter
         inFlight,
         isDirectorySkipped: () => false,
         isRequestedRootActive: () => true,
+        loadFactoryTemplateOwner: vi.fn(async () => null),
         maxDepth: 12,
         maxPresenters: 100,
         requestedRoot: ROOT,
@@ -168,6 +263,7 @@ class MailTemplatesAdminPresenter
         inFlight: new Map(),
         isDirectorySkipped: () => false,
         isRequestedRootActive: () => true,
+        loadFactoryTemplateOwner: vi.fn(async () => null),
         loadPresenterMappings: async () =>
           normalizeNettePresenterMappings([
             [
@@ -226,6 +322,7 @@ class DashboardPresenter
         inFlight: new Map(),
         isDirectorySkipped: () => false,
         isRequestedRootActive: () => true,
+        loadFactoryTemplateOwner: vi.fn(async () => null),
         loadPresenterMappings: async () => [
           ...normalizeNettePresenterMappings([
             ["Api", "Shared\\Presenters\\*Presenter"],
@@ -248,3 +345,36 @@ class DashboardPresenter
     ]);
   });
 });
+
+function emptyContext(currentRelativePath: string) {
+  return {
+    cache: {},
+    currentRelativePath,
+    deps: {
+      getActiveDocument: () => null,
+      joinPath: (root: string, relativePath: string) => `${root}/${relativePath}`,
+      listDirectory: vi.fn(async () => []),
+      openTarget: vi.fn(async () => true),
+      readFileContent: vi.fn(async () => {
+        throw new Error("missing");
+      }),
+      toRelativePath: (root: string, path: string) => path.replace(`${root}/`, ""),
+    },
+    frameworkCapabilities: {
+      isPresenterSourcePath: isNettePresenterDiscoverySourcePath,
+      parsePresenterLinkTarget: parseNetteLinkTarget,
+      presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
+      presenterClassCandidatePathsForLink: nettePresenterClassCandidatePathsForLink,
+      presenterLinkTargetsFromSource: nettePresenterLinkTargetsFromSource,
+      presenterScanDirectories: [] as string[],
+    },
+    inFlight: new Map(),
+    isDirectorySkipped: () => false,
+    isRequestedRootActive: () => true,
+    loadFactoryTemplateOwner: vi.fn(async () => null),
+    maxDepth: 1,
+    maxPresenters: 1,
+    requestedRoot: ROOT,
+    ttlMs: 5_000,
+  };
+}

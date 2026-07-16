@@ -21,6 +21,117 @@ const MAPPINGS = normalizeNettePresenterMappings([
 ]);
 
 describe("resolveNettePresenterOwner", () => {
+  it("uses a complete factory hierarchy for a bare datagrid signal", async () => {
+    const ownerPath = `${ROOT}/app/Components/UblabooDatagrid.php`;
+    const dataGridPath = `${ROOT}/vendor/ublaboo/datagrid/src/DataGrid.php`;
+    const owner = await resolveNettePresenterOwner(
+      context({
+        currentRelativePath: "app/Notifications/datagrid.latte",
+        loadFactoryTemplateOwner: vi.fn(async () => ({
+          className: "App\\Components\\UblabooDatagrid",
+          dependencyPaths: [ownerPath],
+          factoryPaths: [`${ROOT}/app/Notifications/DatagridFactory.php`],
+          path: ownerPath,
+          source: "<?php class UblabooDatagrid extends DataGrid {}",
+        })),
+        readPhpClassSource: vi.fn(async (className) =>
+          className === "DataGrid"
+            ? {
+                path: dataGridPath,
+                source:
+                  "<?php class DataGrid { public function handlePage(): void {} }",
+              }
+            : null,
+        ),
+      }),
+      parsed("page!"),
+    );
+
+    expect(owner?.path).toBe(ownerPath);
+    expect(owner?.factoryHierarchy?.sources.map((source) => source.path)).toEqual([
+      ownerPath,
+      dataGridPath,
+    ]);
+  });
+
+  it("keeps explicit presenter signals on presenter resolution semantics", async () => {
+    const loadFactoryTemplateOwner = vi.fn(async () => {
+      throw new Error("explicit presenter signals must not load a factory owner");
+    });
+    const owner = await resolveNettePresenterOwner(
+      context({
+        files: {
+          "app/UI/Product/ProductPresenter.php":
+            "<?php class ProductPresenter { public function handleDelete(): void {} }",
+        },
+        loadFactoryTemplateOwner,
+        mappings: [],
+      }),
+      parsed("Product:delete!"),
+    );
+
+    expect(owner?.path).toBe(`${ROOT}/app/UI/Product/ProductPresenter.php`);
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
+  });
+
+  it("keeps a conventional component ahead of a complete factory owner", async () => {
+    const componentRelativePath =
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php";
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "App\\Components\\FactoryTimeline",
+      dependencyPaths: [`${ROOT}/app/Components/FactoryTimeline.php`],
+      factoryPaths: [`${ROOT}/app/Components/TimelineFactory.php`],
+      path: `${ROOT}/app/Components/FactoryTimeline.php`,
+      source:
+        "<?php class FactoryTimeline { public function handleCancel(): void {} }",
+    }));
+    const owner = await resolveNettePresenterOwner(
+      context({
+        currentRelativePath:
+          "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
+        files: {
+          [componentRelativePath]:
+            "<?php class CrossSellTransferTimeline { public function handleCancel(): void {} }",
+        },
+        loadFactoryTemplateOwner,
+        mappings: [],
+      }),
+      parsed("cancel!"),
+    );
+
+    expect(owner?.path).toBe(`${ROOT}/${componentRelativePath}`);
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
+  });
+
+  it("does not let an ambiguous factory suppress a valid conventional component", async () => {
+    const componentRelativePath =
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php";
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "App\\Components\\AmbiguousTimeline",
+      dependencyPaths: [`${ROOT}/app/Components/AmbiguousTimeline.php`],
+      factoryPaths: [`${ROOT}/app/Components/TimelineFactory.php`],
+      path: `${ROOT}/app/Components/AmbiguousTimeline.php`,
+      source:
+        "<?php class AmbiguousTimeline { use FirstSignals, SecondSignals; }",
+    }));
+    const owner = await resolveNettePresenterOwner(
+      context({
+        currentRelativePath:
+          "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
+        files: {
+          [componentRelativePath]:
+            "<?php class CrossSellTransferTimeline { public function handleCancel(): void {} }",
+        },
+        loadFactoryTemplateOwner,
+        mappings: [],
+      }),
+      parsed("cancel!"),
+    );
+
+    expect(owner?.path).toBe(`${ROOT}/${componentRelativePath}`);
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
+  });
+
   it("resolves the exact ebox RempMailer link before wildcard and convention", async () => {
     const readPhpClassSource = vi.fn(async (className: string) =>
       className ===
@@ -180,6 +291,7 @@ function context(
     currentRelativePath?: string;
     files?: Record<string, string>;
     mappings?: typeof MAPPINGS;
+    loadFactoryTemplateOwner?: NettePresenterResolutionContext["loadFactoryTemplateOwner"];
     readPhpClassSource?: NettePresenterResolutionContext["deps"]["readPhpClassSource"];
   } = {},
 ): NettePresenterResolutionContext {
@@ -203,12 +315,15 @@ function context(
       ...(options.readPhpClassSource
         ? { readPhpClassSource: options.readPhpClassSource }
         : {}),
+      resolveDeclaredType: (_source, typeHint) => typeHint,
     },
     frameworkCapabilities: {
       presenterClassCandidatePathsForLink:
         nettePresenterClassCandidatePathsForLink,
     },
     isRequestedRootActive: () => true,
+    loadFactoryTemplateOwner:
+      options.loadFactoryTemplateOwner ?? vi.fn(async () => null),
     loadPresenterMappings: async () => options.mappings ?? MAPPINGS,
     requestedRoot: ROOT,
   };

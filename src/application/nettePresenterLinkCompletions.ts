@@ -7,6 +7,8 @@ import {
   nettePresenterNameFromClass,
   type NettePresenterMapping,
 } from "../domain/nettePresenterMapping";
+import { aggregateNetteFactoryTemplateOwnerLifecycleMembers } from "./netteFactoryTemplateOwnerHierarchy";
+import type { NetteFactoryTemplateOwner } from "./netteFactoryTemplateOwners";
 import {
   loadNettePresenterLinkTargets,
   nettePresenterShortNameFromPath,
@@ -15,6 +17,10 @@ import type {
   NettePresenterDiscoveryContext,
   NettePresenterLinkDependencies,
 } from "./nettePresenterLinkDiscovery";
+import {
+  loadNettePresenterFactoryOwnerHierarchy,
+  type NettePresenterResolutionContext,
+} from "./nettePresenterResolution";
 
 export interface NettePresenterLinkCompletionItem {
   detail?: string;
@@ -27,8 +33,17 @@ export interface NettePresenterLinkCompletionItem {
 
 const LATTE_MAX_COMPLETIONS = 100;
 
+export interface NettePresenterLinkCompletionContext
+  extends NettePresenterDiscoveryContext {
+  deps: NettePresenterDiscoveryContext["deps"] &
+    NettePresenterResolutionContext["deps"];
+  loadFactoryTemplateOwner(
+    templatePath: string,
+  ): Promise<NetteFactoryTemplateOwner | null>;
+}
+
 export async function lattePresenterLinkCompletions(
-  context: NettePresenterDiscoveryContext,
+  context: NettePresenterLinkCompletionContext,
   completion: { prefix: string; replaceEnd: number; replaceStart: number },
 ): Promise<NettePresenterLinkCompletionItem[]> {
   const [targets, currentComponentSignalTargets, mappings] = await Promise.all([
@@ -79,15 +94,52 @@ export async function lattePresenterLinkCompletions(
 }
 
 async function loadCurrentComponentSignalTargets(
-  context: NettePresenterDiscoveryContext,
+  context: NettePresenterLinkCompletionContext,
 ): Promise<string[]> {
+  const conventional = await loadConventionalComponentSignalTargets(context);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  if (conventional.ownerFound) {
+    return conventional.targets;
+  }
+
+  const factoryHierarchy =
+    await loadNettePresenterFactoryOwnerHierarchy(context);
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  if (factoryHierarchy) {
+    const lifecycleMembers =
+      aggregateNetteFactoryTemplateOwnerLifecycleMembers(factoryHierarchy);
+
+    if (!lifecycleMembers) {
+      return [];
+    }
+
+    return lifecycleMembers
+      .filter((entry) => entry.lifecycle.kind === "handle" && entry.lifecycle.name)
+      .map((entry) => `${entry.lifecycle.name}!`);
+  }
+
+  return [];
+}
+
+async function loadConventionalComponentSignalTargets(
+  context: NettePresenterLinkCompletionContext,
+): Promise<{ ownerFound: boolean; targets: string[] }> {
+  let ownerFound = false;
   const targets = new Set<string>();
 
   for (const relativePath of componentClassCandidatePathsForTemplate(
     context.currentRelativePath,
   )) {
     if (!context.isRequestedRootActive()) {
-      return [];
+      return { ownerFound: false, targets: [] };
     }
 
     let source: string;
@@ -98,15 +150,17 @@ async function loadCurrentComponentSignalTargets(
       );
     } catch {
       if (!context.isRequestedRootActive()) {
-        return [];
+        return { ownerFound: false, targets: [] };
       }
 
       continue;
     }
 
     if (!context.isRequestedRootActive()) {
-      return [];
+      return { ownerFound: false, targets: [] };
     }
+
+    ownerFound = true;
 
     for (const entry of nettePresenterLifecycleInfo(source).lifecycle) {
       if (entry.kind === "handle" && entry.name) {
@@ -115,7 +169,7 @@ async function loadCurrentComponentSignalTargets(
     }
   }
 
-  return Array.from(targets);
+  return { ownerFound, targets: Array.from(targets) };
 }
 
 function nettePresenterCompletionTargets(
@@ -190,7 +244,7 @@ function mappedRelativePresenterTargets(
 }
 
 async function currentPresenterCanonicalNames(
-  context: NettePresenterDiscoveryContext,
+  context: NettePresenterLinkCompletionContext,
   mappings: readonly NettePresenterMapping[],
 ): Promise<string[]> {
   if (mappings.length === 0) {

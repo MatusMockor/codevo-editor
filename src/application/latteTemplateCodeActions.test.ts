@@ -275,6 +275,7 @@ class HomePresenter extends Presenter
             nettePresenterClassCandidatePathsForLink,
         },
         isRequestedRootActive: () => true,
+        loadFactoryTemplateOwner: async () => null,
         requestedRoot: ROOT,
       },
       source,

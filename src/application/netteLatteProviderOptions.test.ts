@@ -37,6 +37,12 @@ describe("latteExpressionResolutionContext", () => {
     expect(derived.isRequestedRootActive).toBe(
       context.isRequestedRootActive,
     );
+    expect(context.loadFactoryTemplateOwner).toBe(
+      request.loadFactoryTemplateOwner,
+    );
+    expect(derived.loadFactoryTemplateOwner).toBe(
+      request.loadFactoryTemplateOwner,
+    );
   });
 
   it("canonicalizes equivalent include cache and generation roots", () => {

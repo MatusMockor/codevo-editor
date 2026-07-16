@@ -5,6 +5,7 @@ import type {
   NetteLinkTarget,
 } from "../domain/latteLinkNavigation";
 import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
+import { findNetteFactoryTemplateOwnerMethodSource } from "./netteFactoryTemplateOwnerHierarchy";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 import {
   createNettePresenterResolutionRun,
@@ -18,6 +19,7 @@ export interface NettePresenterLinkDiagnosticDependencies {
   readPhpClassSource?(
     className: string,
   ): Promise<{ path: string; source: string } | null>;
+  resolveDeclaredType?(source: string, typeHint: string | null): string | null;
 }
 
 export interface NettePresenterLinkDiagnosticCapabilities {
@@ -124,11 +126,24 @@ async function diagnosticForDetection(
     return null;
   }
 
+  const factoryHierarchy = owner.factoryHierarchy;
+
   if (
+    factoryHierarchy &&
+    methodNames.some((methodName) =>
+      findNetteFactoryTemplateOwnerMethodSource(
+        factoryHierarchy,
+        methodName,
+      ),
+    )
+  ) {
+    return null;
+  }
+
+  if (!factoryHierarchy &&
     !canProveNettePresenterMethodAbsenceLocally(owner.source, undefined, {
       barePresenterParentPolicy: "accept",
-    })
-  ) {
+    })) {
     return null;
   }
 

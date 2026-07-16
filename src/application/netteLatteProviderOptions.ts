@@ -12,8 +12,11 @@ import {
 import { resolveLatteProjectFilters } from "./latteFilterCallableResolution";
 import type { NetteControlCompletionContext } from "./netteControlContracts";
 import type {
-  NettePresenterDiscoveryContext,
-} from "./nettePresenterLinkDiscovery";
+  NettePresenterLinkCompletionContext,
+} from "./nettePresenterLinkCompletions";
+import type {
+  NettePresenterLinkDefinitionContext,
+} from "./nettePresenterLinkDefinitions";
 import type { NetteTemplateCompletionContext } from "./netteTemplateCompletions";
 import {
   isLatteScanSkippedDirectory,
@@ -80,6 +83,7 @@ export function latteExpressionResolutionContext(
     deps: request.deps,
     frameworkCapabilities: options.frameworkCapabilities,
     isRequestedRootActive,
+    loadFactoryTemplateOwner: request.loadFactoryTemplateOwner,
     maxCompletions: LATTE_MAX_COMPLETIONS,
     requestedRoot: request.requestedRoot,
     templateTypeCache: options.caches.templateTypeCache,
@@ -274,7 +278,7 @@ export function latteTemplateCompletionContext(
 export function nettePresenterLinkCompletionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
-): NettePresenterDiscoveryContext {
+): NettePresenterLinkCompletionContext {
   const mappingGeneration = captureNettePresenterMappingGeneration(
     options.caches.presenterMappingGeneration,
     request.requestedRoot,
@@ -290,6 +294,7 @@ export function nettePresenterLinkCompletionContext(
     isCacheWriteCurrent: mappingGeneration.isCurrent,
     isRequestedRootActive: request.isRequestedRootActive,
     isPresenterMappingGenerationCurrent: mappingGeneration.isCurrent,
+    loadFactoryTemplateOwner: request.loadFactoryTemplateOwner,
     loadPresenterMappings: () =>
       loadNettePresenterMappings(
         nettePresenterMappingDiscoveryContext(options, request),
@@ -304,7 +309,7 @@ export function nettePresenterLinkCompletionContext(
 export function nettePresenterLinkDefinitionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
-): Omit<NettePresenterDiscoveryContext, "cache" | "inFlight" | "ttlMs"> {
+): NettePresenterLinkDefinitionContext {
   const mappingGeneration = captureNettePresenterMappingGeneration(
     options.caches.presenterMappingGeneration,
     request.requestedRoot,
@@ -317,6 +322,7 @@ export function nettePresenterLinkDefinitionContext(
     isDirectorySkipped: isLatteScanSkippedDirectory,
     isRequestedRootActive: request.isRequestedRootActive,
     isPresenterMappingGenerationCurrent: mappingGeneration.isCurrent,
+    loadFactoryTemplateOwner: request.loadFactoryTemplateOwner,
     loadPresenterMappings: () =>
       loadNettePresenterMappings(
         nettePresenterMappingDiscoveryContext(options, request),

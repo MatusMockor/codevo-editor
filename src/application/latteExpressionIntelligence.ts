@@ -52,6 +52,7 @@ import type { ResolvedLatteProjectFilter } from "./latteFilterCallableResolution
 import { parseLatteForeachCollection } from "../domain/latteSyntax";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { resolveNetteLatteComponentReceiverType } from "./netteLatteComponentReceiverTypes";
+import type { NetteFactoryTemplateOwner } from "./netteFactoryTemplateOwners";
 
 const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
@@ -84,6 +85,9 @@ export interface LatteExpressionResolutionContext {
   forTemplate(relativePath: string): LatteExpressionResolutionContext;
   frameworkCapabilities: LatteFrameworkCapabilities;
   isRequestedRootActive: () => boolean;
+  loadFactoryTemplateOwner(
+    templatePath: string,
+  ): Promise<NetteFactoryTemplateOwner | null>;
   loadIncludedTemplateArguments(
     targetRelativePath: string,
   ): Promise<readonly NetteIncludedTemplateArgument[]>;
@@ -448,6 +452,7 @@ function netteCurrentClassContext(context: LatteExpressionResolutionContext) {
     currentTemplateRelativePath: templateRelativePath,
     deps,
     isRequestedRootActive,
+    loadFactoryTemplateOwner,
     requestedRoot,
   } = context;
 
@@ -459,6 +464,7 @@ function netteCurrentClassContext(context: LatteExpressionResolutionContext) {
     createComponentSearchLimit: LATTE_VIEW_DATA_SEARCH_LIMIT,
     deps,
     isRequestedRootActive,
+    loadFactoryTemplateOwner,
     phpExtension: PHP_EXTENSION,
     requestedRoot,
     supportsComponentFactoryViewData:

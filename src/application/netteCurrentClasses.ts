@@ -5,6 +5,8 @@ import {
   presenterCandidatePathsForTemplate,
 } from "../domain/nettePathResolution";
 import { phpTypeNamesEqual } from "../domain/phpTypes";
+import { maskPhpSource } from "../domain/phpSourceMask";
+import type { NetteFactoryTemplateOwner } from "./netteFactoryTemplateOwners";
 
 export interface NetteCurrentClassDependencies {
   joinPath(rootPath: string, relativePath: string): string;
@@ -26,6 +28,9 @@ export interface NetteCurrentClassContext {
   createComponentSearchLimit: number;
   deps: NetteCurrentClassDependencies;
   isRequestedRootActive(): boolean;
+  loadFactoryTemplateOwner(
+    templatePath: string,
+  ): Promise<NetteFactoryTemplateOwner | null>;
   phpExtension: string;
   requestedRoot: string;
   supportsComponentFactoryViewData: boolean;
@@ -74,7 +79,13 @@ export async function currentNetteControlClassName(
     return phpQualifiedClassName(source, className);
   }
 
-  return null;
+  const owner = await context.loadFactoryTemplateOwner(templateRelativePath);
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  return owner?.className ?? null;
 }
 
 export async function currentNettePresenterClassName(
@@ -162,7 +173,20 @@ export async function resolveNetteControlVariableDefinition(
     );
   }
 
-  return false;
+  const owner = await context.loadFactoryTemplateOwner(templateRelativePath);
+
+  if (!isRequestedRootActive() || !owner) {
+    return false;
+  }
+
+  const className = owner.className.split("\\").pop() ?? owner.className;
+  const position = phpClassPositionInSource(owner.source, className);
+
+  return deps.openTarget(
+    owner.path,
+    position ?? { column: 1, lineNumber: 1 },
+    "$control",
+  );
 }
 
 async function currentNetteFactoryPresenterClassName(
@@ -268,7 +292,7 @@ export function phpClassPositionInSource(
   className: string,
 ): EditorPosition | null {
   const pattern = new RegExp(`\\bclass\\s+${escapeRegExp(className)}\\b`);
-  const match = pattern.exec(source);
+  const match = pattern.exec(maskPhpSource(source));
 
   if (!match) {
     return null;

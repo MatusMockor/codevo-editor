@@ -5,8 +5,16 @@ import {
   type NettePresenterMapping,
 } from "../domain/nettePresenterMapping";
 import { componentClassCandidatePathsForTemplate } from "../domain/nettePathResolution";
+import type { NetteControlDependencies } from "./netteControlContracts";
+import {
+  aggregateNetteFactoryTemplateOwnerLifecycleMembers,
+  loadNetteFactoryTemplateOwnerHierarchy,
+  type NetteFactoryTemplateOwnerHierarchy,
+} from "./netteFactoryTemplateOwnerHierarchy";
+import type { NetteFactoryTemplateOwner } from "./netteFactoryTemplateOwners";
 
 export interface NettePresenterResolvedOwner {
+  factoryHierarchy?: NetteFactoryTemplateOwnerHierarchy;
   path: string;
   source: string;
 }
@@ -17,6 +25,7 @@ export interface NettePresenterResolutionDependencies {
   readPhpClassSource?(
     className: string,
   ): Promise<NettePresenterResolvedOwner | null>;
+  resolveDeclaredType?(source: string, typeHint: string | null): string | null;
 }
 
 export interface NettePresenterResolutionCapabilities {
@@ -32,6 +41,9 @@ export interface NettePresenterResolutionContext {
   frameworkCapabilities: NettePresenterResolutionCapabilities;
   isRequestedRootActive(): boolean;
   isPresenterMappingGenerationCurrent?(): boolean;
+  loadFactoryTemplateOwner(
+    templatePath: string,
+  ): Promise<NetteFactoryTemplateOwner | null>;
   loadPresenterMappings?(): Promise<readonly NettePresenterMapping[]>;
   requestedRoot: string;
 }
@@ -40,8 +52,33 @@ export interface NettePresenterResolutionRun {
   sources: Map<string, string | null>;
 }
 
+export type NettePresenterFactoryOwnerContext = Pick<
+  NettePresenterResolutionContext,
+  | "currentRelativePath"
+  | "deps"
+  | "isRequestedRootActive"
+  | "loadFactoryTemplateOwner"
+>;
+
 export function createNettePresenterResolutionRun(): NettePresenterResolutionRun {
   return { sources: new Map() };
+}
+
+export function loadNettePresenterFactoryOwnerHierarchy(
+  context: NettePresenterFactoryOwnerContext,
+): Promise<NetteFactoryTemplateOwnerHierarchy | null> {
+  return loadNetteFactoryTemplateOwnerHierarchy(
+    {
+      deps: {
+        ...(context.deps as NetteControlDependencies),
+        resolveDeclaredType:
+          context.deps.resolveDeclaredType ?? ((_source, typeHint) => typeHint),
+      },
+      isRequestedRootActive: context.isRequestedRootActive,
+      loadOwner: context.loadFactoryTemplateOwner,
+    },
+    context.currentRelativePath,
+  );
 }
 
 export async function resolveNettePresenterOwner(
@@ -51,6 +88,32 @@ export async function resolveNettePresenterOwner(
 ): Promise<NettePresenterResolvedOwner | null> {
   if (!isResolutionCurrent(context)) {
     return null;
+  }
+
+  if (target.isSignal && target.presenter === null) {
+    const conventionalComponent = await resolveConventionalOwner(
+      context,
+      componentClassCandidatePathsForTemplate(context.currentRelativePath),
+      run,
+    );
+
+    if (!isResolutionCurrent(context)) {
+      return null;
+    }
+
+    if (conventionalComponent) {
+      return conventionalComponent;
+    }
+
+    const factory = await resolveFactoryTemplateOwner(context);
+
+    if (!isResolutionCurrent(context)) {
+      return null;
+    }
+
+    if (factory) {
+      return factory;
+    }
   }
 
   const mappings = context.loadPresenterMappings
@@ -100,7 +163,22 @@ export async function resolveNettePresenterOwner(
     }
   }
 
-  for (const relativePath of conventionalOwnerCandidatePaths(context, target)) {
+  return resolveConventionalOwner(
+    context,
+    context.frameworkCapabilities.presenterClassCandidatePathsForLink(
+      target,
+      context.currentRelativePath,
+    ),
+    run,
+  );
+}
+
+async function resolveConventionalOwner(
+  context: NettePresenterResolutionContext,
+  relativePaths: readonly string[],
+  run: NettePresenterResolutionRun,
+): Promise<NettePresenterResolvedOwner | null> {
+  for (const relativePath of relativePaths) {
     if (!isResolutionCurrent(context)) {
       return null;
     }
@@ -120,24 +198,27 @@ export async function resolveNettePresenterOwner(
   return null;
 }
 
-function conventionalOwnerCandidatePaths(
+async function resolveFactoryTemplateOwner(
   context: NettePresenterResolutionContext,
-  target: NetteLinkTarget,
-): string[] {
-  const presenterPaths =
-    context.frameworkCapabilities.presenterClassCandidatePathsForLink(
-      target,
-      context.currentRelativePath,
-    );
+): Promise<NettePresenterResolvedOwner | null> {
+  const hierarchy = await loadNettePresenterFactoryOwnerHierarchy(context);
 
-  if (!target.isSignal || target.presenter !== null) {
-    return presenterPaths;
+  if (!hierarchy) {
+    return null;
   }
 
-  return dedupe([
-    ...componentClassCandidatePathsForTemplate(context.currentRelativePath),
-    ...presenterPaths,
-  ]);
+  if (
+    !hierarchy.precedence ||
+    !aggregateNetteFactoryTemplateOwnerLifecycleMembers(hierarchy)
+  ) {
+    return null;
+  }
+
+  return {
+    factoryHierarchy: hierarchy,
+    path: hierarchy.owner.path,
+    source: hierarchy.owner.source,
+  };
 }
 
 async function logicalPresenterNames(

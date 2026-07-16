@@ -4,6 +4,7 @@ import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
 import {
   latteExpressionCompletions,
+  resolveNettePresenterVariableDefinition,
   resolveLatteMemberDefinition,
   resolveLatteExpressionVariableType,
   type LatteExpressionResolutionContext,
@@ -12,7 +13,10 @@ import type {
   LatteProviderFlowCaches,
   LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
-import type { LatteProviderRequestContext } from "./latteProviderRequestContext";
+import {
+  latteProviderRequestContext,
+  type LatteProviderRequestContext,
+} from "./latteProviderRequestContext";
 import { latteExpressionResolutionContext } from "./netteLatteProviderOptions";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
@@ -118,6 +122,116 @@ describe("path-aware Latte expression type resolution", () => {
       "App\\Model\\IncludedRecord",
     );
     expect(loadIncludedTemplateArguments).toHaveBeenCalledWith("active.latte");
+  });
+
+  it("drives $control completion and definitions from a datagrid factory owner", async () => {
+    const root = "/workspace";
+    const templatePath = "app/Grid/templates/order-grid.latte";
+    const factoryPath = `${root}/app/Grid/OrderGridFactory.php`;
+    const ownerPath = `${root}/vendor/ublaboo/datagrid/src/DataGrid.php`;
+    const ownerSource = `<?php
+namespace Ublaboo\\DataGrid;
+
+class DataGrid extends Control
+{
+    public function setDataSource(iterable $source): self
+    {
+        return $this;
+    }
+}`;
+    const factorySource = String.raw`<?php
+namespace App\Grid;
+use Ublaboo\DataGrid\DataGrid;
+
+final class OrderGridFactory
+{
+    public function create(): DataGrid
+    {
+        $grid = new DataGrid();
+        $grid->setTemplateFile(__DIR__ . '/templates/order-grid.latte');
+        return $grid;
+    }
+}`;
+    const files = {
+      [factoryPath]: factorySource,
+      [ownerPath]: ownerSource,
+    };
+    const deps = dependencies(
+      root,
+      files,
+      vi.fn(() => ({ path: `${root}/${templatePath}` })),
+      { current: root },
+    );
+    deps.resolvePhpClassSourcePaths = vi.fn(async (className) =>
+      className === "Ublaboo\\DataGrid\\DataGrid" ? [ownerPath] : [],
+    );
+    deps.searchText = vi.fn(async () => [{ path: factoryPath }]);
+    const flowOptions = options(deps, providerCaches());
+    const request = latteProviderRequestContext(flowOptions);
+
+    expect(request).not.toBeNull();
+    const context = latteExpressionResolutionContext(flowOptions, request!);
+    context.deps.synthesizeTypedReceiverSource = vi.fn(
+      (variableName, typeName) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `<?php\n/** @var \\${typeName} $${variableName} */\n$${variableName}->`,
+      }),
+    );
+    context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Ublaboo\\DataGrid\\DataGrid",
+        name: "setDataSource",
+        parameters: "iterable $source",
+        returnType: "self",
+      },
+    ]);
+    context.deps.openPhpMethodTarget = vi.fn(async () => true);
+    context.deps.openTarget = vi.fn(async () => true);
+    const completionSource = "{$control->setData}";
+
+    await expect(
+      latteExpressionCompletions(
+        context,
+        completionSource,
+        completionSource.indexOf("setData") + "setData".length,
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        insertText: "setDataSource()",
+        label: "setDataSource",
+      }),
+    ]);
+    expect(context.deps.synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "control",
+      "Ublaboo\\DataGrid\\DataGrid",
+    );
+
+    const memberSource = "{$control->setDataSource($rows)}";
+    await expect(
+      resolveLatteMemberDefinition(
+        context,
+        memberSource,
+        memberSource.indexOf("setDataSource") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "Ublaboo\\DataGrid\\DataGrid",
+      "setDataSource",
+    );
+
+    const variableSource = "{$control}";
+    await expect(
+      resolveNettePresenterVariableDefinition(
+        context,
+        variableSource,
+        variableSource.indexOf("control") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      ownerPath,
+      { column: 7, lineNumber: 4 },
+      "$control",
+    );
   });
 
   it("completes and defines User::isAllowed in real-shaped Nette template markup", async () => {

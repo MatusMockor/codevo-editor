@@ -5,20 +5,68 @@ import {
   parseNetteLinkTarget,
 } from "../domain/latteLinkNavigation";
 import { normalizeNettePresenterMappings } from "../domain/nettePresenterMapping";
-import { resolveNettePresenterLink } from "./nettePresenterLinkDefinitions";
+import {
+  resolveNettePresenterLink,
+  type NettePresenterLinkDefinitionContext,
+} from "./nettePresenterLinkDefinitions";
 import type { NettePresenterDiscoveryContext } from "./nettePresenterLinkDiscovery";
+import type { NetteFactoryTemplateOwner } from "./netteFactoryTemplateOwners";
 
 describe("resolveNettePresenterLink", () => {
+  it("opens an inherited datagrid signal at its exact factory hierarchy source", async () => {
+    const ownerPath = "/ws/app/Components/UblabooDatagrid.php";
+    const dataGridPath = "/ws/vendor/ublaboo/datagrid/src/DataGrid.php";
+    const openTarget = vi.fn(async () => true);
+    const context = mappedDefinitionContext(
+      openTarget,
+      vi.fn(async (className) =>
+        className === "DataGrid"
+          ? {
+              path: dataGridPath,
+              source: `<?php
+class DataGrid
+{
+    public function handlePage(): void {}
+}`,
+            }
+          : null,
+      ),
+      () => true,
+      vi.fn(async () => ({
+        className: "App\\Components\\UblabooDatagrid",
+        dependencyPaths: [ownerPath],
+        factoryPaths: ["/ws/app/Notifications/DatagridFactory.php"],
+        path: ownerPath,
+        source: "<?php class UblabooDatagrid extends DataGrid {}",
+      })),
+      "app/Notifications/datagrid.latte",
+    );
+
+    await expect(
+      resolveNettePresenterLink(context, parseNetteLinkTarget("page!"), "page!"),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      dataGridPath,
+      { column: 21, lineNumber: 4 },
+      "page!",
+    );
+  });
+
   it("resolves singular Component signals without taking ownership of presenter actions", async () => {
     const componentPath =
       "/ws/app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php";
     const presenterPath =
       "/ws/app/modules/crossSellModule/Presenters/CrossSellAdminPresenter.php";
     const openTarget = vi.fn(async () => true);
-    const context: Omit<
-      NettePresenterDiscoveryContext,
-      "cache" | "inFlight" | "ttlMs"
-    > = {
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "App\\FactoryTimeline",
+      dependencyPaths: ["/ws/app/FactoryTimeline.php"],
+      factoryPaths: ["/ws/app/TimelineFactory.php"],
+      path: "/ws/app/FactoryTimeline.php",
+      source:
+        "<?php class FactoryTimeline { public function handleCancel(): void {} }",
+    }));
+    const context: NettePresenterLinkDefinitionContext = {
       currentRelativePath:
         "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
       deps: {
@@ -54,6 +102,7 @@ class CrossSellTransferTimeline
       },
       isDirectorySkipped: () => false,
       isRequestedRootActive: () => true,
+      loadFactoryTemplateOwner,
       maxDepth: 1,
       maxPresenters: 1,
       requestedRoot: "/ws",
@@ -86,6 +135,7 @@ class CrossSellTransferTimeline
       expect.objectContaining({ lineNumber: 1 }),
       ":CrossSell:CrossSellAdmin:show",
     );
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
   });
 
   it("opens the mapped presenter action through the shared resolution service", async () => {
@@ -130,6 +180,7 @@ class MailTemplatesAdminPresenter
         },
         isDirectorySkipped: () => false,
         isRequestedRootActive: () => true,
+        loadFactoryTemplateOwner: vi.fn(async () => null),
         loadPresenterMappings: async () =>
           normalizeNettePresenterMappings([
             [
@@ -182,9 +233,13 @@ function mappedDefinitionContext(
     NettePresenterDiscoveryContext["deps"]["readPhpClassSource"]
   >,
   isPresenterMappingGenerationCurrent: () => boolean,
-): Omit<NettePresenterDiscoveryContext, "cache" | "inFlight" | "ttlMs"> {
+  loadFactoryTemplateOwner: (
+    templatePath: string,
+  ) => Promise<NetteFactoryTemplateOwner | null> = vi.fn(async () => null),
+  currentRelativePath = "app/components/widget.latte",
+): NettePresenterLinkDefinitionContext {
   return {
-    currentRelativePath: "app/components/widget.latte",
+    currentRelativePath,
     deps: {
       getActiveDocument: () => null,
       joinPath: (root, relative) => `${root}/${relative}`,
@@ -194,6 +249,7 @@ function mappedDefinitionContext(
         throw new Error("mapping should resolve first");
       }),
       readPhpClassSource,
+      resolveDeclaredType: (_source, typeHint) => typeHint,
       toRelativePath: (_root, path) => path,
     },
     frameworkCapabilities: {
@@ -208,6 +264,7 @@ function mappedDefinitionContext(
     isDirectorySkipped: () => false,
     isPresenterMappingGenerationCurrent,
     isRequestedRootActive: () => true,
+    loadFactoryTemplateOwner,
     loadPresenterMappings: async () =>
       normalizeNettePresenterMappings([
         ["RempMailer", "Crm\\RempMailerModule\\Presenters\\*Presenter"],

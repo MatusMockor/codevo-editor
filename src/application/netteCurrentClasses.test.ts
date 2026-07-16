@@ -39,6 +39,16 @@ class GridControl
 }
 `;
 
+const ADVERSARIAL_CONTROL_SOURCE = `<?php
+namespace App\\UI\\Invoice;
+
+// class GridControl is mentioned in documentation.
+$example = 'class GridControl is not a declaration';
+class GridControl
+{
+}
+`;
+
 const CROSS_SELL_CONTROL_SOURCE = `<?php
 namespace App\\Modules\\CrossSell\\Component;
 
@@ -47,15 +57,40 @@ class CrossSellTransferTimeline
 }
 `;
 
+const DATAGRID_OWNER_PATH = `${ROOT}/vendor/ublaboo/datagrid/src/DataGrid.php`;
+const DATAGRID_OWNER_SOURCE = `<?php
+namespace Ublaboo\\DataGrid;
+
+class DataGrid extends Control
+{
+    public function setDataSource(iterable $source): self
+    {
+        return $this;
+    }
+}
+`;
+
+const ADVERSARIAL_DATAGRID_OWNER_SOURCE = `<?php
+namespace Ublaboo\\DataGrid;
+
+/* class DataGrid is mentioned in documentation. */
+$example = "class DataGrid is not a declaration";
+class DataGrid extends Control
+{
+}
+`;
+
 function makeContext({
   active = true,
   readFileContent,
+  loadFactoryTemplateOwner = vi.fn(async () => null),
   searchText = vi.fn(async () => []),
   supportsComponentFactoryViewData = true,
   templateRelativePath = "app/UI/Invoice/Components/GridControl/default.latte",
 }: {
   active?: boolean | (() => boolean);
   readFileContent?: (path: string) => Promise<string>;
+  loadFactoryTemplateOwner?: NetteCurrentClassContext["loadFactoryTemplateOwner"];
   searchText?: (rootPath: string, query: string, limit: number) => Promise<{ path: string }[]>;
   supportsComponentFactoryViewData?: boolean;
   templateRelativePath?: string;
@@ -90,6 +125,7 @@ function makeContext({
       searchText,
     },
     isRequestedRootActive: isActive,
+    loadFactoryTemplateOwner,
     phpExtension: ".php",
     requestedRoot: ROOT,
     supportsComponentFactoryViewData,
@@ -143,6 +179,68 @@ describe("currentNetteControlClassName", () => {
       readFileContent: vi.fn(async () => {
         active = false;
         return CONTROL_SOURCE;
+      }),
+    });
+
+    await expect(currentNetteControlClassName(context)).resolves.toBeNull();
+  });
+
+  it("falls back to a real-shaped datagrid factory template owner", async () => {
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "Ublaboo\\DataGrid\\DataGrid",
+      dependencyPaths: [DATAGRID_OWNER_PATH],
+      factoryPaths: [`${ROOT}/app/Grid/OrderGridFactory.php`],
+      path: DATAGRID_OWNER_PATH,
+      source: DATAGRID_OWNER_SOURCE,
+    }));
+    const context = makeContext({
+      loadFactoryTemplateOwner,
+      readFileContent: vi.fn(async () => {
+        throw new Error("no conventional control");
+      }),
+      templateRelativePath: "app/Grid/templates/order-grid.latte",
+    });
+
+    await expect(currentNetteControlClassName(context)).resolves.toBe(
+      "Ublaboo\\DataGrid\\DataGrid",
+    );
+    expect(loadFactoryTemplateOwner).toHaveBeenCalledWith(
+      "app/Grid/templates/order-grid.latte",
+    );
+  });
+
+  it("prefers a conventional control candidate over a factory owner", async () => {
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "Ublaboo\\DataGrid\\DataGrid",
+      dependencyPaths: [],
+      factoryPaths: [],
+      path: DATAGRID_OWNER_PATH,
+      source: DATAGRID_OWNER_SOURCE,
+    }));
+    const context = makeContext({ loadFactoryTemplateOwner });
+
+    await expect(currentNetteControlClassName(context)).resolves.toBe(
+      "App\\UI\\Invoice\\GridControl",
+    );
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
+  });
+
+  it("drops a stale factory owner without returning its class", async () => {
+    let active = true;
+    const context = makeContext({
+      active: () => active,
+      loadFactoryTemplateOwner: vi.fn(async () => {
+        active = false;
+        return {
+          className: "Ublaboo\\DataGrid\\DataGrid",
+          dependencyPaths: [],
+          factoryPaths: [],
+          path: DATAGRID_OWNER_PATH,
+          source: DATAGRID_OWNER_SOURCE,
+        };
+      }),
+      readFileContent: vi.fn(async () => {
+        throw new Error("no conventional control");
       }),
     });
 
@@ -212,7 +310,8 @@ describe("currentNettePresenterClassName", () => {
 
 describe("resolveNetteControlVariableDefinition", () => {
   it("opens the current control class declaration for $control", async () => {
-    const context = makeContext();
+    const loadFactoryTemplateOwner = vi.fn(async () => null);
+    const context = makeContext({ loadFactoryTemplateOwner });
 
     await expect(resolveNetteControlVariableDefinition(context)).resolves.toBe(
       true,
@@ -220,6 +319,78 @@ describe("resolveNetteControlVariableDefinition", () => {
     expect(context.deps.openTarget).toHaveBeenCalledWith(
       `${ROOT}/app/UI/Invoice/Components/GridControl/GridControl.php`,
       { column: 7, lineNumber: 4 },
+      "$control",
+    );
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
+  });
+
+  it("ignores comment and string class lookalikes in a conventional control", async () => {
+    const context = makeContext({
+      readFileContent: vi.fn(async (path: string) => {
+        if (path.endsWith("GridControl.php")) {
+          return ADVERSARIAL_CONTROL_SOURCE;
+        }
+
+        throw new Error(`missing ${path}`);
+      }),
+    });
+
+    await expect(resolveNetteControlVariableDefinition(context)).resolves.toBe(
+      true,
+    );
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/UI/Invoice/Components/GridControl/GridControl.php`,
+      { column: 7, lineNumber: 6 },
+      "$control",
+    );
+  });
+
+  it("opens a datagrid factory owner declaration for $control", async () => {
+    const context = makeContext({
+      loadFactoryTemplateOwner: vi.fn(async () => ({
+        className: "Ublaboo\\DataGrid\\DataGrid",
+        dependencyPaths: [DATAGRID_OWNER_PATH],
+        factoryPaths: [`${ROOT}/app/Grid/OrderGridFactory.php`],
+        path: DATAGRID_OWNER_PATH,
+        source: DATAGRID_OWNER_SOURCE,
+      })),
+      readFileContent: vi.fn(async () => {
+        throw new Error("no conventional control");
+      }),
+      templateRelativePath: "app/Grid/templates/order-grid.latte",
+    });
+
+    await expect(resolveNetteControlVariableDefinition(context)).resolves.toBe(
+      true,
+    );
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      DATAGRID_OWNER_PATH,
+      { column: 7, lineNumber: 4 },
+      "$control",
+    );
+  });
+
+  it("ignores comment and string class lookalikes in a factory owner", async () => {
+    const context = makeContext({
+      loadFactoryTemplateOwner: vi.fn(async () => ({
+        className: "Ublaboo\\DataGrid\\DataGrid",
+        dependencyPaths: [DATAGRID_OWNER_PATH],
+        factoryPaths: [`${ROOT}/app/Grid/OrderGridFactory.php`],
+        path: DATAGRID_OWNER_PATH,
+        source: ADVERSARIAL_DATAGRID_OWNER_SOURCE,
+      })),
+      readFileContent: vi.fn(async () => {
+        throw new Error("no conventional control");
+      }),
+      templateRelativePath: "app/Grid/templates/order-grid.latte",
+    });
+
+    await expect(resolveNetteControlVariableDefinition(context)).resolves.toBe(
+      true,
+    );
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      DATAGRID_OWNER_PATH,
+      { column: 7, lineNumber: 6 },
       "$control",
     );
   });

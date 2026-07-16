@@ -14,6 +14,46 @@ const ROOT = "/ws";
 const CURRENT_TEMPLATE = "app/UI/Product/default.latte";
 
 describe("nettePresenterLinkDiagnostics", () => {
+  it("accepts inherited datagrid signals from a complete factory hierarchy", async () => {
+    const ownerPath = `${ROOT}/app/Components/UblabooDatagrid.php`;
+    const diagnostics = await nettePresenterLinkDiagnostics(
+      context({
+        currentRelativePath: "app/Notifications/datagrid.latte",
+        files: {},
+        loadFactoryTemplateOwner: vi.fn(async () => ({
+          className: "App\\Components\\UblabooDatagrid",
+          dependencyPaths: [ownerPath],
+          factoryPaths: [`${ROOT}/app/Notifications/DatagridFactory.php`],
+          path: ownerPath,
+          source:
+            "<?php class UblabooDatagrid extends DataGrid { use GridSignals; }",
+        })),
+        readPhpClassSource: vi.fn(async (className) => {
+          if (className === "GridSignals") {
+            return {
+              path: `${ROOT}/app/Components/GridSignals.php`,
+              source:
+                "<?php trait GridSignals { public function handleResetFilter(): void {} }",
+            };
+          }
+
+          if (className === "DataGrid") {
+            return {
+              path: `${ROOT}/vendor/ublaboo/datagrid/src/DataGrid.php`,
+              source:
+                "<?php class DataGrid { public function handlePage(): void {} }",
+            };
+          }
+
+          return null;
+        }),
+      }),
+      `{link page!}\n{link resetFilter!}`,
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
   it("warns when a static action link resolves to an existing presenter without an action or render method", async () => {
     const diagnostics = await runDiagnostics(
       `{link Product:show}`,
@@ -158,6 +198,14 @@ class ProductPresenter
   });
 
   it("accepts component-relative signal links handled by the component class", async () => {
+    const loadFactoryTemplateOwner = vi.fn(async () => ({
+      className: "App\\AmbiguousApiListing",
+      dependencyPaths: [`${ROOT}/app/Components/AmbiguousApiListing.php`],
+      factoryPaths: [`${ROOT}/app/Components/ApiListingFactory.php`],
+      path: `${ROOT}/app/Components/AmbiguousApiListing.php`,
+      source:
+        "<?php class AmbiguousApiListing { use FirstSignals, SecondSignals; }",
+    }));
     const diagnostics = await nettePresenterLinkDiagnostics(
       context({
         currentRelativePath:
@@ -170,11 +218,13 @@ class ApiListingControl
 }
 `,
         },
+        loadFactoryTemplateOwner,
       }),
       `{link Select! 1}`,
     );
 
     expect(diagnostics).toEqual([]);
+    expect(loadFactoryTemplateOwner).not.toHaveBeenCalled();
   });
 
   it("skips dynamic links, this links, and unsafe current-presenter relative targets", async () => {
@@ -324,7 +374,9 @@ function context(
     currentRelativePath?: string;
     files: Record<string, string>;
     isRequestedRootActive?: () => boolean;
+    loadFactoryTemplateOwner?: NettePresenterLinkDiagnosticContext["loadFactoryTemplateOwner"];
     readFileContent?: (path: string) => Promise<string>;
+    readPhpClassSource?: NettePresenterLinkDiagnosticContext["deps"]["readPhpClassSource"];
   },
 ): NettePresenterLinkDiagnosticContext {
   return {
@@ -345,6 +397,8 @@ function context(
 
           return source;
         }),
+      readPhpClassSource: options.readPhpClassSource,
+      resolveDeclaredType: (_source, typeHint) => typeHint,
     },
     frameworkCapabilities: {
       parsePresenterLinkTarget: parseNetteLinkTarget,
@@ -352,6 +406,8 @@ function context(
       presenterClassCandidatePathsForLink: nettePresenterClassCandidatePathsForLink,
     },
     isRequestedRootActive: options.isRequestedRootActive ?? (() => true),
+    loadFactoryTemplateOwner:
+      options.loadFactoryTemplateOwner ?? vi.fn(async () => null),
     requestedRoot: ROOT,
   };
 }
