@@ -202,6 +202,19 @@ describe("OwnerDocumentSaveRepository", () => {
     expect(activate).not.toHaveBeenCalled();
   });
 
+  it("resolves the current owner document by identity without a captured document", () => {
+    const active = candidate();
+    const repository = new OwnerDocumentSaveRepository({
+      active: () => active.candidate,
+      cached: () => null,
+    });
+
+    const session = repository.resolveCurrent(owner, "src/a.ts");
+
+    expect(session?.currentDocument()).toBe(active.document());
+    expect(session?.path).toBe(PATH);
+  });
+
   it("rejects owner, cache, and document replacement", () => {
     const original = candidate();
     let active: OwnerDocumentRepositoryCandidate | null = original.candidate;

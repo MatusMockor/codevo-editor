@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  editorSurfaceCommandIds,
+  type EditorSurfaceCommandRunner,
+} from "../domain/editorSurfaceCommand";
 import type { KeymapCommandId } from "../domain/keymap";
 import type { Command, CommandContext } from "./commandRegistry";
 import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands";
@@ -37,6 +41,12 @@ describe("workbenchEditorSurfaceCommands", () => {
         shortcut: "shortcut:editor.reopenClosedTab",
       },
       {
+        id: "editor.quickDefinition",
+        title: "Quick Definition",
+        category: "Editor",
+        shortcut: "shortcut:editor.quickDefinition",
+      },
+      {
         id: "editor.rename",
         title: "Rename Symbol",
         category: "Editor",
@@ -66,16 +76,30 @@ describe("workbenchEditorSurfaceCommands", () => {
         category: "Editor",
         shortcut: "shortcut:editor.quickFix",
       },
+      {
+        id: "editor.nextChange",
+        title: "Go to Next Change",
+        category: "Editor",
+        shortcut: "shortcut:editor.nextChange",
+      },
+      {
+        id: "editor.previousChange",
+        title: "Go to Previous Change",
+        category: "Editor",
+        shortcut: "shortcut:editor.previousChange",
+      },
     ]);
-    expect(shortcut).toHaveBeenNthCalledWith(1, "editor.save");
-    expect(shortcut).toHaveBeenNthCalledWith(2, "editor.closeTab");
-    expect(shortcut).toHaveBeenNthCalledWith(3, "editor.reopenClosedTab");
-    expect(shortcut).toHaveBeenNthCalledWith(4, "editor.rename");
-    expect(shortcut).toHaveBeenNthCalledWith(5, "editor.gotoLine");
-    expect(shortcut).toHaveBeenNthCalledWith(6, "editor.formatDocument");
-    expect(shortcut).toHaveBeenNthCalledWith(7, "editor.formatSelection");
-    expect(shortcut).toHaveBeenNthCalledWith(8, "editor.quickFix");
-    expect(shortcut).toHaveBeenCalledTimes(8);
+    expect(shortcut.mock.calls.map(([commandId]) => commandId)).toEqual(
+      commands.map(({ id }) => id),
+    );
+  });
+
+  it("keeps every editor surface command in the production registry", () => {
+    const registeredIds = new Set(createCommands().map(({ id }) => id));
+
+    expect(
+      editorSurfaceCommandIds.filter((id) => !registeredIds.has(id)),
+    ).toEqual([]);
   });
 
   it("enables save only for dirty active documents", () => {
@@ -124,24 +148,54 @@ describe("workbenchEditorSurfaceCommands", () => {
     ).toBe(true);
   });
 
-  it("enables editor surface runner commands only with an active document and live runner", () => {
-    const withoutRunner = commandById(
-      "editor.rename",
-      createCommands({ editorSurfaceCommandRunner: null }),
+  it.each(editorSurfaceCommandIds)(
+    "enables %s only with an active document and live runner",
+    (commandId) => {
+      const withoutRunner = commandById(
+        commandId,
+        createCommands({ editorSurfaceCommandRunner: null }),
+      );
+      const withRunner = commandById(
+        commandId,
+        createCommands({
+          editorSurfaceCommandRunner: vi.fn() as EditorSurfaceCommandRunner,
+        }),
+      );
+
+      expect(
+        withoutRunner.isEnabled(context({ hasActiveDocument: true })),
+      ).toBe(false);
+      expect(withRunner.isEnabled(context({ hasActiveDocument: false }))).toBe(
+        false,
+      );
+      expect(withRunner.isEnabled(context({ hasActiveDocument: true }))).toBe(
+        true,
+      );
+    },
+  );
+
+  it("uses the live runner capability without bypassing the registry", () => {
+    const editorSurfaceCommandRunner = vi.fn() as EditorSurfaceCommandRunner;
+    editorSurfaceCommandRunner.isEnabled = vi.fn(
+      (commandId) => commandId !== "editor.nextChange",
     );
-    const withRunner = commandById(
-      "editor.rename",
-      createCommands({ editorSurfaceCommandRunner: vi.fn() }),
-    );
+    const commands = createCommands({ editorSurfaceCommandRunner });
 
     expect(
-      withoutRunner.isEnabled(context({ hasActiveDocument: true })),
+      commandById("editor.nextChange", commands).isEnabled(
+        context({ hasActiveDocument: true }),
+      ),
     ).toBe(false);
-    expect(withRunner.isEnabled(context({ hasActiveDocument: false }))).toBe(
-      false,
+    expect(
+      commandById("editor.previousChange", commands).isEnabled(
+        context({ hasActiveDocument: true }),
+      ),
+    ).toBe(true);
+    expect(editorSurfaceCommandRunner.isEnabled).toHaveBeenCalledWith(
+      "editor.nextChange",
     );
-    expect(withRunner.isEnabled(context({ hasActiveDocument: true }))).toBe(
-      true,
+    expect(editorSurfaceCommandRunner.isEnabled).toHaveBeenCalledWith(
+      "editor.previousChange",
     );
   });
 

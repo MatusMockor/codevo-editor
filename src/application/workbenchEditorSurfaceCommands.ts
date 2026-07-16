@@ -56,7 +56,9 @@ export function workbenchEditorSurfaceCommands({
       category: "Editor",
       shortcut: shortcut(id),
       isEnabled: (context: CommandContext) =>
-        context.hasActiveDocument && Boolean(editorSurfaceCommandRunner),
+        context.hasActiveDocument &&
+        Boolean(editorSurfaceCommandRunner) &&
+        (editorSurfaceCommandRunner?.isEnabled?.(id) ?? true),
       run: () => {
         editorSurfaceCommandRunner?.(id);
       },
@@ -68,6 +70,10 @@ const editorSurfaceRunnerCommands: ReadonlyArray<{
   id: EditorSurfaceCommandId;
   title: string;
 }> = [
+  {
+    id: "editor.quickDefinition",
+    title: "Quick Definition",
+  },
   {
     id: "editor.rename",
     title: "Rename Symbol",
@@ -87,5 +93,13 @@ const editorSurfaceRunnerCommands: ReadonlyArray<{
   {
     id: "editor.quickFix",
     title: "Context Actions",
+  },
+  {
+    id: "editor.nextChange",
+    title: "Go to Next Change",
+  },
+  {
+    id: "editor.previousChange",
+    title: "Go to Previous Change",
   },
 ];

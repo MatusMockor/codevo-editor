@@ -1026,7 +1026,28 @@ function EditorSurfaceComponent({
       }
 
       editorApi.focus();
+
+      if (commandId === "editor.nextChange") {
+        jumpToChangeHunk(editorApi, changeHunksRef.current, "next");
+        return;
+      }
+
+      if (commandId === "editor.previousChange") {
+        jumpToChangeHunk(editorApi, changeHunksRef.current, "previous");
+        return;
+      }
+
       triggerEditorSurfaceCommand(editorApi, commandId);
+    };
+    runner.isEnabled = (commandId) => {
+      if (
+        commandId === "editor.nextChange" ||
+        commandId === "editor.previousChange"
+      ) {
+        return changeHunksRef.current.length > 0;
+      }
+
+      return true;
     };
 
     onEditorSurfaceCommandRunnerChange(runner);
@@ -1908,10 +1929,9 @@ function EditorSurfaceComponent({
         label: "Quick Definition",
         keybindings: keybinding("editor.quickDefinition"),
         run: () =>
-          runRegisteredCommand(
+          requestRegisteredCommand(
             commandExecutionRunnerRef,
             "editor.quickDefinition",
-            () => triggerEditorAction(editorApi, "editor.action.peekDefinition"),
           ),
       }),
       editorApi.addAction({
@@ -2359,14 +2379,17 @@ function EditorSurfaceComponent({
         label: "Go to Next Change",
         keybindings: keybinding("editor.nextChange"),
         run: () =>
-          jumpToChangeHunk(editorApi, changeHunksRef.current, "next"),
+          requestRegisteredCommand(commandExecutionRunnerRef, "editor.nextChange"),
       }),
       editorApi.addAction({
         id: "mockor.previousChange",
         label: "Go to Previous Change",
         keybindings: keybinding("editor.previousChange"),
         run: () =>
-          jumpToChangeHunk(editorApi, changeHunksRef.current, "previous"),
+          requestRegisteredCommand(
+            commandExecutionRunnerRef,
+            "editor.previousChange",
+          ),
       }),
     ];
 
@@ -4279,7 +4302,9 @@ function editorActionForMenuCommand(command: EditorMenuCommand): string {
   }
 }
 
-function editorActionForSurfaceCommand(commandId: EditorSurfaceCommandId): string {
+function editorActionForSurfaceCommand(
+  commandId: EditorSurfaceCommandId,
+): string | null {
   switch (commandId) {
     case "editor.formatDocument":
       return "editor.action.formatDocument";
@@ -4287,6 +4312,11 @@ function editorActionForSurfaceCommand(commandId: EditorSurfaceCommandId): strin
       return "editor.action.formatSelection";
     case "editor.gotoLine":
       return "editor.action.gotoLine";
+    case "editor.nextChange":
+    case "editor.previousChange":
+      return null;
+    case "editor.quickDefinition":
+      return "editor.action.peekDefinition";
     case "editor.quickFix":
       return "editor.action.quickFix";
     case "editor.rename":
@@ -4827,7 +4857,13 @@ function triggerEditorSurfaceCommand(
     return;
   }
 
-  editor.trigger("keyboard", editorActionForSurfaceCommand(commandId), {});
+  const actionId = editorActionForSurfaceCommand(commandId);
+
+  if (!actionId) {
+    return;
+  }
+
+  editor.trigger("keyboard", actionId, {});
 }
 
 function runRegisteredCommand(
@@ -4847,6 +4883,19 @@ function runRegisteredCommand(
   }
 
   fallback();
+}
+
+function requestRegisteredCommand(
+  runnerRef: MutableRefObject<CommandExecutionRunner | undefined>,
+  commandId: string,
+): void {
+  const runner = runnerRef.current;
+
+  if (!runner) {
+    return;
+  }
+
+  runner(commandId);
 }
 
 function dismissTransientEditorWidgets(

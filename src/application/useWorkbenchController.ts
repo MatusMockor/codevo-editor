@@ -432,6 +432,7 @@ import {
   type WorkspaceDescriptor,
   type WorkspaceDetectionGateway,
   type WorkspaceFileGateway,
+  type WorkspaceOwnerFileGateway,
 } from "../domain/workspace";
 
 export interface WorkbenchWorkspaceGateways {
@@ -5758,6 +5759,15 @@ export function useWorkbenchController(
 
   const activateEditorGroupTab = useCallback(
     (groupId: EditorGroupId, path: string) => {
+      const group = editorGroupsRef.current.groups[groupId];
+
+      if (
+        !group ||
+        (!group.openPaths.includes(path) && group.previewPath !== path)
+      ) {
+        return;
+      }
+
       updateEditorGroups((current) => {
         const activated = editorGroupsReducer(current, {
           type: "activate-group",
@@ -5769,8 +5779,15 @@ export function useWorkbenchController(
           path,
         });
       });
+
+      if (isGitDiffDocumentPath(path)) {
+        loadGitDiffDocument(path);
+        return;
+      }
+
+      clearGitDiffPreviewState();
     },
-    [updateEditorGroups],
+    [clearGitDiffPreviewState, loadGitDiffDocument, updateEditorGroups],
   );
 
   const splitActiveEditorGroup = useCallback(
@@ -6992,19 +7009,91 @@ export function useWorkbenchController(
     closeLocalHistory,
   } = useLocalHistory({
     activeDocumentRef,
-    captureLocalHistorySnapshot,
+    beginOwnerDocumentSelfWrite: (owner, rootPath, path, content) => {
+      if (!ownerDocumentSaveAdapters.isOwnerCurrent(owner)) {
+        return null;
+      }
+      if (resolveWorkspaceRuntimeOwner(rootPath)?.ownerKey !== owner.ownerKey) {
+        return null;
+      }
+      const ownership = resolveDocumentSaveOwnership(rootPath, path);
+      return ownership ? documentSelfWrites.begin(ownership, content) : null;
+    },
+    captureLocalHistorySnapshot: async (owner, rootPath, path, content) => {
+      if (!ownerDocumentSaveAdapters.isOwnerCurrent(owner)) {
+        return;
+      }
+      if (resolveWorkspaceRuntimeOwner(rootPath)?.ownerKey !== owner.ownerKey) {
+        return;
+      }
+      await captureLocalHistorySnapshot(rootPath, path, content);
+    },
     currentWorkspaceRootRef,
-    documentsRef,
-    filePrefetchCacheRef,
+    invalidateOwnerDocumentPrefetch: (owner, path) => {
+      if (!ownerDocumentSaveAdapters.isOwnerCurrent(owner)) {
+        return;
+      }
+      filePrefetchCacheRef.current.invalidate(path);
+    },
     localHistoryGateway,
+    ownerDocumentSaveRepository: ownerDocumentSaveAdapters.repository,
+    resolveCurrentWorkspaceRuntimeOwner,
+    resolveDocumentSaveOwnership,
     reportError,
     reportErrorForActiveWorkspaceRoot,
-    setDocuments,
+    requestOwnerDocumentSave: requestCoordinatedOwnerDocumentSave,
     setMessage,
-    syncSavedDocument: syncSavedDocumentForRoot,
-    syncSavedJavaScriptTypeScriptDocument:
-      syncSavedJavaScriptTypeScriptDocumentForRoot,
-    workspaceFiles,
+    syncSavedDocument: async (owner, rootPath, document, shouldEmit) => {
+      if (resolveWorkspaceRuntimeOwner(rootPath)?.ownerKey !== owner.ownerKey) {
+        return;
+      }
+      await syncSavedDocumentForRoot(rootPath, document, shouldEmit);
+    },
+    syncSavedJavaScriptTypeScriptDocument: async (
+      owner,
+      rootPath,
+      document,
+      shouldEmit,
+    ) => {
+      if (resolveWorkspaceRuntimeOwner(rootPath)?.ownerKey !== owner.ownerKey) {
+        return;
+      }
+      await syncSavedJavaScriptTypeScriptDocumentForRoot(
+        rootPath,
+        document,
+        shouldEmit,
+      );
+    },
+    writeOwnerDocument: async (owner, rootPath, document, content) => {
+      if (!ownerDocumentSaveAdapters.isOwnerCurrent(owner)) {
+        return { status: "error", message: "Workspace owner is stale." };
+      }
+      if (resolveWorkspaceRuntimeOwner(rootPath)?.ownerKey !== owner.ownerKey) {
+        return { status: "error", message: "Workspace owner is stale." };
+      }
+      if (!document.revision) {
+        return {
+          status: "error",
+          message: "Reload the file before restoring Local History.",
+        };
+      }
+
+      const ownerWriter = workspaceFiles as WorkspaceFileGateway &
+        Partial<WorkspaceOwnerFileGateway>;
+      if (!ownerWriter.writeTextFileForWorkspace) {
+        return {
+          status: "error",
+          message: "The workspace does not support owner-scoped writes.",
+        };
+      }
+
+      return ownerWriter.writeTextFileForWorkspace(
+        owner.ownerKey,
+        document.path,
+        content,
+        document.revision,
+      );
+    },
     workspaceRoot,
   });
 

@@ -272,6 +272,16 @@ export interface WorkspaceFileGateway {
   ): Promise<WorkspaceWriteResult | void>;
 }
 
+/** Writes through one admitted native workspace instead of path-based routing. */
+export interface WorkspaceOwnerFileGateway {
+  writeTextFileForWorkspace(
+    workspaceId: string,
+    path: string,
+    content: string,
+    expectedRevision: WorkspaceFileRevision,
+  ): Promise<WorkspaceWriteResult>;
+}
+
 export interface WorkspaceTextFileSnapshot {
   content: string;
   revision: WorkspaceFileRevision | null;

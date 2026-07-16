@@ -88,6 +88,31 @@ export class OwnerDocumentSaveRepository {
     );
   }
 
+  resolveCurrent(
+    owner: WorkspaceRuntimeOwner,
+    documentIdentity: string,
+  ): ResolvedOwnerDocumentSaveRepository | null {
+    if (!documentIdentity) {
+      return null;
+    }
+
+    const candidate = this.candidate(owner);
+    if (!candidate) {
+      return null;
+    }
+    const snapshot = candidate.readDocument(documentIdentity);
+    if (!snapshot) {
+      return null;
+    }
+
+    return new ResolvedRepositorySession(
+      this.dependencies,
+      { owner, documentIdentity, document: snapshot.document },
+      candidate,
+      snapshot.incarnation,
+    );
+  }
+
   private candidate(
     owner: WorkspaceRuntimeOwner,
   ): OwnerDocumentRepositoryCandidate | null {

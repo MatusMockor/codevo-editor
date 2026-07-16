@@ -3014,6 +3014,8 @@ describe("EditorSurface", () => {
     )?.[0];
 
     expect(runner).toEqual(expect.any(Function));
+    expect(runner.isEnabled("editor.rename")).toBe(true);
+    expect(runner.isEnabled("editor.nextChange")).toBe(false);
 
     act(() => {
       runner("editor.rename");
@@ -8629,6 +8631,7 @@ class Foo
     };
     const monaco = createMonaco(model);
     const editor = createEditor(model);
+    const editorSurfaceCommandRunnerChange = vi.fn();
     editorSurfaceMocks.editor = editor;
     editorSurfaceMocks.monaco = monaco;
 
@@ -8647,6 +8650,7 @@ class Foo
           onChange={vi.fn()}
           onCloseActiveTab={vi.fn()}
           onCursorPositionChange={vi.fn()}
+          onEditorSurfaceCommandRunnerChange={editorSurfaceCommandRunnerChange}
           onGoBack={vi.fn()}
           onGoForward={vi.fn()}
           onGoToDefinition={vi.fn()}
@@ -8674,6 +8678,12 @@ class Foo
 
     const nextChange = actionById("mockor.nextChange");
     const previousChange = actionById("mockor.previousChange");
+    const runner = editorSurfaceCommandRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+
+    expect(runner.isEnabled("editor.nextChange")).toBe(true);
+    expect(runner.isEnabled("editor.previousChange")).toBe(true);
 
     expect(nextChange).toEqual(
       expect.objectContaining({
@@ -8690,10 +8700,14 @@ class Foo
       }),
     );
 
+    nextChange.run();
+    previousChange.run();
+    expect(editor.setPosition).not.toHaveBeenCalled();
+
     // Caret starts on line 1, before both hunks: Next jumps to the first hunk.
     editor.getPosition.mockReturnValue({ column: 1, lineNumber: 1 });
     editor.setPosition.mockClear();
-    nextChange.run();
+    runner("editor.nextChange");
     expect(editor.setPosition).toHaveBeenCalledWith(
       expect.objectContaining({ lineNumber: firstHunkLine }),
     );
@@ -8701,7 +8715,7 @@ class Foo
     // From inside the first hunk, Next advances to the second hunk.
     editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
     editor.setPosition.mockClear();
-    nextChange.run();
+    runner("editor.nextChange");
     expect(editor.setPosition).toHaveBeenCalledWith(
       expect.objectContaining({ lineNumber: secondHunkLine }),
     );
@@ -8709,7 +8723,7 @@ class Foo
     // From the second (last) hunk, Next wraps around to the first hunk.
     editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
     editor.setPosition.mockClear();
-    nextChange.run();
+    runner("editor.nextChange");
     expect(editor.setPosition).toHaveBeenCalledWith(
       expect.objectContaining({ lineNumber: firstHunkLine }),
     );
@@ -8717,7 +8731,7 @@ class Foo
     // From the first hunk, Previous wraps around to the last hunk.
     editor.getPosition.mockReturnValue({ column: 1, lineNumber: firstHunkLine });
     editor.setPosition.mockClear();
-    previousChange.run();
+    runner("editor.previousChange");
     expect(editor.setPosition).toHaveBeenCalledWith(
       expect.objectContaining({ lineNumber: secondHunkLine }),
     );
@@ -8725,7 +8739,7 @@ class Foo
     // From the last hunk, Previous steps back to the first hunk.
     editor.getPosition.mockReturnValue({ column: 1, lineNumber: secondHunkLine });
     editor.setPosition.mockClear();
-    previousChange.run();
+    runner("editor.previousChange");
     expect(editor.setPosition).toHaveBeenCalledWith(
       expect.objectContaining({ lineNumber: firstHunkLine }),
     );
@@ -10366,6 +10380,8 @@ class Foo
         ["mockor.closeTab", "editor.closeTab"],
         ["mockor.goBack", "navigation.back"],
         ["mockor.goForward", "navigation.forward"],
+        ["mockor.nextChange", "editor.nextChange"],
+        ["mockor.previousChange", "editor.previousChange"],
       ]);
       const actions = editor.addAction.mock.calls.map(([action]) => action);
 
@@ -10386,10 +10402,11 @@ class Foo
       expect(props.onOpenFile).not.toHaveBeenCalled();
       expect(props.onOpenFileStructure).not.toHaveBeenCalled();
       expect(editor.trigger).not.toHaveBeenCalled();
+      expect(editor.setPosition).not.toHaveBeenCalled();
     },
   );
 
-  it("preserves Monaco language-provider fallbacks when navigation registry commands are missing", async () => {
+  it("does not bypass authoritative surface commands when registry commands are missing", async () => {
     const activeDocument: EditorDocument = {
       content: "const value = 1;\n",
       language: "typescript",
@@ -10422,21 +10439,25 @@ class Foo
       actions.find((action) => action.id === id);
 
     actionById("mockor.quickDefinition")?.run();
+    actionById("mockor.nextChange")?.run();
+    actionById("mockor.previousChange")?.run();
     actionById("mockor.goToSourceDefinition")?.run();
     actionById("mockor.goToDeclaration")?.run();
     actionById("mockor.goToTypeDefinition")?.run();
 
     expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
       "editor.quickDefinition",
+      "editor.nextChange",
+      "editor.previousChange",
       "editor.goToSourceDefinition",
       "editor.goToDeclaration",
       "editor.goToTypeDefinition",
     ]);
     expect(editor.trigger.mock.calls).toEqual([
-      ["keyboard", "editor.action.peekDefinition", {}],
       ["keyboard", "editor.action.revealDeclaration", {}],
       ["keyboard", "editor.action.goToTypeDefinition", {}],
     ]);
+    expect(editor.setPosition).not.toHaveBeenCalled();
   });
 
   it("routes editor-focused Escape through the floating-surface closer", async () => {
@@ -10836,7 +10857,12 @@ class Foo
     duplicateLine?.run();
     addSelectionToNextMatch?.run();
     deleteLine?.run();
+    const triggerCountBeforeQuickDefinition = editor.trigger.mock.calls.length;
     quickDefinition?.run();
+
+    expect(editor.trigger).toHaveBeenCalledTimes(
+      triggerCountBeforeQuickDefinition,
+    );
 
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
@@ -10861,11 +10887,6 @@ class Foo
     expect(editor.trigger).toHaveBeenCalledWith(
       "keyboard",
       "editor.action.deleteLines",
-      {},
-    );
-    expect(editor.trigger).toHaveBeenCalledWith(
-      "keyboard",
-      "editor.action.peekDefinition",
       {},
     );
   });

@@ -97,6 +97,7 @@ import {
   type TextSearchOptions,
   type TextSearchResult,
   type WorkspaceDescriptor,
+  type WorkspaceOwnerFileGateway,
 } from "../domain/workspace";
 
 type WorkbenchController = ReturnType<typeof useWorkbenchController>;
@@ -1545,7 +1546,6 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().saveActiveDocument();
     });
     await flushAsyncTurns();
-
     await act(async () => {
       await getWorkbench().openLocalHistory();
     });
@@ -1583,6 +1583,19 @@ describe("useWorkbenchController preview tabs", () => {
 
   it("reverts the active document to a selected Local History version", async () => {
     const localHistoryGateway = createInMemoryLocalHistoryGateway();
+    const initialRevision = {
+      contentHash: "initial",
+      device: "1",
+      inode: "2",
+      modifiedNanoseconds: 3,
+      modifiedSeconds: 4,
+      size: 14,
+    };
+    const revertedRevision = { ...initialRevision, contentHash: "reverted" };
+    const writeTextFileForWorkspace = vi.fn(async () => ({
+      status: "success" as const,
+      revision: revertedRevision,
+    }));
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -1590,6 +1603,21 @@ describe("useWorkbenchController preview tabs", () => {
       },
       localHistoryGateway,
       readTextFile: vi.fn(async () => "<?php // v1\n"),
+      workspaceFiles: {
+        readTextFileSnapshot: vi.fn(async () => ({
+          content: "<?php // v1\n",
+          revision: initialRevision,
+        })),
+        writeTextFileForWorkspace,
+      },
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () =>
+          trustedDescriptor("workspace-local-history", "/workspace"),
+        ),
+        unregister: vi.fn(async () => undefined),
+      },
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         autoSave: false,
@@ -1615,6 +1643,7 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().saveActiveDocument();
     });
     await flushAsyncTurns();
+    vi.mocked(dependencies.workspaceGateways.files.writeTextFile).mockClear();
 
     await act(async () => {
       await getWorkbench().openLocalHistory();
@@ -1632,9 +1661,13 @@ describe("useWorkbenchController preview tabs", () => {
 
     // The reverted content (v1) is written back to disk and reflected in the
     // open document.
-    expect(
-      dependencies.workspaceGateways.files.writeTextFile,
-    ).toHaveBeenLastCalledWith("/workspace/src/User.php", "<?php // v1\n");
+    expect(writeTextFileForWorkspace).toHaveBeenLastCalledWith(
+      "workspace-local-history",
+      "/workspace/src/User.php",
+      "<?php // v1\n",
+      initialRevision,
+    );
+    expect(dependencies.workspaceGateways.files.writeTextFile).not.toHaveBeenCalled();
     const active = getWorkbench().openDocuments.find(
       (document) => document.path === "/workspace/src/User.php",
     );
@@ -2366,6 +2399,253 @@ describe("useWorkbenchController preview tabs", () => {
       firstDiffPath,
     ]);
     expect(gitGateway.getDiff).toHaveBeenCalledTimes(3);
+  });
+
+  it("makes the activated pinned Git diff authoritative", async () => {
+    const firstChange = gitChangedFile("src/First.php", false);
+    const secondChange = gitChangedFile("src/Second.php", false);
+    const firstRepositoryRoot = "/workspace/packages/first";
+    const secondRepositoryRoot = "/workspace/packages/second";
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getDiff = vi.fn(async (repositoryRoot, change) => ({
+      change,
+      language: "php",
+      modifiedContent: `new ${repositoryRoot}`,
+      originalContent: `old ${change.relativePath}`,
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(firstChange, firstRepositoryRoot);
+      await getWorkbench().openGitChange(secondChange, secondRepositoryRoot);
+    });
+
+    const groupId = getWorkbench().editorGroups.activeGroupId;
+    const firstDiffPath = "mockor-git-diff:worktree:/workspace/src/First.php";
+    await act(async () => {
+      getWorkbench().activateEditorGroupTab(groupId, firstDiffPath);
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().activePath).toBe(firstDiffPath);
+    expect(getWorkbench().selectedGitChange).toEqual(firstChange);
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+    expect(getWorkbench().gitDiffPreview).toEqual(
+      expect.objectContaining({
+        change: firstChange,
+        modifiedContent: `new ${firstRepositoryRoot}`,
+      }),
+    );
+    expect(getWorkbench().gitDiffDocuments[firstDiffPath]).toEqual(
+      expect.objectContaining({
+        change: firstChange,
+        repositoryRoot: firstRepositoryRoot,
+      }),
+    );
+    expect(gitGateway.getDiff).toHaveBeenLastCalledWith(
+      firstRepositoryRoot,
+      firstChange,
+    );
+  });
+
+  it("clears hidden Git diff state when activating non-worktree diff tabs", async () => {
+    const change = gitChangedFile("src/User.php", false);
+    const file = fileEntry("/workspace/src/Normal.php", "Normal.php");
+    const historyPath = "mockor-git-history-diff:abc123:src/User.php";
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway: fileHistoryGitGateway({}),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(file);
+      getWorkbench().openReadOnlyDocument(
+        {
+          content: "",
+          language: "plaintext",
+          name: "History: User.php",
+          path: historyPath,
+          readOnly: true,
+          savedContent: "",
+        },
+        { pin: true },
+      );
+      await getWorkbench().openGitChange(change);
+    });
+
+    const groupId = getWorkbench().editorGroups.activeGroupId;
+    act(() => getWorkbench().activateEditorGroupTab(groupId, file.path));
+    expect(getWorkbench().activePath).toBe(file.path);
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+
+    const diffPath = "mockor-git-diff:worktree:/workspace/src/User.php";
+    await act(async () => {
+      getWorkbench().activateEditorGroupTab(groupId, diffPath);
+      await flushAsyncTurns();
+    });
+    act(() => getWorkbench().activateEditorGroupTab(groupId, historyPath));
+
+    expect(getWorkbench().activePath).toBe(historyPath);
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+  });
+
+  it("reactivates a same-path Git diff through its split editor group", async () => {
+    const change = gitChangedFile("src/Shared.php", false);
+    let loadCount = 0;
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getDiff = vi.fn(async (_repositoryRoot, requestedChange) => ({
+      change: requestedChange,
+      language: "php",
+      modifiedContent: `version ${++loadCount}`,
+      originalContent: "old",
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(change);
+    });
+    act(() => getWorkbench().splitActiveEditorGroup("right"));
+    const [leftGroupId, rightGroupId] = Object.keys(
+      getWorkbench().editorGroups.groups,
+    );
+    const diffPath = "mockor-git-diff:worktree:/workspace/src/Shared.php";
+    expect(getWorkbench().editorGroups.activeGroupId).toBe(rightGroupId);
+    expect(getWorkbench().editorGroups.groups[leftGroupId].activePath).toBe(
+      diffPath,
+    );
+
+    await act(async () => {
+      getWorkbench().activateEditorGroupTab(leftGroupId, diffPath);
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().editorGroups.activeGroupId).toBe(leftGroupId);
+    expect(getWorkbench().activePath).toBe(diffPath);
+    expect(getWorkbench().selectedGitChange).toEqual(change);
+    expect(getWorkbench().gitDiffPreview?.modifiedContent).toBe("version 2");
+    expect(gitGateway.getDiff).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let a stale group-activated Git diff load win", async () => {
+    const firstChange = gitChangedFile("src/First.php", false);
+    const secondChange = gitChangedFile("src/Second.php", false);
+    const staleFirstLoad = createDeferred<
+      Awaited<ReturnType<GitGateway["getDiff"]>>
+    >();
+    const gitGateway = fileHistoryGitGateway({});
+    gitGateway.getDiff = vi
+      .fn()
+      .mockResolvedValueOnce({
+        change: firstChange,
+        language: "php",
+        modifiedContent: "first initial",
+        originalContent: "old first",
+      })
+      .mockResolvedValueOnce({
+        change: secondChange,
+        language: "php",
+        modifiedContent: "second initial",
+        originalContent: "old second",
+      })
+      .mockReturnValueOnce(staleFirstLoad.promise)
+      .mockResolvedValueOnce({
+        change: secondChange,
+        language: "php",
+        modifiedContent: "second authoritative",
+        originalContent: "old second",
+      });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(firstChange);
+      await getWorkbench().openGitChange(secondChange);
+    });
+    const groupId = getWorkbench().editorGroups.activeGroupId;
+    const firstDiffPath = "mockor-git-diff:worktree:/workspace/src/First.php";
+    const secondDiffPath = "mockor-git-diff:worktree:/workspace/src/Second.php";
+    await act(async () => {
+      getWorkbench().activateEditorGroupTab(groupId, firstDiffPath);
+      getWorkbench().activateEditorGroupTab(groupId, secondDiffPath);
+      await flushAsyncTurns();
+    });
+
+    await act(async () => {
+      staleFirstLoad.resolve({
+        change: firstChange,
+        language: "php",
+        modifiedContent: "first stale",
+        originalContent: "old first",
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().activePath).toBe(secondDiffPath);
+    expect(getWorkbench().selectedGitChange).toEqual(secondChange);
+    expect(getWorkbench().gitDiffLoading).toBe(false);
+    expect(getWorkbench().gitDiffPreview?.modifiedContent).toBe(
+      "second authoritative",
+    );
+  });
+
+  it("ignores activation callbacks for tabs no longer owned by the group", async () => {
+    const change = gitChangedFile("src/Closed.php", false);
+    const gitGateway = fileHistoryGitGateway({});
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      gitGateway,
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openGitChange(change);
+    });
+
+    const groupId = getWorkbench().editorGroups.activeGroupId;
+    const diffPath = "mockor-git-diff:worktree:/workspace/src/Closed.php";
+    await act(async () => {
+      getWorkbench().closeGitDiffPreview();
+      await flushAsyncTurns();
+    });
+    vi.mocked(gitGateway.getDiff).mockClear();
+
+    act(() => getWorkbench().activateEditorGroupTab(groupId, diffPath));
+
+    expect(getWorkbench().activePath).not.toBe(diffPath);
+    expect(getWorkbench().selectedGitChange).toBeNull();
+    expect(getWorkbench().gitDiffPreview).toBeNull();
+    expect(gitGateway.getDiff).not.toHaveBeenCalled();
   });
 
   it("closes an open Git diff tab when a status refresh no longer contains that diff", async () => {
@@ -73879,7 +74159,9 @@ MissingClass::class;
     workspaceDescriptor?: WorkspaceDescriptor;
     workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
     workspaceIdentityGateway?: WorkbenchWorkspaceGateways["identity"];
-    workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"]>;
+    workspaceFiles?: Partial<
+      WorkbenchWorkspaceGateways["files"] & WorkspaceOwnerFileGateway
+    >;
     workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
     workspaceSettings?: Omit<ReturnType<typeof defaultWorkspaceSettings>, "session"> & {
       session: unknown;
@@ -74389,7 +74671,9 @@ function createControllerDependencies({
   workspaceDescriptor?: WorkspaceDescriptor;
   workspaceFileChangeGateway?: WorkbenchWorkspaceGateways["fileChanges"];
   workspaceIdentityGateway?: WorkbenchWorkspaceGateways["identity"];
-  workspaceFiles?: Partial<WorkbenchWorkspaceGateways["files"]>;
+  workspaceFiles?: Partial<
+    WorkbenchWorkspaceGateways["files"] & WorkspaceOwnerFileGateway
+  >;
   workspaceRuntimeLifecycleGateway?: WorkspaceRuntimeLifecycleGateway;
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
   workspaceTrustGateway?: WorkspaceTrustGateway;

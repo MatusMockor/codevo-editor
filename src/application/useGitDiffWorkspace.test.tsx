@@ -28,6 +28,7 @@ const ROOT = "/workspace";
 
 interface Deferred<T> {
   promise: Promise<T>;
+  reject: (reason?: unknown) => void;
   resolve: (value: T) => void;
 }
 
@@ -44,10 +45,12 @@ interface Harness {
 
 function createDeferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 function changedFile(
@@ -533,6 +536,43 @@ describe("useGitDiffWorkspace", () => {
     expect(
       harness.git().gitDiffDocuments[gitDiffDocumentPath(firstChange)]?.diff,
     ).toEqual(diff(firstChange));
+
+    harness.unmount();
+  });
+
+  it("does not report a late failure from an inactive retained diff", async () => {
+    const firstChange = changedFile("src/First.ts");
+    const secondChange = changedFile("src/Second.ts");
+    const firstReload = createDeferred<GitFileDiff>();
+    const getDiff = vi
+      .fn<GitGateway["getDiff"]>()
+      .mockResolvedValueOnce(diff(firstChange))
+      .mockResolvedValueOnce(diff(secondChange))
+      .mockReturnValueOnce(firstReload.promise)
+      .mockResolvedValueOnce(diff(secondChange));
+    const harness = renderGitDiffWorkspace({
+      gitGateway: createFakeGitGateway(getDiff),
+    });
+
+    await act(async () => {
+      await harness.git().openGitChange(firstChange);
+      await harness.git().openGitChange(secondChange);
+    });
+
+    act(() => {
+      harness.git().loadGitDiffDocument(gitDiffDocumentPath(firstChange));
+      harness.git().loadGitDiffDocument(gitDiffDocumentPath(secondChange));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      firstReload.reject(new Error("inactive diff failed"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(harness.git().selectedGitChange).toBe(secondChange);
+    expect(harness.git().gitDiffPreview).toEqual(diff(secondChange));
+    expect(harness.reportError).not.toHaveBeenCalled();
 
     harness.unmount();
   });

@@ -299,8 +299,8 @@ export function useGitDiffWorkspace(
           }));
           if (selectedGitDiffDocumentPathRef.current === path) {
             setGitDiffPreview(null);
+            reportError("Git Diff", error);
           }
-          reportError("Git Diff", error);
         })
         .finally(() => {
           if (

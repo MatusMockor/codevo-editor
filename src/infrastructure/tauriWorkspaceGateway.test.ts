@@ -161,6 +161,61 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
   });
 
+  it("routes an owner-scoped save through the captured workspace instead of a nested match", async () => {
+    const nestedDescriptor = {
+      ...descriptor,
+      workspaceId: "ws-nested",
+      selectedPath: "/selected/project/packages/nested",
+      canonicalRoot: "/real/project/packages/nested",
+    };
+    const gateway = new TauriWorkspaceGateway({
+      descriptorForPath: () => nestedDescriptor,
+      matchForPath: (path, workspaceId) => {
+        if (workspaceId !== descriptor.workspaceId) {
+          return null;
+        }
+
+        return {
+          descriptor,
+          matchedRoot: descriptor.selectedPath,
+          relativePath: path.slice(`${descriptor.selectedPath}/`.length),
+        };
+      },
+    });
+    invoke.mockResolvedValue({ status: "success", revision: revision() });
+
+    await gateway.writeTextFileForWorkspace(
+      descriptor.workspaceId,
+      "/selected/project/packages/nested/src/App.php",
+      "<?php",
+      revision(),
+    );
+
+    expect(invoke).toHaveBeenCalledWith("workspace_save_text_file", {
+      workspaceId: descriptor.workspaceId,
+      relativePath: "packages/nested/src/App.php",
+      content: "<?php",
+      expectedRevision: revision(),
+    });
+  });
+
+  it("rejects an owner-scoped save when the captured workspace no longer owns the path", () => {
+    const gateway = new TauriWorkspaceGateway({
+      descriptorForPath: () => descriptor,
+      matchForPath: () => null,
+    });
+
+    expect(() =>
+      gateway.writeTextFileForWorkspace(
+        "ws-retired",
+        "/selected/project/src/App.php",
+        "<?php",
+        revision(),
+      )
+    ).toThrow("does not belong to the captured workspace");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("maps descriptor-scoped replace payloads and presentation paths", async () => {
     invoke.mockResolvedValue({ status: "partial", files: [{ relativePath: "src/a.ts", replacements: 1 }], totalReplacements: 1, conflicts: [{ relativePath: "src/b.ts", message: "changed" }], errors: [], message: "partial" });
     await expect(trustedGateway().replaceInPath(

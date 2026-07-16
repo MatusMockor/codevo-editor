@@ -16,6 +16,7 @@ import type {
   WorkspaceDescriptor,
   WorkspaceDetectionGateway,
   WorkspaceFileGateway,
+  WorkspaceOwnerFileGateway,
   WorkspaceWriteResult,
   WorkspaceFileRevision,
   WorkspaceMutationResult,
@@ -43,7 +44,8 @@ export class TauriWorkspaceGateway
     PhpToolGateway,
     TextSearchGateway,
     WorkspaceDetectionGateway,
-    WorkspaceFileGateway
+    WorkspaceFileGateway,
+    WorkspaceOwnerFileGateway
 {
   constructor(
     private readonly workspaceIdentities?: WorkspaceIdentityDescriptorResolver,
@@ -252,6 +254,26 @@ export class TauriWorkspaceGateway
         "Cannot save without the revision from the loaded document. Reload the file and try again.",
       );
     }
+    return invoke<WorkspaceWriteResult>("workspace_save_text_file", {
+      ...target,
+      content,
+      expectedRevision,
+    });
+  }
+
+  writeTextFileForWorkspace(
+    workspaceId: string,
+    path: string,
+    content: string,
+    expectedRevision: WorkspaceFileRevision,
+  ): Promise<WorkspaceWriteResult> {
+    const target = this.optionalTrustedTarget(path, workspaceId);
+    if (!target) {
+      throw new Error(
+        "The requested file does not belong to the captured workspace.",
+      );
+    }
+
     return invoke<WorkspaceWriteResult>("workspace_save_text_file", {
       ...target,
       content,
