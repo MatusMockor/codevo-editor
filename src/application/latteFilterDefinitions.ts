@@ -57,6 +57,19 @@ export async function resolveLatteFilterDefinition(
     return openLatteCoreFilterMethodTarget(context, reference.name);
   }
 
+  const inlineCallableOpened = await openInlineObjectCallableMethodTarget(
+    context,
+    target,
+  );
+
+  if (!context.isRequestedRootActive()) {
+    return false;
+  }
+
+  if (inlineCallableOpened) {
+    return true;
+  }
+
   let targetSource: string;
 
   try {
@@ -92,7 +105,41 @@ export async function resolveLatteFilterDefinition(
     return false;
   }
 
+  if (isInlineObjectCallable(target)) {
+    return false;
+  }
+
   return openLatteCallableMethodTarget(context, target, targetSource);
+}
+
+async function openInlineObjectCallableMethodTarget(
+  context: LatteFilterDefinitionContext,
+  target: LatteFilterRegistrationTarget,
+): Promise<boolean> {
+  if (!isInlineObjectCallable(target)) {
+    return false;
+  }
+
+  return context.deps.openPhpMethodTarget(
+    target.callable.serviceClassName,
+    target.callable.methodName,
+  );
+}
+
+function isInlineObjectCallable(
+  target: LatteFilterRegistrationTarget,
+): target is LatteFilterRegistrationTarget & {
+  callable: {
+    methodName: string;
+    serviceClassName: string;
+    serviceName?: undefined;
+  };
+} {
+  if (!target.callable?.serviceClassName) {
+    return false;
+  }
+
+  return target.callable.serviceName === undefined;
 }
 
 async function openLatteCoreFilterMethodTarget(

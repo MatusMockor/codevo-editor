@@ -80,6 +80,20 @@ function filterLoaderConfig(...names: string[]): string {
   ].join("\n");
 }
 
+function inlineObjectFilterLoaderConfig(): string {
+  return [
+    "services:",
+    "    filterLoader:",
+    "        setup:",
+    "            - register('activeLabel', [Crm\\ApplicationModule\\Helpers\\ActiveLabelHelper(), process])",
+    "            - register('diff', [Crm\\ApplicationModule\\Helpers\\DiffHelper(), process])",
+    "            - register('json', [Crm\\ApplicationModule\\Helpers\\JsonHelper(), process])",
+    "            - register('gravatar', [Crm\\UsersModule\\Helpers\\GravatarHelper(), process])",
+    "            - register('userLabel', [Crm\\UsersModule\\Helpers\\UserLabelHelper(), process])",
+    "",
+  ].join("\n");
+}
+
 function neonFilterCallable(source: string, filterName: string) {
   return {
     callable: {
@@ -147,6 +161,42 @@ function makeContext(
 }
 
 describe("loadLatteFilterRegistrations", () => {
+  it("discovers real ebox-crm inline object callable targets", async () => {
+    const configSource = inlineObjectFilterLoaderConfig();
+    const { context } = makeContext({
+      "app/modules/baseModule/config/config.neon": configSource,
+    });
+    const expected = [
+      ["activeLabel", "Crm\\ApplicationModule\\Helpers\\ActiveLabelHelper"],
+      ["diff", "Crm\\ApplicationModule\\Helpers\\DiffHelper"],
+      ["gravatar", "Crm\\UsersModule\\Helpers\\GravatarHelper"],
+      ["json", "Crm\\ApplicationModule\\Helpers\\JsonHelper"],
+      ["userLabel", "Crm\\UsersModule\\Helpers\\UserLabelHelper"],
+    ];
+
+    await expect(loadLatteFilterRegistrations(context)).resolves.toEqual(
+      expected.map(([name, serviceClassName]) => ({
+        callable: {
+          methodName: "process",
+          methodOffset: configSource.indexOf(
+            "process",
+            configSource.indexOf(`'${name}'`),
+          ),
+          serviceClassName,
+          serviceOffset: configSource.indexOf(
+            serviceClassName,
+            configSource.indexOf(`'${name}'`),
+          ),
+        },
+        methodName: "process",
+        name,
+        offset: configSource.indexOf(name),
+        path: `${ROOT}/app/modules/baseModule/config/config.neon`,
+        serviceClassName,
+      })),
+    );
+  });
+
   it("aggregates unique names across neon files keeping the first location", async () => {
     const usersConfig = filterLoaderConfig("gravatar", "userLabel");
     const appConfig = filterLoaderConfig("userDate", "gravatar");

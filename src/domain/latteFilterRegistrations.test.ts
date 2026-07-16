@@ -25,21 +25,81 @@ function callable(
   };
 }
 
+function inlineObjectCallable(
+  source: string,
+  serviceClassName: string,
+  methodName: string,
+  start = 0,
+) {
+  return {
+    methodName,
+    methodOffset: offsetOf(source, methodName, start),
+    serviceClassName,
+    serviceOffset: offsetOf(source, serviceClassName, start),
+  };
+}
+
 describe("latteFilterRegistrationsFromSource", () => {
-  it("extracts register() names with offsets under a filterLoader service", () => {
+  it("extracts real ebox-crm inline object filter callables", () => {
     const source = [
       "services:",
       "    filterLoader:",
       "        setup:",
+      "            - register('activeLabel', [Crm\\ApplicationModule\\Helpers\\ActiveLabelHelper(), process])",
+      "            - register('diff', [Crm\\ApplicationModule\\Helpers\\DiffHelper(), process])",
+      "            - register('json', [Crm\\ApplicationModule\\Helpers\\JsonHelper(), process])",
       "            - register('gravatar', [Crm\\UsersModule\\Helpers\\GravatarHelper(), process])",
-      "            - register('userLabel', [@userLabelHelper, process])",
+      "            - register('userLabel', [Crm\\UsersModule\\Helpers\\UserLabelHelper(), process])",
       "",
     ].join("\n");
 
     expect(latteFilterRegistrationsFromSource(source)).toEqual([
-      { name: "gravatar", offset: offsetOf(source, "gravatar") },
       {
-        callable: callable(source, "userLabelHelper", "process", offsetOf(source, "userLabel")),
+        callable: inlineObjectCallable(
+          source,
+          "Crm\\ApplicationModule\\Helpers\\ActiveLabelHelper",
+          "process",
+        ),
+        name: "activeLabel",
+        offset: offsetOf(source, "activeLabel"),
+      },
+      {
+        callable: inlineObjectCallable(
+          source,
+          "Crm\\ApplicationModule\\Helpers\\DiffHelper",
+          "process",
+          offsetOf(source, "diff"),
+        ),
+        name: "diff",
+        offset: offsetOf(source, "diff"),
+      },
+      {
+        callable: inlineObjectCallable(
+          source,
+          "Crm\\ApplicationModule\\Helpers\\JsonHelper",
+          "process",
+          offsetOf(source, "json"),
+        ),
+        name: "json",
+        offset: offsetOf(source, "json"),
+      },
+      {
+        callable: inlineObjectCallable(
+          source,
+          "Crm\\UsersModule\\Helpers\\GravatarHelper",
+          "process",
+          offsetOf(source, "gravatar"),
+        ),
+        name: "gravatar",
+        offset: offsetOf(source, "gravatar"),
+      },
+      {
+        callable: inlineObjectCallable(
+          source,
+          "Crm\\UsersModule\\Helpers\\UserLabelHelper",
+          "process",
+          offsetOf(source, "userLabel"),
+        ),
         name: "userLabel",
         offset: offsetOf(source, "userLabel"),
       },
@@ -143,6 +203,11 @@ describe("latteFilterRegistrationsFromSource", () => {
       "            - register('dynamicMethod', [@helper, %method%])",
       "            - register('numericMethod', [@helper, 123])",
       "            - register('classCallable', [Helper::class, process])",
+      "            - register('shortClass', [Helper(), process])",
+      "            - register('constructorArgument', [App\\Helper('value'), process])",
+      "            - register('missingSegment', [App\\(), process])",
+      "            - register('missingMethod', [App\\Helper(), ])",
+      "            - register('trailingMember', [App\\Helper(), process::call])",
       "",
     ].join("\n");
 
@@ -151,6 +216,14 @@ describe("latteFilterRegistrationsFromSource", () => {
       { name: "dynamicMethod", offset: offsetOf(source, "dynamicMethod") },
       { name: "numericMethod", offset: offsetOf(source, "numericMethod") },
       { name: "classCallable", offset: offsetOf(source, "classCallable") },
+      { name: "shortClass", offset: offsetOf(source, "shortClass") },
+      {
+        name: "constructorArgument",
+        offset: offsetOf(source, "constructorArgument"),
+      },
+      { name: "missingSegment", offset: offsetOf(source, "missingSegment") },
+      { name: "missingMethod", offset: offsetOf(source, "missingMethod") },
+      { name: "trailingMember", offset: offsetOf(source, "trailingMember") },
     ]);
   });
 

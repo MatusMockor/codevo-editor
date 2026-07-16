@@ -13,7 +13,7 @@ export interface LatteFilterRegistrationCallable {
   methodName: string;
   methodOffset: number;
   serviceClassName?: string;
-  serviceName: string;
+  serviceName?: string;
   serviceOffset: number;
 }
 
@@ -143,11 +143,19 @@ function filterCallableArgument(
 
   cursor = skipInlineSpaces(source, cursor + 1);
 
-  if (source[cursor] !== "@") {
-    return null;
+  if (source[cursor] === "@") {
+    return serviceFilterCallable(source, cursor, method);
   }
 
-  const serviceOffset = cursor + 1;
+  return inlineObjectFilterCallable(source, cursor);
+}
+
+function serviceFilterCallable(
+  source: string,
+  start: number,
+  method: NeonServiceSetupMethod,
+): LatteFilterRegistrationCallable | null {
+  const serviceOffset = start + 1;
   let serviceEnd = serviceOffset;
 
   while (isServiceNameChar(source[serviceEnd] ?? "")) {
@@ -159,7 +167,62 @@ function filterCallableArgument(
   }
 
   const serviceName = source.slice(serviceOffset, serviceEnd);
-  cursor = skipInlineSpaces(source, serviceEnd);
+  const callableMethod = callableMethodAfter(source, serviceEnd);
+
+  if (!callableMethod) {
+    return null;
+  }
+
+  return {
+    ...callableMethod,
+    ...(serviceName === "self"
+      ? serviceClassNamePayload(method.service)
+      : {}),
+    serviceName,
+    serviceOffset,
+  };
+}
+
+function inlineObjectFilterCallable(
+  source: string,
+  start: number,
+): LatteFilterRegistrationCallable | null {
+  const className = phpClassNameAt(source, start);
+
+  if (!className) {
+    return null;
+  }
+
+  let cursor = skipInlineSpaces(source, className.end);
+
+  if (source[cursor] !== "(") {
+    return null;
+  }
+
+  cursor = skipInlineSpaces(source, cursor + 1);
+
+  if (source[cursor] !== ")") {
+    return null;
+  }
+
+  const callableMethod = callableMethodAfter(source, cursor + 1);
+
+  if (!callableMethod) {
+    return null;
+  }
+
+  return {
+    ...callableMethod,
+    serviceClassName: className.name,
+    serviceOffset: start,
+  };
+}
+
+function callableMethodAfter(
+  source: string,
+  start: number,
+): Pick<LatteFilterRegistrationCallable, "methodName" | "methodOffset"> | null {
+  let cursor = skipInlineSpaces(source, start);
 
   if (source[cursor] !== ",") {
     return null;
@@ -172,14 +235,10 @@ function filterCallableArgument(
     return null;
   }
 
-  let methodEnd = cursor;
+  let methodEnd = methodOffset + 1;
 
   while (isMethodNameChar(source[methodEnd] ?? "")) {
     methodEnd += 1;
-  }
-
-  if (methodEnd === methodOffset) {
-    return null;
   }
 
   const methodName = source.slice(methodOffset, methodEnd);
@@ -192,12 +251,55 @@ function filterCallableArgument(
   return {
     methodName,
     methodOffset,
-    ...(serviceName === "self"
-      ? serviceClassNamePayload(method.service)
-      : {}),
-    serviceName,
-    serviceOffset,
   };
+}
+
+function phpClassNameAt(
+  source: string,
+  start: number,
+): { end: number; name: string } | null {
+  let cursor = start;
+
+  if (source[cursor] === "\\") {
+    cursor += 1;
+  }
+
+  const firstSegmentEnd = phpIdentifierEnd(source, cursor);
+
+  if (firstSegmentEnd === null || source[firstSegmentEnd] !== "\\") {
+    return null;
+  }
+
+  cursor = firstSegmentEnd;
+
+  while (source[cursor] === "\\") {
+    const segmentEnd = phpIdentifierEnd(source, cursor + 1);
+
+    if (segmentEnd === null) {
+      return null;
+    }
+
+    cursor = segmentEnd;
+  }
+
+  return {
+    end: cursor,
+    name: source.slice(start, cursor).replace(/^\\/, ""),
+  };
+}
+
+function phpIdentifierEnd(source: string, start: number): number | null {
+  if (!isMethodNameStart(source[start] ?? "")) {
+    return null;
+  }
+
+  let cursor = start + 1;
+
+  while (isMethodNameChar(source[cursor] ?? "")) {
+    cursor += 1;
+  }
+
+  return cursor;
 }
 
 function serviceClassNamePayload(service: NeonServiceSetupMethod["service"]):

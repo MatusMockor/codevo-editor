@@ -1356,10 +1356,6 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
     const usersDeps = makeLatteDeps(usersTemplatePath);
     const usersLatte = createLatteIntelligence(() => usersDeps);
-    const usersConfigPath = "app/modules/usersModule/config/config.neon";
-    const usersConfig = await readFileContent(
-      joinPath(EBOX_CRM_ROOT, usersConfigPath),
-    );
 
     await expect(
       usersLatte.provideLatteDefinition(
@@ -1367,11 +1363,11 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         offsetInside(usersSource, "userLabel"),
       ),
     ).resolves.toBe(true);
-    expect(usersDeps.openTarget).toHaveBeenLastCalledWith(
-      joinPath(EBOX_CRM_ROOT, usersConfigPath),
-      positionAtOffset(usersConfig, usersConfig.indexOf("userLabel")),
-      "userLabel",
+    expect(usersDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
+      "Crm\\UsersModule\\Helpers\\UserLabelHelper",
+      "process",
     );
+    expect(usersDeps.openTarget).not.toHaveBeenCalled();
 
     await expect(
       usersLatte.provideLatteDefinition(
@@ -1379,11 +1375,11 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         offsetInside(usersSource, "gravatar"),
       ),
     ).resolves.toBe(true);
-    expect(usersDeps.openTarget).toHaveBeenLastCalledWith(
-      joinPath(EBOX_CRM_ROOT, usersConfigPath),
-      positionAtOffset(usersConfig, usersConfig.indexOf("gravatar")),
-      "gravatar",
+    expect(usersDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
+      "Crm\\UsersModule\\Helpers\\GravatarHelper",
+      "process",
     );
+    expect(usersDeps.openTarget).not.toHaveBeenCalled();
 
     const subscriptionTemplatePath =
       "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/default.latte";

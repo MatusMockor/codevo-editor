@@ -20,6 +20,11 @@ const CROSS_FILE_CALLABLE_CONFIG_SOURCE = `services:
     setup:
       - addFilter('UserDate', [@userDateFilter, format])
 `;
+const INLINE_OBJECT_CONFIG_SOURCE = `services:
+  filterLoader:
+    setup:
+      - register('UserDate', [App\\Filters\\UserDateFilter(), format])
+`;
 const EXTENSION_SOURCE = `<?php
 final class AppLatteExtension extends Latte\\Extension
 {
@@ -85,6 +90,71 @@ function makeContext({
 }
 
 describe("resolveLatteFilterDefinition", () => {
+  it("opens an inline object callable PHP method before its NEON registration", async () => {
+    const context = makeContext({ configSource: INLINE_OBJECT_CONFIG_SOURCE });
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callable: {
+          methodName: "format",
+          serviceClassName: "App\\Filters\\UserDateFilter",
+        },
+        methodName: "format",
+        name: "UserDate",
+        offset: INLINE_OBJECT_CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/filters.neon",
+        serviceClassName: "App\\Filters\\UserDateFilter",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.readFileContent).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("falls back to an inline object callable's NEON registration", async () => {
+    const context = makeContext({ configSource: INLINE_OBJECT_CONFIG_SOURCE });
+    context.deps.openPhpMethodTarget = vi.fn(async () => false);
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callable: {
+          methodName: "format",
+          serviceClassName: "App\\Filters\\UserDateFilter",
+        },
+        name: "UserDate",
+        offset: INLINE_OBJECT_CONFIG_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/config/filters.neon",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledTimes(1);
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/config/filters.neon",
+      { column: 19, lineNumber: 4 },
+      "UserDate",
+    );
+  });
+
   it("opens the discovered Latte filter registration", async () => {
     const context = makeContext();
     const source = "{$createdAt|UserDate}";
