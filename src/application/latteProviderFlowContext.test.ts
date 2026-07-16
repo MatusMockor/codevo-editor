@@ -17,11 +17,28 @@ describe("latteProviderFlowContext", () => {
       ["/active/", Promise.resolve([])],
       ["/stale", Promise.resolve([])],
     ]);
+    const factoryTemplateOwnerInFlight = new Map([
+      ["/active\0template", Promise.resolve(null)],
+      ["/stale\0template", Promise.resolve(null)],
+    ]);
 
-    evictLatteProviderCaches(caches, "/active/", inFlight, filterInFlight);
+    evictLatteProviderCaches(
+      caches,
+      "/active/",
+      inFlight,
+      filterInFlight,
+      factoryTemplateOwnerInFlight,
+    );
 
     expect(Object.keys(caches.componentCache)).toEqual(["/active"]);
     expect(Object.keys(caches.filterCache)).toEqual(["/active"]);
+    expect(Object.keys(caches.factoryTemplateOwnerCache)).toEqual(["/active"]);
+    expect(Array.from(factoryTemplateOwnerInFlight.keys())).toEqual([
+      "/active\0template",
+    ]);
+    expect(caches.factoryTemplateOwnerGeneration.roots).toEqual({
+      "/active": 1,
+    });
     expect(Object.keys(caches.includeArgumentCache)).toEqual(["/active"]);
     expect(caches.includeArgumentGenerationByRoot).toEqual({
       "/active": 1,
@@ -45,11 +62,24 @@ describe("latteProviderFlowContext", () => {
       ["/active", Promise.resolve([])],
       ["/stale", Promise.resolve([])],
     ]);
+    const factoryTemplateOwnerInFlight = new Map([
+      ["/active\0template", Promise.resolve(null)],
+      ["/stale\0template", Promise.resolve(null)],
+    ]);
 
-    evictLatteProviderCaches(caches, null, inFlight, filterInFlight);
+    evictLatteProviderCaches(
+      caches,
+      null,
+      inFlight,
+      filterInFlight,
+      factoryTemplateOwnerInFlight,
+    );
 
     expect(caches.componentCache).toEqual({});
     expect(caches.filterCache).toEqual({});
+    expect(caches.factoryTemplateOwnerCache).toEqual({});
+    expect(caches.factoryTemplateOwnerGeneration.roots).toEqual({});
+    expect(factoryTemplateOwnerInFlight.size).toBe(0);
     expect(caches.includeArgumentCache).toEqual({});
     expect(caches.includeArgumentGenerationByRoot).toEqual({
       "/active": 2,
@@ -82,6 +112,14 @@ function providerCaches(): LatteProviderFlowCaches {
     filterCache: {
       "/active": { expiresAt: 1, registrations: [] },
       "/stale": { expiresAt: 1, registrations: [] },
+    },
+    factoryTemplateOwnerCache: {
+      "/active": { dependencyPaths: [], ownersByTemplatePath: {} },
+      "/stale": { dependencyPaths: [], ownersByTemplatePath: {} },
+    },
+    factoryTemplateOwnerGeneration: {
+      next: 2,
+      roots: { "/active": 1, "/stale": 2 },
     },
     includeArgumentCache: {
       "/active": includeArgumentCacheEntry(),

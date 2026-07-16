@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
 import { createLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
 import {
@@ -24,6 +28,16 @@ const frameworkIntelligence = createPhpFrameworkIntelligence({
   profile: "generic",
   providers: [frameworkProvider],
 });
+const netteFrameworkIntelligence = createPhpFrameworkIntelligence({
+  matchedProviderIds: [phpNetteFrameworkProvider.id],
+  profile: "nette",
+  providers: [phpNetteFrameworkProvider],
+});
+const laravelFrameworkIntelligence = createPhpFrameworkIntelligence({
+  matchedProviderIds: [phpLaravelFrameworkProvider.id],
+  profile: "laravel",
+  providers: [phpLaravelFrameworkProvider],
+});
 
 describe("latteProviderRequestContext", () => {
   it("returns request context for an active Latte workspace and evicts stale roots", () => {
@@ -39,6 +53,7 @@ describe("latteProviderRequestContext", () => {
     expect(cacheRoots(caches)).toEqual({
       componentCache: [root],
       filterCache: [root],
+      factoryTemplateOwnerCache: [root],
       includeArgumentCache: [root],
       presenterCache: [root],
       presenterMappingCache: [root],
@@ -60,6 +75,94 @@ describe("latteProviderRequestContext", () => {
     expect(request?.isRequestedRootActive()).toBe(false);
   });
 
+  it("loads a factory template owner through captured workspace dependencies", async () => {
+    const factoryPath = `${root}/app/UI/Home/HomeFactory.php`;
+    const ownerPath = `${root}/vendor/acme/Widget.php`;
+    const factorySource = String.raw`<?php
+namespace App\UI\Home;
+use Acme\Widget;
+class HomeFactory {
+    public function create(): Widget {
+        $widget = new Widget();
+        $widget->setTemplateFile(__DIR__ . '/default.latte');
+        return $widget;
+    }
+}`;
+    const ownerSource = String.raw`<?php
+namespace Acme;
+class Widget {}`;
+    const request = latteProviderRequestContext(
+      options(
+        deps({
+          frameworkIntelligence: netteFrameworkIntelligence,
+          readFileContent: vi.fn(async (path) =>
+            path === ownerPath ? ownerSource : factorySource,
+          ),
+          resolvePhpClassSourcePaths: vi.fn(async () => [ownerPath]),
+          searchText: vi.fn(async () => [{ path: factoryPath }]),
+        }),
+        providerCaches(),
+      ),
+    );
+
+    await expect(
+      request?.loadFactoryTemplateOwner(
+        `${root}/app/UI/Home/default.latte`,
+      ),
+    ).resolves.toMatchObject({
+      className: "Acme\\Widget",
+      path: ownerPath,
+      source: ownerSource,
+    });
+  });
+
+  it("does not discover factory owners for a custom Latte provider", async () => {
+    const readFileContent = vi.fn(async () => "");
+    const resolvePhpClassSourcePaths = vi.fn(async () => []);
+    const searchText = vi.fn(async () => []);
+    const request = latteProviderRequestContext(
+      options(
+        deps({
+          readFileContent,
+          resolvePhpClassSourcePaths,
+          searchText,
+        }),
+        providerCaches(),
+      ),
+    );
+
+    await expect(
+      request?.loadFactoryTemplateOwner(
+        `${root}/app/UI/Home/default.latte`,
+      ),
+    ).resolves.toBeNull();
+    expect(searchText).not.toHaveBeenCalled();
+    expect(readFileContent).not.toHaveBeenCalled();
+    expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+  });
+
+  it("does not run factory-owner discovery for Laravel-only projects", () => {
+    const readFileContent = vi.fn(async () => "");
+    const resolvePhpClassSourcePaths = vi.fn(async () => []);
+    const searchText = vi.fn(async () => []);
+    const request = latteProviderRequestContext(
+      options(
+        deps({
+          frameworkIntelligence: laravelFrameworkIntelligence,
+          readFileContent,
+          resolvePhpClassSourcePaths,
+          searchText,
+        }),
+        providerCaches(),
+      ),
+    );
+
+    expect(request).toBeNull();
+    expect(searchText).not.toHaveBeenCalled();
+    expect(readFileContent).not.toHaveBeenCalled();
+    expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
+  });
+
   it("returns null and clears stale caches when no workspace root is requested", () => {
     const caches = providerCaches();
     const request = latteProviderRequestContext(
@@ -70,6 +173,7 @@ describe("latteProviderRequestContext", () => {
     expect(cacheRoots(caches)).toEqual({
       componentCache: [],
       filterCache: [],
+      factoryTemplateOwnerCache: [],
       includeArgumentCache: [],
       presenterCache: [],
       presenterMappingCache: [],
@@ -131,6 +235,7 @@ function options(
     getDependencies: () => dependencies,
     inFlight: {
       filterInFlight: new Map(),
+      factoryTemplateOwnerInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       presenterMappingInFlight: new Map(),
@@ -157,6 +262,14 @@ function providerCaches(): LatteProviderFlowCaches {
     filterCache: {
       [root]: { expiresAt: 1, registrations: [] },
       [staleRoot]: { expiresAt: 1, registrations: [] },
+    },
+    factoryTemplateOwnerCache: {
+      [root]: { dependencyPaths: [], ownersByTemplatePath: {} },
+      [staleRoot]: { dependencyPaths: [], ownersByTemplatePath: {} },
+    },
+    factoryTemplateOwnerGeneration: {
+      next: 2,
+      roots: { [root]: 1, [staleRoot]: 2 },
     },
     includeArgumentCache: {
       [root]: includedArgumentEntry(),
@@ -194,6 +307,7 @@ function cacheRoots(caches: LatteProviderFlowCaches) {
   return {
     componentCache: Object.keys(caches.componentCache),
     filterCache: Object.keys(caches.filterCache),
+    factoryTemplateOwnerCache: Object.keys(caches.factoryTemplateOwnerCache),
     includeArgumentCache: Object.keys(caches.includeArgumentCache),
     presenterCache: Object.keys(caches.presenterCache),
     presenterMappingCache: Object.keys(caches.presenterMappingCache),

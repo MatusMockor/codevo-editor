@@ -76,6 +76,13 @@ import type {
   PhpCodeActionContext,
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
+import {
+  createNetteFactoryTemplateOwnerGeneration,
+  invalidateNetteFactoryTemplateOwnersForPath,
+  type NetteFactoryTemplateOwnerCache,
+  type NetteFactoryTemplateOwnerGeneration,
+  type NetteFactoryTemplateOwnerInFlight,
+} from "./netteFactoryTemplateOwners";
 
 export interface LatteProviderFlows {
   collectCompleteLatteTemplateRelativePaths(): Promise<readonly string[]>;
@@ -154,6 +161,10 @@ export function createLatteIntelligence(
   presenterMappingInFlight: NettePresenterMappingInFlight = new Map(),
   presenterMappingGeneration: NettePresenterMappingGeneration =
     createNettePresenterMappingGeneration(),
+  factoryTemplateOwnerCache: NetteFactoryTemplateOwnerCache = {},
+  factoryTemplateOwnerInFlight: NetteFactoryTemplateOwnerInFlight = new Map(),
+  factoryTemplateOwnerGeneration: NetteFactoryTemplateOwnerGeneration =
+    createNetteFactoryTemplateOwnerGeneration(),
 ): LatteIntelligence {
   const neonConfigCache: NeonConfigCache = {};
   const neonConfigInFlight: NeonConfigInFlight = new Map();
@@ -161,6 +172,8 @@ export function createLatteIntelligence(
     caches: {
       componentCache,
       filterCache,
+      factoryTemplateOwnerCache,
+      factoryTemplateOwnerGeneration,
       includeArgumentCache,
       includeArgumentGenerationByRoot,
       presenterCache,
@@ -174,6 +187,7 @@ export function createLatteIntelligence(
     getDependencies,
     inFlight: {
       filterInFlight: new Map(),
+      factoryTemplateOwnerInFlight,
       includeArgumentInFlight,
       presenterInFlight: new Map(),
       presenterMappingInFlight,
@@ -246,6 +260,13 @@ function invalidateLatteExpressionDataForPath(
   }
 
   const generation = bumpLatteExpressionGeneration(options.caches, rootPath);
+  invalidateNetteFactoryTemplateOwnersForPath(
+    options.caches.factoryTemplateOwnerCache,
+    options.inFlight.factoryTemplateOwnerInFlight,
+    options.caches.factoryTemplateOwnerGeneration,
+    rootPath,
+    path,
+  );
   invalidateNettePresenterMappingDataForPath(options, rootPath, path);
   invalidateLatteFilterDataForPath(options, rootPath, path, true);
   deleteCacheEntriesForRoot(options.caches.includeArgumentCache, rootPath);

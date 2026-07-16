@@ -61,6 +61,9 @@ export function useLatteIntelligence(
       caches.presenterMappingCache,
       caches.presenterMappingInFlight,
       caches.presenterMappingGeneration,
+      caches.factoryTemplateOwnerCache,
+      caches.factoryTemplateOwnerInFlight,
+      caches.factoryTemplateOwnerGeneration,
     );
   }
 

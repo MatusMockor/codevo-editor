@@ -126,6 +126,11 @@ describe("createLatteProviderFlows", () => {
       mappings: [],
     };
     options.caches.presenterMappingGeneration.roots["/workspace"] = 1;
+    options.caches.factoryTemplateOwnerCache["/workspace"] = {
+      dependencyPaths: ["/workspace/app/Factory.php"],
+      ownersByTemplatePath: {},
+    };
+    options.caches.factoryTemplateOwnerGeneration.roots["/workspace"] = 1;
     const flows = createLatteProviderFlows(options);
 
     flows.invalidateLatteExpressionDataForPath(
@@ -136,6 +141,9 @@ describe("createLatteProviderFlows", () => {
     expect(options.caches.presenterCache).toEqual({});
     expect(options.caches.presenterMappingCache).toEqual({});
     expect(options.caches.presenterMappingGeneration.roots["/workspace"])
+      .toBeGreaterThan(1);
+    expect(options.caches.factoryTemplateOwnerCache).toEqual({});
+    expect(options.caches.factoryTemplateOwnerGeneration.roots["/workspace"])
       .toBeGreaterThan(1);
 
     options.caches.presenterMappingCache["/workspace"] = {
@@ -175,6 +183,8 @@ function flowOptions(): LatteProviderFlowFactoryOptions {
     caches: {
       componentCache: {},
       filterCache: {},
+      factoryTemplateOwnerCache: {},
+      factoryTemplateOwnerGeneration: { next: 0, roots: {} },
       includeArgumentCache: {},
       includeArgumentGenerationByRoot: {},
       presenterCache: {},
@@ -188,6 +198,7 @@ function flowOptions(): LatteProviderFlowFactoryOptions {
     getDependencies: vi.fn(),
     inFlight: {
       filterInFlight: new Map(),
+      factoryTemplateOwnerInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       presenterMappingInFlight: new Map(),

@@ -42,6 +42,12 @@ import {
   normalizedWorkspaceRootKey,
   workspaceRootKeysEqual,
 } from "../domain/workspaceRootKey";
+import {
+  evictOtherRootNetteFactoryTemplateOwnerEntries,
+  type NetteFactoryTemplateOwnerCache,
+  type NetteFactoryTemplateOwnerGeneration,
+  type NetteFactoryTemplateOwnerInFlight,
+} from "./netteFactoryTemplateOwners";
 
 export const LATTE_TEMPLATE_SCAN_DIRECTORIES: readonly string[] = [
   "app",
@@ -59,10 +65,14 @@ export const MAX_LATTE_PRESENTER_MAPPING_SEARCH_RESULTS = 500;
 export const MAX_LATTE_FILTER_CONFIG_FILES = 500;
 export const MAX_LATTE_INCLUDE_ARGUMENT_DEPTH = 8;
 export const MAX_LATTE_INCLUDE_ARGUMENT_TRAVERSAL_STATES = 2_000;
+export const MAX_NETTE_FACTORY_TEMPLATE_OWNER_SEARCH_RESULTS = 500;
+export const NETTE_FACTORY_TEMPLATE_OWNER_CACHE_TTL_MS = 5_000;
 
 export interface LatteProviderFlowCaches {
   componentCache: NetteControlCache;
   filterCache: LatteFilterCache;
+  factoryTemplateOwnerCache: NetteFactoryTemplateOwnerCache;
+  factoryTemplateOwnerGeneration: NetteFactoryTemplateOwnerGeneration;
   includeArgumentCache: NetteIncludedTemplateArgumentCache;
   includeArgumentGenerationByRoot: LatteIncludeArgumentGenerationByRoot;
   presenterCache: NettePresenterCache;
@@ -74,6 +84,7 @@ export interface LatteProviderFlowCaches {
 }
 
 export interface LatteProviderFlowInFlight {
+  factoryTemplateOwnerInFlight: NetteFactoryTemplateOwnerInFlight;
   filterInFlight: LatteFilterInFlight;
   includeArgumentInFlight: NetteIncludedTemplateArgumentInFlight;
   presenterInFlight: NettePresenterInFlight;
@@ -129,7 +140,14 @@ export function evictLatteProviderCaches(
   requestedRoot: string | null,
   includeArgumentInFlight: NetteIncludedTemplateArgumentInFlight,
   filterInFlight: LatteFilterInFlight,
+  factoryTemplateOwnerInFlight: NetteFactoryTemplateOwnerInFlight,
 ): void {
+  evictOtherRootNetteFactoryTemplateOwnerEntries(
+    caches.factoryTemplateOwnerCache,
+    factoryTemplateOwnerInFlight,
+    caches.factoryTemplateOwnerGeneration,
+    requestedRoot,
+  );
   fenceEvictedIncludeArgumentRoots(caches, requestedRoot);
   evictLatteInheritedViewDataCaches(caches.viewDataCache, requestedRoot);
   evictOtherRootCacheEntries(caches.templateCache, requestedRoot);

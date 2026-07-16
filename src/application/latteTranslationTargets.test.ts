@@ -141,6 +141,7 @@ function requestContext(
       workspaceRoot: ROOT,
     },
     isRequestedRootActive: overrides.isActive ?? (() => true),
+    loadFactoryTemplateOwner: async () => null,
     requestedRoot: ROOT,
   };
 }

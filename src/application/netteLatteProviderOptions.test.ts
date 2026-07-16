@@ -272,6 +272,7 @@ describe("latteExpressionResolutionContext", () => {
       "/workspace-b",
       flowOptions.inFlight.includeArgumentInFlight,
       flowOptions.inFlight.filterInFlight,
+      flowOptions.inFlight.factoryTemplateOwnerInFlight,
     );
     expect(flowOptions.inFlight.filterInFlight).toEqual(
       new Map([["/workspace-b/", bInFlight]]),
@@ -282,6 +283,7 @@ describe("latteExpressionResolutionContext", () => {
       "/workspace-a",
       flowOptions.inFlight.includeArgumentInFlight,
       flowOptions.inFlight.filterInFlight,
+      flowOptions.inFlight.factoryTemplateOwnerInFlight,
     );
     const freshA = loadLatteFilterRegistrations(
       latteFilterDiscoveryContext(
@@ -312,6 +314,7 @@ function requestContext(
     currentTemplateRelativePath,
     deps,
     isRequestedRootActive: () => true,
+    loadFactoryTemplateOwner: async () => null,
     requestedRoot,
   };
 }
@@ -323,6 +326,8 @@ function options(
     caches: {
       componentCache: {},
       filterCache: {},
+      factoryTemplateOwnerCache: {},
+      factoryTemplateOwnerGeneration: { next: 0, roots: {} },
       includeArgumentCache: {},
       includeArgumentGenerationByRoot: {},
       presenterCache: {},
@@ -347,6 +352,7 @@ function options(
     getDependencies: () => deps,
     inFlight: {
       filterInFlight: new Map(),
+      factoryTemplateOwnerInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       presenterMappingInFlight: new Map(),

@@ -13,6 +13,11 @@ describe("createLatteIntelligenceCaches", () => {
     );
     first.presenterMappingGeneration.roots["/workspace"] = 2;
     first.presenterMappingInFlight.set("/workspace", Promise.resolve([]));
+    first.factoryTemplateOwnerGeneration.roots["/workspace"] = 4;
+    first.factoryTemplateOwnerInFlight.set(
+      "/workspace\0template",
+      Promise.resolve(null),
+    );
 
     expect(second.includeArgumentCache).toEqual({});
     expect(second.includeArgumentGenerationByRoot).toEqual({});
@@ -21,5 +26,8 @@ describe("createLatteIntelligenceCaches", () => {
     expect(second.presenterMappingCache).toEqual({});
     expect(second.presenterMappingGeneration.roots).toEqual({});
     expect(second.presenterMappingInFlight.size).toBe(0);
+    expect(second.factoryTemplateOwnerCache).toEqual({});
+    expect(second.factoryTemplateOwnerGeneration.roots).toEqual({});
+    expect(second.factoryTemplateOwnerInFlight.size).toBe(0);
   });
 });

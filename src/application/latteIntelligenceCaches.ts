@@ -14,6 +14,12 @@ import type {
   NetteIncludedTemplateArgumentCache,
   NetteIncludedTemplateArgumentInFlight,
 } from "./netteIncludedTemplateArguments";
+import {
+  createNetteFactoryTemplateOwnerGeneration,
+  type NetteFactoryTemplateOwnerCache,
+  type NetteFactoryTemplateOwnerGeneration,
+  type NetteFactoryTemplateOwnerInFlight,
+} from "./netteFactoryTemplateOwners";
 
 export type LatteIncludeArgumentGenerationByRoot = Record<string, number>;
 
@@ -23,6 +29,9 @@ export interface LatteIntelligenceCaches {
   includeArgumentCache: NetteIncludedTemplateArgumentCache;
   includeArgumentGenerationByRoot: LatteIncludeArgumentGenerationByRoot;
   includeArgumentInFlight: NetteIncludedTemplateArgumentInFlight;
+  factoryTemplateOwnerCache: NetteFactoryTemplateOwnerCache;
+  factoryTemplateOwnerGeneration: NetteFactoryTemplateOwnerGeneration;
+  factoryTemplateOwnerInFlight: NetteFactoryTemplateOwnerInFlight;
   presenterCache: NettePresenterCache;
   presenterMappingCache: NettePresenterMappingCache;
   presenterMappingGeneration: NettePresenterMappingGeneration;
@@ -42,6 +51,10 @@ export function createLatteIntelligenceCaches(): LatteIntelligenceCaches {
       graphs: new Map(),
       queries: new Map(),
     },
+    factoryTemplateOwnerCache: {},
+    factoryTemplateOwnerGeneration:
+      createNetteFactoryTemplateOwnerGeneration(),
+    factoryTemplateOwnerInFlight: new Map(),
     presenterCache: {},
     presenterMappingCache: {},
     presenterMappingGeneration: createNettePresenterMappingGeneration(),

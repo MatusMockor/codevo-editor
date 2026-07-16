@@ -75,6 +75,8 @@ function factoryOptions(): LatteProviderFlowFactoryOptions {
     caches: {
       componentCache: {},
       filterCache: {},
+      factoryTemplateOwnerCache: {},
+      factoryTemplateOwnerGeneration: { next: 0, roots: {} },
       includeArgumentCache: {},
       includeArgumentGenerationByRoot: {},
       presenterCache: {},
@@ -116,6 +118,7 @@ function factoryOptions(): LatteProviderFlowFactoryOptions {
     }),
     inFlight: {
       filterInFlight: new Map(),
+      factoryTemplateOwnerInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       presenterMappingInFlight: new Map(),

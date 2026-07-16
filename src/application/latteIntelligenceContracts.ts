@@ -54,6 +54,9 @@ export interface LatteIntelligenceDependencies {
   readPhpClassSource?(
     className: string,
   ): Promise<{ path: string; source: string } | null>;
+  resolvePhpClassSourcePaths?(
+    className: string,
+  ): Promise<readonly string[]>;
   resolveDeclaredType(source: string, typeHint: string | null): string | null;
   resolveExpressionType(
     source: string,

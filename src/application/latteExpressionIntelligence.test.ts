@@ -442,6 +442,7 @@ function expressionContext(
     currentTemplateRelativePath: "active.latte",
     deps,
     isRequestedRootActive: () => currentWorkspaceRootRef.current === root,
+    loadFactoryTemplateOwner: async () => null,
     requestedRoot: root,
   };
 
@@ -523,6 +524,7 @@ function options(
     getDependencies: () => deps,
     inFlight: {
       filterInFlight: new Map(),
+      factoryTemplateOwnerInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       presenterMappingInFlight: new Map(),
@@ -550,6 +552,8 @@ function providerCaches(): LatteProviderFlowCaches {
   return {
     componentCache: {},
     filterCache: {},
+    factoryTemplateOwnerCache: {},
+    factoryTemplateOwnerGeneration: { next: 0, roots: {} },
     includeArgumentCache: {},
     includeArgumentGenerationByRoot: {},
     presenterCache: {},

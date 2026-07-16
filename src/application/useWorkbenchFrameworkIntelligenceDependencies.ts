@@ -157,6 +157,7 @@ export function useWorkbenchFrameworkIntelligenceDependencies(
         },
         resolveDeclaredType: resolvePhpDeclaredType,
         resolveExpressionType: resolvePhpExpressionType,
+        resolvePhpClassSourcePaths,
         resolvePhpReceiverCompletions: resolvePhpReceiverMethodCompletions,
         searchText: (root, query, maxResults) =>
           textSearch.searchText(root, query, maxResults),

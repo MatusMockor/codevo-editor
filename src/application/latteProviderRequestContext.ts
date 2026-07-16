@@ -12,11 +12,22 @@ import type {
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
+import {
+  loadNetteFactoryTemplateOwner,
+  type NetteFactoryTemplateOwner,
+} from "./netteFactoryTemplateOwners";
+import {
+  MAX_NETTE_FACTORY_TEMPLATE_OWNER_SEARCH_RESULTS,
+  NETTE_FACTORY_TEMPLATE_OWNER_CACHE_TTL_MS,
+} from "./latteProviderFlowContext";
 
 export interface LatteProviderRequestContext {
   currentTemplateRelativePath: string;
   deps: LatteIntelligenceDependencies;
   isRequestedRootActive(): boolean;
+  loadFactoryTemplateOwner(
+    templatePath: string,
+  ): Promise<NetteFactoryTemplateOwner | null>;
   requestedRoot: string;
 }
 
@@ -29,6 +40,7 @@ export function latteProviderRequestContext(
     deps.workspaceRoot,
     options.inFlight.includeArgumentInFlight,
     options.inFlight.filterInFlight,
+    options.inFlight.factoryTemplateOwnerInFlight,
   );
   evictOtherRootPresenterMappingEntries(
     options.caches.presenterMappingCache,
@@ -51,11 +63,44 @@ export function latteProviderRequestContext(
   }
 
   const { isRequestedRootActive, requestedRoot } = workspaceContext;
+  const loadFactoryTemplateOwner = (templatePath: string) => {
+    if (!deps.frameworkIntelligence.isNette) {
+      return Promise.resolve(null);
+    }
+
+    const resolvePhpClassSourcePaths = deps.resolvePhpClassSourcePaths;
+
+    if (!resolvePhpClassSourcePaths) {
+      return Promise.resolve(null);
+    }
+
+    return loadNetteFactoryTemplateOwner(
+      {
+        cache: options.caches.factoryTemplateOwnerCache,
+        deps: {
+          readFileContent: deps.readFileContent,
+          resolvePhpClassSourcePaths: async (className) => [
+            ...(await resolvePhpClassSourcePaths(className)),
+          ],
+          searchText: deps.searchText,
+        },
+        generation: options.caches.factoryTemplateOwnerGeneration,
+        inFlight: options.inFlight.factoryTemplateOwnerInFlight,
+        isRequestedRootActive,
+        maxSearchResults:
+          MAX_NETTE_FACTORY_TEMPLATE_OWNER_SEARCH_RESULTS,
+        requestedRoot,
+        ttlMs: NETTE_FACTORY_TEMPLATE_OWNER_CACHE_TTL_MS,
+      },
+      templatePath,
+    );
+  };
 
   return {
     currentTemplateRelativePath: currentTemplatePath(deps, requestedRoot),
     deps,
     isRequestedRootActive,
+    loadFactoryTemplateOwner,
     requestedRoot,
   };
 }
