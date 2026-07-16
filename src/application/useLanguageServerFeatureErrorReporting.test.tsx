@@ -12,7 +12,10 @@ import {
   type LanguageServerFeatureErrorReporting,
   type LanguageServerFeatureErrorReportingDependencies,
 } from "./useLanguageServerFeatureErrorReporting";
-import type { WorkbenchNotice } from "./workbenchNotice";
+import {
+  createWorkbenchNotice,
+  type WorkbenchNotice,
+} from "./workbenchNotice";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -371,6 +374,71 @@ describe("useLanguageServerFeatureErrorReporting", () => {
       message: error,
       source: "Language Server",
     });
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
+  it("replaces only the current workspace crash group with the latest message", () => {
+    const harness = renderHook();
+    const otherWorkspaceCrash = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "Other workspace crashed.",
+      "language-server-crash:/other-workspace",
+    );
+    const unrelatedNotice = createWorkbenchNotice(
+      "warning",
+      "Git",
+      "Repository has uncommitted changes.",
+      "git-status",
+    );
+    harness.notices.set([otherWorkspaceCrash, unrelatedNotice]);
+
+    act(() => {
+      harness.api.reportLanguageServerCrash("First workspace crash.");
+      harness.api.reportLanguageServerCrash("Second workspace crash.");
+    });
+
+    expect(harness.message.value).toBe("Second workspace crash.");
+    expect(harness.lastLanguageServerCrashRef.current).toBe(
+      "Second workspace crash.",
+    );
+    expect(harness.notices.value).toHaveLength(3);
+    expect(harness.notices.value[0]).toMatchObject({
+      groupKey: "language-server-crash:/workspace",
+      message: "Second workspace crash.",
+    });
+    expect(harness.notices.value).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: "First workspace crash." }),
+      ]),
+    );
+    expect(harness.notices.value).toContain(otherWorkspaceCrash);
+    expect(harness.notices.value).toContain(unrelatedNotice);
+
+    act(() => {
+      harness.root.unmount();
+    });
+  });
+
+  it("continues appending differently worded crashes without a workspace root", () => {
+    const harness = renderHook();
+    harness.currentWorkspaceRootRef.current = null;
+
+    act(() => {
+      harness.api.reportLanguageServerCrash("First unscoped crash.");
+      harness.api.reportLanguageServerCrash("Second unscoped crash.");
+    });
+
+    expect(harness.notices.value.map(({ groupKey, message }) => ({
+      groupKey,
+      message,
+    }))).toEqual([
+      { groupKey: undefined, message: "Second unscoped crash." },
+      { groupKey: undefined, message: "First unscoped crash." },
+    ]);
 
     act(() => {
       harness.root.unmount();

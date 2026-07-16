@@ -22,6 +22,12 @@ import {
   type LanguageServerRuntimeLifecycle,
   type LanguageServerRuntimeLifecycleDependencies,
 } from "./useLanguageServerRuntimeLifecycle";
+import {
+  createWorkbenchNotice,
+  languageServerCrashNoticeGroupKey,
+  languageServerRequestErrorNoticeGroupKey,
+  type WorkbenchNotice,
+} from "./workbenchNotice";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -233,6 +239,20 @@ async function flushEffects(): Promise<void> {
   });
 }
 
+function noticesAfterLastUpdate(
+  harness: Harness,
+  current: WorkbenchNotice[],
+): WorkbenchNotice[] {
+  const calls = vi.mocked(harness.dependencies.setNotices).mock.calls;
+  const update = calls[calls.length - 1]?.[0];
+
+  if (!update) {
+    throw new Error("notices were not updated");
+  }
+
+  return typeof update === "function" ? update(current) : update;
+}
+
 describe("useLanguageServerRuntimeLifecycle ownership", () => {
   it("reports a PHP crashed runtime status through the crash reporter", async () => {
     const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
@@ -251,6 +271,647 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
     expect(
       harness.dependencies.reportLanguageServerError,
     ).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps a subscribed PHP crash when an older getStatus resolves running", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const crashRef = { current: null as string | null };
+    const reportedCrashes: string[] = [];
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerRuntimeGateway: phpGateway,
+      lastLanguageServerCrashRef: crashRef,
+      reportLanguageServerCrash: vi.fn((error) => {
+        const message = String(error);
+        if (crashRef.current === message) {
+          return;
+        }
+
+        crashRef.current = message;
+        reportedCrashes.push(message);
+      }),
+    });
+    await flushEffects();
+    vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
+    vi.mocked(harness.dependencies.setNotices).mockClear();
+    vi.mocked(harness.dependencies.setMessage).mockClear();
+    const listener = latestStatusListener(phpGateway);
+    const crashStatus = crashed(FIRST_ROOT, "newer subscribed crash");
+
+    act(() => listener(crashStatus));
+    pendingStatus.resolve(running(FIRST_ROOT, 80));
+    await flushEffects();
+
+    expect(crashRef.current).toBe("newer subscribed crash");
+    expect(reportedCrashes).toEqual(["newer subscribed crash"]);
+    expect(harness.dependencies.setNotices).not.toHaveBeenCalled();
+    expect(harness.dependencies.setMessage).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toEqual(crashStatus);
+    expect(
+      harness.dependencies.setLanguageServerRuntimeStatus,
+    ).toHaveBeenLastCalledWith(crashStatus);
+
+    act(() => listener(crashStatus));
+    expect(reportedCrashes).toEqual(["newer subscribed crash"]);
+
+    const crashNotice = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "newer subscribed crash",
+      languageServerCrashNoticeGroupKey(FIRST_ROOT) ?? undefined,
+    );
+    act(() => listener(running(FIRST_ROOT, 81)));
+
+    expect(crashRef.current).toBeNull();
+    expect(noticesAfterLastUpdate(harness, [crashNotice])).toEqual([]);
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toMatchObject({ kind: "running", sessionId: 81 });
+    harness.unmount();
+  });
+
+  it("keeps a subscribed PHP crash when an older start resolves running", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    const crashRef = { current: null as string | null };
+    const reportedCrashes: string[] = [];
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerRuntimeGateway: phpGateway,
+      lastLanguageServerCrashRef: crashRef,
+      reportLanguageServerCrash: vi.fn((error) => {
+        const message = String(error);
+        if (crashRef.current === message) {
+          return;
+        }
+
+        crashRef.current = message;
+        reportedCrashes.push(message);
+      }),
+    });
+    await flushEffects();
+    vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
+    vi.mocked(harness.dependencies.setNotices).mockClear();
+    vi.mocked(harness.dependencies.setMessage).mockClear();
+    const listener = latestStatusListener(phpGateway);
+    const startPromise = harness.lifecycle().startLanguageServer();
+    const crashStatus = crashed(FIRST_ROOT, "crash after start request");
+
+    act(() => listener(crashStatus));
+    pendingStart.resolve(running(FIRST_ROOT, 90));
+    await act(async () => startPromise);
+
+    expect(crashRef.current).toBe("crash after start request");
+    expect(reportedCrashes).toEqual(["crash after start request"]);
+    expect(harness.dependencies.setNotices).not.toHaveBeenCalled();
+    expect(harness.dependencies.setMessage).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toEqual(crashStatus);
+    expect(
+      harness.dependencies.setLanguageServerRuntimeStatus,
+    ).toHaveBeenLastCalledWith(crashStatus);
+
+    act(() => listener(crashStatus));
+    expect(reportedCrashes).toEqual(["crash after start request"]);
+
+    const crashNotice = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "crash after start request",
+      languageServerCrashNoticeGroupKey(FIRST_ROOT) ?? undefined,
+    );
+    act(() => listener(running(FIRST_ROOT, 91)));
+
+    expect(crashRef.current).toBeNull();
+    expect(noticesAfterLastUpdate(harness, [crashNotice])).toEqual([]);
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toMatchObject({ kind: "running", sessionId: 91 });
+    harness.unmount();
+  });
+
+  it("accepts autostart running when a later getStatus request is still pending", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerPlan: READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+
+    expect(phpGateway.start).toHaveBeenCalledTimes(1);
+    expect(phpGateway.getStatus).toHaveBeenCalledTimes(1);
+    pendingStart.resolve(running(FIRST_ROOT, 100));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toMatchObject({ kind: "running", sessionId: 100 });
+    expect(
+      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
+    ).toEqual({});
+    harness.unmount();
+  });
+
+  it("accepts autostart running after getStatus resolves stopped first", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerPlan: READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+
+    pendingStatus.resolve(stopped(FIRST_ROOT));
+    await flushEffects();
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toEqual(stopped(FIRST_ROOT));
+
+    pendingStart.resolve(running(FIRST_ROOT, 103));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toMatchObject({ kind: "running", sessionId: 103 });
+    expect(
+      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
+    ).toEqual({});
+    harness.unmount();
+  });
+
+  it("retries autostart without caching a rootless active response", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerPlan: READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+    vi.mocked(harness.dependencies.setLanguageServerRuntimeStatus).mockClear();
+    vi.mocked(
+      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
+    ).mockClear();
+
+    pendingStart.resolve({
+      ...running(FIRST_ROOT, 108),
+      rootPath: undefined,
+    });
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toBeUndefined();
+    expect(
+      harness.dependencies.setLanguageServerRuntimeStatus,
+    ).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.autoStartedLanguageServerRootRef.current,
+    ).toBeNull();
+    expect(
+      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
+    ).toEqual({ [owner.ownerKey]: 1 });
+    harness.unmount();
+  });
+
+  it.each(["getStatus", "start"] as const)(
+    "keeps explicit start authoritative when %s resolves first",
+    async (firstResult) => {
+      const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+      const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+      const pendingStart = deferred<LanguageServerRuntimeStatus>();
+      const phpGateway = runtimeGateway();
+      vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+      vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+      const harness = renderLifecycle(owner, {
+        languageServerRuntimeGateway: phpGateway,
+      });
+      await flushEffects();
+      const startPromise = harness.lifecycle().startLanguageServer();
+
+      if (firstResult === "getStatus") {
+        pendingStatus.resolve(stopped(FIRST_ROOT));
+        await flushEffects();
+        pendingStart.resolve(running(FIRST_ROOT, 104));
+        await act(async () => startPromise);
+      }
+
+      if (firstResult === "start") {
+        pendingStart.resolve(running(FIRST_ROOT, 104));
+        await act(async () => startPromise);
+        pendingStatus.resolve(stopped(FIRST_ROOT));
+        await flushEffects();
+      }
+
+      expect(
+        harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+          owner.ownerKey
+        ],
+      ).toMatchObject({ kind: "running", sessionId: 104 });
+      harness.unmount();
+    },
+  );
+
+  it.each([
+    ["start-stop", "start-first", "stopped"],
+    ["start-stop", "stop-first", "stopped"],
+    ["stop-start", "start-first", "running"],
+    ["stop-start", "stop-first", "running"],
+  ] as const)(
+    "keeps the latest PHP command for %s with %s completion",
+    async (invocationOrder, completionOrder, expectedKind) => {
+      const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+      const pendingStart = deferred<LanguageServerRuntimeStatus>();
+      const pendingStop = deferred<LanguageServerRuntimeStatus>();
+      const phpGateway = runtimeGateway();
+      vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+      vi.mocked(phpGateway.stop).mockReturnValueOnce(pendingStop.promise);
+      const harness = renderLifecycle(owner, {
+        languageServerRuntimeGateway: phpGateway,
+      });
+      await flushEffects();
+
+      let startPromise: Promise<void>;
+      let stopPromise: Promise<LanguageServerRuntimeStatus | null>;
+      if (invocationOrder === "start-stop") {
+        startPromise = harness.lifecycle().startLanguageServer();
+        stopPromise = harness
+          .lifecycle()
+          .stopLanguageServerRuntime(FIRST_ROOT, owner);
+      } else {
+        stopPromise = harness
+          .lifecycle()
+          .stopLanguageServerRuntime(FIRST_ROOT, owner);
+        startPromise = harness.lifecycle().startLanguageServer();
+      }
+
+      if (completionOrder === "start-first") {
+        pendingStart.resolve(running(FIRST_ROOT, 105));
+        await flushEffects();
+        pendingStop.resolve(stopped(FIRST_ROOT));
+      } else {
+        pendingStop.resolve(stopped(FIRST_ROOT));
+        await flushEffects();
+        pendingStart.resolve(running(FIRST_ROOT, 105));
+      }
+
+      await act(async () => Promise.all([startPromise, stopPromise]));
+
+      expect(
+        harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+          owner.ownerKey
+        ],
+      ).toMatchObject({ kind: expectedKind });
+      harness.unmount();
+    },
+  );
+
+  it("keeps a completed stop over an older pending getStatus snapshot", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const pendingStop = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    vi.mocked(phpGateway.stop).mockReturnValueOnce(pendingStop.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+    const stopPromise = harness
+      .lifecycle()
+      .stopLanguageServerRuntime(FIRST_ROOT, owner);
+
+    pendingStop.resolve(stopped(FIRST_ROOT));
+    await act(async () => stopPromise);
+    pendingStatus.resolve(running(FIRST_ROOT, 106));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toEqual(stopped(FIRST_ROOT));
+    harness.unmount();
+  });
+
+  it("ignores a stop rejection superseded by a subscription status", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStop = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.stop).mockReturnValueOnce(pendingStop.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+    const stopPromise = harness
+      .lifecycle()
+      .stopLanguageServerRuntime(FIRST_ROOT, owner);
+
+    act(() => latestStatusListener(phpGateway)(running(FIRST_ROOT, 107)));
+    vi.mocked(harness.dependencies.reportLanguageServerError).mockClear();
+    pendingStop.reject(new Error("stale stop failure"));
+    await act(async () => stopPromise);
+
+    expect(
+      harness.dependencies.reportLanguageServerError,
+    ).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toMatchObject({ kind: "running", sessionId: 107 });
+    harness.unmount();
+  });
+
+  it("does not update autostart bookkeeping for running superseded by a subscribed crash", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerPlan: READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+    const crashStatus = crashed(FIRST_ROOT, "newer autostart crash");
+
+    act(() => latestStatusListener(phpGateway)(crashStatus));
+    vi.mocked(
+      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
+    ).mockClear();
+    pendingStart.resolve(running(FIRST_ROOT, 101));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.languageServerRuntimeStatusByRootRef.current[
+        owner.ownerKey
+      ],
+    ).toEqual(crashStatus);
+    expect(
+      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
+    ).toEqual({ [owner.ownerKey]: 1 });
+    expect(
+      harness.dependencies.autoStartedLanguageServerRootRef.current,
+    ).toBe(owner.ownerKey);
+    expect(
+      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
+    ).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("ignores a getStatus rejection superseded by a subscription status", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+
+    act(() => latestStatusListener(phpGateway)(running(FIRST_ROOT, 102)));
+    vi.mocked(harness.dependencies.reportError).mockClear();
+    vi.mocked(
+      harness.dependencies.setLanguageServerRuntimeStatusRoot,
+    ).mockClear();
+    pendingStatus.reject(new Error("stale getStatus failure"));
+    await flushEffects();
+
+    expect(harness.dependencies.reportError).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.setLanguageServerRuntimeStatusRoot,
+    ).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("ignores an explicit start rejection superseded by a subscription status", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+    const startPromise = harness.lifecycle().startLanguageServer();
+
+    act(() =>
+      latestStatusListener(phpGateway)(
+        crashed(FIRST_ROOT, "newer explicit-start crash"),
+      ),
+    );
+    vi.mocked(harness.dependencies.reportLanguageServerError).mockClear();
+    pendingStart.reject(new Error("stale explicit start failure"));
+    await act(async () => startPromise);
+
+    expect(
+      harness.dependencies.reportLanguageServerError,
+    ).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("ignores an autostart rejection superseded by a subscribed crash", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const pendingStatus = deferred<LanguageServerRuntimeStatus>();
+    const pendingStart = deferred<LanguageServerRuntimeStatus>();
+    const phpGateway = runtimeGateway();
+    vi.mocked(phpGateway.getStatus).mockReturnValueOnce(pendingStatus.promise);
+    vi.mocked(phpGateway.start).mockReturnValueOnce(pendingStart.promise);
+    const harness = renderLifecycle(owner, {
+      languageServerPlan: READY_PLAN,
+      languageServerRuntimeGateway: phpGateway,
+    });
+    await flushEffects();
+
+    act(() =>
+      latestStatusListener(phpGateway)(
+        crashed(FIRST_ROOT, "newer autostart rejection crash"),
+      ),
+    );
+    vi.mocked(harness.dependencies.reportLanguageServerError).mockClear();
+    vi.mocked(
+      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
+    ).mockClear();
+    pendingStart.reject(new Error("stale autostart failure"));
+    await flushEffects();
+
+    expect(
+      harness.dependencies.reportLanguageServerError,
+    ).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.setPhpLanguageServerAutostartRetryVersion,
+    ).not.toHaveBeenCalled();
+    expect(
+      harness.dependencies.phpLanguageServerAutostartAttemptsByRootRef.current,
+    ).toEqual({ [owner.ownerKey]: 1 });
+    expect(
+      harness.dependencies.autoStartedLanguageServerRootRef.current,
+    ).toBe(owner.ownerKey);
+    harness.unmount();
+  });
+
+  it("clears the current owner's PHP crash notice on running with a null crash ref", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const harness = renderLifecycle(owner);
+    await flushEffects();
+    vi.mocked(harness.dependencies.setNotices).mockClear();
+
+    const crashNotice = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "a stale crash message",
+      languageServerCrashNoticeGroupKey(FIRST_ROOT) ?? undefined,
+    );
+
+    act(() => {
+      harness.lifecycle().handleLanguageServerRuntimeStatus(
+        running(FIRST_ROOT, 60),
+        FIRST_ROOT,
+        owner,
+      );
+    });
+
+    expect(harness.dependencies.lastLanguageServerCrashRef.current).toBeNull();
+    expect(noticesAfterLastUpdate(harness, [crashNotice])).toEqual([]);
+    harness.unmount();
+  });
+
+  it("retains unrelated and request-error notices during PHP crash recovery", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const harness = renderLifecycle(owner);
+    await flushEffects();
+    vi.mocked(harness.dependencies.setNotices).mockClear();
+
+    const crashNotice = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "phpactor crashed",
+      languageServerCrashNoticeGroupKey(FIRST_ROOT) ?? undefined,
+    );
+    const requestError = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "completion failed",
+      languageServerRequestErrorNoticeGroupKey(FIRST_ROOT) ?? undefined,
+    );
+    const unrelatedNotice = createWorkbenchNotice(
+      "warning",
+      "Git",
+      "working tree changed",
+      "git-status",
+    );
+
+    act(() => {
+      harness.lifecycle().handleLanguageServerRuntimeStatus(
+        running(FIRST_ROOT, 61),
+        FIRST_ROOT,
+        owner,
+      );
+    });
+
+    expect(
+      noticesAfterLastUpdate(harness, [
+        crashNotice,
+        requestError,
+        unrelatedNotice,
+      ]),
+    ).toEqual([requestError, unrelatedNotice]);
+    harness.unmount();
+  });
+
+  it("retains another workspace's PHP crash notice during recovery", async () => {
+    const owner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const harness = renderLifecycle(owner);
+    await flushEffects();
+    vi.mocked(harness.dependencies.setNotices).mockClear();
+
+    const currentCrash = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "same crash text",
+      languageServerCrashNoticeGroupKey(FIRST_ROOT) ?? undefined,
+    );
+    const otherCrash = createWorkbenchNotice(
+      "error",
+      "Language Server",
+      "same crash text",
+      languageServerCrashNoticeGroupKey(SECOND_ROOT) ?? undefined,
+    );
+
+    act(() => {
+      harness.lifecycle().handleLanguageServerRuntimeStatus(
+        running(FIRST_ROOT, 62),
+        FIRST_ROOT,
+        owner,
+      );
+    });
+
+    expect(noticesAfterLastUpdate(harness, [currentCrash, otherCrash])).toEqual([
+      otherCrash,
+    ]);
+    harness.unmount();
+  });
+
+  it("ignores PHP crash recovery from a background owner", async () => {
+    const currentOwner = createWorkspaceRuntimeOwner("workspace-a", FIRST_ROOT);
+    const backgroundOwner = createWorkspaceRuntimeOwner(
+      "workspace-b",
+      SECOND_ROOT,
+    );
+    const harness = renderLifecycle(currentOwner);
+    harness.dependencies.appSettingsRef.current.workspaceTabs = [SECOND_ROOT];
+    await flushEffects();
+    vi.mocked(harness.dependencies.setNotices).mockClear();
+
+    act(() => {
+      harness.lifecycle().handleLanguageServerRuntimeStatus(
+        running(SECOND_ROOT, 63),
+        SECOND_ROOT,
+        backgroundOwner,
+      );
+    });
+
+    expect(harness.dependencies.setNotices).not.toHaveBeenCalled();
     harness.unmount();
   });
 

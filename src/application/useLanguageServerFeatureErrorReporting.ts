@@ -144,16 +144,24 @@ export function useLanguageServerFeatureErrorReporting({
       }
 
       lastLanguageServerCrashRef.current = nextMessage;
-      setNotices((current) => [
-        createWorkbenchNotice(
-          "error",
-          "Language Server",
-          nextMessage,
-          languageServerCrashNoticeGroupKey(currentWorkspaceRootRef.current) ??
-            undefined,
-        ),
-        ...current,
-      ]);
+      const groupKey = languageServerCrashNoticeGroupKey(
+        currentWorkspaceRootRef.current,
+      );
+      const notice = createWorkbenchNotice(
+        "error",
+        "Language Server",
+        nextMessage,
+        groupKey ?? undefined,
+      );
+
+      if (!groupKey) {
+        setNotices((current) => [notice, ...current]);
+        return;
+      }
+
+      setNotices((current) =>
+        replaceWorkbenchNoticeGroup(current, groupKey, [notice]),
+      );
     },
     [
       currentWorkspaceRootRef,

@@ -50,6 +50,7 @@ import type {
 } from "../domain/workspace";
 import {
   createWorkbenchNotice,
+  languageServerCrashNoticeGroupKey,
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
@@ -236,6 +237,12 @@ export interface LanguageServerRuntimeLifecycle {
   restartJavaScriptTypeScriptService: () => Promise<void>;
 }
 
+interface LanguageServerRuntimeStatusFence {
+  authority: "command" | "snapshot";
+  commandSequence: number;
+  subscriptionSequence: number;
+}
+
 export function useLanguageServerRuntimeLifecycle(
   dependencies: LanguageServerRuntimeLifecycleDependencies,
 ): LanguageServerRuntimeLifecycle {
@@ -315,6 +322,12 @@ export function useLanguageServerRuntimeLifecycle(
   const currentRuntimeOwnerRef = useRef(currentRuntimeOwner);
   currentRuntimeOwnerRef.current = currentRuntimeOwner;
   const ownerRevisionByKeyRef = useRef<Record<string, number>>({});
+  const languageServerRuntimeStatusSequenceByOwnerRef = useRef<
+    Record<string, number>
+  >({});
+  const languageServerRuntimeCommandSequenceByOwnerRef = useRef<
+    Record<string, number>
+  >({});
   const previousRuntimeOwnerRef = useRef(currentRuntimeOwner);
   const retainedRuntimeAliasesByOwnerRef = useRef<
     Record<string, { revision: number; rootPaths: string[] }>
@@ -465,6 +478,77 @@ export function useLanguageServerRuntimeLifecycle(
     (owner: WorkspaceRuntimeOwner, revision: number) =>
       ownerRevision(owner) === revision,
     [ownerRevision],
+  );
+
+  const languageServerRuntimeStatusSequence = useCallback(
+    (owner: WorkspaceRuntimeOwner) =>
+      languageServerRuntimeStatusSequenceByOwnerRef.current[owner.ownerKey] ?? 0,
+    [languageServerRuntimeStatusSequenceByOwnerRef],
+  );
+
+  const advanceLanguageServerRuntimeStatusSequence = useCallback(
+    (owner: WorkspaceRuntimeOwner) => {
+      languageServerRuntimeStatusSequenceByOwnerRef.current[owner.ownerKey] =
+        languageServerRuntimeStatusSequence(owner) + 1;
+    },
+    [
+      languageServerRuntimeStatusSequence,
+      languageServerRuntimeStatusSequenceByOwnerRef,
+    ],
+  );
+
+  const languageServerRuntimeCommandSequence = useCallback(
+    (owner: WorkspaceRuntimeOwner) =>
+      languageServerRuntimeCommandSequenceByOwnerRef.current[owner.ownerKey] ??
+      0,
+    [languageServerRuntimeCommandSequenceByOwnerRef],
+  );
+
+  const advanceLanguageServerRuntimeCommandSequence = useCallback(
+    (owner: WorkspaceRuntimeOwner) => {
+      const sequence = languageServerRuntimeCommandSequence(owner) + 1;
+      languageServerRuntimeCommandSequenceByOwnerRef.current[owner.ownerKey] =
+        sequence;
+      return sequence;
+    },
+    [
+      languageServerRuntimeCommandSequence,
+      languageServerRuntimeCommandSequenceByOwnerRef,
+    ],
+  );
+
+  const isLanguageServerRuntimeStatusSequenceCurrent = useCallback(
+    (owner: WorkspaceRuntimeOwner, sequence: number) =>
+      languageServerRuntimeStatusSequence(owner) === sequence,
+    [languageServerRuntimeStatusSequence],
+  );
+
+  const isLanguageServerRuntimeStatusFenceCurrent = useCallback(
+    (owner: WorkspaceRuntimeOwner, fence: LanguageServerRuntimeStatusFence) =>
+      isLanguageServerRuntimeStatusSequenceCurrent(
+        owner,
+        fence.subscriptionSequence,
+      ) &&
+      languageServerRuntimeCommandSequence(owner) === fence.commandSequence,
+    [
+      isLanguageServerRuntimeStatusSequenceCurrent,
+      languageServerRuntimeCommandSequence,
+    ],
+  );
+
+  const acceptLanguageServerRuntimeCommandFence = useCallback(
+    (owner: WorkspaceRuntimeOwner, fence: LanguageServerRuntimeStatusFence) => {
+      if (!isLanguageServerRuntimeStatusFenceCurrent(owner, fence)) {
+        return false;
+      }
+
+      advanceLanguageServerRuntimeCommandSequence(owner);
+      return true;
+    },
+    [
+      advanceLanguageServerRuntimeCommandSequence,
+      isLanguageServerRuntimeStatusFenceCurrent,
+    ],
   );
 
   const isAdmittedRuntimeOwnerForRoot = useCallback(
@@ -909,13 +993,14 @@ export function useLanguageServerRuntimeLifecycle(
       fallbackRootPath?: string,
       owner?: WorkspaceRuntimeOwner,
       revision?: number,
-    ) => {
+      fence?: LanguageServerRuntimeStatusFence,
+    ): boolean => {
       if (
         owner &&
         revision !== undefined &&
         !isOwnerRevisionCurrent(owner, revision)
       ) {
-        return;
+        return false;
       }
 
       const statusRootPath = runtimeStatusRootPath(
@@ -924,7 +1009,7 @@ export function useLanguageServerRuntimeLifecycle(
       );
 
       if (!statusRootPath) {
-        return;
+        return false;
       }
 
       const statusOwner = latestRuntimeOwner(
@@ -933,7 +1018,22 @@ export function useLanguageServerRuntimeLifecycle(
       const ownedRootPath = statusOwner.executionRoot;
 
       if (!isOpenWorkspaceRuntimeRoot(statusRootPath, statusOwner)) {
-        return;
+        return false;
+      }
+
+      if (
+        fence &&
+        !isLanguageServerRuntimeStatusFenceCurrent(statusOwner, fence)
+      ) {
+        return false;
+      }
+
+      if (!fence) {
+        advanceLanguageServerRuntimeStatusSequence(statusOwner);
+      }
+
+      if (fence?.authority === "command") {
+        acceptLanguageServerRuntimeCommandFence(statusOwner, fence);
       }
 
       const rootedStatus = cachePhpLanguageServerRuntimeStatus(
@@ -952,7 +1052,7 @@ export function useLanguageServerRuntimeLifecycle(
           resetLanguageServerDiagnosticsForRoot(ownedRootPath, statusOwner);
         }
 
-        return;
+        return true;
       }
 
       setLanguageServerRuntimeStatus(rootedStatus);
@@ -966,27 +1066,38 @@ export function useLanguageServerRuntimeLifecycle(
         const previousCrash = lastLanguageServerCrashRef.current;
         if (previousCrash) {
           setMessage((current) => (current === previousCrash ? null : current));
-          setNotices((current) =>
-            current.filter(
-              (notice) =>
-                notice.source !== "Language Server" ||
-                notice.message !== previousCrash,
-            ),
-          );
         }
         lastLanguageServerCrashRef.current = null;
-        return;
+
+        if (status.kind !== "running") {
+          return true;
+        }
+
+        const crashNoticeGroup =
+          languageServerCrashNoticeGroupKey(ownedRootPath);
+        if (!crashNoticeGroup) {
+          return true;
+        }
+
+        setNotices((current) =>
+          replaceWorkbenchNoticeGroup(current, crashNoticeGroup, []),
+        );
+        return true;
       }
 
       reportLanguageServerCrash(crash);
+      return true;
     },
     [
       cachePhpLanguageServerRuntimeStatus,
+      advanceLanguageServerRuntimeStatusSequence,
+      acceptLanguageServerRuntimeCommandFence,
       clearManualPhpLanguageServerStop,
       currentWorkspaceRootRef,
       isOpenWorkspaceRuntimeRoot,
       isCurrentRuntimeOwner,
       isOwnerRevisionCurrent,
+      isLanguageServerRuntimeStatusFenceCurrent,
       lastLanguageServerCrashRef,
       latestRuntimeOwner,
       reportLanguageServerCrash,
@@ -1097,11 +1208,26 @@ export function useLanguageServerRuntimeLifecycle(
       const targetOwner = runtimeOwnerForRoot(requestedRootPath, owner);
       const targetRootPath = targetOwner.executionRoot;
       const requestedRevision = ownerRevision(targetOwner);
+      const requestedFence: LanguageServerRuntimeStatusFence = {
+        authority: "command",
+        commandSequence:
+          advanceLanguageServerRuntimeCommandSequence(targetOwner),
+        subscriptionSequence: languageServerRuntimeStatusSequence(targetOwner),
+      };
 
       try {
         const status = await languageServerRuntimeGateway.stop(targetRootPath);
 
         if (!isOwnerRevisionCurrent(targetOwner, requestedRevision)) {
+          return null;
+        }
+
+        if (
+          !acceptLanguageServerRuntimeCommandFence(
+            targetOwner,
+            requestedFence,
+          )
+        ) {
           return null;
         }
 
@@ -1134,6 +1260,15 @@ export function useLanguageServerRuntimeLifecycle(
           return null;
         }
 
+        if (
+          !isLanguageServerRuntimeStatusFenceCurrent(
+            targetOwner,
+            requestedFence,
+          )
+        ) {
+          return null;
+        }
+
         if (!isCurrentRuntimeOwner(targetOwner)) {
           return null;
         }
@@ -1143,12 +1278,16 @@ export function useLanguageServerRuntimeLifecycle(
       }
     },
     [
+      acceptLanguageServerRuntimeCommandFence,
+      advanceLanguageServerRuntimeCommandSequence,
       cachePhpLanguageServerRuntimeStatus,
       clearLanguageServerDiagnosticsForRoot,
       currentWorkspaceRootRef,
       isCurrentRuntimeOwner,
+      isLanguageServerRuntimeStatusFenceCurrent,
       isOwnerRevisionCurrent,
       languageServerRuntimeGateway,
+      languageServerRuntimeStatusSequence,
       lastLanguageServerCrashRef,
       latestRuntimeOwner,
       ownerRevision,
@@ -1270,6 +1409,12 @@ export function useLanguageServerRuntimeLifecycle(
       const targetOwner = runtimeOwnerForRoot(requestedRootPath, owner);
       const targetRootPath = targetOwner.executionRoot;
       const requestedRevision = ownerRevision(targetOwner);
+      const requestedFence: LanguageServerRuntimeStatusFence = {
+        authority: "command",
+        commandSequence:
+          advanceLanguageServerRuntimeCommandSequence(targetOwner),
+        subscriptionSequence: languageServerRuntimeStatusSequence(targetOwner),
+      };
 
       try {
         await workspaceRuntimeLifecycleGateway.disposeWorkspace(targetRootPath);
@@ -1313,8 +1458,11 @@ export function useLanguageServerRuntimeLifecycle(
           kind: "stopped",
           rootPath: targetRootPath,
         };
+        const phpStopAccepted =
+          phpStop.status === "fulfilled" &&
+          acceptLanguageServerRuntimeCommandFence(targetOwner, requestedFence);
 
-        if (phpStop.status === "fulfilled") {
+        if (phpStopAccepted) {
           cachePhpLanguageServerRuntimeStatus(
             targetRootPath,
             stoppedStatus,
@@ -1346,7 +1494,7 @@ export function useLanguageServerRuntimeLifecycle(
           return fallbackResult;
         }
 
-        if (phpStop.status === "fulfilled") {
+        if (phpStopAccepted) {
           setLanguageServerRuntimeStatus(stoppedStatus);
           setLanguageServerRuntimeStatusRoot(targetRootPath);
           lastLanguageServerCrashRef.current = null;
@@ -1375,25 +1523,33 @@ export function useLanguageServerRuntimeLifecycle(
 
       const completionOwner = latestRuntimeOwner(targetOwner);
       const completionRootPath = completionOwner.executionRoot;
+      const phpStopAccepted = acceptLanguageServerRuntimeCommandFence(
+        targetOwner,
+        requestedFence,
+      );
 
       const stoppedStatus: LanguageServerRuntimeStatus = {
         kind: "stopped",
         rootPath: completionRootPath,
       };
-      cachePhpLanguageServerRuntimeStatus(
-        completionRootPath,
-        stoppedStatus,
-        completionOwner,
-      );
+      if (phpStopAccepted) {
+        cachePhpLanguageServerRuntimeStatus(
+          completionRootPath,
+          stoppedStatus,
+          completionOwner,
+        );
+      }
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus(
         completionRootPath,
         stoppedStatus,
         completionOwner,
       );
-      clearLanguageServerDiagnosticsForRoot(
-        completionRootPath,
-        completionOwner,
-      );
+      if (phpStopAccepted) {
+        clearLanguageServerDiagnosticsForRoot(
+          completionRootPath,
+          completionOwner,
+        );
+      }
       clearJavaScriptTypeScriptDiagnosticsForRoot(
         completionRootPath,
         completionOwner,
@@ -1403,18 +1559,22 @@ export function useLanguageServerRuntimeLifecycle(
         return "stopped";
       }
 
-      setLanguageServerRuntimeStatus(stoppedStatus);
-      setLanguageServerRuntimeStatusRoot(completionRootPath);
+      if (phpStopAccepted) {
+        setLanguageServerRuntimeStatus(stoppedStatus);
+        setLanguageServerRuntimeStatusRoot(completionRootPath);
+        lastLanguageServerCrashRef.current = null;
+        resetLanguageServerDocuments();
+      }
       setJavaScriptTypeScriptLanguageServerRuntimeStatus(stoppedStatus);
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
         completionRootPath,
       );
-      lastLanguageServerCrashRef.current = null;
-      resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
       return "stopped";
     },
     [
+      acceptLanguageServerRuntimeCommandFence,
+      advanceLanguageServerRuntimeCommandSequence,
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,
       cachePhpLanguageServerRuntimeStatus,
       clearJavaScriptTypeScriptDiagnosticsForRoot,
@@ -1426,6 +1586,7 @@ export function useLanguageServerRuntimeLifecycle(
       javaScriptTypeScriptLanguageServerRuntimeGateway,
       lastLanguageServerCrashRef,
       languageServerRuntimeGateway,
+      languageServerRuntimeStatusSequence,
       latestRuntimeOwner,
       ownerRevision,
       reportErrorForActiveWorkspaceRoot,
@@ -1487,6 +1648,13 @@ export function useLanguageServerRuntimeLifecycle(
     const requestedOwner = currentRuntimeOwner;
     const requestedRoot = requestedOwner.executionRoot;
     const requestedRevision = ownerRevision(requestedOwner);
+    const requestedFence: LanguageServerRuntimeStatusFence = {
+      authority: "command",
+      commandSequence:
+        advanceLanguageServerRuntimeCommandSequence(requestedOwner),
+      subscriptionSequence:
+        languageServerRuntimeStatusSequence(requestedOwner),
+    };
     clearManualPhpLanguageServerStop(requestedRoot, requestedOwner);
     prepareLanguageServerDiagnosticsForRuntimeStart(
       requestedRoot,
@@ -1503,9 +1671,16 @@ export function useLanguageServerRuntimeLifecycle(
         requestedRoot,
         requestedOwner,
         requestedRevision,
+        requestedFence,
       );
     } catch (error) {
       if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
+        return;
+      }
+
+      if (
+        !isLanguageServerRuntimeStatusFenceCurrent(requestedOwner, requestedFence)
+      ) {
         return;
       }
 
@@ -1515,13 +1690,16 @@ export function useLanguageServerRuntimeLifecycle(
     }
   }, [
     clearManualPhpLanguageServerStop,
+    advanceLanguageServerRuntimeCommandSequence,
     currentRuntimeOwner,
     currentWorkspaceRootRef,
     handleLanguageServerRuntimeStatus,
     intelligenceMode,
     isCurrentRuntimeOwner,
+    isLanguageServerRuntimeStatusFenceCurrent,
     isOwnerRevisionCurrent,
     languageServerRuntimeGateway,
+    languageServerRuntimeStatusSequence,
     ownerRevision,
     prepareLanguageServerDiagnosticsForRuntimeStart,
     reportLanguageServerError,
@@ -1741,6 +1919,13 @@ export function useLanguageServerRuntimeLifecycle(
     }
 
     const requestedRevision = ownerRevision(requestedOwner);
+    const requestedFence: LanguageServerRuntimeStatusFence = {
+      authority: "command",
+      commandSequence:
+        advanceLanguageServerRuntimeCommandSequence(requestedOwner),
+      subscriptionSequence:
+        languageServerRuntimeStatusSequence(requestedOwner),
+    };
     autoStartedLanguageServerRootRef.current = autostartOwnerKey;
     phpLanguageServerAutostartAttemptsByRootRef.current[autostartOwnerKey] =
       autostartAttempts + 1;
@@ -1755,23 +1940,12 @@ export function useLanguageServerRuntimeLifecycle(
           return;
         }
 
-        handleLanguageServerRuntimeStatus(
-          status,
-          requestedRoot,
-          requestedOwner,
-          requestedRevision,
-        );
-
         if (
-          isRunningLanguageServerForWorkspace(
-            status,
-            status.rootPath ?? null,
-            requestedRoot,
+          !isLanguageServerRuntimeStatusFenceCurrent(
+            requestedOwner,
+            requestedFence,
           )
         ) {
-          delete phpLanguageServerAutostartAttemptsByRootRef.current[
-            autostartOwnerKey
-          ];
           return;
         }
 
@@ -1791,6 +1965,31 @@ export function useLanguageServerRuntimeLifecycle(
           return;
         }
 
+        const accepted = handleLanguageServerRuntimeStatus(
+          status,
+          requestedRoot,
+          requestedOwner,
+          requestedRevision,
+          requestedFence,
+        );
+
+        if (!accepted) {
+          return;
+        }
+
+        if (
+          isRunningLanguageServerForWorkspace(
+            status,
+            status.rootPath ?? null,
+            requestedRoot,
+          )
+        ) {
+          delete phpLanguageServerAutostartAttemptsByRootRef.current[
+            autostartOwnerKey
+          ];
+          return;
+        }
+
         if (!languageServerCrashMessage(status)) {
           return;
         }
@@ -1803,6 +2002,15 @@ export function useLanguageServerRuntimeLifecycle(
       })
       .catch((error) => {
         if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
+          return;
+        }
+
+        if (
+          !isLanguageServerRuntimeStatusFenceCurrent(
+            requestedOwner,
+            requestedFence,
+          )
+        ) {
           return;
         }
 
@@ -1819,15 +2027,18 @@ export function useLanguageServerRuntimeLifecycle(
       });
   }, [
     autoStartedLanguageServerRootRef,
+    advanceLanguageServerRuntimeCommandSequence,
     currentRuntimeOwner,
     currentWorkspaceRootRef,
     handleLanguageServerRuntimeStatus,
     intelligenceMode,
     isPhpLanguageServerManuallyStopped,
     isCurrentRuntimeOwner,
+    isLanguageServerRuntimeStatusFenceCurrent,
     isOwnerRevisionCurrent,
     languageServerPlan,
     languageServerRuntimeGateway,
+    languageServerRuntimeStatusSequence,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusByRootRef,
     languageServerRuntimeStatusRoot,
@@ -2178,6 +2389,16 @@ export function useLanguageServerRuntimeLifecycle(
     const requestedRevision = requestedOwner
       ? ownerRevision(requestedOwner)
       : null;
+    const requestedFence: LanguageServerRuntimeStatusFence | null =
+      requestedOwner
+        ? {
+            authority: "snapshot",
+            commandSequence:
+              languageServerRuntimeCommandSequence(requestedOwner),
+            subscriptionSequence:
+              languageServerRuntimeStatusSequence(requestedOwner),
+          }
+        : null;
 
     if (requestedOwner) {
       const requestedRoot = requestedOwner.executionRoot;
@@ -2208,11 +2429,22 @@ export function useLanguageServerRuntimeLifecycle(
             return;
           }
 
+          if (
+            !requestedFence ||
+            !isLanguageServerRuntimeStatusFenceCurrent(
+              requestedOwner,
+              requestedFence,
+            )
+          ) {
+            return;
+          }
+
           handleLanguageServerRuntimeStatus(
             status,
             requestedRoot,
             requestedOwner,
             requestedRevision,
+            requestedFence ?? undefined,
           );
         })
         .catch((error) => {
@@ -2223,6 +2455,16 @@ export function useLanguageServerRuntimeLifecycle(
           if (
             requestedRevision === null ||
             !isOwnerRevisionCurrent(requestedOwner, requestedRevision)
+          ) {
+            return;
+          }
+
+          if (
+            !requestedFence ||
+            !isLanguageServerRuntimeStatusFenceCurrent(
+              requestedOwner,
+              requestedFence,
+            )
           ) {
             return;
           }
@@ -2322,8 +2564,11 @@ export function useLanguageServerRuntimeLifecycle(
     currentWorkspaceRootRef,
     handleLanguageServerRuntimeStatus,
     isCurrentRuntimeOwner,
+    isLanguageServerRuntimeStatusFenceCurrent,
     isOwnerRevisionCurrent,
     languageServerRuntimeGateway,
+    languageServerRuntimeCommandSequence,
+    languageServerRuntimeStatusSequence,
     languageServerRuntimeStatusByRootRef,
     ownerRevisionVersion,
     ownerRevision,
