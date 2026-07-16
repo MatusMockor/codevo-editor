@@ -5,7 +5,10 @@ import type {
   LatteFrameworkCapabilities,
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
-import type { LatteViewDataCache } from "./latteExpressionIntelligence";
+import {
+  evictLatteInheritedViewDataCaches,
+  type LatteViewDataCache,
+} from "./latteExpressionIntelligence";
 import type { LatteViewDataInFlight } from "./latteExpressionIntelligence";
 import type {
   LatteFilterCache,
@@ -68,6 +71,7 @@ export function evictLatteProviderCaches(
   caches: LatteProviderFlowCaches,
   requestedRoot: string | null,
 ): void {
+  evictLatteInheritedViewDataCaches(caches.viewDataCache, requestedRoot);
   evictOtherRootCacheEntries(caches.templateCache, requestedRoot);
   evictOtherRootCacheEntries(caches.viewDataCache, requestedRoot);
   evictOtherRootCacheEntries(caches.presenterCache, requestedRoot);

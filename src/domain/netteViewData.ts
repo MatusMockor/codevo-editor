@@ -75,6 +75,7 @@ interface NetteMethodRange {
   action: string;
   bodyEnd: number;
   bodyStart: number;
+  methodStart: number;
   methodName: string;
   parameters: string;
   parametersOffset: number;
@@ -86,11 +87,32 @@ interface NetteViewDataSighting {
   viewName: string;
 }
 
-type NetteViewOwnerKind = "presenter" | "control";
+export type NetteViewOwnerKind = "presenter" | "control";
 
-interface NetteViewOwner {
+export interface NetteViewOwner {
   kind: NetteViewOwnerKind;
   name: string;
+}
+
+/** View data contributed by one inheritable Nette presenter lifecycle method. */
+export interface NetteViewDataMethodFacts {
+  action: string;
+  callsParent: boolean;
+  methodName: string;
+  parentCallOffset: number | null;
+  variables: PhpFrameworkViewDataVariable[];
+}
+
+/** Source-local facts used to compose presenter view data across inheritance. */
+export interface NetteViewDataSourceFacts {
+  methods: NetteViewDataMethodFacts[];
+  owner: NetteViewOwner | null;
+}
+
+interface NetteViewOwnerRange {
+  bodyEnd: number;
+  bodyStart: number;
+  owner: NetteViewOwner;
 }
 
 const TEMPLATE_RECEIVER = String.raw`\$(?:this\s*->\s*template|template)`;
@@ -116,6 +138,127 @@ export function netteViewDataEntryFromSource(
   source: string,
 ): PhpFrameworkViewDataEntry {
   return { bindings: netteViewDataBindings(source), source };
+}
+
+/**
+ * Extracts source-local lifecycle facts without flattening methods by action.
+ * Empty methods are deliberately retained: an override with no assignments can
+ * shadow inherited data unless it explicitly continues via `parent::method()`.
+ */
+export function netteViewDataSourceFactsFromSource(
+  source: string,
+): NetteViewDataSourceFacts {
+  const ownerRange = netteViewOwnerRange(source);
+
+  if (!ownerRange) {
+    return { methods: [], owner: null };
+  }
+
+  const { owner } = ownerRange;
+  const allRanges = presenterMethodRanges(source, owner.kind);
+  const ranges = directOwnerMethodRanges(source, ownerRange, allRanges);
+  const assignmentSightings = [
+    ...propertyAssignmentSightings(source, allRanges, owner.name),
+    ...addCallSightings(source, allRanges, owner.name),
+    ...setParametersSightings(source, allRanges, owner.name),
+  ];
+  const methods: NetteViewDataMethodFacts[] = [];
+
+  for (const range of ranges) {
+    if (!isInheritedViewDataMethod(range.methodName)) {
+      continue;
+    }
+
+    const sightings = [
+      ...methodParameterSightings([range], owner.name),
+      ...assignmentSightings.filter(
+        (sighting) =>
+          innermostMethodRange(sighting.offset, allRanges) === range,
+      ),
+    ].sort((left, right) => left.offset - right.offset);
+    const variables = new Map<string, PhpFrameworkViewDataVariable>();
+
+    for (const sighting of sightings) {
+      variables.set(sighting.variable.name, sighting.variable);
+    }
+
+    const parentCallOffset = executableParentCallOffset(source, range);
+
+    methods.push({
+      action: range.action,
+      callsParent: parentCallOffset !== null,
+      methodName: range.methodName,
+      parentCallOffset,
+      variables: Array.from(variables.values()),
+    });
+  }
+
+  return { methods, owner };
+}
+
+function directOwnerMethodRanges(
+  source: string,
+  ownerRange: NetteViewOwnerRange,
+  ranges: readonly NetteMethodRange[],
+): NetteMethodRange[] {
+  const structuralSource = maskPhpCommentsAndStrings(source);
+
+  return ranges.filter(
+    (range) =>
+      range.methodStart > ownerRange.bodyStart &&
+      range.bodyEnd < ownerRange.bodyEnd &&
+      braceDepthBetween(
+        structuralSource,
+        ownerRange.bodyStart + 1,
+        range.methodStart,
+      ) === 0,
+  );
+}
+
+function braceDepthBetween(source: string, start: number, end: number): number {
+  let depth = 0;
+
+  for (let index = start; index < end; index += 1) {
+    if (source[index] === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (source[index] === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return depth;
+}
+
+function isInheritedViewDataMethod(methodName: string): boolean {
+  if (methodName === "startup" || methodName === "beforeRender") {
+    return true;
+  }
+
+  return /^(?:action|render)[A-Z][A-Za-z0-9_]*$/.test(methodName);
+}
+
+function executableParentCallOffset(
+  source: string,
+  range: NetteMethodRange,
+): number | null {
+  const body = maskPhpCommentsAndStrings(
+    source.slice(range.bodyStart + 1, range.bodyEnd),
+  );
+  const methodName = escapeRegExp(range.methodName);
+  const pattern = new RegExp(
+    String.raw`(?:^|[^$\\A-Za-z0-9_])(parent)\s*::\s*${methodName}\s*\(`,
+    "i",
+  );
+  const match = pattern.exec(body);
+
+  if (!match || match.index === undefined || !match[1]) {
+    return null;
+  }
+
+  return range.bodyStart + 1 + match.index + match[0].indexOf(match[1]);
 }
 
 function netteViewDataBindings(source: string): PhpFrameworkViewDataBinding[] {
@@ -189,11 +332,17 @@ function addCallSightings(
   presenterName: string,
 ): NetteViewDataSighting[] {
   const sightings: NetteViewDataSighting[] = [];
+  const structuralSource = maskPhpCommentsAndStrings(source);
 
-  for (const match of source.matchAll(TEMPLATE_ADD)) {
+  for (const match of structuralSource.matchAll(TEMPLATE_ADD)) {
     const callOffset = match.index ?? 0;
     const openParen = callOffset + match[0].length - 1;
-    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+    const closeParen = matchingBracketOffset(
+      structuralSource,
+      openParen,
+      "(",
+      ")",
+    );
 
     if (closeParen === null) {
       continue;
@@ -237,8 +386,9 @@ function propertyAssignmentSightings(
   presenterName: string,
 ): NetteViewDataSighting[] {
   const sightings: NetteViewDataSighting[] = [];
+  const structuralSource = maskPhpCommentsAndStrings(source);
 
-  for (const match of source.matchAll(TEMPLATE_PROPERTY_ASSIGNMENT)) {
+  for (const match of structuralSource.matchAll(TEMPLATE_PROPERTY_ASSIGNMENT)) {
     const name = match[1] ?? "";
     const offset = match.index ?? 0;
 
@@ -274,11 +424,17 @@ function setParametersSightings(
   presenterName: string,
 ): NetteViewDataSighting[] {
   const sightings: NetteViewDataSighting[] = [];
+  const structuralSource = maskPhpCommentsAndStrings(source);
 
-  for (const match of source.matchAll(TEMPLATE_SET_PARAMETERS)) {
+  for (const match of structuralSource.matchAll(TEMPLATE_SET_PARAMETERS)) {
     const callOffset = match.index ?? 0;
     const openParen = callOffset + match[0].length - 1;
-    const closeParen = matchingBracketOffset(source, openParen, "(", ")");
+    const closeParen = matchingBracketOffset(
+      structuralSource,
+      openParen,
+      "(",
+      ")",
+    );
 
     if (closeParen === null) {
       continue;
@@ -813,24 +969,56 @@ function typedPublicProperties(body: string): NetteTemplateProperty[] {
  * anonymous-class shape.
  */
 function netteViewOwner(source: string): NetteViewOwner | null {
+  return netteViewOwnerRange(source)?.owner ?? null;
+}
+
+function netteViewOwnerRange(source: string): NetteViewOwnerRange | null {
+  const structuralSource = maskPhpCommentsAndStrings(source);
   const pattern = /\bclass\s+(?!extends\b|implements\b)([A-Za-z_][A-Za-z0-9_]*)/g;
 
-  for (const match of source.matchAll(pattern)) {
+  for (const match of structuralSource.matchAll(pattern)) {
     const className = match[1] ?? "";
+    let owner: NetteViewOwner | null = null;
 
     if (className.endsWith("Presenter")) {
-      return {
+      owner = {
         kind: "presenter",
         name: className.slice(0, -"Presenter".length),
       };
     }
 
-    if (className.endsWith("Control")) {
-      return {
+    if (!owner && className.endsWith("Control")) {
+      owner = {
         kind: "control",
         name: className.slice(0, -"Control".length),
       };
     }
+
+    if (!owner) {
+      continue;
+    }
+
+    const bodyStart = structuralSource.indexOf(
+      "{",
+      (match.index ?? 0) + match[0].length,
+    );
+
+    if (bodyStart === -1) {
+      continue;
+    }
+
+    const bodyEnd = matchingBracketOffset(
+      structuralSource,
+      bodyStart,
+      "{",
+      "}",
+    );
+
+    if (bodyEnd === null) {
+      continue;
+    }
+
+    return { bodyEnd, bodyStart, owner };
   }
 
   return null;
@@ -841,23 +1029,37 @@ function presenterMethodRanges(
   ownerKind: NetteViewOwnerKind,
 ): NetteMethodRange[] {
   const ranges: NetteMethodRange[] = [];
+  const structuralSource = maskPhpCommentsAndStrings(source);
   const pattern = /\bfunction\s+&?([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
 
-  for (const match of source.matchAll(pattern)) {
+  for (const match of structuralSource.matchAll(pattern)) {
     const parenOpen = (match.index ?? 0) + match[0].lastIndexOf("(");
-    const parenClose = matchingBracketOffset(source, parenOpen, "(", ")");
+    const parenClose = matchingBracketOffset(
+      structuralSource,
+      parenOpen,
+      "(",
+      ")",
+    );
 
     if (parenClose === null) {
       continue;
     }
 
-    const bodyStart = source.indexOf("{", parenClose);
+    const bodyStart = structuralSource.indexOf("{", parenClose);
 
-    if (bodyStart === -1 || /[;}]/.test(source.slice(parenClose + 1, bodyStart))) {
+    if (
+      bodyStart === -1 ||
+      /[;}]/.test(structuralSource.slice(parenClose + 1, bodyStart))
+    ) {
       continue;
     }
 
-    const bodyEnd = matchingBracketOffset(source, bodyStart, "{", "}");
+    const bodyEnd = matchingBracketOffset(
+      structuralSource,
+      bodyStart,
+      "{",
+      "}",
+    );
 
     if (bodyEnd === null) {
       continue;
@@ -867,6 +1069,7 @@ function presenterMethodRanges(
       action: actionFromMethodName(match[1] ?? "", ownerKind),
       bodyEnd,
       bodyStart,
+      methodStart: match.index ?? 0,
       methodName: match[1] ?? "",
       parameters: source.slice(parenOpen + 1, parenClose),
       parametersOffset: parenOpen + 1,
@@ -874,6 +1077,119 @@ function presenterMethodRanges(
   }
 
   return ranges;
+}
+
+/** Replaces comments and quoted text with spaces while preserving byte offsets. */
+function maskPhpCommentsAndStrings(source: string): string {
+  const masked = source.split("");
+  let index = 0;
+
+  const maskThrough = (end: number) => {
+    while (index < end) {
+      if (masked[index] !== "\n" && masked[index] !== "\r") {
+        masked[index] = " ";
+      }
+
+      index += 1;
+    }
+  };
+
+  while (index < source.length) {
+    const character = source[index] ?? "";
+    const next = source[index + 1] ?? "";
+
+    if (character === "?" && next === ">") {
+      const phpOpen = source.indexOf("<?", index + 2);
+
+      if (phpOpen === -1) {
+        maskThrough(source.length);
+        continue;
+      }
+
+      const openingTag = /^<\?php\b/i.exec(source.slice(phpOpen));
+      const openEnd = openingTag
+        ? phpOpen + openingTag[0].length
+        : phpOpen + (source[phpOpen + 2] === "=" ? 3 : 2);
+
+      maskThrough(openEnd);
+      continue;
+    }
+
+    if (source.startsWith("<<<", index)) {
+      const heredoc = /^<<<[ \t]*(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))[^\r\n]*(?:\r?\n|$)/.exec(
+        source.slice(index),
+      );
+      const label = heredoc?.[1] ?? heredoc?.[2] ?? heredoc?.[3];
+
+      if (heredoc && label) {
+        const contentStart = index + heredoc[0].length;
+        const closingPattern = new RegExp(
+          String.raw`^[ \t]*${escapeRegExp(label)}[;,]?[ \t]*(?:\r?\n|$)`,
+          "gm",
+        );
+        closingPattern.lastIndex = contentStart;
+        const closing = closingPattern.exec(source);
+
+        maskThrough(closing ? closing.index + closing[0].length : source.length);
+        continue;
+      }
+    }
+
+    if (character === "/" && next === "/") {
+      const lineEnd = source.indexOf("\n", index + 2);
+      maskThrough(lineEnd === -1 ? source.length : lineEnd);
+      continue;
+    }
+
+    if (character === "#" && next !== "[") {
+      const lineEnd = source.indexOf("\n", index + 1);
+      maskThrough(lineEnd === -1 ? source.length : lineEnd);
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      const commentEnd = source.indexOf("*/", index + 2);
+      maskThrough(commentEnd === -1 ? source.length : commentEnd + 2);
+      continue;
+    }
+
+    if (character !== "'" && character !== '"' && character !== "`") {
+      index += 1;
+      continue;
+    }
+
+    const quote = character;
+    masked[index] = " ";
+    index += 1;
+
+    while (index < source.length) {
+      const quotedCharacter = source[index] ?? "";
+
+      if (quotedCharacter === "\\") {
+        masked[index] = " ";
+        index += 1;
+
+        if (index < source.length) {
+          masked[index] = " ";
+          index += 1;
+        }
+
+        continue;
+      }
+
+      masked[index] =
+        quotedCharacter === "\n" || quotedCharacter === "\r"
+          ? quotedCharacter
+          : " ";
+      index += 1;
+
+      if (quotedCharacter === quote) {
+        break;
+      }
+    }
+  }
+
+  return masked.join("");
 }
 
 interface MethodParameter {
@@ -884,8 +1200,9 @@ interface MethodParameter {
 
 function methodParameters(parameters: string): MethodParameter[] {
   const parsed: MethodParameter[] = [];
+  const structuralParameters = maskPhpCommentsAndStrings(parameters);
 
-  for (const part of splitTopLevelParts(parameters, ",")) {
+  for (const part of splitTopLevelParts(structuralParameters, ",")) {
     const withoutDefault = stripParameterDefault(part.text).trim();
     const variableMatch = /\$(\w+)\b/.exec(withoutDefault);
 
@@ -988,6 +1305,13 @@ function actionForOffset(
   offset: number,
   ranges: readonly NetteMethodRange[],
 ): string {
+  return innermostMethodRange(offset, ranges)?.action ?? "*";
+}
+
+function innermostMethodRange(
+  offset: number,
+  ranges: readonly NetteMethodRange[],
+): NetteMethodRange | null {
   let enclosing: NetteMethodRange | null = null;
 
   for (const range of ranges) {
@@ -1000,7 +1324,7 @@ function actionForOffset(
     }
   }
 
-  return enclosing?.action ?? "*";
+  return enclosing;
 }
 
 function topLevelStatementEnd(source: string, start: number): number | null {

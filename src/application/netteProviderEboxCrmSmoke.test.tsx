@@ -1208,6 +1208,74 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     expect(memberCompletions.map((item) => item.label)).toContain("id");
   });
 
+  it("loads inherited ProductsAdmin view data from the real Admin and Base presenters", async () => {
+    const templatePath =
+      "app/modules/productsModule/templates/ProductsAdmin/default.latte";
+    const presenterPath =
+      "app/modules/productsModule/Presenters/ProductsAdminPresenter.php";
+    const adminPresenterPath =
+      "app/modules/adminModule/Presenters/AdminPresenter.php";
+    const basePresenterPath =
+      "app/modules/applicationModule/Presenters/BasePresenter.php";
+    const [source, adminPresenter, basePresenter] = await Promise.all([
+      readFileContent(joinPath(EBOX_CRM_ROOT, templatePath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, adminPresenterPath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, basePresenterPath)),
+    ]);
+    const inheritedClasses = new Map([
+      [
+        "Crm\\AdminModule\\Presenters\\AdminPresenter",
+        {
+          path: joinPath(EBOX_CRM_ROOT, adminPresenterPath),
+          source: adminPresenter,
+        },
+      ],
+      [
+        "Crm\\ApplicationModule\\Presenters\\BasePresenter",
+        {
+          path: joinPath(EBOX_CRM_ROOT, basePresenterPath),
+          source: basePresenter,
+        },
+      ],
+    ]);
+    const deps = makeLatteDeps(templatePath, {
+      readFileContent: vi.fn(readFileContent),
+      readPhpClassSource: vi.fn(async (className: string) =>
+        inheritedClasses.get(className.trim().replace(/^\\+/, "")) ?? null,
+      ),
+      resolveDeclaredType: (presenterSource, typeHint) =>
+        typeHint ? resolvePhpClassName(presenterSource, typeHint) : null,
+      searchText: vi.fn(async () => []),
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const completionOffset = source.indexOf("$totalCount") + 1;
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, completionOffset),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("$current_user");
+    expect(labels).toContain("$siteTitle");
+    expect(labels).toContain("$locale");
+
+    const definitionSource = `${source}\n{$siteTitle}`;
+    await expect(
+      latte.provideLatteDefinition(
+        definitionSource,
+        definitionSource.lastIndexOf("siteTitle") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, basePresenterPath),
+      expect.any(Object),
+      "$siteTitle",
+    );
+    expect(deps.readFileContent).toHaveBeenCalledWith(
+      joinPath(EBOX_CRM_ROOT, presenterPath),
+    );
+  });
+
   it("covers variable completion inside a real n:foreach attribute value", async () => {
     const templatePath =
       "app/modules/efabricaSubscriptionsModule/templates/SubscriptionTypeGroupAdmin/showAddons.latte";

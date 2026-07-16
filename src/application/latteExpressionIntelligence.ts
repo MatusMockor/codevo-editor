@@ -21,6 +21,11 @@ import {
   type NetteViewDataInFlight,
 } from "./netteViewDataEntries";
 import {
+  loadNetteInheritedPresenterViewData,
+  type NetteInheritedPresenterViewDataCache,
+  type NetteInheritedPresenterViewDataInFlight,
+} from "./netteInheritedPresenterViewData";
+import {
   latteTemplateTypePropertySightings as netteTemplateTypePropertySightings,
   type LatteTemplateTypeCache,
   type LatteTemplateTypeInFlight,
@@ -40,6 +45,7 @@ import type {
   LatteFrameworkCapabilities,
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
@@ -52,6 +58,16 @@ const CONTROL_SUFFIX = "Control.php";
 
 export type LatteViewDataCache = NetteViewDataCache;
 export type LatteViewDataInFlight = NetteViewDataInFlight;
+
+interface LatteInheritedViewDataState {
+  cache: NetteInheritedPresenterViewDataCache;
+  inFlight: NetteInheritedPresenterViewDataInFlight;
+}
+
+const inheritedViewDataStateByCache = new WeakMap<
+  LatteViewDataCache,
+  LatteInheritedViewDataState
+>();
 
 export interface LatteExpressionResolutionContext {
   collectProjectFilterNames(): Promise<readonly string[]>;
@@ -247,7 +263,7 @@ function netteCurrentClassContext(context: LatteExpressionResolutionContext) {
   };
 }
 
-function loadLatteViewDataEntries(
+async function loadLatteViewDataEntries(
   context: LatteExpressionResolutionContext,
 ): Promise<NetteViewDataEntry[]> {
   const {
@@ -259,7 +275,7 @@ function loadLatteViewDataEntries(
     viewDataInFlight,
   } = context;
 
-  return loadNetteViewDataEntries({
+  const existingEntriesLoad = loadNetteViewDataEntries({
     cache: viewDataCache,
     deps,
     frameworkCapabilities,
@@ -275,6 +291,101 @@ function loadLatteViewDataEntries(
       ),
     ttlMs: LATTE_VIEW_DATA_CACHE_TTL_MS,
   });
+  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+
+  if (!templateRelativePath || !hasNetteViewDataProvider(context)) {
+    return existingEntriesLoad;
+  }
+
+  const inheritedState = inheritedViewDataState(viewDataCache);
+  const inheritedEntriesLoad = loadNetteInheritedPresenterViewData({
+    cache: inheritedState.cache,
+    deps,
+    inFlight: inheritedState.inFlight,
+    isRequestedRootActive,
+    requestedRoot,
+    templateRelativePath,
+    ttlMs: LATTE_VIEW_DATA_CACHE_TTL_MS,
+  });
+  const [inheritedEntries, existingEntries] = await Promise.all([
+    inheritedEntriesLoad,
+    existingEntriesLoad,
+  ]);
+
+  return [...inheritedEntries, ...existingEntries];
+}
+
+export function evictLatteInheritedViewDataCaches(
+  viewDataCache: LatteViewDataCache,
+  requestedRoot: string | null,
+): void {
+  const state = inheritedViewDataStateByCache.get(viewDataCache);
+
+  if (!state) {
+    return;
+  }
+
+  const retainedCache: NetteInheritedPresenterViewDataCache = {};
+  let hasStaleState = false;
+
+  for (const key of Object.keys(state.cache)) {
+    if (inheritedCacheKeyMatchesRoot(key, requestedRoot)) {
+      retainedCache[key] = state.cache[key]!;
+      continue;
+    }
+
+    hasStaleState = true;
+  }
+
+  for (const key of state.inFlight.keys()) {
+    if (inheritedCacheKeyMatchesRoot(key, requestedRoot)) {
+      continue;
+    }
+
+    hasStaleState = true;
+  }
+
+  if (!hasStaleState) {
+    return;
+  }
+
+  state.cache = retainedCache;
+  state.inFlight = new Map();
+}
+
+function inheritedViewDataState(
+  viewDataCache: LatteViewDataCache,
+): LatteInheritedViewDataState {
+  const existing = inheritedViewDataStateByCache.get(viewDataCache);
+
+  if (existing) {
+    return existing;
+  }
+
+  const created = {
+    cache: {},
+    inFlight: new Map(),
+  };
+  inheritedViewDataStateByCache.set(viewDataCache, created);
+  return created;
+}
+
+function inheritedCacheKeyMatchesRoot(
+  key: string,
+  requestedRoot: string | null,
+): boolean {
+  const separator = key.indexOf("\u0000");
+  const cachedRoot = separator >= 0 ? key.slice(0, separator) : key;
+
+  return workspaceRootKeysEqual(cachedRoot, requestedRoot);
+}
+
+function hasNetteViewDataProvider(
+  context: LatteExpressionResolutionContext,
+): boolean {
+  return context.deps.frameworkIntelligence.providers.some(
+    (provider) => provider.id === "nette",
+  );
 }
 
 function latteTemplateTypeContext(context: LatteExpressionResolutionContext) {

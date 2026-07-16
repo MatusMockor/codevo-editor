@@ -1362,6 +1362,206 @@ function buildNettePresenterWorkspace(
   return { readFileContent, searchText };
 }
 
+function inheritedPresenterWorkspace(
+  root: string,
+  baseVariableName = "baseShared",
+): Pick<
+  LatteIntelligenceDependencies,
+  | "readFileContent"
+  | "readPhpClassSource"
+  | "resolveDeclaredType"
+  | "searchText"
+> {
+  const presenterPath = `${root}/app/UI/Products/ProductsPresenter.php`;
+  const adminPath = `${root}/app/UI/Admin/AdminPresenter.php`;
+  const basePath = `${root}/app/UI/Base/BasePresenter.php`;
+  const presenterSource = `<?php
+namespace App\\UI\\Products;
+
+use App\\UI\\Admin\\AdminPresenter;
+
+class ProductsPresenter extends AdminPresenter
+{
+    public function actionDefault(): void
+    {
+        $this->template->totalCount = $this->products->totalCount();
+    }
+}
+`;
+  const adminSource = `<?php
+namespace App\\UI\\Admin;
+
+use App\\UI\\Base\\BasePresenter;
+
+class AdminPresenter extends BasePresenter
+{
+    public function startup(): void
+    {
+        parent::startup();
+        /** @var \\App\\Model\\AdminUser $adminUser */
+        $adminUser = $this->users->current();
+        $this->template->adminUser = $adminUser;
+    }
+}
+`;
+  const baseSource = `<?php
+namespace App\\UI\\Base;
+
+class BasePresenter extends \\Nette\\Application\\UI\\Presenter
+{
+    public function startup(): void
+    {
+        parent::startup();
+        $this->template->${baseVariableName} = $this->settings->shared();
+    }
+}
+`;
+  const classSources = new Map([
+    ["App\\UI\\Admin\\AdminPresenter", { path: adminPath, source: adminSource }],
+    ["App\\UI\\Base\\BasePresenter", { path: basePath, source: baseSource }],
+  ]);
+
+  return {
+    readFileContent: vi.fn(async (path: string) => {
+      if (path === presenterPath) {
+        return presenterSource;
+      }
+
+      throw new Error(`no such file: ${path}`);
+    }),
+    readPhpClassSource: vi.fn(async (className: string) =>
+      classSources.get(className) ?? null,
+    ),
+    resolveDeclaredType: (_source, typeHint) => {
+      if (typeHint === "AdminPresenter") {
+        return "App\\UI\\Admin\\AdminPresenter";
+      }
+
+      if (typeHint === "BasePresenter") {
+        return "App\\UI\\Base\\BasePresenter";
+      }
+
+      return typeHint;
+    },
+    searchText: vi.fn(async () => []),
+  };
+}
+
+describe("createLatteIntelligence inherited presenter view data", () => {
+  it("offers variables contributed by Admin and Base presenter lifecycles", async () => {
+    const deps = makeDeps({
+      ...inheritedPresenterWorkspace(ROOT),
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Products/default.latte`,
+      }),
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$}";
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, source.indexOf("}")),
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("$totalCount");
+    expect(labels).toContain("$adminUser");
+    expect(labels).toContain("$baseShared");
+  });
+
+  it("uses an inherited variable type for member completion", async () => {
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 1 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeDeps({
+      ...inheritedPresenterWorkspace(ROOT),
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Products/default.latte`,
+      }),
+      resolvePhpReceiverCompletions: vi.fn(async () => [
+        {
+          declaringClassName: "App\\Model\\AdminUser",
+          kind: "property" as const,
+          name: "email",
+          parameters: "",
+          returnType: "string",
+        },
+      ]),
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$adminUser->}";
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(source, source.indexOf("->") + 2),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "adminUser",
+      "\\App\\Model\\AdminUser",
+    );
+    expect(completions.map((completion) => completion.label)).toContain("email");
+  });
+
+  it("navigates an inherited variable definition to its ancestor presenter", async () => {
+    const openTarget = vi.fn(async () => true);
+    const deps = makeDeps({
+      ...inheritedPresenterWorkspace(ROOT),
+      getActiveDocument: () => ({
+        path: `${ROOT}/app/UI/Products/default.latte`,
+      }),
+      openTarget,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const source = "{$baseShared}";
+
+    await expect(
+      latte.provideLatteDefinition(source, source.indexOf("baseShared") + 2),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/UI/Base/BasePresenter.php`,
+      expect.objectContaining({ lineNumber: 9 }),
+      "$baseShared",
+    );
+  });
+
+  it("reloads inherited entries after switching away from and back to a root", async () => {
+    const rootA = "/ws-a";
+    const rootB = "/ws-b";
+    const viewDataCache: LatteViewDataCache = {};
+    const complete = async (
+      root: string,
+      baseVariableName: string,
+    ): Promise<string[]> => {
+      const deps = makeDeps({
+        ...inheritedPresenterWorkspace(root, baseVariableName),
+        currentWorkspaceRootRef: { current: root },
+        getActiveDocument: () => ({
+          path: `${root}/app/UI/Products/default.latte`,
+        }),
+        workspaceRoot: root,
+      });
+      const latte = createLatteIntelligence(() => deps, {}, viewDataCache);
+      const source = "{$}";
+      const completions = await latte.provideLatteCompletions(
+        source,
+        positionAtOffset(source, source.indexOf("}")),
+      );
+
+      return completions.map((completion) => completion.label);
+    };
+
+    expect(await complete(rootA, "firstRootValue")).toContain("$firstRootValue");
+    expect(await complete(rootB, "secondRootValue")).toContain("$secondRootValue");
+    const refreshed = await complete(rootA, "refreshedRootValue");
+
+    expect(refreshed).toContain("$refreshedRootValue");
+    expect(refreshed).not.toContain("$firstRootValue");
+  });
+});
+
 describe("createLatteIntelligence member completion ({$var->})", () => {
   it("resolves a {templateType} property and dispatches typed member completion", async () => {
     const templateSource = `<?php

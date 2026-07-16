@@ -3,6 +3,7 @@ import {
   NETTE_VIEW_DATA_SEARCH_QUERIES,
   netteTemplateClassPropertiesFromSource,
   netteViewDataEntryFromSource,
+  netteViewDataSourceFactsFromSource,
 } from "./netteViewData";
 
 describe("netteViewDataEntryFromSource", () => {
@@ -670,6 +671,516 @@ class CommentController
       "function render",
       "function action",
     ]);
+  });
+});
+
+describe("netteViewDataSourceFactsFromSource", () => {
+  it("reports the owner and ordered lifecycle methods with their own variables", () => {
+    const source = `<?php
+class ProductPresenter extends BasePresenter
+{
+    protected function startup(): void
+    {
+        parent::startup();
+        $this->template->site = $this->site;
+    }
+
+    protected function beforeRender(): void
+    {
+        $this->template->navigation = $this->navigation;
+    }
+
+    public function actionShow(int $id): void
+    {
+        parent::actionShow($id);
+    }
+
+    public function renderShow(Product $product): void
+    {
+        $this->template->product = $product;
+    }
+}
+`;
+
+    expect(netteViewDataSourceFactsFromSource(source)).toEqual({
+      owner: { kind: "presenter", name: "Product" },
+      methods: [
+        {
+          methodName: "startup",
+          action: "*",
+          callsParent: true,
+          parentCallOffset: source.indexOf("parent::startup"),
+          variables: [
+            expect.objectContaining({
+              name: "$site",
+              valueExpression: "$this->site",
+            }),
+          ],
+        },
+        {
+          methodName: "beforeRender",
+          action: "*",
+          callsParent: false,
+          parentCallOffset: null,
+          variables: [
+            expect.objectContaining({
+              name: "$navigation",
+              valueExpression: "$this->navigation",
+            }),
+          ],
+        },
+        {
+          methodName: "actionShow",
+          action: "show",
+          callsParent: true,
+          parentCallOffset: source.indexOf("parent::actionShow"),
+          variables: [expect.objectContaining({ name: "$id" })],
+        },
+        {
+          methodName: "renderShow",
+          action: "show",
+          callsParent: false,
+          parentCallOffset: null,
+          variables: [
+            expect.objectContaining({ name: "$product", typeHint: "Product" }),
+          ],
+        },
+      ],
+    });
+  });
+
+  it("retains empty overrides and ignores unrelated methods", () => {
+    const source = `<?php
+class EmptyPresenter extends BasePresenter
+{
+    protected function startup(): void {}
+    protected function beforeRender(): void {}
+    public function actionDefault(): void {}
+    public function renderDefault(): void {}
+    public function helper(): void { $this->template->ignored = true; }
+}
+`;
+
+    expect(netteViewDataSourceFactsFromSource(source).methods).toEqual([
+      {
+        methodName: "startup",
+        action: "*",
+        callsParent: false,
+        parentCallOffset: null,
+        variables: [],
+      },
+      {
+        methodName: "beforeRender",
+        action: "*",
+        callsParent: false,
+        parentCallOffset: null,
+        variables: [],
+      },
+      {
+        methodName: "actionDefault",
+        action: "default",
+        callsParent: false,
+        parentCallOffset: null,
+        variables: [],
+      },
+      {
+        methodName: "renderDefault",
+        action: "default",
+        callsParent: false,
+        parentCallOffset: null,
+        variables: [],
+      },
+    ]);
+  });
+
+  it("only detects executable calls to the same parent method", () => {
+    const source = `<?php
+class FakeParentPresenter extends BasePresenter
+{
+    protected function startup(): void
+    {
+        // parent::startup();
+        $fake = 'parent::startup()';
+        parent::beforeRender();
+    }
+
+    protected function beforeRender(): void
+    {
+        /* parent::beforeRender(); */
+        $fake = "parent::beforeRender()";
+        $nowdoc = <<<'PHP'
+parent::beforeRender();
+PHP;
+        $parent::beforeRender();
+    }
+
+    public function actionShow(): void
+    {
+        parent /* executable comment */ :: actionShow();
+    }
+}
+`;
+
+    expect(
+      netteViewDataSourceFactsFromSource(source).methods.map((method) => [
+        method.methodName,
+        method.callsParent,
+      ]),
+    ).toEqual([
+      ["startup", false],
+      ["beforeRender", false],
+      ["actionShow", true],
+    ]);
+  });
+
+  it("parses multiline signatures with braces in defaults, strings, and comments", () => {
+    const source = `<?php
+class SignaturePresenter extends BasePresenter
+{
+    // function renderFake(): void { parent::renderFake(); }
+    public function actionEdit(
+        string $label = "}",
+        array $options = ['shape' => '{'],
+    ): void /* { not the body */
+    {
+        parent::actionEdit($label, $options);
+    }
+
+    public function renderEdit(): void
+    {
+    }
+}
+`;
+
+    const facts = netteViewDataSourceFactsFromSource(source);
+
+    expect(facts.methods.map((method) => method.methodName)).toEqual([
+      "actionEdit",
+      "renderEdit",
+    ]);
+    expect(facts.methods[0]).toMatchObject({
+      action: "edit",
+      callsParent: true,
+      variables: [
+        { name: "$label", typeHint: "string" },
+        { name: "$options", typeHint: "array" },
+      ],
+    });
+  });
+
+  it("returns a null owner for non-Nette source", () => {
+    expect(
+      netteViewDataSourceFactsFromSource("<?php class Service {}"),
+    ).toEqual({ owner: null, methods: [] });
+  });
+
+  it("reports control ownership", () => {
+    expect(
+      netteViewDataSourceFactsFromSource(`<?php
+class SummaryControl extends Nette\\Application\\UI\\Control
+{
+    public function renderDetail(): void {}
+}
+`),
+    ).toMatchObject({
+      owner: { kind: "control", name: "Summary" },
+      methods: [{ methodName: "renderDetail", action: "detail" }],
+    });
+  });
+
+  it("stops masking at heredoc and nowdoc labels with comma, semicolon, or no punctuation", () => {
+    const source = `<?php
+class HeredocPresenter extends BasePresenter
+{
+    private function commaValue(): void
+    {
+        $values = [<<<TEXT
+comma
+TEXT,
+        ];
+    }
+
+    public function actionComma(): void {}
+
+    private function semicolonValue(): void
+    {
+        $value = <<<'TEXT'
+semicolon
+TEXT;
+    }
+
+    public function actionSemicolon(): void {}
+
+    private function bareValue(): void
+    {
+        consume(<<<"TEXT"
+bare
+TEXT
+        );
+    }
+
+    public function actionBare(): void {}
+}
+`;
+
+    expect(
+      netteViewDataSourceFactsFromSource(source).methods.map(
+        (method) => method.methodName,
+      ),
+    ).toEqual(["actionComma", "actionSemicolon", "actionBare"]);
+  });
+
+  it("treats PHP attributes as code and keeps same-line actions scoped", () => {
+    const source = `<?php
+class AttributePresenter extends BasePresenter
+{
+    #[RequiresRole('editor')] public function actionShow(): void
+    {
+        $this->template->item = $this->item;
+    }
+}
+`;
+
+    expect(netteViewDataSourceFactsFromSource(source).methods).toMatchObject([
+      {
+        methodName: "actionShow",
+        action: "show",
+        variables: [{ name: "$item" }],
+      },
+    ]);
+    expect(netteViewDataEntryFromSource(source).bindings).toMatchObject([
+      { viewName: "Attribute:show", variables: [{ name: "$item" }] },
+    ]);
+  });
+
+  it("restricts facts to direct methods of the selected owner class", () => {
+    const source = `<?php
+trait SharedLifecycle
+{
+    protected function startup(): void
+    {
+        $this->template->traitValue = true;
+    }
+}
+
+class ProductPresenter extends BasePresenter
+{
+    use SharedLifecycle;
+
+    public function actionShow(): void
+    {
+        $this->template->product = $this->product;
+    }
+
+    private function factory(): object
+    {
+        return new class {
+            public function renderAnonymous(): void
+            {
+                $this->template->anonymousValue = true;
+            }
+        };
+    }
+
+    public function renderShow(): void {}
+}
+
+class SummaryControl extends Nette\\Application\\UI\\Control
+{
+    public function renderControl(): void
+    {
+        $this->template->controlValue = true;
+    }
+}
+
+class SecondaryPresenter extends BasePresenter
+{
+    protected function beforeRender(): void
+    {
+        $this->template->secondaryValue = true;
+    }
+}
+
+$outside = new class {
+    public function actionOutside(): void {}
+};
+`;
+
+    const facts = netteViewDataSourceFactsFromSource(source);
+
+    expect(facts.owner).toEqual({ kind: "presenter", name: "Product" });
+    expect(facts.methods).toMatchObject([
+      {
+        methodName: "actionShow",
+        action: "show",
+        variables: [{ name: "$product" }],
+      },
+      {
+        methodName: "renderShow",
+        action: "show",
+        variables: [],
+      },
+    ]);
+  });
+
+  it("masks inline HTML when detecting executable parent calls", () => {
+    const source = `<?php
+class InlineHtmlPresenter extends BasePresenter
+{
+    protected function startup(): void
+    {
+?>
+        parent::startup();
+<?php
+    }
+}
+`;
+
+    expect(netteViewDataSourceFactsFromSource(source).methods).toMatchObject([
+      { methodName: "startup", callsParent: false },
+    ]);
+  });
+
+  it("ignores commented parameters while preserving the real parameter offset", () => {
+    const source = `<?php
+class ParameterPresenter extends BasePresenter
+{
+    public function actionShow(
+        /* string $id, FakeType $fake */
+        int /* WrongType $wrong */ $id,
+    ): void {}
+}
+`;
+
+    expect(netteViewDataSourceFactsFromSource(source).methods[0]).toMatchObject({
+      methodName: "actionShow",
+      variables: [
+        {
+          name: "$id",
+          typeHint: "int",
+          valueOffset: source.lastIndexOf("$id"),
+        },
+      ],
+    });
+    expect(netteViewDataEntryFromSource(source).bindings).toMatchObject([
+      {
+        viewName: "Parameter:show",
+        variables: [{ name: "$id", typeHint: "int" }],
+      },
+    ]);
+  });
+
+  it("ignores template data syntax in strings and comments", () => {
+    const source = `<?php
+class MaskedSightingsPresenter extends BasePresenter
+{
+    public function renderShow(): void
+    {
+        $single = '$this->template->singleFake = $bad;';
+        $double = "$this->template->add('doubleFake', $bad);";
+
+        // $this->template->setParameters(['lineFake' => $bad]);
+        /*
+         * $this->template->blockFake = $bad;
+         * $this->template->add('blockAddFake', $bad);
+         */
+
+        $heredoc = <<<TEXT
+$this->template->heredocFake = $bad;
+$this->template->add('heredocAddFake', $bad);
+$this->template->setParameters(['heredocSetFake' => $bad]);
+TEXT;
+
+        $nowdoc = <<<'TEXT'
+$this->template->nowdocFake = $bad;
+$this->template->add('nowdocAddFake', $bad);
+$this->template->setParameters(['nowdocSetFake' => $bad]);
+TEXT;
+
+        $this->template->realAssignment = 'kept';
+        $this->template->add('realAdd', $realAdd);
+        $this->template->setParameters([
+            'realSet' => $realSet,
+        ]);
+    }
+}
+`;
+    const expectedNames = ["$realAssignment", "$realAdd", "$realSet"];
+
+    expect(
+      netteViewDataEntryFromSource(source).bindings[0]?.variables.map(
+        (variable) => variable.name,
+      ),
+    ).toEqual(expectedNames);
+    expect(
+      netteViewDataSourceFactsFromSource(source).methods[0]?.variables.map(
+        (variable) => variable.name,
+      ),
+    ).toEqual(expectedNames);
+    expect(netteViewDataEntryFromSource(source).bindings[0]).toMatchObject({
+      viewName: "MaskedSightings:show",
+      variables: [
+        {
+          name: "$realAssignment",
+          valueExpression: "'kept'",
+          valueOffset: source.indexOf("'kept'"),
+        },
+        {
+          name: "$realAdd",
+          valueExpression: "$realAdd",
+          valueOffset: source.indexOf("$realAdd);"),
+        },
+        {
+          name: "$realSet",
+          valueExpression: "$realSet",
+          valueOffset: source.indexOf("$realSet,"),
+        },
+      ],
+    });
+  });
+
+  it("reports the executable parent-call offset relative to assignments", () => {
+    const source = `<?php
+class OrderingPresenter extends BasePresenter
+{
+    protected function startup(): void
+    {
+        $this->template->beforeParent = 1;
+        // parent::startup();
+        parent::startup();
+        $this->template->afterParent = 2;
+    }
+
+    public function renderShow(): void
+    {
+        parent::renderShow();
+        $this->template->afterRenderParent = 3;
+    }
+}
+`;
+    const methods = netteViewDataSourceFactsFromSource(source).methods;
+    const startup = methods[0];
+    const render = methods[1];
+
+    expect(startup).toMatchObject({
+      callsParent: true,
+      methodName: "startup",
+      parentCallOffset: source.lastIndexOf("parent::startup"),
+    });
+    expect(startup?.variables[0]?.valueOffset).toBeLessThan(
+      startup?.parentCallOffset ?? 0,
+    );
+    expect(startup?.variables[1]?.valueOffset).toBeGreaterThan(
+      startup?.parentCallOffset ?? source.length,
+    );
+    expect(render).toMatchObject({
+      callsParent: true,
+      methodName: "renderShow",
+      parentCallOffset: source.indexOf("parent::renderShow"),
+    });
+    expect(render?.parentCallOffset).toBeLessThan(
+      render?.variables[0]?.valueOffset ?? 0,
+    );
   });
 });
 
