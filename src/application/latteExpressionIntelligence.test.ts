@@ -89,6 +89,29 @@ describe("path-aware Latte expression type resolution", () => {
       callerVariableType(context.forTemplate(HOME_TEMPLATE)),
     ).resolves.toBeNull();
   });
+
+  it("forwards include loading and the current template to type resolution", async () => {
+    const context = expressionContext("/workspace", {});
+    const loadIncludedTemplateArguments = vi.fn(async () => [
+      {
+        depth: 0,
+        expression: "$record",
+        name: "record",
+        provenance: [],
+        sourceSpan: { end: 10, start: 3 },
+        sourceTemplateRelativePath: "app/UI/Home/default.latte",
+        targetSpan: { end: 16, start: 10 },
+        targetTemplateRelativePath: "active.latte",
+        type: "App\\Model\\IncludedRecord",
+      },
+    ]);
+    context.loadIncludedTemplateArguments = loadIncludedTemplateArguments;
+
+    await expect(callerVariableType(context)).resolves.toBe(
+      "App\\Model\\IncludedRecord",
+    );
+    expect(loadIncludedTemplateArguments).toHaveBeenCalledWith("active.latte");
+  });
 });
 
 function callerVariableType(
@@ -202,6 +225,7 @@ function options(
     getDependencies: () => deps,
     inFlight: {
       filterInFlight: new Map(),
+      includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
@@ -227,6 +251,8 @@ function providerCaches(): LatteProviderFlowCaches {
   return {
     componentCache: {},
     filterCache: {},
+    includeArgumentCache: {},
+    includeArgumentGenerationByRoot: {},
     presenterCache: {},
     templateCache: {},
     templateTypeCache: {},

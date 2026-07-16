@@ -5,6 +5,8 @@ import {
 } from "../domain/latteSyntax";
 import type { PhpFrameworkViewDataVariable } from "../domain/phpFrameworkProviders";
 import type { NetteViewDataEntry } from "./netteViewDataEntries";
+import type { NetteIncludedTemplateArgument } from "./netteIncludedTemplateArguments";
+import { mergeLatteResolvedTypes } from "./latteTemplateTypeResolution";
 import type { LatteVariableResolutionContext } from "./latteVariableContracts";
 
 export interface LatteVariableCandidate {
@@ -28,8 +30,8 @@ const NETTE_TEMPLATE_IMPLICIT_VARIABLES = [
 
 /**
  * Gathers the in-scope template variables for the `{$}` list, first sighting of
- * a name wins: inline declarations > template type > foreach > implicit
- * context > presenter/control view-data.
+ * a name wins: inline declarations > template type > foreach > include
+ * arguments > implicit context > presenter/control view-data.
  */
 export async function collectLatteVariableCandidates(
   context: LatteVariableResolutionContext,
@@ -86,6 +88,28 @@ export async function collectLatteVariableCandidates(
     }
   }
 
+  const includedArguments = await loadIncludedArguments(context);
+
+  if (!isRequestedRootActive()) {
+    return [];
+  }
+
+  const includedTypesByName = new Map<string, (string | null)[]>();
+
+  for (const argument of includedArguments) {
+    const types = includedTypesByName.get(argument.name) ?? [];
+    types.push(argument.type);
+    includedTypesByName.set(argument.name, types);
+  }
+
+  for (const [name, types] of includedTypesByName) {
+    add(
+      `$${name}`,
+      "include argument",
+      shortTypeName(mergeLatteResolvedTypes(types)),
+    );
+  }
+
   for (const variable of NETTE_TEMPLATE_IMPLICIT_VARIABLES) {
     add(variable.name, variable.detail, variable.typeHint);
   }
@@ -107,6 +131,31 @@ export async function collectLatteVariableCandidates(
   }
 
   return Array.from(byName.values());
+}
+
+interface IncludeAwareVariableContext {
+  currentTemplateRelativePath: string;
+  loadIncludedTemplateArguments(
+    targetRelativePath: string,
+  ): Promise<readonly NetteIncludedTemplateArgument[]>;
+}
+
+function loadIncludedArguments(
+  context: LatteVariableResolutionContext,
+): Promise<readonly NetteIncludedTemplateArgument[]> {
+  const includeContext = context as LatteVariableResolutionContext &
+    Partial<IncludeAwareVariableContext>;
+
+  if (
+    !includeContext.currentTemplateRelativePath ||
+    !includeContext.loadIncludedTemplateArguments
+  ) {
+    return Promise.resolve([]);
+  }
+
+  return includeContext.loadIncludedTemplateArguments(
+    includeContext.currentTemplateRelativePath,
+  );
 }
 
 export function isLatteDeclarationVisibleAt(

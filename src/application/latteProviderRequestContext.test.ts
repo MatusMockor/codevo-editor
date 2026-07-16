@@ -39,6 +39,7 @@ describe("latteProviderRequestContext", () => {
     expect(cacheRoots(caches)).toEqual({
       componentCache: [root],
       filterCache: [root],
+      includeArgumentCache: [root],
       presenterCache: [root],
       templateCache: [root],
       templateTypeCache: [root],
@@ -68,6 +69,7 @@ describe("latteProviderRequestContext", () => {
     expect(cacheRoots(caches)).toEqual({
       componentCache: [],
       filterCache: [],
+      includeArgumentCache: [],
       presenterCache: [],
       templateCache: [],
       templateTypeCache: [],
@@ -127,6 +129,7 @@ function options(
     getDependencies: () => dependencies,
     inFlight: {
       filterInFlight: new Map(),
+      includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
@@ -152,6 +155,11 @@ function providerCaches(): LatteProviderFlowCaches {
       [root]: { expiresAt: 1, registrations: [] },
       [staleRoot]: { expiresAt: 1, registrations: [] },
     },
+    includeArgumentCache: {
+      [root]: includedArgumentEntry(),
+      [staleRoot]: includedArgumentEntry(),
+    },
+    includeArgumentGenerationByRoot: {},
     presenterCache: {
       [root]: { expiresAt: 1, targets: [] },
       [staleRoot]: { expiresAt: 1, targets: [] },
@@ -175,9 +183,25 @@ function cacheRoots(caches: LatteProviderFlowCaches) {
   return {
     componentCache: Object.keys(caches.componentCache),
     filterCache: Object.keys(caches.filterCache),
+    includeArgumentCache: Object.keys(caches.includeArgumentCache),
     presenterCache: Object.keys(caches.presenterCache),
     templateCache: Object.keys(caches.templateCache),
     templateTypeCache: Object.keys(caches.templateTypeCache),
     viewDataCache: Object.keys(caches.viewDataCache),
+  };
+}
+
+function includedArgumentEntry() {
+  return {
+    generation: 0,
+    graph: {
+      cycleAnalysisOperations: 0,
+      cyclicEdgeIds: new Set<string>(),
+      edges: [],
+      filesByPath: new Map(),
+      incomingByTarget: new Map(),
+      outgoingBySource: new Map(),
+    },
+    queryResults: new Map(),
   };
 }

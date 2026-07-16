@@ -10,9 +10,17 @@ import {
   type LatteCompletionItem,
 } from "./latteCompletionItems";
 import { createLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
-import { type LatteViewDataCache } from "./latteExpressionIntelligence";
+import {
+  invalidateLatteInheritedViewDataForRoot,
+  type LatteViewDataCache,
+} from "./latteExpressionIntelligence";
 import type { LatteFilterCache } from "./latteFilterDiscovery";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
+import type {
+  NetteIncludedTemplateArgumentCache,
+  NetteIncludedTemplateArgumentInFlight,
+} from "./netteIncludedTemplateArguments";
+import type { LatteIncludeArgumentGenerationByRoot } from "./latteIntelligenceCaches";
 import type {
   LatteDefinitionOutcome,
   LatteFrameworkCapabilities,
@@ -46,11 +54,14 @@ import {
   nettePresenterLinkDiagnostics,
 } from "./nettePresenterLinkDiagnostics";
 import {
+  bumpLatteExpressionGeneration,
+  captureLatteExpressionGeneration,
   LATTE_TEMPLATE_CACHE_TTL_MS,
   LATTE_TEMPLATE_SCAN_DIRECTORIES,
   MAX_LATTE_SCAN_DEPTH,
   MAX_LATTE_TEMPLATE_FILES,
 } from "./latteProviderFlowContext";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { latteProviderRequestContext } from "./latteProviderRequestContext";
 import type {
   PhpCodeActionDescriptor,
@@ -61,6 +72,7 @@ import type {
 export interface LatteProviderFlows {
   collectCompleteLatteTemplateRelativePaths(): Promise<readonly string[]>;
   collectLatteTemplateRelativePaths(): Promise<readonly string[]>;
+  invalidateLatteExpressionDataForPath(rootPath: string, path: string): void;
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,
@@ -122,6 +134,12 @@ export function createLatteIntelligence(
     () => getDependencies().frameworkIntelligence.providers,
   ),
   filterCache: LatteFilterCache = {},
+  includeArgumentCache: NetteIncludedTemplateArgumentCache = {},
+  includeArgumentInFlight: NetteIncludedTemplateArgumentInFlight = {
+    graphs: new Map(),
+    queries: new Map(),
+  },
+  includeArgumentGenerationByRoot: LatteIncludeArgumentGenerationByRoot = {},
 ): LatteIntelligence {
   const neonConfigCache: NeonConfigCache = {};
   const neonConfigInFlight: NeonConfigInFlight = new Map();
@@ -129,6 +147,8 @@ export function createLatteIntelligence(
     caches: {
       componentCache,
       filterCache,
+      includeArgumentCache,
+      includeArgumentGenerationByRoot,
       presenterCache,
       templateCache,
       templateTypeCache,
@@ -138,6 +158,7 @@ export function createLatteIntelligence(
     getDependencies,
     inFlight: {
       filterInFlight: new Map(),
+      includeArgumentInFlight,
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
@@ -172,6 +193,8 @@ export function createLatteProviderFlows(
     },
     collectLatteTemplateRelativePaths: () =>
       collectLatteTemplateRelativePaths(options),
+    invalidateLatteExpressionDataForPath: (rootPath, path) =>
+      invalidateLatteExpressionDataForPath(options, rootPath, path),
     provideLatteCodeActions: (source, range, context) =>
       provideLatteCodeActionsFlow(options, source, range, context),
     provideLatteCompletions: (source, position) =>
@@ -188,6 +211,65 @@ export function createLatteProviderFlows(
       ),
     ...phpPresenterLinks,
   };
+}
+
+function invalidateLatteExpressionDataForPath(
+  options: LatteProviderFlowFactoryOptions,
+  rootPath: string,
+  path: string,
+): void {
+  if (!path.endsWith(".latte") && !path.endsWith(".php")) {
+    return;
+  }
+
+  const generation = bumpLatteExpressionGeneration(options.caches, rootPath);
+  deleteCacheEntriesForRoot(options.caches.includeArgumentCache, rootPath);
+  deleteCacheEntriesForRoot(options.caches.viewDataCache, rootPath);
+  deleteCacheEntriesForRoot(options.caches.templateTypeCache, rootPath);
+
+  if (path.endsWith(".latte")) {
+    deleteCacheEntriesForRoot(options.caches.templateCache, rootPath);
+  }
+
+  deleteInFlightForRoot(options.inFlight.viewDataInFlight, rootPath);
+  deleteInFlightForRoot(options.inFlight.templateTypeInFlight, rootPath);
+  deleteInFlightForRoot(
+    options.inFlight.includeArgumentInFlight.graphs,
+    generation.rootKey,
+  );
+  deleteInFlightForRoot(
+    options.inFlight.includeArgumentInFlight.queries,
+    generation.rootKey,
+  );
+  invalidateLatteInheritedViewDataForRoot(
+    options.caches.viewDataCache,
+    rootPath,
+  );
+}
+
+function deleteInFlightForRoot(
+  inFlight: Map<string, unknown>,
+  rootPath: string,
+): void {
+  for (const key of inFlight.keys()) {
+    const separator = key.indexOf("\0");
+    const keyRoot = separator < 0 ? key : key.slice(0, separator);
+
+    if (workspaceRootKeysEqual(keyRoot, rootPath)) {
+      inFlight.delete(key);
+    }
+  }
+}
+
+function deleteCacheEntriesForRoot<Entry>(
+  cache: Record<string, Entry>,
+  rootPath: string,
+): void {
+  for (const cachedRoot of Object.keys(cache)) {
+    if (workspaceRootKeysEqual(cachedRoot, rootPath)) {
+      delete cache[cachedRoot];
+    }
+  }
 }
 
 async function provideLattePresenterLinkDiagnostics(
@@ -233,10 +315,16 @@ async function collectLatteTemplateEntry(
     return null;
   }
 
+  const generation = captureLatteExpressionGeneration(
+    options.caches,
+    request.requestedRoot,
+  );
+
   await listLatteTemplateRelativePaths({
     cache: options.caches.templateCache,
     deps: request.deps,
     isRequestedRootActive: request.isRequestedRootActive,
+    isCacheWriteCurrent: generation.isCurrent,
     maxDepth: MAX_LATTE_SCAN_DEPTH,
     maxTemplates: MAX_LATTE_TEMPLATE_FILES,
     requestedRoot: request.requestedRoot,

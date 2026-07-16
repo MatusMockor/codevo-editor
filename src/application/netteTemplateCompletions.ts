@@ -18,6 +18,7 @@ export interface NetteTemplateCompletionContext {
   cache: LatteTemplateCache;
   currentTemplateRelativePath: string;
   deps: NetteTemplateDiscoveryDependencies;
+  isCacheWriteCurrent?(): boolean;
   isRequestedRootActive(): boolean;
   maxCompletions: number;
   maxDepth: number;

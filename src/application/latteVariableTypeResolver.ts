@@ -5,6 +5,7 @@ import {
   parseLatteForeachCollection,
 } from "../domain/latteSyntax";
 import type { PhpFrameworkViewDataVariable } from "../domain/phpFrameworkProviders";
+import type { NetteIncludedTemplateArgument } from "./netteIncludedTemplateArguments";
 import {
   latteResolvedTypeFromTemplateSightings,
   mergeLatteResolvedTypes,
@@ -22,8 +23,8 @@ const NETTE_TEMPLATE_IMPLICIT_CONTROL_TYPE = "Nette\\Application\\UI\\Control";
 
 /**
  * Resolves the receiver type of a Latte variable through the PhpStorm-like
- * priority chain: inline type, template type, local expression, implicit
- * presenter/control, presenter view-data, foreach element type.
+ * priority chain: inline type, template type, local expression, foreach item,
+ * include argument, implicit presenter/control, presenter view-data.
  */
 export async function resolveLatteVariableType(
   context: LatteVariableResolutionContext,
@@ -73,6 +74,36 @@ export async function resolveLatteVariableType(
     return localType;
   }
 
+  const foreachType = await latteForeachVariableType(
+    context,
+    source,
+    offset,
+    variableName,
+    depth,
+  );
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  if (foreachType) {
+    return foreachType;
+  }
+
+  const includeResolution = await latteIncludedArgumentType(
+    context,
+    variableName,
+    depth,
+  );
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  if (includeResolution.found) {
+    return includeResolution.type;
+  }
+
   const implicitType = await latteImplicitVariableType(context, variableName);
 
   if (!isRequestedRootActive()) {
@@ -93,7 +124,57 @@ export async function resolveLatteVariableType(
     return presenterType;
   }
 
-  return latteForeachVariableType(context, source, offset, variableName, depth);
+  return null;
+}
+
+interface IncludeAwareVariableContext {
+  currentTemplateRelativePath: string;
+  loadIncludedTemplateArguments(
+    targetRelativePath: string,
+  ): Promise<readonly NetteIncludedTemplateArgument[]>;
+}
+
+async function latteIncludedArgumentType(
+  context: LatteVariableResolutionContext,
+  variableName: string,
+  depth: number,
+): Promise<{ found: boolean; type: string | null }> {
+  if (depth >= context.maxTypeResolutionDepth) {
+    return { found: false, type: null };
+  }
+
+  const includeContext = context as LatteVariableResolutionContext &
+    Partial<IncludeAwareVariableContext>;
+
+  if (
+    !includeContext.currentTemplateRelativePath ||
+    !includeContext.loadIncludedTemplateArguments
+  ) {
+    return { found: false, type: null };
+  }
+
+  const argumentsForTemplate = await includeContext.loadIncludedTemplateArguments(
+    includeContext.currentTemplateRelativePath,
+  );
+
+  if (!context.isRequestedRootActive()) {
+    return { found: false, type: null };
+  }
+
+  const matchingArguments = argumentsForTemplate.filter(
+    (argument) => argument.name === variableName,
+  );
+
+  if (matchingArguments.length === 0) {
+    return { found: false, type: null };
+  }
+
+  return {
+    found: true,
+    type: mergeLatteResolvedTypes(
+      matchingArguments.map((argument) => argument.type),
+    ),
+  };
 }
 
 function latteDeclaredVariableType(

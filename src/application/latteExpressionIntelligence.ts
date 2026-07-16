@@ -38,6 +38,7 @@ import {
   resolveLatteVariableType as resolveNetteLatteVariableType,
 } from "./latteVariableTypeResolver";
 import type { LatteCompletionItem } from "./latteCompletionItems";
+import type { NetteIncludedTemplateArgument } from "./netteIncludedTemplateArguments";
 import type {
   LatteFrameworkCapabilities,
   LatteIntelligenceDependencies,
@@ -73,6 +74,9 @@ export interface LatteExpressionResolutionContext {
   forTemplate(relativePath: string): LatteExpressionResolutionContext;
   frameworkCapabilities: LatteFrameworkCapabilities;
   isRequestedRootActive: () => boolean;
+  loadIncludedTemplateArguments(
+    targetRelativePath: string,
+  ): Promise<readonly NetteIncludedTemplateArgument[]>;
   maxCompletions: number;
   requestedRoot: string;
   templateTypeCache: LatteTemplateTypeCache;
@@ -125,9 +129,12 @@ function latteExpressionDefinitionContext(
   context: LatteExpressionResolutionContext,
 ) {
   return {
+    currentTemplateRelativePath: context.currentTemplateRelativePath,
     deps: context.deps,
     isRequestedRootActive: context.isRequestedRootActive,
+    loadIncludedTemplateArguments: context.loadIncludedTemplateArguments,
     loadViewDataEntries: () => loadLatteViewDataEntries(context),
+    requestedRoot: context.requestedRoot,
     resolveControlVariableDefinition: () =>
       resolveNetteControlVariableDefinition(context),
     resolveVariableType: (
@@ -217,8 +224,10 @@ function latteVariableTypeContext(context: LatteExpressionResolutionContext) {
   return {
     currentControlClassName: () => currentNetteControlClassName(context),
     currentPresenterClassName: () => currentNettePresenterClassName(context),
+    currentTemplateRelativePath: context.currentTemplateRelativePath,
     deps: context.deps,
     isRequestedRootActive: context.isRequestedRootActive,
+    loadIncludedTemplateArguments: context.loadIncludedTemplateArguments,
     loadTemplateTypePropertySightings: (source: string) =>
       netteTemplateTypePropertySightings(
         latteTemplateTypeContext(context),
@@ -368,6 +377,29 @@ export function evictLatteInheritedViewDataCaches(
 
   state.cache = retainedCache;
   state.inFlight = new Map();
+}
+
+export function invalidateLatteInheritedViewDataForRoot(
+  viewDataCache: LatteViewDataCache,
+  requestedRoot: string,
+): void {
+  const state = inheritedViewDataStateByCache.get(viewDataCache);
+
+  if (!state) {
+    return;
+  }
+
+  for (const key of Object.keys(state.cache)) {
+    if (inheritedCacheKeyMatchesRoot(key, requestedRoot)) {
+      delete state.cache[key];
+    }
+  }
+
+  for (const key of state.inFlight.keys()) {
+    if (inheritedCacheKeyMatchesRoot(key, requestedRoot)) {
+      state.inFlight.delete(key);
+    }
+  }
 }
 
 function inheritedViewDataState(

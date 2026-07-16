@@ -12,11 +12,20 @@ describe("latteProviderFlowContext", () => {
 
   it("evicts every per-root provider cache except the requested root", () => {
     const caches = providerCaches();
+    const inFlight = includeArgumentInFlight();
 
-    evictLatteProviderCaches(caches, "/active");
+    evictLatteProviderCaches(caches, "/active/", inFlight);
 
     expect(Object.keys(caches.componentCache)).toEqual(["/active"]);
     expect(Object.keys(caches.filterCache)).toEqual(["/active"]);
+    expect(Object.keys(caches.includeArgumentCache)).toEqual(["/active"]);
+    expect(caches.includeArgumentGenerationByRoot).toEqual({
+      "/active": 1,
+      "/stale": 3,
+    });
+    expect(Array.from(inFlight.graphs.keys())).toEqual([
+      "/active\0generation",
+    ]);
     expect(Object.keys(caches.presenterCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateTypeCache)).toEqual(["/active"]);
@@ -25,11 +34,18 @@ describe("latteProviderFlowContext", () => {
 
   it("clears provider caches when no workspace is active", () => {
     const caches = providerCaches();
+    const inFlight = includeArgumentInFlight();
 
-    evictLatteProviderCaches(caches, null);
+    evictLatteProviderCaches(caches, null, inFlight);
 
     expect(caches.componentCache).toEqual({});
     expect(caches.filterCache).toEqual({});
+    expect(caches.includeArgumentCache).toEqual({});
+    expect(caches.includeArgumentGenerationByRoot).toEqual({
+      "/active": 2,
+      "/stale": 3,
+    });
+    expect(inFlight.graphs.size).toBe(0);
     expect(caches.presenterCache).toEqual({});
     expect(caches.templateCache).toEqual({});
     expect(caches.templateTypeCache).toEqual({});
@@ -55,6 +71,14 @@ function providerCaches(): LatteProviderFlowCaches {
       "/active": { expiresAt: 1, registrations: [] },
       "/stale": { expiresAt: 1, registrations: [] },
     },
+    includeArgumentCache: {
+      "/active": includeArgumentCacheEntry(),
+      "/stale": includeArgumentCacheEntry(),
+    },
+    includeArgumentGenerationByRoot: {
+      "/active": 1,
+      "/stale": 2,
+    },
     presenterCache: {
       "/active": { expiresAt: 1, targets: [] },
       "/stale": { expiresAt: 1, targets: [] },
@@ -71,5 +95,30 @@ function providerCaches(): LatteProviderFlowCaches {
       "/active": { entries: [], expiresAt: 1 },
       "/stale": { entries: [], expiresAt: 1 },
     },
+  };
+}
+
+function includeArgumentInFlight() {
+  return {
+    graphs: new Map([
+      ["/active\0generation", Promise.resolve(null)],
+      ["/stale\0generation", Promise.resolve(null)],
+    ]),
+    queries: new Map<string, Promise<readonly never[]>>(),
+  };
+}
+
+function includeArgumentCacheEntry() {
+  return {
+    generation: 1,
+    graph: {
+      cycleAnalysisOperations: 0,
+      cyclicEdgeIds: new Set<string>(),
+      edges: [],
+      filesByPath: new Map(),
+      incomingByTarget: new Map(),
+      outgoingBySource: new Map(),
+    },
+    queryResults: new Map(),
   };
 }

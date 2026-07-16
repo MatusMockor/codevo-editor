@@ -10,6 +10,7 @@ export interface NetteIncludedTemplateArgumentDependencies {
   joinPath(rootPath: string, relativePath: string): string;
   readFileContent(path: string): Promise<string>;
   resolveCallerVariableType(
+    callerTemplateRelativePath: string,
     source: string,
     offset: number,
     variableName: string,
@@ -566,6 +567,7 @@ async function resolveLocalAliasType(
   }
 
   return context.deps.resolveCallerVariableType(
+    state.edge.sourceTemplateRelativePath,
     source,
     state.argument.valueSpan.start,
     variableName,

@@ -23,7 +23,11 @@ export function latteProviderRequestContext(
   options: LatteProviderFlowFactoryOptions,
 ): LatteProviderRequestContext | null {
   const deps = options.getDependencies();
-  evictLatteProviderCaches(options.caches, deps.workspaceRoot);
+  evictLatteProviderCaches(
+    options.caches,
+    deps.workspaceRoot,
+    options.inFlight.includeArgumentInFlight,
+  );
 
   if (options.neonConfigCache) {
     evictOtherRootConfigCacheEntries(options.neonConfigCache, deps.workspaceRoot);

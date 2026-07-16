@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { resolvePhpClassName } from "../domain/phpNavigation";
+import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
 import type {
   FileEntry,
   TextSearchResult,
@@ -25,6 +26,7 @@ import type {
 } from "./useNeonIntelligence";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { synthesizePhpTypedReceiverSource } from "./phpTypedReceiverSource";
 import { findNetteRedrawControlSnippetDefinitionTarget } from "./netteAjaxSnippetDefinitions";
 import {
   createPhpNetteTranslationTargetResolver,
@@ -970,6 +972,103 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         "partials/@showSubmenu.latte",
       ]),
     );
+  });
+
+  it("carries typed static include arguments into the real subscription header", async () => {
+    const callerPath =
+      "app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/show.latte";
+    const headerPath =
+      "app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/header.latte";
+    const untypedSecondaryCallerPath =
+      "app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/stats.latte";
+    const activeRowPath =
+      "app/modules/activeRowTypeModule/Generated/ActiveRow/SubscriptionTypesActiveRow.php";
+    const activeRowType =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\SubscriptionTypesActiveRow";
+    const [caller, header, activeRowSource] = await Promise.all(
+      [callerPath, headerPath, activeRowPath].map((relativePath) =>
+        readFileContent(joinPath(EBOX_CRM_ROOT, relativePath)),
+      ),
+    );
+    const collectors = renderPhpClassMemberCollectors(
+      makePhpClassMemberCollectorOptions(
+        [activeRowSource],
+        new Map([
+          [activeRowType, joinPath(EBOX_CRM_ROOT, activeRowPath)],
+        ]),
+        vi.fn(async () => null),
+      ),
+    );
+    const completionResolvers = renderPhpCompletionResolvers({
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
+      collectPhpMethodsForClass: collectors.api().collectPhpMethodsForClass,
+      currentPhpFrameworkSourceContext: () => ({
+        workspaceSources: [activeRowSource],
+      }),
+      frameworkRuntime: createPhpFrameworkRuntimeContext(NETTE_FRAMEWORK),
+      phpNormalizedReceiverExpressionIsThis: (expression) =>
+        expression.trim() === "$this",
+      resolvePhpClassReference: (source, className) =>
+        resolvePhpClassName(source, className),
+      resolvePhpExpressionType: async (source, position, expression) =>
+        phpReceiverExpressionTypeInSource(source, position, expression),
+      resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
+    });
+    const deps = makeLatteDeps(headerPath, {
+      listDirectory: async (directory) =>
+        (await listDirectory(directory)).filter(
+          (entry) =>
+            entry.path !==
+            joinPath(EBOX_CRM_ROOT, untypedSecondaryCallerPath),
+        ),
+      resolvePhpReceiverCompletions:
+        completionResolvers.api().resolvePhpReceiverMethodCompletions,
+      synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const firstTypeOffset = offsetAfter(header, "$type");
+
+    const variableCompletions = await latte.provideLatteCompletions(
+      header,
+      positionAtOffset(header, firstTypeOffset),
+    );
+    expect(variableCompletions).toContainEqual(
+      expect.objectContaining({
+        detail: "include argument · SubscriptionTypesActiveRow",
+        label: "$type",
+      }),
+    );
+
+    const memberCompletions = await latte.provideLatteCompletions(
+      header,
+      positionAtOffset(header, offsetAfter(header, "$type->")),
+    );
+    expect(memberCompletions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: `${activeRowType}::id: int`,
+          label: "id",
+        }),
+        expect.objectContaining({
+          detail: `${activeRowType}::name: string`,
+          label: "name",
+        }),
+      ]),
+    );
+
+    await expect(
+      latte.provideLatteDefinition(header, firstTypeOffset - 1),
+    ).resolves.toBe(true);
+    const includeValueOffset =
+      caller.indexOf("type => $type") + "type => ".length;
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, callerPath),
+      positionAtOffset(caller, includeValueOffset),
+      "$type",
+    );
+
+    completionResolvers.unmount();
+    collectors.unmount();
   });
 
   it("covers Nette AJAX snippet navigation from Latte to redrawControl over real component files", async () => {

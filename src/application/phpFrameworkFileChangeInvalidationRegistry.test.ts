@@ -18,6 +18,7 @@ function dependencies(providers: readonly PhpFrameworkProvider[] = []) {
     },
     invalidateBladeComponentNamesForPath: vi.fn(),
     invalidateBladeViewDataEntriesForPath: vi.fn(),
+    invalidateLatteExpressionDataForPath: vi.fn(),
     invalidateNeonConfigForPath: vi.fn(),
   };
 }
@@ -37,6 +38,9 @@ describe("createPhpFrameworkFileChangeInvalidator", () => {
       invalidators.invalidateBladeViewDataEntriesForPath,
     ).not.toHaveBeenCalled();
     expect(invalidators.invalidateNeonConfigForPath).not.toHaveBeenCalled();
+    expect(
+      invalidators.invalidateLatteExpressionDataForPath,
+    ).not.toHaveBeenCalled();
   });
 
   it("runs both Laravel Blade invalidators in their existing order", () => {
@@ -63,9 +67,12 @@ describe("createPhpFrameworkFileChangeInvalidator", () => {
       invalidators.invalidateBladeViewDataEntriesForPath,
     ).toHaveBeenCalledWith(ROOT, PATH);
     expect(invalidators.invalidateNeonConfigForPath).not.toHaveBeenCalled();
+    expect(
+      invalidators.invalidateLatteExpressionDataForPath,
+    ).not.toHaveBeenCalled();
   });
 
-  it("runs only the Nette Neon invalidator for Nette", () => {
+  it("runs the Nette expression-data and Neon invalidators", () => {
     const invalidators = dependencies([phpNetteFrameworkProvider]);
     const invalidateForPath =
       createPhpFrameworkFileChangeInvalidator(invalidators);
@@ -76,6 +83,9 @@ describe("createPhpFrameworkFileChangeInvalidator", () => {
       ROOT,
       PATH,
     );
+    expect(
+      invalidators.invalidateLatteExpressionDataForPath,
+    ).toHaveBeenCalledWith(ROOT, PATH);
     expect(
       invalidators.invalidateBladeComponentNamesForPath,
     ).not.toHaveBeenCalled();

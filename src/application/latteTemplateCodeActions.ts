@@ -9,6 +9,7 @@ import type {
   PhpCodeActionRange,
 } from "./phpCodeActionTypes";
 import {
+  captureLatteExpressionGeneration,
   LATTE_TEMPLATE_CACHE_TTL_MS,
   LATTE_TEMPLATE_SCAN_DIRECTORIES,
   MAX_LATTE_SCAN_DEPTH,
@@ -36,6 +37,10 @@ export async function provideLatteCodeActions(
     isRequestedRootActive,
     requestedRoot,
   } = request;
+  const generation = captureLatteExpressionGeneration(
+    options.caches,
+    requestedRoot,
+  );
   const diagnosticActions = await latteDiagnosticCodeActions({
     context,
     isRequestedRootActive,
@@ -52,6 +57,7 @@ export async function provideLatteCodeActions(
     cache: options.caches.templateCache,
     deps,
     isRequestedRootActive,
+    isCacheWriteCurrent: generation.isCurrent,
     maxDepth: MAX_LATTE_SCAN_DEPTH,
     maxTemplates: MAX_LATTE_TEMPLATE_FILES,
     requestedRoot,

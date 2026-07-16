@@ -36,6 +36,7 @@ describe("collectActiveContributions", () => {
     ).toEqual([
       { kind: "bladeComponentNames" },
       { kind: "bladeViewDataEntries" },
+      { kind: "latteExpressionData" },
       { kind: "neonConfig" },
     ]);
 
@@ -48,6 +49,7 @@ describe("collectActiveContributions", () => {
         select: (provider) => provider.fileChangeInvalidations,
       }),
     ).toEqual([
+      { kind: "latteExpressionData" },
       { kind: "neonConfig" },
       { kind: "bladeComponentNames" },
       { kind: "bladeViewDataEntries" },

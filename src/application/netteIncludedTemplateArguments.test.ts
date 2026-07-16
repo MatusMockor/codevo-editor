@@ -66,8 +66,9 @@ function makeHarness(
 
       return source;
     }),
-    resolveCallerVariableType: vi.fn(async (_source, _offset, variableName) =>
-      variableName === "product" ? "App\\Model\\Product" : null,
+    resolveCallerVariableType: vi.fn(
+      async (_callerPath, _source, _offset, variableName) =>
+        variableName === "product" ? "App\\Model\\Product" : null,
     ),
     resolveTemplateCandidatePaths: vi.fn(defaultCandidates),
     ...overrides,

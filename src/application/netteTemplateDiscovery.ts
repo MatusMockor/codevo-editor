@@ -21,6 +21,7 @@ export interface NetteTemplateScanContext {
   cache: LatteTemplateCache;
   deps: NetteTemplateDiscoveryDependencies;
   isRequestedRootActive(): boolean;
+  isCacheWriteCurrent?(): boolean;
   maxDepth: number;
   maxTemplates: number;
   requestedRoot: string;
@@ -99,6 +100,11 @@ export async function listLatteTemplateRelativePaths(
   const sorted = Array.from(relativePaths).sort((left, right) =>
     left.localeCompare(right),
   );
+
+  if (!isRequestedRootActive() || context.isCacheWriteCurrent?.() === false) {
+    return [];
+  }
+
   cache[requestedRoot] = {
     complete: !scanState.depthLimitHit && scanState.templatesFound < maxTemplates,
     expiresAt: Date.now() + ttlMs,

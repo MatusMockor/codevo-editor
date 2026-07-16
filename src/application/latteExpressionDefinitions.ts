@@ -1,4 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { latteVariableDeclarations } from "../domain/latteSyntax";
 import {
   latteMemberReferenceAt,
   latteVariableNameAt,
@@ -6,12 +7,15 @@ import {
 } from "./latteExpressionDetection";
 import type { NetteViewDataEntry } from "./netteViewDataEntries";
 import { matchesLatteViewName } from "./netteViewDataEntries";
+import type { NetteIncludedTemplateArgument } from "./netteIncludedTemplateArguments";
+import { isLatteDeclarationVisibleAt } from "./latteVariableCandidates";
 import {
   orderPhpMemberCompletionsByCategory,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
 
 export interface LatteExpressionDefinitionDependencies {
+  joinPath(rootPath: string, relativePath: string): string;
   openPhpMethodTarget(className: string, methodName: string): Promise<boolean>;
   openPhpPropertyTarget(
     className: string,
@@ -22,6 +26,7 @@ export interface LatteExpressionDefinitionDependencies {
     position: EditorPosition,
     label: string,
   ): Promise<boolean>;
+  readFileContent(path: string): Promise<string>;
   resolvePhpReceiverCompletions(
     source: string,
     position: EditorPosition,
@@ -34,9 +39,14 @@ export interface LatteExpressionDefinitionDependencies {
 }
 
 export interface LatteExpressionDefinitionContext {
+  currentTemplateRelativePath: string;
   deps: LatteExpressionDefinitionDependencies;
   isRequestedRootActive(): boolean;
+  loadIncludedTemplateArguments(
+    targetRelativePath: string,
+  ): Promise<readonly NetteIncludedTemplateArgument[]>;
   loadViewDataEntries(): Promise<NetteViewDataEntry[]>;
+  requestedRoot: string;
   resolveControlVariableDefinition(): Promise<boolean>;
   resolveVariableType(
     source: string,
@@ -59,6 +69,26 @@ export async function resolveNettePresenterVariableDefinition(
 
   if (!variableName) {
     return false;
+  }
+
+  const localHandled = await resolveLocalVariableDefinition(
+    context,
+    source,
+    offset,
+    variableName,
+  );
+
+  if (localHandled) {
+    return true;
+  }
+
+  const includeHandled = await resolveIncludedVariableDefinition(
+    context,
+    variableName,
+  );
+
+  if (includeHandled) {
+    return true;
   }
 
   if (variableName === "control") {
@@ -105,6 +135,103 @@ export async function resolveNettePresenterVariableDefinition(
   }
 
   return false;
+}
+
+async function resolveLocalVariableDefinition(
+  context: LatteExpressionDefinitionContext,
+  source: string,
+  offset: number,
+  variableName: string,
+): Promise<boolean> {
+  if (!context.currentTemplateRelativePath) {
+    return false;
+  }
+
+  for (const declaration of latteVariableDeclarations(source)) {
+    if (declaration.variableName !== variableName) {
+      continue;
+    }
+
+    if (!isLatteDeclarationVisibleAt(declaration, offset)) {
+      continue;
+    }
+
+    const path = context.deps.joinPath(
+      context.requestedRoot,
+      context.currentTemplateRelativePath,
+    );
+    const position = editorPositionAtOffset(source, declaration.offset);
+
+    return context.deps.openTarget(path, position, `$${variableName}`);
+  }
+
+  return false;
+}
+
+async function resolveIncludedVariableDefinition(
+  context: LatteExpressionDefinitionContext,
+  variableName: string,
+): Promise<boolean> {
+  const argumentsForTemplate = await context.loadIncludedTemplateArguments(
+    context.currentTemplateRelativePath,
+  );
+
+  if (!context.isRequestedRootActive()) {
+    return false;
+  }
+
+  for (const argument of argumentsForTemplate) {
+    if (argument.name !== variableName) {
+      continue;
+    }
+
+    const path = context.deps.joinPath(
+      context.requestedRoot,
+      argument.sourceTemplateRelativePath,
+    );
+    const position = await includedArgumentPosition(context, argument);
+
+    if (!context.isRequestedRootActive()) {
+      return false;
+    }
+
+    if (!position) {
+      continue;
+    }
+
+    const opened = await context.deps.openTarget(
+      path,
+      position,
+      `$${variableName}`,
+    );
+
+    if (!context.isRequestedRootActive() || opened) {
+      return opened;
+    }
+  }
+
+  return false;
+}
+
+async function includedArgumentPosition(
+  context: LatteExpressionDefinitionContext,
+  argument: NetteIncludedTemplateArgument,
+): Promise<EditorPosition | null> {
+  try {
+    const path = context.deps.joinPath(
+      context.requestedRoot,
+      argument.sourceTemplateRelativePath,
+    );
+    const source = await context.deps.readFileContent(path);
+
+    if (!context.isRequestedRootActive()) {
+      return null;
+    }
+
+    return editorPositionAtOffset(source, argument.sourceSpan.start);
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveLatteMemberDefinition(

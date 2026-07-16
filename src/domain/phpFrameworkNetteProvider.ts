@@ -121,6 +121,9 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
   ],
   fileChangeInvalidations: [
     {
+      kind: "latteExpressionData",
+    },
+    {
       kind: "neonConfig",
     },
   ],

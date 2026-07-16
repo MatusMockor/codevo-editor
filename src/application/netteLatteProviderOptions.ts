@@ -1,4 +1,10 @@
-import type { LatteExpressionResolutionContext } from "./latteExpressionIntelligence";
+import {
+  resolveLatteExpressionVariableType,
+  type LatteExpressionResolutionContext,
+} from "./latteExpressionIntelligence";
+import {
+  resolveLatteTemplateCandidatePaths,
+} from "../domain/nettePathResolution";
 import {
   loadLatteFilterRegistrations,
   loadLatteFilterNames,
@@ -9,7 +15,11 @@ import type {
   NettePresenterDiscoveryContext,
 } from "./nettePresenterLinkDiscovery";
 import type { NetteTemplateCompletionContext } from "./netteTemplateCompletions";
-import { isLatteScanSkippedDirectory } from "./netteTemplateDiscovery";
+import {
+  isLatteScanSkippedDirectory,
+  listLatteTemplateRelativePaths,
+} from "./netteTemplateDiscovery";
+import { netteIncludedTemplateArguments } from "./netteIncludedTemplateArguments";
 import {
   LATTE_COMPONENT_CACHE_TTL_MS,
   LATTE_FILTER_CACHE_TTL_MS,
@@ -18,8 +28,11 @@ import {
   LATTE_TEMPLATE_CACHE_TTL_MS,
   LATTE_TEMPLATE_SCAN_DIRECTORIES,
   MAX_LATTE_FILTER_CONFIG_FILES,
+  MAX_LATTE_INCLUDE_ARGUMENT_DEPTH,
+  MAX_LATTE_INCLUDE_ARGUMENT_TRAVERSAL_STATES,
   MAX_LATTE_SCAN_DEPTH,
   MAX_LATTE_TEMPLATE_FILES,
+  captureLatteExpressionGeneration,
 } from "./latteProviderFlowContext";
 import { loadNeonProjectConfig } from "./neonProjectConfigDiscovery";
 import type {
@@ -33,12 +46,19 @@ export function latteExpressionResolutionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ): LatteExpressionResolutionContext {
+  const generationFence = captureLatteExpressionGeneration(
+    options.caches,
+    request.requestedRoot,
+  );
+  const { generation, rootKey } = generationFence;
+  const isRequestedRootActive = () =>
+    request.isRequestedRootActive() && generationFence.isCurrent();
   const shared = {
     collectProjectFilterNames: () =>
       loadLatteFilterNames(latteFilterDiscoveryContext(options, request)),
     deps: request.deps,
     frameworkCapabilities: options.frameworkCapabilities,
-    isRequestedRootActive: request.isRequestedRootActive,
+    isRequestedRootActive,
     maxCompletions: LATTE_MAX_COMPLETIONS,
     requestedRoot: request.requestedRoot,
     templateTypeCache: options.caches.templateTypeCache,
@@ -48,13 +68,70 @@ export function latteExpressionResolutionContext(
   };
   const forTemplate = (
     currentTemplateRelativePath: string,
-  ): LatteExpressionResolutionContext => ({
-    ...shared,
-    currentTemplateRelativePath,
-    forTemplate,
-  });
+  ): LatteExpressionResolutionContext => {
+    const context: LatteExpressionResolutionContext = {
+      ...shared,
+      currentTemplateRelativePath,
+      forTemplate,
+      loadIncludedTemplateArguments: (targetRelativePath) =>
+        netteIncludedTemplateArguments(
+          {
+            cache: options.caches.includeArgumentCache,
+            currentGeneration: () =>
+              options.caches.includeArgumentGenerationByRoot[
+                rootKey
+              ] ?? 0,
+            deps: {
+              enumerateTemplateRelativePaths: () =>
+                enumerateCompleteTemplateRelativePaths(options, {
+                  ...request,
+                  isRequestedRootActive,
+                }),
+              joinPath: request.deps.joinPath,
+              readFileContent: request.deps.readFileContent,
+              resolveCallerVariableType: (
+                callerRelativePath,
+                source,
+                offset,
+                variableName,
+              ) =>
+                resolveLatteExpressionVariableType(
+                  context.forTemplate(callerRelativePath),
+                  source,
+                  offset,
+                  variableName,
+                ),
+              resolveTemplateCandidatePaths:
+                resolveLatteTemplateCandidatePaths,
+            },
+            generation,
+            inFlight: options.inFlight.includeArgumentInFlight,
+            isRequestedRootActive,
+            maxDepth: MAX_LATTE_INCLUDE_ARGUMENT_DEPTH,
+            maxTraversalStates:
+              MAX_LATTE_INCLUDE_ARGUMENT_TRAVERSAL_STATES,
+            requestedRoot: rootKey,
+          },
+          targetRelativePath,
+        ),
+    };
+
+    return context;
+  };
 
   return forTemplate(request.currentTemplateRelativePath);
+}
+
+async function enumerateCompleteTemplateRelativePaths(
+  options: LatteProviderFlowFactoryOptions,
+  request: LatteProviderRequestContext,
+): Promise<readonly string[]> {
+  await listLatteTemplateRelativePaths(
+    latteTemplateCompletionContext(options, request),
+  );
+
+  const entry = options.caches.templateCache[request.requestedRoot];
+  return entry?.complete ? entry.relativePaths : [];
 }
 
 export function latteFilterDefinitionContext(
@@ -108,11 +185,17 @@ export function latteTemplateCompletionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ): NetteTemplateCompletionContext {
+  const generation = captureLatteExpressionGeneration(
+    options.caches,
+    request.requestedRoot,
+  );
+
   return {
     cache: options.caches.templateCache,
     currentTemplateRelativePath: request.currentTemplateRelativePath,
     deps: request.deps,
     isRequestedRootActive: request.isRequestedRootActive,
+    isCacheWriteCurrent: generation.isCurrent,
     maxCompletions: LATTE_MAX_COMPLETIONS,
     maxDepth: MAX_LATTE_SCAN_DEPTH,
     maxTemplates: MAX_LATTE_TEMPLATE_FILES,

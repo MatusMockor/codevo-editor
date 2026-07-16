@@ -77,6 +77,8 @@ function makeOptions(
     caches: {
       componentCache: {},
       filterCache: {},
+      includeArgumentCache: {},
+      includeArgumentGenerationByRoot: {},
       presenterCache: {},
       templateCache: {
         [ROOT]: {
@@ -94,6 +96,7 @@ function makeOptions(
     getDependencies: () => deps,
     inFlight: {
       filterInFlight: new Map(),
+      includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),

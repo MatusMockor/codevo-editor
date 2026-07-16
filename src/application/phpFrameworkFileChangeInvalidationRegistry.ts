@@ -5,6 +5,7 @@ import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 export interface PhpFrameworkFileChangeInvalidationDependencies {
   invalidateBladeComponentNamesForPath(rootPath: string, path: string): void;
   invalidateBladeViewDataEntriesForPath(rootPath: string, path: string): void;
+  invalidateLatteExpressionDataForPath(rootPath: string, path: string): void;
   invalidateNeonConfigForPath(rootPath: string, path: string): void;
 }
 
@@ -38,6 +39,9 @@ function invalidateDescriptorForPath(
       return;
     case "bladeViewDataEntries":
       dependencies.invalidateBladeViewDataEntriesForPath(rootPath, path);
+      return;
+    case "latteExpressionData":
+      dependencies.invalidateLatteExpressionDataForPath(rootPath, path);
       return;
     case "neonConfig":
       dependencies.invalidateNeonConfigForPath(rootPath, path);

@@ -1472,6 +1472,12 @@ return new class extends Migration
 
   describe("phpNetteFrameworkProvider wired capabilities (S5/S6)", () => {
     const providers = [phpNetteFrameworkProvider];
+
+    it("declares Latte expression-data invalidation", () => {
+      expect(phpNetteFrameworkProvider.fileChangeInvalidations).toContainEqual({
+        kind: "latteExpressionData",
+      });
+    });
     const presenterSource = `<?php
 class ProductPresenter extends Nette\\Application\\UI\\Presenter
 {

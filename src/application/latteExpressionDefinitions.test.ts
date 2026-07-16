@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
+import type { NetteIncludedTemplateArgument } from "./netteIncludedTemplateArguments";
 import {
   resolveLatteMemberDefinition,
   resolveNettePresenterVariableDefinition,
@@ -16,6 +17,8 @@ class InvoicePresenter
     }
 }
 `;
+const TEMPLATE_PATH = "app/UI/Invoice/default.latte";
+const TEMPLATE_ROOT = "/ws";
 
 function makeEntry(): NetteViewDataEntry {
   return {
@@ -52,24 +55,41 @@ function method(
 
 function makeContext({
   active = true,
+  includedArguments = [],
+  includedSources = {},
   members = [],
   receiverType = "App\\Model\\Invoice",
+  requestedRoot = TEMPLATE_ROOT,
   viewDataEntries = [makeEntry()],
   viewNames = ["Invoice:default"],
 }: {
   active?: boolean | (() => boolean);
+  includedArguments?: readonly NetteIncludedTemplateArgument[];
+  includedSources?: Readonly<Record<string, string>>;
   members?: PhpMethodCompletion[];
   receiverType?: string | null;
+  requestedRoot?: string;
   viewDataEntries?: NetteViewDataEntry[];
   viewNames?: string[];
 } = {}): LatteExpressionDefinitionContext {
   const isActive = typeof active === "function" ? active : () => active;
 
   return {
+    currentTemplateRelativePath: TEMPLATE_PATH,
     deps: {
+      joinPath: (rootPath, relativePath) => `${rootPath}/${relativePath}`,
       openPhpMethodTarget: vi.fn(async () => true),
       openPhpPropertyTarget: vi.fn(async () => true),
       openTarget: vi.fn(async () => true),
+      readFileContent: vi.fn(async (path) => {
+        const source = includedSources[path];
+
+        if (source === undefined) {
+          throw new Error(`Missing test file: ${path}`);
+        }
+
+        return source;
+      }),
       resolvePhpReceiverCompletions: vi.fn(async () => members),
       synthesizeTypedReceiverSource: vi.fn((variableName, typeName) => ({
         position: { column: 1, lineNumber: 3 },
@@ -77,7 +97,9 @@ function makeContext({
       })),
     },
     isRequestedRootActive: isActive,
+    loadIncludedTemplateArguments: vi.fn(async () => includedArguments),
     loadViewDataEntries: vi.fn(async () => viewDataEntries),
+    requestedRoot,
     resolveControlVariableDefinition: vi.fn(async () => true),
     resolveVariableType: vi.fn(async () => receiverType),
     viewNames: vi.fn(async () => viewNames),
@@ -85,6 +107,138 @@ function makeContext({
 }
 
 describe("resolveNettePresenterVariableDefinition", () => {
+  it("opens a visible local declaration before include and presenter definitions", async () => {
+    const source = "{var $invoice = createInvoice()}\n{$invoice}";
+    const context = makeContext({
+      includedArguments: [includeArgument("invoice", "caller.latte", 10)],
+    });
+
+    await expect(
+      resolveNettePresenterVariableDefinition(
+        context,
+        source,
+        source.lastIndexOf("$invoice") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Invoice/default.latte",
+      { column: 1, lineNumber: 1 },
+      "$invoice",
+    );
+    expect(context.loadIncludedTemplateArguments).not.toHaveBeenCalled();
+    expect(context.loadViewDataEntries).not.toHaveBeenCalled();
+  });
+
+  it("opens an include argument at its exact caller value provenance before presenter data", async () => {
+    const caller = "{include 'default.latte', invoice: $order->invoice}";
+    const valueStart = caller.indexOf("$order");
+    const context = makeContext({
+      includedArguments: [
+        includeArgument("invoice", "app/UI/Order/caller.latte", valueStart),
+      ],
+      includedSources: {
+        "/ws/app/UI/Order/caller.latte": caller,
+      },
+    });
+    const source = "{$invoice}";
+
+    await expect(
+      resolveNettePresenterVariableDefinition(
+        context,
+        source,
+        source.indexOf("$invoice") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/UI/Order/caller.latte",
+      { column: valueStart + 1, lineNumber: 1 },
+      "$invoice",
+    );
+    expect(context.loadViewDataEntries).not.toHaveBeenCalled();
+  });
+
+  it("chooses the loader's first matching caller deterministically", async () => {
+    const firstCaller = "first\n{include 'default.latte', invoice: $first}";
+    const secondCaller = "{include 'default.latte', invoice: $second}";
+    const firstStart = firstCaller.indexOf("$first");
+    const context = makeContext({
+      includedArguments: [
+        includeArgument("invoice", "a/first.latte", firstStart),
+        includeArgument(
+          "invoice",
+          "z/second.latte",
+          secondCaller.indexOf("$second"),
+        ),
+      ],
+      includedSources: {
+        "/ws/a/first.latte": firstCaller,
+        "/ws/z/second.latte": secondCaller,
+      },
+    });
+
+    await expect(
+      resolveNettePresenterVariableDefinition(context, "{$invoice}", 3),
+    ).resolves.toBe(true);
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/a/first.latte",
+      {
+        column: firstStart - firstCaller.lastIndexOf("\n", firstStart),
+        lineNumber: 2,
+      },
+      "$invoice",
+    );
+    expect(context.deps.readFileContent).toHaveBeenCalledOnce();
+  });
+
+  it("opens include provenance inside the requested workspace root", async () => {
+    const caller = "{include 'default.latte', invoice: $invoice}";
+    const valueStart = caller.lastIndexOf("$invoice");
+    const context = makeContext({
+      includedArguments: [
+        includeArgument("invoice", "caller.latte", valueStart),
+      ],
+      includedSources: { "/workspace-b/caller.latte": caller },
+      requestedRoot: "/workspace-b",
+    });
+
+    await expect(
+      resolveNettePresenterVariableDefinition(context, "{$invoice}", 3),
+    ).resolves.toBe(true);
+    expect(context.deps.readFileContent).toHaveBeenCalledWith(
+      "/workspace-b/caller.latte",
+    );
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/workspace-b/caller.latte",
+      { column: valueStart + 1, lineNumber: 1 },
+      "$invoice",
+    );
+  });
+
+  it("drops include provenance when the requested root becomes stale", async () => {
+    let active = true;
+    const caller = "{include 'default.latte', invoice: $invoice}";
+    const context = makeContext({
+      active: () => active,
+      includedArguments: [
+        includeArgument(
+          "invoice",
+          "caller.latte",
+          caller.lastIndexOf("$invoice"),
+        ),
+      ],
+      includedSources: { "/ws/caller.latte": caller },
+    });
+    context.deps.readFileContent = vi.fn(async () => {
+      active = false;
+      return caller;
+    });
+
+    await expect(
+      resolveNettePresenterVariableDefinition(context, "{$invoice}", 3),
+    ).resolves.toBe(false);
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
   it("opens the presenter variable assignment that feeds the active template", async () => {
     const context = makeContext();
     const source = "{if $invoice}\n{/if}";
@@ -164,7 +318,54 @@ describe("resolveNettePresenterVariableDefinition", () => {
   });
 });
 
+function includeArgument(
+  name: string,
+  sourceTemplateRelativePath: string,
+  start: number,
+): NetteIncludedTemplateArgument {
+  const span = { end: start + 6, start };
+
+  return {
+    depth: 0,
+    expression: "$value",
+    name,
+    provenance: [],
+    sourceSpan: span,
+    sourceTemplateRelativePath,
+    targetSpan: { end: 1, start: 0 },
+    targetTemplateRelativePath: TEMPLATE_PATH,
+    type: "App\\Model\\Invoice",
+  };
+}
+
 describe("resolveLatteMemberDefinition", () => {
+  it("uses the shared variable resolver for an include-derived receiver type", async () => {
+    const context = makeContext({
+      members: [method({ declaringClassName: "Caller\\Invoice" })],
+      receiverType: "Caller\\Invoice",
+    });
+    const source = "{$invoice->total()}";
+
+    await expect(
+      resolveLatteMemberDefinition(
+        context,
+        source,
+        source.indexOf("total") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(context.resolveVariableType).toHaveBeenCalledWith(
+      source,
+      source.indexOf("total") + 2,
+      "invoice",
+      0,
+    );
+    expect(context.loadIncludedTemplateArguments).not.toHaveBeenCalled();
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "Caller\\Invoice",
+      "total",
+    );
+  });
+
   it("opens method targets from typed receiver completions", async () => {
     const context = makeContext({
       members: [method({ name: "total" })],

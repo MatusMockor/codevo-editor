@@ -55,6 +55,9 @@ export function useLatteIntelligence(
         () => dependenciesRef.current.frameworkIntelligence.providers,
       ),
       caches.filterCache,
+      caches.includeArgumentCache,
+      caches.includeArgumentInFlight,
+      caches.includeArgumentGenerationByRoot,
     );
   }
 

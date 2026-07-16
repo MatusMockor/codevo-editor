@@ -756,6 +756,9 @@ export type PhpFrameworkFileChangeInvalidationDescriptor =
       kind: "bladeViewDataEntries";
     }
   | {
+      kind: "latteExpressionData";
+    }
+  | {
       kind: "neonConfig";
     };
 
