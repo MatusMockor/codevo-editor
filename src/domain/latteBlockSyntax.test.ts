@@ -561,4 +561,49 @@ describe("parseLatteBlockSyntax", () => {
     ]);
     expect(include?.ownerDefinition).toBeNull();
   });
+
+  it("exposes ordinary, local, and define declarations with named closer spans", () => {
+    const source = [
+      "{block #emptyState}<p>Nothing here</p>{/block emptyState}",
+      "{block local helper}<i />{/block helper}",
+      "{define tableRow, $row}<tr>{$row->id}</tr>{/define tableRow}",
+    ].join("\n");
+    const syntax = parseLatteBlockSyntax(source);
+
+    expect(
+      syntax.declarations.map((declaration) => ({
+        closing: declaration.closingNameSpan
+          ? textAt(source, declaration.closingNameSpan)
+          : null,
+        kind: declaration.kind,
+        name: declaration.name,
+        opening: textAt(source, declaration.nameSpan),
+      })),
+    ).toEqual([
+      { closing: "emptyState", kind: "block", name: "emptyState", opening: "emptyState" },
+      { closing: "helper", kind: "local", name: "helper", opening: "helper" },
+      { closing: "tableRow", kind: "define", name: "tableRow", opening: "tableRow" },
+    ]);
+    expect(syntax.definitions.map(({ name }) => name)).toEqual([
+      "helper",
+      "tableRow",
+    ]);
+  });
+
+  it("omits malformed and masked block declarations without losing later symbols", () => {
+    const source = [
+      "{* {block #decoy}{/block decoy} *}",
+      "{syntax off}{define hidden}{/define hidden}{/syntax}",
+      "{block #wrong}<p />{/block other}",
+      "{block #emptyState}<p />{/block emptyState}",
+      "{include block emptyState}",
+    ].join("\n");
+    const syntax = parseLatteBlockSyntax(source);
+
+    expect(syntax.declarations.map(({ name }) => name)).toEqual(["emptyState"]);
+    expect(syntax.includes.map(({ name }) => name)).toEqual(["emptyState"]);
+    expect(syntax.declarations[0]?.closingNameSpan).toEqual(
+      spanOf(source, "emptyState", 1),
+    );
+  });
 });

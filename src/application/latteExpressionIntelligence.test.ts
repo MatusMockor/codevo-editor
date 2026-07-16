@@ -162,6 +162,96 @@ describe("path-aware Latte expression type resolution", () => {
     );
   });
 
+  it("completes and defines a member on a typed Nette Form array-access field", async () => {
+    const root = "/workspace";
+    const templatePath =
+      "app/modules/apiModule/templates/ApiTokensAdmin/show.latte";
+    const presenterPath =
+      `${root}/app/modules/apiModule/Presenters/ApiTokensAdminPresenter.php`;
+    const presenter = `<?php
+namespace App\\Presenters;
+use App\\Forms\\ApiTokenMetaFormFactory;
+class ApiTokensAdminPresenter
+{
+    public ApiTokenMetaFormFactory $apiTokenMetaFormFactory;
+    protected function createComponentApiTokenMetaForm(): Form
+    {
+        return $this->apiTokenMetaFormFactory->create($this->apiToken);
+    }
+}`;
+    const factory = `<?php
+namespace App\\Forms;
+use Nette\\Application\\UI\\Form;
+class ApiTokenMetaFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('key');
+        return $form;
+    }
+}`;
+    const context = expressionContext(root, { [presenterPath]: presenter })
+      .forTemplate(templatePath);
+    context.deps.resolveDeclaredType = (_source, typeHint) =>
+      typeHint === "ApiTokenMetaFormFactory"
+        ? "App\\Forms\\ApiTokenMetaFormFactory"
+        : typeHint;
+    context.deps.readPhpClassSource = vi.fn(async (className) =>
+      className === "App\\Forms\\ApiTokenMetaFormFactory"
+        ? { path: `${root}/app/Forms/ApiTokenMetaFormFactory.php`, source: factory }
+        : null,
+    );
+    context.deps.synthesizeTypedReceiverSource = vi.fn(
+      (variableName, typeName) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `<?php\n/** @var \\${typeName} $${variableName} */\n$${variableName}->`,
+      }),
+    );
+    context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "Nette\\Forms\\Controls\\BaseControl",
+        kind: "property" as const,
+        name: "htmlId",
+        parameters: "",
+        returnType: "string|bool|null",
+      },
+    ]);
+    context.deps.openPhpPropertyTarget = vi.fn(async () => true);
+    const completionSource =
+      `{$control["apiTokenMetaForm"]['key']->html}`;
+
+    await expect(
+      latteExpressionCompletions(
+        context,
+        completionSource,
+        completionSource.indexOf("->html") + "->html".length,
+      ),
+    ).resolves.toEqual([
+      expect.objectContaining({ label: "htmlId", insertText: "htmlId" }),
+    ]);
+    expect(context.deps.resolvePhpReceiverCompletions).toHaveBeenLastCalledWith(
+      expect.stringContaining("Nette\\Forms\\Controls\\TextInput"),
+      expect.anything(),
+      "$control",
+    );
+
+    const definitionSource =
+      `{$control["apiTokenMetaForm"]['key']->htmlId}`;
+
+    await expect(
+      resolveLatteMemberDefinition(
+        context,
+        definitionSource,
+        definitionSource.indexOf("htmlId") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(context.deps.openPhpPropertyTarget).toHaveBeenLastCalledWith(
+      "Nette\\Forms\\Controls\\BaseControl",
+      "htmlId",
+    );
+  });
+
   it.each([
     {
       label: "unknown local",

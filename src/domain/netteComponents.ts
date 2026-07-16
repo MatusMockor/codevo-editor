@@ -37,6 +37,7 @@ import {
 import type { LatteMaskedRegion } from "./latteSyntax";
 import { phpTraitClassNames } from "./phpMethodCompletions";
 import { maskPhpStringsAndComments } from "./phpReceiverExpressions";
+import { resolvePhpClassName } from "./phpClassNameResolution";
 
 const CREATE_COMPONENT_PREFIX = "createComponent";
 
@@ -138,6 +139,10 @@ export interface NetteCreateComponentDetection {
 
 /** One static `$form->addText('field')`-style field declared by a form factory. */
 export interface NetteFormFieldDefinition {
+  /** The concrete Nette control class for a well-known safe builder. */
+  controlClass: string | null;
+  /** The originating form builder method (`addText`, `addHidden`, ...). */
+  methodName: string;
   name: string;
   nameEnd: number;
   nameStart: number;
@@ -970,6 +975,18 @@ export function netteFormFieldDefinitionsInFactoryCreateMethod(
   }
 
   return formFieldDefinitionsInMethod(phpSource, method);
+}
+
+/** Whether the selected form factory class declares its own `create()` method. */
+export function netteFormFactoryCreateMethodExists(
+  phpSource: string,
+  factoryClass?: string,
+): boolean {
+  return Boolean(
+    factoryClass
+      ? findPhpMethodByNameInClass(phpSource, factoryClass, "create")
+      : findPhpMethodByName(phpSource, "create"),
+  );
 }
 
 function createComponentFactoryContextFromMethod(
@@ -2891,9 +2908,36 @@ function typedPropertyByName(
 // --- form factory field scanning -------------------------------------------
 
 const FORM_NEW_ASSIGNMENT =
-  /\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+\\?(?:Nette\\Application\\UI\\)?Form\b/g;
+  /\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*new\s+([\\A-Za-z_][\\A-Za-z0-9_]*)\b/g;
 const FORM_ADD_CALL =
   /\$([A-Za-z_][A-Za-z0-9_]*)\s*->\s*(add[A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+const NETTE_FORM_CLASSES: ReadonlySet<string> = new Set([
+  "Nette\\Application\\UI\\Form",
+  "Nette\\Forms\\Form",
+]);
+const NETTE_FORM_CONTROL_CLASSES: Readonly<Record<string, string>> = {
+  addButton: "Nette\\Forms\\Controls\\Button",
+  addCheckbox: "Nette\\Forms\\Controls\\Checkbox",
+  addCheckboxList: "Nette\\Forms\\Controls\\CheckboxList",
+  addColor: "Nette\\Forms\\Controls\\ColorPicker",
+  addDate: "Nette\\Forms\\Controls\\DateTimeControl",
+  addDateTime: "Nette\\Forms\\Controls\\DateTimeControl",
+  addEmail: "Nette\\Forms\\Controls\\TextInput",
+  addFloat: "Nette\\Forms\\Controls\\TextInput",
+  addHidden: "Nette\\Forms\\Controls\\HiddenField",
+  addImageButton: "Nette\\Forms\\Controls\\ImageButton",
+  addInteger: "Nette\\Forms\\Controls\\TextInput",
+  addMultiSelect: "Nette\\Forms\\Controls\\MultiSelectBox",
+  addMultiUpload: "Nette\\Forms\\Controls\\UploadControl",
+  addPassword: "Nette\\Forms\\Controls\\TextInput",
+  addRadioList: "Nette\\Forms\\Controls\\RadioList",
+  addSelect: "Nette\\Forms\\Controls\\SelectBox",
+  addSubmit: "Nette\\Forms\\Controls\\SubmitButton",
+  addText: "Nette\\Forms\\Controls\\TextInput",
+  addTextArea: "Nette\\Forms\\Controls\\TextArea",
+  addTime: "Nette\\Forms\\Controls\\DateTimeControl",
+  addUpload: "Nette\\Forms\\Controls\\UploadControl",
+};
 
 function formFieldDefinitionsInMethod(
   source: string,
@@ -2928,13 +2972,44 @@ function formVariablesInBody(
 
   forEachPhpBodyMatch(source, FORM_NEW_ASSIGNMENT, from, limit, (match) => {
     const variable = match[1];
+    const classReference = match[2];
 
-    if (variable) {
-      variables.add(variable);
+    if (!variable || !classReference) {
+      return;
     }
+
+    const resolvedClass = resolvePhpClassName(
+      phpNameResolutionSourceAt(source, match.index),
+      classReference,
+    );
+
+    if (!resolvedClass || !NETTE_FORM_CLASSES.has(resolvedClass)) {
+      return;
+    }
+
+    variables.add(variable);
   });
 
   return variables;
+}
+
+function phpNameResolutionSourceAt(source: string, offset: number): string {
+  let scopeStart = 0;
+  PHP_NAMESPACE_DEF.lastIndex = 0;
+
+  for (
+    let match = PHP_NAMESPACE_DEF.exec(source);
+    match !== null && match.index < offset;
+    match = PHP_NAMESPACE_DEF.exec(source)
+  ) {
+    if (PHP_NAMESPACE_DEF.lastIndex <= match.index) {
+      PHP_NAMESPACE_DEF.lastIndex = match.index + 1;
+    }
+
+    scopeStart = match.index;
+  }
+
+  return source.slice(scopeStart, offset);
 }
 
 function formFieldDefinitionsInBody(
@@ -2966,7 +3041,11 @@ function formFieldDefinitionsInBody(
     }
 
     seen.add(field.name);
-    fields.push(field);
+    fields.push({
+      ...field,
+      controlClass: NETTE_FORM_CONTROL_CLASSES[methodName] ?? null,
+      methodName,
+    });
   });
 
   return fields;
@@ -2976,7 +3055,7 @@ function firstStaticStringArgument(
   source: string,
   openParen: number,
   limit: number,
-): NetteFormFieldDefinition | null {
+): Pick<NetteFormFieldDefinition, "name" | "nameEnd" | "nameStart"> | null {
   let index = skipWhitespace(source, openParen + 1);
   const quote = source[index];
 

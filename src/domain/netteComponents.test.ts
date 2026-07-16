@@ -434,11 +434,15 @@ class HomePresenter
       netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
     ).toEqual([
       {
+        controlClass: "Nette\\Forms\\Controls\\TextInput",
+        methodName: "addText",
         name: "email",
         nameStart: source.indexOf("email"),
         nameEnd: source.indexOf("email") + "email".length,
       },
       {
+        controlClass: "Nette\\Forms\\Controls\\SelectBox",
+        methodName: "addSelect",
         name: "role",
         nameStart: source.indexOf("role"),
         nameEnd: source.indexOf("role") + "role".length,
@@ -462,6 +466,127 @@ class HomePresenter
     expect(
       netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
     ).toEqual([]);
+  });
+
+  it("preserves the builder and leaves unknown add methods untyped", () => {
+    const source = `<?php
+use Nette\\Application\\UI\\Form;
+
+class HomePresenter
+{
+    protected function createComponentContactForm()
+    {
+        $form = new Form();
+        $form->addTextArea('message');
+        $form->addCustomWidget('custom');
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
+    ).toEqual([
+      {
+        controlClass: "Nette\\Forms\\Controls\\TextArea",
+        methodName: "addTextArea",
+        name: "message",
+        nameEnd: source.indexOf("message") + "message".length,
+        nameStart: source.indexOf("message"),
+      },
+      {
+        controlClass: null,
+        methodName: "addCustomWidget",
+        name: "custom",
+        nameEnd: source.indexOf("custom") + "custom".length,
+        nameStart: source.indexOf("custom"),
+      },
+    ]);
+  });
+
+  it("does not type fields on an imported custom Form", () => {
+    const source = `<?php
+namespace App\\Presenters;
+
+use App\\Custom\\Form;
+
+class HomePresenter
+{
+    protected function createComponentContactForm(): Form
+    {
+        $form = new Form();
+        $form->addText('email');
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
+    ).toEqual([]);
+  });
+
+  it("leaves an unqualified Form without a reliable import untyped", () => {
+    const source = `<?php
+class HomePresenter
+{
+    protected function createComponentContactForm(): Form
+    {
+        $form = new Form();
+        $form->addText('email');
+        return $form;
+    }
+}`;
+
+    expect(
+      netteFormFieldDefinitionsInCreateComponent(source, "contactForm"),
+    ).toEqual([]);
+  });
+
+  it("types fields on imported and fully-qualified Nette Forms", () => {
+    const imported = `<?php
+use Nette\\Forms\\Form as NetteForm;
+class ImportedFactory
+{
+    public function create()
+    {
+        $form = new NetteForm();
+        $form->addText('imported');
+    }
+}`;
+    const fullyQualified = `<?php
+class FullyQualifiedFactory
+{
+    public function create()
+    {
+        $form = new \\Nette\\Application\\UI\\Form();
+        $form->addHidden('qualified');
+    }
+}`;
+
+    expect(
+      netteFormFieldDefinitionsInFactoryCreateMethod(
+        imported,
+        "ImportedFactory",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        controlClass: "Nette\\Forms\\Controls\\TextInput",
+        methodName: "addText",
+        name: "imported",
+      }),
+    ]);
+    expect(
+      netteFormFieldDefinitionsInFactoryCreateMethod(
+        fullyQualified,
+        "FullyQualifiedFactory",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        controlClass: "Nette\\Forms\\Controls\\HiddenField",
+        methodName: "addHidden",
+        name: "qualified",
+      }),
+    ]);
   });
 
   it("finds fields in a one-hop delegated typed form factory present in the same source", () => {
@@ -495,6 +620,8 @@ class StepperGatewayFormFactory
       netteFormFieldDefinitionsInCreateComponent(source, "gatewayForm"),
     ).toEqual([
       {
+        controlClass: "Nette\\Forms\\Controls\\HiddenField",
+        methodName: "addHidden",
         name: "subscription_type_link_id",
         nameStart: source.indexOf("subscription_type_link_id"),
         nameEnd:
@@ -502,6 +629,8 @@ class StepperGatewayFormFactory
           "subscription_type_link_id".length,
       },
       {
+        controlClass: "Nette\\Forms\\Controls\\TextInput",
+        methodName: "addText",
         name: "email",
         nameStart: source.indexOf("email"),
         nameEnd: source.indexOf("email") + "email".length,
@@ -540,6 +669,8 @@ class StepperGatewayFormFactory
       netteFormFieldDefinitionsInCreateComponent(source, "gatewayForm"),
     ).toEqual([
       {
+        controlClass: "Nette\\Forms\\Controls\\HiddenField",
+        methodName: "addHidden",
         name: "subscription_type_link_id",
         nameStart: source.indexOf("subscription_type_link_id"),
         nameEnd:
@@ -1156,6 +1287,8 @@ class StepperGatewayFormFactory
       ),
     ).toEqual([
       {
+        controlClass: "Nette\\Forms\\Controls\\HiddenField",
+        methodName: "addHidden",
         name: "subscription_type_link_id",
         nameStart: source.indexOf("subscription_type_link_id"),
         nameEnd:
@@ -1163,6 +1296,8 @@ class StepperGatewayFormFactory
           "subscription_type_link_id".length,
       },
       {
+        controlClass: "Nette\\Forms\\Controls\\SubmitButton",
+        methodName: "addSubmit",
         name: "send",
         nameStart: source.indexOf("send"),
         nameEnd: source.indexOf("send") + "send".length,
@@ -1197,7 +1332,7 @@ class GatewayFormFactory
 {
     public function create(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('wrong_field');
         return $form;
     }
@@ -1209,7 +1344,7 @@ class GatewayFormFactory
 {
     public function create(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('right_field');
         return $form;
     }
@@ -1223,6 +1358,8 @@ class GatewayFormFactory
       ),
     ).toEqual([
       {
+        controlClass: "Nette\\Forms\\Controls\\TextInput",
+        methodName: "addText",
         name: "right_field",
         nameStart: source.indexOf("right_field"),
         nameEnd: source.indexOf("right_field") + "right_field".length,

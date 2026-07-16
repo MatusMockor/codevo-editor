@@ -1,5 +1,6 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { LatteReference } from "../domain/latteNavigation";
+import { parseLatteBlockSyntax } from "../domain/latteBlockSyntax";
 
 export interface LatteBlockDefinitionActiveDocument {
   path: string;
@@ -47,29 +48,22 @@ export function latteBlockDefinitionOffset(
   source: string,
   reference: LatteReference,
 ): number | null {
-  const blockReference = new RegExp(
-    String.raw`\{(?:block|define)\s+#?${escapeRegExp(reference.name)}(?=[\s,}/])`,
-    "g",
-  );
+  const declarations = parseLatteBlockSyntax(source).declarations;
 
-  for (const match of source.matchAll(blockReference)) {
-    const start = match.index ?? 0;
-    const nameStart = start + match[0].lastIndexOf(reference.name);
+  if (reference.tag !== "include") {
+    const ownDeclaration = declarations.find(
+      (declaration) =>
+        declaration.name === reference.name &&
+        declaration.nameSpan.start === reference.nameStart,
+    );
 
-    if (reference.tag !== "include" && nameStart === reference.nameStart) {
-      return nameStart;
-    }
-
-    if (reference.tag === "include") {
-      return nameStart;
-    }
+    return ownDeclaration?.nameSpan.start ?? null;
   }
 
-  return null;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (
+    declarations.find((declaration) => declaration.name === reference.name)
+      ?.nameSpan.start ?? null
+  );
 }
 
 function editorPositionAtOffset(source: string, offset: number): EditorPosition {

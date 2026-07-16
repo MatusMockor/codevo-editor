@@ -253,7 +253,7 @@ export function componentTemplateCandidatePathsForClass(
 
   const dir = dirnameOf(path);
 
-  if (!hasComponentsSegment(dir)) {
+  if (!hasComponentOwnershipSegment(dir)) {
     return [];
   }
 
@@ -290,7 +290,7 @@ function componentClassCandidate(dir: string, fileName: string): string[] {
   const candidateDir =
     basenameOf(dir) === "templates" ? parentDirOf(dir) : dir;
 
-  if (!hasComponentsSegment(candidateDir)) {
+  if (!hasComponentOwnershipSegment(candidateDir)) {
     return [];
   }
 
@@ -332,10 +332,12 @@ function componentClassCandidate(dir: string, fileName: string): string[] {
   );
 }
 
-function hasComponentsSegment(path: string): boolean {
+function hasComponentOwnershipSegment(path: string): boolean {
   return path
     .split("/")
-    .some((segment) => segment.toLowerCase() === "components");
+    .some((segment) =>
+      ["component", "components"].includes(segment.toLowerCase()),
+    );
 }
 
 /** Classic convention: `.../templates/<Short>/<view>.latte`. */

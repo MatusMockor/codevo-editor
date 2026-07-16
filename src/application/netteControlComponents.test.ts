@@ -402,7 +402,7 @@ class HomePresenter
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -436,7 +436,7 @@ class ApiConsoleControl
 {
     protected function createComponentConsoleForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -449,7 +449,7 @@ class ApiConsoleControlPresenter
 {
     protected function createComponentOtherForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('unrelated', 'Unrelated');
         return $form;
     }
@@ -500,7 +500,7 @@ class ApiConsoleControl
 {
     protected function createComponentConsoleForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -553,7 +553,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -619,7 +619,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -695,7 +695,7 @@ class GatewayFormFactory
 {
     public function create(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         $form->addPassword('password', 'Password');
         return $form;
@@ -773,7 +773,7 @@ class SegmentRecalculationSettingsFormFactory
 {
     public function create(int $segmentId): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('amount', 'Amount');
         $form->addSelect('unit', 'Unit');
         $form->addHidden('segment_id', $segmentId);
@@ -841,7 +841,7 @@ class SettingsFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('amount');
         return $form;
     }
@@ -901,7 +901,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -975,7 +975,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1041,7 +1041,7 @@ class BasePresenter
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1106,7 +1106,7 @@ trait FormTrait
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1166,7 +1166,7 @@ trait FormTrait
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('traitEmail', 'Email');
         return $form;
     }
@@ -1179,7 +1179,7 @@ class BasePresenter
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('parentEmail', 'Email');
         return $form;
     }
@@ -1258,7 +1258,7 @@ class LoopPresenter extends HomePresenter
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1326,7 +1326,7 @@ class BasePresenter
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1676,7 +1676,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1745,7 +1745,7 @@ class GatewayFormFactory
 {
     public function create(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1806,7 +1806,7 @@ class SegmentRecalculationSettingsFormFactory
 {
     public function create(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('amount');
         $form->addSelect('unit');
         $form->addHidden('segment_id');
@@ -1867,7 +1867,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1935,7 +1935,7 @@ class BasePresenter
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -1988,7 +1988,7 @@ class BasePresenter
 {
     protected function createComponentContactForm()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }

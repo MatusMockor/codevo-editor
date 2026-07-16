@@ -7,7 +7,11 @@ import {
   resolveLatteMemberDefinition as resolveLatteExpressionMemberDefinition,
   resolveNettePresenterVariableDefinition as resolveLattePresenterVariableDefinition,
 } from "./latteExpressionDefinitions";
-import type { LatteExpressionNavigation } from "./latteExpressionDetection";
+import {
+  latteExpressionCompletionTargetAt,
+  latteMemberReferenceAt,
+  type LatteExpressionNavigation,
+} from "./latteExpressionDetection";
 import {
   latteExpressionCompletions as resolveLatteExpressionCompletions,
 } from "./latteExpressionCompletions";
@@ -47,6 +51,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { ResolvedLatteProjectFilter } from "./latteFilterCallableResolution";
 import { parseLatteForeachCollection } from "../domain/latteSyntax";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { resolveNetteLatteComponentReceiverType } from "./netteLatteComponentReceiverTypes";
 
 const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
@@ -90,6 +95,11 @@ export interface LatteExpressionResolutionContext {
   viewDataInFlight: LatteViewDataInFlight;
 }
 
+interface LatteReceiverTypeOverride {
+  receiverExpression: string;
+  typeName: string;
+}
+
 export async function resolveNettePresenterVariableDefinition(
   context: LatteExpressionResolutionContext,
   source: string,
@@ -110,8 +120,19 @@ export async function resolveLatteMemberDefinition(
   offset: number,
   navigation?: LatteExpressionNavigation,
 ): Promise<boolean> {
+  const member = navigation
+    ? navigation.memberReference
+    : latteMemberReferenceAt(source, offset);
+  const receiverOverride = member
+    ? await netteReceiverTypeOverride(context, member.receiverExpression)
+    : null;
+
+  if (!context.isRequestedRootActive()) {
+    return false;
+  }
+
   return resolveLatteExpressionMemberDefinition(
-    latteExpressionDefinitionContext(context),
+    latteExpressionDefinitionContext(context, receiverOverride),
     source,
     offset,
     navigation,
@@ -123,8 +144,17 @@ export async function latteExpressionCompletions(
   source: string,
   offset: number,
 ): Promise<LatteCompletionItem[]> {
+  const target = latteExpressionCompletionTargetAt(source, offset);
+  const receiverOverride = target?.kind === "member"
+    ? await netteReceiverTypeOverride(context, target.member.receiverExpression)
+    : null;
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
   return resolveLatteExpressionCompletions(
-    latteExpressionCompletionContext(context),
+    latteExpressionCompletionContext(context, receiverOverride),
     source,
     offset,
   );
@@ -132,10 +162,11 @@ export async function latteExpressionCompletions(
 
 function latteExpressionDefinitionContext(
   context: LatteExpressionResolutionContext,
+  receiverOverride: LatteReceiverTypeOverride | null = null,
 ) {
   return {
     currentTemplateRelativePath: context.currentTemplateRelativePath,
-    deps: context.deps,
+    deps: receiverOverrideDependencies(context, receiverOverride),
     isRequestedRootActive: context.isRequestedRootActive,
     loadIncludedTemplateArguments: context.loadIncludedTemplateArguments,
     loadViewDataEntries: () => loadLatteViewDataEntries(context),
@@ -147,14 +178,19 @@ function latteExpressionDefinitionContext(
       offset: number,
       variableName: string,
       depth: number,
-    ) =>
-      resolveLatteExpressionVariableType(
+    ) => {
+      if (receiverOverride && variableName === "control") {
+        return Promise.resolve(receiverOverride.typeName);
+      }
+
+      return resolveLatteExpressionVariableType(
         context,
         source,
         offset,
         variableName,
         depth,
-      ),
+      );
+    },
     viewNames: () => latteCandidateViewNames(context),
   };
 }
@@ -173,12 +209,13 @@ async function resolveNetteControlVariableDefinition(
 
 function latteExpressionCompletionContext(
   context: LatteExpressionResolutionContext,
+  receiverOverride: LatteReceiverTypeOverride | null = null,
 ) {
   return {
     collectFilters: context.collectProjectFilters,
     collectVariableCandidates: (source: string, offset: number) =>
       collectLatteVariableCandidates(context, source, offset),
-    deps: context.deps,
+    deps: receiverOverrideDependencies(context, receiverOverride),
     isRequestedRootActive: context.isRequestedRootActive,
     maxCompletions: context.maxCompletions,
     resolveVariableType: (
@@ -186,15 +223,73 @@ function latteExpressionCompletionContext(
       offset: number,
       variableName: string,
       depth: number,
-    ) =>
-      resolveLatteExpressionVariableType(
+    ) => {
+      if (receiverOverride && variableName === "control") {
+        return Promise.resolve(receiverOverride.typeName);
+      }
+
+      return resolveLatteExpressionVariableType(
         context,
         source,
         offset,
         variableName,
         depth,
-      ),
+      );
+    },
   };
+}
+
+function receiverOverrideDependencies(
+  context: LatteExpressionResolutionContext,
+  receiverOverride: LatteReceiverTypeOverride | null,
+): LatteIntelligenceDependencies {
+  if (!receiverOverride) {
+    return context.deps;
+  }
+
+  return {
+    ...context.deps,
+    resolvePhpReceiverCompletions: (source, position, receiverExpression) => {
+      if (receiverExpression === receiverOverride.receiverExpression) {
+        return context.deps.resolvePhpReceiverCompletions(
+          source,
+          position,
+          "$control",
+        );
+      }
+
+      return context.deps.resolvePhpReceiverCompletions(
+        source,
+        position,
+        receiverExpression,
+      );
+    },
+  };
+}
+
+async function netteReceiverTypeOverride(
+  context: LatteExpressionResolutionContext,
+  receiverExpression: string,
+): Promise<LatteReceiverTypeOverride | null> {
+  if (!hasNetteViewDataProvider(context)) {
+    return null;
+  }
+
+  const typeName = await resolveNetteLatteComponentReceiverType(
+    {
+      deps: context.deps,
+      isRequestedRootActive: context.isRequestedRootActive,
+      requestedRoot: context.requestedRoot,
+      templateRelativePath: context.currentTemplateRelativePath,
+    },
+    receiverExpression,
+  );
+
+  if (!context.isRequestedRootActive() || !typeName) {
+    return null;
+  }
+
+  return { receiverExpression, typeName };
 }
 
 async function collectLatteVariableCandidates(

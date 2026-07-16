@@ -39,6 +39,14 @@ class GridControl
 }
 `;
 
+const CROSS_SELL_CONTROL_SOURCE = `<?php
+namespace App\\Modules\\CrossSell\\Component;
+
+class CrossSellTransferTimeline
+{
+}
+`;
+
 function makeContext({
   active = true,
   readFileContent,
@@ -102,6 +110,24 @@ describe("current Nette class helpers", () => {
 });
 
 describe("currentNetteControlClassName", () => {
+  it("resolves the current control class from a singular Component path", async () => {
+    const context = makeContext({
+      templateRelativePath:
+        "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
+      readFileContent: vi.fn(async (path: string) => {
+        if (path.endsWith("CrossSellTransferTimeline.php")) {
+          return CROSS_SELL_CONTROL_SOURCE;
+        }
+
+        throw new Error(`missing ${path}`);
+      }),
+    });
+
+    await expect(currentNetteControlClassName(context)).resolves.toBe(
+      "App\\Modules\\CrossSell\\Component\\CrossSellTransferTimeline",
+    );
+  });
+
   it("resolves the current control class from a component template path", async () => {
     const context = makeContext();
 

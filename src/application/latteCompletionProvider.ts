@@ -48,12 +48,29 @@ import {
 import {
   latteProviderRequestContext,
 } from "./latteProviderRequestContext";
+import { latteBlockIncludeCompletionAt } from "./latteBlockSymbols";
 
 export async function provideLatteCompletions(
   options: LatteProviderFlowFactoryOptions,
   source: string,
   position: EditorPosition,
 ): Promise<LatteCompletionItem[]> {
+  const offset = offsetAtEditorPosition(source, position);
+  const blockCompletion = latteBlockIncludeCompletionAt(source, offset);
+
+  if (blockCompletion) {
+    return blockCompletion.candidates
+      .slice(0, LATTE_MAX_COMPLETIONS)
+      .map((declaration) => ({
+        detail: "Same-file Latte block",
+        insertText: declaration.name,
+        kind: "block" as const,
+        label: declaration.name,
+        replaceEnd: blockCompletion.replaceSpan.end,
+        replaceStart: blockCompletion.replaceSpan.start,
+      }));
+  }
+
   const request = latteProviderRequestContext(options);
 
   if (!request) {
@@ -61,7 +78,6 @@ export async function provideLatteCompletions(
   }
 
   const { deps } = request;
-  const offset = offsetAtEditorPosition(source, position);
   const includeCompletion = detectLatteIncludeCompletionAt(source, offset);
 
   if (includeCompletion) {

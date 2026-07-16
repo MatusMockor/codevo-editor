@@ -3971,7 +3971,7 @@ class HomePresenter extends Presenter
 
     protected function createComponentContactForm(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         $form->addSelect('role', 'Role');
         $form->addTextArea('message', 'Message');
@@ -4282,7 +4282,7 @@ class GatewayFormFactory
 {
     public function create(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -4341,7 +4341,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }
@@ -4845,7 +4845,7 @@ class GatewayFormFactory
 {
     public function create(): Form
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         $form->addPassword('password', 'Password');
         return $form;
@@ -4912,7 +4912,7 @@ class GatewayFormFactory
 {
     public function create()
     {
-        $form = new Form();
+        $form = new \\Nette\\Application\\UI\\Form();
         $form->addText('email', 'Email');
         return $form;
     }

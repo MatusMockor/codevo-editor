@@ -9,6 +9,85 @@ import { resolveNettePresenterLink } from "./nettePresenterLinkDefinitions";
 import type { NettePresenterDiscoveryContext } from "./nettePresenterLinkDiscovery";
 
 describe("resolveNettePresenterLink", () => {
+  it("resolves singular Component signals without taking ownership of presenter actions", async () => {
+    const componentPath =
+      "/ws/app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php";
+    const presenterPath =
+      "/ws/app/modules/crossSellModule/Presenters/CrossSellAdminPresenter.php";
+    const openTarget = vi.fn(async () => true);
+    const context: Omit<
+      NettePresenterDiscoveryContext,
+      "cache" | "inFlight" | "ttlMs"
+    > = {
+      currentRelativePath:
+        "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
+      deps: {
+        getActiveDocument: () => null,
+        joinPath: (root, relative) => `${root}/${relative}`,
+        listDirectory: vi.fn(async () => []),
+        openTarget,
+        readFileContent: vi.fn(async (path: string) => {
+          if (path === componentPath) {
+            return `<?php
+class CrossSellTransferTimeline
+{
+    public function handleCancel(): void {}
+}`;
+          }
+
+          if (path === presenterPath) {
+            return "<?php class CrossSellAdminPresenter { public function actionShow(): void {} }";
+          }
+
+          throw new Error(`missing ${path}`);
+        }),
+        toRelativePath: (_root, path) => path,
+      },
+      frameworkCapabilities: {
+        isPresenterSourcePath: () => true,
+        parsePresenterLinkTarget: parseNetteLinkTarget,
+        presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
+        presenterClassCandidatePathsForLink:
+          nettePresenterClassCandidatePathsForLink,
+        presenterLinkTargetsFromSource: () => [],
+        presenterScanDirectories: [],
+      },
+      isDirectorySkipped: () => false,
+      isRequestedRootActive: () => true,
+      maxDepth: 1,
+      maxPresenters: 1,
+      requestedRoot: "/ws",
+    };
+
+    await expect(
+      resolveNettePresenterLink(
+        context,
+        parseNetteLinkTarget("cancel!"),
+        "cancel!",
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      resolveNettePresenterLink(
+        context,
+        parseNetteLinkTarget(":CrossSell:CrossSellAdmin:show"),
+        ":CrossSell:CrossSellAdmin:show",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenNthCalledWith(
+      1,
+      componentPath,
+      { column: 21, lineNumber: 4 },
+      "cancel!",
+    );
+    expect(openTarget).toHaveBeenNthCalledWith(
+      2,
+      presenterPath,
+      expect.objectContaining({ lineNumber: 1 }),
+      ":CrossSell:CrossSellAdmin:show",
+    );
+  });
+
   it("opens the mapped presenter action through the shared resolution service", async () => {
     const source = `<?php
 class MailTemplatesAdminPresenter

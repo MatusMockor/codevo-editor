@@ -49,6 +49,46 @@ describe("latteBlockDefinitionOffset", () => {
       source.lastIndexOf("price.total"),
     );
   });
+
+  it("ignores masked and malformed declaration decoys", () => {
+    const source = [
+      "{* {block #emptyState}{/block emptyState} *}",
+      "{block #emptyState}{/block wrong}",
+      "{include block emptyState}",
+      "{define emptyState}<p />{/define emptyState}",
+    ].join("\n");
+    const includeName = source.indexOf("emptyState", source.indexOf("{include"));
+    const reference = {
+      kind: "block",
+      name: "emptyState",
+      nameEnd: includeName + "emptyState".length,
+      nameStart: includeName,
+      tag: "include",
+    } as const;
+
+    expect(latteBlockDefinitionOffset(source, reference)).toBe(
+      source.indexOf("emptyState", source.indexOf("{define")),
+    );
+  });
+
+  it("keeps duplicate declaration self-navigation exact and include lookup deterministic", () => {
+    const source = [
+      "{include #card}",
+      "{block #card}<p>First</p>{/block card}",
+      "{block #card}<p>Second</p>{/block card}",
+    ].join("\n");
+    const includeReference = referenceAt(source, "card");
+    const secondOpening = source.indexOf("card", source.lastIndexOf("{block"));
+    const secondReference = detectLatteReferenceAt(source, secondOpening + 1);
+
+    expect(secondReference).not.toBeNull();
+    expect(latteBlockDefinitionOffset(source, includeReference)).toBe(
+      source.indexOf("card", source.indexOf("{block")),
+    );
+    expect(latteBlockDefinitionOffset(source, secondReference!)).toBe(
+      secondOpening,
+    );
+  });
 });
 
 describe("resolveLatteBlockDefinition", () => {

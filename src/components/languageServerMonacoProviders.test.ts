@@ -73,6 +73,20 @@ describe("registerLanguageServerMonacoProviders", () => {
     expect(registered.selectionRangeLanguage).toBe("php");
     expect(registered.renameLanguage).toBe("php");
     expect(registered.referenceLanguage).toBe("php");
+    expect(Object.keys(registered.renameProvidersByLanguage).sort()).toEqual([
+      "latte",
+      "php",
+    ]);
+    expect(Object.keys(registered.referenceProvidersByLanguage).sort()).toEqual([
+      "latte",
+      "php",
+    ]);
+    expect(registered.renameProvider).toBe(
+      registered.renameProvidersByLanguage.php,
+    );
+    expect(registered.referenceProvider).toBe(
+      registered.referenceProvidersByLanguage.php,
+    );
     expect(registered.definitionLanguage).toBe("php");
     expect(registered.declarationLanguage).toBe("php");
     expect(registered.implementationLanguage).toBe("php");
@@ -13504,9 +13518,11 @@ function createRegisteredProviders() {
     referenceDispose: ReturnType<typeof vi.fn>;
     referenceLanguage: string | null;
     referenceProvider: any;
+    referenceProvidersByLanguage: Record<string, any>;
     renameDispose: ReturnType<typeof vi.fn>;
     renameLanguage: string | null;
     renameProvider: any;
+    renameProvidersByLanguage: Record<string, any>;
     selectionRangeDispose: ReturnType<typeof vi.fn>;
     selectionRangeLanguage: string | null;
     selectionRangeProvider: any;
@@ -13607,9 +13623,11 @@ function createRegisteredProviders() {
     referenceDispose,
     referenceLanguage: null,
     referenceProvider: null,
+    referenceProvidersByLanguage: {},
     renameDispose,
     renameLanguage: null,
     renameProvider: null,
+    renameProvidersByLanguage: {},
     selectionRangeDispose,
     selectionRangeLanguage: null,
     selectionRangeProvider: null,
@@ -13862,13 +13880,23 @@ function createRegisteredProviders() {
         return { dispose: onTypeFormattingDispose };
       }),
       registerReferenceProvider: vi.fn((language, provider) => {
-        registered.referenceLanguage = language;
-        registered.referenceProvider = provider;
+        registered.referenceProvidersByLanguage[language] = provider;
+
+        if (language === "php") {
+          registered.referenceLanguage = language;
+          registered.referenceProvider = provider;
+        }
+
         return { dispose: referenceDispose };
       }),
       registerRenameProvider: vi.fn((language, provider) => {
-        registered.renameLanguage = language;
-        registered.renameProvider = provider;
+        registered.renameProvidersByLanguage[language] = provider;
+
+        if (language === "php") {
+          registered.renameLanguage = language;
+          registered.renameProvider = provider;
+        }
+
         return { dispose: renameDispose };
       }),
       registerSelectionRangeProvider: vi.fn((language, provider) => {

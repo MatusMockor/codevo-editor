@@ -285,6 +285,32 @@ describe("presenterCandidatePathsForTemplate", () => {
 });
 
 describe("componentClassCandidatePathsForTemplate", () => {
+  it("maps an ebox singular Component template to its colocated class", () => {
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
+      ),
+    ).toEqual([
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php",
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimelineControl.php",
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimelineComponent.php",
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimelineWidget.php",
+    ]);
+  });
+
+  it("matches singular and plural ownership segments case-insensitively", () => {
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/component/StatusControl/status.latte",
+      ),
+    ).toContain("app/component/StatusControl/StatusControl.php");
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/COMPONENTS/StatusControl/status.latte",
+      ),
+    ).toContain("app/COMPONENTS/StatusControl/StatusControl.php");
+  });
+
   it("maps an ebox-crm colocated control template to its control class", () => {
     expect(
       componentClassCandidatePathsForTemplate(
@@ -330,9 +356,46 @@ describe("componentClassCandidatePathsForTemplate", () => {
       "app/modules/shopModule/Components/CartSummaryControl/CartSummaryControl.php",
     ]);
   });
+
+  it("rejects unrelated similarly named ownership segments", () => {
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/ComponentLibrary/StatusControl/status.latte",
+      ),
+    ).toEqual([]);
+    expect(
+      componentClassCandidatePathsForTemplate(
+        "app/MyComponents/StatusControl/status.latte",
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("componentTemplateCandidatePathsForClass", () => {
+  it("reverse-maps an ebox class under singular Component", () => {
+    expect(
+      componentTemplateCandidatePathsForClass(
+        "app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php",
+      ),
+    ).toEqual([
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
+      "app/modules/crossSellModule/Component/CrossSellTransferTimeline/default.latte",
+    ]);
+  });
+
+  it("reverse-maps singular and plural ownership segments case-insensitively", () => {
+    expect(
+      componentTemplateCandidatePathsForClass(
+        "app/COMPONENT/StatusControl/StatusControl.php",
+      ),
+    ).toContain("app/COMPONENT/StatusControl/status.latte");
+    expect(
+      componentTemplateCandidatePathsForClass(
+        "app/components/StatusControl/StatusControl.php",
+      ),
+    ).toContain("app/components/StatusControl/status.latte");
+  });
+
   it("prefers the stripped Control template basename before the full class name", () => {
     expect(
       componentTemplateCandidatePathsForClass(
@@ -355,5 +418,13 @@ describe("componentTemplateCandidatePathsForClass", () => {
       "app/modules/usersModule/Components/UserTimeTravel/user_time_travel.latte",
       "app/modules/usersModule/Components/UserTimeTravel/default.latte",
     ]);
+  });
+
+  it("rejects reverse mapping from similarly named ownership segments", () => {
+    expect(
+      componentTemplateCandidatePathsForClass(
+        "app/ComponentsLegacy/StatusControl/StatusControl.php",
+      ),
+    ).toEqual([]);
   });
 });

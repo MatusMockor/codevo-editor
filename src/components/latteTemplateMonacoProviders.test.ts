@@ -118,6 +118,159 @@ describe("registerLatteTemplateMonacoProviders", () => {
     expect(result).toBeNull();
   });
 
+  it("navigates same-file block symbols without invoking framework navigation", async () => {
+    const source = [
+      "{block #emptyState}<p />{/block emptyState}",
+      "{include block emptyState}",
+    ].join("\n");
+    const registered = registerProviders();
+    const provideDefinition = vi.fn(async () => true);
+    const context = templateContext({ content: source, provideDefinition });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(source);
+    const includeOffset = source.lastIndexOf("emptyState") + 2;
+
+    const result = await registered.definitionProvider?.provideDefinition(
+      model,
+      positionAtOffset(source, includeOffset),
+      {} as never,
+    );
+
+    expect(result).toEqual([expect.objectContaining({ uri: model.uri })]);
+    expect(provideDefinition).not.toHaveBeenCalled();
+  });
+
+  it("navigates duplicate declaration openers and named closers to their own opener", async () => {
+    const source = [
+      "{block #card}<p>First</p>{/block card}",
+      "{block #card}<p>Second</p>{/block card}",
+    ].join("\n");
+    const registered = registerProviders();
+    const context = templateContext({ content: source });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(source);
+    const firstOpening = source.indexOf("card");
+    const firstClosing = source.indexOf("card", firstOpening + 1);
+    const secondOpening = source.indexOf("card", firstClosing + 1);
+    const secondClosing = source.indexOf("card", secondOpening + 1);
+
+    for (const offset of [firstOpening, firstClosing]) {
+      const result = await registered.definitionProvider?.provideDefinition(
+        model,
+        positionAtOffset(source, offset + 1),
+        {} as never,
+      );
+
+      expect(definitionLocation(result)?.range.startLineNumber).toBe(1);
+    }
+
+    for (const offset of [secondOpening, secondClosing]) {
+      const result = await registered.definitionProvider?.provideDefinition(
+        model,
+        positionAtOffset(source, offset + 1),
+        {} as never,
+      );
+
+      expect(definitionLocation(result)?.range.startLineNumber).toBe(2);
+    }
+  });
+
+  it("returns same-model references and rename edits including named closers", async () => {
+    const source = [
+      "{block #emptyState}<p />{/block emptyState}",
+      "{define tableRow, $row}<tr />{/define tableRow}",
+      "{include block tableRow, row: $row}",
+      "{include #emptyState}",
+    ].join("\n");
+    const registered = registerProviders();
+    const context = templateContext({ content: source });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(source);
+    const tableRowPosition = positionAtOffset(source, source.indexOf("tableRow") + 2);
+
+    const references = await registered.referenceProvider?.provideReferences(
+      model,
+      tableRowPosition,
+      { includeDeclaration: true },
+      {} as never,
+    );
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      tableRowPosition,
+      "compactRow",
+      {} as never,
+    );
+
+    expect(references).toHaveLength(3);
+    expect(references?.every((location) => location.uri === model.uri)).toBe(true);
+    expect(rename?.rejectReason).toBeUndefined();
+    expect(rename?.edits).toHaveLength(3);
+    expect(
+      rename?.edits.every(
+        (edit) => "resource" in edit && edit.resource === model.uri,
+      ),
+    ).toBe(true);
+
+    const invalid = await registered.renameProvider?.provideRenameEdits(
+      model,
+      tableRowPosition,
+      "row name",
+      {} as never,
+    );
+    expect(invalid?.rejectReason).toBe("Enter a valid Latte block name.");
+    expect(invalid?.edits).toEqual([]);
+  });
+
+  it("bounds same-file references and rename for large documents", async () => {
+    const source = `{block #emptyState}{/block emptyState}\n${"x\n".repeat(501)}`;
+    const registered = registerProviders();
+    const context = templateContext({ content: source });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(source);
+    const position = positionAtOffset(source, source.indexOf("emptyState") + 1);
+
+    expect(
+      await registered.referenceProvider?.provideReferences(
+        model,
+        position,
+        { includeDeclaration: true },
+        {} as never,
+      ),
+    ).toBeNull();
+    expect(
+      await registered.renameProvider?.provideRenameEdits(
+        model,
+        position,
+        "renamed",
+        {} as never,
+      ),
+    ).toMatchObject({ edits: [], rejectReason: expect.any(String) });
+  });
+
   it("maps Latte quick fixes through the shared code-action handler", async () => {
     const registered = registerProviders();
     const descriptor = {
@@ -163,7 +316,13 @@ describe("registerLatteTemplateMonacoProviders", () => {
     );
 
     disposable.dispose();
-    expect(registered.disposed).toEqual(["definition", "completion", "actions"]);
+    expect(registered.disposed).toEqual([
+      "definition",
+      "references",
+      "rename",
+      "completion",
+      "actions",
+    ]);
   });
 
   it("maps Monaco markers into the Latte code-action diagnostic context", async () => {
@@ -246,7 +405,17 @@ function registerProviders() {
     | Monaco.languages.CompletionItemProvider
     | undefined;
   let definitionProvider: Monaco.languages.DefinitionProvider | undefined;
+  let referenceProvider: Monaco.languages.ReferenceProvider | undefined;
+  let renameProvider: Monaco.languages.RenameProvider | undefined;
   const monaco = {
+    Range: class {
+      constructor(
+        public startLineNumber: number,
+        public startColumn: number,
+        public endLineNumber: number,
+        public endColumn: number,
+      ) {}
+    },
     languages: {
       CompletionItemKind: {
         Field: 1,
@@ -255,6 +424,7 @@ function registerProviders() {
         Keyword: 4,
         Method: 5,
         Module: 6,
+        Reference: 8,
         Variable: 7,
       },
       registerCodeActionProvider: vi.fn(
@@ -281,6 +451,20 @@ function registerProviders() {
           return { dispose: () => disposed.push("definition") };
         },
       ),
+      registerReferenceProvider: vi.fn(
+        (_language: string, provider: Monaco.languages.ReferenceProvider) => {
+          referenceProvider = provider;
+
+          return { dispose: () => disposed.push("references") };
+        },
+      ),
+      registerRenameProvider: vi.fn(
+        (_language: string, provider: Monaco.languages.RenameProvider) => {
+          renameProvider = provider;
+
+          return { dispose: () => disposed.push("rename") };
+        },
+      ),
     },
   } as unknown as typeof Monaco;
 
@@ -295,12 +479,38 @@ function registerProviders() {
     get definitionProvider() {
       return definitionProvider;
     },
+    get referenceProvider() {
+      return referenceProvider;
+    },
+    get renameProvider() {
+      return renameProvider;
+    },
     monaco,
   };
 }
 
 function latteCursorPosition(): Monaco.Position {
   return { column: 1, lineNumber: 1 } as Monaco.Position;
+}
+
+function positionAtOffset(source: string, offset: number): Monaco.Position {
+  const before = source.slice(0, offset);
+  const lineStart = before.lastIndexOf("\n") + 1;
+
+  return {
+    column: offset - lineStart + 1,
+    lineNumber: before.split("\n").length,
+  } as Monaco.Position;
+}
+
+function definitionLocation(
+  definition: Monaco.languages.Definition | null | undefined,
+): Monaco.languages.Location | null {
+  if (!definition) {
+    return null;
+  }
+
+  return Array.isArray(definition) ? definition[0] ?? null : definition;
 }
 
 function templateContext({
@@ -350,6 +560,7 @@ function templateContext({
 
 function textModel(value: string): Monaco.editor.ITextModel {
   return {
+    getVersionId: () => 1,
     getValue: () => value,
     getWordUntilPosition: () => ({ endColumn: 1, startColumn: 1, word: "" }),
     uri: {

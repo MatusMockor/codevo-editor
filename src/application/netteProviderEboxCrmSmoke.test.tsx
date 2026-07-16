@@ -1203,6 +1203,119 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     }
   });
 
+  it("types the real ApiTokenMetaForm key array-access receiver", async () => {
+    const templatePath =
+      "app/modules/apiModule/templates/ApiTokensAdmin/show.latte";
+    const presenterPath =
+      "app/modules/apiModule/Presenters/ApiTokensAdminPresenter.php";
+    const factoryPath =
+      "app/modules/apiModule/Forms/ApiTokenMetaFormFactory.php";
+    const textInputPath =
+      "vendor/nette/forms/src/Forms/Controls/TextInput.php";
+    const textBasePath =
+      "vendor/nette/forms/src/Forms/Controls/TextBase.php";
+    const baseControlPath =
+      "vendor/nette/forms/src/Forms/Controls/BaseControl.php";
+    const relativePaths = [
+      templatePath,
+      presenterPath,
+      factoryPath,
+      textInputPath,
+      textBasePath,
+      baseControlPath,
+    ];
+    const [template, presenter, factory, textInput, textBase, baseControl] =
+      await Promise.all(
+        relativePaths.map((relativePath) =>
+          readFileContent(joinPath(EBOX_CRM_ROOT, relativePath)),
+        ),
+      );
+    const classSourcePaths = new Map<string, string>([
+      [
+        "Nette\\Forms\\Controls\\TextInput",
+        joinPath(EBOX_CRM_ROOT, textInputPath),
+      ],
+      [
+        "Nette\\Forms\\Controls\\TextBase",
+        joinPath(EBOX_CRM_ROOT, textBasePath),
+      ],
+      [
+        "Nette\\Forms\\Controls\\BaseControl",
+        joinPath(EBOX_CRM_ROOT, baseControlPath),
+      ],
+    ]);
+    const memberSources = [textInput, textBase, baseControl];
+    const collectors = renderPhpClassMemberCollectors(
+      makePhpClassMemberCollectorOptions(
+        memberSources,
+        classSourcePaths,
+        vi.fn(async () => null),
+      ),
+    );
+    const completionResolvers = renderPhpCompletionResolvers({
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
+      collectPhpMethodsForClass: collectors.api().collectPhpMethodsForClass,
+      currentPhpFrameworkSourceContext: () => ({
+        workspaceSources: memberSources,
+      }),
+      frameworkRuntime: createPhpFrameworkRuntimeContext(NETTE_FRAMEWORK),
+      phpNormalizedReceiverExpressionIsThis: (expression) =>
+        expression.trim() === "$this",
+      resolvePhpClassReference: (source, className) =>
+        resolvePhpClassName(source, className),
+      resolvePhpExpressionType: async (source, position, expression) =>
+        phpReceiverExpressionTypeInSource(source, position, expression),
+      resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
+    });
+    const openPhpPropertyTarget = vi.fn(async () => true);
+    const deps = makeLatteDeps(templatePath, {
+      openPhpPropertyTarget,
+      readPhpClassSource: vi.fn(async (className: string) =>
+        className === "Crm\\ApiModule\\Forms\\ApiTokenMetaFormFactory"
+          ? {
+              path: joinPath(EBOX_CRM_ROOT, factoryPath),
+              source: factory,
+            }
+          : null,
+      ),
+      resolveDeclaredType: (source, typeHint) =>
+        typeHint ? resolvePhpClassName(source, typeHint) : null,
+      resolvePhpReceiverCompletions:
+        completionResolvers.api().resolvePhpReceiverMethodCompletions,
+      synthesizeTypedReceiverSource: synthesizePhpTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const receiver = `$control["apiTokenMetaForm"]['key']`;
+    const expression = `${receiver}->htmlId`;
+
+    expect(template).toContain(expression);
+    expect(presenter).toContain("createComponentApiTokenMetaForm");
+    expect(factory).toContain("$form->addText('key'");
+
+    const completions = await latte.provideLatteCompletions(
+      template,
+      positionAtOffset(
+        template,
+        template.indexOf(expression) + `${receiver}->html`.length,
+      ),
+    );
+
+    expect(completions.map((item) => item.label)).toContain("htmlId");
+    await expect(
+      latte.provideLatteDefinition(
+        template,
+        template.indexOf(expression) + expression.indexOf("htmlId") + 2,
+      ),
+    ).resolves.toBe(true);
+    expect(openPhpPropertyTarget).toHaveBeenLastCalledWith(
+      "Nette\\Forms\\Controls\\BaseControl",
+      "htmlId",
+    );
+
+    completionResolvers.unmount();
+    collectors.unmount();
+  });
+
   it("covers Nette AJAX snippet navigation from redrawControl to colocated Latte over real component files", async () => {
     const templatePath =
       "app/modules/mailerModule/Components/MailLogs/mail_logs.latte";

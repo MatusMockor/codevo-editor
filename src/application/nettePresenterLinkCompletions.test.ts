@@ -16,6 +16,61 @@ import { normalizeNettePresenterMappings } from "../domain/nettePresenterMapping
 const ROOT = "/ws";
 
 describe("lattePresenterLinkCompletions", () => {
+  it("includes singular Component signals alongside presenter actions", async () => {
+    const componentPath = `${ROOT}/app/modules/crossSellModule/Component/CrossSellTransferTimeline/CrossSellTransferTimeline.php`;
+    const presenterPath = `${ROOT}/app/CrossSellAdminPresenter.php`;
+    const completions = await lattePresenterLinkCompletions(
+      {
+        cache: {},
+        currentRelativePath:
+          "app/modules/crossSellModule/Component/CrossSellTransferTimeline/cross_sell_transfer_timeline.latte",
+        deps: {
+          getActiveDocument: () => null,
+          joinPath: (root, relativePath) => `${root}/${relativePath}`,
+          listDirectory: vi.fn(async (path: string) =>
+            path === `${ROOT}/app`
+              ? [{ kind: "file" as const, path: presenterPath }]
+              : [],
+          ),
+          openTarget: vi.fn(async () => true),
+          readFileContent: vi.fn(async (path: string) => {
+            if (path === componentPath) {
+              return "<?php class CrossSellTransferTimeline { public function handleCancel(): void {} }";
+            }
+
+            if (path === presenterPath) {
+              return "<?php class CrossSellAdminPresenter { public function actionShow(): void {} }";
+            }
+
+            throw new Error(`missing ${path}`);
+          }),
+          toRelativePath: (root, path) => path.replace(`${root}/`, ""),
+        },
+        frameworkCapabilities: {
+          isPresenterSourcePath: isNettePresenterDiscoverySourcePath,
+          parsePresenterLinkTarget: parseNetteLinkTarget,
+          presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
+          presenterClassCandidatePathsForLink:
+            nettePresenterClassCandidatePathsForLink,
+          presenterLinkTargetsFromSource: nettePresenterLinkTargetsFromSource,
+          presenterScanDirectories: ["app"],
+        },
+        inFlight: new Map(),
+        isDirectorySkipped: () => false,
+        isRequestedRootActive: () => true,
+        maxDepth: 1,
+        maxPresenters: 10,
+        requestedRoot: ROOT,
+        ttlMs: 5_000,
+      },
+      { prefix: "", replaceEnd: 0, replaceStart: 0 },
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual(
+      expect.arrayContaining(["cancel!", "CrossSellAdmin:show"]),
+    );
+  });
+
   it("scans presenters once and offers relative targets for the current presenter", async () => {
     const source = `<?php
 class HomePresenter

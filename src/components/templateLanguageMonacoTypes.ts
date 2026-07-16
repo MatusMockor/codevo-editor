@@ -47,6 +47,7 @@ export interface BladeCompletion {
  * member is a field; a `|filter` name is a function.
  */
 export type LatteCompletionKind =
+  | "block"
   | "tag"
   | "template"
   | "variable"

@@ -12,6 +12,7 @@ import type { ResolvedLatteProjectFilter } from "./latteFilterCallableResolution
  * property/method, filter -> `|filter` name.
  */
 export type LatteCompletionItemKind =
+  | "block"
   | "tag"
   | "template"
   | "variable"

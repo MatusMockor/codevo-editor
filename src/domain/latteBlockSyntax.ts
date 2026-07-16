@@ -24,6 +24,14 @@ export interface LatteBlockDefinition {
   tagSpan: LatteBlockSourceSpan;
 }
 
+export interface LatteBlockDeclaration {
+  closingNameSpan: LatteBlockSourceSpan | null;
+  kind: "block" | "define" | "local";
+  name: string;
+  nameSpan: LatteBlockSourceSpan;
+  tagSpan: LatteBlockSourceSpan;
+}
+
 export interface LatteBlockIncludeArgument {
   kind: "named" | "positional";
   name: string | null;
@@ -42,6 +50,7 @@ export interface LatteBlockInclude {
 }
 
 export interface LatteBlockSyntaxDocument {
+  declarations: LatteBlockDeclaration[];
   definitions: LatteBlockDefinition[];
   includes: LatteBlockInclude[];
 }
@@ -65,9 +74,17 @@ interface OpenDefinition {
   tagSpan: LatteBlockSourceSpan;
 }
 
+interface OpenDeclaration {
+  kind: LatteBlockDeclaration["kind"];
+  name: string;
+  nameSpan: LatteBlockSourceSpan;
+  tagSpan: LatteBlockSourceSpan;
+}
+
 interface PairedTagFrame {
   canCloseAtEof: boolean;
   closingTag: string;
+  declaration: OpenDeclaration | null;
   definition: OpenDefinition | null;
   isDefinition: boolean;
   ownerDefinition: OpenDefinition | null;
@@ -124,6 +141,7 @@ const MAX_TAG_LENGTH = 64_000;
 
 /** Parses same-file static Latte definitions and block includes in one bounded pass. */
 export function parseLatteBlockSyntax(source: string): LatteBlockSyntaxDocument {
+  const declarations: LatteBlockDeclaration[] = [];
   const definitions: LatteBlockDefinition[] = [];
   const closedDefinitions = new Map<OpenDefinition, LatteBlockDefinition>();
   const pendingIncludes: PendingInclude[] = [];
@@ -170,6 +188,7 @@ export function parseLatteBlockSyntax(source: string): LatteBlockSyntaxDocument 
         source,
         tag,
         pairedFrames,
+        declarations,
         definitions,
         closedDefinitions,
       );
@@ -182,6 +201,12 @@ export function parseLatteBlockSyntax(source: string): LatteBlockSyntaxDocument 
       pairedFrames.push({
         canCloseAtEof: definition.kind === "local",
         closingTag: definition.closingTag,
+        declaration: {
+          kind: definition.kind,
+          name: definition.name,
+          nameSpan: definition.nameSpan,
+          tagSpan: definition.tagSpan,
+        },
         definition,
         isDefinition: true,
         ownerDefinition: definition,
@@ -196,6 +221,21 @@ export function parseLatteBlockSyntax(source: string): LatteBlockSyntaxDocument 
 
     if (isLocalBlockHeader(source, tag)) {
       pairedFrames.push(invalidDefinitionFrame("block"));
+      continue;
+    }
+
+    const blockDeclaration = parseOrdinaryBlockDeclaration(source, tag);
+
+    if (blockDeclaration) {
+      pairedFrames.push({
+        canCloseAtEof: false,
+        closingTag: "block",
+        declaration: blockDeclaration,
+        definition: null,
+        isDefinition: false,
+        ownerDefinition:
+          pairedFrames[pairedFrames.length - 1]?.ownerDefinition ?? null,
+      });
       continue;
     }
 
@@ -218,17 +258,19 @@ export function parseLatteBlockSyntax(source: string): LatteBlockSyntaxDocument 
   finalizeTopLevelLocalAtEof(
     source,
     pairedFrames,
+    declarations,
     definitions,
     closedDefinitions,
   );
   definitions.sort((left, right) => left.tagSpan.start - right.tagSpan.start);
+  declarations.sort((left, right) => left.tagSpan.start - right.tagSpan.start);
 
   const includes = pendingIncludes.map(({ include, owner }) => ({
     ...include,
     ownerDefinition: owner ? (closedDefinitions.get(owner) ?? null) : null,
   }));
 
-  return { definitions, includes };
+  return { declarations, definitions, includes };
 }
 
 /** Alias kept convenient for callers that use the module name as the parser name. */
@@ -404,6 +446,32 @@ function parseOpeningDefinition(
   const nameStart = skipWhitespace(source, localEnd, tag.contentEnd);
 
   return parseDefinitionHeader(source, tag, "local", nameStart, false);
+}
+
+function parseOrdinaryBlockDeclaration(
+  source: string,
+  tag: TagToken,
+): OpenDeclaration | null {
+  if (tag.name !== "block") {
+    return null;
+  }
+
+  const target = staticBlockTarget(source, tag.expressionStart, tag.contentEnd);
+
+  if (!target) {
+    return null;
+  }
+
+  if (skipWhitespace(source, target.tokenEnd, tag.contentEnd) !== tag.contentEnd) {
+    return null;
+  }
+
+  return {
+    kind: "block",
+    name: target.name,
+    nameSpan: target.span,
+    tagSpan: { end: tag.contentEnd + 1, start: tag.openBrace },
+  };
 }
 
 function parseDefinitionHeader(
@@ -732,6 +800,7 @@ function closePairedTag(
   source: string,
   tag: TagToken,
   stack: PairedTagFrame[],
+  declarations: LatteBlockDeclaration[],
   definitions: LatteBlockDefinition[],
   closedDefinitions: Map<OpenDefinition, LatteBlockDefinition>,
 ): void {
@@ -746,11 +815,6 @@ function closePairedTag(
     return;
   }
 
-  if (!frame.isDefinition) {
-    stack.pop();
-    return;
-  }
-
   const closingName = optionalClosingName(source, tag);
 
   if (closingName === undefined) {
@@ -759,15 +823,25 @@ function closePairedTag(
   }
 
   if (
-    frame.definition &&
+    frame.declaration &&
     closingName !== null &&
-    closingName !== frame.definition.name
+    closingName.name !== frame.declaration.name
   ) {
     frame.canCloseAtEof = false;
     return;
   }
 
   stack.pop();
+  const openingDeclaration = frame.declaration;
+
+  if (openingDeclaration) {
+    completeDeclaration(openingDeclaration, closingName?.span ?? null, declarations);
+  }
+
+  if (!frame.isDefinition) {
+    return;
+  }
+
   const opening = frame.definition;
 
   if (!opening) {
@@ -780,6 +854,14 @@ function closePairedTag(
     definitions,
     closedDefinitions,
   );
+}
+
+function completeDeclaration(
+  opening: OpenDeclaration,
+  closingNameSpan: LatteBlockSourceSpan | null,
+  declarations: LatteBlockDeclaration[],
+): void {
+  declarations.push({ ...opening, closingNameSpan });
 }
 
 function completeDefinition(
@@ -805,6 +887,7 @@ function completeDefinition(
 function finalizeTopLevelLocalAtEof(
   source: string,
   stack: PairedTagFrame[],
+  declarations: LatteBlockDeclaration[],
   definitions: LatteBlockDefinition[],
   closedDefinitions: Map<OpenDefinition, LatteBlockDefinition>,
 ): void {
@@ -821,6 +904,10 @@ function finalizeTopLevelLocalAtEof(
 
   if (!frame.canCloseAtEof) {
     return;
+  }
+
+  if (frame.declaration) {
+    completeDeclaration(frame.declaration, null, declarations);
   }
 
   completeDefinition(opening, source.length, definitions, closedDefinitions);
@@ -850,6 +937,7 @@ function invalidDefinitionFrame(closingTag: "block" | "define"): PairedTagFrame 
   return {
     canCloseAtEof: false,
     closingTag,
+    declaration: null,
     definition: null,
     isDefinition: true,
     ownerDefinition: null,
@@ -864,6 +952,7 @@ function pushControlFrame(tag: TagToken, stack: PairedTagFrame[]): void {
   stack.push({
     canCloseAtEof: false,
     closingTag: tag.name,
+    declaration: null,
     definition: null,
     isDefinition: false,
     ownerDefinition: stack[stack.length - 1]?.ownerDefinition ?? null,
@@ -898,7 +987,7 @@ function isLocalBlockHeader(source: string, tag: TagToken): boolean {
 function optionalClosingName(
   source: string,
   tag: TagToken,
-): string | null | undefined {
+): { name: string; span: LatteBlockSourceSpan } | null | undefined {
   const content = trimSpan(source, tag.expressionStart, tag.contentEnd);
 
   if (content.start >= content.end) {
@@ -919,7 +1008,7 @@ function optionalClosingName(
     return undefined;
   }
 
-  return target.name;
+  return { name: target.name, span: target.span };
 }
 
 function includeBlockTargetStart(source: string, tag: TagToken): number {
