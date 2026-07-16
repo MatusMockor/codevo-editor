@@ -7,6 +7,7 @@ import {
   detectKeymapPlatform,
   eventCanMatchKeymapShortcut,
   findKeymapConflicts,
+  keymapCommandIdForShortcut,
   keymapCommands,
   matchesShortcut,
   normalizeKeymapSettings,
@@ -47,6 +48,18 @@ describe("keymap", () => {
       "navigation.forward": "Cmd+]",
       "workbench.openAppearanceSettings": "",
     });
+  });
+
+  it("resolves shortcut conflicts in dispatcher command order", () => {
+    const keymap = {
+      ...defaultKeymapSettings("mac"),
+      "editor.save": "F12",
+      "workbench.openSettings": "F12",
+    };
+
+    expect(keymapCommandIdForShortcut(keymap, "F12", "mac")).toBe(
+      "editor.save",
+    );
   });
 
   it("registers a Quit Application command bound to Cmd+Q", () => {
@@ -1079,6 +1092,21 @@ describe("keymap", () => {
         { id: "editor.closeTab", label: "Close Tab or Window" },
       ]);
       expect(findKeymapConflicts(keymap, "editor.closeTab")).toEqual([
+        { id: "editor.save", label: "Save File" },
+      ]);
+    });
+
+    it("reports F12 conflicts between user bindings", () => {
+      const keymap = {
+        ...defaultKeymapSettings("mac"),
+        "editor.save": "F12",
+        "workbench.openSettings": "F12",
+      };
+
+      expect(findKeymapConflicts(keymap, "editor.save")).toEqual([
+        { id: "workbench.openSettings", label: "Open Settings" },
+      ]);
+      expect(findKeymapConflicts(keymap, "workbench.openSettings")).toEqual([
         { id: "editor.save", label: "Save File" },
       ]);
     });

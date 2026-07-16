@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   ideProgress: { busy: true, state: "active", text: "Working" },
   openGitBranchPanel: vi.fn(),
   runCommand: vi.fn(),
+  setPaletteOpen: vi.fn(),
   showBottomPanelView: vi.fn(),
 }));
 
@@ -140,6 +141,7 @@ describe("App command routing", () => {
     mocks.ideProgress = { busy: true, state: "active", text: "Working" };
     mocks.openGitBranchPanel.mockReset();
     mocks.runCommand.mockReset();
+    mocks.setPaletteOpen.mockReset();
     mocks.showBottomPanelView.mockReset();
     host = document.createElement("div");
     document.body.append(host);
@@ -187,6 +189,16 @@ describe("App command routing", () => {
       "runtime.show",
       "workspace.trust",
     ]);
+  });
+
+  it("routes the Commands activity through the registry without a direct state fallback", () => {
+    mocks.runCommand.mockReturnValue("disabled");
+
+    click(buttonByTitle("Commands"));
+
+    expect(mocks.runCommand).toHaveBeenCalledOnce();
+    expect(mocks.runCommand).toHaveBeenCalledWith("commands.show");
+    expect(mocks.setPaletteOpen).not.toHaveBeenCalled();
   });
 
   it("routes problem progress while preserving unrelated direct callbacks", async () => {
@@ -303,6 +315,7 @@ function createWorkbench() {
       searchEverywhereModel: { sections: [] },
       searchEverywhereOpen: false,
       selectedGitChange: null,
+      setPaletteOpen: mocks.setPaletteOpen,
       settingsOpen: false,
       showBottomPanelView: mocks.showBottomPanelView,
       sidebarView: "files",

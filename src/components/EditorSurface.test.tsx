@@ -3045,6 +3045,101 @@ describe("EditorSurface", () => {
     expect(editor?.trigger).not.toHaveBeenCalled();
   });
 
+  it("uses legacy owner scope for a partial workspace identity descriptor", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editorSurfaceCommandRunnerChange = vi.fn();
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onEditorSurfaceCommandRunnerChange:
+            editorSurfaceCommandRunnerChange,
+          workspaceIdentityDescriptor: {},
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const runner = editorSurfaceCommandRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+
+    expect(runner.captureScope()).toEqual(
+      expect.objectContaining({
+        documentPath: activeDocument.path,
+        modelIdentity: model,
+        ownerKey: "/workspace",
+      }),
+    );
+  });
+
+  it("republishes a fresh command scope when Monaco replaces the same-path model", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const originalModel: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const replacementModel: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(originalModel);
+    const editorSurfaceCommandRunnerChange = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(originalModel);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onEditorSurfaceCommandRunnerChange:
+            editorSurfaceCommandRunnerChange,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const originalRunner = editorSurfaceCommandRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+    const originalScope = originalRunner.captureScope();
+    editor.getModel.mockReturnValue(replacementModel);
+
+    act(() => {
+      editor.modelChangeHandler?.();
+    });
+
+    const publishedRunners = editorSurfaceCommandRunnerChange.mock.calls
+      .map(([candidate]) => candidate)
+      .filter((candidate) => typeof candidate === "function");
+    const replacementRunner = publishedRunners[publishedRunners.length - 1];
+
+    expect(replacementRunner).not.toBe(originalRunner);
+    expect(replacementRunner.captureScope()).toEqual(
+      expect.objectContaining({ modelIdentity: replacementModel }),
+    );
+    expect(replacementRunner.isScopeCurrent(originalScope)).toBe(false);
+  });
+
   it("publishes a guarded buffer fix runner that applies fixes in one edit call", async () => {
     const content = "let value = 'x'";
     const activeDocument: EditorDocument = {
@@ -4036,11 +4131,19 @@ interface ParserFactory
         column: 21,
         lineNumber: 5,
       });
-      expect(runCommand).toHaveBeenCalledWith("editor.goToImplementation", {
-        activeDocumentDirty: true,
-        hasActiveDocument: true,
-        hasWorkspace: false,
-      });
+      expect(runCommand).toHaveBeenCalledWith(
+        "editor.goToImplementation",
+        expect.objectContaining({
+          activeDocumentDirty: true,
+          editorSurfaceScope: expect.objectContaining({
+            documentPath: activeDocument.path,
+            modelIdentity: model,
+            ownerKey: null,
+          }),
+          hasActiveDocument: true,
+          hasWorkspace: false,
+        }),
+      );
       expect(onGoToImplementationAt).not.toHaveBeenCalled();
     },
   );
@@ -4448,11 +4551,19 @@ class InvoiceServiceTest extends TestCase
     });
 
     expect(editor.setPosition).toHaveBeenCalledWith(position);
-    expect(runCommand).toHaveBeenCalledWith("editor.goToDefinition", {
-      activeDocumentDirty: true,
-      hasActiveDocument: true,
-      hasWorkspace: false,
-    });
+    expect(runCommand).toHaveBeenCalledWith(
+      "editor.goToDefinition",
+      expect.objectContaining({
+        activeDocumentDirty: true,
+        editorSurfaceScope: expect.objectContaining({
+          documentPath: activeDocument.path,
+          modelIdentity: model,
+          ownerKey: null,
+        }),
+        hasActiveDocument: true,
+        hasWorkspace: false,
+      }),
+    );
     expect(onGoToDefinition).not.toHaveBeenCalled();
     expect(preventDefault).toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
@@ -4558,11 +4669,16 @@ class InvoiceServiceTest extends TestCase
 
       expect(populatedEditor.setPosition).toHaveBeenCalledWith(position);
       expect(receivedContexts).toEqual([
-        {
+        expect.objectContaining({
           activeDocumentDirty: false,
+          editorSurfaceScope: expect.objectContaining({
+            documentPath: populatedDocument.path,
+            modelIdentity: populatedModel,
+            ownerKey: "/workspace",
+          }),
           hasActiveDocument: true,
           hasWorkspace: true,
-        },
+        }),
       ]);
       expect(registeredDefinition).toHaveBeenCalledOnce();
       expect(fallbackDefinition).not.toHaveBeenCalled();
@@ -10100,6 +10216,73 @@ class Foo
     );
   });
 
+  it("routes editor-focused F12 rebindings through the registry", async () => {
+    stubNavigatorPlatform("MacIntel");
+
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const runCommand = vi.fn(() => "executed" as const);
+    const onGoToDefinition = vi.fn();
+    const keymap = {
+      ...defaultKeymapSettings("mac"),
+      "workbench.openSettings": "F12",
+    };
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          keymap,
+          onGoToDefinition,
+          runCommand,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const actions = editor.addAction.mock.calls.map(([action]) => action);
+    const f12Action = actions.find(
+      (action) => action.id === "mockor.dispatchF12",
+    );
+    const definitionAction = actions.find(
+      (action) => action.id === "mockor.goToDefinition",
+    );
+
+    expect(f12Action).toEqual(
+      expect.objectContaining({ keybindings: [monaco.KeyCode.F12] }),
+    );
+    expect(definitionAction?.keybindings).not.toContain(monaco.KeyCode.F12);
+
+    f12Action?.run();
+
+    expect(runCommand).toHaveBeenCalledWith(
+      "workbench.openSettings",
+      expect.objectContaining({
+        editorSurfaceScope: expect.objectContaining({
+          modelIdentity: model,
+        }),
+      }),
+    );
+    expect(onGoToDefinition).not.toHaveBeenCalled();
+    expect(editor.trigger).not.toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.revealDefinition",
+      {},
+    );
+  });
+
   it("registers reference shortcuts and preserves Monaco fallbacks without a command runner", async () => {
     stubNavigatorPlatform("MacIntel");
 
@@ -10320,16 +10503,26 @@ class Foo
     closeTabAction?.run();
     goBackAction?.run();
 
-    expect(runCommand).toHaveBeenNthCalledWith(1, "editor.closeTab", {
+    const expectedCommandContext = expect.objectContaining({
       activeDocumentDirty: true,
+      editorSurfaceScope: expect.objectContaining({
+        documentPath: activeDocument.path,
+        modelIdentity: model,
+        ownerKey: null,
+      }),
       hasActiveDocument: true,
       hasWorkspace: false,
     });
-    expect(runCommand).toHaveBeenNthCalledWith(2, "navigation.back", {
-      activeDocumentDirty: true,
-      hasActiveDocument: true,
-      hasWorkspace: false,
-    });
+    expect(runCommand).toHaveBeenNthCalledWith(
+      1,
+      "editor.closeTab",
+      expectedCommandContext,
+    );
+    expect(runCommand).toHaveBeenNthCalledWith(
+      2,
+      "navigation.back",
+      expectedCommandContext,
+    );
     expect(onCloseActiveTab).not.toHaveBeenCalled();
     expect(onGoBack).toHaveBeenCalledOnce();
   });
@@ -13025,7 +13218,7 @@ class Foo
   });
 
   it.each([1, 2, 4])(
-    "keeps 48 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
+    "keeps 49 Monaco actions stable across callback-only rerenders for %i editor pane(s)",
     async (paneCount) => {
       const activeDocument: EditorDocument = {
         content: "const value = 1;\n",
@@ -13082,7 +13275,7 @@ class Foo
       });
 
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(48);
+        expect(editor.addAction).toHaveBeenCalledTimes(49);
       });
 
       await act(async () => {
@@ -13092,7 +13285,7 @@ class Foo
       });
 
       editors.forEach((editor) => {
-        expect(editor.addAction).toHaveBeenCalledTimes(48);
+        expect(editor.addAction).toHaveBeenCalledTimes(49);
       });
       for (const [paneIndex, editor] of editors.entries()) {
         const actions = editor.addAction.mock.calls.map(([action]) => action);
@@ -13118,7 +13311,7 @@ class Foo
       });
 
       actionDisposersByPane.forEach((actionDisposers) => {
-        expect(actionDisposers).toHaveLength(48);
+        expect(actionDisposers).toHaveLength(49);
         actionDisposers.forEach((dispose) => {
           expect(dispose).toHaveBeenCalledTimes(1);
         });
@@ -13166,7 +13359,7 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(48);
+    expect(editor.addAction).toHaveBeenCalledTimes(49);
 
     await act(async () => {
       root.render(
@@ -13176,11 +13369,11 @@ class Foo
       await Promise.resolve();
     });
 
-    expect(editor.addAction).toHaveBeenCalledTimes(96);
-    actionDisposers.slice(0, 48).forEach((dispose) => {
+    expect(editor.addAction).toHaveBeenCalledTimes(98);
+    actionDisposers.slice(0, 49).forEach((dispose) => {
       expect(dispose).toHaveBeenCalledTimes(1);
     });
-    actionDisposers.slice(48).forEach((dispose) => {
+    actionDisposers.slice(49).forEach((dispose) => {
       expect(dispose).not.toHaveBeenCalled();
     });
 

@@ -24,6 +24,7 @@ import type {
   PhpToolAvailability,
   WorkspaceDescriptor,
 } from "../domain/workspace";
+import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfaceCommand";
 import type { EditorGroupsState, EditorSplitDirection } from "../domain/editorGroups";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
@@ -70,6 +71,7 @@ type NavigationRun = () => unknown;
 
 interface UseWorkbenchCommandRegistryOptions {
   activeDocument: EditorDocument | null;
+  captureNavigationCommandScope(): EditorSurfaceCommandInvocationScope;
   activeEslintBufferClean: boolean;
   activeEslintFixes: readonly unknown[];
   activeImage: ImageTab | null;
@@ -124,6 +126,9 @@ interface UseWorkbenchCommandRegistryOptions {
     status: LanguageServerRuntimeStatus | null,
     statusRoot: string | null,
     workspaceRoot: string | null | undefined,
+  ): boolean;
+  isNavigationCommandScopeCurrent(
+    scope: EditorSurfaceCommandInvocationScope,
   ): boolean;
   javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
@@ -211,6 +216,7 @@ export function useWorkbenchCommandRegistry(
 ): CommandRegistry {
   const {
     activeDocument,
+    captureNavigationCommandScope,
     activeEslintBufferClean,
     activeEslintFixes,
     activeImage,
@@ -262,6 +268,7 @@ export function useWorkbenchCommandRegistry(
     intelligenceMode,
     isActiveDocumentPhpTest,
     isLanguageServerActiveForWorkspace,
+    isNavigationCommandScopeCurrent,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     languageServerPlan,
@@ -364,6 +371,7 @@ export function useWorkbenchCommandRegistry(
       openSettingsPanel,
       openAppearanceSettingsPanel,
     });
+    const navigationCommandScope = captureNavigationCommandScope();
 
     workbenchAppLifecycleCommands({
       shortcut,
@@ -477,13 +485,17 @@ export function useWorkbenchCommandRegistry(
       openTextSearch: () => setTextSearchOpen(true),
     }).forEach((command) => registry.register(command));
 
-    workbenchNavigationHistoryCommands({
+    scopedNavigationCommands(
+      workbenchNavigationHistoryCommands({
       shortcut,
       canNavigateBackward: navigationHistory.backStack.length > 0,
       canNavigateForward: navigationHistory.forwardStack.length > 0,
       navigateBackward,
       navigateForward: navigateForwardInHistory,
-    }).forEach((command) => registry.register(command));
+      }),
+      isNavigationCommandScopeCurrent,
+      navigationCommandScope,
+    ).forEach((command) => registry.register(command));
 
     workbenchEditorSurfaceCommands({
       shortcut,
@@ -525,7 +537,8 @@ export function useWorkbenchCommandRegistry(
       shortcut,
     }).forEach((command) => registry.register(command));
 
-    workbenchLanguageNavigationCommands({
+    scopedNavigationCommands(
+      workbenchLanguageNavigationCommands({
       shortcut,
       activeDocument: activeDocumentLanguage,
       goToDefinition,
@@ -534,13 +547,17 @@ export function useWorkbenchCommandRegistry(
       goToTypeDefinition,
       goToImplementation,
       goToSuperMethod,
-    }).forEach((command) => registry.register(command));
+      }),
+      isNavigationCommandScopeCurrent,
+      navigationCommandScope,
+    ).forEach((command) => registry.register(command));
 
     appearanceCommands.editorCommands.forEach((command) =>
       registry.register(command),
     );
 
-    workbenchLanguagePanelCommands({
+    scopedNavigationCommands(
+      workbenchLanguagePanelCommands({
       shortcut,
       activeDocument: activeDocumentLanguage,
       languageServerRuntimeStatus,
@@ -553,7 +570,10 @@ export function useWorkbenchCommandRegistry(
       openTypeHierarchy,
       openReferencesPanel,
       openFileReferencesPanel,
-    }).forEach((command) => registry.register(command));
+      }),
+      isNavigationCommandScopeCurrent,
+      navigationCommandScope,
+    ).forEach((command) => registry.register(command));
 
     workbenchProblemNavigationCommands({
       shortcut,
@@ -646,6 +666,7 @@ export function useWorkbenchCommandRegistry(
     return registry;
   }, [
     activeDocument,
+    captureNavigationCommandScope,
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
@@ -709,6 +730,7 @@ export function useWorkbenchCommandRegistry(
     openTypeHierarchy,
     openSettingsPanel,
     openWorkspaceSymbols,
+    isNavigationCommandScopeCurrent,
     openSearchEverywhere,
     editorMenuCommandRunner,
     editorSurfaceCommandRunner,
@@ -768,4 +790,53 @@ export function useWorkbenchCommandRegistry(
     phpTools,
     workspaceTrust,
   ]);
+}
+
+const scopedNavigationCommandIds = new Set([
+  "editor.goToDefinition",
+  "editor.goToSourceDefinition",
+  "editor.goToDeclaration",
+  "editor.goToTypeDefinition",
+  "editor.goToImplementation",
+  "editor.goToSuperMethod",
+  "editor.findReferences",
+  "editor.findFileReferences",
+  "editor.showCallHierarchy",
+  "editor.showTypeHierarchy",
+  "navigation.back",
+  "navigation.forward",
+]);
+
+export function scopedNavigationCommands(
+  commands: readonly Command[],
+  isScopeCurrent: (scope: EditorSurfaceCommandInvocationScope) => boolean,
+  defaultScope?: EditorSurfaceCommandInvocationScope,
+): Command[] {
+  return commands.map((command) => {
+    if (!scopedNavigationCommandIds.has(command.id)) {
+      return command;
+    }
+
+    return {
+      ...command,
+      isEnabled: (context) => {
+        const scope = context.editorSurfaceScope ?? defaultScope;
+
+        if (!scope || !isScopeCurrent(scope)) {
+          return false;
+        }
+
+        return command.isEnabled(context);
+      },
+      run: (context) => {
+        const scope = context?.editorSurfaceScope ?? defaultScope;
+
+        if (!scope || !isScopeCurrent(scope)) {
+          return;
+        }
+
+        return command.run(context);
+      },
+    };
+  });
 }

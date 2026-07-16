@@ -35,8 +35,11 @@ import type {
 } from "../domain/editorMenuCommand";
 import type {
   EditorSurfaceCommandId,
+  EditorSurfaceCommandInvocationScope,
   EditorSurfaceCommandRunner,
 } from "../domain/editorSurfaceCommand";
+import { editorSurfaceCommandInvocationScopesEqual } from "../domain/editorSurfaceCommand";
+import { createWorkspaceEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import {
   applicableEslintFixes,
   type EslintFix,
@@ -63,7 +66,9 @@ import {
   type BackgroundTokenizableModel,
 } from "../domain/backgroundTokenizer";
 import {
+  defaultShortcutForCommand,
   detectKeymapPlatform,
+  keymapCommandIdForShortcut,
   parseShortcut,
   shortcutForCommand,
   type KeymapCommandId,
@@ -224,6 +229,10 @@ function shouldTriggerLatteMemberSuggest(
   );
 }
 
+type IncompleteWorkspaceIdentityDescriptor =
+  | { canonicalRoot?: string; workspaceId?: undefined }
+  | { canonicalRoot?: undefined; workspaceId?: string };
+
 export interface EditorSurfaceProps {
   activeDocument: EditorDocument | null;
   activeDocumentContentReady?: boolean;
@@ -297,7 +306,10 @@ export interface EditorSurfaceProps {
   phpLanguageServerWorkspaceEditGateway?: LanguageServerWorkspaceEditGateway;
   userSnippets?: readonly UserSnippet[];
   workspaceRoot?: string | null;
-  workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
+  workspaceIdentityDescriptor?:
+    | WorkspaceIdentityDescriptor
+    | IncompleteWorkspaceIdentityDescriptor
+    | null;
   onCloseActiveTab(): void;
   onCursorPositionChange(position: EditorPosition): void;
   onEditorViewStateChange?(
@@ -549,6 +561,38 @@ function EditorSurfaceComponent({
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] =
     useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const surfaceIdentityRef = useRef<object>({});
+  const completeWorkspaceIdentityDescriptor =
+    resolveCompleteWorkspaceIdentityDescriptor(workspaceIdentityDescriptor);
+  const editorSessionOwnerKey = useMemo(() => {
+    if (!workspaceRoot) {
+      return null;
+    }
+
+    return createWorkspaceEditorSessionOwnerKey(
+      workspaceRoot,
+      workspaceIdentityDescriptor,
+    );
+  }, [workspaceIdentityDescriptor, workspaceRoot]);
+  const captureEditorSurfaceScope = useCallback(
+    (): EditorSurfaceCommandInvocationScope | null => {
+      const model = editorApi?.getModel();
+
+      if (
+        !activeDocument ||
+        !model ||
+        !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+      ) {
+        return null;
+      }
+
+      return {
+        documentPath: activeDocument.path,
+        modelIdentity: model,
+        ownerKey: editorSessionOwnerKey,
+        surfaceIdentity: surfaceIdentityRef.current,
+      };
+    }, [activeDocument, editorApi, editorSessionOwnerKey, workspaceRoot]);
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
   const activeDocumentRef = useRef(activeDocument);
@@ -576,6 +620,7 @@ function EditorSurfaceComponent({
     activeDocumentDirty: Boolean(
       activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
     ),
+    editorSurfaceScope: captureEditorSurfaceScope() ?? undefined,
   };
   commandExecutionRunnerRef.current = runCommand
     ? (commandId) => runCommand(commandId, surfaceCommandContext)
@@ -1041,45 +1086,29 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const targetPath = activeDocument.path;
-    const runner: EditorSurfaceCommandRunner = (commandId) => {
-      const model = editorApi.getModel();
-
-      if (!model || !modelMatchesProject(model, workspaceRoot, targetPath)) {
-        return;
-      }
-
-      editorApi.focus();
-
-      if (commandId === "editor.nextChange") {
-        jumpToChangeHunk(editorApi, changeHunksRef.current, "next");
-        return;
-      }
-
-      if (commandId === "editor.previousChange") {
-        jumpToChangeHunk(editorApi, changeHunksRef.current, "previous");
-        return;
-      }
-
-      triggerEditorSurfaceCommand(editorApi, commandId);
-    };
-    runner.isEnabled = (commandId) => {
-      if (
-        commandId === "editor.nextChange" ||
-        commandId === "editor.previousChange"
-      ) {
-        return changeHunksRef.current.length > 0;
-      }
-
-      return true;
+    const publishRunner = () => {
+      onEditorSurfaceCommandRunnerChange(
+        createEditorSurfaceCommandRunner({
+          captureScope: captureEditorSurfaceScope,
+          changeHunksRef,
+          editor: editorApi,
+        }),
+      );
     };
 
-    onEditorSurfaceCommandRunnerChange(runner);
+    publishRunner();
+    const modelChangeDisposable = editorApi.onDidChangeModel(publishRunner);
 
     return () => {
+      modelChangeDisposable.dispose();
       onEditorSurfaceCommandRunnerChange(null);
     };
-  }, [activeDocument?.path, editorApi, onEditorSurfaceCommandRunnerChange, workspaceRoot]);
+  }, [
+    activeDocument?.path,
+    captureEditorSurfaceScope,
+    editorApi,
+    onEditorSurfaceCommandRunnerChange,
+  ]);
 
   useEffect(() => {
     if (!onEditorSurfaceBufferFixRunnerChange) {
@@ -1365,7 +1394,7 @@ function EditorSurfaceComponent({
       monacoApi,
       refreshGateway: languageServerRefreshGateway,
       workspaceEditGateway: phpLanguageServerWorkspaceEditGateway,
-      workspaceIdentityDescriptor,
+      workspaceIdentityDescriptor: completeWorkspaceIdentityDescriptor,
       workspaceRoot,
     },
     routing: {
@@ -1380,7 +1409,8 @@ function EditorSurfaceComponent({
         getActiveDocument: () => activeDocumentRef.current,
         getRuntimeStatus: () => javaScriptTypeScriptRuntimeStatusRef.current,
         getUserSnippets: () => userSnippetsRef.current,
-        getWorkspaceIdentityDescriptor: () => workspaceIdentityDescriptor,
+        getWorkspaceIdentityDescriptor: () =>
+          completeWorkspaceIdentityDescriptor,
         getWorkspaceRoot: () => workspaceRoot,
         limitNavigationResultsToOpenModels: true,
         refreshGateway: javaScriptTypeScriptLanguageServerRefreshGateway,
@@ -1421,7 +1451,7 @@ function EditorSurfaceComponent({
         ),
       validationEnabled: javaScriptTypeScriptValidationEnabled,
     },
-    workspaceIdentityDescriptor,
+    workspaceIdentityDescriptor: completeWorkspaceIdentityDescriptor,
     workspaceRoot,
   };
   resolveDocumentForModelRef.current =
@@ -1463,7 +1493,7 @@ function EditorSurfaceComponent({
     runtime,
     runtimeMembership?.resolveDocumentForModel,
     runtimeMembership?.retainPaths,
-    workspaceIdentityDescriptor,
+    completeWorkspaceIdentityDescriptor,
     workspaceRoot,
   ]);
 
@@ -1978,8 +2008,35 @@ function EditorSurfaceComponent({
         monacoApi,
         shortcutForCommand(keymap, commandId, keymapPlatform),
         keymapPlatform,
-      );
+      ).filter((binding) => binding !== monacoApi.KeyCode.F12);
+    const configuredF12CommandId = keymapCommandIdForShortcut(
+      keymap,
+      "F12",
+      keymapPlatform,
+    );
+    const definitionUsesDefaultShortcut =
+      shortcutForCommand(
+        keymap,
+        "editor.goToDefinition",
+        keymapPlatform,
+      ) ===
+      defaultShortcutForCommand("editor.goToDefinition", keymapPlatform);
+    const f12CommandId =
+      configuredF12CommandId ??
+      (definitionUsesDefaultShortcut ? "editor.goToDefinition" : null);
     const disposables = [
+      editorApi.addAction({
+        id: "mockor.dispatchF12",
+        label: "Dispatch F12",
+        keybindings: [monacoApi.KeyCode.F12],
+        run: () => {
+          if (!f12CommandId) {
+            return;
+          }
+
+          requestRegisteredCommand(commandExecutionRunnerRef, f12CommandId);
+        },
+      }),
       editorApi.addAction({
         id: "mockor.goToDefinition",
         label: "Go to Definition",
@@ -4933,6 +4990,70 @@ function triggerEditorSurfaceCommand(
   editor.trigger("keyboard", actionId, {});
 }
 
+function createEditorSurfaceCommandRunner({
+  captureScope,
+  changeHunksRef,
+  editor,
+}: {
+  captureScope(): EditorSurfaceCommandInvocationScope | null;
+  changeHunksRef: MutableRefObject<EditorChangeHunk[]>;
+  editor: Monaco.editor.IStandaloneCodeEditor;
+}): EditorSurfaceCommandRunner {
+  const runner: EditorSurfaceCommandRunner = (commandId, scope) => {
+    if (scope && !runner.isScopeCurrent?.(scope)) {
+      return;
+    }
+
+    if (!captureScope()) {
+      return;
+    }
+
+    editor.focus();
+
+    if (commandId === "editor.nextChange") {
+      jumpToChangeHunk(editor, changeHunksRef.current, "next");
+      return;
+    }
+
+    if (commandId === "editor.previousChange") {
+      jumpToChangeHunk(editor, changeHunksRef.current, "previous");
+      return;
+    }
+
+    triggerEditorSurfaceCommand(editor, commandId);
+  };
+  runner.captureScope = captureScope;
+  runner.isScopeCurrent = (scope) => {
+    const currentScope = captureScope();
+
+    if (!currentScope) {
+      return false;
+    }
+
+    return editorSurfaceCommandInvocationScopesEqual(scope, currentScope);
+  };
+  runner.isEnabled = (commandId, scope) => {
+    if (scope && !runner.isScopeCurrent?.(scope)) {
+      return false;
+    }
+
+    if (!captureScope()) {
+      return false;
+    }
+
+    if (
+      commandId === "editor.nextChange" ||
+      commandId === "editor.previousChange"
+    ) {
+      return changeHunksRef.current.length > 0;
+    }
+
+    return true;
+  };
+
+  return runner;
+}
+
 function runRegisteredCommand(
   runnerRef: MutableRefObject<CommandExecutionRunner | undefined>,
   commandId: string,
@@ -4950,6 +5071,23 @@ function runRegisteredCommand(
   }
 
   fallback();
+}
+
+function resolveCompleteWorkspaceIdentityDescriptor(
+  descriptor:
+    | WorkspaceIdentityDescriptor
+    | IncompleteWorkspaceIdentityDescriptor
+    | null,
+): WorkspaceIdentityDescriptor | null {
+  if (typeof descriptor?.workspaceId !== "string") {
+    return null;
+  }
+
+  if (typeof descriptor.canonicalRoot !== "string") {
+    return null;
+  }
+
+  return descriptor;
 }
 
 function requestRegisteredCommand(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createEditorSessionOwnerKey,
   createLegacyEditorSessionOwnerKey,
+  createWorkspaceEditorSessionOwnerKey,
 } from "./editorSessionOwnerKey";
 
 describe("editorSessionOwnerKey", () => {
@@ -17,5 +18,16 @@ describe("editorSessionOwnerKey", () => {
   it("preserves normalized root ownership for legacy sessions", () => {
     expect(createLegacyEditorSessionOwnerKey("/project/"))
       .toBe(createLegacyEditorSessionOwnerKey("/project"));
+  });
+
+  it("falls back to legacy ownership for partial workspace descriptors", () => {
+    expect(createWorkspaceEditorSessionOwnerKey("/project", {})).toBe(
+      createLegacyEditorSessionOwnerKey("/project"),
+    );
+    expect(
+      createWorkspaceEditorSessionOwnerKey("/project", {
+        canonicalRoot: "/canonical/project",
+      }),
+    ).toBe(createLegacyEditorSessionOwnerKey("/project"));
   });
 });

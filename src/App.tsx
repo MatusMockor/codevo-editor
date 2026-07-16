@@ -692,6 +692,9 @@ function App() {
   const openWorkspace = useCallback(() => {
     void workbench.runCommand("workspace.open");
   }, [workbench.runCommand]);
+  const showCommands = useCallback(() => {
+    void workbench.runCommand("commands.show");
+  }, [workbench.runCommand]);
   const openSettings = useCallback(() => {
     void workbench.runCommand("workbench.openSettings");
   }, [workbench.runCommand]);
@@ -1223,7 +1226,7 @@ function App() {
           <FolderOpen aria-hidden="true" size={20} />
         </button>
         <button
-          onClick={() => workbench.setPaletteOpen(true)}
+          onClick={showCommands}
           title="Commands"
           type="button"
         >

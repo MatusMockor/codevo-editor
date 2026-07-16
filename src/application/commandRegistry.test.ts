@@ -130,6 +130,31 @@ describe("CommandRegistry", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("passes the same invocation context to enablement and execution", () => {
+    const registry = new CommandRegistry();
+    const seenContexts: CommandContext[] = [];
+    registry.register({
+      id: "editor.goToDefinition",
+      title: "Go to Definition",
+      category: "Editor",
+      isEnabled: (currentContext) => {
+        seenContexts.push(currentContext);
+        return true;
+      },
+      run: (currentContext) => {
+        if (currentContext) {
+          seenContexts.push(currentContext);
+        }
+      },
+    });
+
+    expect(executeCommand(registry, "editor.goToDefinition", context)).toBe(
+      "executed",
+    );
+    expect(seenContexts).toEqual([context, context]);
+    expect(seenContexts[0]).toBe(seenContexts[1]);
+  });
+
   it("starts asynchronous commands without waiting for completion", () => {
     const registry = new CommandRegistry();
     let resolveRun: (() => void) | undefined;

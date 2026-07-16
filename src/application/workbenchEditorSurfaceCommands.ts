@@ -55,12 +55,29 @@ export function workbenchEditorSurfaceCommands({
       title,
       category: "Editor",
       shortcut: shortcut(id),
-      isEnabled: (context: CommandContext) =>
-        context.hasActiveDocument &&
-        Boolean(editorSurfaceCommandRunner) &&
-        (editorSurfaceCommandRunner?.isEnabled?.(id) ?? true),
-      run: () => {
-        editorSurfaceCommandRunner?.(id);
+      isEnabled: (context: CommandContext) => {
+        if (!context.hasActiveDocument || !editorSurfaceCommandRunner) {
+          return false;
+        }
+
+        if (!context.editorSurfaceScope) {
+          return editorSurfaceCommandRunner.isEnabled?.(id) ?? true;
+        }
+
+        return (
+          editorSurfaceCommandRunner.isEnabled?.(
+            id,
+            context.editorSurfaceScope,
+          ) ?? true
+        );
+      },
+      run: (context?: CommandContext) => {
+        if (!context?.editorSurfaceScope) {
+          editorSurfaceCommandRunner?.(id);
+          return;
+        }
+
+        editorSurfaceCommandRunner?.(id, context.editorSurfaceScope);
       },
     })),
   ];

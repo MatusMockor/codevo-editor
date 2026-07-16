@@ -773,6 +773,26 @@ export function shortcutForCommand(
   return keymap[commandId] ?? defaultKeymapSettings(platform)[commandId];
 }
 
+export function keymapCommandIdForShortcut(
+  keymap: KeymapSettings,
+  shortcut: string,
+  platform: KeymapPlatform = detectKeymapPlatform(),
+): KeymapCommandId | null {
+  const normalizedShortcut = normalizeShortcutInput(shortcut);
+
+  for (const command of keymapCommands) {
+    if (
+      normalizeShortcutInput(
+        shortcutForCommand(keymap, command.id, platform),
+      ) === normalizedShortcut
+    ) {
+      return command.id;
+    }
+  }
+
+  return null;
+}
+
 export interface KeymapConflict {
   id: KeymapCommandId;
   label: string;

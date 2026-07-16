@@ -173,7 +173,10 @@ import { useJavaScriptTypeScriptFileStructure } from "./useJavaScriptTypeScriptF
 import {
   synthesizePhpTypedReceiverSource,
 } from "./phpTypedReceiverSource";
-import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
+import type {
+  EditorSurfaceCommandInvocationScope,
+  EditorSurfaceCommandRunner,
+} from "../domain/editorSurfaceCommand";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type {
   WorkspaceIdentityDescriptor,
@@ -6600,15 +6603,54 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
+  const navigationSurfaceIdentity = useMemo(
+    () => ({}),
+    [activeGroupId, activePath, editorSessionOwnerKey],
+  );
+  const captureNavigationCommandScope = useCallback(
+    (): EditorSurfaceCommandInvocationScope =>
+      options.editorSurfaceCommandRunner?.captureScope?.() ?? {
+        documentPath: activeDocumentRef.current?.path ?? null,
+        modelIdentity: null,
+        ownerKey: currentEditorSessionOwnerKeyRef.current,
+        surfaceIdentity: navigationSurfaceIdentity,
+      },
+    [navigationSurfaceIdentity, options.editorSurfaceCommandRunner],
+  );
+  const isNavigationCommandScopeCurrent = useCallback(
+    (scope: EditorSurfaceCommandInvocationScope): boolean => {
+      if (scope.ownerKey !== currentEditorSessionOwnerKeyRef.current) {
+        return false;
+      }
+
+      if (scope.documentPath !== (activeDocumentRef.current?.path ?? null)) {
+        return false;
+      }
+
+      if (!scope.modelIdentity) {
+        return scope.surfaceIdentity === navigationSurfaceIdentity;
+      }
+
+      return options.editorSurfaceCommandRunner?.isScopeCurrent?.(scope) === true;
+    },
+    [navigationSurfaceIdentity, options.editorSurfaceCommandRunner],
+  );
   const commandContext = useMemo(
-    () => ({
-      hasWorkspace: Boolean(workspaceRoot),
-      hasActiveDocument: Boolean(activeDocument),
-      activeDocumentDirty: Boolean(
-        activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
-      ),
-    }),
-    [activeDocument, workspaceRoot],
+    () => {
+      return {
+        hasWorkspace: Boolean(workspaceRoot),
+        hasActiveDocument: Boolean(activeDocument),
+        activeDocumentDirty: Boolean(
+          activeDocument && !activeDocument.readOnly && isDirty(activeDocument),
+        ),
+        editorSurfaceScope: captureNavigationCommandScope(),
+      };
+    },
+    [
+      activeDocument,
+      captureNavigationCommandScope,
+      workspaceRoot,
+    ],
   );
   const commandContextRef = useRef(commandContext);
   commandContextRef.current = commandContext;
@@ -8770,6 +8812,7 @@ export function useWorkbenchController(
 
   const commandRegistry = useWorkbenchCommandRegistry({
     activeDocument,
+    captureNavigationCommandScope,
     activeEslintBufferClean,
     activeEslintFixes,
     activeImage,
@@ -8821,6 +8864,7 @@ export function useWorkbenchController(
     intelligenceMode,
     isActiveDocumentPhpTest,
     isLanguageServerActiveForWorkspace,
+    isNavigationCommandScopeCurrent,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     languageServerPlan,

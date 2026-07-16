@@ -515,17 +515,90 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
-  it("routes default F12 through the injected command runner when missing", () => {
-    const runCommand = vi.fn(() => "missing" as const);
-    const harness = renderHook({ runCommand });
+  it("honors a user rebind of F12 to another command", () => {
+    const definition = vi.fn();
+    const rebound = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.goToDefinition",
+      isEnabled: () => true,
+      run: definition,
+      title: "Go to Definition",
+    });
+    registry.register({
+      category: "Workbench",
+      id: "workbench.openSettings",
+      isEnabled: () => true,
+      run: rebound,
+      title: "Settings",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: {
+          ...appSettings.keymap,
+          "workbench.openSettings": "F12",
+        },
+      },
+      commandRegistry: registry,
+    });
 
     const event = dispatchKeyboardEvent({ key: "F12" });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(runCommand).toHaveBeenCalledWith(
-      "editor.goToDefinition",
-      commandContext,
-    );
+    expect(rebound).toHaveBeenCalledTimes(1);
+    expect(definition).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("keeps dispatcher conflict precedence when commands share F12", () => {
+    const definition = vi.fn();
+    const save = vi.fn();
+    const settings = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.goToDefinition",
+      isEnabled: () => true,
+      run: definition,
+      title: "Go to Definition",
+    });
+    registry.register({
+      category: "Editor",
+      id: "editor.save",
+      isEnabled: () => true,
+      run: save,
+      title: "Save File",
+    });
+    registry.register({
+      category: "Workbench",
+      id: "workbench.openSettings",
+      isEnabled: () => true,
+      run: settings,
+      title: "Settings",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: {
+          ...appSettings.keymap,
+          "editor.save": "F12",
+          "workbench.openSettings": "F12",
+        },
+      },
+      commandRegistry: registry,
+    });
+
+    const event = dispatchKeyboardEvent({ key: "F12" });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(settings).not.toHaveBeenCalled();
+    expect(definition).not.toHaveBeenCalled();
 
     harness.unmount();
   });

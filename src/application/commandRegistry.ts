@@ -1,7 +1,10 @@
+import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfaceCommand";
+
 export interface CommandContext {
   hasWorkspace: boolean;
   hasActiveDocument: boolean;
   activeDocumentDirty: boolean;
+  editorSurfaceScope?: EditorSurfaceCommandInvocationScope;
 }
 
 export interface Command {
@@ -10,7 +13,7 @@ export interface Command {
   category: string;
   shortcut?: string;
   isEnabled(context: CommandContext): boolean;
-  run(): void | Promise<void>;
+  run(context?: CommandContext): void | Promise<void>;
 }
 
 export type CommandExecutionOutcome = "missing" | "disabled" | "executed";
@@ -76,7 +79,7 @@ export function executeCommand(
     return "disabled";
   }
 
-  void command.run();
+  void command.run(context);
   return "executed";
 }
 
@@ -113,7 +116,7 @@ export function executeCommandAndReport(
   }
 
   try {
-    void Promise.resolve(command.run()).catch(reportSafely);
+    void Promise.resolve(command.run(context)).catch(reportSafely);
   } catch (error) {
     reportSafely(error);
   }
@@ -129,6 +132,6 @@ export async function executeCommandAndWait(
     return "disabled";
   }
 
-  await command.run();
+  await command.run(context);
   return "executed";
 }

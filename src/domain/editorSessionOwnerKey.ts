@@ -27,6 +27,28 @@ export function createLegacyEditorSessionOwnerKey(
   return normalizedWorkspaceRootKey(rootPath) as EditorSessionOwnerKey;
 }
 
+export function createWorkspaceEditorSessionOwnerKey(
+  rootPath: string,
+  descriptor?: {
+    canonicalRoot?: string;
+    workspaceId?: string;
+  } | null,
+): EditorSessionOwnerKey {
+  if (
+    typeof descriptor?.workspaceId === "string" &&
+    descriptor.workspaceId.trim() &&
+    typeof descriptor.canonicalRoot === "string" &&
+    descriptor.canonicalRoot.trim()
+  ) {
+    return createEditorSessionOwnerKey(
+      descriptor.workspaceId,
+      descriptor.canonicalRoot,
+    );
+  }
+
+  return createLegacyEditorSessionOwnerKey(rootPath);
+}
+
 function requireValue(value: string, name: string): void {
   if (value.trim()) {
     return;
