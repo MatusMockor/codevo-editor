@@ -324,6 +324,11 @@ import {
   type WorkspaceRuntimeOwner,
 } from "../domain/workspaceRuntimeOwner";
 import {
+  createEditorSessionOwnerKey,
+  createLegacyEditorSessionOwnerKey,
+  type EditorSessionOwnerKey,
+} from "../domain/editorSessionOwnerKey";
+import {
   type WorkspaceFileChangeGateway,
   type WorkspaceFileChangeUnsubscribeFn,
 } from "../domain/workspaceFileChange";
@@ -691,6 +696,22 @@ export function useWorkbenchController(
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [workspaceIdentityDescriptor, setWorkspaceIdentityDescriptor] =
     useState<WorkspaceIdentityDescriptor | null>(null);
+  const editorSessionOwnerKey = useMemo(
+    () =>
+      workspaceRoot
+        ? workspaceIdentityDescriptor
+          ? createEditorSessionOwnerKey(
+              workspaceIdentityDescriptor.workspaceId,
+              workspaceIdentityDescriptor.canonicalRoot,
+            )
+          : createLegacyEditorSessionOwnerKey(workspaceRoot)
+        : null,
+    [workspaceIdentityDescriptor, workspaceRoot],
+  );
+  const currentEditorSessionOwnerKeyRef = useRef<EditorSessionOwnerKey | null>(
+    editorSessionOwnerKey,
+  );
+  currentEditorSessionOwnerKeyRef.current = editorSessionOwnerKey;
   const workspaceRuntimeOwner = useMemo(
     () =>
       workspaceRoot && workspaceIdentityDescriptor
@@ -1131,6 +1152,14 @@ export function useWorkbenchController(
     ReturnType<typeof setTimeout>[]
   >([]);
   const currentWorkspaceRootRef = useRef<string | null>(null);
+  const editorSessionOwnerKeyForRoot = useCallback(
+    (rootPath: string): EditorSessionOwnerKey =>
+      workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
+      currentEditorSessionOwnerKeyRef.current
+        ? currentEditorSessionOwnerKeyRef.current
+        : createLegacyEditorSessionOwnerKey(rootPath),
+    [],
+  );
   const resetIndexedWorkspaceViewsRef = useRef<() => void>(() => {});
   const resetIndexedWorkspaceViews = useCallback(() => {
     resetIndexedWorkspaceViewsRef.current();
@@ -2098,7 +2127,9 @@ export function useWorkbenchController(
         editorSurface.editorGroups,
         sidebarView,
         bottomPanelView,
-        workspaceEditorViewStatesRef.current[rootPath] ?? {},
+        workspaceEditorViewStatesRef.current[
+          editorSessionOwnerKeyForRoot(rootPath)
+        ] ?? {},
         new Set(Object.keys(editorSurface.documents)),
       );
 
@@ -2113,6 +2144,7 @@ export function useWorkbenchController(
     },
     [
       bottomPanelView,
+      editorSessionOwnerKeyForRoot,
       persistWorkspaceSettings,
       sidebarView,
       snapshotEditorSurface,
@@ -2998,6 +3030,7 @@ export function useWorkbenchController(
 
     workspaceSessionRestoredRef.current = false;
     workspaceEditorViewStatesRef.current = {};
+    currentEditorSessionOwnerKeyRef.current = null;
     currentWorkspaceRootRef.current = null;
     clearWorkspaceStateCache();
     workspaceIdentityByRootRef.current = {};
@@ -3322,7 +3355,9 @@ export function useWorkbenchController(
         ) {
           return;
         }
-        workspaceEditorViewStatesRef.current[rootPath] = session.viewStates ?? {};
+        workspaceEditorViewStatesRef.current[
+          editorSessionOwnerKeyForRoot(rootPath)
+        ] = session.viewStates ?? {};
         setSidebarView(session.sidebarView);
         setBottomPanelView(restoredBottomPanelView(session.bottomPanelView));
         return;
@@ -3356,7 +3391,9 @@ export function useWorkbenchController(
       if (openFileRequestTokenRef.current !== openFileRequestToken) {
         return;
       }
-      workspaceEditorViewStatesRef.current[rootPath] = restored.viewStates;
+      workspaceEditorViewStatesRef.current[
+        editorSessionOwnerKeyForRoot(rootPath)
+      ] = restored.viewStates;
       setDocuments(restored.documents);
       updateEditorGroups(() => restored.editor);
       setSidebarView(session.sidebarView);
@@ -3389,7 +3426,12 @@ export function useWorkbenchController(
         ...current,
       ]);
     },
-    [updateEditorGroups, updateLocalPhpDiagnostics, workspaceFiles],
+    [
+      editorSessionOwnerKeyForRoot,
+      updateEditorGroups,
+      updateLocalPhpDiagnostics,
+      workspaceFiles,
+    ],
   );
 
   const runWithIssuedWriteDrainRef =
@@ -3428,14 +3470,29 @@ export function useWorkbenchController(
       const previousWorkspaceIdentity = previousRootPath
         ? workspaceIdentityByRootRef.current[previousRootPath] ?? null
         : null;
+      const previousEditorSessionOwnerKey = previousRootPath
+        ? previousWorkspaceIdentity
+          ? createEditorSessionOwnerKey(
+              previousWorkspaceIdentity.workspaceId,
+              previousWorkspaceIdentity.canonicalRoot,
+            )
+          : createLegacyEditorSessionOwnerKey(previousRootPath)
+        : null;
+      const nextEditorSessionOwnerKey = identityDescriptor
+        ? createEditorSessionOwnerKey(
+            identityDescriptor.workspaceId,
+            identityDescriptor.canonicalRoot,
+          )
+        : createLegacyEditorSessionOwnerKey(path);
+      const replacingOwnerAtSameRoot = Boolean(
+        previousRootPath &&
+          workspaceRootKeysEqual(previousRootPath, path) &&
+          previousEditorSessionOwnerKey !== nextEditorSessionOwnerKey,
+      );
       const switchingWorkspace =
         previousRootPath &&
         (!workspaceRootKeysEqual(previousRootPath, path) ||
-          Boolean(
-            identityDescriptor &&
-              previousWorkspaceIdentity?.workspaceId !==
-              identityDescriptor.workspaceId,
-          ));
+          previousEditorSessionOwnerKey !== nextEditorSessionOwnerKey);
 
       let cachedWorkspaceState =
         identityDescriptor && switchingWorkspace
@@ -3542,7 +3599,10 @@ export function useWorkbenchController(
             if (capturedLegacyState) {
               forgetCachedWorkspaceState(path, identityDescriptor);
               workspaceStateCacheRef.current[
-                workspaceIdentityStateCacheKey(identityDescriptor.workspaceId)
+                workspaceIdentityStateCacheKey(
+                  identityDescriptor.workspaceId,
+                  identityDescriptor.canonicalRoot,
+                )
               ] = capturedLegacyState;
             }
           }
@@ -3835,6 +3895,12 @@ export function useWorkbenchController(
         workspaceRuntimeOwnerByTabRef.current[path] = admittedRuntimeOwner;
       }
       currentWorkspaceRootRef.current = path;
+      currentEditorSessionOwnerKeyRef.current = identityDescriptor
+        ? createEditorSessionOwnerKey(
+            identityDescriptor.workspaceId,
+            identityDescriptor.canonicalRoot,
+          )
+        : createLegacyEditorSessionOwnerKey(path);
       lastLanguageServerCrashRef.current = null;
       restoreLanguageServerDiagnosticsForRoot(path, explicitRuntimeOwner);
       restoreJavaScriptTypeScriptDiagnosticsForRoot(path, explicitRuntimeOwner);
@@ -4108,7 +4174,9 @@ export function useWorkbenchController(
 
         await restoreWorkspaceSession(
           path,
-          workspaceSettings.session,
+          replacingOwnerAtSameRoot
+            ? { ...workspaceSettings.session, viewStates: {} }
+            : workspaceSettings.session,
           isCurrentOpenWorkspaceOwnerRequest,
         );
 
@@ -5577,7 +5645,12 @@ export function useWorkbenchController(
 
       recentlyClosedTabsRef.current = clearRecentlyClosedTabs(
         recentlyClosedTabsRef.current,
-        resolvedTabPath,
+        identityDescriptor
+          ? createEditorSessionOwnerKey(
+              identityDescriptor.workspaceId,
+              identityDescriptor.canonicalRoot,
+            )
+          : createLegacyEditorSessionOwnerKey(resolvedTabPath),
       );
     },
     [closeWorkspaceTabWithLifecycle, workspaceSettingsByRoot],
@@ -5585,10 +5658,10 @@ export function useWorkbenchController(
 
   const recentlyClosedDocumentViewState = useCallback(
     (rootPath: string, path: string) =>
-      workspaceEditorViewStatesRef.current[rootPath]?.[
-        editorGroupsRef.current.activeGroupId
-      ]?.[path],
-    [],
+      workspaceEditorViewStatesRef.current[
+        editorSessionOwnerKeyForRoot(rootPath)
+      ]?.[editorGroupsRef.current.activeGroupId]?.[path],
+    [editorSessionOwnerKeyForRoot],
   );
 
   const onRecentlyClosedTabsChange = useCallback(() => {
@@ -5620,17 +5693,18 @@ export function useWorkbenchController(
         return;
       }
 
-      const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
+      const ownerKey = editorSessionOwnerKeyForRoot(rootPath);
+      const current = workspaceEditorViewStatesRef.current[ownerKey] ?? {};
       const groupId = editorGroupsRef.current.activeGroupId;
       current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
-      workspaceEditorViewStatesRef.current[rootPath] = current;
+      workspaceEditorViewStatesRef.current[ownerKey] = current;
       setRestoredEditorViewStateRevision((revision) => revision + 1);
       setEditorRevealTarget({
         path,
         position: { column: viewState.column, lineNumber: viewState.line },
       });
     },
-    [setEditorRevealTarget],
+    [editorSessionOwnerKeyForRoot, setEditorRevealTarget],
   );
 
   const {
@@ -5646,6 +5720,7 @@ export function useWorkbenchController(
     canReopenClosedDocument,
   } = useDocumentLifecycle({
     workspaceRoot,
+    editorSessionOwnerKey,
     documentTabSession,
     activeDocument,
     documents,
@@ -5653,6 +5728,7 @@ export function useWorkbenchController(
     activePath,
     previewPath,
     workspaceSettings,
+    currentEditorSessionOwnerKeyRef,
     currentWorkspaceRootRef,
     workspaceRequestTokenRef: openWorkspaceRequestTokenRef,
     activeDocumentRef,
@@ -5930,12 +6006,13 @@ export function useWorkbenchController(
         return;
       }
 
-      const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
+      const ownerKey = editorSessionOwnerKeyForRoot(rootPath);
+      const current = workspaceEditorViewStatesRef.current[ownerKey] ?? {};
       const groupId = editorGroupsRef.current.activeGroupId;
       current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
-      workspaceEditorViewStatesRef.current[rootPath] = current;
+      workspaceEditorViewStatesRef.current[ownerKey] = current;
     },
-    [],
+    [editorSessionOwnerKeyForRoot],
   );
 
   const updateEditorGroupViewState = useCallback(
@@ -5948,11 +6025,12 @@ export function useWorkbenchController(
       if (!rootPath || !isSessionPathInWorkspace(rootPath, path)) {
         return;
       }
-      const current = workspaceEditorViewStatesRef.current[rootPath] ?? {};
+      const ownerKey = editorSessionOwnerKeyForRoot(rootPath);
+      const current = workspaceEditorViewStatesRef.current[ownerKey] ?? {};
       current[groupId] = { ...(current[groupId] ?? {}), [path]: viewState };
-      workspaceEditorViewStatesRef.current[rootPath] = current;
+      workspaceEditorViewStatesRef.current[ownerKey] = current;
     },
-    [],
+    [editorSessionOwnerKeyForRoot],
   );
 
   const setStatusBarItemVisibility = useCallback(
@@ -8975,7 +9053,9 @@ export function useWorkbenchController(
       editorGroups,
       sidebarView,
       bottomPanelView,
-      workspaceEditorViewStatesRef.current[workspaceRoot] ?? {},
+      workspaceEditorViewStatesRef.current[
+        editorSessionOwnerKeyForRoot(workspaceRoot)
+      ] ?? {},
       new Set(Object.keys(documents)),
     );
 
@@ -8993,6 +9073,7 @@ export function useWorkbenchController(
     );
   }, [
     bottomPanelView,
+    editorSessionOwnerKeyForRoot,
     documents,
     editorGroups,
     persistWorkspaceSettings,
@@ -9968,10 +10049,14 @@ export function useWorkbenchController(
       : "legacyCompatibility",
     workspaceRoot,
     restoredEditorViewStates: workspaceRoot
-      ? workspaceEditorViewStatesRef.current[workspaceRoot]?.[activeGroupId] ?? {}
+      ? workspaceEditorViewStatesRef.current[
+          editorSessionOwnerKeyForRoot(workspaceRoot)
+        ]?.[activeGroupId] ?? {}
       : {},
     restoredEditorViewStatesByGroup: workspaceRoot
-      ? workspaceEditorViewStatesRef.current[workspaceRoot] ?? {}
+      ? workspaceEditorViewStatesRef.current[
+          editorSessionOwnerKeyForRoot(workspaceRoot)
+        ] ?? {}
       : {},
     restoredEditorViewStateRevision,
     workspaceTabs: appSettings.workspaceTabs,

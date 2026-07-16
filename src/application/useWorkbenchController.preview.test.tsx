@@ -71023,6 +71023,94 @@ MissingClass::class;
     );
   });
 
+  it("preserves dirty documents and view state when canonical owners share a selected root and workspace ID", async () => {
+    const selectedRoot = "/selected/canonical-owner";
+    const path = `${selectedRoot}/src/Shared.php`;
+    const ownerA = {
+      ...trustedDescriptor("ws-canonical-owner", selectedRoot),
+      canonicalRoot: "/canonical/owner-a",
+    };
+    const ownerB = {
+      ...trustedDescriptor("ws-canonical-owner", selectedRoot),
+      canonicalRoot: "/canonical/owner-b",
+    };
+    const descriptors = [ownerA, ownerB, ownerA];
+    const { dependencies, getWorkbench } = renderController({
+      readTextFile: vi.fn(async () => "<?php\n// disk\n"),
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? ownerA),
+        unregister: vi.fn(async () => undefined),
+      },
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+      await getWorkbench().openPinnedFile(fileEntry(path, "Shared.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n// owner A dirty\n");
+      getWorkbench().updateEditorViewState(path, {
+        column: 7,
+        line: 4,
+        scrollTop: 140,
+      });
+    });
+    vi.mocked(dependencies.settingsGateway.saveWorkspaceSettings).mockClear();
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
+      {
+        canonicalKey: ownerA.canonicalRoot,
+        legacyRawKeys: [ownerA.canonicalRoot, selectedRoot],
+      },
+      expect.any(Object),
+    );
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(path, "Shared.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n// owner B dirty\n");
+      getWorkbench().updateEditorViewState(path, {
+        column: 3,
+        line: 9,
+        scrollTop: 320,
+      });
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+
+    expect(dependencies.settingsGateway.saveWorkspaceSettings).toHaveBeenCalledWith(
+      {
+        canonicalKey: ownerB.canonicalRoot,
+        legacyRawKeys: [ownerB.canonicalRoot, selectedRoot],
+      },
+      expect.any(Object),
+    );
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(ownerA);
+    expect(getWorkbench().activeDocument).toEqual(
+      expect.objectContaining({
+        content: "<?php\n// owner A dirty\n",
+        path,
+        savedContent: "<?php\n// disk\n",
+      }),
+    );
+    expect(getWorkbench().restoredEditorViewStates[path]).toEqual({
+      column: 7,
+      line: 4,
+      scrollTop: 140,
+    });
+  });
+
   it("resolves save ownership from an admitted remembered alias", () => {
     const descriptor = {
       ...trustedDescriptor("ws-save-alias", "/selected/workspace"),

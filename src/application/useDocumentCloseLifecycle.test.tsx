@@ -4,6 +4,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { GitChangedFile } from "../domain/git";
+import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import { emptyRecentlyClosedTabs } from "../domain/recentlyClosedTabs";
 import type { EditorDocument } from "../domain/workspace";
 import { nextActiveEditorPathAfterClose } from "../domain/workspace";
@@ -15,6 +16,7 @@ import {
 } from "./useDocumentCloseLifecycle";
 
 const ROOT = "/workspace";
+const OWNER_KEY = createEditorSessionOwnerKey("workspace", ROOT);
 
 function editorDocument(
   path: string,
@@ -88,6 +90,8 @@ function renderLifecycle(
   const currentWorkspaceRootRef = overrides.currentWorkspaceRootRef ?? {
     current: ROOT,
   };
+  const currentEditorSessionOwnerKeyRef =
+    overrides.currentEditorSessionOwnerKeyRef ?? { current: OWNER_KEY };
   const recentlyClosedTabsRef = overrides.recentlyClosedTabsRef ?? {
     current: emptyRecentlyClosedTabs(),
   };
@@ -137,10 +141,12 @@ function renderLifecycle(
 
   const dependencies: TestDependencies = {
     workspaceRoot: ROOT,
+    editorSessionOwnerKey: OWNER_KEY,
     activeDocument,
     activePath: activeDocument?.path ?? null,
     documentTabSession,
     currentWorkspaceRootRef,
+    currentEditorSessionOwnerKeyRef,
     activeDocumentRef,
     documentsRef,
     openPathsRef,
@@ -408,6 +414,43 @@ describe("useDocumentCloseLifecycle", () => {
       reopening = harness.lifecycle().reopenClosedDocument();
     });
     harness.dependencies.currentWorkspaceRootRef.current = "/other";
+    await act(async () => {
+      resolveOpen(true);
+      await reopening;
+    });
+
+    expect(
+      harness.dependencies.restoreRecentlyClosedDocumentViewState,
+    ).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops a pending reopen after same-root owner replacement", async () => {
+    let resolveOpen!: (opened: boolean) => void;
+    const openRecentlyClosedDocument = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+    const active = editorDocument(`${ROOT}/src/Reopen.php`);
+    const harness = renderLifecycle({
+      activeDocument: active,
+      activePath: active.path,
+      activeDocumentRef: { current: active },
+      documentsRef: { current: { [active.path]: active } },
+      openPathsRef: { current: [active.path] },
+      recentlyClosedDocumentViewState: () => ({ line: 12, column: 4 }),
+      openRecentlyClosedDocument,
+    });
+    act(() => harness.lifecycle().closeDocument(active.path));
+
+    let reopening!: Promise<void>;
+    act(() => {
+      reopening = harness.lifecycle().reopenClosedDocument();
+    });
+    harness.dependencies.currentEditorSessionOwnerKeyRef.current =
+      createEditorSessionOwnerKey("replacement", ROOT);
     await act(async () => {
       resolveOpen(true);
       await reopening;

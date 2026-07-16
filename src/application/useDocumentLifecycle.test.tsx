@@ -9,6 +9,7 @@ import {
   type DocumentLifecycleDependencies,
 } from "./useDocumentLifecycle";
 import type { GitChangedFile } from "../domain/git";
+import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { LocalHistoryGateway } from "../domain/localHistory";
 import { defaultWorkspaceSettings } from "../domain/settings";
 import {
@@ -24,6 +25,7 @@ import {
 import type { DocumentCloseSessionPort } from "./useDocumentCloseLifecycle";
 
 const ROOT = "/workspace";
+const OWNER_KEY = createEditorSessionOwnerKey("workspace", ROOT);
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -173,6 +175,8 @@ function renderLifecycle(
       ? overrides.activePath ?? null
       : activeDocument?.path ?? null;
   const rootRef: { current: string | null } = { current: ROOT };
+  const currentEditorSessionOwnerKeyRef =
+    overrides.currentEditorSessionOwnerKeyRef ?? { current: OWNER_KEY };
   const workspaceRequestTokenRef = { current: 1 };
   const activeDocumentRef: { current: EditorDocument | null } = {
     current: activeDocument,
@@ -359,6 +363,8 @@ function renderLifecycle(
     restoreRecentlyClosedDocumentViewState,
     onRecentlyClosedTabsChange: vi.fn(),
     ...overrides,
+    editorSessionOwnerKey: overrides.editorSessionOwnerKey ?? OWNER_KEY,
+    currentEditorSessionOwnerKeyRef,
   };
 
   function HarnessComponent() {
@@ -1945,9 +1951,12 @@ describe("useDocumentLifecycle", () => {
       });
 
       act(() => harness.lifecycle().closeDocument(normal.path));
-      expect(hasRecentlyClosedTabs(harness.recentlyClosedTabsRef.current, ROOT)).toBe(
-        true,
-      );
+      expect(
+        hasRecentlyClosedTabs(
+          harness.recentlyClosedTabsRef.current,
+          OWNER_KEY,
+        ),
+      ).toBe(true);
 
       harness.recentlyClosedTabsRef.current = emptyRecentlyClosedTabs();
       act(() =>
@@ -1956,9 +1965,12 @@ describe("useDocumentLifecycle", () => {
         }),
       );
 
-      expect(hasRecentlyClosedTabs(harness.recentlyClosedTabsRef.current, ROOT)).toBe(
-        false,
-      );
+      expect(
+        hasRecentlyClosedTabs(
+          harness.recentlyClosedTabsRef.current,
+          OWNER_KEY,
+        ),
+      ).toBe(false);
       harness.unmount();
     });
 

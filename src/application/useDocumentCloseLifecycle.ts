@@ -5,6 +5,7 @@ import {
   pushRecentlyClosedTab,
   type RecentlyClosedTabs,
 } from "../domain/recentlyClosedTabs";
+import type { EditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { WorkspaceSessionViewState } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
 import { isDirty } from "../domain/workspace";
@@ -25,8 +26,10 @@ export interface DocumentCloseOptions {
 
 export interface DocumentCloseLifecycleDependencies {
   workspaceRoot: string | null;
+  editorSessionOwnerKey: EditorSessionOwnerKey | null;
   documentTabSession: DocumentCloseSessionPort;
 
+  currentEditorSessionOwnerKeyRef: MutableRefObject<EditorSessionOwnerKey | null>;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   externallyRemovedDocumentRootByPathRef: MutableRefObject<
     Record<string, string>
@@ -81,7 +84,9 @@ export function useDocumentCloseLifecycle(
 ): DocumentCloseLifecycle {
   const {
     workspaceRoot,
+    editorSessionOwnerKey,
     documentTabSession,
+    currentEditorSessionOwnerKeyRef,
     currentWorkspaceRootRef,
     externallyRemovedDocumentRootByPathRef,
     recentlyClosedTabsRef,
@@ -108,6 +113,7 @@ export function useDocumentCloseLifecycle(
     (path: string, options: DocumentCloseOptions = {}) => {
       const document = documentTabSession.getDocument(path);
       const rootPath = currentWorkspaceRootRef.current;
+      const ownerKey = currentEditorSessionOwnerKeyRef.current;
       const externallyRemovedRoot =
         externallyRemovedDocumentRootByPathRef.current[path];
       const hasExternalConflict = document
@@ -131,11 +137,16 @@ export function useDocumentCloseLifecycle(
         invalidateDocumentSave(rootPath, path);
       }
 
-      if (document && rootPath && options.recordRecentlyClosed !== false) {
+      if (
+        document &&
+        rootPath &&
+        ownerKey &&
+        options.recordRecentlyClosed !== false
+      ) {
         const viewState = recentlyClosedDocumentViewState(rootPath, path);
         recentlyClosedTabsRef.current = pushRecentlyClosedTab(
           recentlyClosedTabsRef.current,
-          rootPath,
+          ownerKey,
           {
             path,
             ...(viewState ? { viewState } : {}),
@@ -175,6 +186,7 @@ export function useDocumentCloseLifecycle(
       clearExternalFileConflict,
       clearLanguageServerDiagnosticsForPath,
       clearPhpLocalDiagnosticsForPath,
+      currentEditorSessionOwnerKeyRef,
       currentWorkspaceRootRef,
       documentTabSession,
       externallyRemovedDocumentRootByPathRef,
@@ -217,15 +229,16 @@ export function useDocumentCloseLifecycle(
 
   const reopenClosedDocument = useCallback(async () => {
     const rootPath = currentWorkspaceRootRef.current;
+    const ownerKey = currentEditorSessionOwnerKeyRef.current;
 
-    if (!rootPath) {
+    if (!rootPath || !ownerKey) {
       return;
     }
 
-    while (hasRecentlyClosedTabs(recentlyClosedTabsRef.current, rootPath)) {
+    while (hasRecentlyClosedTabs(recentlyClosedTabsRef.current, ownerKey)) {
       const popped = popRecentlyClosedTab(
         recentlyClosedTabsRef.current,
-        rootPath,
+        ownerKey,
       );
       recentlyClosedTabsRef.current = popped.tabs;
       onRecentlyClosedTabsChange();
@@ -243,7 +256,10 @@ export function useDocumentCloseLifecycle(
         popped.entry.path,
       );
 
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)) {
+      if (
+        currentEditorSessionOwnerKeyRef.current !== ownerKey ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)
+      ) {
         return;
       }
 
@@ -262,6 +278,7 @@ export function useDocumentCloseLifecycle(
       return;
     }
   }, [
+    currentEditorSessionOwnerKeyRef,
     currentWorkspaceRootRef,
     documentTabSession,
     onRecentlyClosedTabsChange,
@@ -276,7 +293,8 @@ export function useDocumentCloseLifecycle(
     reopenClosedDocument,
     canReopenClosedDocument: Boolean(
       workspaceRoot &&
-      hasRecentlyClosedTabs(recentlyClosedTabsRef.current, workspaceRoot),
+      editorSessionOwnerKey &&
+      hasRecentlyClosedTabs(recentlyClosedTabsRef.current, editorSessionOwnerKey),
     ),
   };
 }

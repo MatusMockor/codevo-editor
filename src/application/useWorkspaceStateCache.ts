@@ -15,6 +15,7 @@ import type { NavigationHistory } from "../domain/navigation";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
 import type { FileEntry } from "../domain/workspace";
+import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import type { EditorSurfaceSnapshot } from "../domain/workspaceSessionSnapshot";
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
@@ -141,7 +142,10 @@ export function useWorkspaceStateCache(
       identity: WorkspaceIdentityDescriptor,
       requestedRootPath?: string,
     ): CachedWorkspaceWorkbenchState | null => {
-      const identityKey = workspaceIdentityStateCacheKey(identity.workspaceId);
+      const identityKey = workspaceIdentityStateCacheKey(
+        identity.workspaceId,
+        identity.canonicalRoot,
+      );
       const cache = workspaceStateCacheRef.current;
       const identityState = cache[identityKey];
       const matchingAliases = Object.entries(cache).filter(
@@ -218,6 +222,7 @@ export function useWorkspaceStateCache(
       const cacheKey = workspaceIdentityDescriptor
         ? workspaceIdentityStateCacheKey(
             workspaceIdentityDescriptor.workspaceId,
+            workspaceIdentityDescriptor.canonicalRoot,
           )
         : normalizedWorkspaceRootKey(rootPath);
       workspaceStateCacheRef.current[cacheKey] = {
@@ -306,7 +311,14 @@ export function useWorkspaceStateCache(
   };
 }
 
-export function workspaceIdentityStateCacheKey(workspaceId: string): string {
+export function workspaceIdentityStateCacheKey(
+  workspaceId: string,
+  canonicalRoot?: string,
+): string {
+  if (canonicalRoot) {
+    return createEditorSessionOwnerKey(workspaceId, canonicalRoot);
+  }
+
   return `workspace-id:${JSON.stringify(workspaceId)}`;
 }
 
@@ -314,7 +326,16 @@ function cachedStateHasWorkspaceId(
   cached: CachedWorkspaceWorkbenchState,
   identity: WorkspaceIdentityDescriptor,
 ): boolean {
-  return (
-    cached.workspaceIdentityDescriptor?.workspaceId === identity.workspaceId
+  const cachedIdentity = cached.workspaceIdentityDescriptor;
+  if (!cachedIdentity) {
+    return false;
+  }
+
+  return workspaceIdentityStateCacheKey(
+    cachedIdentity.workspaceId,
+    cachedIdentity.canonicalRoot,
+  ) === workspaceIdentityStateCacheKey(
+    identity.workspaceId,
+    identity.canonicalRoot,
   );
 }

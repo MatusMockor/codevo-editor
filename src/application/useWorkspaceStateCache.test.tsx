@@ -328,7 +328,10 @@ describe("useWorkspaceStateCache", () => {
     harness.api().cacheCurrentWorkspaceState(ROOT_A);
 
     const cache = harness.api().workspaceStateCacheRef.current;
-    const identityKey = workspaceIdentityStateCacheKey(identity.workspaceId);
+    const identityKey = workspaceIdentityStateCacheKey(
+      identity.workspaceId,
+      identity.canonicalRoot,
+    );
     expect(Object.keys(cache)).toEqual([identityKey]);
     expect(cache[identityKey].workspaceIdentityDescriptor).toBe(identity);
     harness.unmount();
@@ -346,7 +349,10 @@ describe("useWorkspaceStateCache", () => {
 
     const cached =
       harness.api().workspaceStateCacheRef.current[
-        workspaceIdentityStateCacheKey(identity.workspaceId)
+        workspaceIdentityStateCacheKey(
+          identity.workspaceId,
+          identity.canonicalRoot,
+        )
       ];
     expect(Object.keys(cached.editorSurface.documents)).toEqual([DOC_A.path]);
     expect(cached.editorSurface.imageTabs).toEqual({
@@ -370,7 +376,10 @@ describe("useWorkspaceStateCache", () => {
 
     expect(resolved).toBe(legacyState);
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
-      [workspaceIdentityStateCacheKey(identity.workspaceId)]: legacyState,
+      [workspaceIdentityStateCacheKey(
+        identity.workspaceId,
+        identity.canonicalRoot,
+      )]: legacyState,
     });
     harness.unmount();
   });
@@ -392,7 +401,10 @@ describe("useWorkspaceStateCache", () => {
       workspaceIdentityDescriptor: identity,
     };
     harness.api().workspaceStateCacheRef.current = {
-      [workspaceIdentityStateCacheKey(identity.workspaceId)]: canonicalState,
+      [workspaceIdentityStateCacheKey(
+        identity.workspaceId,
+        identity.canonicalRoot,
+      )]: canonicalState,
       [ROOT_A]: aliasState,
     };
 
@@ -400,7 +412,10 @@ describe("useWorkspaceStateCache", () => {
 
     expect(winner).toBe(canonicalState);
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
-      [workspaceIdentityStateCacheKey(identity.workspaceId)]: canonicalState,
+      [workspaceIdentityStateCacheKey(
+        identity.workspaceId,
+        identity.canonicalRoot,
+      )]: canonicalState,
     });
     harness.unmount();
   });
@@ -427,7 +442,10 @@ describe("useWorkspaceStateCache", () => {
 
     expect(winner).toBe(firstAlias);
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
-      [workspaceIdentityStateCacheKey(identity.workspaceId)]: firstAlias,
+      [workspaceIdentityStateCacheKey(
+        identity.workspaceId,
+        identity.canonicalRoot,
+      )]: firstAlias,
     });
     harness.unmount();
   });
@@ -504,8 +522,14 @@ describe("useWorkspaceStateCache", () => {
       workspaceIdentityDescriptor: identityB,
     };
     harness.api().workspaceStateCacheRef.current = {
-      [workspaceIdentityStateCacheKey(identityA.workspaceId)]: ownerAState,
-      [workspaceIdentityStateCacheKey(identityB.workspaceId)]: ownerBState,
+      [workspaceIdentityStateCacheKey(
+        identityA.workspaceId,
+        identityA.canonicalRoot,
+      )]: ownerAState,
+      [workspaceIdentityStateCacheKey(
+        identityB.workspaceId,
+        identityB.canonicalRoot,
+      )]: ownerBState,
       [ROOT_A]: { ...ownerAState },
     };
 
@@ -535,9 +559,64 @@ describe("useWorkspaceStateCache", () => {
     expect(resolvedB?.navigationHistory.ownerKey).toBe("owner-b");
     expect(resolvedB?.recentLocations[0].snippet).toBe("owner b");
     expect(harness.api().workspaceStateCacheRef.current).toEqual({
-      [workspaceIdentityStateCacheKey(identityA.workspaceId)]: ownerAState,
-      [workspaceIdentityStateCacheKey(identityB.workspaceId)]: ownerBState,
+      [workspaceIdentityStateCacheKey(
+        identityA.workspaceId,
+        identityA.canonicalRoot,
+      )]: ownerAState,
+      [workspaceIdentityStateCacheKey(
+        identityB.workspaceId,
+        identityB.canonicalRoot,
+      )]: ownerBState,
     });
+    harness.unmount();
+  });
+
+  it("does not restore state from a replaced owner at the same root", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const ownerA = workspaceIdentity(ROOT_A, CANONICAL_ROOT_A, "owner-a");
+    const ownerB = workspaceIdentity(ROOT_A, CANONICAL_ROOT_A, "owner-b");
+
+    act(() => {
+      harness.setters().setWorkspaceIdentityDescriptor(ownerA);
+    });
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+
+    expect(harness.api().resolveCachedWorkspaceState(ROOT_A, ownerB)).toBeNull();
+    expect(harness.api().resolveCachedWorkspaceState(ROOT_A, ownerA))
+      .not.toBeNull();
+    harness.unmount();
+  });
+
+  it("round-trips one owner across an alias A to B to A sequence", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const aliasA = workspaceIdentity(
+      "/alias-a/workspace",
+      CANONICAL_ROOT_A,
+      "owner-a",
+    );
+    const aliasB = workspaceIdentity(
+      "/alias-b/workspace",
+      `${CANONICAL_ROOT_A}/`,
+      "owner-a",
+    );
+
+    act(() => {
+      harness.setters().setWorkspaceIdentityDescriptor(aliasA);
+    });
+    seedWorkspaceA(harness);
+    harness.api().cacheCurrentWorkspaceState(aliasA.selectedPath);
+    const captured = harness
+      .api()
+      .resolveCachedWorkspaceState(aliasB.selectedPath, aliasB);
+
+    expect(captured?.bookmarks).toEqual([BOOKMARK_A]);
+    expect(
+      harness.api().resolveCachedWorkspaceState(aliasA.selectedPath, aliasA),
+    ).toBe(captured);
+    expect(Object.keys(harness.api().workspaceStateCacheRef.current)).toEqual([
+      workspaceIdentityStateCacheKey(aliasA.workspaceId, CANONICAL_ROOT_A),
+    ]);
     harness.unmount();
   });
 

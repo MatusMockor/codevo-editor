@@ -18,6 +18,10 @@ import {
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
 import type { EditorDocument } from "../domain/workspace";
+import {
+  buildGitDiffDocumentPath,
+  buildGitHistoryDiffDocumentPath,
+} from "../domain/editorDocumentSchemes";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   createWorkspaceRuntimeOwner,
@@ -461,6 +465,27 @@ describe("useRecentNavigation", () => {
     harness.unmount();
   });
 
+  it("does not record transient Git documents in file navigation history", () => {
+    const harness = renderNavigationHistory();
+    const transientPaths = [
+      buildGitDiffDocumentPath("worktree", `${ROOT}/a.ts`),
+      buildGitHistoryDiffDocumentPath("abc123", "a.ts", null),
+    ];
+
+    act(() => {
+      for (const path of transientPaths) {
+        harness.recentNavigation().recordNavigationLocationSnapshot({
+          path,
+          position: { column: 1, lineNumber: 1 },
+        });
+      }
+    });
+
+    expect(harness.navigationHistory().backStack).toEqual([]);
+
+    harness.unmount();
+  });
+
   it("records a recent-location snapshot built from the document content", () => {
     const harness = renderNavigationHistory();
     harness.documentsRef.current = {
@@ -592,6 +617,124 @@ describe("useRecentNavigation", () => {
 });
 
 describe("useNavigationHistory", () => {
+  it("navigates back from a worktree diff without creating a broken Forward entry", async () => {
+    const harness = renderNavigationHistory();
+    const fileLocation: NavigationLocation = {
+      path: `${ROOT}/a.ts`,
+      position: { column: 2, lineNumber: 4 },
+    };
+    const diffPath = buildGitDiffDocumentPath(
+      "worktree",
+      `${ROOT}/changed.ts`,
+    );
+
+    act(() => {
+      harness
+        .recentNavigation()
+        .recordNavigationLocationSnapshot(fileLocation);
+    });
+    harness.setActiveDocument(editorDocument(diffPath));
+    harness.activeEditorPositionRef.current = { column: 1, lineNumber: 12 };
+
+    await act(async () => {
+      await harness.navigation().navigateBackward();
+    });
+    await act(async () => {
+      await harness.navigation().navigateForwardInHistory();
+    });
+
+    expect(harness.openPathForNavigation).toHaveBeenCalledOnce();
+    expect(harness.openPathForNavigation).toHaveBeenCalledWith(
+      fileLocation.path,
+      expect.anything(),
+    );
+    expect(harness.openPathForNavigation).not.toHaveBeenCalledWith(
+      diffPath,
+      expect.anything(),
+    );
+    expect(harness.navigationHistory()).toEqual({
+      backStack: [],
+      forwardStack: [],
+      ownerKey: "workspace-a",
+    });
+
+    harness.unmount();
+  });
+
+  it.each([
+    [
+      "worktree",
+      buildGitDiffDocumentPath("worktree", `${ROOT}/changed.ts`),
+    ],
+    [
+      "history",
+      buildGitHistoryDiffDocumentPath("abc123", "changed.ts", null),
+    ],
+  ])(
+    "preserves the opposite-stack origin across a transient %s diff",
+    async (_diffKind, transientDiffPath) => {
+      const harness = renderNavigationHistory();
+      const oldestLocation: NavigationLocation = {
+        path: `${ROOT}/a.ts`,
+        position: { column: 1, lineNumber: 1 },
+      };
+      const previousLocation: NavigationLocation = {
+        path: `${ROOT}/b.ts`,
+        position: { column: 2, lineNumber: 5 },
+      };
+      const newestLocation: NavigationLocation = {
+        path: `${ROOT}/c.ts`,
+        position: { column: 3, lineNumber: 9 },
+      };
+      act(() => {
+        harness
+          .recentNavigation()
+          .recordNavigationLocationSnapshot(oldestLocation);
+        harness
+          .recentNavigation()
+          .recordNavigationLocationSnapshot(previousLocation);
+      });
+      harness.setActiveDocument(editorDocument(newestLocation.path));
+      harness.activeEditorPositionRef.current = newestLocation.position;
+
+      await act(async () => {
+        await harness.navigation().navigateBackward();
+      });
+
+      harness.setActiveDocument(editorDocument(transientDiffPath));
+      harness.activeEditorPositionRef.current = { column: 1, lineNumber: 20 };
+
+      await act(async () => {
+        await harness.navigation().navigateForwardInHistory();
+      });
+
+      harness.setActiveDocument(editorDocument(newestLocation.path));
+      harness.activeEditorPositionRef.current = newestLocation.position;
+
+      await act(async () => {
+        await harness.navigation().navigateBackward();
+      });
+
+      expect(
+        harness.openPathForNavigation.mock.calls.map(([path]) => path),
+      ).toEqual([
+        previousLocation.path,
+        newestLocation.path,
+        previousLocation.path,
+      ]);
+      expect(harness.openPathForNavigation).not.toHaveBeenCalledWith(
+        transientDiffPath,
+        expect.anything(),
+      );
+      expect(harness.navigationHistory().backStack).toEqual([oldestLocation]);
+      expect(harness.navigationHistory().forwardStack).toEqual([
+        newestLocation,
+      ]);
+
+      harness.unmount();
+    },
+  );
+
   it("isolates NEON/framework Back from a normal PHP history in another project", async () => {
     const paAiRoot = "/projects/pa-ai-be";
     const eboxRoot = "/projects/ebox-crm";

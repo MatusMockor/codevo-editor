@@ -849,6 +849,61 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.unmount();
   });
 
+  it("keeps fallback cache ownership isolated across same-id canonical roots", async () => {
+    const closingIdentity = workspaceIdentity();
+    const foreignIdentity = workspaceIdentity(
+      "/workspace-foreign",
+      "/real/workspace-foreign",
+    );
+    const closingState = {
+      editorSurface: { documents: {} },
+      workspaceIdentityDescriptor: closingIdentity,
+    };
+    const foreignState = {
+      editorSurface: {
+        documents: {
+          [`${foreignIdentity.canonicalRoot}/Dirty.php`]: dirtyDocument(
+            `${foreignIdentity.canonicalRoot}/Dirty.php`,
+          ),
+        },
+      },
+      workspaceIdentityDescriptor: foreignIdentity,
+    };
+    const closingKey = workspaceIdentityStateCacheKey(
+      closingIdentity.workspaceId,
+      closingIdentity.canonicalRoot,
+    );
+    const foreignKey = workspaceIdentityStateCacheKey(
+      foreignIdentity.workspaceId,
+      foreignIdentity.canonicalRoot,
+    );
+    const cache = {
+      [closingKey]: closingState,
+      [foreignKey]: foreignState,
+      [foreignIdentity.selectedPath]: foreignState,
+    };
+    const harness = renderLifecycle({
+      workspaceIdentityByRootRef: {
+        current: {
+          [closingIdentity.selectedPath]: closingIdentity,
+          [closingIdentity.canonicalRoot]: closingIdentity,
+        },
+      },
+      workspaceStateCacheRef: { current: cache },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(closingIdentity.selectedPath);
+    });
+
+    expect(harness.prompter.confirm).not.toHaveBeenCalled();
+    expect(cache).toEqual({
+      [foreignKey]: foreignState,
+      [foreignIdentity.selectedPath]: foreignState,
+    });
+    harness.unmount();
+  });
+
   it("atomically forgets identity aliases and coalesces duplicate close calls", async () => {
     const persistence = createDeferred<void>();
     const descriptor = workspaceIdentity();

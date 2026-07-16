@@ -26,6 +26,7 @@ import {
   renameRecentLocationsPath,
   type RecentLocation,
 } from "../domain/recentLocations";
+import { isPersistableEditorDocumentPath } from "../domain/editorDocumentSchemes";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/workspace";
@@ -172,6 +173,10 @@ export function useRecentNavigation(
         return null;
       }
 
+      if (!isPersistableEditorDocumentPath(activeDocument.path)) {
+        return null;
+      }
+
       return {
         path: activeDocument.path,
         position: activeEditorPositionRef.current || {
@@ -298,6 +303,11 @@ interface NavigationHistoryTransaction {
   current: NavigationHistory | null;
 }
 
+interface OwnedNavigationLocation {
+  location: NavigationLocation;
+  ownerKey: string;
+}
+
 const navigationHistoryTransactions = new WeakMap<
   NavigationHistorySetter,
   NavigationHistoryTransaction
@@ -328,6 +338,10 @@ function recordOwnedNavigationLocation(
     return history;
   }
 
+  if (!isPersistableEditorDocumentPath(location.path)) {
+    return history;
+  }
+
   const ownedHistory =
     history.ownerKey && history.ownerKey !== ownerKey
       ? createOwnedNavigationHistory(ownerKey)
@@ -346,6 +360,30 @@ function createOwnedNavigationHistory(ownerKey: string): NavigationHistory {
     backStack: [],
     forwardStack: [],
     ownerKey,
+  };
+}
+
+function removeTransientNavigationLocations(
+  history: NavigationHistory,
+): NavigationHistory {
+  const backStack = history.backStack.filter((location) =>
+    isPersistableEditorDocumentPath(location.path),
+  );
+  const forwardStack = history.forwardStack.filter((location) =>
+    isPersistableEditorDocumentPath(location.path),
+  );
+
+  if (
+    backStack.length === history.backStack.length &&
+    forwardStack.length === history.forwardStack.length
+  ) {
+    return history;
+  }
+
+  return {
+    backStack,
+    forwardStack,
+    ...(history.ownerKey ? { ownerKey: history.ownerKey } : {}),
   };
 }
 
@@ -404,8 +442,33 @@ export function useNavigationHistory(
     shouldOpenNavigationTargetReadOnly,
   } = dependencies;
   const navigationHistoryTransaction = useRef<NavigationHistory | null>(null);
+  const lastRegularNavigationLocation =
+    useRef<OwnedNavigationLocation | null>(null);
   const currentOwnerKey =
     resolveCurrentWorkspaceRuntimeOwner()?.ownerKey ?? null;
+
+  useLayoutEffect(() => {
+    if (!currentOwnerKey) {
+      lastRegularNavigationLocation.current = null;
+      return;
+    }
+
+    const location = currentNavigationLocation();
+
+    if (location) {
+      lastRegularNavigationLocation.current = {
+        location,
+        ownerKey: currentOwnerKey,
+      };
+      return;
+    }
+
+    if (
+      lastRegularNavigationLocation.current?.ownerKey !== currentOwnerKey
+    ) {
+      lastRegularNavigationLocation.current = null;
+    }
+  }, [currentNavigationLocation, currentOwnerKey, workspaceRoot]);
 
   useLayoutEffect(() => {
     if (
@@ -475,9 +538,9 @@ export function useNavigationHistory(
       nextHistory: NavigationHistory,
       target: NavigationLocation,
       shouldCommit: () => boolean,
-    ) => {
+    ): boolean => {
       if (!shouldCommit()) {
-        return;
+        return false;
       }
 
       const committed = compareAndSetNavigationHistory(
@@ -488,12 +551,31 @@ export function useNavigationHistory(
       );
 
       if (!committed) {
-        return;
+        return false;
       }
 
       setEditorRevealTarget(target);
+      return true;
     },
     [navigationHistoryTransaction, setNavigationHistory],
+  );
+
+  const currentPlaybackOrigin = useCallback(
+    (ownerKey: string): NavigationLocation | null => {
+      const current = currentNavigationLocation();
+
+      if (current) {
+        lastRegularNavigationLocation.current = { location: current, ownerKey };
+        return current;
+      }
+
+      if (lastRegularNavigationLocation.current?.ownerKey !== ownerKey) {
+        return null;
+      }
+
+      return lastRegularNavigationLocation.current.location;
+    },
+    [currentNavigationLocation],
   );
 
   const navigateBackward = useCallback(async () => {
@@ -512,9 +594,20 @@ export function useNavigationHistory(
       return;
     }
 
-    const next = navigateBack(navigationHistory, currentNavigationLocation());
+    const playableHistory =
+      removeTransientNavigationLocations(navigationHistory);
+    const next = navigateBack(
+      playableHistory,
+      currentPlaybackOrigin(requestedOwner.ownerKey),
+    );
 
     if (!next.target) {
+      compareAndSetNavigationHistory(
+        navigationHistoryTransaction,
+        setNavigationHistory,
+        requestedHistory,
+        playableHistory,
+      );
       return;
     }
 
@@ -536,16 +629,25 @@ export function useNavigationHistory(
       return;
     }
 
-    commitNavigation(
+    const committed = commitNavigation(
       requestedHistory,
       next.history,
       next.target,
       shouldCommit,
     );
+
+    if (!committed) {
+      return;
+    }
+
+    lastRegularNavigationLocation.current = {
+      location: next.target,
+      ownerKey: requestedOwner.ownerKey,
+    };
   }, [
     applyNavigationLocation,
     commitNavigation,
-    currentNavigationLocation,
+    currentPlaybackOrigin,
     navigationHistory,
     resolveCurrentWorkspaceRuntimeOwner,
   ]);
@@ -566,9 +668,20 @@ export function useNavigationHistory(
       return;
     }
 
-    const next = navigateForward(navigationHistory, currentNavigationLocation());
+    const playableHistory =
+      removeTransientNavigationLocations(navigationHistory);
+    const next = navigateForward(
+      playableHistory,
+      currentPlaybackOrigin(requestedOwner.ownerKey),
+    );
 
     if (!next.target) {
+      compareAndSetNavigationHistory(
+        navigationHistoryTransaction,
+        setNavigationHistory,
+        requestedHistory,
+        playableHistory,
+      );
       return;
     }
 
@@ -590,16 +703,25 @@ export function useNavigationHistory(
       return;
     }
 
-    commitNavigation(
+    const committed = commitNavigation(
       requestedHistory,
       next.history,
       next.target,
       shouldCommit,
     );
+
+    if (!committed) {
+      return;
+    }
+
+    lastRegularNavigationLocation.current = {
+      location: next.target,
+      ownerKey: requestedOwner.ownerKey,
+    };
   }, [
     applyNavigationLocation,
     commitNavigation,
-    currentNavigationLocation,
+    currentPlaybackOrigin,
     navigationHistory,
     resolveCurrentWorkspaceRuntimeOwner,
   ]);

@@ -11,6 +11,7 @@ import {
   type MutableRefObject,
 } from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
+import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
 import type { ProjectRuntimeStopResult } from "../domain/workspaceRuntimeLifecycle";
@@ -44,10 +45,7 @@ import {
 import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveService";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import {
-  workspaceIdentityStateCacheKey,
-  type WorkspaceStateCache,
-} from "./useWorkspaceStateCache";
+import type { WorkspaceStateCache } from "./useWorkspaceStateCache";
 
 interface CachedWorkspaceDirtyState {
   editorSurface: {
@@ -1146,7 +1144,10 @@ function resolveCachedWorkspaceStateFallback(
     return cache[normalizedWorkspaceRootKey(rootPath)] ?? null;
   }
 
-  const identityKey = workspaceIdentityStateCacheKey(identity.workspaceId);
+  const identityKey = createEditorSessionOwnerKey(
+    identity.workspaceId,
+    identity.canonicalRoot,
+  );
   return (
     matchingCachedWorkspaceState(cache[identityKey], identity) ??
     Object.values(cache).find(
@@ -1179,9 +1180,20 @@ function matchingCachedWorkspaceState(
   cached: CachedWorkspaceDirtyState | undefined,
   identity: WorkspaceIdentityDescriptor,
 ): CachedWorkspaceDirtyState | null {
-  if (
-    cached?.workspaceIdentityDescriptor?.workspaceId !== identity.workspaceId
-  ) {
+  const cachedIdentity = cached?.workspaceIdentityDescriptor;
+  if (!cachedIdentity) {
+    return null;
+  }
+
+  const cachedOwnerKey = createEditorSessionOwnerKey(
+    cachedIdentity.workspaceId,
+    cachedIdentity.canonicalRoot,
+  );
+  const expectedOwnerKey = createEditorSessionOwnerKey(
+    identity.workspaceId,
+    identity.canonicalRoot,
+  );
+  if (cachedOwnerKey !== expectedOwnerKey) {
     return null;
   }
 
