@@ -145,6 +145,7 @@ import {
   type JavaScriptTypeScriptWorkspaceEditApplicationContext,
 } from "./javascriptTypescriptLanguageServerMonacoProviders";
 import {
+  type LanguageServerMonacoDocumentRequestLease,
   type PhpCodeActionDescriptor,
   type PhpCodeActionNewFile,
   type PhpCodeActionRange,
@@ -261,6 +262,13 @@ export interface EditorSurfaceProps {
     rootPath: string,
     path: string,
   ): number | null;
+  requestLanguageServerDocumentLease?(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerMonacoDocumentRequestLease | null>;
+  isLanguageServerDocumentRequestLeaseCurrent?(
+    lease: LanguageServerMonacoDocumentRequestLease,
+  ): boolean;
   formatOnPaste?: boolean;
   gitBlameEnabled?: boolean;
   isLanguageServerDocumentSynced?(path: string): boolean;
@@ -452,6 +460,8 @@ function EditorSurfaceComponent({
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
   getLanguageServerDocumentLifecycleIdentity,
+  requestLanguageServerDocumentLease,
+  isLanguageServerDocumentRequestLeaseCurrent,
   formatOnPaste = false,
   gitBlameEnabled = false,
   isActiveDocumentPhpTest = false,
@@ -622,6 +632,12 @@ function EditorSurfaceComponent({
   const flushPendingRef = useRef(flushPendingLanguageServerDocument);
   const getLanguageServerDocumentLifecycleIdentityRef = useRef(
     getLanguageServerDocumentLifecycleIdentity,
+  );
+  const requestLanguageServerDocumentLeaseRef = useRef(
+    requestLanguageServerDocumentLease,
+  );
+  const isLanguageServerDocumentRequestLeaseCurrentRef = useRef(
+    isLanguageServerDocumentRequestLeaseCurrent,
   );
   const flushPendingJavaScriptTypeScriptRef = useRef(
     flushPendingJavaScriptTypeScriptLanguageServerDocument,
@@ -844,6 +860,14 @@ function EditorSurfaceComponent({
     getLanguageServerDocumentLifecycleIdentityRef.current =
       getLanguageServerDocumentLifecycleIdentity;
   }, [getLanguageServerDocumentLifecycleIdentity]);
+  useEffect(() => {
+    requestLanguageServerDocumentLeaseRef.current =
+      requestLanguageServerDocumentLease;
+  }, [requestLanguageServerDocumentLease]);
+  useEffect(() => {
+    isLanguageServerDocumentRequestLeaseCurrentRef.current =
+      isLanguageServerDocumentRequestLeaseCurrent;
+  }, [isLanguageServerDocumentRequestLeaseCurrent]);
 
   useEffect(() => {
     flushPendingJavaScriptTypeScriptRef.current =
@@ -1304,6 +1328,12 @@ function EditorSurfaceComponent({
     errorReporterRef,
     flushPendingRef,
     getLanguageServerDocumentLifecycleIdentityRef,
+    ...(requestLanguageServerDocumentLease
+      ? { requestLanguageServerDocumentLeaseRef }
+      : {}),
+    ...(isLanguageServerDocumentRequestLeaseCurrent
+      ? { isLanguageServerDocumentRequestLeaseCurrentRef }
+      : {}),
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
     phpCodeActionsRef,
@@ -1690,22 +1720,54 @@ function EditorSurfaceComponent({
     // UnknownDocument, and `isLanguageServerDocumentSynced` tracks exactly the
     // PHP synced set. JS/TS breadcrumbs keep their prior on-demand behaviour.
     const requiresSync = isLanguageServerDocument(activeDocument);
+    const requestDocumentLease =
+      requestLanguageServerDocumentLeaseRef.current;
+    const isDocumentLeaseCurrent =
+      isLanguageServerDocumentRequestLeaseCurrentRef.current;
+    const canUseDocumentLease = Boolean(
+      requiresSync && requestDocumentLease && isDocumentLeaseCurrent,
+    );
     let active = true;
     let timeout: number | null = null;
 
     const fetchBreadcrumbSymbols = async () => {
       try {
+        const documentLease = canUseDocumentLease
+          ? await requestDocumentLease?.(requestedRoot, requestedPath)
+          : null;
+
+        if (!active) {
+          return;
+        }
+
+        if (
+          canUseDocumentLease &&
+          (!documentLease || !isDocumentLeaseCurrent?.(documentLease))
+        ) {
+          return;
+        }
+
         let load = () =>
           breadcrumbGateway.documentSymbols(requestedRoot, requestedPath);
         if (requiresSync) {
-          await flushPendingLanguageServerDocument(requestedPath);
-          if (!active) {
-            return;
+          if (!canUseDocumentLease) {
+            await flushPendingLanguageServerDocument(requestedPath);
+            if (!active) {
+              return;
+            }
           }
 
           const document = activeDocumentRef.current;
           const status = runtimeStatusRef.current;
           if (!document || document.path !== requestedPath) {
+            return;
+          }
+
+          if (
+            documentLease &&
+            (status?.kind !== "running" ||
+              status.sessionId !== documentLease.sessionId)
+          ) {
             return;
           }
 
@@ -1722,7 +1784,7 @@ function EditorSurfaceComponent({
                   path: requestedPath,
                   rootPath: requestedRoot,
                   runtimeIdentity: languageServerFeaturesGateway,
-                  sessionId: status.sessionId,
+                  sessionId: documentLease?.sessionId ?? status.sessionId,
                 },
                 directLoad,
               ) ?? directLoad();
@@ -1730,14 +1792,18 @@ function EditorSurfaceComponent({
         }
 
         const symbols = await load();
-          if (!active) {
-            return;
-          }
+        if (!active) {
+          return;
+        }
 
-          setBreadcrumbSymbolsByPath((current) => ({
-            ...current,
-            [requestedPath]: symbols,
-          }));
+        if (documentLease && !isDocumentLeaseCurrent?.(documentLease)) {
+          return;
+        }
+
+        setBreadcrumbSymbolsByPath((current) => ({
+          ...current,
+          [requestedPath]: symbols,
+        }));
       } catch (error) {
         if (active) {
           errorReporterRef.current(error);
@@ -1757,6 +1823,7 @@ function EditorSurfaceComponent({
       // ref, so polling is the re-trigger that survives the await-less sync).
       if (
         requiresSync &&
+        !canUseDocumentLease &&
         !isLanguageServerDocumentSyncedRef.current?.(requestedPath)
       ) {
         timeout = window.setTimeout(loadBreadcrumbSymbols, 160);

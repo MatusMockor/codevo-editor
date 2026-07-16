@@ -1203,6 +1203,132 @@ describe("registerLanguageServerMonacoProviders", () => {
     await expect(completionPromise).resolves.toEqual({ suggestions: [] });
   });
 
+  it("waits for a pending didOpen lease before requesting PHP completion", async () => {
+    const registered = createRegisteredProviders();
+    const lease = createDeferred<{
+      lifecycleIdentity: number;
+      path: string;
+      rootPath: string;
+      sessionId: number;
+      syncGeneration: number;
+    } | null>();
+    const gateway = featuresGateway();
+    const requestDocumentLease = vi.fn(async () => lease.promise);
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        isDocumentLeaseCurrent: () => true,
+        requestDocumentLease,
+      }),
+    );
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: phpCompletionFixtureSource() }),
+        position(),
+      );
+
+    await vi.waitFor(() =>
+      expect(requestDocumentLease).toHaveBeenCalledWith(
+        "/project",
+        "/project/src/User.php",
+      ),
+    );
+    expect(gateway.completion).not.toHaveBeenCalled();
+
+    lease.resolve({
+      lifecycleIdentity: 7,
+      path: "/project/src/User.php",
+      rootPath: "/project",
+      sessionId: 1,
+      syncGeneration: 3,
+    });
+
+    await completionPromise;
+    expect(gateway.completion).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops PHP completion when the runtime restarts while awaiting its lease", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        isDocumentLeaseCurrent: () => true,
+        requestDocumentLease: async () => ({
+          lifecycleIdentity: 8,
+          path: "/project/src/User.php",
+          rootPath: "/project",
+          sessionId: 2,
+          syncGeneration: 4,
+        }),
+      }),
+    );
+
+    const result = await registered.completionProvider.provideCompletionItems(
+      model({ content: phpCompletionFixtureSource() }),
+      position(),
+    );
+
+    expect(gateway.completion).not.toHaveBeenCalled();
+    expect(result).toEqual({ suggestions: [] });
+  });
+
+  it.each([
+    "close and reopen",
+    "workspace root switch",
+    "runtime session restart",
+    "sync generation reset",
+  ])("drops PHP completion after its lease becomes stale from %s", async () => {
+    const registered = createRegisteredProviders();
+    let leaseIsCurrent = true;
+    const completion = createDeferred<LanguageServerCompletionList>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion).mockImplementationOnce(
+      async () => completion.promise,
+    );
+    const documentLease = {
+      lifecycleIdentity: 7,
+      path: "/project/src/User.php",
+      rootPath: "/project",
+      sessionId: 1,
+      syncGeneration: 3,
+    };
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        featuresGateway: gateway,
+        isDocumentLeaseCurrent: () => leaseIsCurrent,
+        requestDocumentLease: async () => documentLease,
+      }),
+    );
+
+    const completionPromise =
+      registered.completionProvider.provideCompletionItems(
+        model({ content: phpCompletionFixtureSource() }),
+        position(),
+      );
+
+    await vi.waitFor(() => expect(gateway.completion).toHaveBeenCalledTimes(1));
+    leaseIsCurrent = false;
+    completion.resolve({
+      isIncomplete: false,
+      items: [
+        {
+          detail: null,
+          documentation: null,
+          insertText: "stale",
+          kind: 7,
+          label: "stale",
+        },
+      ],
+    });
+
+    await expect(completionPromise).resolves.toEqual({ suggestions: [] });
+  });
+
   it("captures the document lifecycle before flushing pending changes", async () => {
     const registered = createRegisteredProviders();
     let lifecycleIdentity = 1;
@@ -13750,6 +13876,12 @@ function providerContext(
     flushPendingDocumentChange(path: string): Promise<void>;
     getLargeSmartDocumentPolicy(): { characterLimit: number; lineLimit: number };
     getDocumentLifecycleIdentity(rootPath: string, path: string): number | null;
+    requestDocumentLease: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["requestDocumentLease"]
+    >;
+    isDocumentLeaseCurrent: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["isDocumentLeaseCurrent"]
+    >;
     getWorkspaceRoot(): string | null;
     getRuntimeStatus(): LanguageServerRuntimeStatus | null;
     getUserSnippets(): UserSnippet[];
@@ -13825,6 +13957,8 @@ function providerContext(
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),
     getDocumentLifecycleIdentity: overrides.getDocumentLifecycleIdentity,
+    requestDocumentLease: overrides.requestDocumentLease,
+    isDocumentLeaseCurrent: overrides.isDocumentLeaseCurrent,
     getActiveDocument: () => activeDocument,
     getLargeSmartDocumentPolicy: overrides.getLargeSmartDocumentPolicy,
     getRuntimeStatus: overrides.getRuntimeStatus ?? (() => runtimeStatus),

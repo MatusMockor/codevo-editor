@@ -18,6 +18,7 @@ import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
+  LanguageServerMonacoDocumentRequestLease,
   LanguageServerMonacoProviderContext,
   LatteCompletion,
   PhpCodeActionDescriptor,
@@ -75,6 +76,17 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
   flushPendingRef: CallbackRef<(path: string) => Promise<void>>;
   getLanguageServerDocumentLifecycleIdentityRef?: MutableRefObject<
     ((rootPath: string, path: string) => number | null) | undefined
+  >;
+  requestLanguageServerDocumentLeaseRef?: MutableRefObject<
+    | ((
+        rootPath: string,
+        path: string,
+      ) => Promise<LanguageServerMonacoDocumentRequestLease | null>)
+    | undefined
+  >;
+  isLanguageServerDocumentRequestLeaseCurrentRef?: MutableRefObject<
+    | ((lease: LanguageServerMonacoDocumentRequestLease) => boolean)
+    | undefined
   >;
   isLanguageServerDocumentSyncedRef: MutableRefObject<
     ((path: string) => boolean) | undefined
@@ -140,6 +152,8 @@ export function createEditorSurfaceLanguageProviderOptions({
     errorReporterRef,
     flushPendingRef,
     getLanguageServerDocumentLifecycleIdentityRef,
+    requestLanguageServerDocumentLeaseRef,
+    isLanguageServerDocumentRequestLeaseCurrentRef,
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
     phpCodeActionsRef,
@@ -168,6 +182,23 @@ export function createEditorSurfaceLanguageProviderOptions({
     coordinatePhpDocumentSymbols,
     featuresGateway,
     flushPendingDocumentChange: (path) => flushPendingRef.current(path),
+    ...(requestLanguageServerDocumentLeaseRef
+      ? {
+          requestDocumentLease: (rootPath: string, path: string) =>
+            requestLanguageServerDocumentLeaseRef.current?.(rootPath, path) ??
+            Promise.resolve(null),
+        }
+      : {}),
+    ...(isLanguageServerDocumentRequestLeaseCurrentRef
+      ? {
+          isDocumentLeaseCurrent: (
+            lease: LanguageServerMonacoDocumentRequestLease,
+          ) =>
+            Boolean(
+              isLanguageServerDocumentRequestLeaseCurrentRef.current?.(lease),
+            ),
+        }
+      : {}),
     ...(getLanguageServerDocumentLifecycleIdentityRef
       ? {
           getDocumentLifecycleIdentity: (rootPath: string, path: string) =>

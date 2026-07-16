@@ -988,6 +988,12 @@ function App() {
           getLanguageServerDocumentLifecycleIdentity={
             workbench.getLanguageServerDocumentLifecycleIdentity
           }
+          requestLanguageServerDocumentLease={
+            workbench.requestLanguageServerDocumentLease
+          }
+          isLanguageServerDocumentRequestLeaseCurrent={
+            workbench.isLanguageServerDocumentRequestLeaseCurrent
+          }
           flushPendingJavaScriptTypeScriptLanguageServerDocument={
             workbench.flushPendingJavaScriptTypeScriptLanguageServerDocument
           }

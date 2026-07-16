@@ -32,7 +32,14 @@ function renderPanels(
     activeDocumentRef: { current: null },
     activeEditorPositionRef: { current: null },
     closeCompetingSurfaces: vi.fn(),
-    flushPendingDocumentChange: vi.fn(async () => undefined),
+    requestLanguageServerDocumentLease: vi.fn(async (rootPath, path) => ({
+      lifecycleIdentity: 1,
+      path,
+      rootPath,
+      sessionId: 7,
+      syncGeneration: 0,
+    })),
+    isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => true),
     flushPendingJavaScriptTypeScriptDocumentChange: vi.fn(
       async () => undefined,
     ),
@@ -201,6 +208,62 @@ function runningStatus(capability: "references" = "references"): LanguageServerR
     sessionId: 7,
   };
 }
+
+describe("useWorkbenchSymbolPanels PHP document lease", () => {
+  it("requests the lease with the captured root before calling phpactor", async () => {
+    const document = panelDocument("php");
+    const requestLease = vi.fn(async (rootPath: string, path: string) => ({
+      lifecycleIdentity: 1,
+      path,
+      rootPath,
+      sessionId: 7,
+      syncGeneration: 0,
+    }));
+    const gateway = {
+      references: vi.fn(async () => []),
+    } as unknown as LanguageServerFeaturesGateway;
+    const harness = renderPanels({
+      activeDocumentRef: { current: document },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: runningStatus(),
+      languageServerRuntimeStatusRoot: ROOT,
+      requestLanguageServerDocumentLease: requestLease,
+    });
+
+    await act(async () => {
+      await harness.api().openReferencesPanel();
+    });
+
+    expect(requestLease).toHaveBeenCalledWith(ROOT, document.path);
+    expect(gateway.references).toHaveBeenCalledTimes(1);
+
+    harness.root.unmount();
+  });
+
+  it("does not call phpactor after the document lease becomes invalid", async () => {
+    const gateway = {
+      references: vi.fn(async () => []),
+    } as unknown as LanguageServerFeaturesGateway;
+    const harness = renderPanels({
+      activeDocumentRef: { current: panelDocument("php") },
+      activeEditorPositionRef: { current: { column: 2, lineNumber: 1 } },
+      isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => false),
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: runningStatus(),
+      languageServerRuntimeStatusRoot: ROOT,
+    });
+
+    await act(async () => {
+      await harness.api().openReferencesPanel();
+    });
+
+    expect(gateway.references).not.toHaveBeenCalled();
+    expect(harness.api().referencesView).toBeNull();
+
+    harness.root.unmount();
+  });
+});
 
 describe.each([
   ["PHP", "php"],

@@ -83,6 +83,9 @@ describe("useLanguageServerDocumentSyncState", () => {
     state.pendingDocumentOpenSyncAttemptsRef.current[key] = 2;
     state.documentChangeTimersRef.current[key] = timerId;
     state.documentSyncQueuesRef.current[key] = Promise.resolve();
+    state.nextDocumentLifecycleIdentityRef.current = 3;
+    state.documentLifecycleIdentitiesRef.current[key] = 2;
+    state.pendingDocumentLifecycleIdentitiesRef.current[key] = 3;
     state.documentSyncRuntimeSignatureRef.current = "runtime:1";
     state.phpLanguageServerIndexWarmedRootsRef.current.add(rootPath);
 
@@ -100,6 +103,9 @@ describe("useLanguageServerDocumentSyncState", () => {
     expect(state.documentVersionsByUriRef.current).toEqual({});
     expect(state.lastAppliedDiagnosticVersionByUriRef.current).toEqual({});
     expect(state.documentSyncQueuesRef.current).toEqual({});
+    expect(state.nextDocumentLifecycleIdentityRef.current).toBe(3);
+    expect(state.documentLifecycleIdentitiesRef.current).toEqual({});
+    expect(state.pendingDocumentLifecycleIdentitiesRef.current).toEqual({});
     expect(state.phpLanguageServerIndexWarmedRootsRef.current.size).toBe(0);
     expect(state.getPhpDocumentSyncVersion(rootPath, path)).toBeNull();
   });

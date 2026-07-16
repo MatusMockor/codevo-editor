@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useRef,
   useState,
   type MutableRefObject,
 } from "react";
@@ -36,6 +37,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import type { LatteDefinitionOutcome } from "./latteIntelligenceContracts";
 import type { NavigationRequest } from "./navigationRequest";
+import type { LanguageServerDocumentRequestLease } from "./useDocumentSync";
 
 export interface ImplementationChooserState {
   targets: ImplementationTarget[];
@@ -58,7 +60,13 @@ export interface WorkbenchLanguageNavigationDependencies {
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
   documents: Record<string, EditorDocument>;
-  flushPendingDocumentChange: (path: string) => Promise<void>;
+  requestLanguageServerDocumentLease: (
+    rootPath: string,
+    path: string,
+  ) => Promise<LanguageServerDocumentRequestLease | null>;
+  isLanguageServerDocumentRequestLeaseCurrent: (
+    lease: LanguageServerDocumentRequestLease,
+  ) => boolean;
   flushPendingJavaScriptTypeScriptDocumentChange: (
     path: string,
   ) => Promise<void>;
@@ -192,7 +200,8 @@ export function useWorkbenchLanguageNavigation(
     activeDocumentRef,
     activeEditorPositionRef,
     documents,
-    flushPendingDocumentChange,
+    requestLanguageServerDocumentLease,
+    isLanguageServerDocumentRequestLeaseCurrent,
     flushPendingJavaScriptTypeScriptDocumentChange,
     goToContextualPhpDefinition,
     goToIndexedPhpImplementation,
@@ -224,6 +233,9 @@ export function useWorkbenchLanguageNavigation(
     workspaceFiles,
     workspaceRoot,
   } = dependencies;
+  const implementationChooserCommitPredicateRef = useRef<
+    (() => boolean) | null
+  >(null);
 
   const implementationTargetsFromLocations = useCallback(
     async (
@@ -279,10 +291,22 @@ export function useWorkbenchLanguageNavigation(
         return false;
       }
 
+      const shouldCommit = () => {
+        if (ownerFence && !ownerFence.isCurrent()) {
+          return false;
+        }
+
+        return options.shouldCommit?.() !== false;
+      };
+
+      if (!shouldCommit()) {
+        return false;
+      }
+
       const previousLocation = currentNavigationLocation();
       const opened = await openPathForNavigation(path, {
         ...options,
-        ...(ownerFence ? { shouldCommit: ownerFence.isCurrent } : {}),
+        shouldCommit,
       });
 
       if (!opened) {
@@ -319,6 +343,20 @@ export function useWorkbenchLanguageNavigation(
         return;
       }
 
+      const chooserShouldCommit =
+        implementationChooserCommitPredicateRef.current;
+      const shouldCommit = () => {
+        if (!ownerFence.isCurrent()) {
+          return false;
+        }
+
+        return chooserShouldCommit?.() !== false;
+      };
+
+      if (!shouldCommit()) {
+        return;
+      }
+
       const opened = await openNavigationTargetPath(
         target.path,
         target.position,
@@ -330,7 +368,8 @@ export function useWorkbenchLanguageNavigation(
                 target.path,
               )
             : false,
-          },
+          shouldCommit,
+        },
         ownerFence,
       );
 
@@ -338,6 +377,7 @@ export function useWorkbenchLanguageNavigation(
         return;
       }
 
+      implementationChooserCommitPredicateRef.current = null;
       setImplementationChooser(null);
     },
     [
@@ -397,13 +437,25 @@ export function useWorkbenchLanguageNavigation(
       );
 
     if (feature === "implementation") {
+      implementationChooserCommitPredicateRef.current = null;
       setImplementationChooser(null);
     }
 
     try {
-      await flushPendingDocumentChange(requestedPath);
+      const documentLease = await requestLanguageServerDocumentLease(
+        requestedRoot,
+        requestedPath,
+      );
 
-      if (!isRequestedSessionActive()) {
+      if (!documentLease) {
+        return false;
+      }
+
+      const isDocumentRequestCurrent = () =>
+        isRequestedSessionActive() &&
+        isLanguageServerDocumentRequestLeaseCurrent(documentLease);
+
+      if (!isDocumentRequestCurrent()) {
         return false;
       }
 
@@ -433,7 +485,7 @@ export function useWorkbenchLanguageNavigation(
               ),
             );
 
-      if (!isRequestedSessionActive()) {
+      if (!isDocumentRequestCurrent()) {
         return false;
       }
 
@@ -445,14 +497,16 @@ export function useWorkbenchLanguageNavigation(
       if (feature === "implementation" && locations.length > 1) {
         const targets = await implementationTargetsFromLocations(
           locations,
-          isRequestedSessionActive,
+          isDocumentRequestCurrent,
         );
 
-        if (!isRequestedSessionActive()) {
+        if (!isDocumentRequestCurrent()) {
           return false;
         }
 
         if (targets.length > 1) {
+          implementationChooserCommitPredicateRef.current =
+            isDocumentRequestCurrent;
           setImplementationChooser({
             targets,
             title: implementationChooserTitle(symbolName),
@@ -463,7 +517,7 @@ export function useWorkbenchLanguageNavigation(
         const [onlyTarget] = targets;
 
         if (onlyTarget) {
-          if (!isRequestedSessionActive()) {
+          if (!isDocumentRequestCurrent()) {
             return false;
           }
 
@@ -476,6 +530,7 @@ export function useWorkbenchLanguageNavigation(
                 requestedRoot,
                 onlyTarget.path,
               ),
+              shouldCommit: isDocumentRequestCurrent,
             },
             ownerFence,
           );
@@ -508,7 +563,7 @@ export function useWorkbenchLanguageNavigation(
 
       const previousLocation = currentNavigationLocation();
       const opened = await openPathForNavigation(targetPath, {
-        shouldCommit: isRequestedSessionActive,
+        shouldCommit: isDocumentRequestCurrent,
       });
 
       if (!opened) {
@@ -540,8 +595,8 @@ export function useWorkbenchLanguageNavigation(
   }, [
     activeDocumentRef,
     activeEditorPositionRef,
-    flushPendingDocumentChange,
     implementationTargetsFromLocations,
+    isLanguageServerDocumentRequestLeaseCurrent,
     isLanguageServerSessionActiveForRoot,
     languageServerFeaturesGateway,
     languageServerRuntimeStatus,
@@ -551,6 +606,7 @@ export function useWorkbenchLanguageNavigation(
     openPathForNavigation,
     currentNavigationLocation,
     recordNavigationLocationSnapshot,
+    requestLanguageServerDocumentLease,
     reportLanguageServerErrorForActiveWorkspaceRoot,
     setEditorRevealTarget,
     setImplementationChooser,
@@ -615,6 +671,7 @@ export function useWorkbenchLanguageNavigation(
       );
 
     if (feature === "implementation") {
+      implementationChooserCommitPredicateRef.current = null;
       setImplementationChooser(null);
     }
 
@@ -655,6 +712,8 @@ export function useWorkbenchLanguageNavigation(
         }
 
         if (targets.length > 1) {
+          implementationChooserCommitPredicateRef.current =
+            isRequestedJavaScriptTypeScriptSessionActive;
           setImplementationChooser({
             targets,
             title: implementationChooserTitle(symbolName),

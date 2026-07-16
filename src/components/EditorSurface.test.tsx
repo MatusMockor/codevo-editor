@@ -12537,6 +12537,154 @@ class Foo
     expect(documentSymbolsMock.mock.calls.length).toBe(callsAfterSync);
   });
 
+  it("waits for a PHP document lease and drops stale breadcrumb symbols", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const gateway = languageServerFeaturesGateway();
+    let resolveSymbols: (
+      symbols: LanguageServerDocumentSymbol[],
+    ) => void = () => undefined;
+    const documentSymbolsMock = vi.fn(
+      async () =>
+        new Promise<LanguageServerDocumentSymbol[]>((resolve) => {
+          resolveSymbols = resolve;
+        }),
+    );
+    gateway.documentSymbols =
+      documentSymbolsMock as unknown as typeof gateway.documentSymbols;
+    let resolveLease: ((lease: {
+      lifecycleIdentity: number;
+      path: string;
+      rootPath: string;
+      sessionId: number;
+      syncGeneration: number;
+    }) => void) | null = null;
+    const requestLanguageServerDocumentLease = vi.fn(
+      async () =>
+        new Promise<{
+          lifecycleIdentity: number;
+          path: string;
+          rootPath: string;
+          sessionId: number;
+          syncGeneration: number;
+        }>((resolve) => {
+          resolveLease = resolve;
+        }),
+    );
+    let leaseIsCurrent = true;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          isLanguageServerDocumentRequestLeaseCurrent={vi.fn(
+            () => leaseIsCurrent,
+          )}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={gateway}
+          languageServerRuntimeStatus={{
+            capabilities: emptyLanguageServerCapabilities(),
+            kind: "running",
+            rootPath: "/workspace",
+            sessionId: 1,
+          }}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          requestLanguageServerDocumentLease={
+            requestLanguageServerDocumentLease
+          }
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+
+    expect(requestLanguageServerDocumentLease).toHaveBeenCalledWith(
+      "/workspace",
+      activeDocument.path,
+    );
+    expect(documentSymbolsMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveLease?.({
+        lifecycleIdentity: 2,
+        path: activeDocument.path,
+        rootPath: "/workspace",
+        sessionId: 1,
+        syncGeneration: 3,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(documentSymbolsMock).toHaveBeenCalledWith(
+      "/workspace",
+      activeDocument.path,
+    );
+
+    leaseIsCurrent = false;
+    await act(async () => {
+      resolveSymbols([
+        {
+          children: [],
+          containerName: null,
+          detail: null,
+          kind: 5,
+          name: "Example",
+          range: {
+            start: { line: 1, character: 0 },
+            end: { line: 1, character: 16 },
+          },
+          selectionRange: {
+            start: { line: 1, character: 6 },
+            end: { line: 1, character: 13 },
+          },
+        },
+      ]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector(".breadcrumb-symbol")).toBeNull();
+  });
+
   it("forwards isLanguageServerDocumentSynced into the language server provider context", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php\nclass Example {}\n",

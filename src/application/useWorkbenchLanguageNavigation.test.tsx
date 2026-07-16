@@ -128,7 +128,14 @@ function renderNavigation(
     currentNavigationLocation: () => null,
     documentOffsetAtEditorPosition: offsetAtPosition,
     documents: {},
-    flushPendingDocumentChange: vi.fn(async () => undefined),
+    requestLanguageServerDocumentLease: vi.fn(async (rootPath, path) => ({
+      lifecycleIdentity: 1,
+      path,
+      rootPath,
+      sessionId: 7,
+      syncGeneration: 0,
+    })),
+    isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => true),
     flushPendingJavaScriptTypeScriptDocumentChange: vi.fn(async () => undefined),
     goToContextualPhpDefinition: vi.fn(async () => false),
     goToIndexedPhpImplementation: vi.fn(async () => false),
@@ -551,7 +558,10 @@ describe("useWorkbenchLanguageNavigation fallback owner requests", () => {
 });
 
 describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
-  function renderPhpNavigation(targetPath: string) {
+  function renderPhpNavigation(
+    targetPath: string,
+    overrides: Partial<WorkbenchLanguageNavigationDependencies> = {},
+  ) {
     const gateway = languageServerGateway();
     vi.mocked(gateway.definition).mockResolvedValue([
       {
@@ -586,6 +596,7 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
         sessionId: 7,
       },
       languageServerRuntimeStatusRoot: ROOT,
+      ...overrides,
     });
   }
 
@@ -617,6 +628,151 @@ describe("useWorkbenchLanguageNavigation PHP target delegation", () => {
       `${ROOT}/app/Services/Service.php`,
       expect.objectContaining({ shouldCommit: expect.any(Function) }),
     );
+
+    harness.root.unmount();
+  });
+
+  it("does not call phpactor when an explicit-root document lease is unavailable", async () => {
+    const requestLease = vi.fn(async () => null);
+    const harness = renderPhpNavigation(`${ROOT}/app/Services/Service.php`, {
+      requestLanguageServerDocumentLease: requestLease,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(requestLease).toHaveBeenCalledWith(
+      ROOT,
+      harness.deps.activeDocumentRef.current?.path,
+    );
+    expect(
+      harness.deps.languageServerFeaturesGateway.definition,
+    ).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("revalidates the document lease immediately before calling phpactor", async () => {
+    const isLeaseCurrent = vi.fn(() => false);
+    const harness = renderPhpNavigation(`${ROOT}/app/Services/Service.php`, {
+      isLanguageServerDocumentRequestLeaseCurrent: isLeaseCurrent,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(isLeaseCurrent).toHaveBeenCalledTimes(1);
+    expect(
+      harness.deps.languageServerFeaturesGateway.definition,
+    ).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("drops target resolution when the lease expires after the gateway reply", async () => {
+    let leaseCurrent = true;
+    const gateway = languageServerGateway();
+    vi.mocked(gateway.implementation).mockResolvedValue([
+      navigationLocation(`${ROOT}/src/First.php`, 1),
+      navigationLocation(`${ROOT}/src/Second.php`, 2),
+    ]);
+    const files = workspaceFiles();
+    vi.mocked(files.readTextFile).mockImplementation(async () => {
+      leaseCurrent = false;
+      return "<?php function service() {}";
+    });
+    const harness = renderPhpNavigation(`${ROOT}/src/Unused.php`, {
+      isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => leaseCurrent),
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          implementation: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      },
+      workspaceFiles: files,
+    });
+
+    await act(async () => {
+      await harness.api().goToImplementation();
+    });
+
+    expect(files.readTextFile).toHaveBeenCalledTimes(1);
+    expect(harness.deps.setImplementationChooser).not.toHaveBeenCalledWith(
+      expect.objectContaining({ targets: expect.any(Array) }),
+    );
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("rejects chooser commit after its PHP lease expires", async () => {
+    let leaseCurrent = true;
+    const gateway = languageServerGateway();
+    vi.mocked(gateway.implementation).mockResolvedValue([
+      navigationLocation(`${ROOT}/src/First.php`, 1),
+      navigationLocation(`${ROOT}/src/Second.php`, 2),
+    ]);
+    const harness = renderPhpNavigation(`${ROOT}/src/Unused.php`, {
+      isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => leaseCurrent),
+      languageServerFeaturesGateway: gateway,
+      languageServerRuntimeStatus: {
+        capabilities: {
+          ...emptyLanguageServerCapabilities(),
+          implementation: true,
+        },
+        kind: "running",
+        rootPath: ROOT,
+        sessionId: 7,
+      },
+    });
+
+    await act(async () => {
+      await harness.api().goToImplementation();
+    });
+
+    const chooser = vi
+      .mocked(harness.deps.setImplementationChooser)
+      .mock.calls.find(([value]) => value?.targets.length === 2)?.[0];
+    expect(chooser).not.toBeNull();
+    leaseCurrent = false;
+
+    await act(async () => {
+      await harness.api().openImplementationTarget(chooser!.targets[0]!);
+    });
+
+    expect(harness.deps.openPathForNavigation).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("passes the PHP lease predicate to the open commit boundary", async () => {
+    let leaseCurrent = true;
+    const openPathForNavigation = vi.fn(async (
+      _path: string,
+      options?: { shouldCommit?: () => boolean },
+    ) => {
+      leaseCurrent = false;
+      return options?.shouldCommit?.() !== false;
+    });
+    const harness = renderPhpNavigation(`${ROOT}/app/Services/Service.php`, {
+      isLanguageServerDocumentRequestLeaseCurrent: vi.fn(() => leaseCurrent),
+      openPathForNavigation,
+    });
+
+    await act(async () => {
+      await harness.api().goToDefinition();
+    });
+
+    expect(openPathForNavigation).toHaveBeenCalledTimes(1);
+    expect(harness.deps.recordNavigationLocationSnapshot).not.toHaveBeenCalled();
+    expect(harness.deps.setEditorRevealTarget).not.toHaveBeenCalled();
+    expect(harness.deps.setMessage).not.toHaveBeenCalled();
 
     harness.root.unmount();
   });

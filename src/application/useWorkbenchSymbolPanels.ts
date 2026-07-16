@@ -33,6 +33,7 @@ import {
   captureWorkspaceRuntimeOwnerFence,
   type WorkspaceRuntimeOwnerFence,
 } from "./useWorkbenchLanguageNavigation";
+import type { LanguageServerDocumentRequestLease } from "./useDocumentSync";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
@@ -41,7 +42,7 @@ interface OpenNavigationOptions {
 
 interface LanguageServerFeatureContext {
   featuresGateway: LanguageServerFeaturesGateway;
-  flushPendingChange(path: string): Promise<void>;
+  prepareDocumentRequest(path: string): Promise<(() => boolean) | null>;
   isSessionActive(): boolean;
 }
 
@@ -55,7 +56,13 @@ export interface WorkbenchSymbolPanelsDependencies {
   javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
-  flushPendingDocumentChange(path: string): Promise<void>;
+  requestLanguageServerDocumentLease(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerDocumentRequestLease | null>;
+  isLanguageServerDocumentRequestLeaseCurrent(
+    lease: LanguageServerDocumentRequestLease,
+  ): boolean;
   flushPendingJavaScriptTypeScriptDocumentChange(path: string): Promise<void>;
   isLanguageServerSessionActiveForRoot(
     rootPath: string,
@@ -112,7 +119,8 @@ export function useWorkbenchSymbolPanels(
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    flushPendingDocumentChange,
+    requestLanguageServerDocumentLease,
+    isLanguageServerDocumentRequestLeaseCurrent,
     flushPendingJavaScriptTypeScriptDocumentChange,
     isLanguageServerSessionActiveForRoot,
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
@@ -174,16 +182,31 @@ export function useWorkbenchSymbolPanels(
           return null;
         }
 
+        const isSessionActive = () =>
+          ownerFence.isCurrent() &&
+          isLanguageServerSessionActiveForRoot(
+            workspaceRoot,
+            languageServerRuntimeStatus.sessionId,
+            ownerFence.owner,
+          );
+
         return {
           featuresGateway: languageServerFeaturesGateway,
-          flushPendingChange: flushPendingDocumentChange,
-          isSessionActive: () =>
-            ownerFence.isCurrent() &&
-            isLanguageServerSessionActiveForRoot(
+          isSessionActive,
+          prepareDocumentRequest: async (path) => {
+            const lease = await requestLanguageServerDocumentLease(
               workspaceRoot,
-              languageServerRuntimeStatus.sessionId,
-              ownerFence.owner,
-            ),
+              path,
+            );
+
+            if (!lease) {
+              return null;
+            }
+
+            return () =>
+              isSessionActive() &&
+              isLanguageServerDocumentRequestLeaseCurrent(lease);
+          },
         };
       }
 
@@ -210,7 +233,6 @@ export function useWorkbenchSymbolPanels(
 
       return {
         featuresGateway: javaScriptTypeScriptLanguageServerFeaturesGateway,
-        flushPendingChange: flushPendingJavaScriptTypeScriptDocumentChange,
         isSessionActive: () =>
           ownerFence.isCurrent() &&
           isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
@@ -218,11 +240,21 @@ export function useWorkbenchSymbolPanels(
             javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
             ownerFence.owner,
           ),
+        prepareDocumentRequest: async (path) => {
+          await flushPendingJavaScriptTypeScriptDocumentChange(path);
+          return () =>
+            ownerFence.isCurrent() &&
+            isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
+              workspaceRoot,
+              javaScriptTypeScriptLanguageServerRuntimeStatus.sessionId,
+              ownerFence.owner,
+            );
+        },
       };
     },
     [
-      flushPendingDocumentChange,
       flushPendingJavaScriptTypeScriptDocumentChange,
+      isLanguageServerDocumentRequestLeaseCurrent,
       isLanguageServerSessionActiveForRoot,
       isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
       javaScriptTypeScriptLanguageServerFeaturesGateway,
@@ -231,6 +263,7 @@ export function useWorkbenchSymbolPanels(
       languageServerFeaturesGateway,
       languageServerRuntimeStatus,
       languageServerRuntimeStatusRoot,
+      requestLanguageServerDocumentLease,
       setMessage,
       workspaceRoot,
     ],
@@ -416,16 +449,18 @@ export function useWorkbenchSymbolPanels(
 
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
-    const isRequestedSessionActive = context.isSessionActive;
-
+    let isRequestedSessionActive = context.isSessionActive;
     closeSymbolPanels();
 
     try {
-      await context.flushPendingChange(requestedPath);
+      const documentRequest =
+        await context.prepareDocumentRequest(requestedPath);
 
-      if (!isRequestedSessionActive()) {
+      if (!documentRequest || !documentRequest()) {
         return;
       }
+
+      isRequestedSessionActive = documentRequest;
 
       const [item] = await context.featuresGateway.prepareCallHierarchy(
         requestedRoot,
@@ -521,16 +556,18 @@ export function useWorkbenchSymbolPanels(
 
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
-    const isRequestedSessionActive = context.isSessionActive;
-
+    let isRequestedSessionActive = context.isSessionActive;
     closeSymbolPanels();
 
     try {
-      await context.flushPendingChange(requestedPath);
+      const documentRequest =
+        await context.prepareDocumentRequest(requestedPath);
 
-      if (!isRequestedSessionActive()) {
+      if (!documentRequest || !documentRequest()) {
         return;
       }
+
+      isRequestedSessionActive = documentRequest;
 
       const [item] = await context.featuresGateway.prepareTypeHierarchy(
         requestedRoot,
@@ -629,16 +666,18 @@ export function useWorkbenchSymbolPanels(
       "symbol";
     const requestedRoot = workspaceRoot;
     const requestedPath = document.path;
-    const isRequestedSessionActive = context.isSessionActive;
-
+    let isRequestedSessionActive = context.isSessionActive;
     closeSymbolPanels();
 
     try {
-      await context.flushPendingChange(requestedPath);
+      const documentRequest =
+        await context.prepareDocumentRequest(requestedPath);
 
-      if (!isRequestedSessionActive()) {
+      if (!documentRequest || !documentRequest()) {
         return;
       }
+
+      isRequestedSessionActive = documentRequest;
 
       const locations = await context.featuresGateway.references(
         requestedRoot,

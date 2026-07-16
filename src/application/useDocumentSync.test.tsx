@@ -37,6 +37,15 @@ function ref<T>(value: T): MutableRef<T> {
   return { current: value };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+
+  return { promise, resolve };
+}
+
 function runningStatus(
   rootPath: string,
   sessionId: number,
@@ -267,6 +276,9 @@ function createHarness(): Harness {
   const reportLanguageServerError = vi.fn();
   const reportLanguageServerErrorForActiveWorkspaceRoot = vi.fn();
   const reportErrorForActiveWorkspaceRoot = vi.fn();
+  const nextDocumentLifecycleIdentityRef = ref(0);
+  const documentLifecycleIdentitiesRef = ref<Record<string, number>>({});
+  const pendingDocumentLifecycleIdentitiesRef = ref<Record<string, number>>({});
 
   const resetLanguageServerDocuments = vi.fn(() => {
     php.generation.current += 1;
@@ -279,6 +291,8 @@ function createHarness(): Harness {
     php.versionsByUri.current = {};
     php.lastAppliedByUri.current = {};
     php.syncQueues.current = {};
+    documentLifecycleIdentitiesRef.current = {};
+    pendingDocumentLifecycleIdentitiesRef.current = {};
   });
 
   const deps: DocumentSyncDependencies = {
@@ -294,6 +308,9 @@ function createHarness(): Harness {
     documentChangeTimersRef: php.changeTimers,
     documentSyncQueuesRef: php.syncQueues,
     documentSyncGenerationRef: php.generation,
+    nextDocumentLifecycleIdentityRef,
+    documentLifecycleIdentitiesRef,
+    pendingDocumentLifecycleIdentitiesRef,
     documentVersionsRef: php.versions,
     documentVersionsByUriRef: php.versionsByUri,
     lastAppliedDiagnosticVersionByUriRef: php.lastAppliedByUri,
@@ -477,6 +494,175 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
 
     expect(firstLifecycle).toBe(1);
     expect(secondLifecycle).toBe(2);
+  });
+
+  it("returns a root-bound lease only after didOpen completes", async () => {
+    const harness = createHarness();
+    const open = deferred<void>();
+    vi.mocked(harness.phpGateway.didOpen).mockImplementation(
+      async () => open.promise,
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument();
+    harness.activeDocumentRef.current = document;
+    let leaseSettled = false;
+
+    const leasePromise = api()
+      .requestLanguageServerDocumentLease(ROOT, document.path)
+      .finally(() => {
+        leaseSettled = true;
+      });
+    await flushMicrotasks();
+
+    expect(harness.phpGateway.didOpen).toHaveBeenCalledTimes(1);
+    expect(leaseSettled).toBe(false);
+    expect(api().isLanguageServerDocumentSynced(document.path)).toBe(false);
+
+    open.resolve();
+    const lease = await leasePromise;
+
+    expect(lease?.lifecycleIdentity).toBe(1);
+    expect(
+      lease && api().isLanguageServerDocumentRequestLeaseCurrent(lease),
+    ).toBe(true);
+  });
+
+  it("does not lease a document when didOpen fails", async () => {
+    const harness = createHarness();
+    vi.mocked(harness.phpGateway.didOpen).mockRejectedValue(
+      new Error("open failed"),
+    );
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument();
+    harness.activeDocumentRef.current = document;
+
+    const lease = await api().requestLanguageServerDocumentLease(
+      ROOT,
+      document.path,
+    );
+
+    expect(lease).toBeNull();
+    expect(api().isLanguageServerDocumentSynced(document.path)).toBe(false);
+    expect(harness.reportLanguageServerError).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace an in-flight request with a reopened path's lease", async () => {
+    const harness = createHarness();
+    const firstOpen = deferred<void>();
+    vi.mocked(harness.phpGateway.didOpen)
+      .mockImplementationOnce(async () => firstOpen.promise)
+      .mockResolvedValue(undefined);
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument();
+    harness.activeDocumentRef.current = document;
+
+    const firstRequest = api().requestLanguageServerDocumentLease(
+      ROOT,
+      document.path,
+    );
+    await flushMicrotasks();
+    const closeRequest = api().syncClosedDocument(document);
+    const secondRequest = api().requestLanguageServerDocumentLease(
+      ROOT,
+      document.path,
+    );
+
+    firstOpen.resolve();
+    const [firstLease, secondLease] = await Promise.all([
+      firstRequest,
+      secondRequest,
+      closeRequest,
+    ]);
+
+    expect(firstLease).toBeNull();
+    expect(secondLease?.lifecycleIdentity).toBe(2);
+    expect(harness.phpGateway.didOpen).toHaveBeenCalledTimes(2);
+    expect(harness.phpGateway.didClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears lifecycle identities atomically when reset interrupts didOpen", async () => {
+    const harness = createHarness();
+    const firstOpen = deferred<void>();
+    vi.mocked(harness.phpGateway.didOpen)
+      .mockImplementationOnce(async () => firstOpen.promise)
+      .mockResolvedValue(undefined);
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument();
+    harness.activeDocumentRef.current = document;
+
+    const firstLease = api().requestLanguageServerDocumentLease(
+      ROOT,
+      document.path,
+    );
+    await flushMicrotasks();
+    const reset = api().closeSyncedLanguageServerDocumentsForRoot(ROOT);
+
+    expect(harness.deps.resetLanguageServerDocuments).toHaveBeenCalledTimes(1);
+    expect(
+      api().getLanguageServerDocumentLifecycleIdentity(ROOT, document.path),
+    ).toBeNull();
+
+    firstOpen.resolve();
+    await expect(firstLease).resolves.toBeNull();
+    await reset;
+
+    const replacementLease = await api().requestLanguageServerDocumentLease(
+      ROOT,
+      document.path,
+    );
+
+    expect(replacementLease?.lifecycleIdentity).toBe(2);
+    expect(
+      replacementLease &&
+        api().isLanguageServerDocumentRequestLeaseCurrent(replacementLease),
+    ).toBe(true);
+  });
+
+  it("invalidates leases across close, root switch, and reopen", async () => {
+    const harness = createHarness();
+    const { api } = renderDocumentSync(harness.deps);
+    const document = phpDocument();
+    harness.activeDocumentRef.current = document;
+    const firstLease = await api().requestLanguageServerDocumentLease(
+      ROOT,
+      document.path,
+    );
+
+    expect(firstLease).not.toBeNull();
+    harness.currentRootRef.current = OTHER_ROOT;
+    expect(
+      firstLease &&
+        api().isLanguageServerDocumentRequestLeaseCurrent(firstLease),
+    ).toBe(false);
+
+    harness.currentRootRef.current = ROOT;
+    const replacementSession = runningStatus(ROOT, SESSION + 1);
+    harness.php.statusRef.current = replacementSession;
+    harness.php.statusByRootRef.current = { [ROOT]: replacementSession };
+    expect(
+      firstLease &&
+        api().isLanguageServerDocumentRequestLeaseCurrent(firstLease),
+    ).toBe(false);
+
+    const originalSession = runningStatus(ROOT, SESSION);
+    harness.php.statusRef.current = originalSession;
+    harness.php.statusByRootRef.current = { [ROOT]: originalSession };
+    await api().syncClosedDocument(document);
+    expect(
+      firstLease &&
+        api().isLanguageServerDocumentRequestLeaseCurrent(firstLease),
+    ).toBe(false);
+
+    const secondLease = await api().requestLanguageServerDocumentLease(
+      ROOT,
+      document.path,
+    );
+
+    expect(secondLease?.lifecycleIdentity).toBe(2);
+    expect(
+      secondLease &&
+        api().isLanguageServerDocumentRequestLeaseCurrent(secondLease),
+    ).toBe(true);
   });
 
   it("does not sync huge PHP documents to phpactor", async () => {

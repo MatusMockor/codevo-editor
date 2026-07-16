@@ -147,6 +147,13 @@ type MonacoWorkspaceSymbolRegistry = {
     provider: MonacoWorkspaceSymbolProvider,
   ): Disposable;
 };
+export interface LanguageServerMonacoDocumentRequestLease {
+  readonly lifecycleIdentity: number;
+  readonly path: string;
+  readonly rootPath: string;
+  readonly sessionId: number;
+  readonly syncGeneration: number;
+}
 export type PhpWorkspaceEditApplicationContext = WorkspaceEditApplicationContext;
 
 export type PhpWorkspaceEditApplier = (
@@ -330,6 +337,13 @@ export interface LanguageServerMonacoProviderContext
   ): ReturnType<LanguageServerFeaturesGateway["documentSymbols"]>;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
+  requestDocumentLease?(
+    rootPath: string,
+    path: string,
+  ): Promise<LanguageServerMonacoDocumentRequestLease | null>;
+  isDocumentLeaseCurrent?(
+    lease: LanguageServerMonacoDocumentRequestLease,
+  ): boolean;
   getDocumentLifecycleIdentity?(
     rootPath: string,
     path: string,
@@ -1392,6 +1406,7 @@ async function provideDocumentSymbols(
   // An outline / breadcrumb DocumentSymbol fetch can otherwise fire before the
   // document's `didOpen` is sent, which phpactor answers with UnknownDocument.
   if (
+    !context.requestDocumentLease &&
     context.isDocumentSynced &&
     !context.isDocumentSynced(request.rootPath, request.path)
   ) {
@@ -5781,12 +5796,33 @@ function workspaceSymbolRequestContext(
 async function flushPendingDocumentChangeForActiveRequest(
   context: LanguageServerMonacoProviderContext,
   request: {
+    documentLease?: LanguageServerMonacoDocumentRequestLease | null;
     lifecycleIdentity: number | null;
     path: string;
     rootPath: string;
     sessionId: number;
   },
 ): Promise<boolean> {
+  if (context.requestDocumentLease) {
+    const lease = await context.requestDocumentLease(
+      request.rootPath,
+      request.path,
+    );
+
+    if (!lease) {
+      return false;
+    }
+
+    if (request.sessionId !== lease.sessionId) {
+      return false;
+    }
+
+    request.documentLease = lease;
+    request.lifecycleIdentity = lease.lifecycleIdentity;
+
+    return isFeatureRequestActive(context, request);
+  }
+
   if (context.getDocumentLifecycleIdentity) {
     request.lifecycleIdentity = context.getDocumentLifecycleIdentity(
       request.rootPath,
@@ -5849,12 +5885,17 @@ function raceInteractiveFeatureRequest<T>(
 function isFeatureRequestActive(
   context: LanguageServerMonacoProviderContext,
   request: {
+    documentLease?: LanguageServerMonacoDocumentRequestLease | null;
     lifecycleIdentity?: number | null;
     path?: string;
     rootPath: string;
     sessionId: number;
   },
 ): boolean {
+  if (request.documentLease && context.isDocumentLeaseCurrent) {
+    return context.isDocumentLeaseCurrent(request.documentLease);
+  }
+
   if (
     !isStoredLanguageServerPayloadActive(
       context,

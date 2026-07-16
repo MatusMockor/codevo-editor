@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MutableRefObject } from "react";
+import { useCallback, type MutableRefObject } from "react";
 import type { EditorDocument } from "../domain/workspace";
 import {
   createLanguageServerTextDocument,
@@ -49,6 +49,11 @@ export interface DocumentSyncDependencies {
   documentChangeTimersRef: MutableRefObject<Record<string, number>>;
   documentSyncQueuesRef: MutableRefObject<Record<string, Promise<void>>>;
   documentSyncGenerationRef: MutableRefObject<number>;
+  nextDocumentLifecycleIdentityRef: MutableRefObject<number>;
+  documentLifecycleIdentitiesRef: MutableRefObject<Record<string, number>>;
+  pendingDocumentLifecycleIdentitiesRef: MutableRefObject<
+    Record<string, number>
+  >;
   documentVersionsRef: MutableRefObject<Record<string, number>>;
   documentVersionsByUriRef: MutableRefObject<Record<string, number>>;
   lastAppliedDiagnosticVersionByUriRef: MutableRefObject<
@@ -186,6 +191,13 @@ export interface DocumentSync {
     rootPath: string,
     path: string,
   ) => number | null;
+  requestLanguageServerDocumentLease: (
+    rootPath: string,
+    path: string,
+  ) => Promise<LanguageServerDocumentRequestLease | null>;
+  isLanguageServerDocumentRequestLeaseCurrent: (
+    lease: LanguageServerDocumentRequestLease,
+  ) => boolean;
   syncSavedDocument: (
     requestedRoot: string,
     document: EditorDocument,
@@ -206,6 +218,14 @@ export interface DocumentSync {
   closeSyncedJavaScriptTypeScriptDocumentsForRoot: (
     rootPath: string,
   ) => Promise<void>;
+}
+
+export interface LanguageServerDocumentRequestLease {
+  readonly rootPath: string;
+  readonly path: string;
+  readonly sessionId: number;
+  readonly syncGeneration: number;
+  readonly lifecycleIdentity: number;
 }
 
 /**
@@ -234,6 +254,9 @@ export function useDocumentSync(
     documentChangeTimersRef,
     documentSyncQueuesRef,
     documentSyncGenerationRef,
+    nextDocumentLifecycleIdentityRef,
+    documentLifecycleIdentitiesRef,
+    pendingDocumentLifecycleIdentitiesRef,
     documentVersionsRef,
     documentVersionsByUriRef,
     lastAppliedDiagnosticVersionByUriRef,
@@ -277,9 +300,6 @@ export function useDocumentSync(
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
   } = dependencies;
-  const nextDocumentLifecycleIdentityRef = useRef(0);
-  const documentLifecycleIdentitiesRef = useRef<Record<string, number>>({});
-
   const getLanguageServerDocumentLifecycleIdentity = useCallback(
     (rootPath: string, path: string): number | null => {
       const syncKey = languageServerDocumentSyncKey(rootPath, path);
@@ -330,8 +350,10 @@ export function useDocumentSync(
       }
 
       nextDocumentLifecycleIdentityRef.current += 1;
-      documentLifecycleIdentitiesRef.current[syncKey] =
+      const requestedLifecycleIdentity =
         nextDocumentLifecycleIdentityRef.current;
+      pendingDocumentLifecycleIdentitiesRef.current[syncKey] =
+        requestedLifecycleIdentity;
 
       const version = nextDocumentVersion(rootPath, document.path);
       const syncedDocument = createLanguageServerTextDocument(document, version);
@@ -350,6 +372,7 @@ export function useDocumentSync(
 
         syncedDocumentPathsRef.current.delete(syncKey);
         delete documentLifecycleIdentitiesRef.current[syncKey];
+        delete pendingDocumentLifecycleIdentitiesRef.current[syncKey];
         delete syncedDocumentContentRef.current[syncKey];
         delete pendingDocumentOpenSyncAttemptsRef.current[syncKey];
         delete documentVersionsRef.current[syncKey];
@@ -386,6 +409,21 @@ export function useDocumentSync(
             rootPath,
             syncedDocument,
           );
+
+          if (
+            pendingDocumentOpenSyncAttemptsRef.current[syncKey] !==
+              openSyncAttemptId ||
+            documentSyncGenerationRef.current !== requestedSyncGeneration ||
+            !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+            !isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
+          ) {
+            clearPendingOpenSyncState();
+            return;
+          }
+
+          documentLifecycleIdentitiesRef.current[syncKey] =
+            requestedLifecycleIdentity;
+          delete pendingDocumentLifecycleIdentitiesRef.current[syncKey];
           clearPendingOpenSyncAttempt();
           // The first PHP document is now open on the active phpactor session:
           // force-warm its index off the back of this didOpen so the user's
@@ -889,6 +927,106 @@ export function useDocumentSync(
     [flushPendingDocumentChangeForRoot],
   );
 
+  const isLanguageServerDocumentRequestLeaseCurrent = useCallback(
+    (lease: LanguageServerDocumentRequestLease): boolean => {
+      const syncKey = languageServerDocumentSyncKey(lease.rootPath, lease.path);
+
+      if (
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          lease.rootPath,
+        )
+      ) {
+        return false;
+      }
+
+      if (documentSyncGenerationRef.current !== lease.syncGeneration) {
+        return false;
+      }
+
+      if (
+        !isLanguageServerSessionCurrentForRoot(
+          lease.rootPath,
+          lease.sessionId,
+        )
+      ) {
+        return false;
+      }
+
+      if (!syncedDocumentPathsRef.current.has(syncKey)) {
+        return false;
+      }
+
+      if (pendingDocumentOpenSyncAttemptsRef.current[syncKey] !== undefined) {
+        return false;
+      }
+
+      return (
+        documentLifecycleIdentitiesRef.current[syncKey] ===
+        lease.lifecycleIdentity
+      );
+    },
+    [isLanguageServerSessionCurrentForRoot],
+  );
+
+  const requestLanguageServerDocumentLease = useCallback(
+    async (
+      rootPath: string,
+      path: string,
+    ): Promise<LanguageServerDocumentRequestLease | null> => {
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)
+      ) {
+        return null;
+      }
+
+      if (
+        !isRunningLanguageServerForWorkspace(
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          rootPath,
+        )
+      ) {
+        return null;
+      }
+
+      const syncKey = languageServerDocumentSyncKey(rootPath, path);
+      const requestedSessionId = languageServerRuntimeStatus.sessionId;
+      const requestedSyncGeneration = documentSyncGenerationRef.current;
+      const flushPromise = flushPendingDocumentChangeForRoot(rootPath, path);
+      const requestedLifecycleIdentity =
+        documentLifecycleIdentitiesRef.current[syncKey] ??
+        pendingDocumentLifecycleIdentitiesRef.current[syncKey];
+
+      if (requestedLifecycleIdentity === undefined) {
+        await flushPromise;
+        return null;
+      }
+
+      await flushPromise;
+
+      const lease: LanguageServerDocumentRequestLease = {
+        lifecycleIdentity: requestedLifecycleIdentity,
+        path,
+        rootPath,
+        sessionId: requestedSessionId,
+        syncGeneration: requestedSyncGeneration,
+      };
+
+      if (!isLanguageServerDocumentRequestLeaseCurrent(lease)) {
+        return null;
+      }
+
+      return lease;
+    },
+    [
+      flushPendingDocumentChangeForRoot,
+      isLanguageServerDocumentRequestLeaseCurrent,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+    ],
+  );
+
   // BUG 2 gate: reports whether a PHP document has already been opened
   // (`didOpen` sent) on the active workspace's language server. Outline /
   // breadcrumb DocumentSymbol fetches consult this so they never race ahead of
@@ -901,8 +1039,12 @@ export function useDocumentSync(
       return false;
     }
 
-    return syncedDocumentPathsRef.current.has(
-      languageServerDocumentSyncKey(rootPath, path),
+    const syncKey = languageServerDocumentSyncKey(rootPath, path);
+
+    return (
+      syncedDocumentPathsRef.current.has(syncKey) &&
+      pendingDocumentOpenSyncAttemptsRef.current[syncKey] === undefined &&
+      documentLifecycleIdentitiesRef.current[syncKey] !== undefined
     );
   }, []);
 
@@ -1253,6 +1395,7 @@ export function useDocumentSync(
       clearDocumentChangeTimer(syncKey);
       syncedDocumentPathsRef.current.delete(syncKey);
       delete documentLifecycleIdentitiesRef.current[syncKey];
+      delete pendingDocumentLifecycleIdentitiesRef.current[syncKey];
       delete syncedDocumentContentRef.current[syncKey];
       delete pendingDocumentChangesRef.current[syncKey];
       delete pendingDocumentOpenSyncAttemptsRef.current[syncKey];
@@ -1392,43 +1535,43 @@ export function useDocumentSync(
         ? currentRuntimeStatus.sessionId
         : null;
 
-      await Promise.all(
-        syncedDocuments.map(async ({ key, path }) => {
-          clearDocumentChangeTimer(key);
-          syncedDocumentPathsRef.current.delete(key);
-          delete documentLifecycleIdentitiesRef.current[key];
-          delete syncedDocumentContentRef.current[key];
-          delete pendingDocumentChangesRef.current[key];
-          delete pendingDocumentOpenSyncAttemptsRef.current[key];
-          delete documentVersionsRef.current[key];
-          delete documentVersionsByUriRef.current[
-            languageServerUriSyncKey(rootPath, fileUriFromPath(path))
-          ];
-          delete lastAppliedDiagnosticVersionByUriRef.current[
-            languageServerUriSyncKey(rootPath, fileUriFromPath(path))
-          ];
+      const closeRequests = syncedDocuments.map(async ({ key, path }) => {
+        clearDocumentChangeTimer(key);
+        syncedDocumentPathsRef.current.delete(key);
+        delete documentLifecycleIdentitiesRef.current[key];
+        delete pendingDocumentLifecycleIdentitiesRef.current[key];
+        delete syncedDocumentContentRef.current[key];
+        delete pendingDocumentChangesRef.current[key];
+        delete pendingDocumentOpenSyncAttemptsRef.current[key];
+        delete documentVersionsRef.current[key];
+        delete documentVersionsByUriRef.current[
+          languageServerUriSyncKey(rootPath, fileUriFromPath(path))
+        ];
+        delete lastAppliedDiagnosticVersionByUriRef.current[
+          languageServerUriSyncKey(rootPath, fileUriFromPath(path))
+        ];
 
-          try {
-            await enqueueDocumentSync(key, () =>
-              languageServerDocumentSyncGateway.didClose(rootPath, path),
-            );
-          } catch (error) {
-            if (
-              requestedSessionId !== null &&
-              !isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
-            ) {
-              return;
-            }
-
-            reportLanguageServerErrorForActiveWorkspaceRoot(rootPath, error);
+        try {
+          await enqueueDocumentSync(key, () =>
+            languageServerDocumentSyncGateway.didClose(rootPath, path),
+          );
+        } catch (error) {
+          if (
+            requestedSessionId !== null &&
+            !isLanguageServerSessionCurrentForRoot(rootPath, requestedSessionId)
+          ) {
+            return;
           }
-        }),
-      );
+
+          reportLanguageServerErrorForActiveWorkspaceRoot(rootPath, error);
+        }
+      });
 
       if (syncedDocumentPathsRef.current.size === 0) {
-        documentLifecycleIdentitiesRef.current = {};
         resetLanguageServerDocuments();
       }
+
+      await Promise.all(closeRequests);
     },
     [
       clearDocumentChangeTimer,
@@ -1539,6 +1682,8 @@ export function useDocumentSync(
     flushPendingJavaScriptTypeScriptDocumentChangeForRoot,
     isLanguageServerDocumentSynced,
     getLanguageServerDocumentLifecycleIdentity,
+    requestLanguageServerDocumentLease,
+    isLanguageServerDocumentRequestLeaseCurrent,
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     syncClosedDocument,

@@ -30,6 +30,11 @@ export function useLanguageServerDocumentSyncState() {
   const documentSyncQueuesRef = useRef<Record<string, Promise<void>>>({});
   const documentSyncGenerationRef = useRef(0);
   const documentSyncRuntimeSignatureRef = useRef<string | null>(null);
+  const nextDocumentLifecycleIdentityRef = useRef(0);
+  const documentLifecycleIdentitiesRef = useRef<Record<string, number>>({});
+  const pendingDocumentLifecycleIdentitiesRef = useRef<Record<string, number>>(
+    {},
+  );
   // Cold first-nav fix: tracks which workspace roots have already had their
   // phpactor index force-warmed (one low-priority documentSymbol request fired
   // after the first PHP didOpen). Keyed by the workspace root so each open
@@ -175,6 +180,8 @@ export function useLanguageServerDocumentSyncState() {
     documentVersionsByUriRef.current = {};
     lastAppliedDiagnosticVersionByUriRef.current = {};
     documentSyncQueuesRef.current = {};
+    documentLifecycleIdentitiesRef.current = {};
+    pendingDocumentLifecycleIdentitiesRef.current = {};
     // A document-sync reset means the phpactor session/generation changed, so
     // its index is cold again: allow the next PHP didOpen to re-fire the
     // force-index warm-up.
@@ -218,6 +225,9 @@ export function useLanguageServerDocumentSyncState() {
     documentSyncQueuesRef,
     documentSyncGenerationRef,
     documentSyncRuntimeSignatureRef,
+    nextDocumentLifecycleIdentityRef,
+    documentLifecycleIdentitiesRef,
+    pendingDocumentLifecycleIdentitiesRef,
     phpLanguageServerIndexWarmedRootsRef,
     javaScriptTypeScriptDocumentVersionsRef,
     javaScriptTypeScriptDocumentVersionsByUriRef,
