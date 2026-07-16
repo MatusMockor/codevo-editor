@@ -580,35 +580,75 @@ describe("latteForeachLoopBindingsAt", () => {
 describe("parseLatteForeachCollection", () => {
   it("parses a bare collection variable", () => {
     expect(parseLatteForeachCollection("$items")).toEqual({
-      relationNames: [],
+      expression: "$items",
       rootVariableName: "items",
     });
   });
 
-  it("parses a property/relation chain", () => {
-    expect(parseLatteForeachCollection("$order->lines")).toEqual({
-      relationNames: ["lines"],
-      rootVariableName: "order",
+  it("preserves a complete method chain with nested arguments", () => {
+    const expression =
+      "$type->related('subscription_type_items')->where('deleted_at', null)";
+
+    expect(parseLatteForeachCollection(expression)).toEqual({
+      expression,
+      rootVariableName: "type",
     });
   });
 
-  it("parses a deep relation chain", () => {
-    expect(parseLatteForeachCollection("$a->b->c")).toEqual({
-      relationNames: ["b", "c"],
-      rootVariableName: "a",
+  it("preserves nested offsets and their expressions", () => {
+    const expression = "$groups[$group->id]['items']";
+
+    expect(parseLatteForeachCollection(`  ${expression}  `)).toEqual({
+      expression,
+      rootVariableName: "groups",
     });
   });
 
-  it("rejects a method call", () => {
-    expect(parseLatteForeachCollection("$items->all()")).toBeNull();
+  it.each([
+    "$items->all()",
+    "$items->map(nested([1, 2], ['key' => call($value)]), /* keep */)",
+    "$items->map(fn ($item) => $item->id)",
+    "$items->map(name: /* value */ nested($value),)",
+    "$items[/* key */ nested($keys['primary'], fallback: 'id')]",
+    "$items->where(id: $id,)",
+  ])("accepts plausible nested postfix contents: %s", (expression) => {
+    expect(parseLatteForeachCollection(expression)).toEqual({
+      expression,
+      rootVariableName: "items",
+    });
   });
 
-  it("rejects array access", () => {
-    expect(parseLatteForeachCollection("$items[0]")).toBeNull();
+  it.each([
+    "getItems()",
+    "Factory::items()",
+    "$service->$member",
+    "$service->{$member}",
+    "$items + $items",
+    "$items[missing",
+    "$items->all(",
+    "$items->all();",
+    "$items[]",
+    "$items[/* missing */]",
+    "$items[;]",
+    "$items[$first, $second]",
+    "$items->map(;)",
+    "$items->map(,1)",
+    "$items->map(1,,2)",
+    "$items->map(name:)",
+    "$items->map(=>)",
+    "$items[$key => $value]",
+    '"$items->all()"',
+    "/* $items->all() */",
+  ])("rejects malformed, dynamic, or unsupported roots: %s", (expression) => {
+    expect(parseLatteForeachCollection(expression)).toBeNull();
   });
 
-  it("rejects a non-variable receiver", () => {
-    expect(parseLatteForeachCollection("getItems()")).toBeNull();
+  it("retains the receiver parser's expression bounds", () => {
+    const tooManyOffsets = `$items${"[0]".repeat(65)}`;
+    const tooDeep = `$items->where(${"(".repeat(17)}1${")".repeat(17)})`;
+
+    expect(parseLatteForeachCollection(tooManyOffsets)).toBeNull();
+    expect(parseLatteForeachCollection(tooDeep)).toBeNull();
   });
 });
 

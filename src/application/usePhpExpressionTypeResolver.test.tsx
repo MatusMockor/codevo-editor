@@ -187,6 +187,47 @@ function netteResolverOptions(
 }
 
 describe("usePhpExpressionTypeResolver", () => {
+  it.each([
+    [
+      "row list",
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow[]",
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow",
+    ],
+    [
+      "keyed array",
+      "array<string, Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow>",
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow",
+    ],
+    [
+      "keyed iterable",
+      "iterable<int, Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow>",
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow",
+    ],
+    [
+      "union",
+      "App\\PaymentLog[]|App\\ArchivedPaymentLog[]",
+      "App\\PaymentLog|App\\ArchivedPaymentLog",
+    ],
+    ["plain array", "array", null],
+    ["mixed", "mixed", null],
+    ["scalar", "string", null],
+  ])("resolves a %s array-offset value", async (_kind, containerType, expected) => {
+    const source = `<?php
+/** @var ${containerType} $paymentLogs */
+$paymentLogs['payment_id'];
+`;
+    const harness = renderHook(makeOptions({ frameworkRuntime: GENERIC_RUNTIME }));
+
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        source,
+        positionAfter(source, "payment_id"),
+        "$paymentLogs['payment_id']",
+      ),
+    ).resolves.toBe(expected);
+    harness.unmount();
+  });
+
   it("resolves model factories and builder fluent methods to Builder", async () => {
     const calls: Array<[string, string, number | undefined]> = [];
     const resolvePhpBuilderModelType = vi.fn(
@@ -1116,6 +1157,72 @@ ${expression};
       expression,
     );
 
+    harness.unmount();
+  });
+
+  it("resolves a method chain after a PaymentLogs fetchPairs array offset", async () => {
+    const paymentLogsSelection =
+      "Efabrica\\Crm\\ActiveRowTypes\\Selection\\PaymentLogsSelection";
+    const paymentLogsRow =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow";
+    const fetchPairsExpression =
+      "$paymentLogs->fetchPairs('payment_external_id')";
+    const source = `<?php
+/** @var ${paymentLogsSelection} $paymentLogs */
+$pairs = ${fetchPairsExpression};
+$pairs['pay_123']->getPaymentStatus();
+`;
+    const position = positionAfter(source, "getPaymentStatus");
+    const resolvePhpMethodReturnType = vi.fn(
+      async (
+        className: string,
+        methodName: string,
+        _visitedClassNames?: Set<string>,
+        _lateStaticClassName?: string,
+        _templateTypes?: ReadonlyMap<string, string>,
+        callExpression?: string,
+      ) => {
+        if (
+          className === paymentLogsSelection &&
+          methodName.toLowerCase() === "fetchpairs" &&
+          callExpression === fetchPairsExpression
+        ) {
+          return `${paymentLogsRow}[]`;
+        }
+
+        if (
+          className === paymentLogsRow &&
+          methodName === "getPaymentStatus"
+        ) {
+          return "Crm\\PaymentsModule\\Status\\PaymentStatus";
+        }
+
+        return null;
+      },
+    );
+    const harness = renderHook(
+      netteResolverOptions({ resolvePhpMethodReturnType }),
+    );
+
+    await expect(
+      harness.api().resolvePhpExpressionType(
+        source,
+        position,
+        "$pairs['pay_123']->getPaymentStatus()",
+      ),
+    ).resolves.toBe("Crm\\PaymentsModule\\Status\\PaymentStatus");
+    expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
+      paymentLogsSelection,
+      "fetchPairs",
+      undefined,
+      undefined,
+      undefined,
+      fetchPairsExpression,
+    );
+    expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
+      paymentLogsRow,
+      "getPaymentStatus",
+    );
     harness.unmount();
   });
 

@@ -385,6 +385,25 @@ describe("resolveLatteMemberDefinition", () => {
     );
   });
 
+  it("dispatches a method-chain receiver when opening its final definition", async () => {
+    const context = makeContext({
+      members: [method({ name: "getMethod" })],
+    });
+    const source = "{$api->getEndpoint()->getMethod()}";
+
+    await resolveLatteMemberDefinition(
+      context,
+      source,
+      source.indexOf("getMethod") + 2,
+    );
+
+    expect(context.deps.resolvePhpReceiverCompletions).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      "$api->getEndpoint()",
+    );
+  });
+
   it("uses a precomputed member view instead of re-detecting", async () => {
     const context = makeContext({
       members: [method({ name: "total" })],

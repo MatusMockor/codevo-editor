@@ -39,6 +39,40 @@ describe("latteExpressionCompletionTargetAt", () => {
     });
   });
 
+  it("detects api_listing method chains with nested call arguments", () => {
+    const source =
+      '{$api->getEndpoint($factory->make("endpoint)", [1, 2]))->getMet}';
+    const offset = offsetAfter(source, "getMet");
+
+    expect(latteExpressionCompletionTargetAt(source, offset)).toEqual({
+      kind: "member",
+      member: {
+        end: offset,
+        prefix: "getMet",
+        receiverExpression:
+          '$api->getEndpoint($factory->make("endpoint)", [1, 2]))',
+        start: source.indexOf("getMet"),
+        variableName: "api",
+      },
+    });
+  });
+
+  it("detects PaymentLogs offset member chains", () => {
+    const source = "{$payments[$paymentId]->payment_gateway->na}";
+    const offset = offsetAfter(source, "->na");
+
+    expect(latteExpressionCompletionTargetAt(source, offset)).toEqual({
+      kind: "member",
+      member: {
+        end: offset,
+        prefix: "na",
+        receiverExpression: "$payments[$paymentId]->payment_gateway",
+        start: offset - 2,
+        variableName: "payments",
+      },
+    });
+  });
+
   it("detects filter completion but rejects logical-or", () => {
     const filterSource = "{=$name|upp}";
     expect(
@@ -175,6 +209,30 @@ describe("latteExpressionCompletionTargetAt", () => {
       latteExpressionCompletionTargetAt(source, offsetAfter(source, "->na")),
     ).toBeNull();
   });
+
+  it("ignores quotes inside PHP comments when completing members", () => {
+    const source = '{$invoice /* "not a string" */ -> na}';
+    const offset = offsetAfter(source, "-> na");
+
+    expect(latteExpressionCompletionTargetAt(source, offset)).toEqual({
+      kind: "member",
+      member: {
+        end: offset,
+        prefix: "na",
+        receiverExpression: "$invoice",
+        start: offset - 2,
+        variableName: "invoice",
+      },
+    });
+  });
+
+  it("rejects completion for a malformed trailing method call", () => {
+    const source = "{$invoice->good()->next(}";
+
+    expect(
+      latteExpressionCompletionTargetAt(source, source.length - 1),
+    ).toBeNull();
+  });
 });
 
 describe("latte variable and member reference detection", () => {
@@ -200,6 +258,56 @@ describe("latte variable and member reference detection", () => {
     expect(latteMemberReferenceAt(source, offset)).toEqual({
       memberName: "name",
       receiverExpression: "$invoice->customer",
+      variableName: "invoice",
+    });
+  });
+
+  it("finds method and offset member references from real ebox chain shapes", () => {
+    const apiSource = "{$api->getEndpoint()->getMethod()}";
+    const paymentSource = "{$payments[$paymentId]->user->public_name}";
+
+    expect(
+      latteMemberReferenceAt(apiSource, offsetAfter(apiSource, "getMet")),
+    ).toEqual({
+      memberName: "getMethod",
+      receiverExpression: "$api->getEndpoint()",
+      variableName: "api",
+    });
+    expect(
+      latteMemberReferenceAt(
+        paymentSource,
+        offsetAfter(paymentSource, "public_na"),
+      ),
+    ).toEqual({
+      memberName: "public_name",
+      receiverExpression: "$payments[$paymentId]->user",
+      variableName: "payments",
+    });
+  });
+
+  it("keeps completed member references before malformed trailing postfix", () => {
+    const source = "{$invoice->good()->next(}";
+
+    expect(
+      latteMemberReferenceAt(source, offsetAfter(source, "go")),
+    ).toEqual({
+      memberName: "good",
+      receiverExpression: "$invoice",
+      variableName: "invoice",
+    });
+    expect(
+      latteMemberReferenceAt(source, offsetAfter(source, "ne")),
+    ).toBeNull();
+  });
+
+  it("ignores quotes inside PHP comments when resolving members", () => {
+    const source = '{$invoice /* "not a string" */ -> name}';
+
+    expect(
+      latteMemberReferenceAt(source, offsetAfter(source, "na")),
+    ).toEqual({
+      memberName: "name",
+      receiverExpression: "$invoice",
       variableName: "invoice",
     });
   });
@@ -323,5 +431,10 @@ describe("hasUnclosedStringLiteral", () => {
   it("tracks escaped quotes", () => {
     expect(hasUnclosedStringLiteral(`$a = "unterminated`)).toBe(true);
     expect(hasUnclosedStringLiteral(`$a = "escaped \\" quote"`)).toBe(false);
+  });
+
+  it("ignores quotes inside PHP comments", () => {
+    expect(hasUnclosedStringLiteral('$a /* " */ -> name')).toBe(false);
+    expect(hasUnclosedStringLiteral("$a // ' quote")).toBe(false);
   });
 });

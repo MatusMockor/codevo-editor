@@ -101,6 +101,19 @@ describe("latteExpressionCompletions", () => {
     ]);
   });
 
+  it("dispatches method and offset receivers to PHP member completion", async () => {
+    const context = makeContext({ members: [method({ name: "name" })] });
+    const source = "{$payments[$paymentId]->gateway()->na}";
+
+    await latteExpressionCompletions(context, source, source.length - 1);
+
+    expect(context.deps.resolvePhpReceiverCompletions).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      "$payments[$paymentId]->gateway()",
+    );
+  });
+
   it("returns filter completions from the static Latte filter list", async () => {
     const context = makeContext();
     const source = "{$invoice|lo}";

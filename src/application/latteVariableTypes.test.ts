@@ -317,6 +317,150 @@ describe("resolveLatteVariableType", () => {
     ).resolves.toBe("App\\Model\\Item");
   });
 
+  it("resolves the complete ebox method-chain foreach expression", async () => {
+    const collectionExpression =
+      "$type->related('subscription_type_items')->where('deleted_at', null)";
+    const resolveExpressionType = vi.fn(
+      async (_source, _position, expression) =>
+        expression === collectionExpression
+          ? "Nette\\Database\\Table\\Selection<int, App\\SubscriptionTypeItem>"
+          : null,
+    );
+    const context = makeContext({ deps: { resolveExpressionType } });
+    const source = `{varType App\\SubscriptionTypeActiveRow $type}
+{foreach ${collectionExpression} as $subscriptionTypeItem}
+  {$subscriptionTypeItem}
+{/foreach}`;
+
+    await expect(
+      resolveLatteVariableType(
+        context,
+        source,
+        source.indexOf("{$subscriptionTypeItem}"),
+        "subscriptionTypeItem",
+      ),
+    ).resolves.toBe("App\\SubscriptionTypeItem");
+    expect(resolveExpressionType).toHaveBeenCalledWith(
+      expect.stringContaining(collectionExpression),
+      expect.any(Object),
+      collectionExpression,
+    );
+  });
+
+  it("probes current() on the complete method-chain receiver", async () => {
+    const collectionExpression = "$notification->related('parameters')->order('id')";
+    const resolveExpressionType = vi.fn(async (_source, _position, expression) => {
+      if (expression === `${collectionExpression}->current()`) {
+        return "App\\NotificationParameter|false|null";
+      }
+
+      return null;
+    });
+    const context = makeContext({ deps: { resolveExpressionType } });
+    const source = `{varType App\\NotificationActiveRow $notification}
+{foreach ${collectionExpression} as $parameter}
+  {$parameter}
+{/foreach}`;
+
+    await expect(
+      resolveLatteVariableType(
+        context,
+        source,
+        source.indexOf("{$parameter}"),
+        "parameter",
+      ),
+    ).resolves.toBe("App\\NotificationParameter");
+    expect(resolveExpressionType).toHaveBeenCalledWith(
+      expect.stringContaining(`${collectionExpression}->current();`),
+      expect.any(Object),
+      `${collectionExpression}->current()`,
+    );
+  });
+
+  it("resolves a nested offset foreach through the full expression", async () => {
+    const collectionExpression = "$groups[$group->id]['items']";
+    const resolveExpressionType = vi.fn(
+      async (_source, _position, expression) =>
+        expression === collectionExpression ? "App\\LineItem[]" : null,
+    );
+    const context = makeContext({ deps: { resolveExpressionType } });
+    const source = `{varType array<int, array{items: App\\LineItem[]}> $groups}
+{varType App\\Group $group}
+{foreach ${collectionExpression} as $item}
+  {$item}
+{/foreach}`;
+
+    await expect(
+      resolveLatteVariableType(
+        context,
+        source,
+        source.indexOf("{$item}"),
+        "item",
+      ),
+    ).resolves.toBe("App\\LineItem");
+  });
+
+  it("keeps fetchPairs arguments when deriving PaymentLogs foreach members", async () => {
+    const collectionExpression = "$paymentLogs->fetchPairs('id')";
+    const paymentLog =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow";
+    const resolveExpressionType = vi.fn(
+      async (_source, _position, expression) =>
+        expression === collectionExpression
+          ? `array<int, ${paymentLog}>`
+          : null,
+    );
+    const context = makeContext({ deps: { resolveExpressionType } });
+    const source = `{varType Efabrica\\Crm\\ActiveRowTypes\\Selection\\PaymentLogsSelection $paymentLogs}
+{foreach ${collectionExpression} as $paymentLog}
+  {$paymentLog->variable_symbol}
+{/foreach}`;
+
+    await expect(
+      resolveLatteVariableType(
+        context,
+        source,
+        source.indexOf("$paymentLog->variable_symbol"),
+        "paymentLog",
+      ),
+    ).resolves.toBe(paymentLog);
+    expect(resolveExpressionType).toHaveBeenCalledWith(
+      expect.stringContaining("$paymentLogs->fetchPairs('id');"),
+      expect.any(Object),
+      collectionExpression,
+    );
+  });
+
+  it.each([
+    "$items[]",
+    "$items[;]",
+    "$items->map(;)",
+    "$items->map(1,,2)",
+    "$items->map(name:)",
+    "$items->map(=>)",
+    "$items[$key => $value]",
+  ])(
+    "does not resolve malformed foreach postfix contents: %s",
+    async (collectionExpression) => {
+      const resolveExpressionType = vi.fn(async () => "App\\Item[]");
+      const context = makeContext({ deps: { resolveExpressionType } });
+      const source = `{varType App\\Item[] $items}
+{foreach ${collectionExpression} as $item}
+  {$item}
+{/foreach}`;
+
+      await expect(
+        resolveLatteVariableType(
+          context,
+          source,
+          source.indexOf("{$item}"),
+          "item",
+        ),
+      ).resolves.toBeNull();
+      expect(resolveExpressionType).not.toHaveBeenCalled();
+    },
+  );
+
   it("falls back to current() for iterable object foreach element types", async () => {
     const resolveExpressionType = vi.fn(async (_source, _position, expression) =>
       expression === "$apiTokens->current()"

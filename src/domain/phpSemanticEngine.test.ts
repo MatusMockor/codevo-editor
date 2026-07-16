@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  phpArrayOffsetExpression,
+  phpArrayOffsetValueType,
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
   phpCurrentClassName,
@@ -4573,6 +4575,55 @@ class UserController
       className: "CommentFactory",
       methodName: "make",
     });
+  });
+
+  it("detects structural array-offset expressions", () => {
+    expect(phpArrayOffsetExpression("$rows['payment_id']")).toEqual({
+      containerExpression: "$rows",
+    });
+    expect(phpArrayOffsetExpression("$rows[$keys[0]][1]")).toEqual({
+      containerExpression: "$rows[$keys[0]]",
+    });
+    expect(phpArrayOffsetExpression("$rows[0]->getId()")).toBeNull();
+    expect(phpArrayOffsetExpression("$rows[]")).toBeNull();
+  });
+
+  it("ignores comments while balancing array offsets", () => {
+    expect(phpArrayOffsetExpression("$rows[/* ] ) } */ 0]")).toEqual({
+      containerExpression: "$rows",
+    });
+    expect(
+      phpArrayOffsetExpression("$rows[// ] ) }\n$keys[0]]"),
+    ).toEqual({
+      containerExpression: "$rows",
+    });
+    expect(phpArrayOffsetExpression("$rows[# ] ) }\n0]")).toEqual({
+      containerExpression: "$rows",
+    });
+    expect(phpArrayOffsetExpression("$rows /* [ ] */ [0]")).toEqual({
+      containerExpression: "$rows",
+    });
+    expect(phpArrayOffsetExpression("$rows[/* unterminated ]")).toBeNull();
+    expect(phpArrayOffsetExpression("$rows[0] /* unterminated ]")).toBeNull();
+  });
+
+  it("extracts conservative array-offset value types", () => {
+    const paymentLog =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\PaymentLogsActiveRow";
+
+    expect(phpArrayOffsetValueType(`${paymentLog}[]`)).toBe(paymentLog);
+    expect(phpArrayOffsetValueType(`array<string, ${paymentLog}>`)).toBe(
+      paymentLog,
+    );
+    expect(
+      phpArrayOffsetValueType(
+        `iterable<int, ${paymentLog}>|array<string, App\\ArchivedPaymentLog>`,
+      ),
+    ).toBe(`${paymentLog}|App\\ArchivedPaymentLog`);
+    expect(phpArrayOffsetValueType(`${paymentLog}[][]`)).toBe(`${paymentLog}[]`);
+    expect(phpArrayOffsetValueType("array")).toBeNull();
+    expect(phpArrayOffsetValueType("mixed")).toBeNull();
+    expect(phpArrayOffsetValueType(`${paymentLog}[]|null`)).toBeNull();
   });
 
   it("detects calls that pass class-string arguments", () => {

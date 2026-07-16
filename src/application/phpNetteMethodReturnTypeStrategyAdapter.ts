@@ -1,5 +1,6 @@
 import {
   phpNetteDatabaseTypeKind,
+  phpNetteFetchPairsReturnsRows,
   phpNetteLiteralTableArgument,
 } from "../domain/phpNetteDatabaseTypes";
 import type { PhpMethodReturnTypeStrategy } from "./phpMethodReturnTypeStrategy";
@@ -48,7 +49,7 @@ export function createPhpNetteMethodReturnTypeStrategyAdapter(
       }
 
       if (kind === "selection") {
-        return selectionMethodType(normalizedMethod, types);
+        return selectionMethodType(normalizedMethod, types, callExpression);
       }
 
       if (kind !== "activeRow") {
@@ -94,6 +95,7 @@ function repositoryMethodType(
 function selectionMethodType(
   methodName: string,
   types: { activeRowType: string; selectionType: string },
+  callExpression?: string,
 ): string | null {
   if (["fetch", "get", "offsetget"].includes(methodName)) {
     return `${types.activeRowType}|null`;
@@ -104,6 +106,13 @@ function selectionMethodType(
   }
 
   if (methodName === "fetchall") {
+    return `${types.activeRowType}[]`;
+  }
+
+  if (
+    methodName === "fetchpairs" &&
+    phpNetteFetchPairsReturnsRows(callExpression)
+  ) {
     return `${types.activeRowType}[]`;
   }
 

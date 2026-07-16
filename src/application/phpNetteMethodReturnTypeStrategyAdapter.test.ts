@@ -60,6 +60,38 @@ describe("phpNetteMethodReturnTypeStrategyAdapter", () => {
     ).resolves.toBe(`${TYPES.activeRowType}[]`);
   });
 
+  it("maps static-key fetchPairs rows without guessing other overloads", async () => {
+    const strategy = adapter();
+    const context = {
+      className: TYPES.selectionType,
+      methodName: "fetchPairs",
+    };
+
+    await expect(
+      strategy.knownClassMethodReturnType({
+        ...context,
+        callExpression: "$paymentLogs->fetchPairs('payment_id')",
+      }),
+    ).resolves.toBe(`${TYPES.activeRowType}[]`);
+    await expect(
+      strategy.knownClassMethodReturnType({
+        ...context,
+        callExpression: "$paymentLogs->fetchPairs('payment_id', null)",
+      }),
+    ).resolves.toBe(`${TYPES.activeRowType}[]`);
+
+    for (const callExpression of [
+      "$paymentLogs->fetchPairs()",
+      "$paymentLogs->fetchPairs($key)",
+      "$paymentLogs->fetchPairs('payment_id', 'amount')",
+      "$paymentLogs->fetchPairs(fn ($row) => $row->payment_id)",
+    ]) {
+      await expect(
+        strategy.knownClassMethodReturnType({ ...context, callExpression }),
+      ).resolves.toBeNull();
+    }
+  });
+
   it("uses literal ref and related targets without guessing dynamic arguments", async () => {
     const strategy = adapter();
 

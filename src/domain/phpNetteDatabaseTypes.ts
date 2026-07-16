@@ -170,6 +170,38 @@ export function phpNetteLiteralTableArgument(
   return literal[2].split(".", 1)[0] ?? null;
 }
 
+export function phpNetteFetchPairsReturnsRows(
+  callExpression?: string,
+): boolean {
+  if (!callExpression) {
+    return false;
+  }
+
+  const outerCall = outerMethodCall(callExpression);
+
+  if (!outerCall || outerCall.method !== "fetchpairs") {
+    return false;
+  }
+
+  const arguments_ = topLevelArguments(outerCall.arguments);
+
+  if (arguments_.length < 1 || arguments_.length > 2) {
+    return false;
+  }
+
+  const key = maskPhpComments(arguments_[0] ?? "").trim();
+
+  if (!/^(['"])[A-Za-z_][A-Za-z0-9_.]*\1$/.test(key)) {
+    return false;
+  }
+
+  if (arguments_.length === 1) {
+    return true;
+  }
+
+  return /^null$/i.test(maskPhpComments(arguments_[1] ?? "").trim());
+}
+
 function normalizedSingleType(typeName: string | null): string | null {
   const normalized = typeName?.trim() ?? "";
 
@@ -209,10 +241,26 @@ function normalizedSingleType(typeName: string | null): string | null {
 function outerRelationCall(
   expression: string,
 ): { arguments: string; method: "ref" | "related" } | null {
+  const call = outerMethodCall(expression);
+
+  if (!call || (call.method !== "ref" && call.method !== "related")) {
+    return null;
+  }
+
+  return {
+    arguments: call.arguments,
+    method: call.method,
+  };
+}
+
+function outerMethodCall(
+  expression: string,
+): { arguments: string; method: string } | null {
   const source = expression.trim();
   const code = maskPhpComments(source);
+  const codeEnd = code.trimEnd().length;
 
-  if (!code.endsWith(")")) {
+  if (codeEnd === 0 || code[codeEnd - 1] !== ")") {
     return null;
   }
 
@@ -220,7 +268,7 @@ function outerRelationCall(
   let outerOpen = -1;
   let quote: "'" | '"' | null = null;
 
-  for (let index = 0; index < code.length; index += 1) {
+  for (let index = 0; index < codeEnd; index += 1) {
     const char = code[index];
 
     if (quote) {
@@ -256,7 +304,7 @@ function outerRelationCall(
       return null;
     }
 
-    if (index === code.length - 1) {
+    if (index === codeEnd - 1) {
       outerOpen = open;
     }
   }
@@ -265,7 +313,7 @@ function outerRelationCall(
     return null;
   }
 
-  const call = /(?:->|\?->)\s*(ref|related)\s*$/i.exec(
+  const call = /(?:->|\?->)\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/i.exec(
     code.slice(0, outerOpen),
   );
 
@@ -273,10 +321,263 @@ function outerRelationCall(
     return null;
   }
 
+  const receiver = code.slice(0, call.index).trim();
+
+  if (!isWholePhpReceiverExpression(receiver)) {
+    return null;
+  }
+
   return {
-    arguments: source.slice(outerOpen + 1, -1),
-    method: call[1].toLowerCase() as "ref" | "related",
+    arguments: source.slice(outerOpen + 1, codeEnd - 1),
+    method: call[1].toLowerCase(),
   };
+}
+
+function isWholePhpReceiverExpression(expression: string): boolean {
+  const code = expression.trim();
+  let index = phpReceiverAtomEnd(code, 0);
+
+  if (index === null) {
+    return false;
+  }
+
+  while (index < code.length) {
+    index = skipWhitespace(code, index);
+
+    if (index >= code.length) {
+      return true;
+    }
+
+    if (code[index] === "[") {
+      const close = matchingPhpDelimiter(code, index, "[", "]");
+
+      if (close === null) {
+        return false;
+      }
+
+      index = close + 1;
+      continue;
+    }
+
+    const operatorLength = code.startsWith("?->", index)
+      ? 3
+      : code.startsWith("->", index)
+        ? 2
+        : 0;
+
+    if (operatorLength === 0) {
+      return false;
+    }
+
+    index = skipWhitespace(code, index + operatorLength);
+    const member = /^[A-Za-z_][A-Za-z0-9_]*/.exec(code.slice(index));
+
+    if (!member?.[0]) {
+      return false;
+    }
+
+    index = skipWhitespace(code, index + member[0].length);
+
+    if (code[index] !== "(") {
+      continue;
+    }
+
+    const close = matchingPhpDelimiter(code, index, "(", ")");
+
+    if (close === null) {
+      return false;
+    }
+
+    index = close + 1;
+  }
+
+  return true;
+}
+
+function phpReceiverAtomEnd(code: string, start: number): number | null {
+  const index = skipWhitespace(code, start);
+  const variable = /^\$[A-Za-z_][A-Za-z0-9_]*/.exec(code.slice(index));
+
+  if (variable?.[0]) {
+    return index + variable[0].length;
+  }
+
+  if (code[index] === "(") {
+    const close = matchingPhpDelimiter(code, index, "(", ")");
+
+    if (close === null || !isWholePhpReceiverExpression(code.slice(index + 1, close))) {
+      return null;
+    }
+
+    return close + 1;
+  }
+
+  const newClass = /^new\s+\\?[A-Za-z_][A-Za-z0-9_\\]*/i.exec(
+    code.slice(index),
+  );
+
+  if (newClass?.[0]) {
+    const end = skipWhitespace(code, index + newClass[0].length);
+
+    if (code[end] !== "(") {
+      return end;
+    }
+
+    const close = matchingPhpDelimiter(code, end, "(", ")");
+    return close === null ? null : close + 1;
+  }
+
+  const callable = /^(?:\\?[A-Za-z_][A-Za-z0-9_\\]*)(?:\s*::\s*[A-Za-z_][A-Za-z0-9_]*)?\s*/.exec(
+    code.slice(index),
+  );
+
+  if (!callable?.[0]) {
+    return null;
+  }
+
+  const open = index + callable[0].length;
+
+  if (code[open] !== "(") {
+    return null;
+  }
+
+  const close = matchingPhpDelimiter(code, open, "(", ")");
+  return close === null ? null : close + 1;
+}
+
+function matchingPhpDelimiter(
+  source: string,
+  openOffset: number,
+  open: "(" | "[",
+  close: ")" | "]",
+): number | null {
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+
+  for (let index = openOffset; index < source.length; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (character === open) {
+      depth += 1;
+      continue;
+    }
+
+    if (character !== close) {
+      continue;
+    }
+
+    depth -= 1;
+
+    if (depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function skipWhitespace(source: string, start: number): number {
+  let index = start;
+
+  while (/\s/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function topLevelArguments(argumentsSource: string): string[] {
+  const code = maskPhpComments(argumentsSource);
+
+  if (!code.trim()) {
+    return [];
+  }
+
+  const arguments_: string[] = [];
+  const delimiters: string[] = [];
+  let quote: "'" | '"' | null = null;
+  let argumentStart = 0;
+
+  for (let index = 0; index < code.length; index += 1) {
+    const character = code[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      delimiters.push(character);
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      const expected = character === ")" ? "(" : character === "]" ? "[" : "{";
+
+      if (delimiters.pop() !== expected) {
+        return [];
+      }
+
+      continue;
+    }
+
+    if (character !== "," || delimiters.length > 0) {
+      continue;
+    }
+
+    const argument = argumentsSource.slice(argumentStart, index).trim();
+
+    if (!argument) {
+      return [];
+    }
+
+    arguments_.push(argument);
+    argumentStart = index + 1;
+  }
+
+  if (quote || delimiters.length > 0) {
+    return [];
+  }
+
+  const finalArgument = argumentsSource.slice(argumentStart).trim();
+
+  if (!finalArgument) {
+    return [];
+  }
+
+  arguments_.push(finalArgument);
+  return arguments_;
 }
 
 function firstTopLevelArgument(argumentsSource: string): string {
@@ -396,7 +697,11 @@ function maskPhpComments(source: string): string {
     }
 
     if ((char === "/" && next === "/") || char === "#") {
-      while (index < source.length && source[index] !== "\n") {
+      while (
+        index < source.length &&
+        source[index] !== "\n" &&
+        source[index] !== "\r"
+      ) {
         masked[index] = " ";
         index += 1;
       }

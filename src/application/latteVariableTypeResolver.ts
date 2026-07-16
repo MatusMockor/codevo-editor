@@ -356,20 +356,7 @@ async function latteForeachVariableType(
     return null;
   }
 
-  if (collection.relationNames.length === 0) {
-    return (
-      extractLatteElementType(rootType) ??
-      resolveLatteIterableObjectElementType(
-        context,
-        rootType,
-        collection.rootVariableName,
-      )
-    );
-  }
-
-  const chainExpression = `$${collection.rootVariableName}${collection.relationNames
-    .map((relation) => `->${relation}`)
-    .join("")}`;
+  const chainExpression = collection.expression;
   const document = `<?php\n/** @var \\${rootType.replace(/^\\+/, "")} $${
     collection.rootVariableName
   } */\n${chainExpression};\n`;
@@ -379,17 +366,34 @@ async function latteForeachVariableType(
     chainExpression,
   );
 
-  if (!isRequestedRootActive() || !chainType) {
+  if (!isRequestedRootActive()) {
     return null;
   }
 
-  return extractLatteElementType(chainType);
+  const resolvedCollectionType =
+    chainType ??
+    (chainExpression === `$${collection.rootVariableName}` ? rootType : null);
+  const elementType = resolvedCollectionType
+    ? extractLatteElementType(resolvedCollectionType)
+    : null;
+
+  if (elementType) {
+    return elementType;
+  }
+
+  return resolveLatteIterableObjectElementType(
+    context,
+    rootType,
+    collection.rootVariableName,
+    chainExpression,
+  );
 }
 
 async function resolveLatteIterableObjectElementType(
   context: LatteVariableResolutionContext,
   rootType: string,
   rootVariableName: string,
+  chainExpression: string,
 ): Promise<string | null> {
   const { deps, isRequestedRootActive } = context;
 
@@ -398,7 +402,7 @@ async function resolveLatteIterableObjectElementType(
   }
 
   for (const methodName of ["current", "fetch"]) {
-    const expression = `$${rootVariableName}->${methodName}()`;
+    const expression = `${chainExpression}->${methodName}()`;
     const document = `<?php\n/** @var \\${rootType.replace(/^\\+/, "")} $${rootVariableName} */\n${expression};\n`;
     const methodType = await deps.resolveExpressionType(
       document,

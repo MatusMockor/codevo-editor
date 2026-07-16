@@ -60,6 +60,57 @@ export function phpDeclaredGenericTypeCandidates(typeName: string): string[] {
     .filter((part): part is string => Boolean(part));
 }
 
+export function phpArrayOffsetValueType(typeName: string | null): string | null {
+  const containerTypes = splitPhpTypeUnion(typeName?.trim() ?? "");
+
+  if (containerTypes.length === 0) {
+    return null;
+  }
+
+  const valueTypes: string[] = [];
+
+  for (const containerType of containerTypes) {
+    const valueType = phpArrayLikeValueType(containerType);
+
+    if (!valueType) {
+      return null;
+    }
+
+    if (
+      !valueTypes.some(
+        (candidate) => candidate.toLowerCase() === valueType.toLowerCase(),
+      )
+    ) {
+      valueTypes.push(valueType);
+    }
+  }
+
+  return valueTypes.join("|") || null;
+}
+
+function phpArrayLikeValueType(typeName: string): string | null {
+  const normalized = typeName.trim();
+
+  if (normalized.endsWith("[]")) {
+    return normalized.slice(0, -2).trim() || null;
+  }
+
+  if (
+    !/^(?:array|iterable)\s*</i.test(normalized) ||
+    !normalized.endsWith(">")
+  ) {
+    return null;
+  }
+
+  const arguments_ = phpGenericArguments(normalized);
+
+  if (arguments_.length !== 2) {
+    return null;
+  }
+
+  return arguments_[1]?.trim() || null;
+}
+
 function topLevelReturnExpressions(body: string): string[] {
   const expressions: string[] = [];
   let quote: string | null = null;

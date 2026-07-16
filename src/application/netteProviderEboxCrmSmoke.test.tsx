@@ -1534,6 +1534,53 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     expect(filterCompletions.map((item) => item.label)).toContain("userDate");
   });
 
+  it("types a real ebox method-chain foreach collection end to end", async () => {
+    const templatePath =
+      "app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/default.latte";
+    const collectionExpression =
+      "$type->related('subscription_type_items')->where('deleted_at', null)";
+    const itemType =
+      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\SubscriptionTypeItemsActiveRow";
+    const source = await readFileContent(joinPath(EBOX_CRM_ROOT, templatePath));
+    const synthesizeTypedReceiverSource = vi.fn(
+      (variableName: string, typeName: string) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `${variableName}:${typeName}`,
+      }),
+    );
+    const deps = makeLatteDeps(templatePath, {
+      resolveExpressionType: vi.fn(async (_source, _position, expression) =>
+        expression === collectionExpression
+          ? `Nette\\Database\\Table\\Selection<int, ${itemType}>`
+          : null,
+      ),
+      resolvePhpReceiverCompletions: vi.fn(async () => [
+        {
+          declaringClassName: itemType,
+          kind: "property" as const,
+          name: "name",
+          parameters: "",
+          returnType: "string",
+        },
+      ]),
+      synthesizeTypedReceiverSource,
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const completions = await latte.provideLatteCompletions(
+      source,
+      positionAtOffset(
+        source,
+        offsetAfter(source, "{$subscriptionTypeItem->name"),
+      ),
+    );
+
+    expect(synthesizeTypedReceiverSource).toHaveBeenCalledWith(
+      "subscriptionTypeItem",
+      itemType,
+    );
+    expect(completions.map((item) => item.label)).toContain("name");
+  });
+
   it("covers iterable object foreach member completion via current() fallback over real Latte files", async () => {
     const apiTokensSelection =
       "Efabrica\\Crm\\ActiveRowTypes\\Selection\\ApiTokensSelection";

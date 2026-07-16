@@ -23,6 +23,8 @@
  * `foo` is not on the tag-name allowlist (mirroring the Shiki grammar).
  */
 
+import { latteReceiverMemberCompletionAt } from "./latteReceiverExpression";
+
 /**
  * Fixed allowlist of Latte tag names - the single source of truth for the
  * domain layer. `latteNavigation.ts` re-exports this list as `LATTE_TAGS`
@@ -158,13 +160,12 @@ export interface LatteForeachLoopBinding {
 }
 
 /**
- * The structural shape of a foreach collection expression the application layer
- * can resolve to an element type: the root `$variable` and its chain of
- * `->property` / `->relation` accesses. CONSERVATIVE - a method call `(...)`,
- * array access `[...]` or a non-variable receiver yields `null`.
+ * A bounded variable-root receiver expression used as a foreach collection.
+ * `expression` preserves the complete trimmed Latte source, including method
+ * arguments and array offsets, for synthetic PHP type resolution.
  */
 export interface LatteForeachCollection {
-  relationNames: string[];
+  expression: string;
   rootVariableName: string;
 }
 
@@ -523,28 +524,450 @@ export function latteForeachLoopBindingsAt(
   }));
 }
 
-const LATTE_FOREACH_COLLECTION =
-  /^\$([A-Za-z_][A-Za-z0-9_]*)((?:->[A-Za-z_][A-Za-z0-9_]*)*)$/;
+const LATTE_FOREACH_SENTINEL = "__codevo_latte_foreach_collection";
 
 /**
- * Parses a trimmed foreach collection expression into its root variable and
- * relation chain, or `null` when it is not a plain variable / property chain.
+ * Parses a complete variable-root receiver/postfix expression. The receiver
+ * parser owns the structural bounds and rejects malformed or dynamic chains;
+ * the canonical comparison ensures its matched root covers the whole input.
  */
 export function parseLatteForeachCollection(
   expression: string,
 ): LatteForeachCollection | null {
-  const match = LATTE_FOREACH_COLLECTION.exec(expression.trim());
+  const trimmed = expression.trim();
 
-  if (!match) {
+  if (!trimmed) {
     return null;
   }
 
-  const relationNames = Array.from(
-    (match[2] ?? "").matchAll(/->([A-Za-z_][A-Za-z0-9_]*)/g),
-    (relation) => relation[1] ?? "",
-  );
+  const probe = `${trimmed}->${LATTE_FOREACH_SENTINEL}`;
+  const completion = latteReceiverMemberCompletionAt(probe, probe.length);
 
-  return { relationNames, rootVariableName: match[1] ?? "" };
+  if (
+    !completion ||
+    completion.prefix !== LATTE_FOREACH_SENTINEL ||
+    completion.memberSpan.start !== trimmed.length + 2
+  ) {
+    return null;
+  }
+
+  if (
+    canonicalLatteReceiver(trimmed) !==
+    canonicalLatteReceiver(completion.receiverExpression)
+  ) {
+    return null;
+  }
+
+  if (!hasPlausibleLatteForeachPostfixContents(trimmed)) {
+    return null;
+  }
+
+  return {
+    expression: trimmed,
+    rootVariableName: completion.variableName,
+  };
+}
+
+function canonicalLatteReceiver(expression: string): string {
+  let canonical = "";
+  let index = 0;
+
+  while (index < expression.length) {
+    const char = expression[index] ?? "";
+
+    if (char === "'" || char === '"') {
+      const quote = char;
+      const start = index;
+      index += 1;
+
+      while (index < expression.length) {
+        if (expression[index] === "\\") {
+          index += 2;
+          continue;
+        }
+
+        if (expression[index] === quote) {
+          index += 1;
+          break;
+        }
+
+        index += 1;
+      }
+
+      canonical += expression.slice(start, index);
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+
+    if (expression.startsWith("/*", index)) {
+      const end = expression.indexOf("*/", index + 2);
+      index = end < 0 ? expression.length : end + 2;
+      continue;
+    }
+
+    if (expression.startsWith("//", index) || char === "#") {
+      const end = expression.indexOf("\n", index + 1);
+      index = end < 0 ? expression.length : end + 1;
+      continue;
+    }
+
+    if (expression.startsWith("?->", index)) {
+      canonical += "->";
+      index += 3;
+      continue;
+    }
+
+    canonical += char;
+    index += 1;
+  }
+
+  return canonical;
+}
+
+function hasPlausibleLatteForeachPostfixContents(expression: string): boolean {
+  let index = 1;
+
+  while (/[A-Za-z0-9_]/.test(expression[index] ?? "")) {
+    index += 1;
+  }
+
+  while (index < expression.length) {
+    index = skipLatteForeachTrivia(expression, index);
+
+    if (index < 0) {
+      return false;
+    }
+
+    if (expression[index] === "[") {
+      const end = latteForeachBalancedEnd(expression, index);
+
+      if (
+        end === null ||
+        !hasPlausibleLatteForeachOffset(expression, index + 1, end - 1)
+      ) {
+        return false;
+      }
+
+      index = end;
+      continue;
+    }
+
+    const operatorLength = expression.startsWith("?->", index)
+      ? 3
+      : expression.startsWith("->", index)
+        ? 2
+        : 0;
+
+    if (operatorLength === 0) {
+      return index === expression.length;
+    }
+
+    index = skipLatteForeachTrivia(expression, index + operatorLength);
+
+    if (index < 0 || !/[A-Za-z_]/.test(expression[index] ?? "")) {
+      return false;
+    }
+
+    index += 1;
+
+    while (/[A-Za-z0-9_]/.test(expression[index] ?? "")) {
+      index += 1;
+    }
+
+    const callStart = skipLatteForeachTrivia(expression, index);
+
+    if (callStart < 0) {
+      return false;
+    }
+
+    if (expression[callStart] !== "(") {
+      continue;
+    }
+
+    const callEnd = latteForeachBalancedEnd(expression, callStart);
+
+    if (
+      callEnd === null ||
+      !hasPlausibleLatteForeachArguments(
+        expression,
+        callStart + 1,
+        callEnd - 1,
+      )
+    ) {
+      return false;
+    }
+
+    index = callEnd;
+  }
+
+  return true;
+}
+
+function hasPlausibleLatteForeachOffset(
+  source: string,
+  start: number,
+  end: number,
+): boolean {
+  const parts = latteForeachTopLevelParts(source, start, end);
+
+  return (
+    parts !== null &&
+    !parts.sawComma &&
+    parts.parts.length === 1 &&
+    isPlausibleLatteForeachPart(parts.parts[0] ?? "") &&
+    !(parts.parts[0] ?? "").includes("=>")
+  );
+}
+
+function hasPlausibleLatteForeachArguments(
+  source: string,
+  start: number,
+  end: number,
+): boolean {
+  const result = latteForeachTopLevelParts(source, start, end);
+
+  if (!result) {
+    return false;
+  }
+
+  if (!result.sawComma) {
+    const onlyPart = result.parts[0] ?? "";
+
+    return onlyPart.length === 0 || isPlausibleLatteForeachPart(onlyPart);
+  }
+
+  const requiredParts = result.parts.slice(0, -1);
+  const finalPart = result.parts[result.parts.length - 1] ?? "";
+
+  return (
+    requiredParts.every(isPlausibleLatteForeachPart) &&
+    (finalPart.length === 0 || isPlausibleLatteForeachPart(finalPart))
+  );
+}
+
+function isPlausibleLatteForeachPart(part: string): boolean {
+  return (
+    part.length > 0 &&
+    !part.startsWith(":") &&
+    !part.startsWith("=>") &&
+    !part.endsWith(":")
+  );
+}
+
+function latteForeachTopLevelParts(
+  source: string,
+  start: number,
+  end: number,
+): { parts: string[]; sawComma: boolean } | null {
+  const parts: string[] = [];
+  const delimiters: string[] = [];
+  let currentPart = "";
+  let index = start;
+  let sawComma = false;
+
+  while (index < end) {
+    const char = source[index] ?? "";
+
+    if (char === "'" || char === '"') {
+      const stringEnd = latteForeachQuotedEnd(source, index, char);
+
+      if (stringEnd < 0 || stringEnd > end) {
+        return null;
+      }
+
+      if (delimiters.length === 0) {
+        currentPart += "value";
+      }
+
+      index = stringEnd;
+      continue;
+    }
+
+    const triviaEnd = skipLatteForeachTrivia(source, index);
+
+    if (triviaEnd < 0) {
+      return null;
+    }
+
+    if (triviaEnd !== index) {
+      index = Math.min(triviaEnd, end);
+      continue;
+    }
+
+    const closing = latteForeachClosingDelimiter(char);
+
+    if (closing) {
+      if (delimiters.length === 0) {
+        currentPart += "value";
+      }
+
+      delimiters.push(closing);
+      index += 1;
+      continue;
+    }
+
+    if (")]}".includes(char) && delimiters[delimiters.length - 1] === char) {
+      delimiters.pop();
+      index += 1;
+      continue;
+    }
+
+    if (delimiters.length === 0 && char === ";") {
+      return null;
+    }
+
+    if (delimiters.length === 0 && char === ",") {
+      parts.push(currentPart);
+      currentPart = "";
+      sawComma = true;
+      index += 1;
+      continue;
+    }
+
+    if (delimiters.length === 0 && !/\s/.test(char)) {
+      currentPart += char;
+    }
+
+    index += 1;
+  }
+
+  parts.push(currentPart);
+
+  return { parts, sawComma };
+}
+
+function latteForeachBalancedEnd(source: string, start: number): number | null {
+  const firstClosing = latteForeachClosingDelimiter(source[start] ?? "");
+
+  if (!firstClosing) {
+    return null;
+  }
+
+  const delimiters = [firstClosing];
+  let index = start + 1;
+
+  while (index < source.length) {
+    const char = source[index] ?? "";
+
+    if (char === "'" || char === '"') {
+      const stringEnd = latteForeachQuotedEnd(source, index, char);
+
+      if (stringEnd < 0) {
+        return null;
+      }
+
+      index = stringEnd;
+      continue;
+    }
+
+    const triviaEnd = skipLatteForeachTrivia(source, index);
+
+    if (triviaEnd < 0) {
+      return null;
+    }
+
+    if (triviaEnd !== index) {
+      index = triviaEnd;
+      continue;
+    }
+
+    const closing = latteForeachClosingDelimiter(char);
+
+    if (closing) {
+      delimiters.push(closing);
+      index += 1;
+      continue;
+    }
+
+    if (!")]}".includes(char) || delimiters[delimiters.length - 1] !== char) {
+      index += 1;
+      continue;
+    }
+
+    delimiters.pop();
+    index += 1;
+
+    if (delimiters.length === 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function skipLatteForeachTrivia(source: string, start: number): number {
+  let index = start;
+
+  while (index < source.length) {
+    if (/\s/.test(source[index] ?? "")) {
+      index += 1;
+      continue;
+    }
+
+    if (source.startsWith("/*", index)) {
+      const end = source.indexOf("*/", index + 2);
+
+      if (end < 0) {
+        return -1;
+      }
+
+      index = end + 2;
+      continue;
+    }
+
+    if (source.startsWith("//", index) || source[index] === "#") {
+      const end = source.indexOf("\n", index + 1);
+      index = end < 0 ? source.length : end + 1;
+      continue;
+    }
+
+    break;
+  }
+
+  return index;
+}
+
+function latteForeachQuotedEnd(
+  source: string,
+  start: number,
+  quote: string,
+): number {
+  let index = start + 1;
+
+  while (index < source.length) {
+    if (source[index] === "\\") {
+      index += 2;
+      continue;
+    }
+
+    if (source[index] === quote) {
+      return index + 1;
+    }
+
+    index += 1;
+  }
+
+  return -1;
+}
+
+function latteForeachClosingDelimiter(char: string): string | null {
+  if (char === "(") {
+    return ")";
+  }
+
+  if (char === "[") {
+    return "]";
+  }
+
+  if (char === "{") {
+    return "}";
+  }
+
+  return null;
 }
 
 /**

@@ -7,6 +7,8 @@ import {
   phpFrameworkMethodCallReturnTypeFromSource,
 } from "../domain/phpFrameworkProviders";
 import {
+  phpArrayOffsetExpression,
+  phpArrayOffsetValueType,
   phpAssignmentExpressionForVariableBefore,
   phpClassStringCallExpression,
   phpDocRawTypeForVariableBefore,
@@ -165,9 +167,11 @@ export function usePhpExpressionTypeResolver({
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
           : null;
-        const isNetteRelationCall =
+        const needsNetteCallExpression =
           frameworkRuntime.supports("netteDatabaseSemantics") &&
-          ["ref", "related"].includes(methodCall.methodName.toLowerCase());
+          ["fetchpairs", "ref", "related"].includes(
+            methodCall.methodName.toLowerCase(),
+          );
         if (
           !boundReceiverType ||
           boundReceiverType.toLowerCase() === receiverType?.toLowerCase()
@@ -175,7 +179,7 @@ export function usePhpExpressionTypeResolver({
           return null;
         }
 
-        if (isNetteRelationCall) {
+        if (needsNetteCallExpression) {
           return resolvePhpMethodReturnType(
             boundReceiverType,
             methodCall.methodName,
@@ -350,6 +354,27 @@ export function usePhpExpressionTypeResolver({
         }
       }
 
+      const arrayOffset = phpArrayOffsetExpression(expression);
+
+      if (arrayOffset) {
+        const containerVariable = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
+          arrayOffset.containerExpression,
+        )?.[1];
+        const rawContainerType = containerVariable
+          ? phpDocRawTypeForVariableBefore(source, position, containerVariable)
+          : null;
+        const containerType =
+          rawContainerType ??
+          (await resolvePhpExpressionType(
+            source,
+            position,
+            arrayOffset.containerExpression,
+            depth + 1,
+          ));
+
+        return phpArrayOffsetValueType(containerType);
+      }
+
       const propertyAccess = phpPropertyAccessExpression(expression);
 
       if (propertyAccess) {
@@ -405,9 +430,11 @@ export function usePhpExpressionTypeResolver({
         }
 
         const receiverType = await resolveReceiverType();
-        const isNetteRelationCall =
+        const needsNetteCallExpression =
           frameworkRuntime.supports("netteDatabaseSemantics") &&
-          ["ref", "related"].includes(methodCall.methodName.toLowerCase());
+          ["fetchpairs", "ref", "related"].includes(
+            methodCall.methodName.toLowerCase(),
+          );
 
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
@@ -418,7 +445,7 @@ export function usePhpExpressionTypeResolver({
           boundReceiverType &&
           boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()
         ) {
-          boundReceiverReturnType = isNetteRelationCall
+          boundReceiverReturnType = needsNetteCallExpression
             ? await resolvePhpMethodReturnType(
                 boundReceiverType,
                 methodCall.methodName,
@@ -467,7 +494,7 @@ export function usePhpExpressionTypeResolver({
           return null;
         }
 
-        if (isNetteRelationCall) {
+        if (needsNetteCallExpression) {
           return resolvePhpMethodReturnType(
             receiverType,
             methodCall.methodName,

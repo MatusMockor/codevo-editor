@@ -33,6 +33,7 @@ export {
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
 } from "./phpTypeAnalysis";
+export { phpArrayOffsetValueType } from "./phpTypeAnalysis";
 export {
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
@@ -52,6 +53,10 @@ export interface PhpStaticCallExpression {
 export interface PhpPropertyAccessExpression {
   propertyName: string;
   receiverExpression: string;
+}
+
+export interface PhpArrayOffsetExpression {
+  containerExpression: string;
 }
 
 export type PhpClassStringCallExpression =
@@ -1005,6 +1010,149 @@ export function phpMethodCallExpression(
       normalized.slice(0, methodCall.operatorStart),
     ),
   };
+}
+
+export function phpArrayOffsetExpression(
+  expression: string,
+): PhpArrayOffsetExpression | null {
+  const normalized = expression.trim();
+  const code = phpMaskCommentsForStructure(normalized);
+
+  if (!code || !code.endsWith("]")) {
+    return null;
+  }
+
+  const delimiters: Array<{ character: string; offset: number }> = [];
+  let quote: string | null = null;
+  let outerOffsetStart: number | null = null;
+
+  for (let index = 0; index < code.length; index += 1) {
+    const character = code[index] ?? "";
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === "\"" || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      delimiters.push({ character, offset: index });
+      continue;
+    }
+
+    if (character !== ")" && character !== "]" && character !== "}") {
+      continue;
+    }
+
+    const open = delimiters.pop();
+    const expectedOpen = character === ")" ? "(" : character === "]" ? "[" : "{";
+
+    if (!open || open.character !== expectedOpen) {
+      return null;
+    }
+
+    if (character === "]" && index === code.length - 1) {
+      outerOffsetStart = open.offset;
+    }
+  }
+
+  if (quote || delimiters.length > 0 || outerOffsetStart === null) {
+    return null;
+  }
+
+  const containerExpression = code.slice(0, outerOffsetStart).trim();
+  const offsetExpression = code.slice(outerOffsetStart + 1, -1).trim();
+
+  if (!containerExpression || !offsetExpression) {
+    return null;
+  }
+
+  return { containerExpression };
+}
+
+function phpMaskCommentsForStructure(source: string): string | null {
+  const masked = [...source];
+  let quote: string | null = null;
+  let blockComment = false;
+  let lineComment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+    const next = source[index + 1] ?? "";
+
+    if (blockComment) {
+      masked[index] = " ";
+
+      if (character === "*" && next === "/") {
+        masked[index + 1] = " ";
+        index += 1;
+        blockComment = false;
+      }
+
+      continue;
+    }
+
+    if (lineComment) {
+      if (character === "\n" || character === "\r") {
+        lineComment = false;
+        continue;
+      }
+
+      masked[index] = " ";
+      continue;
+    }
+
+    if (quote) {
+      if (character === "\\" && quote !== "`") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      masked[index] = " ";
+      masked[index + 1] = " ";
+      index += 1;
+      blockComment = true;
+      continue;
+    }
+
+    if ((character === "/" && next === "/") || character === "#") {
+      masked[index] = " ";
+
+      if (next === "/") {
+        masked[index + 1] = " ";
+        index += 1;
+      }
+
+      lineComment = true;
+    }
+  }
+
+  return blockComment ? null : masked.join("");
 }
 
 function phpLastTopLevelMethodCall(

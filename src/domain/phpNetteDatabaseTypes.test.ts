@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   phpNetteDatabaseTypeKind,
   phpNetteDatabaseTypesFromSource,
+  phpNetteFetchPairsReturnsRows,
   phpNetteLiteralTableArgument,
   phpNetteRepositoryTraitClassNames,
   phpNetteSiblingDatabaseType,
@@ -123,6 +124,89 @@ final class UsersRepository { protected string $tableName = 'users'; }`;
         "$row->related(/* ( */ $repository->ref('orders'))",
       ),
     ).toBeNull();
+  });
+
+  it("recognizes only static-key fetchPairs calls that retain rows", () => {
+    expect(phpNetteFetchPairsReturnsRows("$logs->fetchPairs('payment_id')")).toBe(
+      true,
+    );
+    expect(
+      phpNetteFetchPairsReturnsRows(
+        "$logs->fetchPairs(/* key */ 'payment_id', null)",
+      ),
+    ).toBe(true);
+    expect(phpNetteFetchPairsReturnsRows("$logs->fetchPairs()")).toBe(false);
+    expect(phpNetteFetchPairsReturnsRows("$logs->fetchPairs($key)")).toBe(false);
+    expect(
+      phpNetteFetchPairsReturnsRows("$logs->fetchPairs('payment_id', 'amount')"),
+    ).toBe(false);
+    expect(
+      phpNetteFetchPairsReturnsRows("$logs->fetchPairs(fn ($row) => $row->id)"),
+    ).toBe(false);
+    expect(
+      phpNetteFetchPairsReturnsRows("decorate($logs->fetchPairs('payment_id'))"),
+    ).toBe(false);
+  });
+
+  it("keeps fetchPairs argument offsets across separator trivia", () => {
+    for (const expression of [
+      "$logs->fetchPairs('payment_id'   , null)",
+      "$logs->fetchPairs('payment_id' /* before */, /* after */ null)",
+      "$logs->fetchPairs(\n    'payment_id'\n    ,\n    null\n)",
+      "$logs->fetchPairs('payment_id' // before\n, // after\nnull)",
+      "$logs->fetchPairs('payment_id' // before\r, // after\rnull)",
+    ]) {
+      expect(phpNetteFetchPairsReturnsRows(expression)).toBe(true);
+    }
+
+    expect(
+      phpNetteFetchPairsReturnsRows("$logs->fetchPairs('payment_id' , $value)"),
+    ).toBe(false);
+    expect(
+      phpNetteFetchPairsReturnsRows(
+        "$logs->fetchPairs('payment_id' /* before */, 'amount')",
+      ),
+    ).toBe(false);
+  });
+
+  it("allows trailing comments after the complete fetchPairs call", () => {
+    for (const expression of [
+      "$logs->fetchPairs('payment_id') /* trailing ( [ } */",
+      "$logs->fetchPairs('payment_id') // trailing ( [ }",
+      "$logs->fetchPairs('payment_id') # trailing ( [ }",
+      "$logs->fetchPairs('payment_id') // trailing\r",
+    ]) {
+      expect(phpNetteFetchPairsReturnsRows(expression)).toBe(true);
+    }
+
+    expect(
+      phpNetteFetchPairsReturnsRows(
+        "!$logs->fetchPairs('payment_id') /* trailing */",
+      ),
+    ).toBe(false);
+    expect(
+      phpNetteFetchPairsReturnsRows(
+        "$pairs = $logs->fetchPairs('payment_id') // trailing",
+      ),
+    ).toBe(false);
+  });
+
+  it("requires fetchPairs to occupy the entire expression", () => {
+    expect(
+      phpNetteFetchPairsReturnsRows(
+        "$repository->getTable()->where('paid', true)->fetchPairs('payment_id')",
+      ),
+    ).toBe(true);
+
+    for (const expression of [
+      "!$logs->fetchPairs('payment_id')",
+      "(bool) $logs->fetchPairs('payment_id')",
+      "$pairs = $logs->fetchPairs('payment_id')",
+      "return $logs->fetchPairs('payment_id')",
+      "yield $logs->fetchPairs('payment_id')",
+    ]) {
+      expect(phpNetteFetchPairsReturnsRows(expression)).toBe(false);
+    }
   });
 
   it("normalizes nullable and false carriers with one generated object type", () => {
