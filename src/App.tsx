@@ -23,6 +23,7 @@ import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { usePhpTestResults } from "./application/usePhpTestResults";
 import { useScopedEditorSurfaceRunners } from "./application/useScopedEditorSurfaceRunners";
+import { useGitHistoryDiffDocuments } from "./application/useGitHistoryDiffDocuments";
 import type { EditorGroupFocusRunner } from "./application/editorGroupFocusPort";
 import { isGitDiffDocumentPath } from "./application/useGitDiffWorkspace";
 import { ArtisanMakePalette } from "./components/ArtisanMakePalette";
@@ -82,9 +83,7 @@ import {
 import { ideProgressIndicator } from "./domain/ideProgress";
 import { editorChangeHunks } from "./domain/editorChangeMarkers";
 import {
-  type FileChange,
   type GitChangeStatus,
-  type GitFileDiff,
 } from "./domain/git";
 import {
   monacoThemeForAppTheme,
@@ -97,7 +96,6 @@ import {
   type EditorGroupId,
 } from "./domain/editorGroups";
 import {
-  buildGitHistoryDiffDocumentPath,
   isGitHistoryDiffDocumentPath,
 } from "./domain/editorDocumentSchemes";
 import { workspaceRootKeysEqual } from "./domain/workspaceRootKey";
@@ -287,35 +285,11 @@ function App() {
     menu: editorMenuCommandRunner,
     phpstanIgnore: editorSurfacePhpstanIgnoreRunner,
   } = editorRunners.activeRunners;
-  const [gitHistoryDiff, setGitHistoryDiff] = useState<GitFileDiff | null>(null);
-  const [gitHistoryDiffLoading, setGitHistoryDiffLoading] = useState(false);
-  const [gitHistoryDiffDocumentPath, setGitHistoryDiffDocumentPath] =
-    useState<string | null>(null);
-  const gitHistoryDiffRequestTokenRef = useRef(0);
-  const gitHistoryDiffsByDocumentPathRef = useRef<Record<string, GitFileDiff>>(
-    {},
-  );
+  const closeGitHistoryDiffDocumentsRef = useRef<
+    (paths: readonly string[]) => void
+  >(() => undefined);
   const handleClosedEditorPaths = useCallback((paths: readonly string[]) => {
-    const closedPaths = new Set(paths.filter(isGitHistoryDiffDocumentPath));
-    if (closedPaths.size === 0) {
-      return;
-    }
-
-    const nextHistoryDiffs = { ...gitHistoryDiffsByDocumentPathRef.current };
-    for (const path of closedPaths) {
-      delete nextHistoryDiffs[path];
-    }
-    gitHistoryDiffsByDocumentPathRef.current = nextHistoryDiffs;
-    setGitHistoryDiffDocumentPath((current) => {
-      if (!current || !closedPaths.has(current)) {
-        return current;
-      }
-
-      setGitHistoryDiffLoading(false);
-      setGitHistoryDiff(null);
-      gitHistoryDiffRequestTokenRef.current += 1;
-      return null;
-    });
+    closeGitHistoryDiffDocumentsRef.current(paths);
   }, []);
   const fileStatusesByPathRef = useRef<Record<string, GitChangeStatus>>({});
   const workbench = useWorkbenchController(
@@ -367,7 +341,14 @@ function App() {
     runRequestVersion: workbench.phpTestRunRequestVersion,
     workspaceTrusted: workbench.workspaceTrust?.trusted === true,
   });
-  const gitHistoryWorkspaceRootRef = useRef(workbench.workspaceRoot);
+  const gitHistoryDiffDocuments = useGitHistoryDiffDocuments({
+    gateway: gitHistoryGateway,
+    onOpenDocument: workbench.openReadOnlyDocument,
+    ownerId: workbench.workspaceIdentityDescriptor?.workspaceId ?? null,
+    workspaceRoot: workbench.workspaceRoot,
+  });
+  closeGitHistoryDiffDocumentsRef.current =
+    gitHistoryDiffDocuments.closeDocumentPaths;
   const fileStatusesByPath = useMemo<Record<string, GitChangeStatus>>(() => {
     const gitChanges = workbench.gitStatus?.changes;
     const previous = fileStatusesByPathRef.current;
@@ -948,127 +929,10 @@ function App() {
     };
   }, [editorMenuCommandRunner, workbench.commandContext]);
 
-  const openGitHistoryCommitDiff = useCallback(
-    async (
-      commitHash: string,
-      path: string,
-      oldPath: string | null,
-      files?: FileChange[],
-    ) => {
-      const requestedWorkspaceRoot = workbench.workspaceRoot;
-
-      if (!requestedWorkspaceRoot) {
-        return;
-      }
-
-      const requestToken = ++gitHistoryDiffRequestTokenRef.current;
-      const documentPath = gitHistoryDiffDocumentPathFor(
-        commitHash,
-        path,
-        oldPath,
-      );
-      const document: EditorDocument = {
-        content: "",
-        language: "plaintext",
-        name: `Diff: ${fileNameForPath(path)}`,
-        path: documentPath,
-        readOnly: true,
-        savedContent: "",
-      };
-
-      workbench.openReadOnlyDocument(document);
-      setGitHistoryDiffLoading(true);
-      setGitHistoryDiff(null);
-      setGitHistoryDiffDocumentPath(documentPath);
-
-      try {
-        const diff = await gitHistoryGateway.getCommitDiff(
-          requestedWorkspaceRoot,
-          commitHash,
-          path,
-          oldPath,
-          files,
-        );
-
-        if (
-          requestToken !== gitHistoryDiffRequestTokenRef.current ||
-          !workspaceRootKeysEqual(
-            gitHistoryWorkspaceRootRef.current,
-            requestedWorkspaceRoot,
-          )
-        ) {
-          return;
-        }
-
-        const status: GitChangeStatus =
-          diff.status === "A"
-            ? "added"
-            : diff.status === "D"
-              ? "deleted"
-              : diff.status === "R"
-                ? "renamed"
-                : "modified";
-
-        const diffPath = diff.path || path;
-        const diffOldPath = diff.oldPath ?? oldPath;
-
-        const nextHistoryDiff = {
-          change: {
-            isStaged: false,
-            isUnversioned: false,
-            oldPath: diffOldPath ?? null,
-            oldRelativePath: diffOldPath ?? null,
-            path: diffPath,
-            relativePath: diffPath,
-            status,
-          },
-          language: diff.language,
-          modifiedContent: diff.modifiedContent,
-          originalContent: diff.originalContent,
-        };
-
-        gitHistoryDiffsByDocumentPathRef.current = {
-          ...gitHistoryDiffsByDocumentPathRef.current,
-          [documentPath]: nextHistoryDiff,
-        };
-        setGitHistoryDiffDocumentPath(documentPath);
-        setGitHistoryDiff(nextHistoryDiff);
-      } catch (error) {
-        if (
-          requestToken !== gitHistoryDiffRequestTokenRef.current ||
-          !workspaceRootKeysEqual(
-            gitHistoryWorkspaceRootRef.current,
-            requestedWorkspaceRoot,
-          )
-        ) {
-          return;
-        }
-
-        setGitHistoryDiff(null);
-        console.error("Failed to load commit file diff.", error);
-      } finally {
-        if (
-          requestToken === gitHistoryDiffRequestTokenRef.current &&
-          workspaceRootKeysEqual(
-            gitHistoryWorkspaceRootRef.current,
-            requestedWorkspaceRoot,
-          )
-        ) {
-          setGitHistoryDiffLoading(false);
-        }
-      }
-    },
-    [gitHistoryGateway, workbench.openReadOnlyDocument, workbench.workspaceRoot],
-  );
+  const openGitHistoryCommitDiff = gitHistoryDiffDocuments.openCommitDiff;
 
   const activateEditorGroupTab = useCallback(
     (groupId: EditorGroupId, path: string) => {
-      const historyDiff = gitHistoryDiffsByDocumentPathRef.current[path] ?? null;
-      if (historyDiff) {
-        setGitHistoryDiffLoading(false);
-        setGitHistoryDiff(historyDiff);
-        setGitHistoryDiffDocumentPath(path);
-      }
       if (workbench.activateEditorGroupTab) {
         workbench.activateEditorGroupTab(groupId, path);
         return;
@@ -1088,18 +952,6 @@ function App() {
     },
     [workbench],
   );
-  useEffect(() => {
-    if (gitHistoryWorkspaceRootRef.current === workbench.workspaceRoot) {
-      return;
-    }
-
-    gitHistoryWorkspaceRootRef.current = workbench.workspaceRoot;
-    gitHistoryDiffRequestTokenRef.current += 1;
-    gitHistoryDiffsByDocumentPathRef.current = {};
-    setGitHistoryDiffLoading(false);
-    setGitHistoryDiff(null);
-    setGitHistoryDiffDocumentPath(null);
-  }, [workbench.workspaceRoot]);
   const renderEditorDocumentForGroup = useCallback(
     (document: EditorDocument | null, groupId: EditorGroupId) => {
       const groupIsActive = editorGroupsState.activeGroupId === groupId;
@@ -1275,20 +1127,18 @@ function App() {
         return renderEditorDocumentForGroup(null, groupId);
       }
       const path = surface.path;
-      const historyDiff = gitHistoryDiffsByDocumentPathRef.current[path] ??
-        (path === gitHistoryDiffDocumentPath ? gitHistoryDiff : null);
-      const historyDiffLoading = path === gitHistoryDiffDocumentPath &&
-        gitHistoryDiffLoading;
+      const historyDiffDocument =
+        gitHistoryDiffDocuments.documentsByPath[path] ?? null;
       const worktreeDiff = workbench.gitDiffDocuments[path] ?? null;
       if (
         isGitHistoryDiffDocumentPath(path) &&
-        (historyDiffLoading || historyDiff)
+        historyDiffDocument
       ) {
         return (
           <ErrorBoundary title="Could not render this diff" resetKeys={[path]}>
             <GitDiffPreview
-              diff={historyDiff}
-              isLoading={historyDiffLoading}
+              diff={historyDiffDocument.diff}
+              isLoading={historyDiffDocument.isLoading}
               monacoTheme={monacoTheme}
               previewIdentity={path}
               editorFontFamily={workbench.appSettings.editorFontFamily}
@@ -1337,9 +1187,7 @@ function App() {
     },
     [
       closeEditorGroupTab,
-      gitHistoryDiff,
-      gitHistoryDiffDocumentPath,
-      gitHistoryDiffLoading,
+      gitHistoryDiffDocuments.documentsByPath,
       monacoTheme,
       renderEditorDocumentForGroup,
       workbench,
@@ -2391,21 +2239,6 @@ function areFileStatusesByPathEqual(
   }
 
   return leftKeys.every((path) => left[path] === right[path]);
-}
-
-function gitHistoryDiffDocumentPathFor(
-  commitHash: string,
-  path: string,
-  oldPath: string | null,
-): string {
-  return buildGitHistoryDiffDocumentPath(commitHash, path, oldPath);
-}
-
-function fileNameForPath(path: string): string {
-  const normalizedPath = path.replace(/\\/g, "/");
-  const parts = normalizedPath.split("/").filter(Boolean);
-
-  return parts[parts.length - 1] ?? normalizedPath;
 }
 
 function usePrefersLightTheme(): boolean {
