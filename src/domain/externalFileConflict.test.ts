@@ -5,10 +5,43 @@ import {
   externalFileConflictActions,
   externalFileConflictLabels,
   externalFileConflictRef,
+  externalFileSnapshotHasBaselineContent,
   transitionExternalFileConflict,
   type ExternalFileConflictInput,
   type ExternalFileConflictState,
 } from "./externalFileConflict";
+
+describe("externalFileSnapshotHasBaselineContent", () => {
+  it("matches unchanged content independently of metadata revision drift", () => {
+    const value = {
+      content: "<?php\n",
+      path: "/workspace/new.php",
+      revision: fileRevision(1),
+    };
+
+    expect(externalFileSnapshotHasBaselineContent(value, {
+      ...value,
+      path: "/workspace-alias/new.php",
+    })).toBe(true);
+    expect(externalFileSnapshotHasBaselineContent(value, {
+      ...value,
+      revision: fileRevision(2),
+    })).toBe(true);
+  });
+
+  it("rejects changed content even when the trusted revision is unchanged", () => {
+    const value = {
+      content: "<?php\n",
+      path: "/workspace/new.php",
+      revision: fileRevision(1),
+    };
+
+    expect(externalFileSnapshotHasBaselineContent(value, {
+      ...value,
+      content: "<?php echo 1;\n",
+    })).toBe(false);
+  });
+});
 
 describe("external file conflict", () => {
   it("requires attention for either dirty content or an external conflict", () => {
@@ -259,5 +292,16 @@ function renamed(): ExternalFileConflictInput {
     kind: "renamed",
     baseline: baseline(),
     disk: { path: "/project/renamed.txt", content: "disk v2" },
+  };
+}
+
+function fileRevision(contentHash: number) {
+  return {
+    contentHash: String(contentHash),
+    device: "1",
+    inode: "2",
+    modifiedNanoseconds: 3,
+    modifiedSeconds: 4,
+    size: 5,
   };
 }

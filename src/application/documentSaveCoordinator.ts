@@ -409,7 +409,6 @@ export class DocumentSaveCoordinator<TResult = void> {
     issuedWrite.settled = true;
     if (active.issuedWrite === issuedWrite) {
       active.issuedWrite = null;
-      active.writeDenied = true;
     }
     lane.issuedWrites.delete(issuedWrite);
     issuedWrite.barrier.resolve();

@@ -4,6 +4,14 @@ export interface ExternalFileSnapshot {
   revision?: import("./workspace").WorkspaceFileRevision | null;
 }
 
+/** Content equality is the semantic conflict boundary for external watcher reads. */
+export function externalFileSnapshotHasBaselineContent(
+  baseline: ExternalFileSnapshot,
+  disk: ExternalFileSnapshot,
+): boolean {
+  return baseline.content === disk.content;
+}
+
 export interface ModifiedExternalFileConflictInput {
   kind: "modified";
   baseline: ExternalFileSnapshot;

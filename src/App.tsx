@@ -18,6 +18,7 @@ import type {
 import {
   useWorkbenchController,
 } from "./application/useWorkbenchController";
+import { DirtyCloseDecisionCoordinator } from "./application/dirtyCloseDecisionCoordinator";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
 import { usePhpTestResults } from "./application/usePhpTestResults";
@@ -30,6 +31,7 @@ import { BottomPanel } from "./components/BottomPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
+import { DirtyCloseDecisionDialogHost } from "./components/DirtyCloseDecisionDialogHost";
 import { ScopedEditorSurface } from "./components/ScopedEditorSurface";
 import { EditorArea } from "./components/EditorArea";
 import type { EditorGroupSurface } from "./components/EditorGroupView";
@@ -92,7 +94,6 @@ import { isDirty, javaScriptTypeScriptWorkspaceLabel } from "./domain/workspace"
 import type { EditorDocument, ImageTab, IntelligenceMode } from "./domain/workspace";
 import {
   createInitialEditorGroupsState,
-  editorGroupVisiblePaths,
   type EditorGroupId,
 } from "./domain/editorGroups";
 import {
@@ -232,6 +233,7 @@ const workspaceRuntimeLifecycleGateway =
 const settingsGateway = new BrowserSettingsGateway();
 const systemFontGateway = new TauriSystemFontGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
+const dirtyCloseDecisionCoordinator = new DirtyCloseDecisionCoordinator();
 const EMPTY_FILE_STATUSES_BY_PATH: Record<string, GitChangeStatus> = {};
 
 // Warm the Shiki highlighter in the background as soon as the app boots so the
@@ -293,6 +295,28 @@ function App() {
   const gitHistoryDiffsByDocumentPathRef = useRef<Record<string, GitFileDiff>>(
     {},
   );
+  const handleClosedEditorPaths = useCallback((paths: readonly string[]) => {
+    const closedPaths = new Set(paths.filter(isGitHistoryDiffDocumentPath));
+    if (closedPaths.size === 0) {
+      return;
+    }
+
+    const nextHistoryDiffs = { ...gitHistoryDiffsByDocumentPathRef.current };
+    for (const path of closedPaths) {
+      delete nextHistoryDiffs[path];
+    }
+    gitHistoryDiffsByDocumentPathRef.current = nextHistoryDiffs;
+    setGitHistoryDiffDocumentPath((current) => {
+      if (!current || !closedPaths.has(current)) {
+        return current;
+      }
+
+      setGitHistoryDiffLoading(false);
+      setGitHistoryDiff(null);
+      gitHistoryDiffRequestTokenRef.current += 1;
+      return null;
+    });
+  }, []);
   const fileStatusesByPathRef = useRef<Record<string, GitChangeStatus>>({});
   const workbench = useWorkbenchController(
     workspaceGateways,
@@ -323,6 +347,8 @@ function App() {
       editorSurfaceEslintDisableRunner,
       editorSurfacePhpstanIgnoreRunner,
       editorGroupFocusRunner,
+      dirtyCloseDecisionPort: dirtyCloseDecisionCoordinator,
+      onDidCloseEditorPaths: handleClosedEditorPaths,
     },
   );
   const artisanRoutes = useArtisanRoutes({
@@ -1035,13 +1061,6 @@ function App() {
     [gitHistoryGateway, workbench.openReadOnlyDocument, workbench.workspaceRoot],
   );
 
-  const clearGitHistoryDiff = useCallback(() => {
-    setGitHistoryDiffLoading(false);
-    setGitHistoryDiff(null);
-    setGitHistoryDiffDocumentPath(null);
-    gitHistoryDiffRequestTokenRef.current += 1;
-  }, []);
-
   const activateEditorGroupTab = useCallback(
     (groupId: EditorGroupId, path: string) => {
       const historyDiff = gitHistoryDiffsByDocumentPathRef.current[path] ?? null;
@@ -1060,26 +1079,14 @@ function App() {
   );
 
   const closeEditorGroupTab = useCallback(
-    (groupId: EditorGroupId, path: string) => {
-      const membershipCount = Object.values(editorGroupsState.groups).filter(
-        (group) => editorGroupVisiblePaths(group).includes(path),
-      ).length;
+    async (groupId: EditorGroupId, path: string) => {
       if (workbench.closeDocumentInEditorGroup) {
-        workbench.closeDocumentInEditorGroup(groupId, path);
-      } else {
-        workbench.closeDocument(path);
-      }
-      if (membershipCount > 1 || !isGitHistoryDiffDocumentPath(path)) {
+        await workbench.closeDocumentInEditorGroup(groupId, path);
         return;
       }
-      const nextHistoryDiffs = { ...gitHistoryDiffsByDocumentPathRef.current };
-      delete nextHistoryDiffs[path];
-      gitHistoryDiffsByDocumentPathRef.current = nextHistoryDiffs;
-      if (path === gitHistoryDiffDocumentPath) {
-        clearGitHistoryDiff();
-      }
+      await workbench.closeDocument(path);
     },
-    [clearGitHistoryDiff, editorGroupsState.groups, gitHistoryDiffDocumentPath, workbench],
+    [workbench],
   );
   useEffect(() => {
     if (gitHistoryWorkspaceRootRef.current === workbench.workspaceRoot) {
@@ -1181,15 +1188,16 @@ function App() {
           onEslintDisableRunnerChange={updateEditorSurfaceEslintDisableRunner}
           onMenuCommandRunnerChange={updateEditorMenuCommandRunner}
           onPhpstanIgnoreRunnerChange={updateEditorSurfacePhpstanIgnoreRunner}
-          onCloseActiveTab={() => {
+          onCloseActiveTab={async () => {
             const path = editorGroupsState.groups[groupId]?.activePath;
-            if (path) {
-              if (workbench.closeDocumentInEditorGroup) {
-                workbench.closeDocumentInEditorGroup(groupId, path);
-              } else {
-                workbench.closeDocument(path);
-              }
+            if (!path) {
+              return;
             }
+            if (workbench.closeDocumentInEditorGroup) {
+              await workbench.closeDocumentInEditorGroup(groupId, path);
+              return;
+            }
+            await workbench.closeDocument(path);
           }}
           onCursorPositionChange={workbench.updateActiveEditorPosition}
           onEditorViewStateChange={(path, viewState) => {
@@ -1736,6 +1744,10 @@ function App() {
       <NoticeToastHost
         notices={workbench.notices}
         renderNotice={renderNoticeToast}
+      />
+
+      <DirtyCloseDecisionDialogHost
+        coordinator={dirtyCloseDecisionCoordinator}
       />
 
       <CommandPalette

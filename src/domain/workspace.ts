@@ -295,12 +295,12 @@ export type WorkspaceWriteResult =
   | { status: "error"; message: string };
 
 export interface WorkspaceFileRevision {
-  device: number;
-  inode: number;
+  device: string;
+  inode: string;
   size: number;
   modifiedSeconds: number;
   modifiedNanoseconds: number;
-  contentHash: number;
+  contentHash: string;
 }
 
 export type WorkspaceMutationResult =

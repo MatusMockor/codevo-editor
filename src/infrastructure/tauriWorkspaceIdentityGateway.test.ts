@@ -391,11 +391,11 @@ describe("TauriWorkspaceIdentityGateway", () => {
 
 function revision() {
   return {
-    device: 1,
-    inode: 2,
+    device: "1",
+    inode: "2",
     size: 3,
     modifiedSeconds: 4,
     modifiedNanoseconds: 5,
-    contentHash: 6,
+    contentHash: "6",
   };
 }

@@ -732,6 +732,31 @@ describe("DocumentSaveCoordinator", () => {
     ]);
   });
 
+  it("allows a current save operation to reacquire a permit when no drain or invalidation intervenes", async () => {
+    const coordinator = new DocumentSaveCoordinator();
+    const permits: DocumentSaveWritePermit[] = [];
+
+    const save = coordinator.request(key("/a.php"), async (lease) => {
+      const first = lease.tryBeginWrite();
+      expect(first).not.toBeNull();
+      first?.settle();
+
+      const second = lease.tryBeginWrite();
+      expect(second).not.toBeNull();
+      expect(second).not.toBe(first);
+      if (first) {
+        permits.push(first);
+      }
+      if (second) {
+        permits.push(second);
+      }
+      second?.settle();
+    });
+
+    await expect(save).resolves.toEqual({ status: "saved" });
+    expect(permits).toHaveLength(2);
+  });
+
   it("does not let directory-scoped preparation block a drain or escape later", async () => {
     const coordinator = new DocumentSaveCoordinator();
     const preparation = deferred();

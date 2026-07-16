@@ -31,12 +31,14 @@ import {
 } from "./documentSaveCoordinator";
 import {
   legacyDocumentSaveIdentity,
+  type DocumentSaveOwnership,
   type ResolveDocumentSaveOwnership,
 } from "./documentSaveIdentity";
 import {
   DocumentSaveService,
   type DocumentSaveResult,
 } from "./documentSaveService";
+import type { DocumentSelfWriteLease } from "./documentSelfWriteCoordinator";
 
 export type { DocumentSaveResult } from "./documentSaveService";
 
@@ -93,6 +95,11 @@ export interface DocumentSaveLifecycleDependencies {
     error: unknown,
   ) => void;
   hasExternalFileConflict?: (rootPath: string | null, path: string) => boolean;
+  beginDocumentSelfWrite: (
+    rootPath: string,
+    path: string,
+    content: string,
+  ) => DocumentSelfWriteLease | null;
   detectSaveConflict?: (
     rootPath: string,
     document: EditorDocument,
@@ -112,6 +119,10 @@ export interface DocumentSaveLifecycle {
   saveActiveDocument: () => Promise<void>;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   runWithIssuedWriteDrain: RunWithDocumentSaveExclusion;
+  requestOwnerDocumentSave: (
+    ownership: DocumentSaveOwnership,
+    operation: (lease: DocumentSaveLease) => Promise<DocumentSaveResult>,
+  ) => Promise<DocumentSaveResult>;
   invalidateDocumentSave: (rootPath: string, path: string) => void;
 }
 
@@ -146,6 +157,7 @@ export function useDocumentSaveLifecycle(
     syncSavedJavaScriptTypeScriptDocument,
     reportErrorForActiveWorkspaceRoot,
     hasExternalFileConflict = () => false,
+    beginDocumentSelfWrite,
     detectSaveConflict = () => {},
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
@@ -353,6 +365,7 @@ export function useDocumentSaveLifecycle(
         syncSavedDocument,
         syncSavedJavaScriptTypeScriptDocument,
         hasExternalFileConflict,
+        beginDocumentSelfWrite,
       });
       const result = await service.saveDocument(target);
       if (!lease.isCurrent()) {
@@ -380,6 +393,7 @@ export function useDocumentSaveLifecycle(
       filePrefetchCacheRef,
       formattedContentForSave,
       hasExternalFileConflict,
+      beginDocumentSelfWrite,
       optimizedImportsContentForSave,
       organizedImportsContentForSave,
       presentSaveResult,
@@ -456,6 +470,24 @@ export function useDocumentSaveLifecycle(
       [documentSaveCoordinator, resolveDocumentSaveOwnership],
     );
 
+  const requestOwnerDocumentSave = useCallback(
+    async (
+      ownership: DocumentSaveOwnership,
+      operation: (lease: DocumentSaveLease) => Promise<DocumentSaveResult>,
+    ): Promise<DocumentSaveResult> => {
+      const outcome = await documentSaveCoordinator.request(
+        ownership,
+        operation,
+      );
+      if (outcome.status !== "saved") {
+        return { status: "stale" };
+      }
+
+      return outcome.result;
+    },
+    [documentSaveCoordinator],
+  );
+
   const runWithIssuedWriteDrain = useCallback<RunWithDocumentSaveExclusion>(
     (scope, operation) => {
       const resolvedScope = resolveDocumentSaveInvalidationScope(
@@ -514,6 +546,7 @@ export function useDocumentSaveLifecycle(
     saveActiveDocument,
     runWithDocumentSaveExclusion,
     runWithIssuedWriteDrain,
+    requestOwnerDocumentSave,
     invalidateDocumentSave,
   };
 }

@@ -448,12 +448,34 @@ fn split_file_masks(mask: &str) -> Vec<String> {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileRevision {
+    #[serde(with = "decimal_u64")]
     device: u64,
+    #[serde(with = "decimal_u64")]
     inode: u64,
     size: i64,
     modified_seconds: i64,
     modified_nanoseconds: i64,
+    #[serde(with = "decimal_u64")]
     content_hash: u64,
+}
+
+mod decimal_u64 {
+    use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        value.parse().map_err(D::Error::custom)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -2333,6 +2355,28 @@ mod tests {
         ));
         fs::create_dir_all(&base).unwrap();
         LocalHistoryStore::new(base)
+    }
+
+    #[test]
+    fn file_revision_preserves_u64_values_across_json_roundtrip() {
+        let revision = FileRevision {
+            device: 9_007_199_254_740_993,
+            inode: 18_436_989_904_237_926_844,
+            size: 42,
+            modified_seconds: 1_700_000_000,
+            modified_nanoseconds: 123_456_789,
+            content_hash: u64::MAX,
+        };
+
+        let payload = serde_json::to_value(&revision).unwrap();
+
+        assert_eq!(payload["device"], "9007199254740993");
+        assert_eq!(payload["inode"], "18436989904237926844");
+        assert_eq!(payload["contentHash"], "18446744073709551615");
+        assert_eq!(
+            serde_json::from_value::<FileRevision>(payload).unwrap(),
+            revision
+        );
     }
 
     struct FailingSnapshotSink;

@@ -137,6 +137,7 @@ function renderLifecycle(
     resolveEditorConfigForFile: vi.fn(async () => ({})),
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
+    beginDocumentSelfWrite: () => null,
     reportErrorForActiveWorkspaceRoot: vi.fn(),
     runEslintAnalysisOnSave: vi.fn(),
     runPhpstanAnalysisOnSave,

@@ -198,7 +198,7 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
 
   it("does not let background reads alter an explicit save revision", async () => {
     const first = revision();
-    const background = { ...revision(), contentHash: 99 };
+    const background = { ...revision(), contentHash: "99" };
     invoke
       .mockResolvedValueOnce({ content: "background", revision: background })
       .mockResolvedValueOnce({ status: "success", revision: first });
@@ -216,6 +216,36 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
       relativePath: "src/App.ts",
       content: "editor",
       expectedRevision: first,
+    });
+  });
+
+  it("preserves u64 revision fields as exact decimal strings", async () => {
+    const exactRevision = {
+      ...revision(),
+      device: "9007199254740993",
+      inode: "18436989904237926844",
+      contentHash: "18446744073709551615",
+    };
+    invoke
+      .mockResolvedValueOnce({ content: "disk", revision: exactRevision })
+      .mockResolvedValueOnce({ status: "success", revision: exactRevision });
+    const gateway = trustedGateway();
+
+    const snapshot = await gateway.readTextFileSnapshot(
+      "/selected/project/src/App.ts",
+    );
+    await gateway.writeTextFile(
+      "/selected/project/src/App.ts",
+      "editor",
+      snapshot.revision ?? undefined,
+    );
+
+    expect(snapshot.revision).toEqual(exactRevision);
+    expect(invoke).toHaveBeenLastCalledWith("workspace_save_text_file", {
+      workspaceId: "ws-1",
+      relativePath: "src/App.ts",
+      content: "editor",
+      expectedRevision: exactRevision,
     });
   });
 
@@ -302,11 +332,11 @@ function trustedGateway(): TauriWorkspaceGateway {
 
 function revision() {
   return {
-    device: 1,
-    inode: 2,
+    device: "1",
+    inode: "2",
     size: 4,
     modifiedSeconds: 5,
     modifiedNanoseconds: 6,
-    contentHash: 7,
+    contentHash: "7",
   };
 }

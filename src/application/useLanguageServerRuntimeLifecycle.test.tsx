@@ -802,8 +802,12 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       firstOwner.ownerKey
     ];
     pendingDisposal.reject(new Error("dispose failed"));
-    await act(async () => disposal);
+    let result!: Awaited<typeof disposal>;
+    await act(async () => {
+      result = await disposal;
+    });
 
+    expect(result).toBe("stale");
     expect(phpGateway.stop).not.toHaveBeenCalled();
     expect(tsGateway.stop).not.toHaveBeenCalled();
     expect(stopTerminalRoot).not.toHaveBeenCalled();
@@ -855,10 +859,14 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
     ).mockClear();
 
+    let result: "stopped" | "incomplete" | "stale" | undefined;
     await act(async () => {
-      await harness.lifecycle().stopProjectRuntimes(FIRST_ROOT, firstOwner);
+      result = await harness
+        .lifecycle()
+        .stopProjectRuntimes(FIRST_ROOT, firstOwner);
     });
 
+    expect(result).toBe("stopped");
     expect(phpGateway.stop).toHaveBeenCalledWith(FIRST_ROOT);
     expect(tsGateway.stop).toHaveBeenCalledWith(FIRST_ROOT);
     expect(stopTerminalRoot).toHaveBeenCalledWith(FIRST_ROOT);
@@ -920,10 +928,14 @@ describe("useLanguageServerRuntimeLifecycle ownership", () => {
       harness.dependencies.clearJavaScriptTypeScriptDiagnosticsForRoot,
     ).mockClear();
 
+    let result: "stopped" | "incomplete" | "stale" | undefined;
     await act(async () => {
-      await harness.lifecycle().stopProjectRuntimes(FIRST_ROOT, firstOwner);
+      result = await harness
+        .lifecycle()
+        .stopProjectRuntimes(FIRST_ROOT, firstOwner);
     });
 
+    expect(result).toBe("incomplete");
     expect(
       harness.dependencies.languageServerRuntimeStatusByRootRef.current[
         firstOwner.ownerKey

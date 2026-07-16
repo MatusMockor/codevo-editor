@@ -17,6 +17,7 @@ import {
 import { fileUriFromPath } from "../domain/languageServerDocumentSync";
 import { defaultWorkspaceSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
+import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   useDocumentSavePipeline,
   type DocumentSavePipeline,
@@ -475,6 +476,121 @@ describe("useDocumentSavePipeline", () => {
     disabled.unmount();
     noPhpWorkspace.unmount();
     enabled.unmount();
+  });
+
+  it("uses owner-explicit settings and PHP capability over opposite active refs", () => {
+    const source = [
+      "<?php",
+      "namespace App;",
+      "use App\\Used;",
+      "use App\\Unused;",
+      "class Example { public function run(Used $used): void {} }",
+      "",
+    ].join("\n");
+    const item = editorDocument(`${ROOT}/Example.php`, source, "php");
+    const owner = createWorkspaceRuntimeOwner("inactive-owner", ROOT);
+    const activeEnabled = renderPipeline(makeDeps({
+      hasPhpWorkspace: true,
+      workspaceSettingsRef: {
+        current: {
+          ...defaultWorkspaceSettings(),
+          optimizeImportsOnSave: true,
+        },
+      },
+    }));
+    const activeDisabled = renderPipeline(makeDeps());
+    const context = (
+      hasPhpWorkspace: boolean,
+      optimizeImportsOnSave: boolean,
+    ) => ({
+      canUseLanguageServerDocument: true,
+      hasPhpWorkspace,
+      javaScriptTypeScriptRuntimeStatus: null,
+      javaScriptTypeScriptRuntimeStatusRoot: ROOT,
+      owner,
+      phpRuntimeStatus: null,
+      phpRuntimeStatusRoot: ROOT,
+      settings: {
+        ...defaultWorkspaceSettings(),
+        optimizeImportsOnSave,
+      },
+    });
+
+    expect(activeEnabled.pipeline().optimizedImportsContentForOwnerSave(
+      context(false, false),
+      item,
+      source,
+    )).toBe(source);
+    expect(activeDisabled.pipeline().optimizedImportsContentForOwnerSave(
+      context(true, true),
+      item,
+      source,
+    )).not.toContain("use App\\Unused;");
+
+    activeEnabled.unmount();
+    activeDisabled.unmount();
+  });
+
+  it("skips server transformations for an inactive owner without an open buffer", async () => {
+    const phpGateway = featuresGateway();
+    const jsTsGateway = featuresGateway();
+    const deps = makeDeps({
+      javaScriptTypeScriptLanguageServerFeaturesGateway: jsTsGateway,
+      languageServerFeaturesGateway: phpGateway,
+    });
+    const harness = renderPipeline(deps);
+    const owner = createWorkspaceRuntimeOwner("inactive-owner", ROOT);
+    const settings = {
+      ...defaultWorkspaceSettings(),
+      formatOnSave: true,
+      javaScriptTypeScriptOrganizeImportsOnSave: true,
+      optimizeImportsOnSave: true,
+    };
+    const context = {
+      canUseLanguageServerDocument: false,
+      hasPhpWorkspace: true,
+      javaScriptTypeScriptRuntimeStatus: runningStatus({ codeAction: true }),
+      javaScriptTypeScriptRuntimeStatusRoot: ROOT,
+      owner,
+      phpRuntimeStatus: runningStatus({ formatting: true }),
+      phpRuntimeStatusRoot: ROOT,
+      settings,
+    };
+    const phpSource = [
+      "<?php",
+      "namespace App;",
+      "use App\\Used;",
+      "use App\\Unused;",
+      "class Example { public function run(Used $used): void {} }",
+      "",
+    ].join("\n");
+    const phpDocument = editorDocument(`${ROOT}/Example.php`, phpSource, "php");
+    const tsSource = "import { value } from './value';\n";
+    const tsDocument = editorDocument(`${ROOT}/Example.ts`, tsSource);
+
+    await expect(harness.pipeline().formattedContentForOwnerSave(
+      context,
+      phpDocument,
+      ROOT,
+    )).resolves.toBe(phpSource);
+    await expect(harness.pipeline().organizedImportsContentForOwnerSave(
+      context,
+      tsDocument,
+      tsSource,
+      ROOT,
+    )).resolves.toBe(tsSource);
+    expect(harness.pipeline().optimizedImportsContentForOwnerSave(
+      context,
+      phpDocument,
+      phpSource,
+    )).not.toContain("use App\\Unused;");
+    expect(deps.flushPendingDocumentChangeForRoot).not.toHaveBeenCalled();
+    expect(deps.flushPendingJavaScriptTypeScriptDocumentChangeForRoot)
+      .not.toHaveBeenCalled();
+    expect(phpGateway.formatting).not.toHaveBeenCalled();
+    expect(jsTsGateway.codeActions).not.toHaveBeenCalled();
+
+    harness.unmount();
   });
 
   it("resolves data-only JS/TS source actions and applies their edits", async () => {

@@ -1054,9 +1054,9 @@ function gitDiff(change: GitChangedFile): GitFileDiff {
 
 function revision(contentHash: number): WorkspaceFileRevision {
   return {
-    contentHash,
-    device: 1,
-    inode: 2,
+    contentHash: String(contentHash),
+    device: "1",
+    inode: "2",
     modifiedNanoseconds: 5,
     modifiedSeconds: 4,
     size: 3,

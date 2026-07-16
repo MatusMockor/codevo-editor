@@ -25,9 +25,9 @@ function document(
 
 function revision(contentHash: number): WorkspaceFileRevision {
   return {
-    contentHash,
-    device: 1,
-    inode: 2,
+    contentHash: String(contentHash),
+    device: "1",
+    inode: "2",
     modifiedNanoseconds: 3,
     modifiedSeconds: 4,
     size: 5,

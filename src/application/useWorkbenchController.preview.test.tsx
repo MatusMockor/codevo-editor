@@ -370,7 +370,9 @@ describe("useWorkbenchController preview tabs", () => {
       },
       workspaceFiles: { readImageFile },
     });
-    await vi.waitFor(() => expect(getWorkbench().workspaceRoot).toBe("/workspace"));
+    await vi.waitFor(() =>
+      expect(getWorkbench().workspaceRoot).toBe("/workspace"),
+    );
     const image = fileEntry("/workspace/image.gif", "image.gif");
 
     await act(async () => {
@@ -405,6 +407,9 @@ describe("useWorkbenchController preview tabs", () => {
       markdownPreviewRenderer: renderMarkdown,
       readTextFile: vi.fn(async () => "README"),
     });
+    await vi.waitFor(() =>
+      expect(getWorkbench().workspaceRoot).toBe("/workspace"),
+    );
     const file = fileEntry("/workspace/README.md", "README.md");
 
     await act(async () => {
@@ -449,6 +454,9 @@ describe("useWorkbenchController preview tabs", () => {
       markdownPreviewRenderer: renderMarkdown,
       readTextFile: vi.fn(async () => "first"),
     });
+    await vi.waitFor(() =>
+      expect(getWorkbench().workspaceRoot).toBe("/workspace"),
+    );
     const file = fileEntry("/workspace/README.md", "README.md");
 
     await act(async () => {
@@ -480,7 +488,7 @@ describe("useWorkbenchController preview tabs", () => {
 
     await act(async () => {
       getWorkbench().updateActiveDocument("third");
-      getWorkbench().closeDocument(previewPath);
+      await getWorkbench().closeDocument(previewPath);
       await vi.advanceTimersByTimeAsync(300);
     });
     expect(renderMarkdown).toHaveBeenCalledTimes(2);
@@ -496,6 +504,9 @@ describe("useWorkbenchController preview tabs", () => {
       markdownPreviewRenderer: vi.fn(async () => "<h1>README</h1>"),
       readTextFile: vi.fn(async () => "# README"),
     });
+    await vi.waitFor(() =>
+      expect(getWorkbench().workspaceRoot).toBe("/workspace"),
+    );
     const file = fileEntry("/workspace/README.md", "README.md");
 
     await act(async () => {
@@ -557,6 +568,7 @@ describe("useWorkbenchController preview tabs", () => {
         recentWorkspacePath: "/workspace",
       },
     });
+    await vi.waitFor(() => expect(getWorkbench().workspaceRoot).toBe("/workspace"));
     const first = fileEntry("/workspace/src/First.php", "First.php");
     const second = fileEntry("/workspace/src/Second.php", "Second.php");
     const preview = fileEntry("/workspace/src/Preview.php", "Preview.php");
@@ -9130,12 +9142,12 @@ describe("useWorkbenchController preview tabs", () => {
   it("waits for an issued save before caching and restores the clean revision", async () => {
     const path = "/workspace-a/src/User.php";
     const savedRevision = {
-      device: 1,
-      inode: 2,
+      device: "1",
+      inode: "2",
       size: 27,
       modifiedSeconds: 3,
       modifiedNanoseconds: 4,
-      contentHash: 5,
+      contentHash: "5",
     };
     const save = createDeferred<{
       status: "success";
@@ -9277,12 +9289,12 @@ describe("useWorkbenchController preview tabs", () => {
   it("preserves an edit made during an issued save as dirty in the workspace cache", async () => {
     const path = "/workspace-a/src/User.php";
     const savedRevision = {
-      device: 1,
-      inode: 2,
+      device: "1",
+      inode: "2",
       size: 2,
       modifiedSeconds: 3,
       modifiedNanoseconds: 4,
-      contentHash: 5,
+      contentHash: "5",
     };
     const save = createDeferred<{
       status: "success";
@@ -60736,14 +60748,14 @@ final class InvoiceAdapter
   it("restores a session document revision for the next trusted save", async () => {
     const path = "/workspace/src/Restored.ts";
     const restoredRevision = {
-      device: 1,
-      inode: 2,
+      device: "1",
+      inode: "2",
       size: 24,
       modifiedSeconds: 3,
       modifiedNanoseconds: 4,
-      contentHash: 5,
+      contentHash: "5",
     };
-    const savedRevision = { ...restoredRevision, size: 23, contentHash: 6 };
+    const savedRevision = { ...restoredRevision, size: 23, contentHash: "6" };
     const readTextFileSnapshot = vi.fn(async () => ({
       content: "export const value = 1;\n",
       revision: restoredRevision,
@@ -73555,11 +73567,15 @@ MissingClass::class;
     )).toBe(true);
     vi.mocked(dependencies.documentSyncGateway.didClose).mockClear();
 
-    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[0], path));
+    await act(async () => {
+      await getWorkbench().closeDocumentInEditorGroup(groupIds[0], path);
+    });
     expect(getWorkbench().openDocuments.map((document) => document.path)).toEqual([path]);
     expect(dependencies.documentSyncGateway.didClose).not.toHaveBeenCalled();
 
-    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[1], path));
+    await act(async () => {
+      await getWorkbench().closeDocumentInEditorGroup(groupIds[1], path);
+    });
     await flushAsyncTurns(12);
     expect(getWorkbench().openDocuments).toEqual([]);
     expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledOnce();
@@ -73762,11 +73778,15 @@ MissingClass::class;
     const groupIds = Object.keys(getWorkbench().editorGroups.groups);
     act(() => getWorkbench().updateActiveDocument("export const value = 2;\n"));
 
-    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[0], path));
+    await act(async () => {
+      await getWorkbench().closeDocumentInEditorGroup(groupIds[0], path);
+    });
     expect(confirm).not.toHaveBeenCalled();
     expect(getWorkbench().openDocuments).toHaveLength(1);
 
-    act(() => getWorkbench().closeDocumentInEditorGroup(groupIds[1], path));
+    await act(async () => {
+      await getWorkbench().closeDocumentInEditorGroup(groupIds[1], path);
+    });
     expect(confirm).toHaveBeenCalledOnce();
     expect(getWorkbench().openDocuments).toHaveLength(1);
   });

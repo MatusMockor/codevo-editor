@@ -62,14 +62,21 @@ import { useBookmarks } from "./useBookmarks";
 import { useFileHistory } from "./useFileHistory";
 import { useLocalHistory } from "./useLocalHistory";
 import { useDocumentLifecycle } from "./useDocumentLifecycle";
+import type { DirtyCloseDecisionPort } from "./dirtyCloseDecisionPort";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import {
   createDocumentSaveIdentity,
   legacyDocumentSaveIdentity,
   type ResolveDocumentSaveOwnership,
 } from "./documentSaveIdentity";
+import { DocumentSelfWriteCoordinator } from "./documentSelfWriteCoordinator";
 import { useWorkbenchEditorGroupCloseLifecycle } from "./useWorkbenchEditorGroupCloseLifecycle";
-import { useDocumentSavePipeline } from "./useDocumentSavePipeline";
+import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveService";
+import { WorkbenchOwnerDocumentSaveAdapters } from "./workbenchOwnerDocumentSaveAdapters";
+import {
+  useDocumentSavePipeline,
+  type DocumentSavePipelineOwnerContext,
+} from "./useDocumentSavePipeline";
 import {
   currentWorkspaceSessionForEditorGroups,
   isSessionPathInWorkspace,
@@ -89,6 +96,7 @@ import {
 } from "./workspaceSessionSwitchLifecycle";
 import {
   useWorkbenchCloseLifecycle,
+  type WorkbenchCloseLifecycleDependencies,
   type WorkspaceCloseOwnership,
   type WorkspaceCloseSessionPort,
   type WorkspaceIdentityReleaseOutcome,
@@ -264,6 +272,11 @@ import {
   type EditorConfigFile,
   type ResolvedEditorConfig,
 } from "../domain/editorConfig";
+import {
+  editorConfigCacheKey,
+  invalidateEditorConfigCacheForRoot,
+  type EditorConfigCache,
+} from "./editorConfigCache";
 import { FilePrefetchCache } from "../domain/filePrefetchCache";
 import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
@@ -446,6 +459,8 @@ export interface WorkbenchControllerOptions {
   editorMenuCommandRunner?: EditorMenuCommandRunner | null;
   editorGroupFocusRunner?: EditorGroupFocusRunner | null;
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
+  dirtyCloseDecisionPort?: DirtyCloseDecisionPort;
+  onDidCloseEditorPaths?: (paths: readonly string[]) => void;
 }
 
 interface OpenWorkspacePathOptions {
@@ -518,6 +533,99 @@ const pintGateway = new TauriPintGateway();
 
 export type SidebarView = "files" | "git" | "php";
 
+interface WorkbenchEditorConfigLoadDependencies {
+  readonly cache: () => EditorConfigCache;
+  readonly currentWorkspaceRoot: () => string | null;
+  readonly readTextFile: (path: string) => Promise<string>;
+  readonly resolveWorkspaceRuntimeOwner: (
+    rootPath: string,
+  ) => WorkspaceRuntimeOwner | null;
+}
+
+interface WorkbenchEditorConfigLoadRequest {
+  readonly directory: string;
+  readonly owner?: WorkspaceRuntimeOwner;
+  readonly rootPath: string;
+}
+
+export async function loadWorkbenchEditorConfigFile(
+  dependencies: WorkbenchEditorConfigLoadDependencies,
+  request: WorkbenchEditorConfigLoadRequest,
+): Promise<EditorConfigFile | null> {
+  const isCurrent = () => {
+    if (!request.owner) {
+      return workspaceRootKeysEqual(
+        dependencies.currentWorkspaceRoot(),
+        request.rootPath,
+      );
+    }
+
+    const currentOwner = dependencies.resolveWorkspaceRuntimeOwner(
+      request.rootPath,
+    );
+    return currentOwner?.ownerKey === request.owner.ownerKey &&
+      workspaceRootKeysEqual(
+        currentOwner.executionRoot,
+        request.owner.executionRoot,
+      );
+  };
+  if (!isCurrent()) {
+    return null;
+  }
+
+  const cacheKey = editorConfigCacheKey(request.rootPath, request.owner);
+  const cacheForRequest = (dependencies.cache()[cacheKey] ??= {});
+  if (request.directory in cacheForRequest) {
+    return cacheForRequest[request.directory];
+  }
+
+  const path = editorConfigPathForDirectory(request.directory);
+  let content: string | null = null;
+  try {
+    content = await dependencies.readTextFile(path);
+  } catch {
+    content = null;
+  }
+
+  if (!isCurrent()) {
+    return null;
+  }
+
+  const file: EditorConfigFile | null = content === null
+    ? null
+    : { directory: request.directory, parsed: parseEditorConfig(content) };
+  (dependencies.cache()[cacheKey] ??= {})[request.directory] = file;
+  return file;
+}
+
+export function ownerDocumentSavePipelineContextFor(
+  owner: WorkspaceRuntimeOwner,
+  settings: WorkspaceSettings,
+  hasPhpWorkspaceByOwner: Readonly<Record<string, boolean>>,
+  phpRuntimeStatusByOwner: LanguageServerRuntimeStatusByOwner,
+  javaScriptTypeScriptRuntimeStatusByOwner: LanguageServerRuntimeStatusByOwner,
+  synchronizedOwner: WorkspaceRuntimeOwner | null = null,
+): DocumentSavePipelineOwnerContext {
+  const phpRuntimeStatus = phpRuntimeStatusByOwner[owner.ownerKey] ?? null;
+  const javaScriptTypeScriptRuntimeStatus =
+    javaScriptTypeScriptRuntimeStatusByOwner[owner.ownerKey] ?? null;
+  return {
+    canUseLanguageServerDocument: synchronizedOwner?.ownerKey === owner.ownerKey &&
+      workspaceRootKeysEqual(
+        synchronizedOwner.executionRoot,
+        owner.executionRoot,
+      ),
+    hasPhpWorkspace: hasPhpWorkspaceByOwner[owner.ownerKey] === true,
+    javaScriptTypeScriptRuntimeStatus,
+    javaScriptTypeScriptRuntimeStatusRoot:
+      javaScriptTypeScriptRuntimeStatus?.rootPath ?? owner.executionRoot,
+    owner,
+    phpRuntimeStatus,
+    phpRuntimeStatusRoot: phpRuntimeStatus?.rootPath ?? owner.executionRoot,
+    settings,
+  };
+}
+
 export function useWorkbenchController(
   workspaceGateways: WorkbenchWorkspaceGateways,
   smartModeGateway: SmartModeGateway,
@@ -544,6 +652,21 @@ export function useWorkbenchController(
 ) {
   const markdownPreviewRenderer =
     options.markdownPreviewRenderer ?? renderMarkdownPreview;
+  const fallbackDirtyCloseDecisionPort = useMemo<DirtyCloseDecisionPort>(
+    () => ({
+      decideDirtyClose: async ({ documentNames, scope }) =>
+        prompter.confirm(
+          scope === "workspace"
+            ? "Close workspace and discard unsaved changes?"
+            : scope === "quit"
+              ? "Quit and discard unsaved changes?"
+              : documentNames.length === 1
+                ? "Discard changes?"
+                : `Discard changes in ${documentNames.length} files?`,
+        ) ? "discard" : "cancel",
+    }),
+    [prompter],
+  );
   const {
     detection: workspaceDetection,
     fileChanges: workspaceFileChangeGateway,
@@ -1101,6 +1224,10 @@ export function useWorkbenchController(
       ),
     [workspaceGateways.identity],
   );
+  const documentSelfWrites = useMemo(
+    () => new DocumentSelfWriteCoordinator(),
+    [],
+  );
   const canonicalDocumentSaveRoot = useCallback(
     (rootPath: string) =>
       admittedWorkspaceIdentityForRoot(
@@ -1127,6 +1254,11 @@ export function useWorkbenchController(
   const workspaceRuntimeOwnerByTabRef = useRef<
     Record<string, WorkspaceRuntimeOwner>
   >({});
+  const hasPhpWorkspaceByOwnerRef = useRef<Record<string, boolean>>({});
+  const resolveWorkspaceRuntimeOwner = useCallback(
+    (rootPath: string) => workspaceRuntimeOwnerByTabRef.current[rootPath] ?? null,
+    [],
+  );
   const workspaceRuntimeOwnerClaimsRef = useRef<
     WorkspaceRuntimeOwnerClaimRegistry
   >({});
@@ -1374,15 +1506,10 @@ export function useWorkbenchController(
     (root: string) => boolean
   >(() => false);
   const workspaceFileChangeSubscriptionGenerationRef = useRef(0);
-  // Per-workspace `.editorconfig` cache. Keyed by workspace root, then by the
-  // absolute directory whose `.editorconfig` was read. `null` records a
-  // confirmed absence so a missing file is read at most once per session. This
-  // is scoped per root, so it is cleared exactly where the rest of the
-  // per-workspace caches are (workspace switch / tab close), preserving the
-  // per-project isolation invariant.
-  const editorConfigCacheRef = useRef<
-    Record<string, Record<string, EditorConfigFile | null>>
-  >({});
+  // Per-workspace `.editorconfig` cache. Owner reads use a composite key so
+  // overlapping workspace generations cannot share data. `null` records a
+  // confirmed absence so a missing file is read at most once per session.
+  const editorConfigCacheRef = useRef<EditorConfigCache>({});
   const filePrefetchCacheRef = useRef<FilePrefetchCache>(new FilePrefetchCache());
   const filePrefetchTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
@@ -2541,12 +2668,6 @@ export function useWorkbenchController(
         return isLegacyLanguageServerSessionActiveForRoot(rootPath, sessionId);
       }
 
-      if (
-        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== owner.ownerKey
-      ) {
-        return false;
-      }
-
       return isLanguageServerSessionActiveForOwner(
         languageServerRuntimeStatusByRootRef.current,
         owner,
@@ -2554,10 +2675,7 @@ export function useWorkbenchController(
         sessionId,
       );
     },
-    [
-      isLegacyLanguageServerSessionActiveForRoot,
-      resolveCurrentWorkspaceRuntimeOwner,
-    ],
+    [isLegacyLanguageServerSessionActiveForRoot],
   );
 
   const isJavaScriptTypeScriptLanguageServerSessionActiveForRoot = useCallback(
@@ -2573,12 +2691,6 @@ export function useWorkbenchController(
         );
       }
 
-      if (
-        resolveCurrentWorkspaceRuntimeOwner()?.ownerKey !== owner.ownerKey
-      ) {
-        return false;
-      }
-
       return isLanguageServerSessionActiveForOwner(
         javaScriptTypeScriptRuntimeStatusByRootRef.current,
         owner,
@@ -2586,10 +2698,7 @@ export function useWorkbenchController(
         sessionId,
       );
     },
-    [
-      isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-      resolveCurrentWorkspaceRuntimeOwner,
-    ],
+    [isLegacyJavaScriptTypeScriptLanguageServerSessionActiveForRoot],
   );
 
   const {
@@ -2886,6 +2995,7 @@ export function useWorkbenchController(
     workspaceIdentityByRootRef.current = {};
     workspaceRuntimeRootByTabRef.current = {};
     workspaceRuntimeOwnerByTabRef.current = {};
+    hasPhpWorkspaceByOwnerRef.current = {};
     workspaceRuntimeOwnerClaimsRef.current = {};
     editorConfigCacheRef.current = {};
     resetFilePrefetchState();
@@ -3952,6 +4062,8 @@ export function useWorkbenchController(
             }
 
             setWorkspaceDescriptor(detected);
+            hasPhpWorkspaceByOwnerRef.current[admittedRuntimeOwner.ownerKey] =
+              Boolean(detected?.php);
 
             if (
               detected?.php &&
@@ -4819,45 +4931,26 @@ export function useWorkbenchController(
     reportError,
   });
 
-  // Reads (and caches) the `.editorconfig` file for one directory, scoped to
-  // `requestedRoot`. Returns the parsed file, or `null` when absent. The result
-  // is dropped (returns null) if the active workspace switched mid-read, so a
-  // stale read can never feed another project's resolution.
+  // Reads and caches one `.editorconfig`. UI requests remain scoped to the
+  // active root; owner-save requests use their captured owner and root.
   const loadEditorConfigFile = useCallback(
     async (
       requestedRoot: string,
       directory: string,
+      requestedOwner?: WorkspaceRuntimeOwner,
     ): Promise<EditorConfigFile | null> => {
-      const cacheForRoot = (editorConfigCacheRef.current[requestedRoot] ??= {});
-
-      if (directory in cacheForRoot) {
-        return cacheForRoot[directory];
-      }
-
-      const path = editorConfigPathForDirectory(directory);
-      let content: string | null = null;
-
-      try {
-        content = await workspaceFiles.readTextFile(path);
-      } catch {
-        content = null;
-      }
-
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return null;
-      }
-
-      const file: EditorConfigFile | null =
-        content === null
-          ? null
-          : { directory, parsed: parseEditorConfig(content) };
-      // Re-read the per-root bucket: a workspace switch + reopen could have
-      // recreated it while we awaited.
-      (editorConfigCacheRef.current[requestedRoot] ??= {})[directory] = file;
-
-      return file;
+      return loadWorkbenchEditorConfigFile({
+        cache: () => editorConfigCacheRef.current,
+        currentWorkspaceRoot: () => currentWorkspaceRootRef.current,
+        readTextFile: workspaceFiles.readTextFile.bind(workspaceFiles),
+        resolveWorkspaceRuntimeOwner,
+      }, {
+        directory,
+        rootPath: requestedRoot,
+        ...(requestedOwner ? { owner: requestedOwner } : {}),
+      });
     },
-    [workspaceFiles],
+    [resolveWorkspaceRuntimeOwner, workspaceFiles],
   );
 
   // Resolves the effective EditorConfig settings for `filePath` within
@@ -4870,16 +4963,32 @@ export function useWorkbenchController(
     async (
       requestedRoot: string,
       filePath: string,
+      requestedOwner?: WorkspaceRuntimeOwner,
     ): Promise<ResolvedEditorConfig> => {
       const directories = editorConfigDirectoriesForFile(filePath, requestedRoot);
       const files: EditorConfigFile[] = [];
 
       for (const directory of directories) {
-        const file = await loadEditorConfigFile(requestedRoot, directory);
+        const file = await loadEditorConfigFile(
+          requestedRoot,
+          directory,
+          requestedOwner,
+        );
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        const resolvedOwner = requestedOwner
+          ? resolveWorkspaceRuntimeOwner(requestedRoot)
+          : null;
+        const ownerIsCurrent = requestedOwner
+          ? resolvedOwner?.ownerKey === requestedOwner.ownerKey &&
+            workspaceRootKeysEqual(
+              resolvedOwner.executionRoot,
+              requestedOwner.executionRoot,
+            )
+          : workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            );
+        if (!ownerIsCurrent) {
           return {};
         }
 
@@ -4896,7 +5005,7 @@ export function useWorkbenchController(
 
       return resolveEditorConfigSettings(files, filePath, requestedRoot);
     },
-    [loadEditorConfigFile],
+    [loadEditorConfigFile, resolveWorkspaceRuntimeOwner],
   );
 
   // Recompute the resolved EditorConfig for the active document whenever it
@@ -4939,8 +5048,11 @@ export function useWorkbenchController(
 
   const {
     formattedContentForSave,
+    formattedContentForOwnerSave,
     optimizedImportsContentForSave,
+    optimizedImportsContentForOwnerSave,
     organizedImportsContentForSave,
+    organizedImportsContentForOwnerSave,
   } = useDocumentSavePipeline({
     workspaceSettingsRef,
     hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
@@ -4955,6 +5067,23 @@ export function useWorkbenchController(
     isLanguageServerSessionActiveForRoot,
     isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
   });
+  const ownerDocumentSavePipelineContext = useCallback((
+    owner: WorkspaceRuntimeOwner,
+    settings: WorkspaceSettings,
+  ) => {
+    const activeRoot = currentWorkspaceRootRef.current;
+    const synchronizedOwner = activeRoot
+      ? resolveWorkspaceRuntimeOwner(activeRoot)
+      : null;
+    return ownerDocumentSavePipelineContextFor(
+      owner,
+      settings,
+      hasPhpWorkspaceByOwnerRef.current,
+      languageServerRuntimeStatusByRootRef.current,
+      javaScriptTypeScriptRuntimeStatusByRootRef.current,
+      synchronizedOwner,
+    );
+  }, [currentWorkspaceRootRef, resolveWorkspaceRuntimeOwner]);
 
   const externalFileConflicts = useExternalFileConflictLifecycle({
     activeDocumentRef,
@@ -4963,6 +5092,7 @@ export function useWorkbenchController(
     documentsRef,
     openPathsRef,
     resolveDocumentSaveOwnership,
+    documentSelfWrites,
     setActivePath,
     setDocuments,
     setOpenPaths,
@@ -4981,11 +5111,225 @@ export function useWorkbenchController(
       ),
   ).length;
 
+  const ownerDocumentSaveAdapters = useMemo(
+    () => new WorkbenchOwnerDocumentSaveAdapters({
+      currentWorkspaceRootRef,
+      documentsRef,
+      editorGroupsRef,
+      setDocuments,
+      workspaceStateCacheRef,
+      workspaceIdentityByRootRef,
+      resolveDocumentSaveOwnership,
+      resolveWorkspaceRuntimeOwner,
+      hasExternalFileConflict: externalFileConflicts.hasConflict,
+    }),
+    [
+      documentsRef,
+      editorGroupsRef,
+      externalFileConflicts.hasConflict,
+      resolveDocumentSaveOwnership,
+      resolveWorkspaceRuntimeOwner,
+      setDocuments,
+      workspaceStateCacheRef,
+    ],
+  );
+  const ownerResolvingDocumentSaveService = useMemo(
+    () => new OwnerResolvingDocumentSaveService({
+      repository: ownerDocumentSaveAdapters.repository,
+      resolvePipeline: (owner, rootPath) => {
+        const canonicalRoot = canonicalDocumentSaveRoot(rootPath);
+        const settings = workspaceSettingsByRoot.resolve(canonicalRoot) ??
+          (workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath)
+            ? workspaceSettingsRef.current
+            : null);
+        if (!settings || !ownerDocumentSaveAdapters.isOwnerCurrent(owner)) {
+          return null;
+        }
+
+        return {
+          workspaceFiles,
+          settings,
+          invalidatePrefetch: (requestedOwner, path) => {
+            if (!ownerDocumentSaveAdapters.isOwnerCurrent(requestedOwner)) {
+              return;
+            }
+            filePrefetchCacheRef.current.invalidate(path);
+          },
+          captureLocalHistorySnapshot: async (
+            requestedOwner,
+            requestedRoot,
+            path,
+            content,
+          ) => {
+            if (!ownerDocumentSaveAdapters.isOwnerCurrent(requestedOwner)) {
+              return;
+            }
+            const relativePath = workspaceRelativePath(requestedRoot, path);
+            if (!relativePath) {
+              return;
+            }
+            try {
+              await localHistoryGateway.recordSnapshot(
+                requestedRoot,
+                relativePath,
+                content,
+              );
+            } catch (error) {
+              console.error("Local History snapshot failed", error);
+            }
+          },
+          formattedContentForSave: (
+            requestedOwner,
+            requestedRoot,
+            requestedSettings,
+            document,
+          ) => formattedContentForOwnerSave(
+            ownerDocumentSavePipelineContext(requestedOwner, requestedSettings),
+            document,
+            requestedRoot,
+          ),
+          optimizedImportsContentForSave: (
+            requestedOwner,
+            _requestedRoot,
+            requestedSettings,
+            document,
+            content,
+          ) => optimizedImportsContentForOwnerSave(
+            ownerDocumentSavePipelineContext(requestedOwner, requestedSettings),
+            document,
+            content,
+          ),
+          organizedImportsContentForSave: (
+            requestedOwner,
+            requestedRoot,
+            requestedSettings,
+            document,
+            content,
+          ) => organizedImportsContentForOwnerSave(
+            ownerDocumentSavePipelineContext(requestedOwner, requestedSettings),
+            document,
+            content,
+            requestedRoot,
+          ),
+          resolveEditorConfigForFile: (
+            requestedOwner,
+            requestedRoot,
+            path,
+          ) => resolveEditorConfigForFile(
+            requestedRoot,
+            path,
+            requestedOwner,
+          ),
+          syncSavedDocument: async (
+            requestedOwner,
+            requestedRoot,
+            document,
+            shouldEmit,
+          ) => {
+            if (
+              resolveWorkspaceRuntimeOwner(requestedRoot)?.ownerKey !==
+                requestedOwner.ownerKey
+            ) {
+              return;
+            }
+            if (!workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )) {
+              return;
+            }
+            await syncSavedDocumentForRoot(
+              requestedRoot,
+              document,
+              shouldEmit,
+            );
+          },
+          syncSavedJavaScriptTypeScriptDocument: async (
+            requestedOwner,
+            requestedRoot,
+            document,
+            shouldEmit,
+          ) => {
+            if (
+              resolveWorkspaceRuntimeOwner(requestedRoot)?.ownerKey !==
+                requestedOwner.ownerKey
+            ) {
+              return;
+            }
+            if (!workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )) {
+              return;
+            }
+            await syncSavedJavaScriptTypeScriptDocumentForRoot(
+              requestedRoot,
+              document,
+              shouldEmit,
+            );
+          },
+          hasExternalFileConflict: (requestedOwner, requestedRoot, path) =>
+            resolveWorkspaceRuntimeOwner(requestedRoot)?.ownerKey ===
+                requestedOwner.ownerKey &&
+              externalFileConflicts.hasConflict(requestedRoot, path),
+          beginDocumentSelfWrite: (
+            requestedOwner,
+            requestedRoot,
+            path,
+            content,
+          ) => {
+            if (
+              resolveWorkspaceRuntimeOwner(requestedRoot)?.ownerKey !==
+                requestedOwner.ownerKey
+            ) {
+              return null;
+            }
+            const ownership = resolveDocumentSaveOwnership(
+              requestedRoot,
+              path,
+            );
+            return ownership
+              ? documentSelfWrites.begin(ownership, content)
+              : null;
+          },
+        };
+      },
+    }),
+    [
+      canonicalDocumentSaveRoot,
+      documentSelfWrites,
+      externalFileConflicts.hasConflict,
+      formattedContentForOwnerSave,
+      localHistoryGateway,
+      optimizedImportsContentForOwnerSave,
+      organizedImportsContentForOwnerSave,
+      ownerDocumentSaveAdapters,
+      ownerDocumentSavePipelineContext,
+      resolveEditorConfigForFile,
+      resolveDocumentSaveOwnership,
+      resolveWorkspaceRuntimeOwner,
+      syncSavedDocumentForRoot,
+      syncSavedJavaScriptTypeScriptDocumentForRoot,
+      workspaceFiles,
+      workspaceSettingsByRoot,
+    ],
+  );
+  const requestOwnerDocumentSaveRef = useRef<
+    WorkbenchCloseLifecycleDependencies["requestOwnerDocumentSave"]
+  >(async () => ({ status: "stale" }));
+  const requestOwnerDocumentSave = useCallback<
+    WorkbenchCloseLifecycleDependencies["requestOwnerDocumentSave"]
+  >((ownership, operation) =>
+    requestOwnerDocumentSaveRef.current(ownership, operation), []);
+
   const stopProjectRuntimesForWorkspaceClose = useCallback(
     async (rootPath?: string, ownership?: WorkspaceCloseOwnership) => {
+      if (ownership && !ownership.isCurrent()) {
+        return "stale" as const;
+      }
+
       if (!rootPath) {
-        await stopProjectRuntimes(rootPath);
-        return;
+        return stopProjectRuntimes(rootPath);
       }
 
       const identityDescriptor = workspaceIdentityByRootRef.current[rootPath];
@@ -5009,9 +5353,12 @@ export function useWorkbenchController(
       const previousActiveJavaScriptTypeScriptStatusRoot =
         javaScriptTypeScriptLanguageServerRuntimeStatusRootRef.current;
 
-      await stopProjectRuntimes(runtimeRootPath, runtimeOwner);
+      const stopResult = await stopProjectRuntimes(
+        runtimeRootPath,
+        runtimeOwner,
+      );
       if (!ownership || ownership.isCurrent()) {
-        return;
+        return stopResult;
       }
 
       restoreRuntimeStatusCacheEntry(
@@ -5030,7 +5377,7 @@ export function useWorkbenchController(
           rootPath,
         )
       ) {
-        return;
+        return "stale" as const;
       }
 
       languageServerRuntimeStatusRef.current = previousActivePhpStatus;
@@ -5048,6 +5395,7 @@ export function useWorkbenchController(
       setJavaScriptTypeScriptLanguageServerRuntimeStatusRoot(
         previousActiveJavaScriptTypeScriptStatusRoot,
       );
+      return "stale" as const;
     },
     [
       setJavaScriptTypeScriptLanguageServerRuntimeStatus,
@@ -5075,6 +5423,19 @@ export function useWorkbenchController(
       delete workspaceRuntimeOwnerByTabRef.current[rootPath];
     },
     [forgetLanguageServerRuntimeStatuses, retireWorkspaceRuntimeOwnerClaim],
+  );
+  const clearWorkspaceResourceCachesForRoot = useCallback(
+    (rootPath: string) => {
+      invalidateEditorConfigCacheForRoot(editorConfigCacheRef.current, rootPath);
+      documentSelfWrites.clearRoot(rootPath);
+    },
+    [documentSelfWrites],
+  );
+  const clearExternalFileConflictsForWorkspaceClose = useCallback(
+    (rootPath: string) => {
+      clearExternalFileConflictsForRootRef.current(rootPath);
+    },
+    [],
   );
 
   const runWithDocumentSaveExclusionRef =
@@ -5133,6 +5494,15 @@ export function useWorkbenchController(
     gitDiffRequestTokenRef,
     editorGitBaselineRequestTokenRef,
     prompter,
+    dirtyCloseDecisionPort:
+      options.dirtyCloseDecisionPort ?? fallbackDirtyCloseDecisionPort,
+    captureDirtyCloseTargets: (rootPath) =>
+      ownerDocumentSaveAdapters.capture(rootPath),
+    isWorkspaceRuntimeOwnerCurrent: (owner) =>
+      ownerDocumentSaveAdapters.isOwnerCurrent(owner),
+    ownerDocumentSaveRepository: ownerDocumentSaveAdapters.repository,
+    ownerResolvingDocumentSaveService,
+    requestOwnerDocumentSave,
     workspaceCloseSession,
     commitWorkspaceClose,
     runWithDocumentSaveExclusion: runWithDocumentSaveExclusionDelegate,
@@ -5144,8 +5514,10 @@ export function useWorkbenchController(
       forgetLanguageServerRuntimeStatusesForWorkspaceClose,
     forgetLatencyTrackerForRoot,
     unregisterWorkspace: releaseOwnedWorkspaceIdentity,
-    clearExternalFileConflictsForRoot: (root) =>
-      clearExternalFileConflictsForRootRef.current(root),
+    clearExternalFileConflictsForRoot:
+      clearExternalFileConflictsForWorkspaceClose,
+    invalidateWorkspaceResourceCachesForRoot:
+      clearWorkspaceResourceCachesForRoot,
     workspaceHasExternalFileConflicts: (root) =>
       workspaceHasExternalFileConflictsRef.current(root),
     openWorkspacePath,
@@ -5167,6 +5539,9 @@ export function useWorkbenchController(
         : path;
       const runtimeRootPath =
         workspaceRuntimeRootByTabRef.current[resolvedTabPath] ?? resolvedTabPath;
+      const runtimeOwner =
+        workspaceRuntimeOwnerByTabRef.current[resolvedTabPath] ??
+        workspaceRuntimeOwnerByTabRef.current[path];
       await closeWorkspaceTabWithLifecycle(path);
 
       const resolvedTabStillOpen = appSettingsRef.current.workspaceTabs.some(
@@ -5188,6 +5563,9 @@ export function useWorkbenchController(
       delete workspaceRuntimeRootByTabRef.current[runtimeRootPath];
       delete workspaceRuntimeOwnerByTabRef.current[path];
       delete workspaceRuntimeOwnerByTabRef.current[resolvedTabPath];
+      if (runtimeOwner) {
+        delete hasPhpWorkspaceByOwnerRef.current[runtimeOwner.ownerKey];
+      }
 
       recentlyClosedTabsRef.current = clearRecentlyClosedTabs(
         recentlyClosedTabsRef.current,
@@ -5249,6 +5627,8 @@ export function useWorkbenchController(
 
   const {
     captureLocalHistorySnapshot,
+    requestOwnerDocumentSave: requestCoordinatedOwnerDocumentSave,
+    saveDocument,
     saveActiveDocument,
     runWithDocumentSaveExclusion,
     runWithIssuedWriteDrain,
@@ -5301,6 +5681,12 @@ export function useWorkbenchController(
     isGitDiffDocumentPath,
     reportErrorForActiveWorkspaceRoot,
     hasExternalFileConflict: externalFileConflicts.hasConflict,
+    beginDocumentSelfWrite: (rootPath, path, content) => {
+      const ownership = resolveDocumentSaveOwnership(rootPath, path);
+      return ownership
+        ? documentSelfWrites.begin(ownership, content)
+        : null;
+    },
     clearExternalFileConflict: externalFileConflicts.clearConflict,
     detectSaveConflict: externalFileConflicts.detectSaveConflict,
     runEslintAnalysisOnSave,
@@ -5310,6 +5696,7 @@ export function useWorkbenchController(
     restoreRecentlyClosedDocumentViewState,
     onRecentlyClosedTabsChange,
   });
+  requestOwnerDocumentSaveRef.current = requestCoordinatedOwnerDocumentSave;
   runWithDocumentSaveExclusionRef.current = runWithDocumentSaveExclusion;
   runWithIssuedWriteDrainRef.current = runWithIssuedWriteDrain;
 
@@ -5335,9 +5722,33 @@ export function useWorkbenchController(
     updateEditorGroups,
     closeTextDocument,
     closeTextSurface,
+    saveDocument,
+    runWithIssuedWriteDrain,
+    resolveDocumentSaveOwnership,
+    resolveWorkspaceRuntimeOwner,
+    dirtyCloseDecisionPort:
+      options.dirtyCloseDecisionPort ?? fallbackDirtyCloseDecisionPort,
     hasExternalFileConflict: externalFileConflicts.hasConflict,
+    onDidCloseEditorPaths: options.onDidCloseEditorPaths,
     prompter,
   });
+  const closeDocumentForCommandsRef = useRef(closeDocument);
+  const closeActiveEditorGroupForCommandsRef = useRef(closeActiveEditorGroup);
+  const closeActiveEditorGroupSurfaceForCommandsRef = useRef(
+    closeActiveEditorGroupSurface,
+  );
+  closeDocumentForCommandsRef.current = closeDocument;
+  closeActiveEditorGroupForCommandsRef.current = closeActiveEditorGroup;
+  closeActiveEditorGroupSurfaceForCommandsRef.current =
+    closeActiveEditorGroupSurface;
+  const runCloseDocument = useCallback((path: string) =>
+    closeDocumentForCommandsRef.current(path), []);
+  const runCloseActiveEditorGroup = useCallback(async () => {
+    await closeActiveEditorGroupForCommandsRef.current();
+  }, []);
+  const runCloseActiveEditorGroupSurface = useCallback(async () => {
+    await closeActiveEditorGroupSurfaceForCommandsRef.current();
+  }, []);
 
   const activateEditorGroup = useCallback((groupId: EditorGroupId) => {
     updateEditorGroups((current) =>
@@ -8196,9 +8607,9 @@ export function useWorkbenchController(
     canRewordSelectedGitCommit,
     canSearchClassOpenSymbols,
     cherryPickSelectedGitCommit,
-    closeActiveEditorGroup,
-    closeActiveEditorGroupSurface,
-    closeDocument,
+    closeActiveEditorGroup: runCloseActiveEditorGroup,
+    closeActiveEditorGroupSurface: runCloseActiveEditorGroupSurface,
+    closeDocument: runCloseDocument,
     commitGitChanges,
     createDirectory,
     createFile,

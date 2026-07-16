@@ -4,6 +4,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
+import { DocumentSaveService } from "./documentSaveService";
+import { DocumentSelfWriteCoordinator } from "./documentSelfWriteCoordinator";
 import { useExternalFileConflictLifecycle } from "./useExternalFileConflictLifecycle";
 
 const ROOT = "/workspace";
@@ -25,6 +27,7 @@ async function createHarness(
   resolveDocumentSaveOwnership?: Parameters<
     typeof useExternalFileConflictLifecycle
   >[0]["resolveDocumentSaveOwnership"],
+  documentSelfWrites = new DocumentSelfWriteCoordinator(),
 ) {
   const host = document.createElement("div");
   const root = createRoot(host);
@@ -42,6 +45,7 @@ async function createHarness(
       ...refs,
       activePath: PATH,
       resolveDocumentSaveOwnership,
+      documentSelfWrites,
       setActivePath: vi.fn(),
       setDocuments: vi.fn(),
       setOpenPaths: vi.fn(),
@@ -201,6 +205,32 @@ describe("useExternalFileConflictLifecycle", () => {
     act(() => test.root.unmount());
   });
 
+  it("reconciles a same-content save conflict without publishing attention", async () => {
+    const test = await createHarness();
+    const diskRevision = revision(2);
+    const loaded = {
+      ...test.refs.documentsRef.current[PATH],
+      revision: revision(1),
+    };
+    test.refs.documentsRef.current[PATH] = loaded;
+    test.refs.activeDocumentRef.current = loaded;
+
+    act(() => {
+      test.lifecycle().detectSaveConflict(ROOT, loaded, {
+        content: loaded.savedContent,
+        revision: diskRevision,
+      });
+    });
+
+    expect(test.lifecycle().activeState.conflict).toBeNull();
+    expect(test.refs.documentsRef.current[PATH]).toMatchObject({
+      content: loaded.content,
+      savedContent: loaded.savedContent,
+      revision: diskRevision,
+    });
+    act(() => test.root.unmount());
+  });
+
   it("retains dirty local text and records modified, deleted, and renamed conflicts", async () => {
     const test = await createHarness();
     await act(async () => { await test.lifecycle().handleFileChange(modified()); });
@@ -227,6 +257,331 @@ describe("useExternalFileConflictLifecycle", () => {
     test.refs.documentsRef.current[PATH] = editorDocument("base", "base");
     expect(await test.lifecycle().handleFileChange(modified())).toBe(false);
     expect(test.lifecycle().activeState.conflict).toBeNull();
+    act(() => test.root.unmount());
+  });
+
+  it("ignores a delayed modified event when a newly opened dirty file still has its loaded disk baseline", async () => {
+    const loadedRevision = revision(7);
+    const test = await createHarness(undefined, {
+      readTextFileSnapshot: vi.fn(async () => ({
+        content: "base",
+        revision: loadedRevision,
+      })),
+    });
+    const edited = {
+      ...editorDocument("local edit", "base"),
+      revision: loadedRevision,
+    };
+    test.refs.documentsRef.current[PATH] = edited;
+    test.refs.activeDocumentRef.current = edited;
+
+    let result: false | "resolved" | "unreadable" = "resolved";
+    await act(async () => {
+      result = await test.lifecycle().handleFileChange(modified());
+    });
+
+    expect(result).toBe(false);
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    expect(test.lifecycle().activeState.conflict).toBeNull();
+    act(() => test.root.unmount());
+  });
+
+  it("waits for a pending self-write and ignores its exact watcher snapshot", async () => {
+    const selfWrites = new DocumentSelfWriteCoordinator();
+    const diskRevision = revision(12);
+    const readTextFileSnapshot = vi.fn(async () => ({
+      content: "new saved content",
+      revision: diskRevision,
+    }));
+    const test = await createHarness(
+      undefined,
+      { readTextFileSnapshot },
+      undefined,
+      selfWrites,
+    );
+    const edited = editorDocument("new saved content", "");
+    test.refs.documentsRef.current[PATH] = edited;
+    test.refs.activeDocumentRef.current = edited;
+    const lease = selfWrites.begin(
+      { rootPath: ROOT, path: PATH },
+      edited.content,
+    );
+
+    const handling = test.lifecycle().handleFileChange(modified());
+    await Promise.resolve();
+    expect(readTextFileSnapshot).not.toHaveBeenCalled();
+
+    lease?.complete(diskRevision);
+    let result: false | "resolved" | "unreadable" = "resolved";
+    await act(async () => {
+      result = await handling;
+    });
+
+    expect(result).toBe(false);
+    expect(readTextFileSnapshot).toHaveBeenCalledOnce();
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    act(() => test.root.unmount());
+  });
+
+  it("keeps a conflict when a pending self-write snapshot has another trusted revision", async () => {
+    const selfWrites = new DocumentSelfWriteCoordinator();
+    const test = await createHarness(
+      undefined,
+      {
+        readTextFileSnapshot: vi.fn(async () => ({
+          content: "new saved content",
+          revision: revision(13),
+        })),
+      },
+      undefined,
+      selfWrites,
+    );
+    const edited = editorDocument("new saved content", "");
+    test.refs.documentsRef.current[PATH] = edited;
+    test.refs.activeDocumentRef.current = edited;
+    const lease = selfWrites.begin(
+      { rootPath: ROOT, path: PATH },
+      edited.content,
+    );
+
+    const handling = test.lifecycle().handleFileChange(modified());
+    lease?.complete(revision(12));
+    await act(async () => {
+      await handling;
+    });
+
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(true);
+    act(() => test.root.unmount());
+  });
+
+  it("keeps a conflict when a write without revision observes a trusted disk revision", async () => {
+    const selfWrites = new DocumentSelfWriteCoordinator();
+    const test = await createHarness(
+      undefined,
+      {
+        readTextFileSnapshot: vi.fn(async () => ({
+          content: "new saved content",
+          revision: revision(13),
+        })),
+      },
+      undefined,
+      selfWrites,
+    );
+    const edited = editorDocument("new saved content", "");
+    test.refs.documentsRef.current[PATH] = edited;
+    test.refs.activeDocumentRef.current = edited;
+    const lease = selfWrites.begin(
+      { rootPath: ROOT, path: PATH },
+      edited.content,
+    );
+
+    const handling = test.lifecycle().handleFileChange(modified());
+    lease?.complete(null);
+    await act(async () => {
+      await handling;
+    });
+
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(true);
+    act(() => test.root.unmount());
+  });
+
+  it("matches the latest of two rapid writes when watcher reads finish out of order", async () => {
+    const selfWrites = new DocumentSelfWriteCoordinator();
+    const firstRead = deferred<{
+      content: string;
+      revision: ReturnType<typeof revision>;
+    }>();
+    const secondRead = deferred<{
+      content: string;
+      revision: ReturnType<typeof revision>;
+    }>();
+    const readTextFileSnapshot = vi.fn()
+      .mockReturnValueOnce(firstRead.promise)
+      .mockReturnValueOnce(secondRead.promise);
+    const test = await createHarness(
+      undefined,
+      { readTextFileSnapshot },
+      undefined,
+      selfWrites,
+    );
+    const firstDocument = editorDocument("first saved", "base");
+    test.refs.documentsRef.current[PATH] = firstDocument;
+    test.refs.activeDocumentRef.current = firstDocument;
+    const firstLease = selfWrites.begin(
+      { rootPath: ROOT, path: PATH },
+      firstDocument.content,
+    );
+    const firstHandling = test.lifecycle().handleFileChange(modified());
+    firstLease?.complete(revision(21));
+    await vi.waitFor(() => {
+      expect(readTextFileSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    const secondDocument = editorDocument("second saved", "first saved");
+    test.refs.documentsRef.current[PATH] = secondDocument;
+    test.refs.activeDocumentRef.current = secondDocument;
+    const secondLease = selfWrites.begin(
+      { rootPath: ROOT, path: PATH },
+      secondDocument.content,
+    );
+    const secondHandling = test.lifecycle().handleFileChange(modified());
+    secondLease?.complete(revision(22));
+    await vi.waitFor(() => {
+      expect(readTextFileSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    secondRead.resolve({ content: "second saved", revision: revision(22) });
+    await act(async () => {
+      await secondHandling;
+    });
+    firstRead.resolve({ content: "first saved", revision: revision(21) });
+    await act(async () => {
+      await firstHandling;
+    });
+
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    expect(readTextFileSnapshot).toHaveBeenCalledTimes(2);
+    act(() => test.root.unmount());
+  });
+
+  it("cancels a pending self-write wait when its workspace root is cleared", async () => {
+    const selfWrites = new DocumentSelfWriteCoordinator();
+    const readTextFileSnapshot = vi.fn(async () => ({
+      content: "external",
+      revision: revision(30),
+    }));
+    const test = await createHarness(
+      undefined,
+      { readTextFileSnapshot },
+      undefined,
+      selfWrites,
+    );
+    selfWrites.begin({ rootPath: ROOT, path: PATH }, "pending");
+    const handling = test.lifecycle().handleFileChange(modified());
+
+    act(() => test.lifecycle().clearRoot(ROOT));
+    await act(async () => {
+      await handling;
+    });
+
+    expect(readTextFileSnapshot).not.toHaveBeenCalled();
+    expect(test.lifecycle().hasConflict(ROOT, PATH)).toBe(false);
+    act(() => test.root.unmount());
+  });
+
+  it("cancels a pending self-write wait on unmount without reading or publishing", async () => {
+    const selfWrites = new DocumentSelfWriteCoordinator();
+    const readTextFileSnapshot = vi.fn(async () => ({
+      content: "external",
+      revision: revision(31),
+    }));
+    const test = await createHarness(
+      undefined,
+      { readTextFileSnapshot },
+      undefined,
+      selfWrites,
+    );
+    selfWrites.begin({ rootPath: ROOT, path: PATH }, "pending");
+    const handling = test.lifecycle().handleFileChange(modified());
+
+    act(() => test.root.unmount());
+    await expect(handling).resolves.toBe(false);
+    expect(readTextFileSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("reconciles benign baseline revision drift and uses it for the next optimistic save", async () => {
+    const diskRevision = revision(8);
+    const savedRevision = revision(9);
+    const writeTextFile = vi.fn(async () => ({
+      status: "success" as const,
+      revision: savedRevision,
+    }));
+    const workspaceFiles = {
+      readTextFileSnapshot: vi.fn(async () => ({
+        content: "base",
+        revision: diskRevision,
+      })),
+      writeTextFile,
+    };
+    const test = await createHarness(undefined, workspaceFiles);
+    const edited = {
+      ...editorDocument("local edit", "base"),
+      revision: revision(7),
+    };
+    test.refs.documentsRef.current[PATH] = edited;
+    test.refs.activeDocumentRef.current = edited;
+
+    let result: false | "resolved" | "unreadable" = "resolved";
+    await act(async () => {
+      result = await test.lifecycle().handleFileChange(modified());
+    });
+
+    expect(result).toBe(false);
+    expect(test.lifecycle().activeState.conflict).toBeNull();
+    expect(test.refs.documentsRef.current[PATH]).toMatchObject({
+      content: "local edit",
+      savedContent: "base",
+      revision: diskRevision,
+    });
+
+    const saveService = new DocumentSaveService({
+      workspaceFiles: workspaceFiles as unknown as WorkspaceFileGateway,
+      saveStore: {
+        current: () => test.refs.documentsRef.current[PATH] ?? null,
+        acknowledgeIssuedWrite: () => {},
+        updateRevisionForIssuedWrite: () => {},
+        updateRevision: () => {},
+      },
+      invalidatePrefetch: () => {},
+      captureLocalHistorySnapshot: async () => {},
+      formattedContentForSave: async (document) => document.content,
+      optimizedImportsContentForSave: (_document, content) => content,
+      organizedImportsContentForSave: async (_document, content) => content,
+      resolveEditorConfigForFile: async () => ({}),
+      syncSavedDocument: async () => {},
+      syncSavedJavaScriptTypeScriptDocument: async () => {},
+      hasExternalFileConflict: () =>
+        test.lifecycle().hasConflict(ROOT, PATH),
+      beginDocumentSelfWrite: () => null,
+    });
+    await saveService.saveDocument({
+      rootPath: ROOT,
+      path: PATH,
+      workspaceRequestToken: 1,
+      lease: {
+        isCurrent: () => true,
+        tryBeginWrite: () => ({ granted: true, settle: () => {} }),
+      },
+    });
+
+    expect(writeTextFile).toHaveBeenCalledWith(
+      PATH,
+      "local edit",
+      diskRevision,
+    );
+    act(() => test.root.unmount());
+  });
+
+  it("keeps a conflict when the disk content differs from savedContent", async () => {
+    const test = await createHarness(undefined, {
+      readTextFileSnapshot: vi.fn(async () => ({
+        content: "external edit",
+        revision: revision(8),
+      })),
+    });
+    const edited = {
+      ...editorDocument("local edit", "base"),
+      revision: revision(7),
+    };
+    test.refs.documentsRef.current[PATH] = edited;
+    test.refs.activeDocumentRef.current = edited;
+
+    await act(async () => {
+      await test.lifecycle().handleFileChange(modified());
+    });
+
+    expect(test.lifecycle().activeState.conflict?.kind).toBe("modified");
+    expect(test.refs.documentsRef.current[PATH].revision).toEqual(revision(7));
     act(() => test.root.unmount());
   });
 
@@ -533,6 +888,23 @@ describe("useExternalFileConflictLifecycle", () => {
     act(() => test.root.unmount());
   });
 
+  it("resolves an unreadable conflict when retry verifies the loaded baseline", async () => {
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("unreadable"))
+      .mockResolvedValueOnce("base");
+    const test = await createHarness(read);
+
+    expect(await test.lifecycle().handleFileChange(modified())).toBe("unreadable");
+    await act(async () => {
+      await test.lifecycle().action("retryRead");
+    });
+
+    expect(test.lifecycle().activeState.conflict).toBeNull();
+    expect(test.lifecycle().activeState.error).toBeNull();
+    act(() => test.root.unmount());
+  });
+
   it("keeps the conflict unresolved when a manual retry is still unreadable", async () => {
     const read = vi.fn(async () => { throw new Error("still unreadable"); });
     const test = await createHarness(read);
@@ -651,11 +1023,11 @@ describe("useExternalFileConflictLifecycle", () => {
 
 function revision(contentHash: number) {
   return {
-    device: 1,
-    inode: 2,
+    device: "1",
+    inode: "2",
     size: 3,
     modifiedSeconds: 4,
     modifiedNanoseconds: 5,
-    contentHash,
+    contentHash: String(contentHash),
   };
 }

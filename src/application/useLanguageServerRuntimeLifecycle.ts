@@ -26,7 +26,10 @@ import {
 } from "../domain/languageServerRuntimeStatusCache";
 import type { TerminalGateway } from "../domain/terminal";
 import type { WorkspaceTrustState } from "../domain/trust";
-import type { WorkspaceRuntimeLifecycleGateway } from "../domain/workspaceRuntimeLifecycle";
+import type {
+  ProjectRuntimeStopResult,
+  WorkspaceRuntimeLifecycleGateway,
+} from "../domain/workspaceRuntimeLifecycle";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   createLegacyWorkspaceRuntimeOwner,
@@ -222,7 +225,7 @@ export interface LanguageServerRuntimeLifecycle {
   stopProjectRuntimes: (
     rootPath?: string,
     owner?: WorkspaceRuntimeOwner,
-  ) => Promise<void>;
+  ) => Promise<ProjectRuntimeStopResult>;
   stopBackgroundProjectRuntimes: (
     policy: BackgroundRuntimePolicy,
     activeRootPath: string | null,
@@ -1254,11 +1257,14 @@ export function useLanguageServerRuntimeLifecycle(
   );
 
   const stopProjectRuntimes = useCallback(
-    async (rootPath?: string, owner?: WorkspaceRuntimeOwner) => {
+    async (
+      rootPath?: string,
+      owner?: WorkspaceRuntimeOwner,
+    ): Promise<ProjectRuntimeStopResult> => {
       const requestedRootPath = rootPath ?? currentWorkspaceRootRef.current;
 
       if (!requestedRootPath) {
-        return;
+        return "stopped";
       }
 
       const targetOwner = runtimeOwnerForRoot(requestedRootPath, owner);
@@ -1276,14 +1282,17 @@ export function useLanguageServerRuntimeLifecycle(
             requestedRevision,
           )
         ) {
-          return;
+          return "stale";
         }
 
-        const [phpStop, javaScriptTypeScriptStop] = await Promise.allSettled([
-          languageServerRuntimeGateway.stop(targetRootPath),
-          javaScriptTypeScriptLanguageServerRuntimeGateway.stop(targetRootPath),
-          terminalGateway.stopRoot(targetRootPath),
-        ]);
+        const [phpStop, javaScriptTypeScriptStop, terminalStop] =
+          await Promise.allSettled([
+            languageServerRuntimeGateway.stop(targetRootPath),
+            javaScriptTypeScriptLanguageServerRuntimeGateway.stop(
+              targetRootPath,
+            ),
+            terminalGateway.stopRoot(targetRootPath),
+          ]);
 
         if (
           workspaceRuntimeOwner &&
@@ -1293,11 +1302,11 @@ export function useLanguageServerRuntimeLifecycle(
             requestedRevision,
           )
         ) {
-          return;
+          return "stale";
         }
 
         if (!isOwnerRevisionCurrent(targetOwner, requestedRevision)) {
-          return;
+          return "stale";
         }
 
         const stoppedStatus: LanguageServerRuntimeStatus = {
@@ -1326,8 +1335,15 @@ export function useLanguageServerRuntimeLifecycle(
           );
         }
 
+        const fallbackResult =
+          phpStop.status === "fulfilled" &&
+          javaScriptTypeScriptStop.status === "fulfilled" &&
+          terminalStop.status === "fulfilled"
+            ? "stopped"
+            : "incomplete";
+
         if (!isCurrentRuntimeOwner(targetOwner)) {
-          return;
+          return fallbackResult;
         }
 
         if (phpStop.status === "fulfilled") {
@@ -1350,11 +1366,11 @@ export function useLanguageServerRuntimeLifecycle(
           "Workspace Runtime",
           error,
         );
-        return;
+        return fallbackResult;
       }
 
       if (!isOwnerRevisionCurrent(targetOwner, requestedRevision)) {
-        return;
+        return "stale";
       }
 
       const completionOwner = latestRuntimeOwner(targetOwner);
@@ -1384,7 +1400,7 @@ export function useLanguageServerRuntimeLifecycle(
       );
 
       if (!isCurrentRuntimeOwner(completionOwner)) {
-        return;
+        return "stopped";
       }
 
       setLanguageServerRuntimeStatus(stoppedStatus);
@@ -1396,6 +1412,7 @@ export function useLanguageServerRuntimeLifecycle(
       lastLanguageServerCrashRef.current = null;
       resetLanguageServerDocuments();
       resetJavaScriptTypeScriptLanguageServerDocuments();
+      return "stopped";
     },
     [
       cacheJavaScriptTypeScriptLanguageServerRuntimeStatus,

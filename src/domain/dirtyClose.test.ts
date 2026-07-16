@@ -163,9 +163,9 @@ describe("collectDirtyCloseTargets", () => {
     const owner = createWorkspaceRuntimeOwner("project-a", "/real/project");
     const aliasOwner = transferWorkspaceRuntimeOwner(owner, "/alias/project");
     const revision = {
-      contentHash: 1,
-      device: 2,
-      inode: 3,
+      contentHash: "1",
+      device: "2",
+      inode: "3",
       modifiedNanoseconds: 4,
       modifiedSeconds: 5,
       size: 6,
@@ -202,7 +202,7 @@ describe("collectDirtyCloseTargets", () => {
           "edited",
           "saved",
           false,
-          { ...revision, contentHash: 7 },
+          { ...revision, contentHash: "7" },
         ),
       },
     ]);

@@ -59,9 +59,9 @@ function workspaceFiles(
 
 function revision(contentHash: number): WorkspaceFileRevision {
   return {
-    contentHash,
-    device: 1,
-    inode: 2,
+    contentHash: String(contentHash),
+    device: "1",
+    inode: "2",
     modifiedNanoseconds: 3,
     modifiedSeconds: 4,
     size: 5,
@@ -169,6 +169,7 @@ function createHarness(options: {
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     hasExternalFileConflict: () => false,
+    beginDocumentSelfWrite: () => null,
     ...options.overrides,
   };
 
@@ -193,6 +194,40 @@ function createHarness(options: {
 }
 
 describe("DocumentSaveService", () => {
+  it("settles its self-write before checking watcher conflicts after the write", async () => {
+    let selfWriteCompleted = false;
+    let writeReturned = false;
+    const beginDocumentSelfWrite = vi.fn(() => ({
+      abort: vi.fn(),
+      complete: vi.fn(() => {
+        selfWriteCompleted = true;
+      }),
+    }));
+    const hasExternalFileConflict = vi.fn(() => false);
+    const harness = createHarness({
+      workspaceFiles: workspaceFiles({
+        writeTextFile: vi.fn(async () => {
+          writeReturned = true;
+          return { status: "success" as const, revision: revision(2) };
+        }),
+      }),
+      overrides: {
+        beginDocumentSelfWrite,
+        hasExternalFileConflict: () =>
+          hasExternalFileConflict() || (writeReturned && !selfWriteCompleted),
+      },
+    });
+
+    const result = await harness.save();
+
+    expect(result.status).toBe("saved");
+    expect(beginDocumentSelfWrite).toHaveBeenCalledWith(
+      ROOT,
+      PATH,
+      "edited:formatted:optimized:organized",
+    );
+  });
+
   it("runs transform, write, acknowledgement, durability, PHP, and JS in order", async () => {
     const events: string[] = [];
     const writeTextFile = vi.fn(async () => {
@@ -273,11 +308,99 @@ describe("DocumentSaveService", () => {
       }),
     });
 
-    await expect(harness.save()).resolves.toEqual({
+    const result = await harness.save();
+
+    expect(result).toEqual({
       status: "conflict",
       document: harness.documents[PATH],
       snapshot: { content: "disk", revision: diskRevision },
     });
+  });
+
+  it("retries once with a reconciled revision when disk content still matches the loaded baseline", async () => {
+    const loadedRevision = revision(1);
+    const diskRevision = revision(2);
+    const savedRevision = revision(3);
+    const initial = {
+      ...document(),
+      revision: loadedRevision,
+    };
+    const writeTextFile = vi.fn()
+      .mockResolvedValueOnce({
+        status: "conflict" as const,
+        message: "metadata changed",
+      })
+      .mockResolvedValueOnce({
+        status: "success" as const,
+        revision: savedRevision,
+      });
+    const harness = createHarness({
+      documents: { [PATH]: initial },
+      workspaceFiles: workspaceFiles({
+        readTextFileSnapshot: vi.fn(async () => ({
+          content: initial.savedContent,
+          revision: diskRevision,
+        })),
+        writeTextFile,
+      }),
+    });
+
+    await expect(harness.save()).resolves.toEqual(
+      expect.objectContaining({ status: "saved", contentIsCurrent: true }),
+    );
+    expect(writeTextFile).toHaveBeenNthCalledWith(
+      1,
+      PATH,
+      "edited:formatted:optimized:organized",
+      loadedRevision,
+    );
+    expect(writeTextFile).toHaveBeenNthCalledWith(
+      2,
+      PATH,
+      "edited:formatted:optimized:organized",
+      diskRevision,
+    );
+    expect(harness.documents[PATH]).toMatchObject({
+      savedContent: "edited:formatted:optimized:organized",
+      revision: savedRevision,
+    });
+  });
+
+  it("bounds baseline reconciliation to one retry", async () => {
+    const loadedRevision = revision(1);
+    const diskRevision = revision(2);
+    const initial = {
+      ...document(),
+      revision: loadedRevision,
+    };
+    const writeTextFile = vi.fn(async () => ({
+      status: "conflict" as const,
+      message: "metadata keeps changing",
+    }));
+    const readTextFileSnapshot = vi.fn(async () => ({
+      content: initial.savedContent,
+      revision: diskRevision,
+    }));
+    const harness = createHarness({
+      documents: { [PATH]: initial },
+      workspaceFiles: workspaceFiles({
+        readTextFileSnapshot,
+        writeTextFile,
+      }),
+    });
+
+    const result = await harness.save();
+
+    expect(result).toEqual({
+      status: "conflict",
+      document: harness.documents[PATH],
+      snapshot: {
+        content: initial.savedContent,
+        revision: diskRevision,
+      },
+    });
+    expect(writeTextFile).toHaveBeenCalledTimes(2);
+    expect(readTextFileSnapshot).toHaveBeenCalledTimes(2);
   });
 
   it("distinguishes failed and partial-durability writes", async () => {

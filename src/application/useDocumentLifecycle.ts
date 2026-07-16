@@ -57,6 +57,7 @@ export function useDocumentLifecycle(
     saveActiveDocument: saveLifecycle.saveActiveDocument,
     runWithDocumentSaveExclusion: saveLifecycle.runWithDocumentSaveExclusion,
     runWithIssuedWriteDrain: saveLifecycle.runWithIssuedWriteDrain,
+    requestOwnerDocumentSave: saveLifecycle.requestOwnerDocumentSave,
     ...closeLifecycle,
   };
 }

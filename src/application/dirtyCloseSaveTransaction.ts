@@ -34,6 +34,7 @@ export interface DirtyCloseSaveTransactionPorts<TIdentity, TCommitResult> {
 export type DirtyCloseSaveBlockedResult<TIdentity> = {
   readonly status: "blocked";
   readonly target: CapturedDirtyCloseTarget<TIdentity>;
+  readonly savedTargets?: readonly CapturedDirtyCloseTarget<TIdentity>[];
   readonly saveResult: Exclude<
     DocumentSaveResult,
     { readonly status: "saved" | "stale" }
@@ -83,6 +84,7 @@ export class DirtyCloseSaveTransaction<TIdentity, TCommitResult = void> {
     request: DirtyCloseSaveTransactionRequest<TIdentity>,
   ): Promise<DirtyCloseSaveTransactionResult<TIdentity, TCommitResult>> {
     const targets = [...request.targets];
+    const savedTargets: CapturedDirtyCloseTarget<TIdentity>[] = [];
 
     for (const target of targets) {
       const ownerFailure = await this.ownerFailure(target);
@@ -96,10 +98,11 @@ export class DirtyCloseSaveTransaction<TIdentity, TCommitResult = void> {
       }
 
       const saveResult = await this.save(target);
-      const saveFailure = this.saveFailure(target, saveResult);
+      const saveFailure = this.saveFailure(target, saveResult, savedTargets);
       if (saveFailure) {
         return saveFailure;
       }
+      savedTargets.push(target);
     }
 
     for (const target of targets) {
@@ -172,6 +175,7 @@ export class DirtyCloseSaveTransaction<TIdentity, TCommitResult = void> {
   private saveFailure(
     target: CapturedDirtyCloseTarget<TIdentity>,
     saveResult: DocumentSaveResult,
+    savedTargets: readonly CapturedDirtyCloseTarget<TIdentity>[],
   ): DirtyCloseSaveTransactionResult<TIdentity, TCommitResult> | null {
     if (saveResult.status === "saved" && saveResult.contentIsCurrent) {
       return null;
@@ -191,10 +195,15 @@ export class DirtyCloseSaveTransaction<TIdentity, TCommitResult = void> {
       };
     }
 
-    return {
+    const blocked: DirtyCloseSaveBlockedResult<TIdentity> = {
       status: "blocked",
       target,
       saveResult,
     };
+    if (savedTargets.length === 0) {
+      return blocked;
+    }
+
+    return { ...blocked, savedTargets: [...savedTargets] };
   }
 }

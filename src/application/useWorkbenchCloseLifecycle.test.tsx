@@ -5,6 +5,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
+import { createLegacyWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   useWorkbenchCloseLifecycle,
   type WorkbenchCloseLifecycle,
@@ -16,6 +18,13 @@ import type {
   DocumentSaveInvalidationScope,
   RunWithDocumentSaveExclusion,
 } from "./documentSaveCoordinator";
+import { OwnerDocumentSaveRepository } from "./ownerDocumentSaveRepository";
+import { documentSaveOwnershipKey } from "./documentSaveIdentity";
+import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveService";
+import {
+  editorConfigCacheKey,
+  invalidateEditorConfigCacheForRoot,
+} from "./editorConfigCache";
 
 const tauriMocks = vi.hoisted(() => ({
   invoke: vi.fn<(command: string, args?: unknown) => Promise<void>>(
@@ -130,6 +139,56 @@ function cleanDocument(path: string): EditorDocument {
   };
 }
 
+function ownerCloseFixture(document: EditorDocument) {
+  const rootPath = WORKSPACE_A;
+  const owner = createLegacyWorkspaceRuntimeOwner(rootPath);
+  const ownership = { rootPath, path: document.path };
+  const documentIdentity = documentSaveOwnershipKey(ownership);
+  if (!documentIdentity) {
+    throw new Error("Expected a canonical test document identity");
+  }
+  let currentDocument = document;
+  const repositoryIncarnation = {};
+  const documentIncarnation = {};
+  const candidate = {
+    kind: "active" as const,
+    owner,
+    rootPath,
+    incarnation: repositoryIncarnation,
+    readDocument: () => ({
+      incarnation: documentIncarnation,
+      document: currentDocument,
+    }),
+    replaceDocument: () => false,
+  };
+  const repository = new OwnerDocumentSaveRepository({
+    active: () => candidate,
+    cached: () => null,
+  });
+  const service = new OwnerResolvingDocumentSaveService({
+    repository,
+    resolvePipeline: () => null,
+  });
+  const target = {
+    owner,
+    targetId: `${owner.ownerKey}\0${documentIdentity}`,
+    identity: {
+      ownership,
+      saveTarget: { owner, documentIdentity, document },
+    },
+  };
+
+  return {
+    owner,
+    repository,
+    service,
+    setCurrentDocument: (next: EditorDocument) => {
+      currentDocument = next;
+    },
+    target,
+  };
+}
+
 interface Harness {
   appSettingsRef: { current: AppSettings };
   closeSyncedJavaScriptTypeScriptDocumentsForRoot: ReturnType<typeof vi.fn>;
@@ -164,13 +223,16 @@ function renderLifecycle(
       workspaceTabs: [WORKSPACE_A, WORKSPACE_B],
     },
   };
-  const workspaceStateCacheRef = {
+  const workspaceStateCacheRef: Harness["workspaceStateCacheRef"] = {
     current: {},
   };
   const editorConfigCacheRef = {
     current: {},
   };
-  const prompter = { confirm: vi.fn(() => true), prompt: vi.fn(() => null) };
+  const prompter = {
+    confirm: vi.fn((_message: string) => true),
+    prompt: vi.fn((_message: string) => null),
+  };
   const persistAppSettings = vi.fn(async (settings: AppSettings) => {
     appSettingsRef.current = settings;
   });
@@ -181,8 +243,49 @@ function renderLifecycle(
     async () => undefined,
   );
   const runWithDocumentSaveExclusion = documentSaveExclusionMock();
-  const stopProjectRuntimes = vi.fn(async () => undefined);
+  const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
   const reportError = vi.fn();
+  let capturedRoot = WORKSPACE_B;
+  let capturedDocument = dirtyDocument(`${capturedRoot}/captured.php`);
+  let capturedOwner = createLegacyWorkspaceRuntimeOwner(capturedRoot);
+  const repositoryIncarnation = {};
+  const documentIncarnation = {};
+  const repositoryCandidate = () => ({
+    kind: "active" as const,
+    owner: capturedOwner,
+    rootPath: capturedRoot,
+    incarnation: repositoryIncarnation,
+    readDocument: () => ({
+      incarnation: documentIncarnation,
+      document: capturedDocument,
+    }),
+    replaceDocument: (
+      _identity: string,
+      expectedRepository: object,
+      expectedIncarnation: object,
+      expectedDocument: EditorDocument,
+      nextDocument: EditorDocument,
+    ) => {
+      if (
+        expectedRepository !== repositoryIncarnation ||
+        expectedIncarnation !== documentIncarnation ||
+        expectedDocument !== capturedDocument
+      ) {
+        return false;
+      }
+      capturedDocument = nextDocument;
+      return true;
+    },
+  });
+  const ownerDocumentSaveRepository = new OwnerDocumentSaveRepository({
+    active: repositoryCandidate,
+    cached: () => null,
+  });
+  const ownerResolvingDocumentSaveService =
+    new OwnerResolvingDocumentSaveService({
+      repository: ownerDocumentSaveRepository,
+      resolvePipeline: () => null,
+    });
   const liveWorkspaceRoot =
     overrides.workspaceRoot === undefined
       ? WORKSPACE_B
@@ -195,10 +298,94 @@ function renderLifecycle(
     appSettingsRef,
     clearActiveWorkspace: vi.fn(async () => undefined),
     clearExternalFileConflictsForRoot: vi.fn(),
+    invalidateWorkspaceResourceCachesForRoot: vi.fn(),
     commitWorkspaceClose: vi.fn(),
     closeSyncedJavaScriptTypeScriptDocumentsForRoot,
     closeSyncedLanguageServerDocumentsForRoot,
     dirtyCount: 0,
+    dirtyCloseDecisionPort: {
+      decideDirtyClose: async ({ scope }) =>
+        dependencies.prompter.confirm(
+          scope === "quit"
+            ? "Quit and discard unsaved changes?"
+            : "Close workspace and discard unsaved changes?",
+        ) ? "discard" : "cancel",
+    },
+    captureDirtyCloseTargets: (requestedRoot) => {
+      const session = dependencies.workspaceCloseSession.current();
+      let rootPath = requestedRoot ?? session.activeRoot ?? WORKSPACE_B;
+      let needsAttention = Boolean(
+        session.activeRoot &&
+        (!requestedRoot || workspaceRootKeysEqual(session.activeRoot, requestedRoot)) &&
+        session.needsAttention,
+      );
+      const cachedEntries = Object.entries(
+        dependencies.workspaceStateCacheRef.current,
+      );
+      for (const [cacheKey, cached] of cachedEntries) {
+        const identity = cached.workspaceIdentityDescriptor;
+        const roots = identity
+          ? [identity.selectedPath, identity.canonicalRoot]
+          : [cacheKey];
+        if (
+          requestedRoot &&
+          !roots.some((root) => workspaceRootKeysEqual(root, requestedRoot))
+        ) {
+          continue;
+        }
+        if (
+          !requestedRoot &&
+          session.activeRoot &&
+          roots.some((root) => workspaceRootKeysEqual(root, session.activeRoot))
+        ) {
+          continue;
+        }
+        const dirty = Object.values(cached.editorSurface.documents).some(
+          (document) =>
+            document.readOnly !== true &&
+            document.savedContent !== document.content,
+        );
+        const conflict = roots.some((root) =>
+          dependencies.workspaceHasExternalFileConflicts(root),
+        );
+        if (!dirty && !conflict) {
+          continue;
+        }
+        needsAttention = true;
+        rootPath = roots[0] ?? rootPath;
+      }
+      if (!needsAttention) {
+        return [];
+      }
+
+      if (!workspaceRootKeysEqual(capturedRoot, rootPath)) {
+        capturedRoot = rootPath;
+        capturedOwner = createLegacyWorkspaceRuntimeOwner(rootPath);
+        capturedDocument = dirtyDocument(`${rootPath}/captured.php`);
+      }
+      const ownership = { rootPath, path: capturedDocument.path };
+      const documentIdentity = documentSaveOwnershipKey(ownership);
+      if (!documentIdentity) {
+        return null;
+      }
+      return [{
+        owner: capturedOwner,
+        targetId: `${capturedOwner.ownerKey}\0${documentIdentity}`,
+        identity: {
+          ownership,
+          saveTarget: {
+            owner: capturedOwner,
+            documentIdentity,
+            document: capturedDocument,
+          },
+        },
+      }];
+    },
+    isWorkspaceRuntimeOwnerCurrent: (owner) =>
+      owner.ownerKey === capturedOwner.ownerKey,
+    ownerDocumentSaveRepository,
+    ownerResolvingDocumentSaveService,
+    requestOwnerDocumentSave: async () => ({ status: "stale" }),
     editorConfigCacheRef,
     editorGitBaselineRequestTokenRef: { current: 0 },
     forgetLanguageServerRuntimeStatuses: vi.fn(),
@@ -264,6 +451,276 @@ function renderLifecycle(
 }
 
 describe("useWorkbenchCloseLifecycle", () => {
+  it("revalidates Save against the acknowledged repository document", async () => {
+    const original = dirtyDocument(`${WORKSPACE_A}/Saved.php`);
+    const acknowledged = cleanDocument(original.path);
+    const reported = { ...acknowledged };
+    const fixture = ownerCloseFixture(original);
+    let saved = false;
+    vi.spyOn(fixture.service, "saveDocument").mockImplementation(async () => {
+      fixture.setCurrentDocument(acknowledged);
+      saved = true;
+      return { status: "saved", document: reported, contentIsCurrent: true };
+    });
+    const commitWorkspaceClose = vi.fn();
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => saved ? [] : [fixture.target],
+      commitWorkspaceClose,
+      dirtyCloseDecisionPort: { decideDirtyClose: async () => "save" },
+      isWorkspaceRuntimeOwnerCurrent: () => true,
+      ownerDocumentSaveRepository: fixture.repository,
+      ownerResolvingDocumentSaveService: fixture.service,
+      requestOwnerDocumentSave: async (_ownership, operation) => operation({
+        path: original.path,
+        rootPath: WORKSPACE_A,
+        epoch: 1,
+        isCurrent: () => true,
+        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+      }),
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(commitWorkspaceClose).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
+  it("keeps a workspace open when typing continues during its pending Save", async () => {
+    const original = dirtyDocument(`${WORKSPACE_A}/Typing.php`);
+    const fixture = ownerCloseFixture(original);
+    const pendingWrite = createDeferred<void>();
+    const saveStarted = createDeferred<void>();
+    vi.spyOn(fixture.service, "saveDocument").mockImplementation(async () => {
+      saveStarted.resolve();
+      await pendingWrite.promise;
+      return {
+        status: "saved",
+        document: cleanDocument(original.path),
+        contentIsCurrent: false,
+      };
+    });
+    const commitWorkspaceClose = vi.fn();
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => [fixture.target],
+      commitWorkspaceClose,
+      dirtyCloseDecisionPort: { decideDirtyClose: async () => "save" },
+      isWorkspaceRuntimeOwnerCurrent: () => true,
+      ownerDocumentSaveRepository: fixture.repository,
+      ownerResolvingDocumentSaveService: fixture.service,
+      requestOwnerDocumentSave: async (_ownership, operation) => operation({
+        path: original.path,
+        rootPath: WORKSPACE_A,
+        epoch: 1,
+        isCurrent: () => true,
+        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+      }),
+    });
+
+    const close = harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    await saveStarted.promise;
+    fixture.setCurrentDocument({
+      ...original,
+      content: "typed while save was pending",
+    });
+    pendingWrite.resolve();
+    await close;
+
+    expect(commitWorkspaceClose).not.toHaveBeenCalled();
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("keeps a conflict-only workspace open when Save is blocked", async () => {
+    const document = cleanDocument(`${WORKSPACE_A}/Conflict.php`);
+    const fixture = ownerCloseFixture(document);
+    vi.spyOn(fixture.service, "saveDocument").mockResolvedValue({
+      status: "blocked",
+      reason: "external",
+    });
+    const commitWorkspaceClose = vi.fn();
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => [fixture.target],
+      commitWorkspaceClose,
+      dirtyCloseDecisionPort: { decideDirtyClose: async () => "save" },
+      isWorkspaceRuntimeOwnerCurrent: () => true,
+      ownerDocumentSaveRepository: fixture.repository,
+      ownerResolvingDocumentSaveService: fixture.service,
+      requestOwnerDocumentSave: async (_ownership, operation) => operation({
+        path: document.path,
+        rootPath: WORKSPACE_A,
+        epoch: 1,
+        isCurrent: () => true,
+        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+      }),
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(commitWorkspaceClose).not.toHaveBeenCalled();
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("permits a native close retry after cancellation", async () => {
+    const fixture = ownerCloseFixture(dirtyDocument(`${WORKSPACE_A}/Retry.php`));
+    const decideDirtyClose = vi.fn()
+      .mockResolvedValueOnce("cancel")
+      .mockResolvedValueOnce("discard");
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => [fixture.target],
+      dirtyCloseDecisionPort: { decideDirtyClose },
+      isWorkspaceRuntimeOwnerCurrent: () => true,
+      ownerDocumentSaveRepository: fixture.repository,
+      ownerResolvingDocumentSaveService: fixture.service,
+    });
+
+    await act(async () => {
+      requestNativeClose();
+      await Promise.resolve();
+      await Promise.resolve();
+      requestNativeClose();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(decideDirtyClose).toHaveBeenCalledTimes(2);
+    expect(nativeShutdownInvocationCount()).toBe(1);
+    harness.unmount();
+  });
+
+  it("blocks close when another document becomes dirty during the decision", async () => {
+    const original = dirtyDocument(`${WORKSPACE_A}/Original.php`);
+    const fixture = ownerCloseFixture(original);
+    const decisionStarted = createDeferred<void>();
+    const decision = createDeferred<"discard">();
+    const newlyDirty = dirtyDocument(`${WORKSPACE_A}/NewlyDirty.php`);
+    const newlyDirtyTarget = {
+      ...fixture.target,
+      targetId: `${fixture.target.targetId}\0new`,
+      identity: {
+        ...fixture.target.identity,
+        saveTarget: {
+          ...fixture.target.identity.saveTarget,
+          documentIdentity: `${fixture.target.identity.saveTarget.documentIdentity}\0new`,
+          document: newlyDirty,
+        },
+      },
+    };
+    let capturedTargets = [fixture.target];
+    const commitWorkspaceClose = vi.fn();
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => capturedTargets,
+      commitWorkspaceClose,
+      dirtyCloseDecisionPort: {
+        decideDirtyClose: async () => {
+          decisionStarted.resolve();
+          return decision.promise;
+        },
+      },
+      isWorkspaceRuntimeOwnerCurrent: () => true,
+      ownerDocumentSaveRepository: fixture.repository,
+    });
+
+    const closing = harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    await decisionStarted.promise;
+    capturedTargets = [fixture.target, newlyDirtyTarget];
+    decision.resolve("discard");
+    await closing;
+
+    expect(commitWorkspaceClose).not.toHaveBeenCalled();
+    expect(harness.persistAppSettings).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("restores the workspace tab when an edit lands during close persistence", async () => {
+    const persistence = createDeferred<void>();
+    const persistenceStarted = createDeferred<void>();
+    const lateDocument = dirtyDocument(`${WORKSPACE_A}/Late.php`);
+    const fixture = ownerCloseFixture(lateDocument);
+    let capturedTargets: typeof fixture.target[] = [];
+    const persistAppSettings = vi.fn(async (settings: AppSettings) => {
+      if (persistAppSettings.mock.calls.length === 1) {
+        persistenceStarted.resolve();
+        await persistence.promise;
+      }
+      harness.appSettingsRef.current = settings;
+    });
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => capturedTargets,
+      persistAppSettings,
+    });
+
+    const closing = harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    await persistenceStarted.promise;
+    capturedTargets = [fixture.target];
+    persistence.resolve();
+    await closing;
+
+    expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(persistAppSettings).toHaveBeenCalledTimes(2);
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(WORKSPACE_A);
+    harness.unmount();
+  });
+
+  it("preserves workspace state when an edit lands during async disposal", async () => {
+    const documentClose = createDeferred<void>();
+    const documentCloseStarted = createDeferred<void>();
+    const fixture = ownerCloseFixture(
+      dirtyDocument(`${WORKSPACE_A}/DuringDisposal.php`),
+    );
+    const forgetCachedWorkspaceState = vi.fn();
+    let capturedTargets: typeof fixture.target[] = [];
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => capturedTargets,
+      closeSyncedLanguageServerDocumentsForRoot: async () => {
+        documentCloseStarted.resolve();
+        await documentClose.promise;
+      },
+      forgetCachedWorkspaceState,
+    });
+
+    const closing = harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    await documentCloseStarted.promise;
+    capturedTargets = [fixture.target];
+    documentClose.resolve();
+    await closing;
+
+    expect(forgetCachedWorkspaceState).not.toHaveBeenCalled();
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(WORKSPACE_A);
+    harness.unmount();
+  });
+
+  it("blocks quit when an edit lands during final session persistence", async () => {
+    const persistence = createDeferred<void>();
+    const persistenceStarted = createDeferred<void>();
+    const fixture = ownerCloseFixture(
+      dirtyDocument(`${WORKSPACE_A}/LateQuit.php`),
+    );
+    let capturedTargets: typeof fixture.target[] = [];
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => capturedTargets,
+      persistWorkspaceSession: async () => {
+        persistenceStarted.resolve();
+        await persistence.promise;
+      },
+    });
+
+    harness.lifecycle().quitApplication();
+    await persistenceStarted.promise;
+    capturedTargets = [fixture.target];
+    persistence.resolve();
+    await vi.waitFor(() => {
+      expect(harness.runWithDocumentSaveExclusion).toHaveBeenCalled();
+    });
+
+    expect(tauriMocks.invoke).not.toHaveBeenCalledWith("quit_application");
+    harness.unmount();
+  });
+
   it("advertises native close listener readiness while mounted", async () => {
     const harness = renderLifecycle();
 
@@ -316,6 +773,40 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(unregisterWorkspace).toHaveBeenCalledWith("ws-a");
   });
 
+  it("preserves workspace resources when identity unregister fails", async () => {
+    const unregisterFailure = new Error("transient unregister failure");
+    const descriptor = workspaceIdentity();
+    const unregisterWorkspace = vi.fn(async () => {
+      throw unregisterFailure;
+    });
+    const harness = renderLifecycle({
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+    });
+
+    expect(unregisterWorkspace).toHaveBeenCalledOnce();
+    expect(harness.closeSyncedLanguageServerDocumentsForRoot).not.toHaveBeenCalled();
+    expect(
+      harness.closeSyncedJavaScriptTypeScriptDocumentsForRoot,
+    ).not.toHaveBeenCalled();
+    expect(harness.stopProjectRuntimes).not.toHaveBeenCalled();
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(WORKSPACE_A);
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Workspace",
+      unregisterFailure,
+    );
+    harness.unmount();
+  });
+
   it("prompts from canonical dirty state when closing a selected alias", async () => {
     const descriptor = workspaceIdentity();
     const canonicalState = {
@@ -354,10 +845,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     );
     expect(harness.persistAppSettings).not.toHaveBeenCalled();
     expect(cache[descriptor.canonicalRoot]).toBe(canonicalState);
-    expect(resolveCachedWorkspaceState).toHaveBeenCalledWith(
-      descriptor.selectedPath,
-      descriptor,
-    );
+    expect(resolveCachedWorkspaceState).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -500,7 +988,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     const commitWorkspaceClose = vi.fn(() => closeOwnership.ownership);
     const forgetCachedWorkspaceState = vi.fn();
     const unregisterWorkspace = vi.fn(async () => undefined);
-    const stopProjectRuntimes = vi.fn(async () => undefined);
+    const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
     const identities = {
       [oldDescriptor.selectedPath]: oldDescriptor,
       [oldDescriptor.canonicalRoot]: oldDescriptor,
@@ -567,7 +1055,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     );
     const closeOwnership = mutableCloseOwnership();
     const forgetCachedWorkspaceState = vi.fn();
-    const stopProjectRuntimes = vi.fn(async () => undefined);
+    const stopProjectRuntimes = vi.fn(async () => "stopped" as const);
     const unregisterWorkspace = vi.fn(() => unregister.promise);
     const identities = {
       [oldDescriptor.selectedPath]: oldDescriptor,
@@ -635,7 +1123,10 @@ describe("useWorkbenchCloseLifecycle", () => {
     const forgetCachedWorkspaceState = vi.fn();
     const forgetLanguageServerRuntimeStatuses = vi.fn();
     const forgetLatencyTrackerForRoot = vi.fn();
-    const stopProjectRuntimes = vi.fn(() => runtimeStop.promise);
+    const stopProjectRuntimes = vi.fn(async () => {
+      await runtimeStop.promise;
+      return "stopped" as const;
+    });
     const identities = {
       [oldDescriptor.selectedPath]: oldDescriptor,
       [oldDescriptor.canonicalRoot]: oldDescriptor,
@@ -1036,9 +1527,10 @@ describe("useWorkbenchCloseLifecycle", () => {
     const commitWorkspaceClose = vi.fn((rootPath: string) => {
       events.push(`commit:${rootPath}`);
     });
-    const stopProjectRuntimes = vi.fn(() => {
+    const stopProjectRuntimes = vi.fn(async () => {
       events.push("runtime");
-      return runtimeStop.promise;
+      await runtimeStop.promise;
+      return "stopped" as const;
     });
     const harness = renderLifecycle({
       commitWorkspaceClose,
@@ -1062,8 +1554,8 @@ describe("useWorkbenchCloseLifecycle", () => {
       rootPath: WORKSPACE_A,
     });
     expect(events).toEqual([
-      `commit:${WORKSPACE_A}`,
       "lock",
+      `commit:${WORKSPACE_A}`,
       "persist",
       "runtime",
     ]);
@@ -1077,8 +1569,8 @@ describe("useWorkbenchCloseLifecycle", () => {
     expect(harness.workspaceStateCacheRef.current[WORKSPACE_A]).toBeUndefined();
     expect(stopProjectRuntimes).toHaveBeenCalledWith(WORKSPACE_A);
     expect(events).toEqual([
-      `commit:${WORKSPACE_A}`,
       "lock",
+      `commit:${WORKSPACE_A}`,
       "persist",
       "runtime",
       "unlock",
@@ -1110,6 +1602,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
     const stopProjectRuntimes = vi.fn(async () => {
       events.push("runtime");
+      return "stopped" as const;
     });
     const openWorkspacePath = vi.fn(() => {
       events.push("switch");
@@ -1140,8 +1633,8 @@ describe("useWorkbenchCloseLifecycle", () => {
       rootPath: WORKSPACE_B,
     });
     expect(events).toEqual([
-      `commit:${WORKSPACE_B}`,
       "lock",
+      `commit:${WORKSPACE_B}`,
       "session",
       "settings",
       "runtime",
@@ -1397,6 +1890,63 @@ describe("useWorkbenchCloseLifecycle", () => {
     harness.unmount();
   });
 
+  it.each([
+    {
+      name: "keyboard app quit",
+      request: (harness: Harness) => harness.lifecycle().quitApplication(),
+      invocation: ["quit_application"],
+    },
+    {
+      name: "native window close",
+      request: () => requestNativeClose("close"),
+      invocation: ["confirm_native_shutdown", { kind: "close" }],
+    },
+  ])("saves an inactive dirty project before $name", async ({
+    request,
+    invocation,
+  }) => {
+    const path = `${WORKSPACE_A}/src/Inactive.php`;
+    const original = dirtyDocument(path);
+    const fixture = ownerCloseFixture(original);
+    const acknowledged = cleanDocument(path);
+    let saved = false;
+    const saveDocument = vi.spyOn(fixture.service, "saveDocument")
+      .mockImplementation(async () => {
+        fixture.setCurrentDocument(acknowledged);
+        saved = true;
+        return {
+          status: "saved",
+          document: acknowledged,
+          contentIsCurrent: true,
+        };
+      });
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => saved ? [] : [fixture.target],
+      dirtyCloseDecisionPort: { decideDirtyClose: async () => "save" },
+      isWorkspaceRuntimeOwnerCurrent: () => true,
+      ownerDocumentSaveRepository: fixture.repository,
+      ownerResolvingDocumentSaveService: fixture.service,
+      requestOwnerDocumentSave: async (_ownership, operation) => operation({
+        path,
+        rootPath: WORKSPACE_A,
+        epoch: 1,
+        isCurrent: () => true,
+        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+      }),
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: { documents: { [path]: original } },
+    };
+
+    request(harness);
+    await vi.waitFor(() => {
+      expect(tauriMocks.invoke).toHaveBeenCalledWith(...invocation);
+    });
+
+    expect(saveDocument).toHaveBeenCalledOnce();
+    harness.unmount();
+  });
+
   it("blocks shutdown for conflicts in an inactive cached workspace", async () => {
     const persistWorkspaceSession = vi.fn(async () => undefined);
     const harness = renderLifecycle({
@@ -1475,7 +2025,7 @@ describe("useWorkbenchCloseLifecycle", () => {
     });
 
     expect(harness.prompter.confirm).not.toHaveBeenCalled();
-    expect(workspaceHasExternalFileConflicts).toHaveBeenCalledTimes(1);
+    expect(workspaceHasExternalFileConflicts).toHaveBeenCalled();
     expect(nativeShutdownInvocationCount()).toBe(1);
     harness.unmount();
   });
@@ -1706,6 +2256,251 @@ describe("useWorkbenchCloseLifecycle", () => {
 
     expect(tauriMocks.invoke).toHaveBeenCalledWith("quit_application");
     expect(nativeShutdownInvocationCount()).toBe(0);
+    harness.unmount();
+  });
+
+  it("surfaces a truthful notice when Save All partially succeeds", async () => {
+    const owner = createLegacyWorkspaceRuntimeOwner(WORKSPACE_A);
+    const first = dirtyDocument(`${WORKSPACE_A}/src/First.php`);
+    const second = dirtyDocument(`${WORKSPACE_A}/src/Second.php`);
+    const documents = new Map([
+      [first.path, first],
+      [second.path, second],
+    ]);
+    const incarnation = {};
+    const documentIncarnations = new Map([
+      [first.path, {}],
+      [second.path, {}],
+    ]);
+    const candidate = {
+      kind: "active" as const,
+      owner,
+      rootPath: WORKSPACE_A,
+      incarnation,
+      readDocument: (identity: string) => {
+        const document = documents.get(identity);
+        const documentIncarnation = documentIncarnations.get(identity);
+        return document && documentIncarnation
+          ? { document, incarnation: documentIncarnation }
+          : null;
+      },
+      replaceDocument: () => false,
+    };
+    const repository = new OwnerDocumentSaveRepository({
+      active: () => candidate,
+      cached: () => null,
+    });
+    const service = new OwnerResolvingDocumentSaveService({
+      repository,
+      resolvePipeline: () => null,
+    });
+    const targets = [first, second].map((document) => ({
+      owner,
+      targetId: `${owner.ownerKey}\0${document.path}`,
+      identity: {
+        ownership: { rootPath: WORKSPACE_A, path: document.path },
+        saveTarget: {
+          owner,
+          documentIdentity: document.path,
+          document,
+        },
+      },
+    }));
+    const failure = new Error("disk full");
+    vi.spyOn(service, "saveDocument").mockImplementation(async ({ target }) => {
+      if (target.document.path === first.path) {
+        const savedDocument = cleanDocument(first.path);
+        documents.set(first.path, savedDocument);
+        return {
+          status: "saved",
+          document: savedDocument,
+          contentIsCurrent: true,
+        };
+      }
+
+      return { status: "failed", error: failure };
+    });
+    const commitWorkspaceClose = vi.fn();
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => targets,
+      commitWorkspaceClose,
+      dirtyCloseDecisionPort: { decideDirtyClose: async () => "save" },
+      isWorkspaceRuntimeOwnerCurrent: () => true,
+      ownerDocumentSaveRepository: repository,
+      ownerResolvingDocumentSaveService: service,
+      requestOwnerDocumentSave: async (_ownership, operation) => operation({
+        path: first.path,
+        rootPath: WORKSPACE_A,
+        epoch: 1,
+        isCurrent: () => true,
+        tryBeginWrite: () => ({ granted: true, settle: () => undefined }),
+      }),
+    });
+
+    await act(async () => {
+      await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+    });
+
+    expect(commitWorkspaceClose).not.toHaveBeenCalled();
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Save",
+      expect.objectContaining({
+        message: expect.stringContaining("Saved 1 of 2 files"),
+      }),
+    );
+    expect(harness.reportError.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("src/Second.php"),
+      }),
+    );
+    harness.unmount();
+  });
+
+  it("identifies equal dirty paths by workspace in a quit prompt", async () => {
+    const first = ownerCloseFixture(
+      dirtyDocument(`${WORKSPACE_A}/config/config.php`),
+    ).target;
+    const secondDocument = dirtyDocument(
+      `${WORKSPACE_B}/config/config.php`,
+    );
+    const secondOwner = createLegacyWorkspaceRuntimeOwner(WORKSPACE_B);
+    const second = {
+      ...first,
+      owner: secondOwner,
+      targetId: `${secondOwner.ownerKey}\0${secondDocument.path}`,
+      identity: {
+        ownership: { rootPath: WORKSPACE_B, path: secondDocument.path },
+        saveTarget: {
+          owner: secondOwner,
+          documentIdentity: secondDocument.path,
+          document: secondDocument,
+        },
+      },
+    };
+    const decideDirtyClose = vi.fn(async () => "cancel" as const);
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => [first, second],
+      dirtyCloseDecisionPort: { decideDirtyClose },
+    });
+
+    harness.lifecycle().quitApplication();
+    await vi.waitFor(() => expect(decideDirtyClose).toHaveBeenCalledOnce());
+
+    expect(decideDirtyClose).toHaveBeenCalledWith(expect.objectContaining({
+      documents: [
+        expect.objectContaining({
+          workspaceLabel: "workspace-a",
+          relativePath: "config/config.php",
+        }),
+        expect.objectContaining({
+          workspaceLabel: "workspace-b",
+          relativePath: "config/config.php",
+        }),
+      ],
+    }));
+    harness.unmount();
+  });
+
+  it("revalidates an identity-backed scope after runtime disposal", async () => {
+    const runtimeStop = createDeferred<void>();
+    const runtimeStarted = createDeferred<void>();
+    const descriptor = workspaceIdentity();
+    const fixture = ownerCloseFixture(
+      dirtyDocument(`${WORKSPACE_A}/LateIdentity.php`),
+    );
+    let capturedTargets: typeof fixture.target[] = [];
+    const unregisterWorkspace = vi.fn(async () => undefined);
+    const harness = renderLifecycle({
+      captureDirtyCloseTargets: () => capturedTargets,
+      stopProjectRuntimes: async () => {
+        runtimeStarted.resolve();
+        await runtimeStop.promise;
+        return "stopped" as const;
+      },
+      unregisterWorkspace,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+
+    const closing = harness.lifecycle().closeWorkspaceTab(
+      descriptor.selectedPath,
+    );
+    await runtimeStarted.promise;
+    capturedTargets = [fixture.target];
+    runtimeStop.resolve();
+    await closing;
+
+    expect(unregisterWorkspace).toHaveBeenCalledOnce();
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(WORKSPACE_A);
+    harness.unmount();
+  });
+
+  it("preserves workspace state when runtime cleanup is incomplete", async () => {
+    const runtimeFailure = new Error("runtime stop failed");
+    const forgetLanguageServerRuntimeStatuses = vi.fn();
+    const forgetLatencyTrackerForRoot = vi.fn();
+    const harness = renderLifecycle({
+      forgetLanguageServerRuntimeStatuses,
+      forgetLatencyTrackerForRoot,
+      stopProjectRuntimes: async () => {
+        throw runtimeFailure;
+      },
+    });
+    harness.workspaceStateCacheRef.current[WORKSPACE_A] = {
+      editorSurface: { documents: {} },
+    };
+
+    await harness.lifecycle().closeWorkspaceTab(WORKSPACE_A);
+
+    expect(harness.appSettingsRef.current.workspaceTabs).toContain(WORKSPACE_A);
+    expect(harness.workspaceStateCacheRef.current[WORKSPACE_A]).toBeDefined();
+    expect(forgetLanguageServerRuntimeStatuses).not.toHaveBeenCalled();
+    expect(forgetLatencyTrackerForRoot).not.toHaveBeenCalled();
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Runtime cleanup",
+      runtimeFailure,
+    );
+    harness.unmount();
+  });
+
+  it("invalidates composite owner caches through the resource cache port", async () => {
+    const descriptor = workspaceIdentity();
+    const owner = createLegacyWorkspaceRuntimeOwner(descriptor.selectedPath);
+    const compositeKey = editorConfigCacheKey(descriptor.canonicalRoot, owner);
+    const cache: WorkbenchCloseLifecycleDependencies["editorConfigCacheRef"]["current"] = {
+      [compositeKey]: { "app/.editorconfig": null },
+      [WORKSPACE_B]: { "other/.editorconfig": null },
+    };
+    const clearExternalFileConflictsForRoot = vi.fn();
+    const invalidateWorkspaceResourceCachesForRoot = vi.fn((rootPath: string) =>
+      invalidateEditorConfigCacheForRoot(cache, rootPath)
+    );
+    const harness = renderLifecycle({
+      clearExternalFileConflictsForRoot,
+      editorConfigCacheRef: { current: cache },
+      invalidateWorkspaceResourceCachesForRoot,
+      workspaceIdentityByRootRef: {
+        current: {
+          [descriptor.selectedPath]: descriptor,
+          [descriptor.canonicalRoot]: descriptor,
+        },
+      },
+    });
+
+    await harness.lifecycle().closeWorkspaceTab(descriptor.selectedPath);
+
+    expect(cache[compositeKey]).toBeUndefined();
+    expect(cache[WORKSPACE_B]).toBeDefined();
+    expect(invalidateWorkspaceResourceCachesForRoot).toHaveBeenCalledWith(
+      descriptor.canonicalRoot,
+    );
+    expect(clearExternalFileConflictsForRoot).toHaveBeenCalledWith(
+      descriptor.canonicalRoot,
+    );
     harness.unmount();
   });
 });

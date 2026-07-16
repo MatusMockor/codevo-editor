@@ -11,6 +11,7 @@ import type {
   ActiveDocumentSaveWritePermit,
   DocumentSaveTarget,
 } from "./activeDocumentSaveStore";
+import type { DocumentSelfWriteLease } from "./documentSelfWriteCoordinator";
 
 export type {
   DocumentSaveAcknowledgement,
@@ -74,6 +75,11 @@ export interface DocumentSaveServiceDependencies {
     shouldEmit?: () => boolean,
   ) => Promise<void>;
   hasExternalFileConflict: (rootPath: string, path: string) => boolean;
+  beginDocumentSelfWrite: (
+    rootPath: string,
+    path: string,
+    content: string,
+  ) => DocumentSelfWriteLease | null;
 }
 
 /** Owns one root-explicit save transaction without depending on React. */
@@ -86,6 +92,7 @@ export class DocumentSaveService {
     };
 
     try {
+      let baselineReconciliationAttempted = false;
       let documentToTransform = currentDocument();
       if (!documentToTransform) {
         return { status: "stale" };
@@ -135,12 +142,30 @@ export class DocumentSaveService {
           continue;
         }
 
-        return await this.writePreparedDocument(
+        const result = await this.writePreparedDocument(
           target,
           documentToTransform,
           prepared.document,
           currentDocument,
         );
+        if (
+          result.status !== "conflict" ||
+          baselineReconciliationAttempted ||
+          !result.snapshot?.revision ||
+          result.snapshot.content !== result.document.savedContent
+        ) {
+          return result;
+        }
+
+        baselineReconciliationAttempted = true;
+        this.dependencies.saveStore.updateRevision(
+          target,
+          result.snapshot.revision,
+        );
+        documentToTransform = currentDocument();
+        if (!documentToTransform) {
+          return { status: "stale" };
+        }
       }
     } catch (error) {
       if (!currentDocument()) {
@@ -314,26 +339,62 @@ export class DocumentSaveService {
     currentDocument: () => EditorDocument | null,
     settleWritePermit: () => void,
   ): Promise<DocumentSaveResult> {
-    const writeResult = expectedDocument.revision
-      ? await this.dependencies.workspaceFiles.writeTextFile(
-          savedDocument.path,
-          savedDocument.content,
-          expectedDocument.revision,
-        )
-      : await this.dependencies.workspaceFiles.writeTextFile(
-          savedDocument.path,
-          savedDocument.content,
-        );
+    const selfWrite = this.dependencies.beginDocumentSelfWrite(
+      target.rootPath,
+      savedDocument.path,
+      savedDocument.content,
+    );
+    let selfWriteCompleted = false;
+    const abortSelfWrite = () => {
+      if (selfWriteCompleted) {
+        return;
+      }
+
+      selfWriteCompleted = true;
+      selfWrite?.abort();
+    };
+    const completeSelfWrite = (
+      revision: EditorDocument["revision"],
+    ) => {
+      if (selfWriteCompleted) {
+        return;
+      }
+
+      selfWriteCompleted = true;
+      selfWrite?.complete(revision ?? null);
+    };
+
+    let writeResult: Awaited<
+      ReturnType<WorkspaceFileGateway["writeTextFile"]>
+    >;
+    try {
+      writeResult = expectedDocument.revision
+        ? await this.dependencies.workspaceFiles.writeTextFile(
+            savedDocument.path,
+            savedDocument.content,
+            expectedDocument.revision,
+          )
+        : await this.dependencies.workspaceFiles.writeTextFile(
+            savedDocument.path,
+            savedDocument.content,
+          );
+    } catch (error) {
+      abortSelfWrite();
+      throw error;
+    }
 
     if (writeResult?.status === "conflict") {
+      abortSelfWrite();
       settleWritePermit();
       return await this.readConflict(target, currentDocument);
     }
     if (writeResult?.status === "error") {
+      abortSelfWrite();
       settleWritePermit();
       return { status: "failed", error: new Error(writeResult.message) };
     }
     if (writeResult?.status === "partial") {
+      completeSelfWrite(writeResult.revision);
       this.dependencies.saveStore.updateRevisionForIssuedWrite(
         target,
         expectedDocument,
@@ -350,6 +411,10 @@ export class DocumentSaveService {
         ),
       };
     }
+
+    completeSelfWrite(
+      writeResult?.status === "success" ? writeResult.revision : null,
+    );
 
     if (this.hasExternalConflict(target)) {
       settleWritePermit();

@@ -22,6 +22,20 @@ export type ResolveDocumentSaveOwnership = (
   path: string,
 ) => DocumentSaveOwnership | null;
 
+/** Stable key shared by save and close coordination for one canonical file. */
+export function documentSaveOwnershipKey(
+  ownership: DocumentSaveOwnership,
+): string | null {
+  const identity = "canonicalRoot" in ownership
+    ? ownership
+    : legacyDocumentSaveIdentity(ownership.rootPath, ownership.path);
+  if (!identity) {
+    return null;
+  }
+
+  return `${identity.canonicalRoot}\0${identity.workspaceRelativePath}`;
+}
+
 export interface DocumentSaveIdentityStrategy {
   create(
     canonicalRoot: string,

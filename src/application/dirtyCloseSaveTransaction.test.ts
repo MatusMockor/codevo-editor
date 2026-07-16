@@ -238,6 +238,26 @@ describe("DirtyCloseSaveTransaction", () => {
     expect(subject.commitCloseConditionally).not.toHaveBeenCalled();
   });
 
+  it("reports targets saved before a later Save All target fails", async () => {
+    const failure = new Error("second write failed");
+    const subject = harness({
+      saveTarget: async (target) =>
+        target === targetA
+          ? saved(target.identity.path)
+          : { status: "failed", error: failure },
+    });
+
+    await expect(
+      subject.transaction.execute({ targets: [targetA, targetB] }),
+    ).resolves.toEqual({
+      status: "blocked",
+      target: targetB,
+      savedTargets: [targetA],
+      saveResult: { status: "failed", error: failure },
+    });
+    expect(subject.commitCloseConditionally).not.toHaveBeenCalled();
+  });
+
   it("aborts before saving when the captured owner was replaced", async () => {
     const subject = harness({ isOwnerCurrent: () => false });
 
