@@ -26,6 +26,8 @@ export interface NetteFactoryTemplateOwnerSource {
 }
 
 export interface NetteFactoryTemplateOwnerPrecedenceNode {
+  hasUnresolvedParent: boolean;
+  hasUnresolvedTrait: boolean;
   methods: PhpMethodMember[];
   parentIndex: number | null;
   source: NetteFactoryTemplateOwnerSource;
@@ -39,7 +41,7 @@ export interface NetteFactoryTemplateOwnerPrecedence {
 
 export interface NetteFactoryTemplateOwnerHierarchy {
   owner: NetteFactoryTemplateOwner;
-  /** Null when declarations or relationships cannot be modeled uniquely. */
+  /** Null for unmodelable declarations/adaptations; nodes retain missing edges. */
   precedence: NetteFactoryTemplateOwnerPrecedence | null;
   /** Owner first, followed by sources in bounded ancestry discovery order. */
   sources: NetteFactoryTemplateOwnerSource[];
@@ -66,6 +68,7 @@ interface ParsedSource {
 type ReferenceIndex = number | null | "ambiguous";
 type MethodResolution =
   | { kind: "ambiguous" }
+  | { kind: "incomplete" }
   | { kind: "missing" }
   | {
       kind: "resolved";
@@ -123,24 +126,13 @@ export function findNetteFactoryTemplateOwnerMethodSource(
   hierarchy: NetteFactoryTemplateOwnerHierarchy,
   methodName: string,
 ): NetteFactoryTemplateOwnerMethodSource | null {
-  const normalizedName = methodName.trim();
+  const resolution = hierarchyMethodResolution(hierarchy, methodName);
 
-  if (!PHP_IDENTIFIER.test(normalizedName) || !hierarchy.precedence) {
+  if (!resolution || resolution.kind !== "resolved") {
     return null;
   }
 
-  const resolution = resolveMethod(
-    hierarchy.precedence,
-    hierarchy.precedence.rootIndex,
-    normalizedName.toLowerCase(),
-    new Set(),
-  );
-
-  if (resolution.kind !== "resolved") {
-    return null;
-  }
-
-  const node = hierarchy.precedence.nodes[resolution.nodeIndex];
+  const node = hierarchy.precedence?.nodes[resolution.nodeIndex];
 
   if (!node) {
     return null;
@@ -149,9 +141,29 @@ export function findNetteFactoryTemplateOwnerMethodSource(
   return { method: resolution.method, source: node.source };
 }
 
+/** True only when every candidate was searched through a complete precedence path. */
+export function canProveNetteFactoryTemplateOwnerMethodAbsence(
+  hierarchy: NetteFactoryTemplateOwnerHierarchy,
+  methodNames: readonly string[],
+): boolean {
+  if (methodNames.length === 0) {
+    return false;
+  }
+
+  for (const methodName of methodNames) {
+    const resolution = hierarchyMethodResolution(hierarchy, methodName);
+
+    if (!resolution || resolution.kind !== "missing") {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
- * Aggregates effective Nette lifecycle declarations. Null means at least one
- * lifecycle name has ambiguous trait composition or an unmodeled adaptation.
+ * Aggregates effective Nette lifecycle declarations. Incomplete names are
+ * omitted; null means loaded sources are ambiguous or cannot be modeled.
  */
 export function aggregateNetteFactoryTemplateOwnerLifecycleMembers(
   hierarchy: NetteFactoryTemplateOwnerHierarchy,
@@ -187,7 +199,10 @@ export function aggregateNetteFactoryTemplateOwnerLifecycleMembers(
       return null;
     }
 
-    if (resolution.kind === "missing") {
+    if (
+      resolution.kind === "incomplete" ||
+      resolution.kind === "missing"
+    ) {
       continue;
     }
 
@@ -263,6 +278,7 @@ function buildPrecedence(
 
   for (const parsed of parsedSources) {
     const references = netteComponentAncestorReferences(parsed.source.source);
+    let hasUnresolvedTrait = false;
     const traitIndexes: number[] = [];
 
     for (const traitName of references.traitNames) {
@@ -278,7 +294,8 @@ function buildPrecedence(
       }
 
       if (traitIndex === null) {
-        return null;
+        hasUnresolvedTrait = true;
+        continue;
       }
 
       const traitSource = parsedSources[traitIndex];
@@ -304,7 +321,15 @@ function buildPrecedence(
     }
 
     if (references.parentClassName && parentIndex === null) {
-      return null;
+      nodes.push({
+        hasUnresolvedParent: true,
+        hasUnresolvedTrait,
+        methods: parsed.methods,
+        parentIndex: null,
+        source: parsed.source,
+        traitIndexes,
+      });
+      continue;
     }
 
     if (parentIndex !== null) {
@@ -316,6 +341,8 @@ function buildPrecedence(
     }
 
     nodes.push({
+      hasUnresolvedParent: false,
+      hasUnresolvedTrait,
       methods: parsed.methods,
       parentIndex,
       source: parsed.source,
@@ -352,6 +379,7 @@ function resolveMethod(
 
   const nextVisiting = new Set(visiting);
   nextVisiting.add(nodeIndex);
+  let traitsIncomplete = false;
   const traitMatches: Extract<MethodResolution, { kind: "resolved" }>[] = [];
 
   for (const traitIndex of node.traitIndexes) {
@@ -366,6 +394,11 @@ function resolveMethod(
       return traitResolution;
     }
 
+    if (traitResolution.kind === "incomplete") {
+      traitsIncomplete = true;
+      continue;
+    }
+
     if (traitResolution.kind === "resolved") {
       traitMatches.push(traitResolution);
     }
@@ -375,6 +408,10 @@ function resolveMethod(
     return { kind: "ambiguous" };
   }
 
+  if (traitsIncomplete || node.hasUnresolvedTrait) {
+    return { kind: "incomplete" };
+  }
+
   const traitMatch = traitMatches[0];
 
   if (traitMatch) {
@@ -382,6 +419,10 @@ function resolveMethod(
   }
 
   if (node.parentIndex === null) {
+    if (node.hasUnresolvedParent) {
+      return { kind: "incomplete" };
+    }
+
     return { kind: "missing" };
   }
 
@@ -390,6 +431,25 @@ function resolveMethod(
     node.parentIndex,
     methodKey,
     nextVisiting,
+  );
+}
+
+function hierarchyMethodResolution(
+  hierarchy: NetteFactoryTemplateOwnerHierarchy,
+  methodName: string,
+): MethodResolution | null {
+  const normalizedName = methodName.trim();
+  const precedence = hierarchy.precedence;
+
+  if (!PHP_IDENTIFIER.test(normalizedName) || !precedence) {
+    return null;
+  }
+
+  return resolveMethod(
+    precedence,
+    precedence.rootIndex,
+    normalizedName.toLowerCase(),
+    new Set(),
   );
 }
 

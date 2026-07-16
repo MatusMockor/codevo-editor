@@ -54,6 +54,56 @@ describe("nettePresenterLinkDiagnostics", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  it("suppresses missing-signal diagnostics for an incomplete factory hierarchy", async () => {
+    const ownerPath = `${ROOT}/app/Components/Grid.php`;
+    const diagnostics = await nettePresenterLinkDiagnostics(
+      context({
+        currentRelativePath: "app/Notifications/datagrid.latte",
+        files: {},
+        loadFactoryTemplateOwner: vi.fn(async () => ({
+          className: "App\\Components\\Grid",
+          dependencyPaths: [ownerPath],
+          factoryPaths: [`${ROOT}/app/Notifications/DatagridFactory.php`],
+          path: ownerPath,
+          source: "<?php class Grid extends MissingGridBase {}",
+        })),
+        readPhpClassSource: vi.fn(async () => null),
+      }),
+      `{link page!}`,
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("warns for a missing signal only when the factory hierarchy is complete", async () => {
+    const ownerPath = `${ROOT}/app/Components/Grid.php`;
+    const diagnostics = await nettePresenterLinkDiagnostics(
+      context({
+        currentRelativePath: "app/Notifications/datagrid.latte",
+        files: {},
+        loadFactoryTemplateOwner: vi.fn(async () => ({
+          className: "App\\Components\\Grid",
+          dependencyPaths: [ownerPath],
+          factoryPaths: [`${ROOT}/app/Notifications/DatagridFactory.php`],
+          path: ownerPath,
+          source: "<?php class Grid {}",
+        })),
+      }),
+      `{link page!}`,
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      code: "nette.missingPresenterMethod",
+      data: {
+        candidateMethodNames: ["handlePage"],
+        kind: "missing-presenter-method",
+        presenterPath: ownerPath,
+        target: "page!",
+      },
+    });
+  });
+
   it("warns when a static action link resolves to an existing presenter without an action or render method", async () => {
     const diagnostics = await runDiagnostics(
       `{link Product:show}`,

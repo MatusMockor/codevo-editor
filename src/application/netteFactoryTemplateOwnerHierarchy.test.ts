@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { NetteControlDependencies } from "./netteControlContracts";
 import {
   aggregateNetteFactoryTemplateOwnerLifecycleMembers,
+  canProveNetteFactoryTemplateOwnerMethodAbsence,
   findNetteFactoryTemplateOwnerMethodSource,
   loadNetteFactoryTemplateOwnerHierarchy,
   type NetteFactoryTemplateOwnerHierarchyContext,
@@ -244,16 +245,21 @@ class Widget extends BaseWidget {
       TEMPLATE,
     );
 
-    expect(hierarchy?.precedence).toBeNull();
+    expect(hierarchy?.precedence).not.toBeNull();
     expect(
       findNetteFactoryTemplateOwnerMethodSource(hierarchy!, "beforeRender"),
     ).toBeNull();
     expect(
       aggregateNetteFactoryTemplateOwnerLifecycleMembers(hierarchy!),
-    ).toBeNull();
+    ).toEqual([]);
+    expect(
+      canProveNetteFactoryTemplateOwnerMethodAbsence(hierarchy!, [
+        "beforeRender",
+      ]),
+    ).toBe(false);
   });
 
-  it("does not use owner methods when its declared parent is unloaded", async () => {
+  it("keeps owner methods safe when its declared parent is unloaded", async () => {
     const hierarchy = await loadNetteFactoryTemplateOwnerHierarchy(
       makeContext({
         ownerSource: `<?php
@@ -264,16 +270,19 @@ class Widget extends MissingBase {
       TEMPLATE,
     );
 
-    expect(hierarchy?.precedence).toBeNull();
+    expect(hierarchy?.precedence).not.toBeNull();
     expect(
-      findNetteFactoryTemplateOwnerMethodSource(hierarchy!, "startup"),
-    ).toBeNull();
+      findNetteFactoryTemplateOwnerMethodSource(hierarchy!, "startup")?.source
+        .path,
+    ).toBe(OWNER_PATH);
     expect(
-      aggregateNetteFactoryTemplateOwnerLifecycleMembers(hierarchy!),
-    ).toBeNull();
+      aggregateNetteFactoryTemplateOwnerLifecycleMembers(hierarchy!)?.map(
+        (entry) => entry.lifecycle.methodName,
+      ),
+    ).toEqual(["startup"]);
   });
 
-  it("marks ancestry beyond the helper depth bound incomplete", async () => {
+  it("resolves an owner method in a synthetic depth-bound fixture", async () => {
     const deepSources = Object.fromEntries(
       Array.from({ length: 5 }, (_, index) => {
         const level = index + 1;
@@ -298,13 +307,95 @@ class Widget extends Level1 {
     );
 
     expect(hierarchy?.sources).toHaveLength(6);
-    expect(hierarchy?.precedence).toBeNull();
+    expect(hierarchy?.precedence).not.toBeNull();
     expect(
-      findNetteFactoryTemplateOwnerMethodSource(hierarchy!, "startup"),
-    ).toBeNull();
+      findNetteFactoryTemplateOwnerMethodSource(hierarchy!, "startup")?.source
+        .path,
+    ).toBe(OWNER_PATH);
     expect(
-      aggregateNetteFactoryTemplateOwnerLifecycleMembers(hierarchy!),
-    ).toBeNull();
+      aggregateNetteFactoryTemplateOwnerLifecycleMembers(hierarchy!)?.map(
+        (entry) => entry.lifecycle.methodName,
+      ),
+    ).toEqual(["startup"]);
+    expect(
+      canProveNetteFactoryTemplateOwnerMethodAbsence(hierarchy!, [
+        "handleUnknown",
+      ]),
+    ).toBe(false);
+  });
+
+  it("matches the ebox Ublaboo DataGrid and Nette package hierarchy", async () => {
+    const packageSources = eboxDataGridPackageSources();
+    const hierarchy = await loadNetteFactoryTemplateOwnerHierarchy(
+      makeContext({
+        ownerSource: String.raw`<?php
+namespace App\Components;
+class UblabooDatagrid extends \Ublaboo\DataGrid\DataGrid {}`,
+        owner: {
+          ...owner,
+          className: "App\\Components\\UblabooDatagrid",
+          path: "/project/app/Components/UblabooDatagrid.php",
+        },
+        resolveDeclaredType: packageClassName,
+        sources: packageSources,
+      }),
+      TEMPLATE,
+    );
+
+    expect(hierarchy?.sources.map((source) => source.path)).toEqual([
+      "/project/app/Components/UblabooDatagrid.php",
+      packageSources["Ublaboo\\DataGrid\\DataGrid"]?.path,
+      packageSources[
+        "Ublaboo\\DataGrid\\AggregationFunction\\TDataGridAggregationFunction"
+      ]?.path,
+      packageSources["Nette\\Application\\UI\\Control"]?.path,
+      packageSources["Nette\\Application\\UI\\Component"]?.path,
+      packageSources["Nette\\ComponentModel\\ArrayAccess"]?.path,
+      packageSources["Nette\\ComponentModel\\Container"]?.path,
+      packageSources["Nette\\ComponentModel\\Component"]?.path,
+    ]);
+    expect(
+      findNetteFactoryTemplateOwnerMethodSource(hierarchy!, "handlePage")
+        ?.source.path,
+    ).toBe(packageSources["Ublaboo\\DataGrid\\DataGrid"]?.path);
+    expect(
+      findNetteFactoryTemplateOwnerMethodSource(hierarchy!, "isPaginated")
+        ?.source.path,
+    ).toBe(packageSources["Ublaboo\\DataGrid\\DataGrid"]?.path);
+    expect(
+      aggregateNetteFactoryTemplateOwnerLifecycleMembers(hierarchy!)?.map(
+        (entry) => entry.lifecycle.methodName,
+      ),
+    ).toContain("handlePage");
+    expect(
+      canProveNetteFactoryTemplateOwnerMethodAbsence(hierarchy!, [
+        "handleUnknown",
+      ]),
+    ).toBe(false);
+  });
+
+  it("proves absence only across a complete hierarchy", async () => {
+    const hierarchy = await loadNetteFactoryTemplateOwnerHierarchy(
+      makeContext({
+        ownerSource: `<?php
+class Widget {
+  public function handlePage(): void {}
+}`,
+      }),
+      TEMPLATE,
+    );
+
+    expect(
+      canProveNetteFactoryTemplateOwnerMethodAbsence(hierarchy!, [
+        "handlePage",
+      ]),
+    ).toBe(false);
+    expect(
+      canProveNetteFactoryTemplateOwnerMethodAbsence(hierarchy!, [
+        "handleMissing",
+        "renderMissing",
+      ]),
+    ).toBe(true);
   });
 
   it("ignores ambiguous source files for method and lifecycle queries", () => {
@@ -362,8 +453,10 @@ function makeContext(
   overrides: {
     isRequestedRootActive?: () => boolean;
     loadOwner?: NetteFactoryTemplateOwnerHierarchyContext["loadOwner"];
+    owner?: NetteFactoryTemplateOwner;
     ownerSource?: string;
     readPhpClassSource?: NetteControlDependencies["readPhpClassSource"];
+    resolveDeclaredType?: NetteControlDependencies["resolveDeclaredType"];
     sources?: Record<string, { path: string; source: string }>;
   } = {},
 ): NetteFactoryTemplateOwnerHierarchyContext {
@@ -383,15 +476,119 @@ function makeContext(
       readPhpClassSource:
         overrides.readPhpClassSource ??
         vi.fn(async (className: string) => sources[className] ?? null),
-      resolveDeclaredType: (_source, typeHint) => typeHint,
+      resolveDeclaredType:
+        overrides.resolveDeclaredType ?? ((_source, typeHint) => typeHint),
     },
     isRequestedRootActive:
       overrides.isRequestedRootActive ?? (() => true),
     loadOwner:
       overrides.loadOwner ??
       vi.fn(async () => ({
-        ...owner,
+        ...(overrides.owner ?? owner),
         source: overrides.ownerSource ?? owner.source,
       })),
   };
+}
+
+function eboxDataGridPackageSources(): Record<
+  string,
+  { path: string; source: string }
+> {
+  return {
+    "Nette\\Application\\UI\\Component": {
+      path: "/project/vendor/nette/application/src/Application/UI/Component.php",
+      source: String.raw`<?php
+namespace Nette\Application\UI;
+abstract class Component extends \Nette\ComponentModel\Container {
+  use \Nette\ComponentModel\ArrayAccess;
+}`,
+    },
+    "Nette\\Application\\UI\\Control": {
+      path: "/project/vendor/nette/application/src/Application/UI/Control.php",
+      source: String.raw`<?php
+namespace Nette\Application\UI;
+abstract class Control extends Component {}`,
+    },
+    "Nette\\ComponentModel\\ArrayAccess": {
+      path: "/project/vendor/nette/component-model/src/ComponentModel/ArrayAccess.php",
+      source: String.raw`<?php
+namespace Nette\ComponentModel;
+trait ArrayAccess {}`,
+    },
+    "Nette\\ComponentModel\\Component": {
+      path: "/project/vendor/nette/component-model/src/ComponentModel/Component.php",
+      source: String.raw`<?php
+namespace Nette\ComponentModel;
+abstract class Component { use \Nette\SmartObject; }`,
+    },
+    "Nette\\ComponentModel\\Container": {
+      path: "/project/vendor/nette/component-model/src/ComponentModel/Container.php",
+      source: String.raw`<?php
+namespace Nette\ComponentModel;
+class Container extends Component {}`,
+    },
+    "Ublaboo\\DataGrid\\AggregationFunction\\TDataGridAggregationFunction": {
+      path:
+        "/project/vendor/ublaboo/datagrid/src/AggregationFunction/TDataGridAggregationFunction.php",
+      source: String.raw`<?php
+namespace Ublaboo\DataGrid\AggregationFunction;
+trait TDataGridAggregationFunction {}`,
+    },
+    "Ublaboo\\DataGrid\\DataGrid": {
+      path: "/project/vendor/ublaboo/datagrid/src/DataGrid.php",
+      source: String.raw`<?php
+namespace Ublaboo\DataGrid;
+use Nette\Application\UI\Control;
+use Ublaboo\DataGrid\AggregationFunction\TDataGridAggregationFunction;
+class DataGrid extends Control {
+  use TDataGridAggregationFunction;
+  public function handlePage(int $page): void {}
+  public function isPaginated(): bool { return true; }
+}`,
+    },
+  };
+}
+
+function packageClassName(source: string, typeHint: string | null): string | null {
+  if (!typeHint) {
+    return null;
+  }
+
+  const normalized = typeHint.replace(/^\\+/, "");
+
+  if (normalized.includes("\\")) {
+    return normalized;
+  }
+
+  if (source.includes("namespace App\\Components")) {
+    return normalized === "UblabooDatagrid"
+      ? "App\\Components\\UblabooDatagrid"
+      : normalized;
+  }
+
+  if (source.includes("namespace Ublaboo\\DataGrid\\AggregationFunction")) {
+    return `Ublaboo\\DataGrid\\AggregationFunction\\${normalized}`;
+  }
+
+  if (source.includes("namespace Ublaboo\\DataGrid")) {
+    if (normalized === "Control") {
+      return "Nette\\Application\\UI\\Control";
+    }
+
+    if (normalized === "TDataGridAggregationFunction") {
+      return "Ublaboo\\DataGrid\\AggregationFunction\\TDataGridAggregationFunction";
+    }
+
+    return `Ublaboo\\DataGrid\\${normalized}`;
+  }
+
+  if (source.includes("namespace Nette\\Application\\UI")) {
+    return `Nette\\Application\\UI\\${normalized}`;
+  }
+
+  if (source.includes("namespace Nette\\ComponentModel")) {
+    return `Nette\\ComponentModel\\${normalized}`;
+  }
+
+  return normalized;
 }

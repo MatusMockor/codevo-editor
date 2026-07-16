@@ -5,7 +5,10 @@ import type {
   NetteLinkTarget,
 } from "../domain/latteLinkNavigation";
 import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
-import { findNetteFactoryTemplateOwnerMethodSource } from "./netteFactoryTemplateOwnerHierarchy";
+import {
+  canProveNetteFactoryTemplateOwnerMethodAbsence,
+  findNetteFactoryTemplateOwnerMethodSource,
+} from "./netteFactoryTemplateOwnerHierarchy";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 import {
   createNettePresenterResolutionRun,
@@ -135,6 +138,16 @@ async function diagnosticForDetection(
         factoryHierarchy,
         methodName,
       ),
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    factoryHierarchy &&
+    !canProveNetteFactoryTemplateOwnerMethodAbsence(
+      factoryHierarchy,
+      methodNames,
     )
   ) {
     return null;

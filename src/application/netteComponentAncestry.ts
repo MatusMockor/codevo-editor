@@ -8,6 +8,8 @@ export interface NetteAncestorComponentSource {
 }
 
 const MAX_ANCESTOR_DEPTH = 5;
+const MAX_ANCESTOR_SOURCE_READS = 64;
+const MAX_ANCESTOR_SOURCES = 32;
 
 export async function netteAncestorComponentSources(
   deps: NetteControlDependencies,
@@ -21,6 +23,7 @@ export async function netteAncestorComponentSources(
   }
 
   const ancestors: NetteAncestorComponentSource[] = [];
+  let sourceReads = 0;
   const visitedClassKeys = new Set<string>();
   const visitedPaths = new Set<string>();
   const queue: Array<{ depth: number; source: string }> = [
@@ -35,6 +38,14 @@ export async function netteAncestorComponentSources(
     current = queue.shift()
   ) {
     for (const reference of ancestorClassReferences(current.source)) {
+      if (ancestors.length >= MAX_ANCESTOR_SOURCES) {
+        return ancestors;
+      }
+
+      if (sourceReads >= MAX_ANCESTOR_SOURCE_READS) {
+        return ancestors;
+      }
+
       const resolved =
         deps.resolveDeclaredType(current.source, reference) ?? reference;
       const className = resolved.trim().replace(/^\\+/, "");
@@ -46,6 +57,7 @@ export async function netteAncestorComponentSources(
 
       visitedClassKeys.add(classKey);
 
+      sourceReads += 1;
       const ancestor = await readPhpClassSource(className);
 
       if (!isRequestedRootActive()) {
