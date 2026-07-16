@@ -1,0 +1,235 @@
+import { describe, expect, it, vi } from "vitest";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
+import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
+import {
+  resolveLatteExpressionVariableType,
+  type LatteExpressionResolutionContext,
+} from "./latteExpressionIntelligence";
+import type {
+  LatteProviderFlowCaches,
+  LatteProviderFlowFactoryOptions,
+} from "./latteProviderFlowContext";
+import type { LatteProviderRequestContext } from "./latteProviderRequestContext";
+import { latteExpressionResolutionContext } from "./netteLatteProviderOptions";
+import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+
+const HOME_TEMPLATE = "app/UI/Home/default.latte";
+const ADMIN_TEMPLATE = "app/UI/Admin/default.latte";
+
+describe("path-aware Latte expression type resolution", () => {
+  it("resolves two template paths in one root without consulting the active document", async () => {
+    const root = "/workspace";
+    const getActiveDocument = vi.fn(() => ({
+      path: `${root}/app/UI/Active/default.latte`,
+    }));
+    const context = expressionContext(root, {
+      [`${root}/app/UI/Admin/AdminPresenter.php`]: presenterSource(
+        "Root\\Admin",
+        "AdminPresenter",
+      ),
+      [`${root}/app/UI/Home/HomePresenter.php`]: presenterSource(
+        "Root\\Home",
+        "HomePresenter",
+      ),
+    }, getActiveDocument);
+
+    await expect(callerVariableType(context.forTemplate(HOME_TEMPLATE))).resolves.toBe(
+      "Root\\Home\\HomeRecord",
+    );
+    await expect(
+      callerVariableType(context.forTemplate(ADMIN_TEMPLATE)),
+    ).resolves.toBe("Root\\Admin\\AdminRecord");
+    expect(getActiveDocument).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit template resolution isolated by requested root", async () => {
+    const rootA = "/workspace-a";
+    const rootB = "/workspace-b";
+    const files = {
+      [`${rootA}/app/UI/Home/HomePresenter.php`]: presenterSource(
+        "ProjectA\\Home",
+        "HomePresenter",
+      ),
+      [`${rootB}/app/UI/Home/HomePresenter.php`]: presenterSource(
+        "ProjectB\\Home",
+        "HomePresenter",
+      ),
+    };
+    const caches = providerCaches();
+    const contextA = expressionContext(rootA, files, undefined, undefined, undefined, caches);
+    const contextB = expressionContext(rootB, files, undefined, undefined, undefined, caches);
+
+    await expect(
+      callerVariableType(contextA.forTemplate(HOME_TEMPLATE)),
+    ).resolves.toBe("ProjectA\\Home\\HomeRecord");
+    await expect(
+      callerVariableType(contextB.forTemplate(HOME_TEMPLATE)),
+    ).resolves.toBe("ProjectB\\Home\\HomeRecord");
+  });
+
+  it("drops a path-targeted result when its captured root becomes stale", async () => {
+    const root = "/workspace";
+    const currentWorkspaceRootRef = { current: root as string | null };
+    const context = expressionContext(
+      root,
+      {
+        [`${root}/app/UI/Home/HomePresenter.php`]: presenterSource(
+          "Root\\Home",
+          "HomePresenter",
+        ),
+      },
+      undefined,
+      currentWorkspaceRootRef,
+      () => {
+        currentWorkspaceRootRef.current = "/other";
+      },
+    );
+
+    await expect(
+      callerVariableType(context.forTemplate(HOME_TEMPLATE)),
+    ).resolves.toBeNull();
+  });
+});
+
+function callerVariableType(
+  context: LatteExpressionResolutionContext,
+): Promise<string | null> {
+  return resolveLatteExpressionVariableType(
+    context,
+    "{$record}",
+    3,
+    "record",
+  );
+}
+
+function expressionContext(
+  root: string,
+  files: Record<string, string>,
+  getActiveDocument = vi.fn(() => ({ path: `${root}/active.latte` })),
+  currentWorkspaceRootRef = { current: root as string | null },
+  afterRead?: () => void,
+  caches = providerCaches(),
+): LatteExpressionResolutionContext {
+  const deps = dependencies(
+    root,
+    files,
+    getActiveDocument,
+    currentWorkspaceRootRef,
+    afterRead,
+  );
+  const request: LatteProviderRequestContext = {
+    currentTemplateRelativePath: "active.latte",
+    deps,
+    isRequestedRootActive: () => currentWorkspaceRootRef.current === root,
+    requestedRoot: root,
+  };
+
+  return latteExpressionResolutionContext(options(deps, caches), request);
+}
+
+function dependencies(
+  root: string,
+  files: Record<string, string>,
+  getActiveDocument: () => { path: string },
+  currentWorkspaceRootRef: { current: string | null },
+  afterRead?: () => void,
+): LatteIntelligenceDependencies {
+  return {
+    collectTranslationTargets: vi.fn(async () => []),
+    currentWorkspaceRootRef,
+    findTranslationTarget: vi.fn(async () => null),
+    frameworkIntelligence: createPhpFrameworkIntelligence({
+      matchedProviderIds: [phpNetteFrameworkProvider.id],
+      profile: "nette",
+      providers: [phpNetteFrameworkProvider],
+    }),
+    getActiveDocument,
+    isSemanticIntelligenceActive: true,
+    joinPath: (rootPath, relativePath) => `${rootPath}/${relativePath}`,
+    listDirectory: vi.fn(async () => []),
+    openPhpMethodTarget: vi.fn(async () => false),
+    openPhpPropertyTarget: vi.fn(async () => false),
+    openTarget: vi.fn(async () => false),
+    readFileContent: vi.fn(async (path: string) => {
+      const source = files[path];
+
+      if (!source) {
+        throw new Error(`missing ${path}`);
+      }
+
+      afterRead?.();
+      return source;
+    }),
+    resolveDeclaredType: (_source, typeHint) => typeHint,
+    resolveExpressionType: vi.fn(async (source, _position, expression) => {
+      const namespaceName = /\bnamespace\s+([^;]+);/.exec(source)?.[1];
+      const className = /\bnew\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(expression)?.[1];
+
+      return namespaceName && className
+        ? `${namespaceName}\\${className}`
+        : null;
+    }),
+    resolvePhpReceiverCompletions: vi.fn(async () => []),
+    searchText: vi.fn(async () => []),
+    synthesizeTypedReceiverSource: () => ({
+      position: { column: 1, lineNumber: 1 },
+      source: "<?php",
+    }),
+    toRelativePath: (rootPath, path) =>
+      path.startsWith(`${rootPath}/`) ? path.slice(rootPath.length + 1) : path,
+    workspaceRoot: root,
+  };
+}
+
+function options(
+  deps: LatteIntelligenceDependencies,
+  caches: LatteProviderFlowCaches,
+): LatteProviderFlowFactoryOptions {
+  return {
+    caches,
+    frameworkCapabilities: {
+      detectLattePresenterLinkAt: () => null,
+      isPresenterSourcePath: () => false,
+      lattePresenterLinkCompletionContextAt: () => null,
+      parsePresenterLinkTarget: () => null,
+      presenterActionMethodCandidates: () => [],
+      presenterClassCandidatePathsForLink: () => [],
+      presenterLinkTargetsFromSource: () => [],
+      presenterScanDirectories: [],
+      viewDataEntryFromSource: () => null,
+      viewDataSearchQueries: () => [],
+    },
+    getDependencies: () => deps,
+    inFlight: {
+      filterInFlight: new Map(),
+      presenterInFlight: new Map(),
+      templateTypeInFlight: new Map(),
+      viewDataInFlight: new Map(),
+    },
+  };
+}
+
+function presenterSource(namespace: string, className: string): string {
+  const recordClassName = className.replace(/Presenter$/, "Record");
+
+  return `<?php
+namespace ${namespace};
+class ${className}
+{
+    protected function renderDefault(): void
+    {
+        $this->template->record = new ${recordClassName}();
+    }
+}`;
+}
+
+function providerCaches(): LatteProviderFlowCaches {
+  return {
+    componentCache: {},
+    filterCache: {},
+    presenterCache: {},
+    templateCache: {},
+    templateTypeCache: {},
+    viewDataCache: {},
+  };
+}

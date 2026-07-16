@@ -37,9 +37,6 @@ import {
 import {
   resolveLatteVariableType as resolveNetteLatteVariableType,
 } from "./latteVariableTypeResolver";
-import {
-  currentTemplatePath,
-} from "./latteIntelligenceRuntime";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import type {
   LatteFrameworkCapabilities,
@@ -71,7 +68,9 @@ const inheritedViewDataStateByCache = new WeakMap<
 
 export interface LatteExpressionResolutionContext {
   collectProjectFilterNames(): Promise<readonly string[]>;
+  readonly currentTemplateRelativePath: string;
   deps: LatteIntelligenceDependencies;
+  forTemplate(relativePath: string): LatteExpressionResolutionContext;
   frameworkCapabilities: LatteFrameworkCapabilities;
   isRequestedRootActive: () => boolean;
   maxCompletions: number;
@@ -136,7 +135,14 @@ function latteExpressionDefinitionContext(
       offset: number,
       variableName: string,
       depth: number,
-    ) => resolveLatteVariableType(context, source, offset, variableName, depth),
+    ) =>
+      resolveLatteExpressionVariableType(
+        context,
+        source,
+        offset,
+        variableName,
+        depth,
+      ),
     viewNames: () => latteCandidateViewNames(context),
   };
 }
@@ -168,7 +174,14 @@ function latteExpressionCompletionContext(
       offset: number,
       variableName: string,
       depth: number,
-    ) => resolveLatteVariableType(context, source, offset, variableName, depth),
+    ) =>
+      resolveLatteExpressionVariableType(
+        context,
+        source,
+        offset,
+        variableName,
+        depth,
+      ),
   };
 }
 
@@ -184,12 +197,12 @@ async function collectLatteVariableCandidates(
   );
 }
 
-async function resolveLatteVariableType(
+export async function resolveLatteExpressionVariableType(
   context: LatteExpressionResolutionContext,
   source: string,
   offset: number,
   variableName: string,
-  depth: number,
+  depth = 0,
 ): Promise<string | null> {
   return resolveNetteLatteVariableType(
     latteVariableTypeContext(context),
@@ -242,8 +255,12 @@ async function currentNettePresenterClassName(
 }
 
 function netteCurrentClassContext(context: LatteExpressionResolutionContext) {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+  const {
+    currentTemplateRelativePath: templateRelativePath,
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+  } = context;
 
   if (!templateRelativePath) {
     return null;
@@ -291,7 +308,7 @@ async function loadLatteViewDataEntries(
       ),
     ttlMs: LATTE_VIEW_DATA_CACHE_TTL_MS,
   });
-  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+  const templateRelativePath = context.currentTemplateRelativePath;
 
   if (!templateRelativePath || !hasNetteViewDataProvider(context)) {
     return existingEntriesLoad;
@@ -412,8 +429,12 @@ function latteTemplateTypeContext(context: LatteExpressionResolutionContext) {
 async function latteCandidateViewNames(
   context: LatteExpressionResolutionContext,
 ): Promise<string[]> {
-  const { deps, isRequestedRootActive, requestedRoot } = context;
-  const templateRelativePath = currentTemplatePath(deps, requestedRoot);
+  const {
+    currentTemplateRelativePath: templateRelativePath,
+    deps,
+    isRequestedRootActive,
+    requestedRoot,
+  } = context;
 
   if (!templateRelativePath) {
     return [];

@@ -33,7 +33,7 @@ export function latteExpressionResolutionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ): LatteExpressionResolutionContext {
-  return {
+  const shared = {
     collectProjectFilterNames: () =>
       loadLatteFilterNames(latteFilterDiscoveryContext(options, request)),
     deps: request.deps,
@@ -46,6 +46,15 @@ export function latteExpressionResolutionContext(
     viewDataCache: options.caches.viewDataCache,
     viewDataInFlight: options.inFlight.viewDataInFlight,
   };
+  const forTemplate = (
+    currentTemplateRelativePath: string,
+  ): LatteExpressionResolutionContext => ({
+    ...shared,
+    currentTemplateRelativePath,
+    forTemplate,
+  });
+
+  return forTemplate(request.currentTemplateRelativePath);
 }
 
 export function latteFilterDefinitionContext(
