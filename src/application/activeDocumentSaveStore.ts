@@ -32,6 +32,11 @@ export interface DocumentSaveAcknowledgement {
 
 export interface ActiveDocumentSaveStorePort {
   current(target: DocumentSaveTarget): EditorDocument | null;
+  reconcileUnchangedPreparedContent?(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+    preparedContent: string,
+  ): EditorDocument | null;
   acknowledgeIssuedWrite(
     target: DocumentSaveTarget,
     acknowledgement: DocumentSaveAcknowledgement,
@@ -66,6 +71,56 @@ export class ActiveDocumentSaveStore implements ActiveDocumentSaveStorePort {
     }
 
     return this.dependencies.documentsRef.current[target.path] ?? null;
+  }
+
+  reconcileUnchangedPreparedContent(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+    preparedContent: string,
+  ): EditorDocument | null {
+    if (!this.isCurrent(target)) {
+      return null;
+    }
+    const liveDocument = this.dependencies.documentsRef.current[target.path];
+    if (liveDocument !== expectedDocument) {
+      return null;
+    }
+    if (liveDocument.path !== target.path) {
+      return null;
+    }
+    if (preparedContent !== liveDocument.savedContent) {
+      return null;
+    }
+    if (liveDocument.content === preparedContent) {
+      return liveDocument;
+    }
+
+    const reconciledDocument = {
+      ...liveDocument,
+      content: preparedContent,
+    };
+    this.dependencies.documentsRef.current = {
+      ...this.dependencies.documentsRef.current,
+      [target.path]: reconciledDocument,
+    };
+    if (this.dependencies.activeDocumentRef.current === liveDocument) {
+      this.dependencies.activeDocumentRef.current = reconciledDocument;
+    }
+    this.dependencies.setDocuments((current) => {
+      if (!this.isCurrent(target)) {
+        return current;
+      }
+      if (current[target.path] !== liveDocument) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [target.path]: reconciledDocument,
+      };
+    });
+
+    return reconciledDocument;
   }
 
   acknowledgeIssuedWrite(

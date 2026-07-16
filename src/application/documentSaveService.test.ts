@@ -111,6 +111,24 @@ function createHarness(options: {
       };
     },
   );
+  const reconcileUnchangedPreparedContent = vi.fn(
+    (
+      saveTarget: DocumentSaveTarget,
+      expectedDocument: EditorDocument,
+      preparedContent: string,
+    ) => {
+      const live = documents[saveTarget.path];
+      if (live !== expectedDocument || preparedContent !== live.savedContent) {
+        return null;
+      }
+
+      const reconciled = live.content === preparedContent
+        ? live
+        : { ...live, content: preparedContent };
+      documents[saveTarget.path] = reconciled;
+      return reconciled;
+    },
+  );
   const syncSavedDocument = vi.fn(async () => {
     events.push("php");
   });
@@ -125,6 +143,7 @@ function createHarness(options: {
 
       return documents[saveTarget.path] ?? null;
     },
+    reconcileUnchangedPreparedContent,
     acknowledgeIssuedWrite: acknowledgeSavedDocument,
     updateRevisionForIssuedWrite: (
       saveTarget,
@@ -178,6 +197,7 @@ function createHarness(options: {
     dependencies,
     documents,
     events,
+    reconcileUnchangedPreparedContent,
     save: () => new DocumentSaveService(dependencies).saveDocument(target),
     setCurrent: (value: boolean) => {
       current = value;
@@ -194,6 +214,148 @@ function createHarness(options: {
 }
 
 describe("DocumentSaveService", () => {
+  it("returns an unchanged save for already-clean content without persistence side effects", async () => {
+    const clean = document(PATH, "baseline", "baseline");
+    const beginDocumentSelfWrite = vi.fn(() => null);
+    const harness = createHarness({
+      documents: { [PATH]: clean },
+      overrides: {
+        formattedContentForSave: vi.fn(async (item) => item.content),
+        optimizedImportsContentForSave: vi.fn((_item, content) => content),
+        organizedImportsContentForSave: vi.fn(async (_item, content) => content),
+        resolveEditorConfigForFile: vi.fn(async () => ({})),
+        beginDocumentSelfWrite,
+      },
+    });
+
+    await expect(harness.save()).resolves.toEqual({
+      status: "saved",
+      document: clean,
+      contentIsCurrent: true,
+      persistence: "unchanged",
+      contentChanged: false,
+    });
+    expect(harness.reconcileUnchangedPreparedContent).not.toHaveBeenCalled();
+    expect(harness.tryBeginWrite).not.toHaveBeenCalled();
+    expect(beginDocumentSelfWrite).not.toHaveBeenCalled();
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(harness.acknowledgeSavedDocument).not.toHaveBeenCalled();
+    expect(harness.events).not.toContain("prefetch");
+    expect(harness.events).not.toContain("history");
+    expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+    expect(harness.syncSavedJavaScriptTypeScriptDocument).not.toHaveBeenCalled();
+  });
+
+  it("reconciles formatting back to the saved baseline without writing", async () => {
+    const dirty = document(PATH, "needs formatting", "baseline");
+    const harness = createHarness({
+      documents: { [PATH]: dirty },
+      overrides: {
+        formattedContentForSave: vi.fn(async () => "baseline"),
+        optimizedImportsContentForSave: vi.fn((_item, content) => content),
+        organizedImportsContentForSave: vi.fn(async (_item, content) => content),
+        resolveEditorConfigForFile: vi.fn(async () => ({})),
+      },
+    });
+
+    await expect(harness.save()).resolves.toEqual(
+      expect.objectContaining({
+        status: "saved",
+        contentIsCurrent: true,
+        persistence: "unchanged",
+        contentChanged: true,
+      }),
+    );
+    expect(harness.documents[PATH]).toEqual(
+      expect.objectContaining({ content: "baseline", savedContent: "baseline" }),
+    );
+    expect(harness.tryBeginWrite).not.toHaveBeenCalled();
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(harness.syncSavedDocument).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ content: "baseline" }),
+      expect.any(Function),
+    );
+    expect(harness.syncSavedJavaScriptTypeScriptDocument).toHaveBeenCalledWith(
+      ROOT,
+      expect.objectContaining({ content: "baseline" }),
+      expect.any(Function),
+    );
+  });
+
+  it("does not require a reconciliation port when content is already clean", async () => {
+    const clean = document(PATH, "baseline", "baseline");
+    const harness = createHarness({
+      documents: { [PATH]: clean },
+      overrides: {
+        formattedContentForSave: vi.fn(async (item) => item.content),
+        optimizedImportsContentForSave: vi.fn((_item, content) => content),
+        organizedImportsContentForSave: vi.fn(async (_item, content) => content),
+        resolveEditorConfigForFile: vi.fn(async () => ({})),
+      },
+    });
+    delete harness.dependencies.saveStore.reconcileUnchangedPreparedContent;
+
+    await expect(harness.save()).resolves.toEqual(
+      expect.objectContaining({
+        status: "saved",
+        document: clean,
+        persistence: "unchanged",
+        contentChanged: false,
+      }),
+    );
+  });
+
+  it("fails safely when transformed content cannot be reconciled", async () => {
+    const harness = createHarness({
+      documents: { [PATH]: document(PATH, "dirty", "baseline") },
+      overrides: {
+        formattedContentForSave: vi.fn(async () => "baseline"),
+        optimizedImportsContentForSave: vi.fn((_item, content) => content),
+        organizedImportsContentForSave: vi.fn(async (_item, content) => content),
+        resolveEditorConfigForFile: vi.fn(async () => ({})),
+      },
+    });
+    delete harness.dependencies.saveStore.reconcileUnchangedPreparedContent;
+
+    await expect(harness.save()).resolves.toEqual({ status: "stale" });
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+  });
+
+  it("restarts preparation after a concurrent edit before suppressing persistence", async () => {
+    const formatting = deferred<string>();
+    const initial = document(PATH, "first edit", "baseline");
+    const latest = document(PATH, "baseline", "baseline");
+    const formattedContentForSave = vi.fn()
+      .mockImplementationOnce(() => formatting.promise)
+      .mockImplementation(async (item: EditorDocument) => item.content);
+    const harness = createHarness({
+      documents: { [PATH]: initial },
+      overrides: {
+        formattedContentForSave,
+        optimizedImportsContentForSave: vi.fn((_item, content) => content),
+        organizedImportsContentForSave: vi.fn(async (_item, content) => content),
+        resolveEditorConfigForFile: vi.fn(async () => ({})),
+      },
+    });
+    const save = harness.save();
+    harness.documents[PATH] = latest;
+    formatting.resolve("baseline");
+
+    await expect(save).resolves.toEqual(
+      expect.objectContaining({
+        status: "saved",
+        document: latest,
+        persistence: "unchanged",
+        contentChanged: false,
+      }),
+    );
+    expect(formattedContentForSave).toHaveBeenCalledTimes(2);
+    expect(harness.tryBeginWrite).not.toHaveBeenCalled();
+    expect(harness.dependencies.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+  });
+
   it("settles its self-write before checking watcher conflicts after the write", async () => {
     let selfWriteCompleted = false;
     let writeReturned = false;
@@ -243,7 +405,11 @@ describe("DocumentSaveService", () => {
     const result = await harness.save();
 
     expect(result).toEqual(
-      expect.objectContaining({ status: "saved", contentIsCurrent: true }),
+      expect.objectContaining({
+        status: "saved",
+        contentIsCurrent: true,
+        persistence: "written",
+      }),
     );
     expect(events).toEqual([
       "format",

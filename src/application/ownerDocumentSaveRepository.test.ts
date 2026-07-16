@@ -89,6 +89,97 @@ function saveTarget(path = PATH): DocumentSaveTarget {
 }
 
 describe("OwnerDocumentSaveRepository", () => {
+  it("reconciles unchanged prepared content only in the captured owner incarnation", () => {
+    const active = candidate(otherOwner);
+    const cached = candidate(owner, "cached");
+    const repository = new OwnerDocumentSaveRepository({
+      active: () => active.candidate,
+      cached: () => cached.candidate,
+    });
+    const captured = cached.document();
+    const session = repository.resolve({
+      owner,
+      documentIdentity: "src/a.ts",
+      document: captured,
+    });
+
+    const reconciled = session?.saveStore.reconcileUnchangedPreparedContent?.(
+      saveTarget(),
+      captured,
+      "saved",
+    );
+
+    expect(reconciled).toEqual(
+      expect.objectContaining({ content: "saved", savedContent: "saved" }),
+    );
+    expect(cached.document()).toBe(reconciled);
+    expect(active.document().content).toBe("edited");
+  });
+
+  it("rejects unchanged reconciliation for a different project root", () => {
+    const active = candidate();
+    const repository = new OwnerDocumentSaveRepository({
+      active: () => active.candidate,
+      cached: () => null,
+    });
+    const captured = active.document();
+    const session = repository.resolve({
+      owner,
+      documentIdentity: "src/a.ts",
+      document: captured,
+    });
+
+    expect(
+      session?.saveStore.reconcileUnchangedPreparedContent?.(
+        { ...saveTarget(), rootPath: "/other-workspace" },
+        captured,
+        "saved",
+      ),
+    ).toBeNull();
+    expect(active.document()).toBe(captured);
+  });
+
+  it("rejects unchanged reconciliation after a concurrent edit or incarnation replacement", () => {
+    const active = candidate();
+    const repository = new OwnerDocumentSaveRepository({
+      active: () => active.candidate,
+      cached: () => null,
+    });
+    const captured = active.document();
+    const editedSession = repository.resolve({
+      owner,
+      documentIdentity: "src/a.ts",
+      document: captured,
+    });
+    const concurrent = { ...captured, content: "concurrent edit" };
+    active.editDocument(concurrent);
+
+    expect(
+      editedSession?.saveStore.reconcileUnchangedPreparedContent?.(
+        saveTarget(),
+        captured,
+        "saved",
+      ),
+    ).toBeNull();
+    expect(active.document()).toBe(concurrent);
+
+    const replacementSession = repository.resolve({
+      owner,
+      documentIdentity: "src/a.ts",
+      document: concurrent,
+    });
+    const replacement = { ...concurrent, content: "reopened" };
+    active.replaceDocument(replacement);
+    expect(
+      replacementSession?.saveStore.reconcileUnchangedPreparedContent?.(
+        saveTarget(),
+        concurrent,
+        "saved",
+      ),
+    ).toBeNull();
+    expect(active.document()).toBe(replacement);
+  });
+
   it("resolves the captured active document and acknowledges into that incarnation", () => {
     const active = candidate();
     const repository = new OwnerDocumentSaveRepository({

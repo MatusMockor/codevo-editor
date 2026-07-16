@@ -95,6 +95,70 @@ function acknowledgement(
 }
 
 describe("ActiveDocumentSaveStore", () => {
+  it("reconciles prepared content back to the saved baseline", () => {
+    const harness = createHarness();
+
+    const reconciled = harness.store.reconcileUnchangedPreparedContent(
+      harness.target,
+      harness.initialDocument,
+      "saved",
+    );
+
+    expect(reconciled).toEqual(
+      expect.objectContaining({ content: "saved", savedContent: "saved" }),
+    );
+    expect(harness.documentsRef.current[PATH]).toBe(reconciled);
+    expect(harness.activeDocumentRef.current).toBe(reconciled);
+    expect(harness.setDocuments).toHaveBeenCalledOnce();
+  });
+
+  it("preserves document identity when unchanged content is already clean", () => {
+    const harness = createHarness();
+    harness.initialDocument.content = "saved";
+    const documents = harness.documentsRef.current;
+
+    const reconciled = harness.store.reconcileUnchangedPreparedContent(
+      harness.target,
+      harness.initialDocument,
+      "saved",
+    );
+
+    expect(reconciled).toBe(harness.initialDocument);
+    expect(harness.documentsRef.current).toBe(documents);
+    expect(harness.activeDocumentRef.current).toBe(harness.initialDocument);
+    expect(harness.setDocuments).not.toHaveBeenCalled();
+  });
+
+  it.each(["root", "token", "lease", "document"] as const)(
+    "rejects unchanged reconciliation after the %s guard changes",
+    (guard) => {
+      const harness = createHarness();
+      if (guard === "root") {
+        harness.currentWorkspaceRootRef.current = "/other";
+      }
+      if (guard === "token") {
+        harness.workspaceRequestTokenRef.current += 1;
+      }
+      if (guard === "lease") {
+        harness.expireLease();
+      }
+      if (guard === "document") {
+        harness.documentsRef.current = {
+          [PATH]: { ...harness.initialDocument, content: "concurrent edit" },
+        };
+      }
+
+      expect(
+        harness.store.reconcileUnchangedPreparedContent(
+          harness.target,
+          harness.initialDocument,
+          "saved",
+        ),
+      ).toBeNull();
+      expect(harness.setDocuments).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["root", "token", "lease"] as const)(
     "rejects current reads and revision recovery after %s expiry",
     (guard) => {

@@ -1518,7 +1518,7 @@ describe("useWorkbenchController preview tabs", () => {
         recentWorkspacePath: "/workspace",
       },
       localHistoryGateway,
-      readTextFile: vi.fn(async () => "<?php // v1\n"),
+      readTextFile: vi.fn(async () => "<?php // initial\n"),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         autoSave: false,
@@ -1602,10 +1602,10 @@ describe("useWorkbenchController preview tabs", () => {
         recentWorkspacePath: "/workspace",
       },
       localHistoryGateway,
-      readTextFile: vi.fn(async () => "<?php // v1\n"),
+      readTextFile: vi.fn(async () => "<?php // initial\n"),
       workspaceFiles: {
         readTextFileSnapshot: vi.fn(async () => ({
-          content: "<?php // v1\n",
+          content: "<?php // initial\n",
           revision: initialRevision,
         })),
         writeTextFileForWorkspace,
@@ -9102,7 +9102,7 @@ describe("useWorkbenchController preview tabs", () => {
       javaScriptTypeScriptInitialRuntimeStatus: runningStatus(321),
       javaScriptTypeScriptLanguageServerRuntimeGateway,
       javaScriptTypeScriptRuntimeStatus: runningStatus(321),
-      readTextFile: vi.fn(async () => "export const value = 1;\n"),
+      readTextFile: vi.fn(async () => "export const value = 0;\n"),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
     });
     vi.mocked(
@@ -9112,6 +9112,9 @@ describe("useWorkbenchController preview tabs", () => {
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("export const value = 1;\n");
     });
     const command = getWorkbench().commands.find(
       (candidate) => candidate.id === "editor.save",
@@ -9182,7 +9185,7 @@ describe("useWorkbenchController preview tabs", () => {
         recentWorkspacePath: "/workspace",
       },
       languageServerRuntimeGateway,
-      readTextFile: vi.fn(async () => "<?php\nfinal class User {}\n"),
+      readTextFile: vi.fn(async () => "<?php\nclass User {}\n"),
       runtimeStatus: runningStatus(341),
     });
     vi.mocked(dependencies.documentSyncGateway.didSave).mockImplementationOnce(
@@ -9192,6 +9195,9 @@ describe("useWorkbenchController preview tabs", () => {
 
     await act(async () => {
       await getWorkbench().openPinnedFile(fileEntry(path, "User.php"));
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\nfinal class User {}\n");
     });
     const command = getWorkbench().commands.find(
       (candidate) => candidate.id === "editor.save",
@@ -10264,7 +10270,7 @@ describe("useWorkbenchController preview tabs", () => {
           recentWorkspacePath: "/workspace",
           workspaceTabs: ["/workspace"],
         },
-        readTextFile: vi.fn(async () => phpWithUnusedImport),
+        readTextFile: vi.fn(async () => "<?php\n"),
         workspaceDescriptor: phpWorkspaceDescriptor(),
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
@@ -10302,7 +10308,7 @@ describe("useWorkbenchController preview tabs", () => {
           recentWorkspacePath: "/workspace",
           workspaceTabs: ["/workspace"],
         },
-        readTextFile: vi.fn(async () => content),
+        readTextFile: vi.fn(async () => "export {};\n"),
         workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
         workspaceSettings: {
           ...defaultWorkspaceSettings(),
@@ -12768,6 +12774,9 @@ describe("useWorkbenchController preview tabs", () => {
       publishRuntimeStatus?.(runningStatus(66));
     });
     await flushAsyncTurns(24);
+    act(() => {
+      getWorkbench().updateActiveDocument("<?php\n$comment->refresh();\n");
+    });
 
     await act(async () => {
       await getWorkbench().saveActiveDocument();
@@ -70479,8 +70488,8 @@ class PostRepository
 
       expect(
         dependencies.workspaceGateways.files.writeTextFile,
-      ).toHaveBeenLastCalledWith(
-        "/workspace/app/User.php",
+      ).not.toHaveBeenCalled();
+      expect(getWorkbench().activeDocument?.content).toBe(
         "<?php\nclass User {}\n",
       );
     });

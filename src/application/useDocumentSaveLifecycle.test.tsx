@@ -78,6 +78,7 @@ interface Harness {
   syncSavedDocument: ReturnType<typeof vi.fn>;
   syncSavedJavaScriptTypeScriptDocument: ReturnType<typeof vi.fn>;
   setMessage: ReturnType<typeof vi.fn>;
+  runEslintAnalysisOnSave: ReturnType<typeof vi.fn>;
   runPhpstanAnalysisOnSave: ReturnType<typeof vi.fn>;
   replaceDocument: (next: EditorDocument) => void;
   rerender: (overrides: Partial<DocumentSaveLifecycleDependencies>) => void;
@@ -105,6 +106,7 @@ function renderLifecycle(
   const syncSavedDocument = vi.fn(async () => undefined);
   const syncSavedJavaScriptTypeScriptDocument = vi.fn(async () => undefined);
   const setMessage = vi.fn();
+  const runEslintAnalysisOnSave = vi.fn();
   const runPhpstanAnalysisOnSave = vi.fn();
 
   const dependencies: DocumentSaveLifecycleDependencies = {
@@ -139,7 +141,7 @@ function renderLifecycle(
     syncSavedJavaScriptTypeScriptDocument,
     beginDocumentSelfWrite: () => null,
     reportErrorForActiveWorkspaceRoot: vi.fn(),
-    runEslintAnalysisOnSave: vi.fn(),
+    runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
     ...overrides,
   };
@@ -182,6 +184,7 @@ function renderLifecycle(
     syncSavedDocument,
     syncSavedJavaScriptTypeScriptDocument,
     setMessage,
+    runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
     replaceDocument: (next) => {
       documentsRef.current = { ...documentsRef.current, [next.path]: next };
@@ -508,6 +511,103 @@ describe("useDocumentSaveLifecycle", () => {
     expect(harness.setMessage).toHaveBeenCalledWith("Saved User.php");
     harness.unmount();
   });
+
+  it.each([
+    ["ESLint", "typescript", "eslintAnalyseOnSave", "runEslintAnalysisOnSave"],
+    ["PHPStan", "php", "phpstanAnalyseOnSave", "runPhpstanAnalysisOnSave"],
+  ] as const)(
+    "suppresses %s analysis and all persistence effects for an unchanged save",
+    async (_label, language, setting, analysisSpy) => {
+      vi.useFakeTimers();
+      const clean = { ...document("baseline", "baseline"), language };
+      const harness = renderLifecycle({
+        activeDocument: clean,
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          [setting]: true,
+        },
+      });
+      const invalidatePrefetch = vi.spyOn(
+        harness.dependencies.filePrefetchCacheRef.current,
+        "invalidate",
+      );
+
+      let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+      await act(async () => {
+        result = await harness.lifecycle().saveDocument(PATH);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          status: "saved",
+          contentIsCurrent: true,
+          persistence: "unchanged",
+          contentChanged: false,
+        }),
+      );
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(invalidatePrefetch).not.toHaveBeenCalled();
+      expect(harness.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
+      expect(harness.syncSavedDocument).not.toHaveBeenCalled();
+      expect(
+        harness.syncSavedJavaScriptTypeScriptDocument,
+      ).not.toHaveBeenCalled();
+      expect(harness[analysisSpy]).not.toHaveBeenCalled();
+      harness.unmount();
+    },
+  );
+
+  it.each([
+    ["ESLint", "typescript", "eslintAnalyseOnSave", "runEslintAnalysisOnSave"],
+    ["PHPStan", "php", "phpstanAnalyseOnSave", "runPhpstanAnalysisOnSave"],
+  ] as const)(
+    "syncs and schedules %s analysis when formatting restores the saved baseline",
+    async (_label, language, setting, analysisSpy) => {
+      vi.useFakeTimers();
+      const dirty = { ...document("dirty", "baseline"), language };
+      const harness = renderLifecycle({
+        activeDocument: dirty,
+        formattedContentForSave: vi.fn(async () => "baseline"),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          [setting]: true,
+        },
+      });
+
+      let result!: Awaited<ReturnType<DocumentSaveLifecycle["saveDocument"]>>;
+      await act(async () => {
+        result = await harness.lifecycle().saveDocument(PATH);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(500));
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          status: "saved",
+          contentIsCurrent: true,
+          persistence: "unchanged",
+          contentChanged: true,
+        }),
+      );
+      expect(harness.documentsRef.current[PATH].content).toBe("baseline");
+      expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+      expect(harness.localHistoryGateway.recordSnapshot).not.toHaveBeenCalled();
+      expect(harness.syncSavedDocument).toHaveBeenCalledWith(
+        ROOT,
+        expect.objectContaining({ content: "baseline" }),
+        expect.any(Function),
+      );
+      expect(
+        harness.syncSavedJavaScriptTypeScriptDocument,
+      ).toHaveBeenCalledWith(
+        ROOT,
+        expect.objectContaining({ content: "baseline" }),
+        expect.any(Function),
+      );
+      expect(harness[analysisSpy]).toHaveBeenCalledWith(ROOT);
+      harness.unmount();
+    },
+  );
 
   it.each(["root", "token"] as const)(
     "drops the pipeline when the workspace %s becomes stale",

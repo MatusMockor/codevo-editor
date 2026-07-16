@@ -23,6 +23,8 @@ export type DocumentSaveResult =
       status: "saved";
       document: EditorDocument;
       contentIsCurrent: boolean;
+      persistence?: "written" | "unchanged";
+      contentChanged?: boolean;
     }
   | {
       status: "blocked";
@@ -140,6 +142,56 @@ export class DocumentSaveService {
         if (acceptedDocument.document !== documentToTransform) {
           documentToTransform = acceptedDocument.document;
           continue;
+        }
+
+        if (
+          prepared.document.content === acceptedDocument.document.savedContent
+        ) {
+          const contentChanged =
+            prepared.document.content !== acceptedDocument.document.content;
+          let reconciledDocument = acceptedDocument.document;
+          if (contentChanged) {
+            if (
+              !this.dependencies.saveStore.reconcileUnchangedPreparedContent
+            ) {
+              return { status: "stale" };
+            }
+            const reconciled =
+              this.dependencies.saveStore.reconcileUnchangedPreparedContent(
+                target,
+                acceptedDocument.document,
+                prepared.document.content,
+              );
+            if (!reconciled) {
+              return { status: "stale" };
+            }
+            reconciledDocument = reconciled;
+          }
+
+          const isReconciledDocumentCurrent = () =>
+            currentDocument()?.content === reconciledDocument.content;
+          if (contentChanged) {
+            await this.dependencies.syncSavedDocument(
+              target.rootPath,
+              reconciledDocument,
+              isReconciledDocumentCurrent,
+            );
+            if (isReconciledDocumentCurrent()) {
+              await this.dependencies.syncSavedJavaScriptTypeScriptDocument(
+                target.rootPath,
+                reconciledDocument,
+                isReconciledDocumentCurrent,
+              );
+            }
+          }
+
+          return {
+            status: "saved",
+            document: reconciledDocument,
+            contentIsCurrent: isReconciledDocumentCurrent(),
+            persistence: "unchanged",
+            contentChanged,
+          };
         }
 
         const result = await this.writePreparedDocument(
@@ -455,6 +507,7 @@ export class DocumentSaveService {
         status: "saved",
         document: savedDocument,
         contentIsCurrent: false,
+        persistence: "written",
       };
     }
     await this.dependencies.syncSavedDocument(
@@ -467,6 +520,7 @@ export class DocumentSaveService {
         status: "saved",
         document: savedDocument,
         contentIsCurrent: false,
+        persistence: "written",
       };
     }
     await this.dependencies.syncSavedJavaScriptTypeScriptDocument(
@@ -479,6 +533,7 @@ export class DocumentSaveService {
         status: "saved",
         document: savedDocument,
         contentIsCurrent: false,
+        persistence: "written",
       };
     }
 
@@ -486,6 +541,7 @@ export class DocumentSaveService {
       status: "saved",
       document: savedDocument,
       contentIsCurrent: true,
+      persistence: "written",
     };
   }
 

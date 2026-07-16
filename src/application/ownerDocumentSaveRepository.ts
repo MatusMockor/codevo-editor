@@ -163,6 +163,36 @@ class ResolvedRepositorySession
     return this.currentDocument();
   }
 
+  reconcileUnchangedPreparedContent(
+    target: DocumentSaveTarget,
+    expectedDocument: EditorDocument,
+    preparedContent: string,
+  ): EditorDocument | null {
+    if (!target.lease.isCurrent()) {
+      return null;
+    }
+    if (target.rootPath !== this.rootPath || target.path !== this.path) {
+      return null;
+    }
+    const live = this.currentDocument();
+    if (live !== expectedDocument) {
+      return null;
+    }
+    if (preparedContent !== live.savedContent) {
+      return null;
+    }
+    if (live.content === preparedContent) {
+      return live;
+    }
+
+    const reconciled = { ...live, content: preparedContent };
+    if (!this.replace(live, reconciled)) {
+      return null;
+    }
+
+    return reconciled;
+  }
+
   acknowledgeIssuedWrite(
     target: DocumentSaveTarget,
     acknowledgement: DocumentSaveAcknowledgement,
@@ -268,13 +298,13 @@ class ResolvedRepositorySession
   private replace(
     expectedDocument: EditorDocument,
     nextDocument: EditorDocument,
-  ): void {
+  ): boolean {
     const candidate = this.currentCandidate();
     if (!candidate) {
-      return;
+      return false;
     }
 
-    candidate.replaceDocument(
+    return candidate.replaceDocument(
       this.captured.documentIdentity,
       this.repository.incarnation,
       this.documentIncarnation,

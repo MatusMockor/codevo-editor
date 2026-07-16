@@ -791,7 +791,11 @@ describe("useDocumentLifecycle", () => {
         order.push("sync");
         return undefined;
       });
-      const activeDocument = editorDocument(`${ROOT}/src/User.php`, "edited");
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
       const harness = renderLifecycle({
         activeDocument,
         documents: { [activeDocument.path]: activeDocument },
@@ -1657,12 +1661,13 @@ describe("useDocumentLifecycle", () => {
       harness.unmount();
     });
 
-    it("does not apply a write completion after a workspace A-B-A switch", async () => {
+    it("acknowledges an issued write after a workspace A-B-A switch", async () => {
       const write = createDeferred<void>();
       const writeTextFile = vi.fn(() => write.promise);
       const activeDocument = editorDocument(
         `${ROOT}/src/User.php`,
         "workspace A",
+        "saved workspace A",
       );
       const harness = renderLifecycle({
         activeDocument,
@@ -1685,8 +1690,11 @@ describe("useDocumentLifecycle", () => {
         await savePromise;
       });
 
-      expect(harness.documentsRef.current[activeDocument.path]).toBe(
-        activeDocument,
+      expect(harness.documentsRef.current[activeDocument.path]).toEqual(
+        expect.objectContaining({
+          content: "workspace A",
+          savedContent: "workspace A",
+        }),
       );
       expect(harness.syncSavedDocument).not.toHaveBeenCalled();
       expect(harness.setMessage).not.toHaveBeenCalled();
@@ -1732,7 +1740,11 @@ describe("useDocumentLifecycle", () => {
       const writeTextFile = vi.fn(async () => {
         throw new Error("disk full");
       });
-      const activeDocument = editorDocument(`${ROOT}/src/User.php`, "edited");
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "edited",
+        "saved",
+      );
       const harness = renderLifecycle({
         activeDocument,
         documents: { [activeDocument.path]: activeDocument },
@@ -1795,11 +1807,24 @@ describe("useDocumentLifecycle", () => {
         eslintAnalyseOnSave: true,
         phpstanAnalyseOnSave: true,
       };
-      const harness = renderLifecycle({ workspaceSettings: settings });
+      const activeDocument = editorDocument(
+        `${ROOT}/src/User.php`,
+        "first edit",
+        "saved",
+      );
+      const harness = renderLifecycle({
+        activeDocument,
+        documents: { [activeDocument.path]: activeDocument },
+        workspaceSettings: settings,
+      });
 
       await act(async () => {
         await harness.lifecycle().saveActiveDocument();
         await vi.advanceTimersByTimeAsync(300);
+        replaceLiveDocument(harness, {
+          ...harness.documentsRef.current[activeDocument.path],
+          content: "second edit",
+        });
         await harness.lifecycle().saveActiveDocument();
         await vi.advanceTimersByTimeAsync(499);
       });
@@ -1824,7 +1849,7 @@ describe("useDocumentLifecycle", () => {
     ])("routes %s saves only to ESLint", async (language, name) => {
       vi.useFakeTimers();
       const document = {
-        ...editorDocument(`${ROOT}/src/${name}`),
+        ...editorDocument(`${ROOT}/src/${name}`, "edited", "saved"),
         language,
       };
       const harness = renderLifecycle({

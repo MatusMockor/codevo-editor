@@ -331,6 +331,12 @@ export function useDocumentSaveLifecycle(
       }
 
       setMessage(`Saved ${result.document.name}`);
+      if (
+        result.persistence === "unchanged" &&
+        result.contentChanged === false
+      ) {
+        return;
+      }
       scheduleAnalysisOnSave(result.document, requestedRoot);
     },
     [
