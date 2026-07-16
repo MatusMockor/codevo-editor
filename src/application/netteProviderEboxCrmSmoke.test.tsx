@@ -974,6 +974,53 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
     );
   });
 
+  it("resolves the real RempMailer MailTemplatesAdmin link through setMapping", async () => {
+    const templatePath =
+      "app/modules/mailerModule/Components/UserEmailsWidget/user_emails_widget.latte";
+    const presenterPath =
+      "app/modules/mailerModule/Presenters/MailTemplatesAdminPresenter.php";
+    const extensionPath =
+      "app/modules/mailerModule/DI/RempMailerModuleExtension.php";
+    const configPath = "app/config/config.neon";
+    const [template, presenter] = await Promise.all([
+      readFileContent(joinPath(EBOX_CRM_ROOT, templatePath)),
+      readFileContent(joinPath(EBOX_CRM_ROOT, presenterPath)),
+    ]);
+    const deps = makeLatteDeps(templatePath, {
+      readPhpClassSource: vi.fn(async (className: string) =>
+        className ===
+        "Crm\\RempMailerModule\\Presenters\\MailTemplatesAdminPresenter"
+          ? {
+              path: joinPath(EBOX_CRM_ROOT, presenterPath),
+              source: presenter,
+            }
+          : null,
+      ),
+      searchText: vi.fn(async (_root, query) => {
+        if (query === "application:") {
+          return [{ path: joinPath(EBOX_CRM_ROOT, configPath) }];
+        }
+
+        if (query === "setMapping") {
+          return [{ path: joinPath(EBOX_CRM_ROOT, extensionPath) }];
+        }
+
+        return [];
+      }),
+    });
+    const latte = createLatteIntelligence(() => deps);
+    const link = ":RempMailer:MailTemplatesAdmin:show";
+
+    await expect(
+      latte.provideLatteDefinition(template, offsetInside(template, link)),
+    ).resolves.toBe(true);
+    expect(deps.openTarget).toHaveBeenLastCalledWith(
+      joinPath(EBOX_CRM_ROOT, presenterPath),
+      positionAtOffset(presenter, presenter.indexOf("actionShow")),
+      link,
+    );
+  });
+
   it("carries typed static include arguments into the real subscription header", async () => {
     const callerPath =
       "app/modules/subscriptionsModule/templates/SubscriptionTypesAdmin/show.latte";

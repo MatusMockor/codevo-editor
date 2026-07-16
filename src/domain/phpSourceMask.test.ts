@@ -31,6 +31,16 @@ describe("maskPhpSource memoization", () => {
     expect(masked.includes("$total += compute($items[$index],")).toBe(true);
   });
 
+  it("keeps escaped backticks inside a masked PHP backtick string", () => {
+    const source =
+      "<?php $output = `\\`ignored $factory->setMapping(['Bad' => 'Bad\\\\*Presenter'])\\``; $after = true;";
+    const masked = maskPhpSource(source);
+
+    expect(masked).toHaveLength(source.length);
+    expect(masked.includes("setMapping")).toBe(false);
+    expect(masked.endsWith("; $after = true;")).toBe(true);
+  });
+
   it("returns identical output for repeated calls with the same source", () => {
     const source = syntheticPhpSource("repeat", 2_000);
     const first = maskPhpSource(source);

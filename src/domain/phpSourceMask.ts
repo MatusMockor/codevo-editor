@@ -164,7 +164,7 @@ function maskPhpSourceUncached(source: string): string {
     if (quote) {
       output += maskedCharacter(character);
 
-      if (character === "\\" && quote !== "`") {
+      if (character === "\\") {
         output += maskedCharacter(next);
         index += 1;
         continue;

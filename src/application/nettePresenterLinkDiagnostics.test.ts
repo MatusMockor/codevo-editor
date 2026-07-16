@@ -8,6 +8,7 @@ import {
   nettePresenterLinkDiagnostics,
   type NettePresenterLinkDiagnosticContext,
 } from "./nettePresenterLinkDiagnostics";
+import { normalizeNettePresenterMappings } from "../domain/nettePresenterMapping";
 
 const ROOT = "/ws";
 const CURRENT_TEMPLATE = "app/UI/Product/default.latte";
@@ -245,6 +246,66 @@ class ProductPresenter
         readFileContent,
       }),
       `{link Product:show}`,
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("checks a mapped presenter through the shared resolution service", async () => {
+    const diagnostics = await nettePresenterLinkDiagnostics(
+      {
+        ...context({ files: {} }),
+        deps: {
+          ...context({ files: {} }).deps,
+          readPhpClassSource: vi.fn(async () => ({
+            path: `${ROOT}/app/modules/mailerModule/Presenters/MailTemplatesAdminPresenter.php`,
+            source: `<?php
+class MailTemplatesAdminPresenter
+{
+    public function actionShow(): void {}
+}`,
+          })),
+        },
+        loadPresenterMappings: async () =>
+          normalizeNettePresenterMappings([
+            [
+              "RempMailer",
+              "Crm\\RempMailerModule\\Presenters\\*Presenter",
+            ],
+          ]),
+      },
+      `{link :RempMailer:MailTemplatesAdmin:show}`,
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("drops mapped diagnostics after mapping invalidation", async () => {
+    let current = true;
+    const base = context({ files: {} });
+    const diagnostics = await nettePresenterLinkDiagnostics(
+      {
+        ...base,
+        deps: {
+          ...base.deps,
+          readPhpClassSource: vi.fn(async () => {
+            current = false;
+            return {
+              path: `${ROOT}/MailTemplatesAdminPresenter.php`,
+              source: "<?php class MailTemplatesAdminPresenter {}",
+            };
+          }),
+        },
+        isPresenterMappingGenerationCurrent: () => current,
+        loadPresenterMappings: async () =>
+          normalizeNettePresenterMappings([
+            [
+              "RempMailer",
+              "Crm\\RempMailerModule\\Presenters\\*Presenter",
+            ],
+          ]),
+      },
+      `{link :RempMailer:MailTemplatesAdmin:show}`,
     );
 
     expect(diagnostics).toEqual([]);

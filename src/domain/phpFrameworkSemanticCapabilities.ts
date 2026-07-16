@@ -224,9 +224,10 @@ function phpFrameworkAutowiredConcreteClassNameFromSources(
     providers,
   );
   const matches = candidates.filter((candidate) =>
+    candidate.producedTypeSource.kind === "class" &&
     phpFrameworkSourceDeclaresClassImplementing(
       sources,
-      candidate.className,
+      candidate.producedTypeSource.className,
       abstractClassName,
     ),
   );
@@ -244,7 +245,7 @@ function phpFrameworkAutowiredConcreteClassNameFromSources(
   const preferred = eligible.filter((candidate) => candidate.autowiredTypes);
 
   if (preferred.length === 1) {
-    return preferred[0]?.className ?? null;
+    return phpFrameworkCandidateClassName(preferred[0]);
   }
 
   if (preferred.length > 1) {
@@ -255,7 +256,7 @@ function phpFrameworkAutowiredConcreteClassNameFromSources(
     return null;
   }
 
-  return eligible[0]?.className ?? null;
+  return phpFrameworkCandidateClassName(eligible[0]);
 }
 
 export function phpFrameworkContainerAutowiredCandidatesFromSources(
@@ -283,18 +284,35 @@ export function phpFrameworkContainerAutowiredCandidatesFromSources(
         if (
           candidates.some(
             (candidate) =>
-              phpFrameworkNormalizedClassName(candidate.className) === normalized,
+              candidate.producedTypeSource.kind === "class" &&
+              phpFrameworkNormalizedClassName(
+                candidate.producedTypeSource.className,
+              ) === normalized,
           )
         ) {
           continue;
         }
 
-        candidates.push({ autowiredTypes: null, className, source });
+        candidates.push({
+          autowiredTypes: null,
+          producedTypeSource: { className, kind: "class" },
+          source,
+        });
       }
     }
   }
 
   return candidates;
+}
+
+function phpFrameworkCandidateClassName(
+  candidate: PhpFrameworkContainerAutowiredCandidate | undefined,
+): string | null {
+  if (!candidate || candidate.producedTypeSource.kind !== "class") {
+    return null;
+  }
+
+  return candidate.producedTypeSource.className;
 }
 
 function phpFrameworkRequestedTypeMatchesAutowiredType(

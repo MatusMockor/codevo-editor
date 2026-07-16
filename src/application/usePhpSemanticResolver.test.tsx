@@ -40,6 +40,22 @@ function bindingSearchResult(path = PROVIDER_PATH): TextSearchResult {
   };
 }
 
+function classSymbol(path: string, fullyQualifiedName: string) {
+  const name = fullyQualifiedName.slice(
+    fullyQualifiedName.lastIndexOf("\\") + 1,
+  );
+  return {
+    column: 1,
+    containerName: null,
+    fullyQualifiedName,
+    kind: "class" as const,
+    lineNumber: 1,
+    name,
+    path,
+    relativePath: path.slice(ROOT.length + 1),
+  };
+}
+
 function bindingSource(): string {
   return `<?php
 namespace App\\Providers;
@@ -232,6 +248,380 @@ final class DatabaseReportRepository implements ReportRepository
     ).resolves.toBe("App\\Repository\\DatabaseReportRepository");
     expect(readNavigationFileContent).toHaveBeenCalledWith(concretePath);
     expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("materializes a RouterFactory service method returning RouteList", async () => {
+    const factoryPath = `${ROOT}/app/Routing/RouterFactory.php`;
+    const factorySource = `<?php
+namespace App\\Routing;
+
+use Nette\\Application\\Routers\\RouteList;
+
+// class CommentDecoy {}
+#[Marker("class AttributeDecoy {}")]
+final class RouterFactory
+{
+    public function createRouter(): RouteList
+    {
+        return new RouteList();
+    }
+}
+`;
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      if (path !== factoryPath) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return factorySource;
+    });
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:router-factory",
+          workspaceSources: [
+            `services:
+    routerFactory: App\\Routing\\RouterFactory
+    router: @routerFactory::createRouter
+`,
+          ],
+        }),
+        intelligenceMode: "fullSmart",
+        projectSymbolSearch: {
+          searchProjectSymbols: vi.fn(async () => [
+            classSymbol(factoryPath, "App\\Routing\\RouterFactory"),
+          ]),
+        },
+        readNavigationFileContent,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "Nette\\Application\\Routers\\RouteList",
+      ),
+    ).resolves.toBe("Nette\\Application\\Routers\\RouteList");
+    expect(readNavigationFileContent).toHaveBeenCalledTimes(2);
+    expect(
+      harness.api().isPhpFrameworkBindingSearchCandidatePath(factoryPath),
+    ).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("requires class-method factories to be static but permits service methods", async () => {
+    const factoryPath = `${ROOT}/app/Routing/RouterFactory.php`;
+    const readNavigationFileContent = vi.fn(async () => `<?php
+namespace App\\Routing;
+class RouterFactory
+{
+    public function createRouter(): \\Nette\\Application\\Routers\\RouteList {}
+}`);
+    const resolve = async (factory: string) => {
+      const harness = renderResolver(
+        makeOptions({
+          activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+          currentPhpFrameworkSourceContext: () => ({
+            signature: `neon:${factory}`,
+            workspaceSources: [
+              `services:
+    routerFactory: App\\Routing\\RouterFactory
+    router: ${factory}
+`,
+            ],
+          }),
+          intelligenceMode: "fullSmart",
+          projectSymbolSearch: {
+            searchProjectSymbols: vi.fn(async () => [
+              classSymbol(factoryPath, "App\\Routing\\RouterFactory"),
+            ]),
+          },
+          readNavigationFileContent,
+          workspaceDescriptor: phpWorkspaceDescriptor(),
+        }),
+      );
+      const result = await harness.api().resolvePhpFrameworkBoundConcrete(
+        "Nette\\Application\\Routers\\RouteList",
+      );
+      harness.unmount();
+      return result;
+    };
+
+    await expect(resolve("App\\Routing\\RouterFactory::createRouter")).resolves.toBeNull();
+    await expect(resolve("@routerFactory::createRouter")).resolves.toBe(
+      "Nette\\Application\\Routers\\RouteList",
+    );
+  });
+
+  it("materializes an inherited public factory method and tracks its parent", async () => {
+    const childPath = `${ROOT}/app/Routing/ChildRouterFactory.php`;
+    const parentPath = `${ROOT}/app/Routing/RouterFactory.php`;
+    const sources = new Map([
+      [
+        childPath,
+        `<?php
+namespace App\\Routing;
+final class ChildRouterFactory extends RouterFactory {}`,
+      ],
+      [
+        parentPath,
+        `<?php
+namespace App\\Routing;
+class RouterFactory
+{
+    public function createRouter(): \\Nette\\Application\\Routers\\RouteList {}
+}`,
+      ],
+    ]);
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:inherited-factory",
+          workspaceSources: [
+            `services:
+    childFactory:
+        factory: App\\Routing\\ChildRouterFactory
+        autowired: false
+    router: @childFactory::createRouter
+`,
+          ],
+        }),
+        intelligenceMode: "fullSmart",
+        projectSymbolSearch: {
+          searchProjectSymbols: vi.fn(async (_root, query) => {
+            if (query === "ChildRouterFactory") {
+              return [
+                classSymbol(childPath, "App\\Routing\\ChildRouterFactory"),
+              ];
+            }
+
+            if (query === "RouterFactory") {
+              return [classSymbol(parentPath, "App\\Routing\\RouterFactory")];
+            }
+
+            return [];
+          }),
+        },
+        readNavigationFileContent: vi.fn(async (path: string) => {
+          const source = sources.get(path);
+
+          if (!source) {
+            throw new Error(`Unexpected read: ${path}`);
+          }
+
+          return source;
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(
+        "Nette\\Application\\Routers\\RouteList",
+      ),
+    ).resolves.toBe("Nette\\Application\\Routers\\RouteList");
+    expect(
+      harness.api().isPhpFrameworkBindingSearchCandidatePath(childPath),
+    ).toBe(true);
+    expect(
+      harness.api().isPhpFrameworkBindingSearchCandidatePath(parentPath),
+    ).toBe(true);
+    harness.unmount();
+  });
+
+  it("late-binds inherited static returns while self stays on the parent", async () => {
+    const childPath = `${ROOT}/app/Routing/ChildRouterFactory.php`;
+    const parentPath = `${ROOT}/app/Routing/RouterFactory.php`;
+    const sources = new Map([
+      [
+        childPath,
+        `<?php
+namespace App\\Routing;
+final class ChildRouterFactory extends RouterFactory {}`,
+      ],
+      [
+        parentPath,
+        `<?php
+namespace App\\Routing;
+class RouterFactory
+{
+    public static function createLateStatic(): static {}
+    public static function createSelf(): self {}
+}`,
+      ],
+    ]);
+    const resolve = async (methodName: string, requestedType: string) => {
+      const readNavigationFileContent = vi.fn(async (path: string) => {
+        const source = sources.get(path);
+
+        if (!source) {
+          throw new Error(`Unexpected read: ${path}`);
+        }
+
+        return source;
+      });
+      const harness = renderResolver(
+        makeOptions({
+          activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+          currentPhpFrameworkSourceContext: () => ({
+            signature: `neon:late-static:${methodName}`,
+            workspaceSources: [
+              `services:\n    router: App\\Routing\\ChildRouterFactory::${methodName}`,
+            ],
+          }),
+          intelligenceMode: "fullSmart",
+          projectSymbolSearch: {
+            searchProjectSymbols: vi.fn(async (_root, query) => {
+              if (query === "ChildRouterFactory") {
+                return [
+                  classSymbol(childPath, "App\\Routing\\ChildRouterFactory"),
+                ];
+              }
+
+              return [classSymbol(parentPath, "App\\Routing\\RouterFactory")];
+            }),
+          },
+          readNavigationFileContent,
+          workspaceDescriptor: phpWorkspaceDescriptor(),
+        }),
+      );
+      const result = await harness
+        .api()
+        .resolvePhpFrameworkBoundConcrete(requestedType);
+      harness.unmount();
+      return { readCount: readNavigationFileContent.mock.calls.length, result };
+    };
+
+    await expect(
+      resolve("createLateStatic", "App\\Routing\\ChildRouterFactory"),
+    ).resolves.toEqual({
+      readCount: 2,
+      result: "App\\Routing\\ChildRouterFactory",
+    });
+    await expect(
+      resolve("createSelf", "App\\Routing\\RouterFactory"),
+    ).resolves.toEqual({
+      readCount: 2,
+      result: "App\\Routing\\RouterFactory",
+    });
+  });
+
+  it("rejects protected inherited methods and bounded parent cycles", async () => {
+    const childPath = `${ROOT}/app/Routing/ChildRouterFactory.php`;
+    const parentPath = `${ROOT}/app/Routing/RouterFactory.php`;
+    const resolve = async (parentMethod: string) => {
+      const sources = new Map([
+        [
+          childPath,
+          `<?php namespace App\\Routing;
+class ChildRouterFactory extends RouterFactory {}`,
+        ],
+        [
+          parentPath,
+          `<?php namespace App\\Routing;
+class RouterFactory extends ChildRouterFactory { ${parentMethod} }`,
+        ],
+      ]);
+      const harness = renderResolver(
+        makeOptions({
+          activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+          currentPhpFrameworkSourceContext: () => ({
+            signature: `neon:inherited-reject:${parentMethod}`,
+            workspaceSources: [
+              "services:\n    router: App\\Routing\\ChildRouterFactory::createRouter",
+            ],
+          }),
+          intelligenceMode: "fullSmart",
+          projectSymbolSearch: {
+            searchProjectSymbols: vi.fn(async (_root, query) =>
+              query === "ChildRouterFactory"
+                ? [classSymbol(childPath, "App\\Routing\\ChildRouterFactory")]
+                : [classSymbol(parentPath, "App\\Routing\\RouterFactory")],
+            ),
+          },
+          readNavigationFileContent: vi.fn(async (path: string) => {
+            const source = sources.get(path);
+            if (!source) {
+              throw new Error(`Unexpected read: ${path}`);
+            }
+            return source;
+          }),
+          workspaceDescriptor: phpWorkspaceDescriptor(),
+        }),
+      );
+      const result = await harness.api().resolvePhpFrameworkBoundConcrete(
+        "Nette\\Application\\Routers\\RouteList",
+      );
+      harness.unmount();
+      return result;
+    };
+
+    await expect(
+      resolve(
+        "protected static function createRouter(): \\Nette\\Application\\Routers\\RouteList {}",
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      resolve(
+        "private static function createRouter(): \\Nette\\Application\\Routers\\RouteList {}",
+      ),
+    ).resolves.toBeNull();
+    await expect(resolve("")).resolves.toBeNull();
+  });
+
+  it("coalesces factory materialization and drops an invalidated in-flight read", async () => {
+    const factoryPath = `${ROOT}/app/Routing/RouterFactory.php`;
+    const staleRead = createDeferred<string>();
+    const currentRead = createDeferred<string>();
+    const readNavigationFileContent = vi
+      .fn()
+      .mockReturnValueOnce(staleRead.promise)
+      .mockReturnValueOnce(currentRead.promise);
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:coalesced-factory",
+          workspaceSources: [
+            "services:\n    router: App\\Routing\\RouterFactory::createRouter",
+          ],
+        }),
+        intelligenceMode: "fullSmart",
+        projectSymbolSearch: {
+          searchProjectSymbols: vi.fn(async () => [
+            classSymbol(factoryPath, "App\\Routing\\RouterFactory"),
+          ]),
+        },
+        readNavigationFileContent,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+    const target = "Nette\\Application\\Routers\\RouteList";
+    const stale = harness.api().resolvePhpFrameworkBoundConcrete(target);
+    const staleCoalesced = harness.api().resolvePhpFrameworkBoundConcrete(target);
+
+    await vi.waitFor(() => {
+      expect(readNavigationFileContent).toHaveBeenCalledOnce();
+    });
+    harness.api().invalidatePhpFrameworkBindingCache();
+    const current = harness.api().resolvePhpFrameworkBoundConcrete(target);
+    staleRead.resolve(`<?php
+namespace App\\Routing;
+class RouterFactory { public static function createRouter(): \\Old\\RouteList {} }`);
+    await expect(Promise.all([stale, staleCoalesced])).resolves.toEqual([
+      null,
+      null,
+    ]);
+
+    currentRead.resolve(`<?php
+namespace App\\Routing;
+class RouterFactory { public static function createRouter(): \\Nette\\Application\\Routers\\RouteList {} }`);
+    await expect(current).resolves.toBe(target);
+    expect(readNavigationFileContent).toHaveBeenCalledTimes(2);
 
     harness.unmount();
   });
@@ -817,6 +1207,95 @@ final class OtherGateway implements \\App\\Contracts\\Gateway
       "app\\contracts\\gateway": "App\\Services\\OtherGateway",
     });
 
+    harness.unmount();
+  });
+
+  it("does not let stale Nette parent traversal poison the new root cache", async () => {
+    const otherRoot = "/other-workspace";
+    const currentWorkspaceRootRef = { current: ROOT as string | null };
+    const cacheRef = { current: {} as Record<string, string | null> };
+    const oldChildPath = `${ROOT}/app/Routing/ChildRouterFactory.php`;
+    const oldParentPath = `${ROOT}/app/Routing/RouterFactory.php`;
+    const newChildPath = `${otherRoot}/app/Routing/ChildRouterFactory.php`;
+    const newParentPath = `${otherRoot}/app/Routing/RouterFactory.php`;
+    const oldParentRead = createDeferred<string>();
+    const childSource = `<?php
+namespace App\\Routing;
+final class ChildRouterFactory extends RouterFactory {}`;
+    const validParentSource = `<?php
+namespace App\\Routing;
+class RouterFactory
+{
+    public static function createRouter(): \\Nette\\Application\\Routers\\RouteList {}
+}`;
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      if (path === oldParentPath) {
+        return oldParentRead.promise;
+      }
+
+      if (path === oldChildPath || path === newChildPath) {
+        return childSource;
+      }
+
+      if (path === newParentPath) {
+        return validParentSource;
+      }
+
+      throw new Error(`Unexpected read: ${path}`);
+    });
+    const projectSymbolSearch = {
+      searchProjectSymbols: vi.fn(async (root: string, query: string) => {
+        const path = query === "ChildRouterFactory"
+          ? `${root}/app/Routing/ChildRouterFactory.php`
+          : `${root}/app/Routing/RouterFactory.php`;
+        const className = query === "ChildRouterFactory"
+          ? "App\\Routing\\ChildRouterFactory"
+          : "App\\Routing\\RouterFactory";
+        return [classSymbol(path, className)];
+      }),
+    };
+    const oldOptions = makeOptions({
+      activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+      currentPhpFrameworkSourceContext: () => ({
+        signature: "neon:old-factory",
+        workspaceSources: [
+          "services:\n    router: App\\Routing\\ChildRouterFactory::createRouter",
+        ],
+      }),
+      currentWorkspaceRootRef,
+      intelligenceMode: "fullSmart",
+      phpFrameworkBindingCacheRef: cacheRef,
+      projectSymbolSearch,
+      readNavigationFileContent,
+      workspaceDescriptor: phpWorkspaceDescriptor(ROOT),
+    });
+    const harness = renderResolver(oldOptions);
+    const target = "Nette\\Application\\Routers\\RouteList";
+    const stale = harness.api().resolvePhpFrameworkBoundConcrete(target);
+
+    await vi.waitFor(() => {
+      expect(readNavigationFileContent).toHaveBeenCalledWith(oldParentPath);
+    });
+    currentWorkspaceRootRef.current = otherRoot;
+    harness.rerender({
+      ...oldOptions,
+      currentPhpFrameworkSourceContext: () => ({
+        signature: "neon:new-factory",
+        workspaceSources: [
+          "services:\n    router: App\\Routing\\ChildRouterFactory::createRouter",
+        ],
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(otherRoot),
+      workspaceRoot: otherRoot,
+    });
+
+    oldParentRead.resolve(validParentSource);
+    await expect(stale).resolves.toBeNull();
+    expect(cacheRef.current).not.toHaveProperty(target.toLowerCase());
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete(target),
+    ).resolves.toBe(target);
+    expect(cacheRef.current).toEqual({ [target.toLowerCase()]: target });
     harness.unmount();
   });
 

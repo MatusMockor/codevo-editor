@@ -285,6 +285,11 @@ describe("neonServicesFromSource", () => {
         serviceName: "router",
         className: null,
         factory: "App\\Router\\RouterFactory::createRouter",
+        factoryMetadata: {
+          kind: "classMethod",
+          className: "App\\Router\\RouterFactory",
+          methodName: "createRouter",
+        },
         autowired: true,
         offset: offsetOf(source, "router"),
       },
@@ -300,6 +305,11 @@ describe("neonServicesFromSource", () => {
         serviceName: "router",
         className: null,
         factory: "App\\Router\\RouterFactory::createRouter",
+        factoryMetadata: {
+          kind: "classMethod",
+          className: "App\\Router\\RouterFactory",
+          methodName: "createRouter",
+        },
         autowired: true,
         offset: offsetOf(source, "router"),
       },
@@ -315,8 +325,89 @@ describe("neonServicesFromSource", () => {
         serviceName: "logger",
         className: "App\\Logging\\LoggerInterface",
         factory: null,
+        factoryMetadata: {
+          kind: "serviceMethod",
+          serviceName: "loggerFactory",
+          methodName: "create",
+        },
         autowired: true,
         offset: offsetOf(source, "logger"),
+      },
+    ]);
+  });
+
+  it("captures the exact ebox router service-method factory declaratively", () => {
+    const source =
+      "services:\n    router: @Crm\\ApplicationModule\\Router\\RouterFactory::createRouter\n";
+
+    expect(neonServicesFromSource(source)).toEqual([
+      {
+        serviceName: "router",
+        className: null,
+        factory: null,
+        factoryMetadata: {
+          kind: "serviceMethod",
+          serviceName: "Crm\\ApplicationModule\\Router\\RouterFactory",
+          methodName: "createRouter",
+        },
+        autowired: true,
+        offset: offsetOf(source, "router"),
+      },
+    ]);
+  });
+
+  it("preserves explicit class and first-factory precedence", () => {
+    const source = [
+      "services:",
+      "    router:",
+      "        type: App\\Router\\Router",
+      "        factory: @routerFactory::create",
+      "        create: App\\Router\\FallbackFactory::create",
+    ].join("\n");
+
+    expect(neonServicesFromSource(source)[0]).toEqual({
+      serviceName: "router",
+      className: "App\\Router\\Router",
+      factory: null,
+      factoryMetadata: {
+        kind: "serviceMethod",
+        serviceName: "routerFactory",
+        methodName: "create",
+      },
+      autowired: true,
+      offset: offsetOf(source, "router"),
+    });
+  });
+
+  it("rejects dynamic owners and malformed callable factories", () => {
+    const source = [
+      "services:",
+      "    dynamic: %factory%::create",
+      "    missingMethod: App\\Factory::",
+      "    invalidMethod: @factory::1create",
+      "    trailing: App\\Factory::create nope",
+      "    ordinary: App\\Service",
+      "    alias: @ordinary",
+    ].join("\n");
+
+    const services = neonServicesFromSource(source);
+
+    expect(
+      services.slice(0, 4).map((service) => service.factoryMetadata),
+    ).toEqual([undefined, undefined, undefined, undefined]);
+    expect(services[4]).toEqual({
+      serviceName: "ordinary",
+      className: "App\\Service",
+      factory: null,
+      autowired: true,
+      offset: offsetOf(source, "ordinary"),
+    });
+    expect(neonServiceAliasesFromSource(source)).toEqual([
+      {
+        serviceName: "alias",
+        targetName: "ordinary",
+        offset: offsetOf(source, "alias"),
+        targetSpan: spanOf(source, "@ordinary"),
       },
     ]);
   });

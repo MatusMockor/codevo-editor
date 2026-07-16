@@ -25,12 +25,14 @@ import {
   LATTE_FILTER_CACHE_TTL_MS,
   LATTE_MAX_COMPLETIONS,
   LATTE_PRESENTER_CACHE_TTL_MS,
+  LATTE_PRESENTER_MAPPING_CACHE_TTL_MS,
   LATTE_TEMPLATE_CACHE_TTL_MS,
   LATTE_TEMPLATE_SCAN_DIRECTORIES,
   MAX_LATTE_FILTER_CONFIG_FILES,
   MAX_LATTE_INCLUDE_ARGUMENT_DEPTH,
   MAX_LATTE_INCLUDE_ARGUMENT_TRAVERSAL_STATES,
   MAX_LATTE_SCAN_DEPTH,
+  MAX_LATTE_PRESENTER_MAPPING_SEARCH_RESULTS,
   MAX_LATTE_TEMPLATE_FILES,
   captureLatteExpressionGeneration,
 } from "./latteProviderFlowContext";
@@ -41,6 +43,11 @@ import type {
 import type {
   LatteProviderRequestContext,
 } from "./latteProviderRequestContext";
+import {
+  captureNettePresenterMappingGeneration,
+  loadNettePresenterMappings,
+  type NettePresenterMappingDiscoveryContext,
+} from "./nettePresenterMappingDiscovery";
 
 export function latteExpressionResolutionContext(
   options: LatteProviderFlowFactoryOptions,
@@ -268,6 +275,11 @@ export function nettePresenterLinkCompletionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ): NettePresenterDiscoveryContext {
+  const mappingGeneration = captureNettePresenterMappingGeneration(
+    options.caches.presenterMappingGeneration,
+    request.requestedRoot,
+  );
+
   return {
     cache: options.caches.presenterCache,
     currentRelativePath: request.currentTemplateRelativePath,
@@ -275,7 +287,13 @@ export function nettePresenterLinkCompletionContext(
     frameworkCapabilities: options.frameworkCapabilities,
     inFlight: options.inFlight.presenterInFlight,
     isDirectorySkipped: isLatteScanSkippedDirectory,
+    isCacheWriteCurrent: mappingGeneration.isCurrent,
     isRequestedRootActive: request.isRequestedRootActive,
+    isPresenterMappingGenerationCurrent: mappingGeneration.isCurrent,
+    loadPresenterMappings: () =>
+      loadNettePresenterMappings(
+        nettePresenterMappingDiscoveryContext(options, request),
+      ),
     maxDepth: MAX_LATTE_SCAN_DEPTH,
     maxPresenters: MAX_LATTE_TEMPLATE_FILES,
     requestedRoot: request.requestedRoot,
@@ -287,15 +305,41 @@ export function nettePresenterLinkDefinitionContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ): Omit<NettePresenterDiscoveryContext, "cache" | "inFlight" | "ttlMs"> {
+  const mappingGeneration = captureNettePresenterMappingGeneration(
+    options.caches.presenterMappingGeneration,
+    request.requestedRoot,
+  );
+
   return {
     currentRelativePath: request.currentTemplateRelativePath,
     deps: request.deps,
     frameworkCapabilities: options.frameworkCapabilities,
     isDirectorySkipped: isLatteScanSkippedDirectory,
     isRequestedRootActive: request.isRequestedRootActive,
+    isPresenterMappingGenerationCurrent: mappingGeneration.isCurrent,
+    loadPresenterMappings: () =>
+      loadNettePresenterMappings(
+        nettePresenterMappingDiscoveryContext(options, request),
+      ),
     maxDepth: MAX_LATTE_SCAN_DEPTH,
     maxPresenters: MAX_LATTE_TEMPLATE_FILES,
     requestedRoot: request.requestedRoot,
+  };
+}
+
+export function nettePresenterMappingDiscoveryContext(
+  options: LatteProviderFlowFactoryOptions,
+  request: LatteProviderRequestContext,
+): NettePresenterMappingDiscoveryContext {
+  return {
+    cache: options.caches.presenterMappingCache,
+    deps: request.deps,
+    generation: options.caches.presenterMappingGeneration,
+    inFlight: options.inFlight.presenterMappingInFlight,
+    isRequestedRootActive: request.isRequestedRootActive,
+    maxSearchResults: MAX_LATTE_PRESENTER_MAPPING_SEARCH_RESULTS,
+    requestedRoot: request.requestedRoot,
+    ttlMs: LATTE_PRESENTER_MAPPING_CACHE_TTL_MS,
   };
 }
 

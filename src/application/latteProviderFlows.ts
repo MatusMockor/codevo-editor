@@ -53,6 +53,14 @@ import {
 import {
   nettePresenterLinkDiagnostics,
 } from "./nettePresenterLinkDiagnostics";
+import { nettePresenterLinkDefinitionContext } from "./netteLatteProviderOptions";
+import {
+  createNettePresenterMappingGeneration,
+  invalidateNettePresenterMappingsForPath,
+  type NettePresenterMappingCache,
+  type NettePresenterMappingGeneration,
+  type NettePresenterMappingInFlight,
+} from "./nettePresenterMappingDiscovery";
 import {
   bumpLatteExpressionGeneration,
   captureLatteExpressionGeneration,
@@ -74,6 +82,7 @@ export interface LatteProviderFlows {
   collectLatteTemplateRelativePaths(): Promise<readonly string[]>;
   invalidateLatteExpressionDataForPath(rootPath: string, path: string): void;
   invalidateLatteFilterDataForPath(rootPath: string, path: string): void;
+  invalidateNettePresenterMappingDataForPath(rootPath: string, path: string): void;
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,
@@ -141,6 +150,10 @@ export function createLatteIntelligence(
     queries: new Map(),
   },
   includeArgumentGenerationByRoot: LatteIncludeArgumentGenerationByRoot = {},
+  presenterMappingCache: NettePresenterMappingCache = {},
+  presenterMappingInFlight: NettePresenterMappingInFlight = new Map(),
+  presenterMappingGeneration: NettePresenterMappingGeneration =
+    createNettePresenterMappingGeneration(),
 ): LatteIntelligence {
   const neonConfigCache: NeonConfigCache = {};
   const neonConfigInFlight: NeonConfigInFlight = new Map();
@@ -151,6 +164,8 @@ export function createLatteIntelligence(
       includeArgumentCache,
       includeArgumentGenerationByRoot,
       presenterCache,
+      presenterMappingCache,
+      presenterMappingGeneration,
       templateCache,
       templateTypeCache,
       viewDataCache,
@@ -161,6 +176,7 @@ export function createLatteIntelligence(
       filterInFlight: new Map(),
       includeArgumentInFlight,
       presenterInFlight: new Map(),
+      presenterMappingInFlight,
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
     },
@@ -178,6 +194,7 @@ export function createLatteIntelligence(
         path,
       );
       flows.invalidateLatteFilterDataForPath(rootPath, path);
+      flows.invalidateNettePresenterMappingDataForPath(rootPath, path);
     },
   };
 }
@@ -199,6 +216,8 @@ export function createLatteProviderFlows(
       invalidateLatteExpressionDataForPath(options, rootPath, path),
     invalidateLatteFilterDataForPath: (rootPath, path) =>
       invalidateLatteFilterDataForPath(options, rootPath, path),
+    invalidateNettePresenterMappingDataForPath: (rootPath, path) =>
+      invalidateNettePresenterMappingDataForPath(options, rootPath, path),
     provideLatteCodeActions: (source, range, context) =>
       provideLatteCodeActionsFlow(options, source, range, context),
     provideLatteCompletions: (source, position) =>
@@ -227,6 +246,7 @@ function invalidateLatteExpressionDataForPath(
   }
 
   const generation = bumpLatteExpressionGeneration(options.caches, rootPath);
+  invalidateNettePresenterMappingDataForPath(options, rootPath, path);
   invalidateLatteFilterDataForPath(options, rootPath, path, true);
   deleteCacheEntriesForRoot(options.caches.includeArgumentCache, rootPath);
   deleteCacheEntriesForRoot(options.caches.viewDataCache, rootPath);
@@ -250,6 +270,22 @@ function invalidateLatteExpressionDataForPath(
     options.caches.viewDataCache,
     rootPath,
   );
+}
+
+function invalidateNettePresenterMappingDataForPath(
+  options: LatteProviderFlowFactoryOptions,
+  rootPath: string,
+  path: string,
+): void {
+  invalidateNettePresenterMappingsForPath(
+    options.caches.presenterMappingCache,
+    options.inFlight.presenterMappingInFlight,
+    options.caches.presenterMappingGeneration,
+    rootPath,
+    path,
+  );
+  deleteCacheEntriesForRoot(options.caches.presenterCache, rootPath);
+  deleteInFlightForRoot(options.inFlight.presenterInFlight, rootPath);
 }
 
 function invalidateLatteFilterDataForPath(
@@ -307,16 +343,10 @@ async function provideLattePresenterLinkDiagnostics(
   }
 
   return nettePresenterLinkDiagnostics(
-    {
-      currentRelativePath: currentTemplateRelativePath,
-      deps: {
-        joinPath: request.deps.joinPath,
-        readFileContent: request.deps.readFileContent,
-      },
-      frameworkCapabilities: options.frameworkCapabilities,
-      isRequestedRootActive: request.isRequestedRootActive,
-      requestedRoot: request.requestedRoot,
-    },
+    nettePresenterLinkDefinitionContext(options, {
+      ...request,
+      currentTemplateRelativePath,
+    }),
     source,
   );
 }

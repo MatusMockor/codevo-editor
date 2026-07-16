@@ -1,5 +1,11 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
+import { nettePresenterShortNameFromPath } from "../domain/latteLinkNavigation";
+import {
+  nettePresenterNameFromClass,
+  type NettePresenterMapping,
+} from "../domain/nettePresenterMapping";
+import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 
 export {
   isNettePresenterDiscoverySourcePath,
@@ -17,6 +23,9 @@ export interface NettePresenterLinkDependencies {
     label: string,
   ): Promise<boolean>;
   readFileContent(path: string): Promise<string>;
+  readPhpClassSource?(
+    className: string,
+  ): Promise<{ path: string; source: string } | null>;
   toRelativePath(rootPath: string, path: string): string;
 }
 
@@ -47,7 +56,10 @@ export interface NettePresenterDiscoveryContext {
   frameworkCapabilities: NettePresenterLinkCapabilities;
   inFlight: NettePresenterInFlight;
   isDirectorySkipped(path: string): boolean;
+  isCacheWriteCurrent?(): boolean;
   isRequestedRootActive(): boolean;
+  isPresenterMappingGenerationCurrent?(): boolean;
+  loadPresenterMappings?(): Promise<readonly NettePresenterMapping[]>;
   maxDepth: number;
   maxPresenters: number;
   requestedRoot: string;
@@ -63,25 +75,26 @@ export async function loadNettePresenterLinkTargets(
   context: NettePresenterDiscoveryContext,
 ): Promise<string[]> {
   const { cache, inFlight, requestedRoot } = context;
-  const cached = cache[requestedRoot];
+  const rootKey = normalizedWorkspaceRootKey(requestedRoot);
+  const cached = cache[rootKey];
 
   if (cached && cached.expiresAt > Date.now()) {
     return cached.targets;
   }
 
-  const existing = inFlight.get(requestedRoot);
+  const existing = inFlight.get(rootKey);
 
   if (existing) {
     return existing;
   }
 
   const load = scanNettePresenterLinkTargets(context).finally(() => {
-    if (inFlight.get(requestedRoot) === load) {
-      inFlight.delete(requestedRoot);
+    if (inFlight.get(rootKey) === load) {
+      inFlight.delete(rootKey);
     }
   });
 
-  inFlight.set(requestedRoot, load);
+  inFlight.set(rootKey, load);
 
   return load;
 }
@@ -99,6 +112,17 @@ export async function scanNettePresenterLinkTargets(
     ttlMs,
   } = context;
   const presenterPaths = new Set<string>();
+  const mappings = context.loadPresenterMappings
+    ? await context.loadPresenterMappings()
+    : [];
+
+  if (
+    !isRequestedRootActive() ||
+    (context.isCacheWriteCurrent && !context.isCacheWriteCurrent())
+  ) {
+    return [];
+  }
+
   const scanState: PresenterScanState = {
     presentersFound: 0,
     visitedDirectories: new Set<string>(),
@@ -145,27 +169,80 @@ export async function scanNettePresenterLinkTargets(
       return [];
     }
 
-    for (const target of frameworkCapabilities.presenterLinkTargetsFromSource(
+    for (const target of mappedPresenterTargetsFromSource(
       path,
       content,
+      mappings,
+      frameworkCapabilities.presenterLinkTargetsFromSource(path, content),
     )) {
       targets.add(target);
     }
   }
 
-  if (!isRequestedRootActive()) {
+  if (
+    !isRequestedRootActive() ||
+    (context.isCacheWriteCurrent && !context.isCacheWriteCurrent())
+  ) {
     return [];
   }
 
   const sorted = Array.from(targets).sort((left, right) =>
     left.localeCompare(right),
   );
-  cache[requestedRoot] = {
+  cache[normalizedWorkspaceRootKey(requestedRoot)] = {
     expiresAt: Date.now() + ttlMs,
     targets: sorted,
   };
 
   return sorted;
+}
+
+function mappedPresenterTargetsFromSource(
+  path: string,
+  source: string,
+  mappings: readonly NettePresenterMapping[],
+  targets: readonly string[],
+): string[] {
+  if (mappings.length === 0) {
+    return [...targets];
+  }
+
+  const className = phpPrimaryQualifiedClassName(source);
+  const presenterNames = className
+    ? Array.from(new Set(mappings.flatMap((mapping) => {
+        const name = nettePresenterNameFromClass(className, [mapping]);
+        return name ? [name] : [];
+      })))
+    : [];
+  const shortName = nettePresenterShortNameFromPath(path);
+
+  if (presenterNames.length === 0 || !shortName) {
+    return [...targets];
+  }
+
+  const prefix = `${shortName}:`;
+
+  return targets.flatMap((target) => {
+    if (!target.startsWith(prefix)) {
+      return [target];
+    }
+
+    return presenterNames.map(
+      (presenterName) => `:${presenterName}:${target.slice(prefix.length)}`,
+    );
+  });
+}
+
+function phpPrimaryQualifiedClassName(source: string): string | null {
+  const className = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(source)?.[1];
+
+  if (!className) {
+    return null;
+  }
+
+  const namespace = /\bnamespace\s+([^;{]+)\s*[;{]/.exec(source)?.[1]?.trim();
+
+  return namespace ? `${namespace}\\${className}` : className;
 }
 
 async function collectNettePresenterPaths(

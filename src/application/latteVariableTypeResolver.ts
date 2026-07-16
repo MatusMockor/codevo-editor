@@ -5,6 +5,12 @@ import {
   parseLatteForeachCollection,
 } from "../domain/latteSyntax";
 import type { PhpFrameworkViewDataVariable } from "../domain/phpFrameworkProviders";
+import {
+  parseLatteBlockSyntax,
+  type LatteBlockDefinition,
+  type LatteBlockSyntaxDocument,
+} from "../domain/latteBlockSyntax";
+import { resolveLatteBlockArgumentType } from "./latteBlockArgumentTypes";
 import type { NetteIncludedTemplateArgument } from "./netteIncludedTemplateArguments";
 import {
   latteResolvedTypeFromTemplateSightings,
@@ -39,17 +45,23 @@ export async function resolveLatteVariableType(
     return null;
   }
 
-  const declaredType = latteDeclaredVariableType(source, variableName);
+  const blockSyntax = parseLatteBlockSyntax(source);
+  const definition = innermostDefineAt(blockSyntax, offset);
+  const declaredType = latteDeclaredVariableType(
+    source,
+    offset,
+    variableName,
+    blockSyntax,
+    definition,
+  );
 
   if (declaredType) {
     return declaredType;
   }
 
-  const templateType = await latteTemplateTypeVariableType(
-    context,
-    source,
-    variableName,
-  );
+  const templateType = definition
+    ? null
+    : await latteTemplateTypeVariableType(context, source, variableName);
 
   if (!isRequestedRootActive()) {
     return null;
@@ -59,22 +71,24 @@ export async function resolveLatteVariableType(
     return templateType;
   }
 
-  const localType = await latteLocalVariableType(
+  const localResolution = await latteLocalVariableType(
     context,
     source,
     offset,
     variableName,
+    blockSyntax,
+    definition,
   );
 
   if (!isRequestedRootActive()) {
     return null;
   }
 
-  if (localType) {
-    return localType;
+  if (localResolution.found) {
+    return localResolution.type;
   }
 
-  const foreachType = await latteForeachVariableType(
+  const foreachResolution = await latteForeachVariableType(
     context,
     source,
     offset,
@@ -86,8 +100,32 @@ export async function resolveLatteVariableType(
     return null;
   }
 
-  if (foreachType) {
-    return foreachType;
+  if (foreachResolution.found) {
+    return foreachResolution.type;
+  }
+
+  const blockResolution = await resolveLatteBlockArgumentType(
+    source,
+    offset,
+    variableName,
+    {
+      isRequestedRootActive,
+      resolveExpressionType: (expression, expressionOffset) =>
+        context.resolveExpressionTypeAt?.(
+          source,
+          expression,
+          expressionOffset,
+          depth + 1,
+        ) ?? Promise.resolve(null),
+    },
+  );
+
+  if (!isRequestedRootActive()) {
+    return null;
+  }
+
+  if (blockResolution.blocksOuterScope) {
+    return blockResolution.type;
   }
 
   const includeResolution = await latteIncludedArgumentType(
@@ -179,14 +217,22 @@ async function latteIncludedArgumentType(
 
 function latteDeclaredVariableType(
   source: string,
+  offset: number,
   variableName: string,
+  syntax: LatteBlockSyntaxDocument,
+  definition: LatteBlockDefinition | null,
 ): string | null {
-  for (const declaration of latteVariableDeclarations(source)) {
+  for (const declaration of latteVariableDeclarations(source).reverse()) {
     if (declaration.kind !== "varType" && declaration.kind !== "parameters") {
       continue;
     }
 
-    if (declaration.variableName === variableName && declaration.typeName) {
+    if (
+      declaration.variableName === variableName &&
+      declaration.typeName &&
+      declarationBelongsToDefinition(syntax, declaration.offset, definition) &&
+      isLatteDeclarationVisibleAt(declaration, offset)
+    ) {
       return declaration.typeName;
     }
   }
@@ -217,10 +263,12 @@ async function latteLocalVariableType(
   source: string,
   offset: number,
   variableName: string,
-): Promise<string | null> {
+  syntax: LatteBlockSyntaxDocument,
+  definition: LatteBlockDefinition | null,
+): Promise<LexicalTypeResolution> {
   const { deps, isRequestedRootActive } = context;
 
-  for (const declaration of latteVariableDeclarations(source)) {
+  for (const declaration of latteVariableDeclarations(source).reverse()) {
     if (declaration.kind !== "var" && declaration.kind !== "default") {
       continue;
     }
@@ -229,8 +277,16 @@ async function latteLocalVariableType(
       continue;
     }
 
-    if (declaration.variableName !== variableName || !declaration.expression) {
+    if (!declarationBelongsToDefinition(syntax, declaration.offset, definition)) {
       continue;
+    }
+
+    if (declaration.variableName !== variableName) {
+      continue;
+    }
+
+    if (!declaration.expression) {
+      return foundLexicalType(null);
     }
 
     const document = `<?php\n${declaration.expression};\n`;
@@ -241,15 +297,44 @@ async function latteLocalVariableType(
     );
 
     if (!isRequestedRootActive()) {
-      return null;
+      return missingLexicalType();
     }
 
-    if (type) {
-      return type;
+    return foundLexicalType(type);
+  }
+
+  return missingLexicalType();
+}
+
+function innermostDefineAt(
+  syntax: LatteBlockSyntaxDocument,
+  offset: number,
+): LatteBlockDefinition | null {
+  let innermost: LatteBlockDefinition | null = null;
+
+  for (const definition of syntax.definitions) {
+    if (definition.kind !== "define") {
+      continue;
+    }
+
+    if (offset < definition.bodySpan.start || offset > definition.bodySpan.end) {
+      continue;
+    }
+
+    if (!innermost || definition.bodySpan.start >= innermost.bodySpan.start) {
+      innermost = definition;
     }
   }
 
-  return null;
+  return innermost;
+}
+
+function declarationBelongsToDefinition(
+  syntax: LatteBlockSyntaxDocument,
+  declarationOffset: number,
+  definition: LatteBlockDefinition | null,
+): boolean {
+  return innermostDefineAt(syntax, declarationOffset) === definition;
 }
 
 async function latteImplicitVariableType(
@@ -324,24 +409,29 @@ async function latteForeachVariableType(
   offset: number,
   variableName: string,
   depth: number,
-): Promise<string | null> {
+): Promise<LexicalTypeResolution> {
   const { deps, isRequestedRootActive } = context;
   let collectionExpression: string | null = null;
 
-  for (const binding of latteForeachLoopBindingsAt(source, offset)) {
+  for (const binding of latteForeachLoopBindingsAt(source, offset).reverse()) {
+    if (binding.keyVariableName === variableName) {
+      return foundLexicalType(null);
+    }
+
     if (binding.loopVariableName === variableName) {
       collectionExpression = binding.collectionExpression;
+      break;
     }
   }
 
   if (collectionExpression === null) {
-    return null;
+    return missingLexicalType();
   }
 
   const collection = parseLatteForeachCollection(collectionExpression);
 
   if (!collection || collection.rootVariableName === variableName) {
-    return null;
+    return foundLexicalType(null);
   }
 
   const rootType = await resolveLatteVariableType(
@@ -352,8 +442,12 @@ async function latteForeachVariableType(
     depth + 1,
   );
 
-  if (!isRequestedRootActive() || !rootType) {
-    return null;
+  if (!isRequestedRootActive()) {
+    return missingLexicalType();
+  }
+
+  if (!rootType) {
+    return foundLexicalType(null);
   }
 
   const chainExpression = collection.expression;
@@ -367,7 +461,7 @@ async function latteForeachVariableType(
   );
 
   if (!isRequestedRootActive()) {
-    return null;
+    return missingLexicalType();
   }
 
   const resolvedCollectionType =
@@ -378,15 +472,34 @@ async function latteForeachVariableType(
     : null;
 
   if (elementType) {
-    return elementType;
+    return foundLexicalType(elementType);
   }
 
-  return resolveLatteIterableObjectElementType(
+  const iterableElementType = await resolveLatteIterableObjectElementType(
     context,
     rootType,
     collection.rootVariableName,
     chainExpression,
   );
+
+  if (!isRequestedRootActive()) {
+    return missingLexicalType();
+  }
+
+  return foundLexicalType(iterableElementType);
+}
+
+interface LexicalTypeResolution {
+  found: boolean;
+  type: string | null;
+}
+
+function foundLexicalType(type: string | null): LexicalTypeResolution {
+  return { found: true, type };
+}
+
+function missingLexicalType(): LexicalTypeResolution {
+  return { found: false, type: null };
 }
 
 async function resolveLatteIterableObjectElementType(

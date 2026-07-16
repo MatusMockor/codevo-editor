@@ -78,6 +78,18 @@ export interface NeonParameterCompletionContext {
   span: NeonSpan;
 }
 
+export type NeonServiceFactory =
+  | {
+      kind: "classMethod";
+      className: string;
+      methodName: string;
+    }
+  | {
+      kind: "serviceMethod";
+      serviceName: string;
+      methodName: string;
+    };
+
 /** A registered service (anonymous services carry `serviceName === null`). */
 export interface NeonService {
   /** The service key (case preserved), or `null` for an anonymous `- ` entry. */
@@ -89,6 +101,8 @@ export interface NeonService {
   className: string | null;
   /** A `Class::method` static-factory expression, or `null`. */
   factory: string | null;
+  /** Statically-known declarative callable metadata, when configured. */
+  factoryMetadata?: NeonServiceFactory;
   /** Normal eligibility, disabled eligibility, or narrowed/preferred types. */
   autowired: boolean | string[];
   /**
@@ -1032,6 +1046,7 @@ interface SetupSource {
 interface ClassifiedValue {
   className: string | null;
   factory: string | null;
+  factoryMetadata: NeonServiceFactory | null;
   tokenOffset: number | null;
 }
 
@@ -1045,7 +1060,12 @@ function classifyServiceValue(
   end: number,
 ): ClassifiedValue {
   const range = trimRange(source, start, end);
-  const empty: ClassifiedValue = { className: null, factory: null, tokenOffset: null };
+  const empty: ClassifiedValue = {
+    className: null,
+    factory: null,
+    factoryMetadata: null,
+    tokenOffset: null,
+  };
 
   if (range.start >= range.end) {
     return empty;
@@ -1053,7 +1073,22 @@ function classifyServiceValue(
 
   const first = source[range.start] ?? "";
 
-  if (first === "@" || first === "%" || first === "'" || first === '"' || first === "{" || first === "[") {
+  if (first === "@") {
+    const callable = parseServiceMethodFactory(source, range.start, range.end);
+
+    if (!callable) {
+      return empty;
+    }
+
+    return {
+      className: null,
+      factory: null,
+      factoryMetadata: callable,
+      tokenOffset: range.start,
+    };
+  }
+
+  if (first === "%" || first === "'" || first === '"' || first === "{" || first === "[") {
     return empty;
   }
 
@@ -1070,15 +1105,25 @@ function classifyServiceValue(
   }
 
   if (source[cursor] === ":" && source[cursor + 1] === ":") {
-    let method = cursor + 2;
+    if (!isPlausibleClass(token)) {
+      return empty;
+    }
 
-    while (method < range.end && isIdentifierContinuation(source[method] ?? "")) {
-      method += 1;
+    const methodStart = cursor + 2;
+    const methodEnd = callableMethodEnd(source, methodStart, range.end);
+
+    if (methodEnd === null) {
+      return empty;
     }
 
     return {
       className: null,
-      factory: source.slice(range.start, method),
+      factory: source.slice(range.start, methodEnd),
+      factoryMetadata: {
+        kind: "classMethod",
+        className: token,
+        methodName: source.slice(methodStart, methodEnd),
+      },
       tokenOffset: range.start,
     };
   }
@@ -1087,7 +1132,83 @@ function classifyServiceValue(
     return empty;
   }
 
-  return { className: token, factory: null, tokenOffset: range.start };
+  return {
+    className: token,
+    factory: null,
+    factoryMetadata: null,
+    tokenOffset: range.start,
+  };
+}
+
+function callableMethodEnd(
+  source: string,
+  methodStart: number,
+  rangeEnd: number,
+): number | null {
+  if (!isMethodNameStart(source[methodStart] ?? "")) {
+    return null;
+  }
+
+  let methodEnd = methodStart + 1;
+
+  while (methodEnd < rangeEnd && isIdentifierContinuation(source[methodEnd] ?? "")) {
+    methodEnd += 1;
+  }
+
+  if (methodEnd === rangeEnd) {
+    return methodEnd;
+  }
+
+  if (source[methodEnd] !== "(") {
+    return null;
+  }
+
+  const close = matchingBracketOffset(source, methodEnd, "(", ")");
+
+  if (
+    close === null ||
+    close >= rangeEnd ||
+    trimRange(source, close + 1, rangeEnd).start < rangeEnd
+  ) {
+    return null;
+  }
+
+  return methodEnd;
+}
+
+function parseServiceMethodFactory(
+  source: string,
+  start: number,
+  end: number,
+): Extract<NeonServiceFactory, { kind: "serviceMethod" }> | null {
+  const serviceStart = start + 1;
+
+  if (!isServiceNameStart(source[serviceStart] ?? "")) {
+    return null;
+  }
+
+  let serviceEnd = serviceStart;
+
+  while (serviceEnd < end && isServiceNameChar(source[serviceEnd] ?? "")) {
+    serviceEnd += 1;
+  }
+
+  if (source[serviceEnd] !== ":" || source[serviceEnd + 1] !== ":") {
+    return null;
+  }
+
+  const methodStart = serviceEnd + 2;
+  const methodEnd = callableMethodEnd(source, methodStart, end);
+
+  if (methodEnd === null) {
+    return null;
+  }
+
+  return {
+    kind: "serviceMethod",
+    serviceName: source.slice(serviceStart, serviceEnd),
+    methodName: source.slice(methodStart, methodEnd),
+  };
 }
 
 function serviceAliasTargetInValue(
@@ -1280,6 +1401,7 @@ function parseServiceGroupDefinition(
 
   let className: string | null = null;
   let factory: string | null = null;
+  let factoryMetadata: NeonServiceFactory | null = null;
   let classOffset: number | null = null;
   let autowired: boolean | string[] = true;
   let autowiredConfigured = false;
@@ -1339,7 +1461,15 @@ function parseServiceGroupDefinition(
     if (entry.key === null || SERVICE_FACTORY_KEYS.has(entry.key)) {
       creationConfigured = true;
 
-      if (classified.factory !== null && factory === null) {
+      if (classified.factoryMetadata !== null && factoryMetadata === null) {
+        factoryMetadata = classified.factoryMetadata;
+      }
+
+      if (
+        classified.factory !== null &&
+        factory === null &&
+        factoryMetadata === classified.factoryMetadata
+      ) {
         factory = classified.factory;
 
         if (classOffset === null) {
@@ -1360,7 +1490,12 @@ function parseServiceGroupDefinition(
     autowired = blockTargets;
   }
 
-  if (serviceName === null && className === null && factory === null) {
+  if (
+    serviceName === null &&
+    className === null &&
+    factory === null &&
+    factoryMetadata === null
+  ) {
     return null;
   }
 
@@ -1375,7 +1510,14 @@ function parseServiceGroupDefinition(
     autowiredConfigured,
     creationConfigured,
     preventsMerging: head.preventsMerging,
-    service: { serviceName, className, factory, autowired, offset },
+    service: {
+      serviceName,
+      className,
+      factory,
+      ...(factoryMetadata ? { factoryMetadata } : {}),
+      autowired,
+      offset,
+    },
   };
 }
 

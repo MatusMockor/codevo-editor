@@ -45,6 +45,8 @@ import type {
 } from "./latteIntelligenceContracts";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { ResolvedLatteProjectFilter } from "./latteFilterCallableResolution";
+import { parseLatteForeachCollection } from "../domain/latteSyntax";
+import type { EditorPosition } from "../domain/languageServerFeatures";
 
 const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
@@ -238,7 +240,86 @@ function latteVariableTypeContext(context: LatteExpressionResolutionContext) {
       ),
     loadViewDataEntries: () => loadLatteViewDataEntries(context),
     maxTypeResolutionDepth: MAX_LATTE_TYPE_RESOLUTION_DEPTH,
+    resolveExpressionTypeAt: (
+      source: string,
+      expression: string,
+      offset: number,
+      depth: number,
+    ) => resolveLatteExpressionTypeAt(context, source, expression, offset, depth),
     viewNames: () => latteCandidateViewNames(context),
+  };
+}
+
+async function resolveLatteExpressionTypeAt(
+  context: LatteExpressionResolutionContext,
+  source: string,
+  expression: string,
+  offset: number,
+  depth: number,
+): Promise<string | null> {
+  if (depth > MAX_LATTE_TYPE_RESOLUTION_DEPTH) {
+    return null;
+  }
+
+  const parsed = parseLatteForeachCollection(expression);
+
+  if (!parsed) {
+    const document = `<?php\n${expression};\n`;
+    const type = await context.deps.resolveExpressionType(
+      document,
+      editorPositionAtOffset(document, document.length),
+      expression,
+    );
+
+    if (!context.isRequestedRootActive()) {
+      return null;
+    }
+
+    return type;
+  }
+
+  const rootType = await resolveLatteExpressionVariableType(
+    context,
+    source,
+    offset,
+    parsed.rootVariableName,
+    depth,
+  );
+
+  if (!context.isRequestedRootActive() || !rootType) {
+    return null;
+  }
+
+  if (parsed.expression === `$${parsed.rootVariableName}`) {
+    return rootType;
+  }
+
+  const document = `<?php\n/** @var \\${rootType.replace(/^\\+/, "")} $${
+    parsed.rootVariableName
+  } */\n${parsed.expression};\n`;
+  const type = await context.deps.resolveExpressionType(
+    document,
+    editorPositionAtOffset(document, document.length),
+    parsed.expression,
+  );
+
+  if (!context.isRequestedRootActive()) {
+    return null;
+  }
+
+  return type;
+}
+
+function editorPositionAtOffset(
+  source: string,
+  offset: number,
+): EditorPosition {
+  const prefix = source.slice(0, Math.max(0, Math.min(offset, source.length)));
+  const lines = prefix.split("\n");
+
+  return {
+    column: (lines[lines.length - 1]?.length ?? 0) + 1,
+    lineNumber: lines.length,
   };
 }
 

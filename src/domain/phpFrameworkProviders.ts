@@ -150,7 +150,17 @@ export interface PhpFrameworkContainerConcreteClassNamesContext {
 
 export interface PhpFrameworkContainerAutowiredCandidate {
   autowiredTypes: readonly string[] | null;
-  className: string;
+  producedTypeSource:
+    | {
+        className: string;
+        kind: "class";
+      }
+    | {
+        declaringClassName: string;
+        kind: "factoryMethod";
+        methodName: string;
+        staticOnly: boolean;
+      };
   source: string;
 }
 

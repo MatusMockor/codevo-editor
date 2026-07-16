@@ -3,6 +3,7 @@ import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { WorkspaceFileChangeEvent } from "../domain/workspaceFileChange";
 import {
   createPhpFrameworkBindingFileChangeInvalidator,
+  phpFrameworkBindingEditorChangeRequiresInvalidation,
   phpFrameworkBindingKnownCandidateChanged,
 } from "./phpFrameworkBindingInvalidation";
 
@@ -120,6 +121,22 @@ describe("phpFrameworkBindingKnownCandidateChanged", () => {
     ).toBe(true);
   });
 
+  it("detects a renamed factory dependency through its previous path", () => {
+    const factoryPath = `${ROOT}/app/Routing/RouterFactory.php`;
+
+    expect(
+      phpFrameworkBindingKnownCandidateChanged(
+        event({
+          kind: "renamed",
+          path: `${ROOT}/app/Routing/LegacyRouterFactory.php`,
+          previousPath: factoryPath,
+        }),
+        [],
+        (path) => path === factoryPath,
+      ),
+    ).toBe(true);
+  });
+
   it("detects provider-owned candidate paths on renames", () => {
     expect(
       phpFrameworkBindingKnownCandidateChanged(
@@ -131,6 +148,32 @@ describe("phpFrameworkBindingKnownCandidateChanged", () => {
         () => false,
       ),
     ).toBe(true);
+  });
+});
+
+describe("phpFrameworkBindingEditorChangeRequiresInvalidation", () => {
+  it("invalidates a tracked factory owner after binding syntax is removed", () => {
+    expect(
+      phpFrameworkBindingEditorChangeRequiresInvalidation(
+        `${ROOT}/app/Routing/RouterFactory.php`,
+        "<?php class RouterFactory {}",
+        "<?php class RouterFactory { public function changed() {} }",
+        [provider()],
+        () => true,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps unrelated binding-free editor changes inert", () => {
+    expect(
+      phpFrameworkBindingEditorChangeRequiresInvalidation(
+        PHP_PATH,
+        "<?php echo 'before';",
+        "<?php echo 'after';",
+        [provider()],
+        () => false,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -166,6 +209,20 @@ describe("createPhpFrameworkBindingFileChangeInvalidator", () => {
     );
 
     createPhpFrameworkBindingFileChangeInvalidator(harness.deps)(event());
+
+    expect(harness.deps.invalidateBindingCache).toHaveBeenCalledOnce();
+    expect(harness.deps.readTextFile).not.toHaveBeenCalled();
+  });
+
+  it("invalidates an unsaved factory-owner modification without rereading disk", () => {
+    const harness = dependencies();
+    harness.deps.isBindingSearchCandidatePath = vi.fn(
+      (path: string): boolean => path === PHP_PATH,
+    );
+
+    createPhpFrameworkBindingFileChangeInvalidator(harness.deps)(
+      event({ kind: "modified" }),
+    );
 
     expect(harness.deps.invalidateBindingCache).toHaveBeenCalledOnce();
     expect(harness.deps.readTextFile).not.toHaveBeenCalled();

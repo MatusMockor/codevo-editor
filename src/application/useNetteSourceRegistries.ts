@@ -38,6 +38,9 @@ export function useNetteSourceRegistries({
   const discoveredPathsByRootRef = useRef<Record<string, ReadonlySet<string>>>(
     {},
   );
+  const discoveredPathsBySourcesRef = useRef<
+    WeakMap<readonly string[], ReadonlySet<string>>
+  >(new WeakMap());
   const isTrackedNetteSourcePath = useCallback(
     (rootPath: string, path: string): boolean =>
       isPhpNetteNeonConfigPath(rootPath, path) ||
@@ -53,8 +56,24 @@ export function useNetteSourceRegistries({
         rootPath,
         reader,
       );
-      discoveredPathsByRootRef.current[rootPath] = collection.discoveredPaths;
-      return collection.entries.map((entry) => entry.source);
+      const sources = collection.entries.map((entry) => entry.source);
+      discoveredPathsBySourcesRef.current.set(
+        sources,
+        collection.discoveredPaths,
+      );
+      return sources;
+    },
+    [],
+  );
+  const publishTrackedNetteSourcePaths = useCallback(
+    (rootPath: string, sources: readonly string[]): void => {
+      const discoveredPaths = discoveredPathsBySourcesRef.current.get(sources);
+
+      if (!discoveredPaths) {
+        return;
+      }
+
+      discoveredPathsByRootRef.current[rootPath] = discoveredPaths;
     },
     [],
   );
@@ -69,12 +88,14 @@ export function useNetteSourceRegistries({
     isActive,
     isSourcePath: isTrackedNetteSourcePath,
     loadSources: loadTrackedNetteSources,
+    onSourcesAccepted: publishTrackedNetteSourcePaths,
     onSourcesLoaded,
     sourceSignature: phpNetteNeonConfigSourcesSignature,
     workspaceFiles,
   });
   const resetPhpNetteSourceRegistries = useCallback((): void => {
     discoveredPathsByRootRef.current = {};
+    discoveredPathsBySourcesRef.current = new WeakMap();
     resetPhpNetteNeonSourceRegistry();
   }, [resetPhpNetteNeonSourceRegistry]);
 

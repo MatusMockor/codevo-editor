@@ -370,12 +370,18 @@ final class SmtpMailer implements \\App\\Contracts\\Mailer {}
     ).toEqual([
       {
         autowiredTypes: ["App\\Contracts\\Mailer"],
-        className: "App\\Mail\\IncludedMailer",
+        producedTypeSource: {
+          className: "App\\Mail\\IncludedMailer",
+          kind: "class",
+        },
         source: lower,
       },
       {
         autowiredTypes: null,
-        className: "App\\Mail\\OtherMailer",
+        producedTypeSource: {
+          className: "App\\Mail\\OtherMailer",
+          kind: "class",
+        },
         source: lower,
       },
     ]);
@@ -398,7 +404,12 @@ final class SmtpMailer implements \\App\\Contracts\\Mailer {}
         lower,
       ]),
     ).toEqual([
-      expect.objectContaining({ className: "App\\Mail\\OtherMailer" }),
+      expect.objectContaining({
+        producedTypeSource: {
+          className: "App\\Mail\\OtherMailer",
+          kind: "class",
+        },
+      }),
     ]);
     expect(
       phpNetteContainerAutowiredCandidatesFromSources([
@@ -413,12 +424,20 @@ final class SmtpMailer implements \\App\\Contracts\\Mailer {}
           "App\\Contracts\\Mailer",
           "App\\Contracts\\Secondary",
         ],
-        className: "App\\Mail\\RootMailer",
+        producedTypeSource: {
+          className: "App\\Mail\\RootMailer",
+          kind: "class",
+        },
         source: `services:
     mailer: App\\Mail\\RootMailer
 `,
       },
-      expect.objectContaining({ className: "App\\Mail\\OtherMailer" }),
+      expect.objectContaining({
+        producedTypeSource: {
+          className: "App\\Mail\\OtherMailer",
+          kind: "class",
+        },
+      }),
     ]);
   });
 
@@ -427,14 +446,121 @@ final class SmtpMailer implements \\App\\Contracts\\Mailer {}
       phpNetteContainerAutowiredCandidatesFromSources([
         "services:\n    mailer:\n        autowired: App\\Contracts\\Mailer",
         "services:\n    mailer: App\\Mail\\FirstMailer",
-      ])[0]?.className,
-    ).toBe("App\\Mail\\FirstMailer");
+      ])[0]?.producedTypeSource,
+    ).toEqual({ className: "App\\Mail\\FirstMailer", kind: "class" });
     expect(
       phpNetteContainerAutowiredCandidatesFromSources([
         "services:\n    mailer:\n        autowired: App\\Contracts\\Mailer",
         "services:\n    mailer: App\\Mail\\SecondMailer",
-      ])[0]?.className,
-    ).toBe("App\\Mail\\SecondMailer");
+      ])[0]?.producedTypeSource,
+    ).toEqual({ className: "App\\Mail\\SecondMailer", kind: "class" });
+  });
+
+  it("describes class and service method factories for async materialization", () => {
+    const candidates = phpNetteContainerAutowiredCandidatesFromSources([
+      `services:
+    routerFactory: App\\Routing\\RouterFactory
+    router: @routerFactory::createRouter
+    staticRouter: App\\Routing\\StaticRouterFactory::createRouter
+    directOwner: @\\App\\Routing\\RouterFactory::createRouter
+`,
+    ]);
+
+    expect(candidates.map((candidate) => candidate.producedTypeSource)).toEqual(
+      expect.arrayContaining([
+        {
+          declaringClassName: "App\\Routing\\RouterFactory",
+          kind: "factoryMethod",
+          methodName: "createRouter",
+          staticOnly: false,
+        },
+        {
+          declaringClassName: "App\\Routing\\StaticRouterFactory",
+          kind: "factoryMethod",
+          methodName: "createRouter",
+          staticOnly: true,
+        },
+      ]),
+    );
+    expect(
+      candidates.filter(
+        (candidate) => candidate.producedTypeSource.kind === "factoryMethod",
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("keeps anonymous service-method factories as autowiring candidates", () => {
+    const candidates = phpNetteContainerAutowiredCandidatesFromSources([
+      `services:
+    routerFactory: App\\Routing\\RouterFactory
+    - @routerFactory::createRouter
+    - { factory: @routerFactory::createRouter }
+`,
+    ]);
+
+    expect(
+      candidates.filter(
+        (candidate) => candidate.producedTypeSource.kind === "factoryMethod",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        producedTypeSource: {
+          declaringClassName: "App\\Routing\\RouterFactory",
+          kind: "factoryMethod",
+          methodName: "createRouter",
+          staticOnly: false,
+        },
+      }),
+      expect.objectContaining({
+        producedTypeSource: {
+          declaringClassName: "App\\Routing\\RouterFactory",
+          kind: "factoryMethod",
+          methodName: "createRouter",
+          staticOnly: false,
+        },
+      }),
+    ]);
+  });
+
+  it("resolves unique factory service aliases and rejects cycles and conflicts", () => {
+    const candidates = phpNetteContainerAutowiredCandidatesFromSources([
+      `services:
+    routerFactory: App\\Routing\\RouterFactory
+    factoryAlias: @routerFactory
+    router: @factoryAlias::createRouter
+    cycleA: @cycleB
+    cycleB: @cycleA
+    rejected: @cycleA::createRouter
+`,
+      `services:
+    conflictingAlias: @routerFactory
+    conflictingRouter: @conflictingAlias::createRouter
+`,
+      `services:
+    otherFactory: App\\Routing\\OtherFactory
+    conflictingAlias: @otherFactory
+`,
+    ]);
+
+    expect(candidates).toContainEqual(
+      expect.objectContaining({
+        producedTypeSource: {
+          declaringClassName: "App\\Routing\\RouterFactory",
+          kind: "factoryMethod",
+          methodName: "createRouter",
+          staticOnly: false,
+        },
+      }),
+    );
+    expect(
+      candidates.some(
+        (candidate) =>
+          candidate.producedTypeSource.kind === "factoryMethod" &&
+          (candidate.producedTypeSource.declaringClassName === "cycleA" ||
+            candidate.producedTypeSource.declaringClassName ===
+              "App\\Routing\\OtherFactory"),
+      ),
+    ).toBe(false);
   });
 
   it("honors merge prevention and blocks unsupported creation leakage", () => {
@@ -464,7 +590,10 @@ final class SmtpMailer implements \\App\\Contracts\\Mailer {}
     expect(phpNetteContainerAutowiredCandidatesFromSources([source])).toEqual([
       {
         autowiredTypes: [],
-        className: "App\\Mail\\Mailer",
+        producedTypeSource: {
+          className: "App\\Mail\\Mailer",
+          kind: "class",
+        },
         source,
       },
     ]);

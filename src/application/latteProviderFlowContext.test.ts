@@ -32,6 +32,7 @@ describe("latteProviderFlowContext", () => {
     ]);
     expect(Array.from(filterInFlight.keys())).toEqual(["/active/"]);
     expect(Object.keys(caches.presenterCache)).toEqual(["/active"]);
+    expect(Object.keys(caches.presenterMappingCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateTypeCache)).toEqual(["/active"]);
     expect(Object.keys(caches.viewDataCache)).toEqual(["/active"]);
@@ -57,6 +58,7 @@ describe("latteProviderFlowContext", () => {
     expect(inFlight.graphs.size).toBe(0);
     expect(filterInFlight.size).toBe(0);
     expect(caches.presenterCache).toEqual({});
+    expect(caches.presenterMappingCache).toEqual({});
     expect(caches.templateCache).toEqual({});
     expect(caches.templateTypeCache).toEqual({});
     expect(caches.viewDataCache).toEqual({});
@@ -93,6 +95,11 @@ function providerCaches(): LatteProviderFlowCaches {
       "/active": { expiresAt: 1, targets: [] },
       "/stale": { expiresAt: 1, targets: [] },
     },
+    presenterMappingCache: {
+      "/active": { expiresAt: 1, mappings: [] },
+      "/stale": { expiresAt: 1, mappings: [] },
+    },
+    presenterMappingGeneration: { next: 2, roots: {} },
     templateCache: {
       "/active": { complete: true, expiresAt: 1, relativePaths: [] },
       "/stale": { complete: true, expiresAt: 1, relativePaths: [] },

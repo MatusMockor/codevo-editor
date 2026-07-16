@@ -5,12 +5,19 @@ import type {
   NetteLinkTarget,
 } from "../domain/latteLinkNavigation";
 import { canProveNettePresenterMethodAbsenceLocally } from "../domain/nettePresenterMethodAbsence";
-import { componentClassCandidatePathsForTemplate } from "../domain/nettePathResolution";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
+import {
+  createNettePresenterResolutionRun,
+  resolveNettePresenterOwner,
+  type NettePresenterResolutionContext,
+} from "./nettePresenterResolution";
 
 export interface NettePresenterLinkDiagnosticDependencies {
   joinPath(rootPath: string, relativePath: string): string;
   readFileContent(path: string): Promise<string>;
+  readPhpClassSource?(
+    className: string,
+  ): Promise<{ path: string; source: string } | null>;
 }
 
 export interface NettePresenterLinkDiagnosticCapabilities {
@@ -22,7 +29,8 @@ export interface NettePresenterLinkDiagnosticCapabilities {
   ): string[];
 }
 
-export interface NettePresenterLinkDiagnosticContext {
+export interface NettePresenterLinkDiagnosticContext
+  extends NettePresenterResolutionContext {
   currentRelativePath: string;
   deps: NettePresenterLinkDiagnosticDependencies;
   frameworkCapabilities: NettePresenterLinkDiagnosticCapabilities;
@@ -40,7 +48,7 @@ export interface NettePresenterLinkDiagnosticData {
 const NETTE_THIS_ACTION = "this";
 interface DiagnosticsRunState {
   lineStarts: readonly number[];
-  presenterSources: Map<string, string | null>;
+  resolution: ReturnType<typeof createNettePresenterResolutionRun>;
 }
 
 export async function nettePresenterLinkDiagnostics(
@@ -54,7 +62,7 @@ export async function nettePresenterLinkDiagnostics(
   const diagnostics: LanguageServerDiagnostic[] = [];
   const run: DiagnosticsRunState = {
     lineStarts: lineStartsForSource(source),
-    presenterSources: new Map(),
+    resolution: createNettePresenterResolutionRun(),
   };
 
   for (const detection of detectLatteLinks(source)) {
@@ -105,85 +113,35 @@ async function diagnosticForDetection(
     return null;
   }
 
-  const candidatePaths = linkOwnerCandidatePaths(
-    context,
-    parsed,
-    context.currentRelativePath,
-  );
+  const owner = await resolveNettePresenterOwner(context, parsed, run.resolution);
 
-  if (candidatePaths.length === 0) {
+  if (
+    !context.isRequestedRootActive() ||
+    (context.isPresenterMappingGenerationCurrent &&
+      !context.isPresenterMappingGenerationCurrent()) ||
+    !owner
+  ) {
     return null;
   }
 
-  for (const relativePath of candidatePaths) {
-    if (!context.isRequestedRootActive()) {
-      return null;
-    }
-
-    const presenterPath = context.deps.joinPath(
-      context.requestedRoot,
-      relativePath,
-    );
-    const presenterSource = await readPresenterSource(
-      context,
-      presenterPath,
-      run,
-    );
-
-    if (!context.isRequestedRootActive()) {
-      return null;
-    }
-
-    if (presenterSource === null) {
-      continue;
-    }
-
-    if (
-      !canProveNettePresenterMethodAbsenceLocally(presenterSource, undefined, {
-        barePresenterParentPolicy: "accept",
-      })
-    ) {
-      return null;
-    }
-
-    if (phpMethodPositionInSource(presenterSource, methodNames)) {
-      return null;
-    }
-
-    return missingPresenterMethodDiagnostic(source, detection, {
-      candidateMethodNames: methodNames,
-      kind: "missing-presenter-method",
-      presenterPath,
-      target: detection.target,
-    }, run.lineStarts);
+  if (
+    !canProveNettePresenterMethodAbsenceLocally(owner.source, undefined, {
+      barePresenterParentPolicy: "accept",
+    })
+  ) {
+    return null;
   }
 
-  return null;
-}
-
-function linkOwnerCandidatePaths(
-  context: NettePresenterLinkDiagnosticContext,
-  parsed: NetteLinkTarget,
-  currentRelativePath: string,
-): string[] {
-  const presenterPaths =
-    context.frameworkCapabilities.presenterClassCandidatePathsForLink(
-      parsed,
-      currentRelativePath,
-    );
-
-  if (!parsed.isSignal || parsed.presenter !== null) {
-    return presenterPaths;
+  if (phpMethodPositionInSource(owner.source, methodNames)) {
+    return null;
   }
 
-  return dedupe([
-    ...componentClassCandidatePathsForTemplate(currentRelativePath),
-    ...presenterPaths,
-  ]);
-}
-
-function dedupe(paths: readonly string[]): string[] {
-  return Array.from(new Set(paths));
+  return missingPresenterMethodDiagnostic(source, detection, {
+    candidateMethodNames: methodNames,
+    kind: "missing-presenter-method",
+    presenterPath: owner.path,
+    target: detection.target,
+  }, run.lineStarts);
 }
 
 function missingPresenterMethodDiagnostic(
@@ -207,29 +165,6 @@ function missingPresenterMethodDiagnostic(
     severity: "warning",
     source: "Nette",
   };
-}
-
-async function readPresenterSource(
-  context: NettePresenterLinkDiagnosticContext,
-  presenterPath: string,
-  run: DiagnosticsRunState,
-): Promise<string | null> {
-  if (run.presenterSources.has(presenterPath)) {
-    return run.presenterSources.get(presenterPath) ?? null;
-  }
-
-  try {
-    const source = await context.deps.readFileContent(presenterPath);
-    run.presenterSources.set(presenterPath, source);
-    return source;
-  } catch {
-    if (!context.isRequestedRootActive()) {
-      return null;
-    }
-
-    run.presenterSources.set(presenterPath, null);
-    return null;
-  }
 }
 
 function lineStartsForSource(source: string): readonly number[] {

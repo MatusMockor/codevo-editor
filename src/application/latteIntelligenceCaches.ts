@@ -2,6 +2,12 @@ import type { LatteViewDataCache } from "./latteExpressionIntelligence";
 import type { LatteFilterCache } from "./latteFilterDiscovery";
 import type { NetteControlCache } from "./netteControlContracts";
 import type { NettePresenterCache } from "./nettePresenterLinkDiscovery";
+import type {
+  NettePresenterMappingCache,
+  NettePresenterMappingGeneration,
+  NettePresenterMappingInFlight,
+} from "./nettePresenterMappingDiscovery";
+import { createNettePresenterMappingGeneration } from "./nettePresenterMappingDiscovery";
 import type { LatteTemplateCache } from "./netteTemplateDiscovery";
 import type { LatteTemplateTypeCache } from "./netteTemplateTypes";
 import type {
@@ -18,6 +24,9 @@ export interface LatteIntelligenceCaches {
   includeArgumentGenerationByRoot: LatteIncludeArgumentGenerationByRoot;
   includeArgumentInFlight: NetteIncludedTemplateArgumentInFlight;
   presenterCache: NettePresenterCache;
+  presenterMappingCache: NettePresenterMappingCache;
+  presenterMappingGeneration: NettePresenterMappingGeneration;
+  presenterMappingInFlight: NettePresenterMappingInFlight;
   templateCache: LatteTemplateCache;
   templateTypeCache: LatteTemplateTypeCache;
   viewDataCache: LatteViewDataCache;
@@ -34,6 +43,9 @@ export function createLatteIntelligenceCaches(): LatteIntelligenceCaches {
       queries: new Map(),
     },
     presenterCache: {},
+    presenterMappingCache: {},
+    presenterMappingGeneration: createNettePresenterMappingGeneration(),
+    presenterMappingInFlight: new Map(),
     templateCache: {},
     templateTypeCache: {},
     viewDataCache: {},

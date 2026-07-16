@@ -1,10 +1,8 @@
 import type { NetteLinkTarget } from "../domain/latteLinkNavigation";
-import {
-  componentClassCandidatePathsForTemplate,
-} from "../domain/nettePathResolution";
 import type {
   NettePresenterDiscoveryContext,
 } from "./nettePresenterLinkDiscovery";
+import { resolveNettePresenterOwner } from "./nettePresenterResolution";
 import { phpMethodPositionInSource } from "./phpMethodPosition";
 
 export type {
@@ -37,13 +35,7 @@ export async function resolveNettePresenterLink(
   parsed: NetteLinkTarget | null,
   label: string,
 ): Promise<boolean> {
-  const {
-    currentRelativePath,
-    deps,
-    frameworkCapabilities,
-    isRequestedRootActive,
-    requestedRoot,
-  } = context;
+  const { deps, frameworkCapabilities, isRequestedRootActive } = context;
 
   if (!parsed || parsed.action === NETTE_THIS_ACTION) {
     return false;
@@ -58,66 +50,21 @@ export async function resolveNettePresenterLink(
     return false;
   }
 
-  const candidatePaths = linkOwnerCandidatePaths(
-    context,
-    parsed,
-    currentRelativePath,
-  );
+  const owner = await resolveNettePresenterOwner(context, parsed);
 
-  for (const relativePath of candidatePaths) {
-    if (!isRequestedRootActive()) {
-      return false;
-    }
-
-    const path = deps.joinPath(requestedRoot, relativePath);
-    let content: string;
-
-    try {
-      content = await deps.readFileContent(path);
-    } catch {
-      if (!isRequestedRootActive()) {
-        return false;
-      }
-
-      continue;
-    }
-
-    if (!isRequestedRootActive()) {
-      return false;
-    }
-
-    const position = phpMethodPositionInSource(content, methodNames) ?? {
-      column: 1,
-      lineNumber: 1,
-    };
-
-    return deps.openTarget(path, position, label);
+  if (
+    !isRequestedRootActive() ||
+    (context.isPresenterMappingGenerationCurrent &&
+      !context.isPresenterMappingGenerationCurrent()) ||
+    !owner
+  ) {
+    return false;
   }
 
-  return false;
-}
+  const position = phpMethodPositionInSource(owner.source, methodNames) ?? {
+    column: 1,
+    lineNumber: 1,
+  };
 
-function linkOwnerCandidatePaths(
-  context: Omit<NettePresenterDiscoveryContext, "cache" | "inFlight" | "ttlMs">,
-  parsed: NetteLinkTarget,
-  currentRelativePath: string,
-): string[] {
-  const presenterPaths =
-    context.frameworkCapabilities.presenterClassCandidatePathsForLink(
-      parsed,
-      currentRelativePath,
-    );
-
-  if (!parsed.isSignal || parsed.presenter !== null) {
-    return presenterPaths;
-  }
-
-  return dedupe([
-    ...componentClassCandidatePathsForTemplate(currentRelativePath),
-    ...presenterPaths,
-  ]);
-}
-
-function dedupe(paths: readonly string[]): string[] {
-  return Array.from(new Set(paths));
+  return deps.openTarget(owner.path, position, label);
 }

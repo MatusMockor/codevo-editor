@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
 import {
+  latteExpressionCompletions,
+  resolveLatteMemberDefinition,
   resolveLatteExpressionVariableType,
   type LatteExpressionResolutionContext,
 } from "./latteExpressionIntelligence";
@@ -112,6 +114,114 @@ describe("path-aware Latte expression type resolution", () => {
     );
     expect(loadIncludedTemplateArguments).toHaveBeenCalledWith("active.latte");
   });
+
+  it("completes and defines members through a tableRow formal type", async () => {
+    const context = expressionContext("/workspace", {});
+    context.deps.resolveExpressionType = vi.fn(
+      async (_source, _position, expression) =>
+        expression.includes("new SubscriptionMigration")
+          ? "App\\Domain\\SubscriptionMigration"
+          : null,
+    );
+    context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Domain\\SubscriptionMigration",
+        kind: "property" as const,
+        name: "name",
+        parameters: "",
+        returnType: "string",
+      },
+    ]);
+    context.deps.openPhpPropertyTarget = vi.fn(async () => true);
+    const completionSource = `{define tableRow, $migration}
+  <a n:href="SubscriptionMigrationAdmin:show $migration->id">{$migration->na}</a>
+{/define}
+{var $sourceMigration = new SubscriptionMigration()}
+{include tableRow $sourceMigration}`;
+    const completionOffset = completionSource.indexOf("->na") + 4;
+
+    await expect(
+      latteExpressionCompletions(context, completionSource, completionOffset),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        insertText: "name",
+        kind: "member",
+        label: "name",
+      }),
+    ]);
+
+    const definitionSource = completionSource.replace("$migration->na}", "$migration->name}");
+    const definitionOffset = definitionSource.indexOf("->name") + 4;
+
+    await expect(
+      resolveLatteMemberDefinition(context, definitionSource, definitionOffset),
+    ).resolves.toBe(true);
+    expect(context.deps.openPhpPropertyTarget).toHaveBeenCalledWith(
+      "App\\Domain\\SubscriptionMigration",
+      "name",
+    );
+  });
+
+  it.each([
+    {
+      label: "unknown local",
+      source: `{define tableRow, $item}
+  {var $item = unknownFactory()}
+  {$item->na}
+{/define}
+{var $sourceItem = new SubscriptionMigration()}
+{include tableRow $sourceItem}`,
+    },
+    {
+      label: "unknown foreach",
+      source: `{define tableRow, $item}
+  {foreach $unknownItems as $item}
+    {$item->na}
+  {/foreach}
+{/define}
+{var $sourceItem = new SubscriptionMigration()}
+{include tableRow $sourceItem}`,
+    },
+  ])(
+    "blocks member completion and definition through an $label shadow",
+    async ({ source }) => {
+      const context = expressionContext("/workspace", {});
+      context.deps.resolveExpressionType = vi.fn(
+        async (_source, _position, expression) =>
+          expression.includes("new SubscriptionMigration")
+            ? "App\\Domain\\SubscriptionMigration"
+            : null,
+      );
+      context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+        {
+          declaringClassName: "App\\Domain\\SubscriptionMigration",
+          kind: "property" as const,
+          name: "name",
+          parameters: "",
+          returnType: "string",
+        },
+      ]);
+      context.deps.openPhpPropertyTarget = vi.fn(async () => true);
+      const completionOffset = source.indexOf("->na") + 4;
+
+      await expect(
+        latteExpressionCompletions(context, source, completionOffset),
+      ).resolves.toEqual([]);
+
+      const definitionSource = source.replace("$item->na}", "$item->name}");
+      const definitionOffset = definitionSource.indexOf("->name") + 4;
+
+      await expect(
+        resolveLatteMemberDefinition(
+          context,
+          definitionSource,
+          definitionOffset,
+        ),
+      ).resolves.toBe(false);
+      expect(context.deps.resolvePhpReceiverCompletions).not.toHaveBeenCalled();
+      expect(context.deps.openPhpPropertyTarget).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function callerVariableType(
@@ -227,6 +337,7 @@ function options(
       filterInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
+      presenterMappingInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
     },
@@ -254,6 +365,8 @@ function providerCaches(): LatteProviderFlowCaches {
     includeArgumentCache: {},
     includeArgumentGenerationByRoot: {},
     presenterCache: {},
+    presenterMappingCache: {},
+    presenterMappingGeneration: { next: 0, roots: {} },
     templateCache: {},
     templateTypeCache: {},
     viewDataCache: {},

@@ -114,6 +114,41 @@ describe("createLatteProviderFlows", () => {
       5,
     );
   });
+
+  it("invalidates presenter mapping and completion state for PHP and NEON", () => {
+    const options = flowOptions();
+    options.caches.presenterCache["/workspace"] = {
+      expiresAt: 1,
+      targets: ["Home:default"],
+    };
+    options.caches.presenterMappingCache["/workspace"] = {
+      expiresAt: 1,
+      mappings: [],
+    };
+    options.caches.presenterMappingGeneration.roots["/workspace"] = 1;
+    const flows = createLatteProviderFlows(options);
+
+    flows.invalidateLatteExpressionDataForPath(
+      "/workspace",
+      "/workspace/app/DI/Extension.php",
+    );
+
+    expect(options.caches.presenterCache).toEqual({});
+    expect(options.caches.presenterMappingCache).toEqual({});
+    expect(options.caches.presenterMappingGeneration.roots["/workspace"])
+      .toBeGreaterThan(1);
+
+    options.caches.presenterMappingCache["/workspace"] = {
+      expiresAt: 1,
+      mappings: [],
+    };
+    flows.invalidateNettePresenterMappingDataForPath(
+      "/workspace",
+      "/workspace/app/config/config.neon",
+    );
+
+    expect(options.caches.presenterMappingCache).toEqual({});
+  });
 });
 
 function includeArgumentEntry(generation: number) {
@@ -143,6 +178,8 @@ function flowOptions(): LatteProviderFlowFactoryOptions {
       includeArgumentCache: {},
       includeArgumentGenerationByRoot: {},
       presenterCache: {},
+      presenterMappingCache: {},
+      presenterMappingGeneration: { next: 0, roots: {} },
       templateCache: {},
       templateTypeCache: {},
       viewDataCache: {},
@@ -153,6 +190,7 @@ function flowOptions(): LatteProviderFlowFactoryOptions {
       filterInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
+      presenterMappingInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
     },

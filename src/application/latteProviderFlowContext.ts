@@ -19,6 +19,11 @@ import type {
   NettePresenterCache,
   NettePresenterInFlight,
 } from "./nettePresenterLinkDiscovery";
+import type {
+  NettePresenterMappingCache,
+  NettePresenterMappingGeneration,
+  NettePresenterMappingInFlight,
+} from "./nettePresenterMappingDiscovery";
 import type { LatteTemplateCache } from "./netteTemplateDiscovery";
 import type {
   LatteTemplateTypeCache,
@@ -45,10 +50,12 @@ export const LATTE_TEMPLATE_SCAN_DIRECTORIES: readonly string[] = [
 export const LATTE_TEMPLATE_CACHE_TTL_MS = 5_000;
 export const LATTE_MAX_COMPLETIONS = 100;
 export const LATTE_PRESENTER_CACHE_TTL_MS = 5_000;
+export const LATTE_PRESENTER_MAPPING_CACHE_TTL_MS = 5_000;
 export const LATTE_COMPONENT_CACHE_TTL_MS = 5_000;
 export const LATTE_FILTER_CACHE_TTL_MS = 5_000;
 export const MAX_LATTE_SCAN_DEPTH = 12;
 export const MAX_LATTE_TEMPLATE_FILES = 2_000;
+export const MAX_LATTE_PRESENTER_MAPPING_SEARCH_RESULTS = 500;
 export const MAX_LATTE_FILTER_CONFIG_FILES = 500;
 export const MAX_LATTE_INCLUDE_ARGUMENT_DEPTH = 8;
 export const MAX_LATTE_INCLUDE_ARGUMENT_TRAVERSAL_STATES = 2_000;
@@ -59,6 +66,8 @@ export interface LatteProviderFlowCaches {
   includeArgumentCache: NetteIncludedTemplateArgumentCache;
   includeArgumentGenerationByRoot: LatteIncludeArgumentGenerationByRoot;
   presenterCache: NettePresenterCache;
+  presenterMappingCache: NettePresenterMappingCache;
+  presenterMappingGeneration: NettePresenterMappingGeneration;
   templateCache: LatteTemplateCache;
   templateTypeCache: LatteTemplateTypeCache;
   viewDataCache: LatteViewDataCache;
@@ -68,6 +77,7 @@ export interface LatteProviderFlowInFlight {
   filterInFlight: LatteFilterInFlight;
   includeArgumentInFlight: NetteIncludedTemplateArgumentInFlight;
   presenterInFlight: NettePresenterInFlight;
+  presenterMappingInFlight: NettePresenterMappingInFlight;
   templateTypeInFlight: LatteTemplateTypeInFlight;
   viewDataInFlight: LatteViewDataInFlight;
 }
@@ -125,6 +135,7 @@ export function evictLatteProviderCaches(
   evictOtherRootCacheEntries(caches.templateCache, requestedRoot);
   evictOtherRootCacheEntries(caches.viewDataCache, requestedRoot);
   evictOtherRootCacheEntries(caches.presenterCache, requestedRoot);
+  evictOtherRootCacheEntries(caches.presenterMappingCache, requestedRoot);
   evictOtherRootCacheEntries(caches.componentCache, requestedRoot);
   evictOtherRootCacheEntries(caches.templateTypeCache, requestedRoot);
   evictOtherRootCacheEntries(caches.filterCache, requestedRoot);

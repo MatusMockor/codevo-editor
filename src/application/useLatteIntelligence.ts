@@ -58,6 +58,9 @@ export function useLatteIntelligence(
       caches.includeArgumentCache,
       caches.includeArgumentInFlight,
       caches.includeArgumentGenerationByRoot,
+      caches.presenterMappingCache,
+      caches.presenterMappingInFlight,
+      caches.presenterMappingGeneration,
     );
   }
 

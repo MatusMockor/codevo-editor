@@ -5,7 +5,9 @@ import type {
 import { PHP_CLASS_NAME_CAPTURE_PATTERN } from "./phpReceiverExpressions";
 import {
   neonServiceDefinitionsFromSource,
+  neonServiceAliasesFromSource,
   neonServicesFromSource,
+  type NeonServiceFactory,
 } from "./netteDiContainer";
 
 export function phpNetteContainerExpressionClassName(
@@ -32,7 +34,12 @@ export function phpNetteContainerBindingsFromSource(
 export function phpNetteContainerAutowiredCandidatesFromSources(
   sources: readonly string[],
 ): PhpFrameworkContainerAutowiredCandidate[] {
-  const anonymousCandidates: PhpFrameworkContainerAutowiredCandidate[] = [];
+  const anonymousServices: Array<{
+    service: ReturnType<
+      typeof neonServiceDefinitionsFromSource
+    >[number]["service"];
+    source: string;
+  }> = [];
   const namedServices = new Map<
     string,
     {
@@ -40,6 +47,7 @@ export function phpNetteContainerAutowiredCandidatesFromSources(
       autowiredResolved: boolean;
       className: string | null;
       creationResolved: boolean;
+      factoryMetadata: NeonServiceFactory | null;
       lowerFieldsBlocked: boolean;
       source: string;
     }
@@ -58,12 +66,7 @@ export function phpNetteContainerAutowiredCandidatesFromSources(
       const { service } = definition;
 
       if (!service.serviceName) {
-        const candidate = netteAutowiredCandidate(service, source);
-
-        if (candidate) {
-          anonymousCandidates.push(candidate);
-        }
-
+        anonymousServices.push({ service, source });
         continue;
       }
 
@@ -72,6 +75,7 @@ export function phpNetteContainerAutowiredCandidatesFromSources(
         autowiredResolved: false,
         className: null,
         creationResolved: false,
+        factoryMetadata: null,
         lowerFieldsBlocked: false,
         source,
       };
@@ -82,6 +86,7 @@ export function phpNetteContainerAutowiredCandidatesFromSources(
 
       if (!merged.creationResolved && definition.creationConfigured) {
         merged.className = service.className;
+        merged.factoryMetadata = service.factoryMetadata ?? null;
         merged.creationResolved = true;
         merged.source = source;
       }
@@ -99,10 +104,29 @@ export function phpNetteContainerAutowiredCandidatesFromSources(
     }
   }
 
-  const namedCandidates = Array.from(namedServices.values()).flatMap((service) => {
-    const candidate = netteAutowiredCandidate(service, service.source);
-    return candidate ? [candidate] : [];
-  });
+  const aliases = mergedNetteServiceAliases(sources);
+  const anonymousCandidates = anonymousServices.flatMap(
+    ({ service, source }) => {
+      const candidate = netteAutowiredCandidate(
+        service,
+        source,
+        namedServices,
+        aliases,
+      );
+      return candidate ? [candidate] : [];
+    },
+  );
+  const namedCandidates = Array.from(namedServices.values()).flatMap(
+    (service) => {
+      const candidate = netteAutowiredCandidate(
+        service,
+        service.source,
+        namedServices,
+        aliases,
+      );
+      return candidate ? [candidate] : [];
+    },
+  );
 
   return [...namedCandidates, ...anonymousCandidates];
 }
@@ -111,16 +135,26 @@ function netteAutowiredCandidate(
   service: {
     autowired: boolean | string[];
     className: string | null;
+    factoryMetadata?: NeonServiceFactory | null;
   },
   source: string,
+  namedServices: ReadonlyMap<
+    string,
+    { className: string | null; factoryMetadata: NeonServiceFactory | null }
+  > = new Map(),
+  aliases: ReadonlyMap<string, string> = new Map(),
 ): PhpFrameworkContainerAutowiredCandidate | null {
   if (service.autowired === false) {
     return null;
   }
 
-  const className = netteNeonServiceConcreteClassName(service);
+  const producedTypeSource = netteProducedTypeSource(
+    service,
+    namedServices,
+    aliases,
+  );
 
-  if (!className) {
+  if (!producedTypeSource) {
     return null;
   }
 
@@ -128,13 +162,130 @@ function netteAutowiredCandidate(
     autowiredTypes: Array.isArray(service.autowired)
       ? service.autowired.map((type) =>
           type.toLowerCase() === "self"
-            ? className
+            ? producedTypeSource.kind === "class"
+              ? producedTypeSource.className
+              : "self"
             : (netteNeonClassName(type) ?? type),
         )
       : null,
-    className,
+    producedTypeSource,
     source,
   };
+}
+
+function netteProducedTypeSource(
+  service: {
+    className: string | null;
+    factoryMetadata?: NeonServiceFactory | null;
+  },
+  namedServices: ReadonlyMap<
+    string,
+    { className: string | null; factoryMetadata: NeonServiceFactory | null }
+  >,
+  aliases: ReadonlyMap<string, string>,
+): PhpFrameworkContainerAutowiredCandidate["producedTypeSource"] | null {
+  const factory = service.factoryMetadata;
+
+  if (!factory) {
+    const className = netteNeonServiceConcreteClassName(service);
+    return className ? { className, kind: "class" } : null;
+  }
+
+  const declaringClassName =
+    factory.kind === "classMethod"
+      ? netteNeonClassName(factory.className)
+      : netteFactoryServiceOwnerClassName(
+          factory.serviceName,
+          namedServices,
+          aliases,
+          new Set<string>(),
+        );
+
+  if (!declaringClassName) {
+    return null;
+  }
+
+  return {
+    declaringClassName,
+    kind: "factoryMethod",
+    methodName: factory.methodName,
+    staticOnly: factory.kind === "classMethod",
+  };
+}
+
+function netteFactoryServiceOwnerClassName(
+  serviceName: string,
+  namedServices: ReadonlyMap<
+    string,
+    { className: string | null; factoryMetadata: NeonServiceFactory | null }
+  >,
+  aliases: ReadonlyMap<string, string>,
+  visited: Set<string>,
+): string | null {
+  const directClassName = netteNeonClassName(serviceName);
+
+  if (directClassName) {
+    return directClassName;
+  }
+
+  if (visited.has(serviceName)) {
+    return null;
+  }
+
+  visited.add(serviceName);
+  const matchingServices = Array.from(namedServices.entries()).filter(
+    ([name]) => name === serviceName,
+  );
+
+  if (matchingServices.length === 1) {
+    const owner = matchingServices[0]?.[1];
+    const ownerClassName = owner
+      ? netteNeonServiceConcreteClassName(owner)
+      : null;
+
+    if (ownerClassName) {
+      return ownerClassName;
+    }
+  }
+
+  const aliasTarget = aliases.get(serviceName);
+
+  if (!aliasTarget) {
+    return null;
+  }
+
+  return netteFactoryServiceOwnerClassName(
+    aliasTarget,
+    namedServices,
+    aliases,
+    visited,
+  );
+}
+
+function mergedNetteServiceAliases(
+  sources: readonly string[],
+): ReadonlyMap<string, string> {
+  const targets = new Map<string, string>();
+  const ambiguous = new Set<string>();
+
+  for (const source of sources) {
+    for (const alias of neonServiceAliasesFromSource(source)) {
+      const existing = targets.get(alias.serviceName);
+
+      if (existing && existing !== alias.targetName) {
+        ambiguous.add(alias.serviceName);
+        continue;
+      }
+
+      targets.set(alias.serviceName, alias.targetName);
+    }
+  }
+
+  for (const serviceName of ambiguous) {
+    targets.delete(serviceName);
+  }
+
+  return targets;
 }
 
 export function phpNetteContainerConcreteClassNamesFromSource(

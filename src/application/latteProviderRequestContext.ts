@@ -7,6 +7,7 @@ import {
   type LatteProviderFlowFactoryOptions,
 } from "./latteProviderFlowContext";
 import { evictOtherRootConfigCacheEntries } from "./neonProjectConfigDiscovery";
+import { evictOtherRootPresenterMappingEntries } from "./nettePresenterMappingDiscovery";
 import type {
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
@@ -28,6 +29,12 @@ export function latteProviderRequestContext(
     deps.workspaceRoot,
     options.inFlight.includeArgumentInFlight,
     options.inFlight.filterInFlight,
+  );
+  evictOtherRootPresenterMappingEntries(
+    options.caches.presenterMappingCache,
+    options.inFlight.presenterMappingInFlight,
+    options.caches.presenterMappingGeneration,
+    deps.workspaceRoot,
   );
 
   if (options.neonConfigCache) {

@@ -22,6 +22,7 @@ function includedArgument(
 
 function context(
   included: readonly NetteIncludedTemplateArgument[],
+  resolveExpressionTypeAt?: LatteVariableResolutionContext["resolveExpressionTypeAt"],
 ): LatteVariableResolutionContext {
   return {
     currentControlClassName: vi.fn(async () => null),
@@ -36,6 +37,7 @@ function context(
     loadTemplateTypePropertySightings: vi.fn(async () => []),
     loadViewDataEntries: vi.fn(async () => []),
     maxTypeResolutionDepth: 5,
+    resolveExpressionTypeAt,
     viewNames: vi.fn(async () => []),
   } as LatteVariableResolutionContext;
 }
@@ -83,5 +85,68 @@ describe("Latte include argument variable candidates", () => {
       "Invoice",
     );
     expect(candidates.find(({ name }) => name === "$conflict")?.typeHint).toBeNull();
+  });
+
+  it("exposes only tableRow formals and lexically visible locals inside define", async () => {
+    const source = `{varType App\\Root\\Migration $migration}
+{define tableRow, $migration, $iterator}
+  {var $migration = $decoratedMigration}
+  {var $local = $migration}
+  {$}
+{/define}
+{include tableRow $sourceMigration, $iterator}`;
+    const includeOffset = source.indexOf(
+      "$sourceMigration",
+      source.indexOf("{include tableRow"),
+    );
+    const loadIncludedTemplateArguments = vi.fn(async () => [
+      includedArgument("leaked", "App\\Included\\Leak"),
+    ]);
+    const resolutionContext = context([], async (_source, expression, offset) =>
+      expression === "$sourceMigration" && offset === includeOffset
+        ? "App\\Domain\\SubscriptionMigration"
+        : null,
+    );
+    Object.assign(resolutionContext, { loadIncludedTemplateArguments });
+    resolutionContext.loadTemplateTypePropertySightings = vi.fn(async () => [
+      {
+        property: { name: "$rootOnly", type: "App\\Root\\Only" },
+        source: "<?php",
+      },
+    ]);
+    resolutionContext.loadViewDataEntries = vi.fn(async () => [
+      {
+        bindings: [
+          {
+            variables: [
+              {
+                detail: "presenter data",
+                name: "$presenterOnly",
+                typeHint: "App\\Presenter\\Only",
+                valueExpression: null,
+                valueOffset: null,
+              },
+            ],
+            viewName: "Home:default",
+          },
+        ],
+        source: "<?php",
+      },
+    ]);
+
+    const candidates = await collectLatteVariableCandidates(
+      resolutionContext,
+      source,
+      source.indexOf("{$}"),
+    );
+
+    expect(candidates).toEqual([
+      { detail: "template var", name: "$migration", typeHint: null },
+      { detail: "define parameter", name: "$iterator", typeHint: null },
+      { detail: "template var", name: "$local", typeHint: null },
+    ]);
+    expect(loadIncludedTemplateArguments).not.toHaveBeenCalled();
+    expect(resolutionContext.loadTemplateTypePropertySightings).not.toHaveBeenCalled();
+    expect(resolutionContext.loadViewDataEntries).not.toHaveBeenCalled();
   });
 });

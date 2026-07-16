@@ -80,6 +80,8 @@ function makeOptions(
       includeArgumentCache: {},
       includeArgumentGenerationByRoot: {},
       presenterCache: {},
+      presenterMappingCache: {},
+      presenterMappingGeneration: { next: 0, roots: {} },
       templateCache: {
         [ROOT]: {
           complete: true,
@@ -98,6 +100,7 @@ function makeOptions(
       filterInFlight: new Map(),
       includeArgumentInFlight: { graphs: new Map(), queries: new Map() },
       presenterInFlight: new Map(),
+      presenterMappingInFlight: new Map(),
       templateTypeInFlight: new Map(),
       viewDataInFlight: new Map(),
     },

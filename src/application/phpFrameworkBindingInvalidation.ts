@@ -147,3 +147,23 @@ function phpFrameworkBindingInvalidationRequestIsCurrent({
     currentBindingCacheGeneration() === requestedGeneration
   );
 }
+
+export function phpFrameworkBindingEditorChangeRequiresInvalidation(
+  path: string,
+  previousSource: string,
+  nextSource: string,
+  frameworkProviders: readonly PhpFrameworkProvider[],
+  isBindingDependencyPath: (path: string) => boolean,
+): boolean {
+  if (isBindingDependencyPath(path)) {
+    return true;
+  }
+
+  return [previousSource, nextSource].some(
+    (source) =>
+      phpFrameworkContainerBindingsFromSource(
+        source,
+        frameworkProviders,
+      ).length > 0,
+  );
+}

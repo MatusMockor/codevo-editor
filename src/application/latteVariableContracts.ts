@@ -23,5 +23,11 @@ export interface LatteVariableResolutionContext {
   ): Promise<LatteTemplateTypePropertySighting[]>;
   loadViewDataEntries(): Promise<NetteViewDataEntry[]>;
   maxTypeResolutionDepth: number;
+  resolveExpressionTypeAt?(
+    source: string,
+    expression: string,
+    offset: number,
+    depth: number,
+  ): Promise<string | null>;
   viewNames(): Promise<string[]>;
 }

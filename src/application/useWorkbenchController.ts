@@ -39,7 +39,10 @@ import { useWorkbenchPintCommand } from "./useWorkbenchPintCommand";
 import { useWorkspaceTodos } from "./useWorkspaceTodos";
 import { usePhpFrameworkTargets } from "./usePhpFrameworkTargets";
 import { usePhpFrameworkSourceRegistries } from "./usePhpFrameworkSourceRegistries";
-import { createPhpFrameworkBindingFileChangeInvalidator } from "./phpFrameworkBindingInvalidation";
+import {
+  createPhpFrameworkBindingFileChangeInvalidator,
+  phpFrameworkBindingEditorChangeRequiresInvalidation,
+} from "./phpFrameworkBindingInvalidation";
 import { usePhpFrameworkDefinitionNavigation } from "./usePhpFrameworkDefinitionNavigation";
 import { usePhpFrameworkModelNavigationTargets } from "./usePhpFrameworkModelNavigationTargets";
 import { usePhpLaravelModelNavigationTargets } from "./usePhpLaravelModelNavigationTargets";
@@ -353,7 +356,6 @@ import {
   type PhpTree,
   type PhpTreeGateway,
 } from "../domain/phpTree";
-import { phpFrameworkContainerBindingsFromSource } from "../domain/phpFrameworkProviders";
 import {
   resolvePhpClassName,
 } from "../domain/phpNavigation";
@@ -775,6 +777,9 @@ export function useWorkbenchController(
   const resetPhpClassMemberCacheRef = useRef<() => void>(() => {});
   const resetPhpFrameworkCachesRef = useRef<() => void>(() => {});
   const invalidatePhpFrameworkBindingCacheRef = useRef<() => void>(() => {});
+  const isPhpFrameworkBindingDependencyPathRef = useRef<
+    (path: string) => boolean
+  >(() => false);
   const resetPhpFrameworkMorphMapModelTypeCacheRef = useRef<() => void>(
     () => {},
   );
@@ -6179,14 +6184,13 @@ export function useWorkbenchController(
       if (activeDocument.language === "php") {
         if (
           phpFrameworkRuntimeContext.supports("containerBindingsFromSource") &&
-          (phpFrameworkContainerBindingsFromSource(
+          phpFrameworkBindingEditorChangeRequiresInvalidation(
+            activeDocument.path,
             activeDocument.content,
+            content,
             activePhpFrameworkProviders,
-          ).length > 0 ||
-            phpFrameworkContainerBindingsFromSource(
-              content,
-              activePhpFrameworkProviders,
-            ).length > 0)
+            (path) => isPhpFrameworkBindingDependencyPathRef.current(path),
+          )
         ) {
           invalidatePhpFrameworkBindingCacheRef.current();
         }
@@ -7309,6 +7313,8 @@ export function useWorkbenchController(
   });
   invalidatePhpFrameworkBindingCacheRef.current =
     invalidatePhpFrameworkBindingCache;
+  isPhpFrameworkBindingDependencyPathRef.current =
+    isPhpFrameworkBindingSearchCandidatePath;
 
   const invalidatePhpFrameworkBindingsForFileChange = useMemo(
     () =>

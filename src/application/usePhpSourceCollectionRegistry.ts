@@ -15,6 +15,10 @@ export interface PhpSourceCollectionRegistryDependencies {
     rootPath: string,
     workspaceFiles: Pick<WorkspaceFileGateway, "readDirectory" | "readTextFile">,
   ): Promise<readonly string[]>;
+  onSourcesAccepted?(
+    rootPath: string,
+    sources: readonly string[],
+  ): void;
   onSourcesLoaded(rootPath: string): void;
   sourceSignature(sources: readonly string[]): string;
   workspaceFiles: Pick<WorkspaceFileGateway, "readDirectory" | "readTextFile">;
@@ -34,6 +38,7 @@ export function usePhpSourceCollectionRegistry({
   isActive,
   isSourcePath,
   loadSources,
+  onSourcesAccepted,
   onSourcesLoaded,
   sourceSignature,
   workspaceFiles,
@@ -41,11 +46,22 @@ export function usePhpSourceCollectionRegistry({
   const sourcesByRootRef = useRef<Record<string, PhpSourceCollectionCacheEntry>>(
     {},
   );
-  const sourcesLoadInFlightRef = useRef<Set<string>>(new Set());
+  const sourcesLoadInFlightRef = useRef<
+    Record<
+      string,
+      { epoch: number; generation: number; promise: Promise<void> }
+    >
+  >({});
+  const sourceCollectionEpochRef = useRef(0);
+  const sourceCollectionGenerationByRootRef = useRef<Record<string, number>>(
+    {},
+  );
 
   const resetSourceCollectionRegistry = useCallback((): void => {
+    sourceCollectionEpochRef.current += 1;
+    sourceCollectionGenerationByRootRef.current = {};
     sourcesByRootRef.current = {};
-    sourcesLoadInFlightRef.current = new Set();
+    sourcesLoadInFlightRef.current = {};
   }, []);
 
   const currentSourceCollectionEntry = useCallback(
@@ -60,37 +76,67 @@ export function usePhpSourceCollectionRegistry({
         return;
       }
 
-      if (
-        sourcesByRootRef.current[requestedRoot] ||
-        sourcesLoadInFlightRef.current.has(requestedRoot)
-      ) {
+      if (sourcesByRootRef.current[requestedRoot]) {
         return;
       }
 
-      sourcesLoadInFlightRef.current.add(requestedRoot);
+      const existingLoad = sourcesLoadInFlightRef.current[requestedRoot];
 
-      try {
-        const sources = await loadSources(requestedRoot, workspaceFiles);
-
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
-        }
-
-        sourcesByRootRef.current[requestedRoot] = {
-          signature: sourceSignature(sources),
-          sources,
-        };
-        onSourcesLoaded(requestedRoot);
-      } catch {
-        // Graceful: unavailable framework source collections keep existing fallbacks.
-      } finally {
-        sourcesLoadInFlightRef.current.delete(requestedRoot);
+      if (existingLoad) {
+        return existingLoad.promise;
       }
+
+      const requestedEpoch = sourceCollectionEpochRef.current;
+      const requestedGeneration =
+        sourceCollectionGenerationByRootRef.current[requestedRoot] ?? 0;
+      const load = (async (): Promise<void> => {
+        try {
+          const sources = await loadSources(requestedRoot, workspaceFiles);
+
+          if (
+            sourceCollectionEpochRef.current !== requestedEpoch ||
+            (sourceCollectionGenerationByRootRef.current[requestedRoot] ?? 0) !==
+              requestedGeneration ||
+            !workspaceRootKeysEqual(
+              currentWorkspaceRootRef.current,
+              requestedRoot,
+            )
+          ) {
+            return;
+          }
+
+          sourcesByRootRef.current[requestedRoot] = {
+            signature: sourceSignature(sources),
+            sources,
+          };
+          onSourcesAccepted?.(requestedRoot, sources);
+          onSourcesLoaded(requestedRoot);
+        } catch {
+          // Graceful: unavailable framework source collections keep existing fallbacks.
+        } finally {
+          const currentLoad = sourcesLoadInFlightRef.current[requestedRoot];
+
+          if (
+            currentLoad?.epoch === requestedEpoch &&
+            currentLoad.generation === requestedGeneration
+          ) {
+            delete sourcesLoadInFlightRef.current[requestedRoot];
+          }
+        }
+      })();
+
+      sourcesLoadInFlightRef.current[requestedRoot] = {
+        epoch: requestedEpoch,
+        generation: requestedGeneration,
+        promise: load,
+      };
+      return load;
     },
     [
       currentWorkspaceRootRef,
       isActive,
       loadSources,
+      onSourcesAccepted,
       onSourcesLoaded,
       sourceSignature,
       workspaceFiles,
@@ -103,8 +149,10 @@ export function usePhpSourceCollectionRegistry({
         return;
       }
 
+      sourceCollectionGenerationByRootRef.current[root] =
+        (sourceCollectionGenerationByRootRef.current[root] ?? 0) + 1;
       delete sourcesByRootRef.current[root];
-      sourcesLoadInFlightRef.current.delete(root);
+      delete sourcesLoadInFlightRef.current[root];
     },
     [isSourcePath],
   );

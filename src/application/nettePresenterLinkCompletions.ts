@@ -4,6 +4,10 @@ import {
   presenterCandidatePathsForTemplate,
 } from "../domain/nettePathResolution";
 import {
+  nettePresenterNameFromClass,
+  type NettePresenterMapping,
+} from "../domain/nettePresenterMapping";
+import {
   loadNettePresenterLinkTargets,
   nettePresenterShortNameFromPath,
 } from "./nettePresenterLinkDiscovery";
@@ -27,9 +31,10 @@ export async function lattePresenterLinkCompletions(
   context: NettePresenterDiscoveryContext,
   completion: { prefix: string; replaceEnd: number; replaceStart: number },
 ): Promise<NettePresenterLinkCompletionItem[]> {
-  const [targets, currentComponentSignalTargets] = await Promise.all([
+  const [targets, currentComponentSignalTargets, mappings] = await Promise.all([
     loadNettePresenterLinkTargets(context),
     loadCurrentComponentSignalTargets(context),
+    context.loadPresenterMappings?.() ?? Promise.resolve([]),
   ]);
 
   if (!context.isRequestedRootActive()) {
@@ -37,6 +42,19 @@ export async function lattePresenterLinkCompletions(
   }
 
   const normalizedPrefix = completion.prefix.toLowerCase();
+  const currentCanonicalNames = await currentPresenterCanonicalNames(
+    context,
+    mappings,
+  );
+
+  if (
+    !context.isRequestedRootActive() ||
+    (context.isPresenterMappingGenerationCurrent &&
+      !context.isPresenterMappingGenerationCurrent())
+  ) {
+    return [];
+  }
+
   const completionTargets = nettePresenterCompletionTargets(
     [...targets, ...currentComponentSignalTargets],
     currentPresenterShortNames(
@@ -44,6 +62,7 @@ export async function lattePresenterLinkCompletions(
       context.requestedRoot,
       context.currentRelativePath,
     ),
+    currentCanonicalNames,
   );
 
   return completionTargets
@@ -102,6 +121,7 @@ async function loadCurrentComponentSignalTargets(
 function nettePresenterCompletionTargets(
   targets: readonly string[],
   currentPresenterNames: readonly string[],
+  currentCanonicalNames: readonly string[],
 ): string[] {
   const withRelativeTargets = new Set<string>(targets);
   const current = new Set(currentPresenterNames);
@@ -111,6 +131,13 @@ function nettePresenterCompletionTargets(
   }
 
   for (const target of targets) {
+    for (const relative of mappedRelativePresenterTargets(
+      target,
+      currentCanonicalNames,
+    )) {
+      withRelativeTargets.add(relative);
+    }
+
     const relative = relativePresenterTarget(target, current);
 
     if (relative) {
@@ -123,17 +150,140 @@ function nettePresenterCompletionTargets(
   );
 }
 
+function mappedRelativePresenterTargets(
+  target: string,
+  currentCanonicalNames: readonly string[],
+): string[] {
+  if (!target.startsWith(":")) {
+    return [];
+  }
+
+  const targetSegments = target.slice(1).split(":");
+  const action = targetSegments.pop();
+
+  if (!action || targetSegments.length === 0) {
+    return [];
+  }
+
+  const relative = new Set<string>();
+
+  for (const currentName of currentCanonicalNames) {
+    const currentSegments = currentName.split(":");
+    const currentModule = currentSegments.slice(0, -1);
+
+    if (!startsWithSegments(targetSegments, currentModule)) {
+      continue;
+    }
+
+    const moduleRelativePresenter = targetSegments.slice(currentModule.length);
+
+    if (moduleRelativePresenter.length > 0) {
+      relative.add([...moduleRelativePresenter, action].join(":"));
+    }
+
+    if (targetSegments.join(":") === currentName) {
+      relative.add(action);
+    }
+  }
+
+  return Array.from(relative);
+}
+
+async function currentPresenterCanonicalNames(
+  context: NettePresenterDiscoveryContext,
+  mappings: readonly NettePresenterMapping[],
+): Promise<string[]> {
+  if (mappings.length === 0) {
+    return [];
+  }
+
+  const paths = new Set(
+    nettePresenterShortNameFromPath(context.currentRelativePath)
+      ? [context.currentRelativePath]
+      : presenterCandidatePathsForTemplate(context.currentRelativePath),
+  );
+  const activeDocument = context.deps.getActiveDocument();
+
+  if (activeDocument) {
+    const activePath = context.deps.toRelativePath(
+      context.requestedRoot,
+      activeDocument.path,
+    );
+
+    if (nettePresenterShortNameFromPath(activePath)) {
+      paths.add(activePath);
+    }
+  }
+
+  const names = new Set<string>();
+
+  for (const relativePath of paths) {
+    if (!context.isRequestedRootActive()) {
+      return [];
+    }
+
+    try {
+      const source = await context.deps.readFileContent(
+        context.deps.joinPath(context.requestedRoot, relativePath),
+      );
+      const className = phpPrimaryQualifiedClassName(source);
+
+      if (!className) {
+        continue;
+      }
+
+      for (const mapping of mappings) {
+        const name = nettePresenterNameFromClass(className, [mapping]);
+
+        if (name) {
+          names.add(name);
+        }
+      }
+    } catch {
+      if (!context.isRequestedRootActive()) {
+        return [];
+      }
+    }
+  }
+
+  return Array.from(names);
+}
+
+function startsWithSegments(
+  value: readonly string[],
+  prefix: readonly string[],
+): boolean {
+  return prefix.every((segment, index) => value[index] === segment);
+}
+
+function phpPrimaryQualifiedClassName(source: string): string | null {
+  const className = /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(source)?.[1];
+
+  if (!className) {
+    return null;
+  }
+
+  const namespace = /\bnamespace\s+([^;{]+)\s*[;{]/.exec(source)?.[1]?.trim();
+
+  return namespace ? `${namespace}\\${className}` : className;
+}
+
 function relativePresenterTarget(
   target: string,
   currentPresenterNames: ReadonlySet<string>,
 ): string | null {
-  const segments = target.split(":");
-
-  if (segments.length !== 2) {
+  if (target.startsWith(":")) {
     return null;
   }
 
-  const [presenter, action] = segments;
+  const segments = target.split(":");
+
+  if (segments.length < 2) {
+    return null;
+  }
+
+  const action = segments[segments.length - 1];
+  const presenter = segments[segments.length - 2];
 
   if (!presenter || !action || !currentPresenterNames.has(presenter)) {
     return null;
@@ -171,5 +321,5 @@ function currentPresenterShortNames(
     }
   }
 
-  return Array.from(names);
+  return names.size === 1 ? Array.from(names) : [];
 }

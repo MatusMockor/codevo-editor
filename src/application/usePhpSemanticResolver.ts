@@ -11,10 +11,16 @@ import {
 } from "../domain/phpSemanticEngine";
 import { phpDeclaredTypeCandidate } from "../domain/phpTypeAnalysis";
 import {
+  phpDeclaredFactoryMethod,
+  phpDeclaresExactFactoryClass,
+  phpDirectlyDeclaresFactoryMethod,
+} from "../domain/phpDeclaredFactoryMethod";
+import {
   phpFrameworkContainerAutowiredCandidatesFromSources,
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkProviderSignature,
   phpFrameworkSupportsContainerBindingsFromSource,
+  type PhpFrameworkContainerAutowiredCandidate,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { PhpFrameworkSourceRegistryContext } from "./usePhpFrameworkSourceRegistries";
@@ -319,6 +325,10 @@ export function usePhpSemanticResolver({
           isRequestedRootActive,
         );
 
+        if (autowiredConcrete.status === "inactive") {
+          return null;
+        }
+
         if (autowiredConcrete.status === "resolved") {
           phpFrameworkBindingCacheRef.current[cacheKey] =
             autowiredConcrete.className;
@@ -464,23 +474,32 @@ export function usePhpSemanticResolver({
         return { status: "inactive" };
       }
 
-      const concreteClassName = resolvePhpClassReference(
-        candidate.source,
-        candidate.className,
+      const producedType = await materializePhpFrameworkCandidateType(
+        candidate,
+        isRequestedRootActive,
       );
 
-      if (!concreteClassName) {
+      if (
+        producedType.status === "inactive" ||
+        producedType.status === "read-failed"
+      ) {
+        return producedType;
+      }
+
+      if (producedType.status !== "resolved") {
         continue;
       }
+
+      const concreteClassName = producedType.className;
 
       if (candidate.autowiredTypes) {
         let targetMatched = false;
 
         for (const autowiredType of candidate.autowiredTypes) {
-          const resolvedAutowiredType = resolvePhpClassReference(
-            candidate.source,
-            autowiredType,
-          );
+          const resolvedAutowiredType =
+            autowiredType.toLowerCase() === "self"
+              ? concreteClassName
+              : resolvePhpClassReference(candidate.source, autowiredType);
 
           if (!resolvedAutowiredType) {
             continue;
@@ -512,6 +531,17 @@ export function usePhpSemanticResolver({
         if (!targetMatched) {
           continue;
         }
+      }
+
+      if (
+        normalizePhpFrameworkBindingClassName(concreteClassName) ===
+        normalizePhpFrameworkBindingClassName(requestedClassName)
+      ) {
+        matches.push({
+          className: concreteClassName,
+          preferred: candidate.autowiredTypes !== null,
+        });
+        continue;
       }
 
       const paths =
@@ -593,6 +623,176 @@ export function usePhpSemanticResolver({
     const className = matches[0]?.className ?? null;
 
     return className ? { className, status: "resolved" } : { status: "miss" };
+  }
+
+  async function materializePhpFrameworkCandidateType(
+    candidate: PhpFrameworkContainerAutowiredCandidate,
+    isRequestedRootActive: () => boolean,
+  ): Promise<PhpFrameworkAutowireLookupResult> {
+    if (candidate.producedTypeSource.kind === "class") {
+      const className = resolvePhpClassReference(
+        candidate.source,
+        candidate.producedTypeSource.className,
+      );
+      return className
+        ? { className, status: "resolved" }
+        : { status: "miss" };
+    }
+
+    const { declaringClassName, methodName, staticOnly } =
+      candidate.producedTypeSource;
+    return resolvePhpFrameworkFactoryMethodType({
+      declaringClassName,
+      depth: 0,
+      isRequestedRootActive,
+      invokedClassName: declaringClassName,
+      methodName,
+      staticOnly,
+      visitedClassNames: new Set<string>(),
+    });
+  }
+
+  async function resolvePhpFrameworkFactoryMethodType({
+    declaringClassName,
+    depth,
+    isRequestedRootActive,
+    invokedClassName,
+    methodName,
+    staticOnly,
+    visitedClassNames,
+  }: {
+    declaringClassName: string;
+    depth: number;
+    isRequestedRootActive: () => boolean;
+    invokedClassName: string;
+    methodName: string;
+    staticOnly: boolean;
+    visitedClassNames: Set<string>;
+  }): Promise<PhpFrameworkAutowireLookupResult> {
+    if (
+      depth > PHP_FRAMEWORK_AUTOWIRE_MAX_DEPTH ||
+      visitedClassNames.size >= PHP_FRAMEWORK_AUTOWIRE_MAX_VISITED_TYPES
+    ) {
+      return { status: "miss" };
+    }
+
+    const normalizedClassName =
+      normalizePhpFrameworkBindingClassName(declaringClassName);
+
+    if (visitedClassNames.has(normalizedClassName)) {
+      return { status: "miss" };
+    }
+
+    visitedClassNames.add(normalizedClassName);
+    const paths = await resolvePhpClassSourcePathsRef.current(
+      declaringClassName,
+    );
+
+    if (!isRequestedRootActive()) {
+      return { status: "inactive" };
+    }
+
+    for (const path of paths) {
+      phpFrameworkBindingSearchPathKeysRef.current.add(
+        phpFrameworkBindingPathKey(path),
+      );
+    }
+
+    let declaringSource: string | null = null;
+    let declaringSourceCount = 0;
+
+    for (const path of paths) {
+      if (!isRequestedRootActive()) {
+        return { status: "inactive" };
+      }
+
+      try {
+        const source = await readNavigationFileContent(path);
+
+        if (!isRequestedRootActive()) {
+          return { status: "inactive" };
+        }
+
+        if (!phpDeclaresExactFactoryClass(source, declaringClassName)) {
+          continue;
+        }
+
+        declaringSourceCount += 1;
+        declaringSource = source;
+      } catch {
+        if (!isRequestedRootActive()) {
+          return { status: "inactive" };
+        }
+
+        return { status: "read-failed" };
+      }
+    }
+
+    if (declaringSourceCount !== 1 || !declaringSource) {
+      return { status: "miss" };
+    }
+
+    const declaration = phpDeclaredFactoryMethod(
+      declaringSource,
+      declaringClassName,
+      methodName,
+    );
+
+    if (declaration) {
+      const resolvedReturnClassName =
+        declaration.nativeReturnType?.replace(/^\?/, "").trim().toLowerCase() ===
+        "static"
+          ? invokedClassName
+          : declaration.resolvedReturnClassName;
+
+      if (
+        declaration.visibility !== "public" ||
+        !resolvedReturnClassName ||
+        (staticOnly && !declaration.isStatic)
+      ) {
+        return { status: "miss" };
+      }
+
+      return {
+        className: resolvedReturnClassName,
+        status: "resolved",
+      };
+    }
+
+    if (
+      phpDirectlyDeclaresFactoryMethod(
+        declaringSource,
+        declaringClassName,
+        methodName,
+      )
+    ) {
+      return { status: "miss" };
+    }
+
+    const parentReference = phpExtendsClassName(declaringSource);
+
+    if (!parentReference) {
+      return { status: "miss" };
+    }
+
+    const parentClassName = resolvePhpClassReference(
+      declaringSource,
+      parentReference,
+    );
+
+    if (!parentClassName) {
+      return { status: "miss" };
+    }
+
+    return resolvePhpFrameworkFactoryMethodType({
+      declaringClassName: parentClassName,
+      depth: depth + 1,
+      isRequestedRootActive,
+      invokedClassName,
+      methodName,
+      staticOnly,
+      visitedClassNames,
+    });
   }
 
   const verifyPhpClassCandidatePaths = useCallback(
