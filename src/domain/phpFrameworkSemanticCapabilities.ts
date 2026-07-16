@@ -2,6 +2,7 @@ import type { EditorPosition } from "./languageServerFeatures";
 import { resolvePhpClassName } from "./phpClassNameResolution";
 import { defaultPhpFrameworkProviders } from "./phpFrameworkProviderDefaults";
 import type {
+  PhpFrameworkContainerAutowiredCandidate,
   PhpFrameworkContainerBinding,
   PhpFrameworkProvider,
   PhpFrameworkQueryCallbackContext,
@@ -176,7 +177,8 @@ export function phpFrameworkSupportsContainerBindingsFromSource(
 ): boolean {
   return providers.some(
     (provider) =>
-      provider.semantics?.containerBindingsFromSource !== undefined,
+      provider.semantics?.containerBindingsFromSource !== undefined ||
+      provider.semantics?.containerAutowiredCandidatesFromSources !== undefined,
   );
 }
 
@@ -217,47 +219,101 @@ function phpFrameworkAutowiredConcreteClassNameFromSources(
   sources: readonly string[],
   providers: readonly PhpFrameworkProvider[],
 ): string | null {
-  const candidates = phpFrameworkContainerConcreteClassNamesFromSources(
+  const candidates = phpFrameworkContainerAutowiredCandidatesFromSources(
     sources,
     providers,
   );
   const matches = candidates.filter((candidate) =>
     phpFrameworkSourceDeclaresClassImplementing(
       sources,
-      candidate,
+      candidate.className,
       abstractClassName,
     ),
   );
+  const eligible = matches.filter((candidate) =>
+    candidate.autowiredTypes
+      ? candidate.autowiredTypes.some((type) =>
+          phpFrameworkRequestedTypeMatchesAutowiredType(
+            sources,
+            abstractClassName,
+            type,
+          ),
+        )
+      : true,
+  );
+  const preferred = eligible.filter((candidate) => candidate.autowiredTypes);
 
-  if (matches.length !== 1) {
+  if (preferred.length === 1) {
+    return preferred[0]?.className ?? null;
+  }
+
+  if (preferred.length > 1) {
     return null;
   }
 
-  return matches[0] ?? null;
+  if (eligible.length !== 1) {
+    return null;
+  }
+
+  return eligible[0]?.className ?? null;
 }
 
-function phpFrameworkContainerConcreteClassNamesFromSources(
+export function phpFrameworkContainerAutowiredCandidatesFromSources(
   sources: readonly string[],
   providers: readonly PhpFrameworkProvider[],
-): string[] {
-  const classNames: string[] = [];
+): PhpFrameworkContainerAutowiredCandidate[] {
+  const candidates: PhpFrameworkContainerAutowiredCandidate[] = [];
 
-  for (const source of sources) {
-    for (const className of phpFrameworkContainerConcreteClassNamesFromSource(
-      source,
-      providers,
-    )) {
-      const normalized = phpFrameworkNormalizedClassName(className);
+  for (const provider of providers) {
+    const providerCandidates =
+      provider.semantics?.containerAutowiredCandidatesFromSources?.({ sources });
 
-      if (classNames.some((seen) => phpFrameworkNormalizedClassName(seen) === normalized)) {
-        continue;
+    if (providerCandidates) {
+      candidates.push(...providerCandidates);
+      continue;
+    }
+
+    for (const source of sources) {
+      for (const className of phpFrameworkContainerConcreteClassNamesFromSource(
+        source,
+        [provider],
+      )) {
+        const normalized = phpFrameworkNormalizedClassName(className);
+
+        if (
+          candidates.some(
+            (candidate) =>
+              phpFrameworkNormalizedClassName(candidate.className) === normalized,
+          )
+        ) {
+          continue;
+        }
+
+        candidates.push({ autowiredTypes: null, className, source });
       }
-
-      classNames.push(className);
     }
   }
 
-  return classNames;
+  return candidates;
+}
+
+function phpFrameworkRequestedTypeMatchesAutowiredType(
+  sources: readonly string[],
+  requestedType: string,
+  autowiredType: string,
+): boolean {
+  if (
+    phpFrameworkNormalizedClassName(requestedType) ===
+    phpFrameworkNormalizedClassName(autowiredType)
+  ) {
+    return true;
+  }
+
+  return phpFrameworkSourceDeclaresClassImplementing(
+    sources,
+    requestedType,
+    autowiredType,
+  );
 }
 
 function phpFrameworkSourceDeclaresClassImplementing(

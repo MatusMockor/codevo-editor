@@ -4274,7 +4274,7 @@ class DashboardPresenter
     ).toBeNull();
   });
 
-  it("uses Nette NEON bindings from workspace sources for getByType concrete types", () => {
+  it("does not use FQN-shaped Nette service IDs as getByType bindings", () => {
     const presenterSource = `<?php
 namespace App\\Presenters;
 
@@ -4308,7 +4308,7 @@ services:
         "$this->container->getByType(App\\Contracts\\Repo::class)",
         options,
       ),
-    ).toBe("App\\Repo");
+    ).toBe("App\\Contracts\\Repo");
     expect(
       phpVariableTypeInSource(
         presenterSource,
@@ -4316,7 +4316,7 @@ services:
         "repo",
         options,
       ),
-    ).toBe("App\\Repo");
+    ).toBe("App\\Contracts\\Repo");
     expect(
       phpVariableTypeInSource(
         presenterSource,

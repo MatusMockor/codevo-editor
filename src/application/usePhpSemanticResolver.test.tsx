@@ -74,7 +74,9 @@ function makeOptions(
   };
 }
 
-function phpWorkspaceDescriptor(): UsePhpSemanticResolverOptions["workspaceDescriptor"] {
+function phpWorkspaceDescriptor(
+  rootPath = ROOT,
+): UsePhpSemanticResolverOptions["workspaceDescriptor"] {
   return {
     javaScriptTypeScript: null,
     php: {
@@ -86,7 +88,7 @@ function phpWorkspaceDescriptor(): UsePhpSemanticResolverOptions["workspaceDescr
       phpVersionConstraint: null,
       psr4Roots: [{ dev: false, namespace: "App\\", paths: ["app"] }],
     },
-    rootPath: ROOT,
+    rootPath,
   };
 }
 
@@ -147,7 +149,7 @@ describe("usePhpSemanticResolver container binding scans", () => {
     harness.unmount();
   });
 
-  it("resolves Nette container bindings from loaded NEON framework sources without text search", async () => {
+  it("does not resolve FQN-shaped Nette service IDs without type evidence", async () => {
     const searchText = vi.fn(async () => []);
     const harness = renderResolver(
       makeOptions({
@@ -170,7 +172,7 @@ describe("usePhpSemanticResolver container binding scans", () => {
 
     await expect(
       harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
-    ).resolves.toBe("App\\Services\\NetteGateway");
+    ).resolves.toBeNull();
     expect(searchText).not.toHaveBeenCalled();
 
     harness.unmount();
@@ -232,6 +234,127 @@ final class DatabaseReportRepository implements ReportRepository
     expect(searchText).not.toHaveBeenCalled();
 
     harness.unmount();
+  });
+
+  it("applies Nette override suppression and requested-contract preference at runtime", async () => {
+    const sources = new Map([
+      [
+        `${ROOT}/app/Services/DisabledGateway.php`,
+        `<?php
+namespace App\\Services;
+
+final class DisabledGateway implements \\App\\Contracts\\Gateway, \\App\\Contracts\\Suppressed
+{
+}
+`,
+      ],
+      [
+        `${ROOT}/app/Services/PreferredGateway.php`,
+        `<?php
+namespace App\\Services;
+
+final class PreferredGateway implements \\App\\Contracts\\Gateway
+{
+}
+`,
+      ],
+      [
+        `${ROOT}/app/Services/OtherGateway.php`,
+        `<?php
+namespace App\\Services;
+
+final class OtherGateway implements \\App\\Contracts\\Gateway
+{
+}
+`,
+      ],
+    ]);
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      const source = sources.get(path);
+
+      if (!source) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return source;
+    });
+    const harness = renderResolver(
+      makeOptions({
+        activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+        currentPhpFrameworkSourceContext: () => ({
+          signature: "neon:runtime-precedence",
+          workspaceSources: [
+            `services:
+    disabled:
+        factory: App\\Services\\DisabledGateway
+        autowired: false
+    preferred:
+        factory: App\\Services\\PreferredGateway
+        autowired: App\\Contracts\\Gateway
+    other: App\\Services\\OtherGateway
+`,
+            `services:
+    disabled: App\\Services\\DisabledGateway
+`,
+          ],
+        }),
+        readNavigationFileContent,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      }),
+    );
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
+    ).resolves.toBe("App\\Services\\PreferredGateway");
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Suppressed"),
+    ).resolves.toBeNull();
+
+    harness.unmount();
+  });
+
+  it("does not autowire explicit empty or malformed target policies", async () => {
+    const concretePath = `${ROOT}/app/Services/EmptyGateway.php`;
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      if (path !== concretePath) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return `<?php
+namespace App\\Services;
+
+final class EmptyGateway implements \\App\\Contracts\\Gateway
+{
+}
+`;
+    });
+    const resolve = async (autowired: string) => {
+      const harness = renderResolver(
+        makeOptions({
+          activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+          currentPhpFrameworkSourceContext: () => ({
+            signature: `neon:${autowired}`,
+            workspaceSources: [
+              `services:
+    gateway:
+        factory: App\\Services\\EmptyGateway
+        autowired: ${autowired}
+`,
+            ],
+          }),
+          readNavigationFileContent,
+          workspaceDescriptor: phpWorkspaceDescriptor(),
+        }),
+      );
+      const result = await harness
+        .api()
+        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway");
+      harness.unmount();
+      return result;
+    };
+
+    await expect(resolve("[]")).resolves.toBeNull();
+    await expect(resolve("%malformed%")).resolves.toBeNull();
   });
 
   it("resolves Nette autowired services through an abstract parent implementing the requested interface", async () => {
@@ -569,6 +692,7 @@ final class DatabaseReportRepository implements ReportRepository
 
   it("invalidates cached Nette misses when framework source signatures change", async () => {
     const searchText = vi.fn(async () => []);
+    const gatewayPath = `${ROOT}/app/Services/NetteGateway.php`;
     const emptySources = {
       signature: "",
       workspaceSources: [],
@@ -578,17 +702,31 @@ final class DatabaseReportRepository implements ReportRepository
       workspaceSources: [
         [
           "services:",
-          "    App\\Contracts\\Gateway: App\\Services\\NetteGateway",
+          "    gateway: App\\Services\\NetteGateway",
         ].join("\n"),
       ],
     };
     const baseOptions = makeOptions({
       activePhpFrameworkProviders: [phpNetteFrameworkProvider],
       currentPhpFrameworkSourceContext: () => emptySources,
+      readNavigationFileContent: vi.fn(async (path: string) => {
+        if (path !== gatewayPath) {
+          throw new Error(`Unexpected read: ${path}`);
+        }
+
+        return `<?php
+namespace App\\Services;
+
+final class NetteGateway implements \\App\\Contracts\\Gateway
+{
+}
+`;
+      }),
       textSearch: {
         replaceInPath: vi.fn(async () => ({ files: [], totalReplacements: 0 })),
         searchText,
       },
+      workspaceDescriptor: phpWorkspaceDescriptor(),
     });
     const harness = renderResolver(baseOptions);
 
@@ -605,6 +743,79 @@ final class DatabaseReportRepository implements ReportRepository
       harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
     ).resolves.toBe("App\\Services\\NetteGateway");
     expect(searchText).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("isolates Nette candidate results and caches across workspace roots", async () => {
+    const otherRoot = "/other-workspace";
+    const currentWorkspaceRootRef = { current: ROOT as string | null };
+    const cacheRef = { current: {} as Record<string, string | null> };
+    const sourceByPath = new Map([
+      [
+        `${ROOT}/app/Services/RootGateway.php`,
+        `<?php
+namespace App\\Services;
+
+final class RootGateway implements \\App\\Contracts\\Gateway
+{
+}
+`,
+      ],
+      [
+        `${otherRoot}/app/Services/OtherGateway.php`,
+        `<?php
+namespace App\\Services;
+
+final class OtherGateway implements \\App\\Contracts\\Gateway
+{
+}
+`,
+      ],
+    ]);
+    const readNavigationFileContent = vi.fn(async (path: string) => {
+      const source = sourceByPath.get(path);
+
+      if (!source) {
+        throw new Error(`Unexpected read: ${path}`);
+      }
+
+      return source;
+    });
+    const rootOptions = makeOptions({
+      activePhpFrameworkProviders: [phpNetteFrameworkProvider],
+      currentPhpFrameworkSourceContext: () => ({
+        signature: "neon:root",
+        workspaceSources: ["services:\n    gateway: App\\Services\\RootGateway"],
+      }),
+      currentWorkspaceRootRef,
+      phpFrameworkBindingCacheRef: cacheRef,
+      readNavigationFileContent,
+      workspaceDescriptor: phpWorkspaceDescriptor(ROOT),
+    });
+    const harness = renderResolver(rootOptions);
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
+    ).resolves.toBe("App\\Services\\RootGateway");
+
+    currentWorkspaceRootRef.current = otherRoot;
+    harness.rerender({
+      ...rootOptions,
+      currentPhpFrameworkSourceContext: () => ({
+        signature: "neon:other",
+        workspaceSources: ["services:\n    gateway: App\\Services\\OtherGateway"],
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(otherRoot),
+      workspaceRoot: otherRoot,
+    });
+
+    await expect(
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
+    ).resolves.toBe("App\\Services\\OtherGateway");
+    expect(cacheRef.current).toEqual({
+      "app\\contracts\\gateway": "App\\Services\\OtherGateway",
+    });
 
     harness.unmount();
   });

@@ -11,8 +11,8 @@ import {
 } from "../domain/phpSemanticEngine";
 import { phpDeclaredTypeCandidate } from "../domain/phpTypeAnalysis";
 import {
+  phpFrameworkContainerAutowiredCandidatesFromSources,
   phpFrameworkContainerBindingsFromSource,
-  phpFrameworkContainerConcreteClassNamesFromSource,
   phpFrameworkProviderSignature,
   phpFrameworkSupportsContainerBindingsFromSource,
   type PhpFrameworkProvider,
@@ -453,16 +453,65 @@ export function usePhpSemanticResolver({
     frameworkSources: readonly string[],
     isRequestedRootActive: () => boolean,
   ): Promise<PhpFrameworkAutowireLookupResult> {
-    const concreteClassNames = phpFrameworkConcreteClassNamesFromSources(
+    const candidates = phpFrameworkContainerAutowiredCandidatesFromSources(
       frameworkSources,
       activePhpFrameworkProviders,
-      (source, className) => resolvePhpClassReference(source, className),
     );
-    const matches: string[] = [];
+    const matches: Array<{ className: string; preferred: boolean }> = [];
 
-    for (const concreteClassName of concreteClassNames) {
+    for (const candidate of candidates) {
       if (!isRequestedRootActive()) {
         return { status: "inactive" };
+      }
+
+      const concreteClassName = resolvePhpClassReference(
+        candidate.source,
+        candidate.className,
+      );
+
+      if (!concreteClassName) {
+        continue;
+      }
+
+      if (candidate.autowiredTypes) {
+        let targetMatched = false;
+
+        for (const autowiredType of candidate.autowiredTypes) {
+          const resolvedAutowiredType = resolvePhpClassReference(
+            candidate.source,
+            autowiredType,
+          );
+
+          if (!resolvedAutowiredType) {
+            continue;
+          }
+
+          const targetMatch = await phpRequestedTypeMatchesAutowiredType({
+            autowiredType: resolvedAutowiredType,
+            isRequestedRootActive,
+            readNavigationFileContent,
+            requestedClassName,
+            resolvePhpClassReference,
+            resolvePhpClassSourcePaths: (className) =>
+              resolvePhpClassSourcePathsRef.current(className),
+          });
+
+          if (
+            targetMatch.status === "inactive" ||
+            targetMatch.status === "read-failed"
+          ) {
+            return targetMatch;
+          }
+
+          if (targetMatch.status === "matched") {
+            targetMatched = true;
+            break;
+          }
+        }
+
+        if (!targetMatched) {
+          continue;
+        }
       }
 
       const paths =
@@ -507,7 +556,10 @@ export function usePhpSemanticResolver({
             continue;
           }
 
-          matches.push(concreteClassName);
+          matches.push({
+            className: concreteClassName,
+            preferred: candidate.autowiredTypes !== null,
+          });
           break;
         } catch {
           if (!isRequestedRootActive()) {
@@ -519,11 +571,26 @@ export function usePhpSemanticResolver({
       }
     }
 
-    if (matches.length !== 1) {
+    const preferredMatches = matches.filter((match) => match.preferred);
+
+    if (preferredMatches.length === 1) {
+      const className = preferredMatches[0]?.className;
+
+      if (!className) {
+        return { status: "miss" };
+      }
+
+      return {
+        className,
+        status: "resolved",
+      };
+    }
+
+    if (preferredMatches.length > 1 || matches.length !== 1) {
       return { status: "miss" };
     }
 
-    const className = matches[0] ?? null;
+    const className = matches[0]?.className ?? null;
 
     return className ? { className, status: "resolved" } : { status: "miss" };
   }
@@ -806,41 +873,38 @@ function phpFrameworkBoundConcreteFromSources(
   return null;
 }
 
-function phpFrameworkConcreteClassNamesFromSources(
-  sources: readonly string[],
-  providers: readonly PhpFrameworkProvider[],
-  resolveClassName: (source: string, className: string) => string | null,
-): string[] {
-  const classNames: string[] = [];
-
-  for (const source of sources) {
-    for (const className of phpFrameworkContainerConcreteClassNamesFromSource(
-      source,
-      providers,
-    )) {
-      const resolvedClassName = resolveClassName(source, className);
-
-      if (!resolvedClassName) {
-        continue;
-      }
-
-      const normalizedClassName =
-        normalizePhpFrameworkBindingClassName(resolvedClassName);
-
-      if (
-        classNames.some(
-          (seen) =>
-            normalizePhpFrameworkBindingClassName(seen) === normalizedClassName,
-        )
-      ) {
-        continue;
-      }
-
-      classNames.push(resolvedClassName);
-    }
+async function phpRequestedTypeMatchesAutowiredType({
+  autowiredType,
+  isRequestedRootActive,
+  readNavigationFileContent,
+  requestedClassName,
+  resolvePhpClassReference,
+  resolvePhpClassSourcePaths,
+}: {
+  autowiredType: string;
+  isRequestedRootActive: () => boolean;
+  readNavigationFileContent: (path: string) => Promise<string>;
+  requestedClassName: string;
+  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
+}): Promise<PhpFrameworkAutowireMatchResult> {
+  if (
+    normalizePhpFrameworkBindingClassName(requestedClassName) ===
+    normalizePhpFrameworkBindingClassName(autowiredType)
+  ) {
+    return { status: "matched" };
   }
 
-  return classNames;
+  return phpTypeTransitivelyReferencesType({
+    className: requestedClassName,
+    depth: 0,
+    isRequestedRootActive,
+    readNavigationFileContent,
+    requestedClassName: autowiredType,
+    resolvePhpClassReference,
+    resolvePhpClassSourcePaths,
+    visitedTypeNames: new Set<string>(),
+  });
 }
 
 async function phpSourceClassTransitivelyImplements({

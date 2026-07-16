@@ -19,6 +19,7 @@ import {
 } from "./netteViewData";
 import {
   isNetteContainerBindingCandidatePath,
+  phpNetteContainerAutowiredCandidatesFromSources,
   phpNetteContainerBindingsFromSource,
   phpNetteContainerConcreteClassNamesFromSource,
   phpNetteContainerExpressionClassName,
@@ -214,6 +215,8 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       phpNetteContainerExpressionClassName(expression),
     containerBindingsFromSource: ({ source }) =>
       phpNetteContainerBindingsFromSource(source),
+    containerAutowiredCandidatesFromSources: ({ sources }) =>
+      phpNetteContainerAutowiredCandidatesFromSources(sources),
     containerConcreteClassNamesFromSource: ({ source }) =>
       phpNetteContainerConcreteClassNamesFromSource(source),
     isContainerBindingCandidatePath: ({ path }) =>

@@ -89,11 +89,20 @@ export interface NeonService {
   className: string | null;
   /** A `Class::method` static-factory expression, or `null`. */
   factory: string | null;
+  /** Normal eligibility, disabled eligibility, or narrowed/preferred types. */
+  autowired: boolean | string[];
   /**
    * Go-to-definition anchor: the service name for a named service, or the
    * class/factory token for an anonymous one (falling back to the entry start).
    */
   offset: number;
+}
+
+export interface NeonServiceDefinition {
+  autowiredConfigured: boolean;
+  creationConfigured: boolean;
+  preventsMerging: boolean;
+  service: NeonService;
 }
 
 export interface NeonGeneratedServiceName {
@@ -269,7 +278,12 @@ function skipString(source: string, open: number, limit: number): number {
   while (index < limit) {
     const character = source[index];
 
-    if (character === "\\") {
+    if (quote === '"' && character === "\\") {
+      index += 2;
+      continue;
+    }
+
+    if (quote === "'" && character === "'" && source[index + 1] === "'") {
       index += 2;
       continue;
     }
@@ -282,6 +296,32 @@ function skipString(source: string, open: number, limit: number): number {
   }
 
   return limit;
+}
+
+function decodeQuotedKey(source: string, start: number, end: number): string {
+  const quote = source[start];
+  const value = source.slice(start + 1, end - 1);
+
+  if (quote === "'") {
+    return value.replace(/''/g, "'");
+  }
+
+  return value.replace(/\\([\\"nrtbf])/g, (_match, escaped: string) => {
+    switch (escaped) {
+      case "n":
+        return "\n";
+      case "r":
+        return "\r";
+      case "t":
+        return "\t";
+      case "b":
+        return "\b";
+      case "f":
+        return "\f";
+      default:
+        return escaped;
+    }
+  });
 }
 
 /**
@@ -316,24 +356,47 @@ interface NeonKey {
   rawName: string;
   keyStart: number;
   keyEnd: number;
+  preventsMerging: boolean;
   valueStart: number;
 }
 
 /**
- * Recognises a `key:` mapping at `cursor` (a `[\w.-]+` name followed by a colon
- * that ends the line or is followed by whitespace). Returns `null` otherwise, so
+ * Recognises a quoted key or a `[\w.\\-]+` name followed by a colon that ends
+ * the line or is followed by whitespace. Returns `null` otherwise, so
  * `http://…`, `Class::method`, and `10:30` are never read as keys. The raw
  * (case-preserved) name is returned - service/parameter names are case sensitive.
  */
 function keyAt(source: string, cursor: number, limit: number): NeonKey | null {
   let index = cursor;
+  let rawName = "";
+  const quote = source[cursor];
 
-  while (index < limit && /[\w.-]/.test(source[index] ?? "")) {
-    index += 1;
+  if (quote === "'" || quote === '"') {
+    index = skipString(source, cursor, limit);
+
+    if (source[index - 1] !== quote) {
+      return null;
+    }
+
+    rawName = decodeQuotedKey(source, cursor, index);
   }
 
-  if (index === cursor) {
+  if (rawName.length === 0) {
+    while (index < limit && /[\w.\\-]/.test(source[index] ?? "")) {
+      index += 1;
+    }
+
+    rawName = source.slice(cursor, index);
+  }
+
+  if (rawName.length === 0) {
     return null;
+  }
+
+  const preventsMerging = source[index] === "!";
+
+  if (preventsMerging) {
+    index += 1;
   }
 
   let colon = index;
@@ -359,7 +422,13 @@ function keyAt(source: string, cursor: number, limit: number): NeonKey | null {
     valueStart += 1;
   }
 
-  return { rawName: source.slice(cursor, index), keyStart: cursor, keyEnd: index, valueStart };
+  return {
+    rawName,
+    keyStart: cursor,
+    keyEnd: index,
+    preventsMerging,
+    valueStart,
+  };
 }
 
 interface NeonLine {
@@ -376,6 +445,7 @@ interface NeonLine {
   keyNameRaw: string | null;
   keyStart: number | null;
   keyEnd: number | null;
+  preventsMerging: boolean;
   /** Offset where the value begins (after `- ` and/or `key:`). */
   valueStart: number;
   /** Offset of the inline comment, or the content limit. */
@@ -400,6 +470,7 @@ function inertLine(
     keyNameRaw: null,
     keyStart: null,
     keyEnd: null,
+    preventsMerging: false,
     valueStart: contentLimit,
     commentStart: contentLimit,
   };
@@ -457,6 +528,7 @@ function buildLine(
     keyNameRaw: key ? key.rawName : null,
     keyStart: key ? key.keyStart : null,
     keyEnd: key ? key.keyEnd : null,
+    preventsMerging: key?.preventsMerging ?? false,
     valueStart: key ? key.valueStart : cursor,
     commentStart,
   };
@@ -1154,18 +1226,108 @@ function serviceSources(source: string, head: NeonLine, body: NeonLine[]): Servi
   return sources;
 }
 
-function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): NeonService | null {
+function blockAutowiredTargets(
+  source: string,
+  body: readonly NeonLine[],
+): string[] | null {
+  const targets: string[] = [];
+  let configured = false;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const line = body[index];
+
+    if (
+      !line ||
+      line.keyNameRaw?.toLowerCase() !== "autowired" ||
+      source.slice(line.valueStart, line.commentStart).trim().length > 0
+    ) {
+      continue;
+    }
+
+    configured = true;
+
+    for (let nestedIndex = index + 1; nestedIndex < body.length; nestedIndex += 1) {
+      const nested = body[nestedIndex];
+
+      if (!nested || nested.indent <= line.indent) {
+        break;
+      }
+
+      if (!nested.isListItem) {
+        continue;
+      }
+
+      const target = source
+        .slice(nested.valueStart, nested.commentStart)
+        .trim();
+
+      if (isPlausibleClass(target) || target.toLowerCase() === "self") {
+        targets.push(target);
+      }
+    }
+  }
+
+  return configured ? targets : null;
+}
+
+function parseServiceGroupDefinition(
+  source: string,
+  head: NeonLine,
+  body: NeonLine[],
+): NeonServiceDefinition | null {
   const serviceName = head.isListItem ? null : head.keyNameRaw;
   const sources = serviceSources(source, head, body);
 
   let className: string | null = null;
   let factory: string | null = null;
   let classOffset: number | null = null;
+  let autowired: boolean | string[] = true;
+  let autowiredConfigured = false;
+  let creationConfigured = false;
 
   for (const entry of sources) {
+    if (entry.key === "autowired") {
+      autowiredConfigured = true;
+      const valueRange = trimRange(source, entry.valueStart, entry.valueEnd);
+      const value = source.slice(valueRange.start, valueRange.end);
+
+      if (/^(?:false|no)$/i.test(value)) {
+        autowired = false;
+        continue;
+      }
+
+      if (/^(?:true|yes)$/i.test(value)) {
+        autowired = true;
+        continue;
+      }
+
+      const targetRanges =
+        value.startsWith("[") && value.endsWith("]")
+          ? splitTopLevelRanges(
+              source,
+              valueRange.start + 1,
+              valueRange.end - 1,
+              ",",
+            )
+          : [];
+      const targets = targetRanges
+        .map((range) => source.slice(range.start, range.end).trim())
+        .filter(
+          (target) =>
+            isPlausibleClass(target) || target.toLowerCase() === "self",
+        );
+      const scalarTarget = value.toLowerCase() === "self" || isPlausibleClass(value);
+
+      autowired = scalarTarget ? [value] : targets;
+
+      continue;
+    }
+
     const classified = classifyServiceValue(source, entry.valueStart, entry.valueEnd);
 
     if (entry.key !== null && SERVICE_CLASS_KEYS.has(entry.key)) {
+      creationConfigured = true;
+
       if (classified.className !== null && className === null) {
         className = classified.className;
         classOffset = classified.tokenOffset;
@@ -1175,6 +1337,8 @@ function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): Ne
     }
 
     if (entry.key === null || SERVICE_FACTORY_KEYS.has(entry.key)) {
+      creationConfigured = true;
+
       if (classified.factory !== null && factory === null) {
         factory = classified.factory;
 
@@ -1190,6 +1354,12 @@ function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): Ne
     }
   }
 
+  const blockTargets = blockAutowiredTargets(source, body);
+
+  if (blockTargets !== null) {
+    autowired = blockTargets;
+  }
+
   if (serviceName === null && className === null && factory === null) {
     return null;
   }
@@ -1201,7 +1371,20 @@ function parseServiceGroup(source: string, head: NeonLine, body: NeonLine[]): Ne
         ? classOffset
         : head.contentStart;
 
-  return { serviceName, className, factory, offset };
+  return {
+    autowiredConfigured,
+    creationConfigured,
+    preventsMerging: head.preventsMerging,
+    service: { serviceName, className, factory, autowired, offset },
+  };
+}
+
+function parseServiceGroup(
+  source: string,
+  head: NeonLine,
+  body: NeonLine[],
+): NeonService | null {
+  return parseServiceGroupDefinition(source, head, body)?.service ?? null;
 }
 
 function collectInlineSetupSources(
@@ -1270,6 +1453,27 @@ export function neonServicesFromSource(source: string): NeonService[] {
   }
 
   return services;
+}
+
+export function neonServiceDefinitionsFromSource(
+  source: string,
+): NeonServiceDefinition[] {
+  const lines = buildLines(source);
+  const definitions: NeonServiceDefinition[] = [];
+
+  for (const group of serviceGroups(lines)) {
+    const definition = parseServiceGroupDefinition(
+      source,
+      group.head,
+      group.body,
+    );
+
+    if (definition) {
+      definitions.push(definition);
+    }
+  }
+
+  return definitions;
 }
 
 export function neonGeneratedServiceNamesFromServices(

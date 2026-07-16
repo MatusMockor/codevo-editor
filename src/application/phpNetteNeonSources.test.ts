@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "../domain/workspace";
 import {
   isPhpNetteNeonConfigPath,
+  loadPhpNetteNeonConfigSourceEntries,
+  loadPhpNetteNeonConfigSourceCollection,
   loadPhpNetteNeonConfigSources,
   phpNetteNeonConfigSourcesSignature,
   type PhpNetteNeonSourceReader,
@@ -121,6 +123,111 @@ describe("loadPhpNetteNeonConfigSources", () => {
     await expect(
       loadPhpNetteNeonConfigSources("/workspace", gateway),
     ).resolves.toEqual([]);
+  });
+
+  it("orders sources by include precedence instead of lexical path", async () => {
+    const root = "includes:\n  - z-base.neon\n  - a-override.neon\nservices:\n  mailer: App\\RootMailer";
+    const base = "services:\n  mailer: App\\BaseMailer";
+    const override = "services:\n  mailer: App\\OverrideMailer";
+    const gateway = reader(
+      {
+        "/workspace/config": [
+          fileEntry("/workspace/config/a-override.neon"),
+          fileEntry("/workspace/config/root.neon"),
+          fileEntry("/workspace/config/z-base.neon"),
+        ],
+      },
+      {
+        "/workspace/config/a-override.neon": override,
+        "/workspace/config/root.neon": root,
+        "/workspace/config/z-base.neon": base,
+      },
+    );
+
+    await expect(
+      loadPhpNetteNeonConfigSourceEntries("/workspace", gateway),
+    ).resolves.toEqual([
+      { path: "/workspace/config/root.neon", source: root },
+      { path: "/workspace/config/a-override.neon", source: override },
+      { path: "/workspace/config/z-base.neon", source: base },
+    ]);
+  });
+
+  it("traverses cyclic includes deterministically and only once", async () => {
+    const first = "includes:\n  - b.neon\nservices:\n  first: App\\First";
+    const second = "includes:\n  - a.neon\nservices:\n  second: App\\Second";
+    const gateway = reader(
+      {
+        "/workspace/config": [
+          fileEntry("/workspace/config/b.neon"),
+          fileEntry("/workspace/config/a.neon"),
+        ],
+      },
+      {
+        "/workspace/config/a.neon": first,
+        "/workspace/config/b.neon": second,
+      },
+    );
+
+    await expect(
+      loadPhpNetteNeonConfigSources("/workspace", gateway),
+    ).resolves.toEqual([first, second]);
+  });
+
+  it("recursively loads valid includes outside conventional scan directories", async () => {
+    const root = "includes:\n  - ../shared/services.neon\nservices:\n  app: App\\Root";
+    const shared = "services:\n  mailer: App\\SharedMailer";
+    const gateway = reader(
+      {
+        "/workspace/config": [fileEntry("/workspace/config/root.neon")],
+      },
+      {
+        "/workspace/config/root.neon": root,
+        "/workspace/shared/services.neon": shared,
+      },
+    );
+
+    await expect(
+      loadPhpNetteNeonConfigSourceCollection("/workspace", gateway),
+    ).resolves.toEqual({
+      discoveredPaths: new Set([
+        "/workspace/config/root.neon",
+        "/workspace/shared/services.neon",
+      ]),
+      entries: [
+        { path: "/workspace/config/root.neon", source: root },
+        { path: "/workspace/shared/services.neon", source: shared },
+      ],
+    });
+  });
+
+  it("tracks missing includes but rejects paths outside the workspace", async () => {
+    const root = [
+      "includes:",
+      "  - ../shared/missing.neon",
+      "  - ../../outside.neon",
+    ].join("\n");
+    const gateway = reader(
+      {
+        "/workspace/config": [fileEntry("/workspace/config/root.neon")],
+      },
+      { "/workspace/config/root.neon": root },
+    );
+
+    const collection = await loadPhpNetteNeonConfigSourceCollection(
+      "/workspace",
+      gateway,
+    );
+
+    expect(collection.entries).toEqual([
+      { path: "/workspace/config/root.neon", source: root },
+    ]);
+    expect(collection.discoveredPaths).toEqual(
+      new Set([
+        "/workspace/config/root.neon",
+        "/workspace/shared/missing.neon",
+      ]),
+    );
   });
 });
 

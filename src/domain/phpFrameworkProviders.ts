@@ -51,6 +51,7 @@ export {
 } from "./phpFrameworkTargetCapabilities";
 export {
   isPhpFrameworkContainerBindingCandidatePath,
+  phpFrameworkContainerAutowiredCandidatesFromSources,
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerConcreteClassNamesFromSource,
   phpFrameworkContainerConcreteClassNameFromSource,
@@ -145,6 +146,16 @@ export interface PhpFrameworkContainerBindingsContext {
 
 export interface PhpFrameworkContainerConcreteClassNamesContext {
   source: string;
+}
+
+export interface PhpFrameworkContainerAutowiredCandidate {
+  autowiredTypes: readonly string[] | null;
+  className: string;
+  source: string;
+}
+
+export interface PhpFrameworkContainerAutowiredCandidatesContext {
+  sources: readonly string[];
 }
 
 export interface PhpFrameworkContainerBindingPathContext {
@@ -1138,6 +1149,9 @@ export interface PhpFrameworkProvider {
     containerConcreteClassNamesFromSource?: (
       context: PhpFrameworkContainerConcreteClassNamesContext,
     ) => string[];
+    containerAutowiredCandidatesFromSources?: (
+      context: PhpFrameworkContainerAutowiredCandidatesContext,
+    ) => PhpFrameworkContainerAutowiredCandidate[];
     isContainerBindingCandidatePath?: (
       context: PhpFrameworkContainerBindingPathContext,
     ) => boolean;

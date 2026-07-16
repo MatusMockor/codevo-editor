@@ -1,8 +1,8 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useRef, type MutableRefObject } from "react";
 import type { WorkspaceFileGateway } from "../domain/workspace";
 import {
   isPhpNetteNeonConfigPath,
-  loadPhpNetteNeonConfigSources,
+  loadPhpNetteNeonConfigSourceCollection,
   phpNetteNeonConfigSourcesSignature,
 } from "./phpNetteNeonSources";
 import { usePhpSourceCollectionRegistry } from "./usePhpSourceCollectionRegistry";
@@ -35,6 +35,29 @@ export function useNetteSourceRegistries({
   onSourcesLoaded,
   workspaceFiles,
 }: UseNetteSourceRegistriesDependencies): NetteSourceRegistries {
+  const discoveredPathsByRootRef = useRef<Record<string, ReadonlySet<string>>>(
+    {},
+  );
+  const isTrackedNetteSourcePath = useCallback(
+    (rootPath: string, path: string): boolean =>
+      isPhpNetteNeonConfigPath(rootPath, path) ||
+      discoveredPathsByRootRef.current[rootPath]?.has(path) === true,
+    [],
+  );
+  const loadTrackedNetteSources = useCallback(
+    async (
+      rootPath: string,
+      reader: Pick<WorkspaceFileGateway, "readDirectory" | "readTextFile">,
+    ): Promise<readonly string[]> => {
+      const collection = await loadPhpNetteNeonConfigSourceCollection(
+        rootPath,
+        reader,
+      );
+      discoveredPathsByRootRef.current[rootPath] = collection.discoveredPaths;
+      return collection.entries.map((entry) => entry.source);
+    },
+    [],
+  );
   const {
     currentSourceCollectionEntry: currentNeonSourceEntry,
     ensureSourceCollectionLoaded: ensurePhpNetteNeonConfigSourcesLoaded,
@@ -44,12 +67,16 @@ export function useNetteSourceRegistries({
   } = usePhpSourceCollectionRegistry({
     currentWorkspaceRootRef,
     isActive,
-    isSourcePath: isPhpNetteNeonConfigPath,
-    loadSources: loadPhpNetteNeonConfigSources,
+    isSourcePath: isTrackedNetteSourcePath,
+    loadSources: loadTrackedNetteSources,
     onSourcesLoaded,
     sourceSignature: phpNetteNeonConfigSourcesSignature,
     workspaceFiles,
   });
+  const resetPhpNetteSourceRegistries = useCallback((): void => {
+    discoveredPathsByRootRef.current = {};
+    resetPhpNetteNeonSourceRegistry();
+  }, [resetPhpNetteNeonSourceRegistry]);
 
   const currentPhpNetteSourceContextForRoot = useCallback(
     (rootPath: string): PhpNetteSourceContext => {
@@ -71,6 +98,6 @@ export function useNetteSourceRegistries({
     currentPhpNetteSourceContextForRoot,
     ensurePhpNetteNeonConfigSourcesLoaded,
     invalidatePhpNetteNeonConfigSourcesForPath,
-    resetPhpNetteSourceRegistries: resetPhpNetteNeonSourceRegistry,
+    resetPhpNetteSourceRegistries,
   };
 }

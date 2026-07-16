@@ -241,6 +241,7 @@ describe("neonServicesFromSource", () => {
         serviceName: null,
         className: "App\\Model\\ProductRepository",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "App\\Model\\ProductRepository"),
       },
     ]);
@@ -254,6 +255,7 @@ describe("neonServicesFromSource", () => {
         serviceName: "productFacade",
         className: "App\\Model\\ProductFacade",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "productFacade"),
       },
     ]);
@@ -268,6 +270,7 @@ describe("neonServicesFromSource", () => {
         serviceName: "db",
         className: "App\\Database\\Connection",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "db"),
       },
     ]);
@@ -282,6 +285,7 @@ describe("neonServicesFromSource", () => {
         serviceName: "router",
         className: null,
         factory: "App\\Router\\RouterFactory::createRouter",
+        autowired: true,
         offset: offsetOf(source, "router"),
       },
     ]);
@@ -296,6 +300,7 @@ describe("neonServicesFromSource", () => {
         serviceName: "router",
         className: null,
         factory: "App\\Router\\RouterFactory::createRouter",
+        autowired: true,
         offset: offsetOf(source, "router"),
       },
     ]);
@@ -310,6 +315,7 @@ describe("neonServicesFromSource", () => {
         serviceName: "logger",
         className: "App\\Logging\\LoggerInterface",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "logger"),
       },
     ]);
@@ -324,6 +330,7 @@ describe("neonServicesFromSource", () => {
         serviceName: null,
         className: "App\\Model\\Factory",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "App\\Model\\Factory"),
       },
     ]);
@@ -338,8 +345,96 @@ describe("neonServicesFromSource", () => {
         serviceName: "facade",
         className: "App\\Model\\Facade",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "facade"),
       },
+    ]);
+  });
+
+  it("preserves disabled, narrowed, and preferred autowiring policies", () => {
+    const source = [
+      "services:",
+      "    lowerFalse: { factory: EBox\\Repository\\LowerFalse, autowired: false }",
+      "    upperFalse: { factory: EBox\\Repository\\UpperFalse, autowired: FALSE }",
+      "    lowerNo: { factory: EBox\\Repository\\LowerNo, autowired: no }",
+      "    titleNo: { factory: EBox\\Repository\\TitleNo, autowired: No }",
+      "    upperNo: { factory: EBox\\Repository\\UpperNo, autowired: NO }",
+      "    narrowed: { factory: EBox\\Repository\\Narrowed, autowired: EBox\\Contract\\Primary }",
+      "    preferred: { factory: EBox\\Repository\\Preferred, autowired: [EBox\\Contract\\Primary, EBox\\Contract\\Secondary] }",
+      "    empty: { factory: EBox\\Repository\\Empty, autowired: [] }",
+      "    dynamic: { factory: EBox\\Repository\\Dynamic, autowired: %autowired% }",
+    ].join("\n");
+
+    expect(
+      neonServicesFromSource(source).map((service) => ({
+        className: service.className,
+        autowired: service.autowired,
+      })),
+    ).toEqual([
+      { className: "EBox\\Repository\\LowerFalse", autowired: false },
+      { className: "EBox\\Repository\\UpperFalse", autowired: false },
+      { className: "EBox\\Repository\\LowerNo", autowired: false },
+      { className: "EBox\\Repository\\TitleNo", autowired: false },
+      { className: "EBox\\Repository\\UpperNo", autowired: false },
+      {
+        className: "EBox\\Repository\\Narrowed",
+        autowired: ["EBox\\Contract\\Primary"],
+      },
+      {
+        className: "EBox\\Repository\\Preferred",
+        autowired: [
+          "EBox\\Contract\\Primary",
+          "EBox\\Contract\\Secondary",
+        ],
+      },
+      { className: "EBox\\Repository\\Empty", autowired: [] },
+      { className: "EBox\\Repository\\Dynamic", autowired: [] },
+    ]);
+  });
+
+  it("parses block-form autowired target arrays and ignores malformed items", () => {
+    const source = [
+      "services:",
+      "    repository:",
+      "        factory: App\\Repository\\DatabaseRepository",
+      "        autowired:",
+      "            - App\\Contracts\\PrimaryRepository",
+      "            - broken value",
+      "            - App\\Contracts\\SecondaryRepository",
+    ].join("\n");
+
+    expect(neonServicesFromSource(source)[0]?.autowired).toEqual([
+      "App\\Contracts\\PrimaryRepository",
+      "App\\Contracts\\SecondaryRepository",
+    ]);
+  });
+
+  it("preserves an explicit block policy with no valid targets as empty", () => {
+    const source = [
+      "services:",
+      "    repository:",
+      "        factory: App\\Repository\\DatabaseRepository",
+      "        autowired:",
+      "            - broken value",
+      "            - %dynamic%",
+    ].join("\n");
+
+    expect(neonServicesFromSource(source)[0]?.autowired).toEqual([]);
+  });
+
+  it("decodes double-quoted service keys and preserves single-quoted backslashes", () => {
+    const source = String.raw`services:
+    "App\\Contracts\\Escaped": App\Service\Escaped
+    'App\Contracts\Literal': App\Service\Literal
+    "service\\\"name": App\Service\Named
+`;
+
+    expect(
+      neonServicesFromSource(source).map((service) => service.serviceName),
+    ).toEqual([
+      "App\\Contracts\\Escaped",
+      "App\\Contracts\\Literal",
+      'service\\"name',
     ]);
   });
 
@@ -543,6 +638,7 @@ describe("detectNeonServiceSetupMethodAt", () => {
         serviceName: "mailer",
         className: "App\\Mail\\Mailer",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "mailer"),
       },
     });
@@ -560,6 +656,7 @@ describe("detectNeonServiceSetupMethodAt", () => {
         serviceName: null,
         className: "App\\Model\\Factory",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "App\\Model\\Factory"),
       },
     });
@@ -587,6 +684,7 @@ describe("neonServiceSetupMethodCompletionContextAt", () => {
         serviceName: "mailer",
         className: "App\\Mail\\Mailer",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "mailer"),
       },
     });
@@ -604,6 +702,7 @@ describe("neonServiceSetupMethodCompletionContextAt", () => {
         serviceName: "mailer",
         className: "App\\Mail\\Mailer",
         factory: null,
+        autowired: true,
         offset: offsetOf(source, "mailer"),
       },
     });
