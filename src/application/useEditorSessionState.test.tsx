@@ -108,6 +108,32 @@ function renderEditorSessionState(): Harness {
 }
 
 describe("useEditorSessionState", () => {
+  it("publishes exact changed-document batches without replaying them", () => {
+    const harness = renderEditorSessionState();
+    const received: string[][] = [];
+    const unsubscribe = harness.session().subscribeChangedDocuments((paths) => {
+      received.push([...paths]);
+    });
+
+    act(() => {
+      harness.session().reportChangedDocuments([
+        DOCUMENT_A.path,
+        DOCUMENT_B.path,
+        DOCUMENT_A.path,
+      ]);
+    });
+
+    expect(received).toEqual([[DOCUMENT_A.path, DOCUMENT_B.path]]);
+    unsubscribe();
+
+    act(() => {
+      harness.session().reportChangedDocuments([DOCUMENT_C.path]);
+    });
+
+    expect(received).toHaveLength(1);
+    harness.unmount();
+  });
+
   it("commits a text preview and replaces only the clean active preview", () => {
     const harness = renderEditorSessionState();
     let replaced: EditorDocument | null = null;

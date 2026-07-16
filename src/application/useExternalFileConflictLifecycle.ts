@@ -43,6 +43,7 @@ interface ExternalFileConflictLifecycleDependencies {
   openPathsRef: MutableRefObject<string[]>;
   resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
   documentSelfWrites: DocumentSelfWriteCoordinator;
+  reportChangedDocuments: (paths: readonly string[]) => void;
   setActivePath: Dispatch<SetStateAction<string | null>>;
   setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
   setOpenPaths: Dispatch<SetStateAction<string[]>>;
@@ -58,6 +59,7 @@ export function useExternalFileConflictLifecycle({
   openPathsRef,
   resolveDocumentSaveOwnership,
   documentSelfWrites,
+  reportChangedDocuments,
   setActivePath,
   setDocuments,
   setOpenPaths,
@@ -878,6 +880,7 @@ export function useExternalFileConflictLifecycle({
         documentsRef.current = { ...documentsRef.current, [activePath]: refreshed };
         activeDocumentRef.current = refreshed;
         setDocuments(documentsRef.current);
+        reportChangedDocuments([activePath]);
       }
 
       if (requested === "followRename") {
@@ -937,6 +940,7 @@ export function useExternalFileConflictLifecycle({
       openPathsRef,
       ownershipKey,
       publish,
+      reportChangedDocuments,
       resolveOwnership,
       setActivePath,
       setDocuments,

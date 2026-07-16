@@ -66,6 +66,7 @@ describe("useWorkbenchTextSearch exclusions", () => {
       textSearch: { searchText, replaceInPath },
       workspaceFiles: {} as WorkbenchTextSearchDependencies["workspaceFiles"],
       reportError,
+      reportChangedDocuments: vi.fn(),
       setDocuments: vi.fn(),
       setEditorRevealTarget: vi.fn(),
       setMessage,

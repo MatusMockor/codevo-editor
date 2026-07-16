@@ -123,6 +123,7 @@ function makeDependencies(
     refreshGitStatus: vi.fn(),
     remapRecentFile: vi.fn(),
     remapRecentLocations: vi.fn(),
+    reportChangedDocuments: vi.fn(),
     reportErrorForActiveWorkspaceRoot: vi.fn(),
     syncClosedDocument: vi.fn(),
     syncClosedJavaScriptTypeScriptDocument: vi.fn(),
@@ -794,6 +795,82 @@ describe("useWorkbenchFileOperations save exclusion", () => {
     expect(dependencies.workspaceFiles.renamePath).not.toHaveBeenCalled();
     expect(dependencies.workspaceFiles.deletePath).not.toHaveBeenCalled();
   });
+});
+
+describe("useWorkbenchFileOperations external modification refresh", () => {
+  it.each([
+    ["PHP", "php", `${ROOT}/Changed.php`],
+    ["JavaScript", "javascript", `${ROOT}/Changed.js`],
+  ] as const)(
+    "reports the exact clean %s document replaced from disk",
+    async (_label, language, path) => {
+      const sibling: EditorDocument = {
+        content: "unchanged",
+        language: "typescript",
+        name: "Sibling.ts",
+        path: `${ROOT}/Sibling.ts`,
+        savedContent: "unchanged",
+      };
+      const changed: EditorDocument = {
+        content: "before",
+        language,
+        name: path.slice(path.lastIndexOf("/") + 1),
+        path,
+        savedContent: "before",
+      };
+      const documentsRef = {
+        current: { [changed.path]: changed, [sibling.path]: sibling },
+      };
+      const activeDocumentRef = { current: changed as EditorDocument | null };
+      const gateway = workspaceFiles();
+      vi.mocked(gateway.readTextFile).mockResolvedValue("after");
+      const reportedDocuments: EditorDocument[] = [];
+      const reportChangedDocuments = vi.fn((paths: readonly string[]) => {
+        paths.forEach((reportedPath) => {
+          reportedDocuments.push(documentsRef.current[reportedPath]);
+        });
+      });
+      const setDocuments: WorkbenchFileOperationsDependencies["setDocuments"] =
+        (update) => {
+          documentsRef.current =
+            typeof update === "function"
+              ? update(documentsRef.current)
+              : update;
+          activeDocumentRef.current = documentsRef.current[path] ?? null;
+        };
+      const dependencies = makeDependencies("", {
+        activeDocumentRef,
+        documentsRef,
+        reportChangedDocuments,
+        setDocuments,
+        workspaceFiles: gateway,
+      });
+      const operations = renderHook(dependencies);
+
+      act(() =>
+        operations().handleWorkspaceFileChange({
+          fileKind: "file",
+          kind: "modified",
+          path,
+          previousPath: null,
+          relativePath: changed.name,
+          rootPath: ROOT,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(reportChangedDocuments).toHaveBeenCalledWith([path]);
+      });
+      expect(reportChangedDocuments).toHaveBeenCalledOnce();
+      expect(documentsRef.current[path]).toMatchObject({
+        content: "after",
+        savedContent: "after",
+      });
+      expect(documentsRef.current[sibling.path]).toBe(sibling);
+      expect(activeDocumentRef.current).toBe(documentsRef.current[path]);
+      expect(reportedDocuments).toEqual([documentsRef.current[path]]);
+    },
+  );
 });
 
 describe("useWorkbenchFileOperations framework cache invalidation", () => {

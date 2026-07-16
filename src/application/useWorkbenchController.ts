@@ -8,6 +8,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { useEditorSessionState } from "./useEditorSessionState";
+import { useChangedDocumentSyncScheduling } from "./useChangedDocumentSyncScheduling";
 import type { EditorGroupFocusRunner } from "./editorGroupFocusPort";
 import { useGitStashPanel } from "./useGitStashPanel";
 import { useGitBranchPanel } from "./useGitBranchPanel";
@@ -879,6 +880,7 @@ export function useWorkbenchController(
     openPathsRef,
     previewPath,
     previewPathRef,
+    reportChangedDocuments,
     resetEditorSurfaceState,
     restoreEditorSurface,
     setActivePath,
@@ -888,6 +890,7 @@ export function useWorkbenchController(
     setOpenPaths,
     setPreviewPath,
     snapshotEditorSurface,
+    subscribeChangedDocuments,
     updateEditorGroups,
   } = useEditorSessionState();
   const [isOpeningFile, setIsOpeningFile] = useState(false);
@@ -1784,6 +1787,7 @@ export function useWorkbenchController(
     textSearch,
     workspaceFiles,
     reportError,
+    reportChangedDocuments,
     setDocuments,
     setEditorRevealTarget,
     setMessage,
@@ -4995,6 +4999,7 @@ export function useWorkbenchController(
     languageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     workspaceFiles,
+    reportChangedDocuments,
     setDocuments,
     setOpenPaths,
     setPreviewPath,
@@ -5172,6 +5177,7 @@ export function useWorkbenchController(
     openPathsRef,
     resolveDocumentSaveOwnership,
     documentSelfWrites,
+    reportChangedDocuments,
     setActivePath,
     setDocuments,
     setOpenPaths,
@@ -6180,15 +6186,6 @@ export function useWorkbenchController(
           localPhpDiagnosticsFromSource(content, []),
         );
       }
-      const updatedDocument = {
-        ...activeDocument,
-        content,
-      };
-      activeDocumentRef.current = updatedDocument;
-      documentsRef.current = {
-        ...documentsRef.current,
-        [activeDocument.path]: updatedDocument,
-      };
       setDocuments((current) => {
         const currentDocument = current[activeDocument.path] ?? activeDocument;
 
@@ -6200,11 +6197,13 @@ export function useWorkbenchController(
           },
         };
       });
+      reportChangedDocuments([activeDocument.path]);
     },
     [
       activeDocument,
       activePhpFrameworkProviders,
       pinDocument,
+      reportChangedDocuments,
       updateLocalPhpDiagnostics,
     ],
   );
@@ -8222,6 +8221,7 @@ export function useWorkbenchController(
     refreshGitStatus,
     remapRecentFile,
     remapRecentLocations,
+    reportChangedDocuments,
     reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
@@ -9367,22 +9367,23 @@ export function useWorkbenchController(
     }
 
     const documentsToSync = openDocumentPaths
-      .map((path) => documents[path])
+      .map((path) => documentsRef.current[path])
       .filter((document): document is EditorDocument => Boolean(document));
 
     if (
-      activeDocument &&
-      !documentsToSync.some((document) => document.path === activeDocument.path)
+      activePath &&
+      documentsRef.current[activePath] &&
+      !documentsToSync.some((document) => document.path === activePath)
     ) {
-      documentsToSync.push(activeDocument);
+      documentsToSync.push(documentsRef.current[activePath]);
     }
 
     documentsToSync.forEach((document) => {
       void syncOpenDocument(document);
     });
   }, [
-    activeDocument,
-    documents,
+    activePath,
+    documentsRef,
     languageServerRuntimeStatus,
     languageServerRuntimeStatusRoot,
     openDocumentPaths,
@@ -9423,7 +9424,7 @@ export function useWorkbenchController(
     }
 
     const documentsToSync = openDocumentPaths
-      .map((path) => documents[path])
+      .map((path) => documentsRef.current[path])
       .filter(
         (document): document is EditorDocument =>
           Boolean(document) &&
@@ -9434,19 +9435,23 @@ export function useWorkbenchController(
       );
 
     if (
-      activeDocument &&
-      isJavaScriptTypeScriptDocumentSyncableForRoot(workspaceRoot, activeDocument) &&
-      !documentsToSync.some((document) => document.path === activeDocument.path)
+      activePath &&
+      documentsRef.current[activePath] &&
+      isJavaScriptTypeScriptDocumentSyncableForRoot(
+        workspaceRoot,
+        documentsRef.current[activePath],
+      ) &&
+      !documentsToSync.some((document) => document.path === activePath)
     ) {
-      documentsToSync.push(activeDocument);
+      documentsToSync.push(documentsRef.current[activePath]);
     }
 
     documentsToSync.forEach((document) => {
       void syncOpenJavaScriptTypeScriptDocument(document);
     });
   }, [
-    activeDocument,
-    documents,
+    activePath,
+    documentsRef,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     openDocumentPaths,
@@ -9455,84 +9460,12 @@ export function useWorkbenchController(
     workspaceRoot,
   ]);
 
-  useEffect(() => {
-    if (
-      !isRunningLanguageServerForWorkspace(
-        languageServerRuntimeStatus,
-        languageServerRuntimeStatusRoot,
-        workspaceRoot,
-      )
-    ) {
-      return;
-    }
-
-    const documentsToSync = openDocumentPaths
-      .map((path) => documents[path])
-      .filter((document): document is EditorDocument => Boolean(document));
-
-    if (
-      activeDocument &&
-      !documentsToSync.some((document) => document.path === activeDocument.path)
-    ) {
-      documentsToSync.push(activeDocument);
-    }
-
-    documentsToSync.forEach((document) => {
-      scheduleDocumentChange(document);
-    });
-  }, [
-    activeDocument,
-    documents,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    openDocumentPaths,
+  useChangedDocumentSyncScheduling({
+    documentsRef,
     scheduleDocumentChange,
-    workspaceRoot,
-  ]);
-
-  useEffect(() => {
-    if (
-      !workspaceRoot ||
-      !isRunningLanguageServerForWorkspace(
-        javaScriptTypeScriptLanguageServerRuntimeStatus,
-        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-        workspaceRoot,
-      )
-    ) {
-      return;
-    }
-
-    const documentsToSync = openDocumentPaths
-      .map((path) => documents[path])
-      .filter(
-        (document): document is EditorDocument =>
-          Boolean(document) &&
-          isJavaScriptTypeScriptDocumentSyncableForRoot(
-            workspaceRoot,
-            document,
-          ),
-      );
-
-    if (
-      activeDocument &&
-      isJavaScriptTypeScriptDocumentSyncableForRoot(workspaceRoot, activeDocument) &&
-      !documentsToSync.some((document) => document.path === activeDocument.path)
-    ) {
-      documentsToSync.push(activeDocument);
-    }
-
-    documentsToSync.forEach((document) => {
-      scheduleJavaScriptTypeScriptDocumentChange(document);
-    });
-  }, [
-    activeDocument,
-    documents,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    openDocumentPaths,
     scheduleJavaScriptTypeScriptDocumentChange,
-    workspaceRoot,
-  ]);
+    subscribeChangedDocuments,
+  });
 
   useEffect(
     () => () => {

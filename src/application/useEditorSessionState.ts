@@ -66,6 +66,7 @@ export interface EditorSessionState {
   openPathsRef: MutableRefObject<string[]>;
   previewPath: string | null;
   previewPathRef: MutableRefObject<string | null>;
+  reportChangedDocuments: (paths: readonly string[]) => void;
   resetEditorSurfaceState: () => void;
   restoreEditorSurface: (
     rootPath: string,
@@ -78,6 +79,9 @@ export interface EditorSessionState {
   setOpenPaths: Dispatch<SetStateAction<string[]>>;
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
   snapshotEditorSurface: (rootPath: string) => EditorSurfaceSnapshot;
+  subscribeChangedDocuments: (
+    listener: (paths: readonly string[]) => void,
+  ) => () => void;
   updateEditorGroups: (
     update: (current: EditorGroupsState) => EditorGroupsState,
   ) => void;
@@ -99,6 +103,30 @@ export function useEditorSessionState(): EditorSessionState {
   const activeDocumentRef = useRef<EditorDocument | null>(null);
   const openPathsRef = useRef<string[]>([]);
   const previewPathRef = useRef<string | null>(null);
+  const changedDocumentListenersRef = useRef(
+    new Set<(paths: readonly string[]) => void>(),
+  );
+
+  const reportChangedDocuments = useCallback((paths: readonly string[]) => {
+    if (paths.length === 0) {
+      return;
+    }
+
+    const changedPaths = Array.from(new Set(paths));
+    changedDocumentListenersRef.current.forEach((listener) => {
+      listener(changedPaths);
+    });
+  }, []);
+
+  const subscribeChangedDocuments = useCallback(
+    (listener: (paths: readonly string[]) => void) => {
+      changedDocumentListenersRef.current.add(listener);
+      return () => {
+        changedDocumentListenersRef.current.delete(listener);
+      };
+    },
+    [],
+  );
 
   const synchronizeActiveGroupRefs = useCallback((next: EditorGroupsState) => {
     const group = next.groups[next.activeGroupId] ?? createEditorGroup();
@@ -408,6 +436,7 @@ export function useEditorSessionState(): EditorSessionState {
     openPathsRef,
     previewPath,
     previewPathRef,
+    reportChangedDocuments,
     resetEditorSurfaceState,
     restoreEditorSurface,
     setActivePath,
@@ -417,6 +446,7 @@ export function useEditorSessionState(): EditorSessionState {
     setOpenPaths,
     setPreviewPath,
     snapshotEditorSurface,
+    subscribeChangedDocuments,
     updateEditorGroups,
   };
 }

@@ -61,6 +61,7 @@ export interface WorkspaceEditFileOperationsDependencies {
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   javaScriptTypeScriptLanguageServerFeaturesGateway: LanguageServerFeaturesGateway;
   workspaceFiles: WorkspaceFileGateway;
+  reportChangedDocuments: (paths: readonly string[]) => void;
   setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
   setOpenPaths: Dispatch<SetStateAction<string[]>>;
   setPreviewPath: Dispatch<SetStateAction<string | null>>;
@@ -143,6 +144,7 @@ export function useWorkspaceEditFileOperations(
     languageServerFeaturesGateway,
     javaScriptTypeScriptLanguageServerFeaturesGateway,
     workspaceFiles,
+    reportChangedDocuments,
     setDocuments,
     setOpenPaths,
     setPreviewPath,
@@ -222,10 +224,16 @@ export function useWorkspaceEditFileOperations(
 
         return changed ? next : current;
       });
+      reportChangedDocuments(editedPaths);
 
       return editedPaths;
     },
-    [documentsRef, isSessionPathInWorkspace, setDocuments],
+    [
+      documentsRef,
+      isSessionPathInWorkspace,
+      reportChangedDocuments,
+      setDocuments,
+    ],
   );
 
   const reconcileJavaScriptTypeScriptWorkspaceEditFileOperations = useCallback(
@@ -422,10 +430,19 @@ export function useWorkspaceEditFileOperations(
         return changed ? next : current;
       };
 
+      const changedPaths = appliedDocuments
+        .filter(({ path, content }) => documentsRef.current[path]?.content !== content)
+        .map(({ path }) => path);
       documentsRef.current = synchronize(documentsRef.current);
       setDocuments(synchronize);
+      reportChangedDocuments(changedPaths);
     },
-    [documentsRef, isSessionPathInWorkspace, setDocuments],
+    [
+      documentsRef,
+      isSessionPathInWorkspace,
+      reportChangedDocuments,
+      setDocuments,
+    ],
   );
 
   const applyJavaScriptTypeScriptLanguageServerWorkspaceEdit = useCallback(

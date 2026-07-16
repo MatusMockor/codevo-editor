@@ -38,6 +38,7 @@ async function createHarness(
     documentsRef: { current: { [PATH]: initial } as Record<string, EditorDocument> },
     openPathsRef: { current: [PATH] },
   };
+  const reportChangedDocuments = vi.fn();
   let lifecycle!: ReturnType<typeof useExternalFileConflictLifecycle>;
 
   function Probe() {
@@ -46,6 +47,7 @@ async function createHarness(
       activePath: PATH,
       resolveDocumentSaveOwnership,
       documentSelfWrites,
+      reportChangedDocuments,
       setActivePath: vi.fn(),
       setDocuments: vi.fn(),
       setOpenPaths: vi.fn(),
@@ -59,7 +61,7 @@ async function createHarness(
   }
 
   await act(async () => root.render(<Probe />));
-  return { lifecycle: () => lifecycle, refs, root };
+  return { lifecycle: () => lifecycle, refs, reportChangedDocuments, root };
 }
 
 const modified = () => ({
@@ -627,6 +629,7 @@ describe("useExternalFileConflictLifecycle", () => {
       await test.lifecycle().action("reload");
     });
     expect(test.refs.documentsRef.current[PATH].content).toBe("captured disk");
+    expect(test.reportChangedDocuments).toHaveBeenCalledWith([PATH]);
     expect(test.lifecycle().activeState.conflict).toBeNull();
     act(() => test.root.unmount());
   });

@@ -135,6 +135,7 @@ export interface WorkbenchFileOperationsDependencies {
     source: string,
     error: unknown,
   ) => void;
+  reportChangedDocuments: (paths: readonly string[]) => void;
   syncClosedDocument: (document: EditorDocument) => Promise<void>;
   syncClosedJavaScriptTypeScriptDocument: (
     document: EditorDocument,
@@ -207,6 +208,7 @@ export function useWorkbenchFileOperations(
     refreshGitStatus,
     remapRecentFile,
     remapRecentLocations,
+    reportChangedDocuments,
     reportErrorForActiveWorkspaceRoot,
     syncClosedDocument,
     syncClosedJavaScriptTypeScriptDocument,
@@ -945,21 +947,6 @@ export function useWorkbenchFileOperations(
         return;
       }
 
-      const refreshedDocument: EditorDocument = {
-        ...latestDocument,
-        content: refreshedSnapshot.content,
-        savedContent: refreshedSnapshot.content,
-        revision: refreshedSnapshot.revision,
-      };
-
-      documentsRef.current = {
-        ...documentsRef.current,
-        [path]: refreshedDocument,
-      };
-      activeDocumentRef.current =
-        activeDocumentRef.current?.path === path
-          ? refreshedDocument
-          : activeDocumentRef.current;
       setDocuments((current) => {
         const currentDocument = current[path];
 
@@ -977,11 +964,12 @@ export function useWorkbenchFileOperations(
           },
         };
       });
+      reportChangedDocuments([path]);
     },
     [
-      activeDocumentRef,
       currentWorkspaceRootRef,
       documentsRef,
+      reportChangedDocuments,
       setDocuments,
       workspaceFiles,
     ],

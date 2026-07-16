@@ -12595,15 +12595,22 @@ describe("useWorkbenchController preview tabs", () => {
       }),
     };
     const path = "/workspace/app/Http/Controllers/CommentController.php";
+    const secondPath = "/workspace/app/Http/Controllers/PostController.php";
     const { dependencies, getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
         recentWorkspacePath: "/workspace",
       },
       languageServerRuntimeGateway,
-      readTextFile: vi.fn(async (requestedPath: string) =>
-        requestedPath === path ? "<?php\n$comment->load();\n" : "",
-      ),
+      readTextFile: vi.fn(async (requestedPath: string) => {
+        if (requestedPath === path) {
+          return "<?php\n$comment->load();\n";
+        }
+        if (requestedPath === secondPath) {
+          return "<?php\n$post->load();\n";
+        }
+        return "";
+      }),
       runtimeStatus: runningStatus(61),
       workspaceDescriptor: phpWorkspaceDescriptor(),
     });
@@ -12614,12 +12621,14 @@ describe("useWorkbenchController preview tabs", () => {
       await getWorkbench().openPinnedFile(
         fileEntry(path, "CommentController.php"),
       );
+      await getWorkbench().openPinnedFile(
+        fileEntry(secondPath, "PostController.php"),
+      );
     });
     await vi.waitFor(() => {
-      expect(syncGateway.didOpen).toHaveBeenCalledWith(
-        "/workspace",
-        expect.objectContaining({ path }),
-      );
+      expect(
+        vi.mocked(syncGateway.didOpen).mock.calls.map(([, value]) => value.path),
+      ).toEqual(expect.arrayContaining([path, secondPath]));
     });
 
     vi.mocked(syncGateway.didOpen).mockClear();
@@ -12629,10 +12638,9 @@ describe("useWorkbenchController preview tabs", () => {
     });
     await flushAsyncTurns(24);
 
-    expect(syncGateway.didOpen).toHaveBeenCalledWith(
-      "/workspace",
-      expect.objectContaining({ path }),
-    );
+    expect(
+      vi.mocked(syncGateway.didOpen).mock.calls.map(([, value]) => value.path),
+    ).toEqual(expect.arrayContaining([path, secondPath]));
   });
 
   it("re-opens then changes a PHP document edited after the phpactor runtime restarts", async () => {
@@ -19750,6 +19758,83 @@ describe("useWorkbenchController preview tabs", () => {
     expect(getWorkbench().entriesByDirectory["/workspace/app/Models"]).toEqual([
       fileEntry("/workspace/app/Models/Account.php", "Account.php"),
     ]);
+  });
+
+  it("syncs every open PHP document changed by one workspace edit", async () => {
+    const firstPath = "/workspace/src/First.php";
+    const secondPath = "/workspace/src/Second.php";
+    const edit = {
+      changes: {
+        [fileUriFromPath(firstPath)]: [
+          {
+            newText: "ChangedFirst",
+            range: {
+              end: { character: 11, line: 1 },
+              start: { character: 6, line: 1 },
+            },
+          },
+        ],
+        [fileUriFromPath(secondPath)]: [
+          {
+            newText: "ChangedSecond",
+            range: {
+              end: { character: 12, line: 1 },
+              start: { character: 6, line: 1 },
+            },
+          },
+        ],
+      },
+    };
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: emptyLanguageServerCapabilities(),
+      kind: "running",
+      rootPath: "/workspace",
+      sessionId: 29,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === firstPath) {
+          return "<?php\nclass First {}\n";
+        }
+        if (path === secondPath) {
+          return "<?php\nclass Second {}\n";
+        }
+        return "";
+      }),
+      runtimeStatus: runningStatus,
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns(24);
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(firstPath, "First.php"));
+      await getWorkbench().openPinnedFile(fileEntry(secondPath, "Second.php"));
+    });
+    await flushAsyncTurns(24);
+    vi.mocked(dependencies.documentSyncGateway.didChange).mockClear();
+
+    await act(async () => {
+      await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        openPaths: [],
+        rootPath: "/workspace",
+      });
+    });
+    await act(async () => {
+      await Promise.all([
+        getWorkbench().flushPendingLanguageServerDocument(firstPath),
+        getWorkbench().flushPendingLanguageServerDocument(secondPath),
+      ]);
+    });
+
+    expect(
+      vi
+        .mocked(dependencies.documentSyncGateway.didChange)
+        .mock.calls.map(([, value]) => value.path),
+    ).toEqual(expect.arrayContaining([firstPath, secondPath]));
   });
 
   it("reconciles open PHP tabs after workspace edit file operations", async () => {

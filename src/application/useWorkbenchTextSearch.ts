@@ -44,6 +44,7 @@ export interface WorkbenchTextSearchDependencies {
   textSearch: TextSearchGateway;
   workspaceFiles: WorkspaceFileGateway;
   reportError: (source: string, error: unknown) => void;
+  reportChangedDocuments: (paths: readonly string[]) => void;
   setDocuments: Dispatch<SetStateAction<Record<string, EditorDocument>>>;
   setEditorRevealTarget: Dispatch<SetStateAction<EditorRevealTarget | null>>;
   setMessage: Dispatch<SetStateAction<string | null>>;
@@ -160,6 +161,7 @@ export function useWorkbenchTextSearch(
     textSearch,
     workspaceFiles,
     reportError,
+    reportChangedDocuments,
     setDocuments,
     setEditorRevealTarget,
     setMessage,
@@ -370,9 +372,16 @@ export function useWorkbenchTextSearch(
             },
           };
         });
+        reportChangedDocuments([path]);
       }
     },
-    [activeDocumentRef, documentsRef, setDocuments, workspaceFiles],
+    [
+      activeDocumentRef,
+      documentsRef,
+      reportChangedDocuments,
+      setDocuments,
+      workspaceFiles,
+    ],
   );
 
   // Shared Replace-in-Path runner. `scopePath === null` means Replace All (every
