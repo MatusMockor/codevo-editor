@@ -517,6 +517,99 @@ describe("EditorSurface", () => {
     );
   });
 
+  it("rebinds folding capture when Monaco replaces a same-path model", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\nfour\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/example.txt",
+      savedContent: "one\ntwo\nthree\nfour\n",
+    };
+    const originalModel: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const replacementModel: FakeModel = {
+      getValue: vi.fn(() => "changed\n"),
+      setValue: vi.fn(),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(originalModel);
+    const originalFoldingModel = createFoldingModel([
+      { collapsed: true, start: 2 },
+    ]);
+    const replacementFoldingModel = createFoldingModel([
+      { collapsed: true, start: 4 },
+    ]);
+    let replacementActive = false;
+    const getFoldingModel = vi.fn(async () =>
+      replacementActive
+        ? replacementFoldingModel
+        : originalFoldingModel,
+    );
+    const onEditorViewStateChange = vi.fn();
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(originalModel);
+    const props = {
+      ...memoGuardProps(activeDocument),
+      onEditorViewStateChange,
+      workspaceRoot: "/workspace",
+    };
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, props));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...props,
+          activeDocument: { ...activeDocument, content: "changed\n" },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(getFoldingModel).toHaveBeenCalledTimes(1);
+    expect(originalFoldingModel.onDidChange).toHaveBeenCalledTimes(1);
+
+    onEditorViewStateChange.mockClear();
+    replacementActive = true;
+    editor.getModel.mockReturnValue(replacementModel);
+    await act(async () => {
+      editor.modelChangeHandler?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getFoldingModel).toHaveBeenCalledTimes(2);
+    expect(replacementFoldingModel.onDidChange).toHaveBeenCalledTimes(1);
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
+      activeDocument.path,
+      { column: 1, foldedLines: [4], line: 1, scrollTop: 10 },
+    );
+
+    onEditorViewStateChange.mockClear();
+    await act(async () => originalFoldingModel.emitChange());
+    expect(onEditorViewStateChange).not.toHaveBeenCalled();
+
+    replacementFoldingModel.setRegions([{ collapsed: true, start: 3 }]);
+    await act(async () => replacementFoldingModel.emitChange());
+    expect(onEditorViewStateChange).toHaveBeenLastCalledWith(
+      activeDocument.path,
+      { column: 1, foldedLines: [3], line: 1, scrollTop: 10 },
+    );
+  });
+
   it("restores valid folds after the folding model is ready and applies them once", async () => {
     const activeDocument: EditorDocument = {
       content: "one\ntwo\nthree\nfour\n",
@@ -582,6 +675,118 @@ describe("EditorSurface", () => {
 
     await act(async () => foldingModel.emitChange());
     expect(foldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts deferred fold restoration for a same-path replacement model", async () => {
+    const activeDocument: EditorDocument = {
+      content: "one\ntwo\nthree\n",
+      language: "plaintext",
+      name: "example.txt",
+      path: "/workspace/example.txt",
+      savedContent: "one\ntwo\nthree\n",
+    };
+    const originalModel: FakeModel = {
+      getLineCount: vi.fn(() => 3),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const replacementModel: FakeModel = {
+      getLineCount: vi.fn(() => 3),
+      getLineMaxColumn: vi.fn(() => 6),
+      getValue: vi.fn(() => "changed\ntwo\nthree\n"),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const originalFoldingModel = createFoldingModel([
+      { collapsed: false, start: 2 },
+    ]);
+    const replacementFoldingModel = createFoldingModel([
+      { collapsed: false, start: 2 },
+    ]);
+    const originalFoldingDeferred = deferred<FakeFoldingModel>();
+    const replacementFoldingDeferred = deferred<FakeFoldingModel>();
+    const getFoldingModel = vi
+      .fn()
+      .mockImplementationOnce(() => originalFoldingDeferred.promise)
+      .mockImplementationOnce(() => replacementFoldingDeferred.promise);
+    const editor = createEditor(originalModel);
+    editor.getContribution.mockImplementation((id?: string) => {
+      if (id === "editor.contrib.folding") {
+        return { getFoldingModel };
+      }
+
+      return null;
+    });
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(originalModel);
+    const restoredViewStates = {
+      [activeDocument.path]: {
+        column: 1,
+        foldedLines: [2],
+        line: 1,
+      },
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          restoredViewStates,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const modelSubscriberCount = editor.onDidChangeModel.mock.calls.length;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps({
+            ...activeDocument,
+            content: "changed\ntwo\nthree\n",
+          }),
+          restoredViewStates,
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editor.onDidChangeModel).toHaveBeenCalledTimes(modelSubscriberCount);
+    expect(getFoldingModel).toHaveBeenCalledTimes(1);
+    expect(editor.setPosition).toHaveBeenCalledTimes(1);
+
+    editor.getModel.mockReturnValue(replacementModel);
+    await act(async () => {
+      editor.modelChangeHandler?.();
+      await Promise.resolve();
+    });
+
+    expect(getFoldingModel).toHaveBeenCalledTimes(2);
+    expect(editor.setPosition).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      originalFoldingDeferred.resolve(originalFoldingModel);
+      await originalFoldingDeferred.promise;
+      await Promise.resolve();
+    });
+
+    expect(originalFoldingModel.toggleCollapseState).not.toHaveBeenCalled();
+    expect(replacementFoldingModel.toggleCollapseState).not.toHaveBeenCalled();
+
+    await act(async () => {
+      replacementFoldingDeferred.resolve(replacementFoldingModel);
+      await replacementFoldingDeferred.promise;
+      await Promise.resolve();
+    });
+
+    expect(originalFoldingModel.toggleCollapseState).not.toHaveBeenCalled();
+    expect(replacementFoldingModel.toggleCollapseState).toHaveBeenCalledTimes(1);
+    expect(replacementFoldingModel.toggleCollapseState).toHaveBeenCalledWith([
+      expect.objectContaining({ startLineNumber: 2 }),
+    ]);
   });
 
   it("reapplies persisted scroll after restoring folds above the viewport", async () => {
@@ -3138,6 +3343,67 @@ describe("EditorSurface", () => {
       expect.objectContaining({ modelIdentity: replacementModel }),
     );
     expect(replacementRunner.isScopeCurrent(originalScope)).toBe(false);
+  });
+
+  it("keeps the command runner and model subscriber stable across a same-path content edit", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    let modelContent = activeDocument.content;
+    const model: FakeModel = {
+      getValue: vi.fn(() => modelContent),
+      setValue: vi.fn((content: string) => {
+        modelContent = content;
+      }),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const editorSurfaceCommandRunnerChange = vi.fn();
+    const props = {
+      ...memoGuardProps(activeDocument),
+      onEditorSurfaceCommandRunnerChange: editorSurfaceCommandRunnerChange,
+      workspaceRoot: "/workspace",
+    };
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, props));
+      await Promise.resolve();
+    });
+
+    const modelSubscriberCount = editor.onDidChangeModel.mock.calls.length;
+    const originalRunner = editorSurfaceCommandRunnerChange.mock.calls.find(
+      ([candidate]) => typeof candidate === "function",
+    )?.[0];
+    const updatedDocument = {
+      ...activeDocument,
+      content: "const value = 2;\n",
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...props,
+          activeDocument: updatedDocument,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const publishedRunners = editorSurfaceCommandRunnerChange.mock.calls
+      .map(([candidate]) => candidate)
+      .filter((candidate) => typeof candidate === "function");
+    expect(editor.onDidChangeModel).toHaveBeenCalledTimes(modelSubscriberCount);
+    expect(publishedRunners).toEqual([originalRunner]);
+    expect(model.setValue).toHaveBeenCalledWith(updatedDocument.content);
+    expect(originalRunner.captureScope()).toEqual(
+      expect.objectContaining({ documentPath: activeDocument.path }),
+    );
   });
 
   it("publishes a guarded buffer fix runner that applies fixes in one edit call", async () => {
@@ -6510,6 +6776,100 @@ class Foo
           message: "syntax error, unexpected end of file",
           severity: "error",
           source: "PHP Syntax",
+        }),
+      ],
+    );
+  });
+
+  it("moves in-flight local PHP validation to a same-path replacement model", async () => {
+    const content = "<?php\n\nfunction codevoQaBroken(";
+    const activeDocument: EditorDocument = {
+      content,
+      language: "php",
+      name: "Broken.php",
+      path: "/workspace/app/Broken.php",
+      savedContent: content,
+    };
+    const sharedUri = {
+      fsPath: activeDocument.path,
+      path: activeDocument.path,
+      toString: () => "file:///workspace/app/Broken.php",
+    };
+    const originalModel: FakeModel = {
+      getValue: vi.fn(() => content),
+      getVersionId: vi.fn(() => 1),
+      uri: sharedUri,
+    };
+    const replacementModel: FakeModel = {
+      getValue: vi.fn(() => content),
+      getVersionId: vi.fn(() => 1),
+      uri: sharedUri,
+    };
+    const validation = deferred<
+      Array<{
+        character: number;
+        endCharacter: number;
+        endLine: number;
+        line: number;
+        message: string;
+      }>
+    >();
+    const validate = vi.fn(() => validation.promise);
+    const monaco = createMonaco(originalModel);
+    const editor = createEditor(originalModel);
+    const onLocalPhpDiagnosticsChange = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onLocalPhpDiagnosticsChange,
+          phpSyntaxDiagnosticsGateway: { validate },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(validate).toHaveBeenCalledTimes(1);
+    monaco.editor.setModelMarkers.mockClear();
+    editor.getModel.mockReturnValue(replacementModel);
+
+    await act(async () => {
+      editor.modelChangeHandler?.();
+      await Promise.resolve();
+    });
+
+    validation.resolve([
+      {
+        character: 9,
+        endCharacter: 10,
+        endLine: 2,
+        line: 2,
+        message: "syntax error, unexpected end of file",
+      },
+    ]);
+    await act(async () => {
+      await validation.promise;
+      await Promise.resolve();
+    });
+
+    const resolvedMarkerCalls = monaco.editor.setModelMarkers.mock.calls.filter(
+      ([, owner, markers]) => owner === "php-syntax" && markers.length > 0,
+    );
+    expect(validate).toHaveBeenCalledTimes(1);
+    expect(resolvedMarkerCalls).not.toEqual([]);
+    expect(resolvedMarkerCalls.every(([model]) => model === replacementModel)).toBe(
+      true,
+    );
+    expect(onLocalPhpDiagnosticsChange).toHaveBeenLastCalledWith(
+      activeDocument.path,
+      [
+        expect.objectContaining({
+          message: "syntax error, unexpected end of file",
+          severity: "error",
         }),
       ],
     );
@@ -14573,6 +14933,94 @@ class Foo
     expect(idle.pending()).toBe(0);
   });
 
+  it("does not restart background tokenization for a same-path content edit", async () => {
+    const idle = captureIdleCallbacks();
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model = tokenizableModel(activeDocument.path, 1200);
+    const editor = createEditor(model);
+    const props = memoGuardProps(activeDocument);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, props));
+      await Promise.resolve();
+    });
+
+    const modelSubscriberCount = editor.onDidChangeModel.mock.calls.length;
+    expect(idle.pending()).toBe(1);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...props,
+          activeDocument: { ...activeDocument, content: "const value = 2;\n" },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(idle.pending()).toBe(1);
+    expect(editor.onDidChangeModel).toHaveBeenCalledTimes(modelSubscriberCount);
+
+    await act(async () => {
+      idle.runAll();
+    });
+    expect(model.tokenization?.forceTokenization).toHaveBeenCalled();
+  });
+
+  it("does not redundantly clear model decorations for a same-path content edit", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getLineContent: vi.fn(() => ""),
+      getLineCount: vi.fn(() => 2),
+      getLineMaxColumn: vi.fn(() => 1),
+      getOptions: vi.fn(() => ({ indentSize: 4 })),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const editor = createEditor(model);
+    const props = {
+      ...memoGuardProps(activeDocument),
+      workspaceRoot: "/workspace",
+    };
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, props));
+      await Promise.resolve();
+    });
+
+    editor.deltaDecorations.mockClear();
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...props,
+          activeDocument: { ...activeDocument, content: "<?php\nclass Renamed {}\n" },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(
+      editor.deltaDecorations.mock.calls.filter(
+        ([, decorations]) => decorations.length === 0,
+      ),
+    ).toEqual([]);
+  });
+
   it("stops warming the model when the surface unmounts", async () => {
     const idle = captureIdleCallbacks();
 
@@ -15152,6 +15600,52 @@ describe("EditorSurface .editorconfig application", () => {
 
     expect(model.updateOptions).not.toHaveBeenCalled();
     expect(model.setEOL).not.toHaveBeenCalled();
+  });
+
+  it("reapplies editorconfig and tokenization to a same-path replacement model", async () => {
+    const idle = captureIdleCallbacks();
+    const originalModel = editorConfigModel(phpDocument.path);
+    const replacementModel = {
+      ...tokenizableModel(phpDocument.path, 1200),
+      getValue: vi.fn(() => phpDocument.content),
+      setValue: vi.fn(),
+      setEOL: vi.fn(),
+      updateOptions: vi.fn(),
+    };
+    const editor = createEditor(originalModel);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monacoWithEol(originalModel);
+
+    await renderSurface(phpDocument, {
+      endOfLine: "crlf",
+      indentSize: 4,
+      indentStyle: "space",
+      tabWidth: 4,
+    });
+
+    originalModel.updateOptions.mockClear();
+    originalModel.setEOL.mockClear();
+    editor.getModel.mockReturnValue(replacementModel);
+
+    act(() => {
+      editor.modelChangeHandler?.();
+    });
+
+    expect(replacementModel.updateOptions).toHaveBeenCalledWith({
+      insertSpaces: true,
+      tabSize: 4,
+    });
+    expect(replacementModel.setEOL).toHaveBeenCalledWith(1);
+    expect(originalModel.updateOptions).not.toHaveBeenCalled();
+    expect(originalModel.setEOL).not.toHaveBeenCalled();
+    expect(idle.pending()).toBe(1);
+
+    await act(async () => {
+      idle.runAll();
+    });
+    expect(
+      replacementModel.tokenization?.forceTokenization,
+    ).toHaveBeenCalled();
   });
 });
 

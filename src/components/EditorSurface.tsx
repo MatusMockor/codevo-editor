@@ -562,6 +562,10 @@ function EditorSurfaceComponent({
   const [editorApi, setEditorApi] =
     useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const surfaceIdentityRef = useRef<object>({});
+  const activeDocumentRef = useRef(activeDocument);
+  const workspaceRootRef = useRef(workspaceRoot);
+  activeDocumentRef.current = activeDocument;
+  workspaceRootRef.current = workspaceRoot;
   const completeWorkspaceIdentityDescriptor =
     resolveCompleteWorkspaceIdentityDescriptor(workspaceIdentityDescriptor);
   const editorSessionOwnerKey = useMemo(() => {
@@ -576,30 +580,32 @@ function EditorSurfaceComponent({
   }, [workspaceIdentityDescriptor, workspaceRoot]);
   const captureEditorSurfaceScope = useCallback(
     (): EditorSurfaceCommandInvocationScope | null => {
+      const document = activeDocumentRef.current;
       const model = editorApi?.getModel();
 
       if (
-        !activeDocument ||
+        !document ||
         !model ||
-        !modelMatchesProject(model, workspaceRoot, activeDocument.path)
+        !modelMatchesProject(model, workspaceRootRef.current, document.path)
       ) {
         return null;
       }
 
       return {
-        documentPath: activeDocument.path,
+        documentPath: document.path,
         modelIdentity: model,
         ownerKey: editorSessionOwnerKey,
         surfaceIdentity: surfaceIdentityRef.current,
       };
-    }, [activeDocument, editorApi, editorSessionOwnerKey, workspaceRoot]);
+    }, [editorApi, editorSessionOwnerKey]);
   const monacoFontLigatures =
     monacoFontLigaturesForEditorSetting(editorFontLigatures);
-  const activeDocumentRef = useRef(activeDocument);
   const commandExecutionRunnerRef = useRef<CommandExecutionRunner | undefined>(
     undefined,
   );
   const onEditorFocusedRef = useRef(onEditorFocused);
+  const onCursorPositionChangeRef = useRef(onCursorPositionChange);
+  const onEditorViewStateChangeRef = useRef(onEditorViewStateChange);
   const editorActionCommandPortRef = useRef<EditorActionCommandPort>({
     closeActiveTab: onCloseActiveTab,
     goBack: onGoBack,
@@ -614,6 +620,8 @@ function EditorSurfaceComponent({
   });
   const editorInteractionActivationPendingRef = useRef(false);
   onEditorFocusedRef.current = onEditorFocused;
+  onCursorPositionChangeRef.current = onCursorPositionChange;
+  onEditorViewStateChangeRef.current = onEditorViewStateChange;
   const surfaceCommandContext: CommandContext = {
     hasWorkspace: Boolean(workspaceRoot),
     hasActiveDocument: Boolean(activeDocument),
@@ -653,7 +661,6 @@ function EditorSurfaceComponent({
   const resolveDocumentForModelRef = useRef(
     (_model: Monaco.editor.ITextModel): EditorDocument | null => null,
   );
-  const workspaceRootRef = useRef(workspaceRoot);
   const previousActiveDocumentPathRef = useRef<string | null>(
     activeDocument?.path ?? null,
   );
@@ -765,7 +772,10 @@ function EditorSurfaceComponent({
   const clearLanguageServerDiagnosticsForPathRef = useRef(
     clearLanguageServerDiagnosticsForPath,
   );
-  const pendingLocalPhpValidationKeyRef = useRef<string | null>(null);
+  const pendingLocalPhpValidationRef = useRef<{
+    key: string;
+    model: Monaco.editor.ITextModel;
+  } | null>(null);
   const phpMethodCompletionsRef = useRef(providePhpMethodCompletions);
   const phpMethodSignatureRef = useRef(providePhpMethodSignature);
   const phpParameterInlayHintsRef = useRef(providePhpParameterInlayHints);
@@ -804,14 +814,6 @@ function EditorSurfaceComponent({
     ],
   );
 
-  useEffect(() => {
-    activeDocumentRef.current = activeDocument;
-  }, [activeDocument]);
-
-  useEffect(() => {
-    workspaceRootRef.current = workspaceRoot;
-  }, [workspaceRoot]);
-
   // A document switch must never apply a wrap meant for the previous file, so
   // any pending Surround With request is dropped when the active document
   // changes. The cyclic-expand-word (hippie) session is dropped for the same
@@ -819,7 +821,7 @@ function EditorSurfaceComponent({
   useEffect(() => {
     setSurroundWithRequest(null);
     hippieSessionRef.current = null;
-  }, [activeDocument]);
+  }, [activeDocument?.path]);
 
   useEffect(() => {
     changeHunksRef.current = changeHunks;
@@ -970,7 +972,7 @@ function EditorSurfaceComponent({
   }, [clearLanguageServerDiagnosticsForPath]);
 
   useEffect(() => {
-    pendingLocalPhpValidationKeyRef.current = null;
+    pendingLocalPhpValidationRef.current = null;
   }, [activeDocument?.path]);
 
   useEffect(() => {
@@ -1654,7 +1656,16 @@ function EditorSurfaceComponent({
           : monacoApi.editor.EndOfLineSequence.LF,
       );
     }
-  }, [activeDocument, editorApi, editorConfig, monacoApi, workspaceRoot]);
+  }, [
+    activeDocument?.path,
+    editorApi,
+    editorConfig?.endOfLine,
+    editorConfig?.indentSize,
+    editorConfig?.indentStyle,
+    editorConfig?.tabWidth,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!editorApi) {
@@ -1662,7 +1673,7 @@ function EditorSurfaceComponent({
     }
 
     const disposable = editorApi.onDidChangeCursorPosition((event) => {
-      onCursorPositionChange(event.position);
+      onCursorPositionChangeRef.current(event.position);
       setCursorPosition((previous) =>
         nextCursorPosition(previous, event.position),
       );
@@ -1670,12 +1681,12 @@ function EditorSurfaceComponent({
     const position = editorApi.getPosition();
 
     if (position) {
-      onCursorPositionChange(position);
+      onCursorPositionChangeRef.current(position);
       setCursorPosition((previous) => nextCursorPosition(previous, position));
     }
 
     return () => disposable.dispose();
-  }, [editorApi, onCursorPositionChange]);
+  }, [editorApi]);
 
   // Eagerly warm the active model's TextMate tokens on idle after open/switch.
   // @monaco-editor/react swaps the model when `path` changes, so this re-runs on
@@ -1708,7 +1719,12 @@ function EditorSurfaceComponent({
     tokenizer.start(model as unknown as BackgroundTokenizableModel);
 
     return () => tokenizer.stop();
-  }, [activeDocument, activeDocumentIsLargeSmart, editorApi, workspaceRoot]);
+  }, [
+    activeDocument?.path,
+    activeDocumentIsLargeSmart,
+    editorApi,
+    workspaceRoot,
+  ]);
 
   // Permanent teardown so a disposed surface leaves no pending idle slice.
   useEffect(() => {
@@ -1995,7 +2011,13 @@ function EditorSurfaceComponent({
     });
 
     return () => disposable.dispose();
-  }, [activeDocument, editorApi, monacoApi, workspaceRoot]);
+  }, [
+    activeDocument?.language,
+    activeDocument?.path,
+    editorApi,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (!editorApi || !monacoApi) {
@@ -3025,11 +3047,15 @@ function EditorSurfaceComponent({
         typeof model.getVersionId === "function" ? model.getVersionId() : 0;
       const validationKey = `${path}\0${model.uri.toString()}\0${version}\0${content}`;
 
-      if (pendingLocalPhpValidationKeyRef.current === validationKey) {
+      if (
+        pendingLocalPhpValidationRef.current?.key === validationKey &&
+        pendingLocalPhpValidationRef.current.model === model
+      ) {
         return false;
       }
 
-      pendingLocalPhpValidationKeyRef.current = validationKey;
+      const pendingValidation = { key: validationKey, model };
+      pendingLocalPhpValidationRef.current = pendingValidation;
 
       try {
         const coordinated = runtime.coordinateLocalPhpValidation<
@@ -3122,8 +3148,8 @@ function EditorSurfaceComponent({
         errorReporterRef.current(error);
         return false;
       } finally {
-        if (pendingLocalPhpValidationKeyRef.current === validationKey) {
-          pendingLocalPhpValidationKeyRef.current = null;
+        if (pendingLocalPhpValidationRef.current === pendingValidation) {
+          pendingLocalPhpValidationRef.current = null;
         }
       }
     },
@@ -3165,7 +3191,13 @@ function EditorSurfaceComponent({
       );
       implementationGutterDecoratedPathRef.current = null;
     }
-  }, [activeDocument, editorApi, monacoApi, workspaceRoot]);
+  }, [
+    activeDocument?.language,
+    activeDocument?.path,
+    editorApi,
+    monacoApi,
+    workspaceRoot,
+  ]);
 
   // The debounced full-file parse + decoration replace. Driven by the shared
   // `phpEditTick` (one 160ms timer per edit for all PHP gutter/diagnostics
@@ -3256,7 +3288,8 @@ function EditorSurfaceComponent({
       testGutterDecoratedPathRef.current = null;
     }
   }, [
-    activeDocument,
+    activeDocument?.language,
+    activeDocument?.path,
     editorApi,
     isActiveDocumentPhpTest,
     monacoApi,
@@ -3362,8 +3395,8 @@ function EditorSurfaceComponent({
       return;
     }
 
-    onCursorPositionChange(position);
-  }, [activeDocument, editorApi, onCursorPositionChange]);
+    onCursorPositionChangeRef.current(position);
+  }, [activeDocument?.path, editorApi]);
 
   useEffect(() => {
     if (!editorRevealTarget) {
@@ -3438,6 +3471,76 @@ function EditorSurfaceComponent({
     workspaceRoot,
   ]);
 
+  const reconcileActiveModelContentRef = useRef(() => undefined);
+  const applyActiveModelConfigRef = useRef(() => undefined);
+  const startActiveModelTokenizerRef = useRef(() => undefined);
+
+  reconcileActiveModelContentRef.current = () => {
+    const document = activeDocumentRef.current;
+
+    if (!editorApi || !document || !activeDocumentContentReady || isOpeningFile) {
+      return;
+    }
+
+    synchronizeActiveDocumentModel(editorApi, workspaceRootRef.current, document);
+  };
+  applyActiveModelConfigRef.current = () => {
+    const document = activeDocumentRef.current;
+
+    if (!editorApi || !monacoApi || !document) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || !modelMatchesProject(model, workspaceRootRef.current, document.path)) {
+      return;
+    }
+
+    const resolved: ResolvedEditorConfig = editorConfig ?? {};
+    const formattingOptions = editorConfigFormattingOptions(resolved);
+
+    if (formattingOptions) {
+      model.updateOptions({
+        insertSpaces: formattingOptions.insertSpaces,
+        tabSize: formattingOptions.tabSize,
+      });
+    }
+
+    const eol = editorConfigEol(resolved);
+
+    if (!eol) {
+      return;
+    }
+
+    model.setEOL(
+      eol === "\r\n"
+        ? monacoApi.editor.EndOfLineSequence.CRLF
+        : monacoApi.editor.EndOfLineSequence.LF,
+    );
+  };
+  startActiveModelTokenizerRef.current = () => {
+    const document = activeDocumentRef.current;
+    const tokenizer = backgroundTokenizerRef.current;
+
+    if (!editorApi || !document || !tokenizer) {
+      return;
+    }
+
+    if (isLargeSmartDocument(document, largeSmartDocumentPolicyRef.current)) {
+      tokenizer.stop();
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || !modelMatchesProject(model, workspaceRootRef.current, document.path)) {
+      return;
+    }
+
+    tokenizer.start(model as unknown as BackgroundTokenizableModel);
+  };
+
   // Deterministic content sync: guarantee the live model buffer matches the
   // active document's content after every open / content change.
   //
@@ -3465,23 +3568,33 @@ function EditorSurfaceComponent({
       return;
     }
 
-    const syncActiveModelContent = () =>
-      synchronizeActiveDocumentModel(editorApi, workspaceRoot, activeDocument);
-
-    syncActiveModelContent();
-
-    const modelChangeDisposable = editorApi.onDidChangeModel(() => {
-      syncActiveModelContent();
-    });
-
-    return () => modelChangeDisposable.dispose();
+    reconcileActiveModelContentRef.current();
   }, [
-    activeDocument,
+    activeDocument?.content,
+    activeDocument?.path,
     activeDocumentContentReady,
     editorApi,
     isOpeningFile,
     workspaceRoot,
   ]);
+
+  // Model replacement is independent from document content updates. Keep one
+  // listener for the editor instance and route it through latest-value refs so
+  // same-path typing never replaces the subscription. A replacement model still
+  // receives the current buffer, EditorConfig settings and token warming.
+  useEffect(() => {
+    if (!editorApi) {
+      return;
+    }
+
+    const disposable = editorApi.onDidChangeModel(() => {
+      reconcileActiveModelContentRef.current();
+      applyActiveModelConfigRef.current();
+      startActiveModelTokenizerRef.current();
+    });
+
+    return () => disposable.dispose();
+  }, [editorApi]);
 
   const appliedRestoredViewStateKeysRef = useRef(new Set<string>());
 
@@ -3504,6 +3617,7 @@ function EditorSurfaceComponent({
 
     let active = true;
     let positionApplied = false;
+    let restorationModel: Monaco.editor.ITextModel | null = null;
     let retryDisposable: Monaco.IDisposable | null = null;
 
     const activeModel = () => {
@@ -3516,10 +3630,8 @@ function EditorSurfaceComponent({
       return model;
     };
 
-    const applyPosition = () => {
-      const model = activeModel();
-
-      if (!model || positionApplied) {
+    const applyPosition = (model: Monaco.editor.ITextModel) => {
+      if (positionApplied) {
         return false;
       }
 
@@ -3552,8 +3664,8 @@ function EditorSurfaceComponent({
       appliedRestoredViewStateKeysRef.current.add(applicationKey);
     };
 
-    const finishFoldingRestore = () => {
-      if (!active || !activeModel()) {
+    const finishFoldingRestore = (model: Monaco.editor.ITextModel) => {
+      if (!active || activeModel() !== model) {
         return;
       }
 
@@ -3564,10 +3676,11 @@ function EditorSurfaceComponent({
       finish();
     };
 
-    const collapsePersistedLines = (foldingModel: FoldingModelViewState) => {
-      const model = activeModel();
-
-      if (!model) {
+    const collapsePersistedLines = (
+      model: Monaco.editor.ITextModel,
+      foldingModel: FoldingModelViewState,
+    ) => {
+      if (activeModel() !== model) {
         return false;
       }
 
@@ -3601,10 +3714,10 @@ function EditorSurfaceComponent({
       return matched;
     };
 
-    const applyFolding = async () => {
+    const applyFolding = async (model: Monaco.editor.ITextModel) => {
       const foldingModel = await foldingModelForEditor(editorApi);
 
-      if (!active || !activeModel()) {
+      if (!active || activeModel() !== model) {
         return;
       }
 
@@ -3614,29 +3727,42 @@ function EditorSurfaceComponent({
       }
 
       if (!foldingModel) {
-        finishFoldingRestore();
+        finishFoldingRestore(model);
         return;
       }
 
-      if (collapsePersistedLines(foldingModel)) {
-        finishFoldingRestore();
+      if (collapsePersistedLines(model, foldingModel)) {
+        finishFoldingRestore(model);
         return;
       }
 
       retryDisposable = foldingModel.onDidChange(() => {
         retryDisposable?.dispose();
         retryDisposable = null;
-        collapsePersistedLines(foldingModel);
-        finishFoldingRestore();
+        collapsePersistedLines(model, foldingModel);
+        finishFoldingRestore(model);
       });
     };
 
     const applyViewState = () => {
-      if (!applyPosition()) {
+      const model = activeModel();
+
+      if (!model) {
         return;
       }
 
-      void applyFolding();
+      if (restorationModel !== model) {
+        restorationModel = model;
+        positionApplied = false;
+        retryDisposable?.dispose();
+        retryDisposable = null;
+      }
+
+      if (!applyPosition(model)) {
+        return;
+      }
+
+      void applyFolding(model);
     };
 
     applyViewState();
@@ -3653,7 +3779,7 @@ function EditorSurfaceComponent({
       retryDisposable?.dispose();
     };
   }, [
-    activeDocument,
+    activeDocument?.path,
     editorApi,
     restoredViewStateRevision,
     restoredViewStates,
@@ -3666,8 +3792,16 @@ function EditorSurfaceComponent({
     }
 
     let active = true;
+    let foldingBindingRevision = 0;
     let foldingModel: FoldingModelViewState | null = null;
     let foldingDisposable: Monaco.IDisposable | null = null;
+
+    const resetFoldingBinding = () => {
+      foldingBindingRevision += 1;
+      foldingDisposable?.dispose();
+      foldingDisposable = null;
+      foldingModel = null;
+    };
 
     const captureViewState = async () => {
       const model = editorApi.getModel();
@@ -3683,11 +3817,18 @@ function EditorSurfaceComponent({
       }
 
       if (!foldingModel) {
-        foldingModel = await foldingModelForEditor(editorApi);
+        const bindingRevision = foldingBindingRevision;
+        const resolvedFoldingModel = await foldingModelForEditor(editorApi);
 
-        if (!active) {
+        if (
+          !active ||
+          bindingRevision !== foldingBindingRevision ||
+          editorApi.getModel() !== model
+        ) {
           return;
         }
+
+        foldingModel = resolvedFoldingModel;
 
         if (foldingModel && !foldingDisposable) {
           foldingDisposable = foldingModel.onDidChange(() => {
@@ -3721,7 +3862,7 @@ function EditorSurfaceComponent({
         }
       }
 
-      onEditorViewStateChange(activeDocument.path, {
+      onEditorViewStateChangeRef.current?.(activeDocument.path, {
         column: position.column,
         ...(foldedLines.length === 0 ? {} : { foldedLines }),
         line: position.lineNumber,
@@ -3736,14 +3877,24 @@ function EditorSurfaceComponent({
     const scrollDisposable = editorApi.onDidScrollChange(() => {
       void captureViewState();
     });
+    const modelDisposable = editorApi.onDidChangeModel(() => {
+      resetFoldingBinding();
+      void captureViewState();
+    });
 
     return () => {
       active = false;
       cursorDisposable.dispose();
-      foldingDisposable?.dispose();
+      modelDisposable.dispose();
+      resetFoldingBinding();
       scrollDisposable.dispose();
     };
-  }, [activeDocument, editorApi, onEditorViewStateChange, workspaceRoot]);
+  }, [
+    activeDocument?.path,
+    Boolean(onEditorViewStateChange),
+    editorApi,
+    workspaceRoot,
+  ]);
 
   useEffect(() => {
     if (
@@ -3756,26 +3907,31 @@ function EditorSurfaceComponent({
     }
 
     let active = true;
-    let validatedModel = false;
+    let validatedModel: Monaco.editor.ITextModel | null = null;
     const validateActiveModel = () => {
-      if (validatedModel) {
-        return;
-      }
-
       const model = editorApi.getModel();
 
       if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
         return;
       }
 
+      if (validatedModel === model) {
+        return;
+      }
+
+      const isCurrentModel = () =>
+        active &&
+        editorApi.getModel() === model &&
+        modelMatchesProject(model, workspaceRoot, activeDocument.path);
+
       void applyLocalPhpDiagnostics(
         activeDocument.path,
         model.getValue(),
         model,
-        () => active,
+        isCurrentModel,
       ).then((wasApplied) => {
-        if (wasApplied) {
-          validatedModel = true;
+        if (wasApplied && isCurrentModel()) {
+          validatedModel = model;
         }
       });
     };
@@ -4019,7 +4175,8 @@ function EditorSurfaceComponent({
       return next;
     });
   }, [
-    activeDocument,
+    activeDocument?.language,
+    activeDocument?.path,
     activeDocumentIsLargeSmart,
     monacoApi,
     generatedSurfaceId,
@@ -4039,21 +4196,26 @@ function EditorSurfaceComponent({
 
     let active = true;
     const model = modelForPath(monacoApi, workspaceRoot, phpEditTick.path);
-    if (!model) {
+    if (!model || !editorApi) {
       return;
     }
+
+    const isCurrentModel = () =>
+      active &&
+      editorApi.getModel() === model &&
+      modelMatchesProject(model, workspaceRoot, phpEditTick.path);
 
     applyLocalPhpDiagnostics(
       phpEditTick.path,
       phpEditTick.content,
       model,
-      () => active,
+      isCurrentModel,
     );
 
     return () => {
       active = false;
     };
-  }, [applyLocalPhpDiagnostics, monacoApi, phpEditTick]);
+  }, [applyLocalPhpDiagnostics, editorApi, monacoApi, phpEditTick, workspaceRoot]);
 
   const breadcrumbSymbols = activeDocument
     ? breadcrumbSymbolsByPath[activeDocument.path] ?? EMPTY_BREADCRUMB_SYMBOLS
