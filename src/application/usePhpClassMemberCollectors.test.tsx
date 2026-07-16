@@ -139,6 +139,57 @@ function createDeferred<T>() {
 }
 
 describe("usePhpClassMemberCollectors", () => {
+  it("keeps direct private and inherited protected members but drops ancestor private members", async () => {
+    const options = makeOptions({
+      "App\\BaseRepository": `<?php
+namespace App;
+class BaseRepository
+{
+    protected string $inheritedProtectedProperty = 'visible';
+    private string $inheritedPrivateProperty = 'hidden';
+    public function inheritedPublic(): void {}
+    protected function inheritedProtected(): void {}
+    private function inheritedPrivate(): void {}
+}
+`,
+      "App\\PostRepository": `<?php
+namespace App;
+class PostRepository extends BaseRepository
+{
+    private string $directPrivateProperty = 'visible';
+    private function directPrivate(): void {}
+}
+`,
+    });
+    const harness = renderHook(options);
+    const members = await harness.api().collectPhpMethodsForClass(
+      "App\\PostRepository",
+      { includeNonPublicMembers: true },
+    );
+    const membersByName = new Map(members.map((member) => [member.name, member]));
+
+    expect(Array.from(membersByName.keys())).toEqual([
+      "directPrivate",
+      "directPrivateProperty",
+      "inheritedPublic",
+      "inheritedProtected",
+      "inheritedProtectedProperty",
+    ]);
+    expect(membersByName.get("directPrivate")?.declaringClassDepth).toBe(0);
+    expect(
+      membersByName.get("directPrivateProperty")?.declaringClassDepth,
+    ).toBe(0);
+    expect(
+      membersByName.get("inheritedProtectedProperty")?.declaringClassDepth,
+    ).toBe(1);
+    expect(membersByName.get("inheritedPublic")?.declaringClassDepth).toBe(1);
+    expect(membersByName.get("inheritedProtected")?.declaringClassDepth).toBe(1);
+    expect(membersByName.has("inheritedPrivate")).toBe(false);
+    expect(membersByName.has("inheritedPrivateProperty")).toBe(false);
+
+    harness.unmount();
+  });
+
   it("reuses cached members for the same source signature and resets on demand", async () => {
     const source = `<?php
 class User

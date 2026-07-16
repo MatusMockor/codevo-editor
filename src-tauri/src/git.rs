@@ -1,4 +1,6 @@
 use crate::ignore_matcher::is_default_ignored_name;
+use crate::workspace_file_commands::{FileCommandResult, WorkspaceFileRepository};
+use crate::workspace_registry::WorkspaceRegistry;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -6,10 +8,12 @@ use std::{
     io::{self, Read},
     path::{Component, Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const MAX_DIFF_SNAPSHOT_BYTES: u64 = 2_000_000;
+static HUNK_REVERT_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const UNTRUSTED_GIT_CONFIG: [&str; 7] = [
     "core.fsmonitor=false",
@@ -106,10 +110,10 @@ pub struct GitRepoStatus {
 
 /// A single hunk from `git diff` (or `git diff --cached`) for one file. The
 /// `index` is the hunk's position within that file's diff and is the stable
-/// identifier the front-end sends back to stage/unstage exactly that hunk. The
-/// `header`/`lines` mirror the unified-diff text verbatim. The original and
-/// modified ranges are parsed once here so the preview can anchor controls to
-/// the corresponding editor lines without re-parsing unified-diff syntax.
+/// identifier the front-end sends back to stage, unstage, or revert exactly
+/// that hunk. The `header`/`lines` mirror the unified-diff text verbatim. The
+/// original and modified ranges are parsed once here so the preview can anchor
+/// controls to the corresponding editor lines without re-parsing unified-diff syntax.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffHunk {
@@ -288,6 +292,13 @@ pub trait GitRepositoryGateway {
         hunk_index: u32,
         expected_identity: &str,
     ) -> io::Result<GitStatus>;
+    fn revert_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+        expected_identity: &str,
+    ) -> io::Result<GitStatus>;
     fn stash_save(&self, root: &Path, message: &str) -> io::Result<()>;
     fn stash_list(&self, root: &Path) -> io::Result<Vec<GitStashEntry>>;
     fn stash_apply(&self, root: &Path, index: u32) -> io::Result<()>;
@@ -346,6 +357,55 @@ impl CommandGitRepositoryGateway {
         }
 
         run_git_with_stdin(&root, &args, patch.as_bytes(), self.trusted)?;
+        self.status(&root)
+    }
+
+    /// Reverts exactly one currently-unstaged hunk in the worktree. The patch
+    /// is identity-fenced against a fresh diff and applied without `--cached`,
+    /// so staged/index content is never changed.
+    fn revert_single_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+        expected_identity: &str,
+    ) -> io::Result<GitStatus> {
+        let root = root.canonicalize()?;
+        let relative = safe_relative_path(relative_path)?;
+        let relative = relative.to_string_lossy().to_string();
+        let registry = WorkspaceRegistry::new();
+        let descriptor = registry.register(&root)?;
+        let files = WorkspaceFileRepository::new(&registry);
+        let snapshot = files.read_text(&descriptor.workspace_id, Path::new(&relative))?;
+        let raw = file_diff_text(&root, &relative, false, self.trusted)?;
+        let patch = single_hunk_patch(&raw, hunk_index, expected_identity)?;
+        let target = reversed_hunk_target(
+            Path::new(&relative),
+            snapshot.content.as_bytes(),
+            patch.as_bytes(),
+            self.trusted,
+        )?;
+        let target = String::from_utf8(target)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+        run_revert_hunk_before_cas_hook();
+        match files.save_text(
+            &descriptor.workspace_id,
+            Path::new(&relative),
+            &target,
+            &snapshot.revision,
+        ) {
+            FileCommandResult::Success { .. } => {}
+            FileCommandResult::Conflict { message } => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Requested Git hunk changed since preview: {message}"),
+                ));
+            }
+            FileCommandResult::Partial { message, .. } | FileCommandResult::Error { message } => {
+                return Err(io::Error::other(message));
+            }
+        }
         self.status(&root)
     }
 }
@@ -932,6 +992,16 @@ impl GitRepositoryGateway for CommandGitRepositoryGateway {
         expected_identity: &str,
     ) -> io::Result<GitStatus> {
         self.apply_single_hunk(root, relative_path, hunk_index, expected_identity, true)
+    }
+
+    fn revert_hunk(
+        &self,
+        root: &Path,
+        relative_path: &str,
+        hunk_index: u32,
+        expected_identity: &str,
+    ) -> io::Result<GitStatus> {
+        self.revert_single_hunk(root, relative_path, hunk_index, expected_identity)
     }
 
     fn stash_save(&self, root: &Path, message: &str) -> io::Result<()> {
@@ -2365,7 +2435,7 @@ fn run_git_vec_with_env(
     git_output_vec_with_env(root, args, index_file, trusted).map(|_| ())
 }
 
-/// Runs `git <args>` with `stdin` piped in (used for `git apply --cached`).
+/// Runs `git <args>` with `stdin` piped in (used for isolated and cached apply).
 /// A non-zero exit becomes an error so callers can treat a rejected patch as a
 /// safe no-op; `git apply` does not mutate the index when it fails.
 fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8], trusted: bool) -> io::Result<()> {
@@ -2396,6 +2466,78 @@ fn run_git_with_stdin(root: &Path, args: &[&str], stdin: &[u8], trusted: bool) -
     Err(io::Error::other(
         String::from_utf8_lossy(&output.stderr).trim().to_string(),
     ))
+}
+
+struct HunkRevertTempTree {
+    root: PathBuf,
+}
+
+impl HunkRevertTempTree {
+    fn create() -> io::Result<Self> {
+        let base = std::env::temp_dir();
+        for _ in 0..100 {
+            let sequence = HUNK_REVERT_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let root = base.join(format!(
+                "codevo-git-hunk-revert-{}-{sequence}",
+                std::process::id()
+            ));
+            match fs::create_dir(&root) {
+                Ok(()) => return Ok(Self { root }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "Could not allocate an isolated Git hunk apply directory.",
+        ))
+    }
+}
+
+impl Drop for HunkRevertTempTree {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn reversed_hunk_target(
+    relative_path: &Path,
+    snapshot: &[u8],
+    patch: &[u8],
+    trusted: bool,
+) -> io::Result<Vec<u8>> {
+    let tree = HunkRevertTempTree::create()?;
+    let target = tree.root.join(relative_path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&target, snapshot)?;
+    run_git_with_stdin(
+        &tree.root,
+        &["apply", "--reverse", "--unidiff-zero", "--recount"],
+        patch,
+        trusted,
+    )?;
+    fs::read(target)
+}
+
+#[cfg(not(test))]
+fn run_revert_hunk_before_cas_hook() {}
+
+#[cfg(test)]
+thread_local! {
+    static REVERT_HUNK_BEFORE_CAS_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn run_revert_hunk_before_cas_hook() {
+    REVERT_HUNK_BEFORE_CAS_HOOK.with(|hook| {
+        if let Some(callback) = hook.borrow_mut().take() {
+            callback();
+        }
+    });
 }
 
 /// Returns the raw `git diff` text for a single file. `staged` selects the
@@ -3339,6 +3481,7 @@ mod tests {
         split_diff, BoundedContent, CommandGitRepositoryGateway, GitChangeStatus, GitChangedFile,
         GitCommitFilters, GitDiffPreviewUnavailableReason, GitRepositoryGateway,
         DEFAULT_GIT_REPOSITORY_DISCOVERY_DEPTH, MAX_DIFF_SNAPSHOT_BYTES,
+        REVERT_HUNK_BEFORE_CAS_HOOK,
     };
     use std::{
         fs, io,
@@ -3350,6 +3493,12 @@ mod tests {
     /// Guarantees a distinct temp-repo path for every `TestGitRepo`, even when
     /// the platform clock is too coarse to disambiguate concurrent tests.
     static TEST_REPO_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn install_revert_hunk_before_cas_hook(callback: impl FnOnce() + 'static) {
+        REVERT_HUNK_BEFORE_CAS_HOOK.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(callback));
+        });
+    }
 
     #[test]
     fn untrusted_git_command_injects_exec_neutralizing_config() {
@@ -5970,6 +6119,152 @@ mod tests {
     }
 
     #[test]
+    fn revert_hunk_reverts_only_selected_worktree_change_and_preserves_index() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\nd\ne\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "A\nb\nc\nd\ne\n");
+        repo.run(["add", "f.txt"]);
+        repo.write("f.txt", "A\nb\nC\nd\nE\n");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let hunks = gateway
+            .file_hunks(repo.path(), "f.txt", false)
+            .expect("worktree hunks");
+        assert_eq!(hunks.len(), 2, "expected two worktree hunks: {hunks:?}");
+
+        gateway
+            .revert_hunk(repo.path(), "f.txt", 0, &hunks[0].identity)
+            .expect("revert selected hunk");
+
+        assert_eq!(repo.read("f.txt"), "A\nb\nc\nd\nE\n");
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "A\nb\nc\nd\ne\n");
+    }
+
+    #[test]
+    fn revert_hunk_rejects_stale_or_reordered_identity_without_mutation() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\nd\ne\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\nb\nc\nd\nE\n");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let expected = repository_hunk_identity(&gateway, &repo, false, 0);
+        repo.write("f.txt", "A\nb\nc\nd\nE\n");
+
+        let error = gateway
+            .revert_hunk(repo.path(), "f.txt", 0, &expected)
+            .expect_err("reordered hunk must be rejected");
+
+        assert!(error.to_string().contains("changed since preview"));
+        assert_eq!(repo.read("f.txt"), "A\nb\nc\nd\nE\n");
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\nd\ne\n");
+    }
+
+    #[test]
+    fn revert_hunk_rejects_changed_identity_at_same_index_without_mutation() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\nB\nc\n");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let expected = repository_hunk_identity(&gateway, &repo, false, 0);
+        repo.write("f.txt", "a\nCHANGED\nc\n");
+
+        let error = gateway
+            .revert_hunk(repo.path(), "f.txt", 0, &expected)
+            .expect_err("changed hunk must be rejected");
+
+        assert!(error.to_string().contains("changed since preview"));
+        assert_eq!(repo.read("f.txt"), "a\nCHANGED\nc\n");
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn revert_hunk_compare_and_swap_rejects_change_after_validation() {
+        let repo = hunk_repo();
+        repo.write("f.txt", "a\nb\nc\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\nB\nc\n");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let expected = repository_hunk_identity(&gateway, &repo, false, 0);
+        let raced_path = repo.path().join("f.txt");
+        install_revert_hunk_before_cas_hook(move || {
+            fs::write(raced_path, "external writer\n").expect("race write");
+        });
+
+        let error = gateway
+            .revert_hunk(repo.path(), "f.txt", 0, &expected)
+            .expect_err("compare-and-swap must reject the raced file");
+
+        assert!(error.to_string().contains("changed since preview"));
+        assert_eq!(repo.read("f.txt"), "external writer\n");
+        assert_eq!(repo.git_output(["show", ":f.txt"]), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn revert_hunk_preserves_crlf_bytes() {
+        let repo = hunk_repo();
+        repo.run(["config", "core.autocrlf", "false"]);
+        repo.write("f.txt", "a\r\nb\r\nc\r\n");
+        repo.run(["add", "f.txt"]);
+        repo.run(["commit", "-m", "initial"]);
+        repo.write("f.txt", "a\r\nB\r\nc\r\n");
+
+        let gateway = CommandGitRepositoryGateway::new(true);
+        let identity = repository_hunk_identity(&gateway, &repo, false, 0);
+        gateway
+            .revert_hunk(repo.path(), "f.txt", 0, &identity)
+            .expect("revert crlf hunk");
+
+        assert_eq!(repo.read("f.txt"), "a\r\nb\r\nc\r\n");
+    }
+
+    #[test]
+    fn revert_hunk_handles_add_delete_and_missing_newline() {
+        let gateway = CommandGitRepositoryGateway::new(true);
+
+        let addition = hunk_repo();
+        addition.write("f.txt", "a\nb\n");
+        addition.run(["add", "f.txt"]);
+        addition.run(["commit", "-m", "initial"]);
+        addition.write("f.txt", "a\nb\nc\n");
+        let identity = repository_hunk_identity(&gateway, &addition, false, 0);
+        gateway
+            .revert_hunk(addition.path(), "f.txt", 0, &identity)
+            .expect("revert addition");
+        assert_eq!(addition.read("f.txt"), "a\nb\n");
+
+        let deletion = hunk_repo();
+        deletion.write("f.txt", "a\nb\nc\n");
+        deletion.run(["add", "f.txt"]);
+        deletion.run(["commit", "-m", "initial"]);
+        deletion.write("f.txt", "a\nc\n");
+        let identity = repository_hunk_identity(&gateway, &deletion, false, 0);
+        gateway
+            .revert_hunk(deletion.path(), "f.txt", 0, &identity)
+            .expect("revert deletion");
+        assert_eq!(deletion.read("f.txt"), "a\nb\nc\n");
+
+        let no_newline = hunk_repo();
+        no_newline.write("f.txt", "one\ntwo\nthree");
+        no_newline.run(["add", "f.txt"]);
+        no_newline.run(["commit", "-m", "initial"]);
+        no_newline.write("f.txt", "one\nTWO\nthree");
+        let identity = repository_hunk_identity(&gateway, &no_newline, false, 0);
+        gateway
+            .revert_hunk(no_newline.path(), "f.txt", 0, &identity)
+            .expect("revert no-newline hunk");
+        assert_eq!(no_newline.read("f.txt"), "one\ntwo\nthree");
+    }
+
+    #[test]
     fn stage_hunk_handles_pure_addition_at_end_of_file() {
         let repo = hunk_repo();
         repo.write("f.txt", "a\nb\n");
@@ -6090,6 +6385,9 @@ mod tests {
             .is_err());
         assert!(gateway
             .unstage_hunk(repo.path(), "/etc/passwd", 0, "missing")
+            .is_err());
+        assert!(gateway
+            .revert_hunk(repo.path(), "../escape.txt", 0, "missing")
             .is_err());
     }
 

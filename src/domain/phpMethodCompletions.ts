@@ -32,6 +32,7 @@ export interface PhpMethodCompletion {
   completionBehavior?: PhpMethodCompletionBehavior;
   declaringClassName: string;
   detail?: string;
+  declaringClassDepth?: number;
   documentation?: string;
   insertText?: string;
   isStatic?: boolean;
@@ -100,6 +101,7 @@ interface PhpMethodSignatureCallContext {
 export interface PhpMethodCompletionOptions {
   frameworkProviders?: readonly PhpFrameworkProvider[];
   frameworkSourceContext?: PhpFrameworkSourceContext;
+  includeNonPublicMembers?: boolean;
 }
 
 export function phpMemberAccessCompletionContextAt(
@@ -191,15 +193,18 @@ export function phpMethodCompletionsFromSource(
     const isScopeAttribute = phpHasAttributeName(attributes, "Scope");
 
     if (
-      /\bprivate\b/.test(modifiers) ||
-      /\bstatic\b/.test(modifiers) && isScopeAttribute ||
-      (/\bprotected\b/.test(modifiers) && !isScopeAttribute)
+      (!options.includeNonPublicMembers && /\bprivate\b/.test(modifiers)) ||
+      (/\bstatic\b/.test(modifiers) && isScopeAttribute) ||
+      (!options.includeNonPublicMembers &&
+        /\bprotected\b/.test(modifiers) &&
+        !isScopeAttribute)
     ) {
       continue;
     }
 
     const docBlock = phpDocBlockBefore(source, functionOffset);
-    const parameters = phpFunctionParametersAt(source, functionOffset) ?? match[3] ?? "";
+    const parameters =
+      phpFunctionParametersAt(source, functionOffset) ?? match[3] ?? "";
     const declaredReturnType = normalizeReturnType(match[4] ?? null);
     const documentedReturnType = phpDocReturnTypeFromBlock(docBlock);
     const classStringTemplate = phpDocClassStringReturnTemplate(docBlock);
@@ -294,7 +299,9 @@ function phpDocMethodCompletionsFromSource(
     const prefix = normalizeWhitespace(match[1] ?? "");
     const prefixParts = prefix ? prefix.split(" ") : [];
     const visibility = phpMemberVisibilityFromToken(prefixParts[0]);
-    const partsWithoutVisibility = visibility ? prefixParts.slice(1) : prefixParts;
+    const partsWithoutVisibility = visibility
+      ? prefixParts.slice(1)
+      : prefixParts;
     const isStatic = partsWithoutVisibility[0]?.toLowerCase() === "static";
     const returnType = normalizeReturnType(
       (isStatic ? partsWithoutVisibility.slice(1) : partsWithoutVisibility).join(
@@ -348,11 +355,14 @@ function phpPropertyCompletionsFromSource(
   for (const match of masked.matchAll(propertyPattern)) {
     const modifiers = (match[1] ?? "").toLowerCase();
 
-    if (!modifiers.includes("public")) {
+    if (!options.includeNonPublicMembers && !modifiers.includes("public")) {
       continue;
     }
 
-    if (/\bprivate\b|\bprotected\b/.test(modifiers)) {
+    if (
+      !options.includeNonPublicMembers &&
+      /\bprivate\b|\bprotected\b/.test(modifiers)
+    ) {
       continue;
     }
 
@@ -369,7 +379,7 @@ function phpPropertyCompletionsFromSource(
       name,
       parameters: "",
       returnType: normalizeReturnType(match[2] ?? null),
-      visibility: "public",
+      visibility: phpMemberVisibilityFromModifiers(modifiers) ?? "public",
     });
   }
 

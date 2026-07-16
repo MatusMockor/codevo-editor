@@ -224,6 +224,24 @@ export class TauriGitGateway implements GitGateway {
     }) as Promise<GitStatus>;
   }
 
+  async revertHunk(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+    expectedIdentity: string,
+  ): Promise<GitStatus> {
+    if (!this.isRuntimeAvailable()) {
+      return emptyGitStatus(rootPath);
+    }
+
+    return this.invokeCommand("revert_git_hunk", {
+      expectedIdentity,
+      hunkIndex,
+      relativePath,
+      rootPath,
+    }) as Promise<GitStatus>;
+  }
+
   async stageFiles(
     rootPath: string,
     changes: GitChangedFile[],

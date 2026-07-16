@@ -1747,6 +1747,29 @@ class Request
     ]);
   });
 
+  it("includes non-public members only for explicit host-context collection", () => {
+    const source = `<?php
+class Repository
+{
+    protected string $sortingColumn = 'sorting';
+    private int $sortingStep = 100;
+    protected function getTable(): object {}
+    private function updateSorting(): void {}
+}
+`;
+
+    expect(
+      phpMethodCompletionsFromSource(source, "Repository", {
+        includeNonPublicMembers: true,
+      }).map(({ kind, name, visibility }) => ({ kind, name, visibility })),
+    ).toEqual([
+      { kind: undefined, name: "getTable", visibility: "protected" },
+      { kind: undefined, name: "updateSorting", visibility: "private" },
+      { kind: "property", name: "sortingColumn", visibility: "protected" },
+      { kind: "property", name: "sortingStep", visibility: "private" },
+    ]);
+  });
+
   it("captures visibility metadata for local PHP methods and properties", () => {
     const source = `<?php
 /**

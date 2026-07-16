@@ -328,6 +328,7 @@ export interface LanguageServerMonacoProviderContext
   coordinatePhpDocumentSymbols?(
     request: {
       content: string;
+      lifecycleIdentity: number;
       path: string;
       rootPath: string;
       runtimeIdentity: object;
@@ -1422,14 +1423,17 @@ async function provideDocumentSymbols(
       request.rootPath,
       request.path,
     );
-    const symbols = await (context.coordinatePhpDocumentSymbols?.(
-      {
-        ...request,
-        content: model.getValue(),
-        runtimeIdentity: context.featuresGateway,
-      },
-      load,
-    ) ?? load());
+    const symbols = await (request.lifecycleIdentity == null
+      ? load()
+      : context.coordinatePhpDocumentSymbols?.(
+          {
+            ...request,
+            content: model.getValue(),
+            lifecycleIdentity: request.lifecycleIdentity,
+            runtimeIdentity: context.featuresGateway,
+          },
+          load,
+        ) ?? load());
 
     if (!isFeatureRequestActive(context, request)) {
       return null;

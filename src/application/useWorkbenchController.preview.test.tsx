@@ -46,7 +46,9 @@ import type {
 import type { DiagnosticsFlushScheduler } from "../domain/diagnosticsCoalescer";
 import {
   fileUriFromPath,
+  sessionBoundLanguageServerDocumentSyncGateway,
   type LanguageServerDocumentSyncGateway,
+  type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import type {
   EditorPosition,
@@ -104,12 +106,12 @@ type WorkbenchController = ReturnType<typeof useWorkbenchController>;
 
 interface ControllerDependencies {
   controllerOptions: WorkbenchControllerOptions;
-  documentSyncGateway: LanguageServerDocumentSyncGateway;
+  documentSyncGateway: SessionBoundLanguageServerDocumentSyncGateway;
   gitGateway: GitGateway;
   localHistoryGateway: LocalHistoryGateway;
   indexProgressGateway: IndexProgressGateway;
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway;
-  languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
+  languageServerDocumentSyncGateway: SessionBoundLanguageServerDocumentSyncGateway;
   languageServerFeaturesGateway: LanguageServerFeaturesGateway;
   languageServerGateway: LanguageServerGateway;
   languageServerRuntimeGateway: LanguageServerRuntimeGateway;
@@ -1844,6 +1846,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(phpDocumentSyncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        901,
       );
     });
     vi.mocked(phpDocumentSyncGateway.didClose).mockImplementationOnce(
@@ -1859,6 +1862,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(phpDocumentSyncGateway.didClose).toHaveBeenCalledWith(
       "/workspace-a",
       path,
+      901,
     );
     expect(
       javaScriptTypeScriptDocumentSyncGateway.didClose,
@@ -3325,6 +3329,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace",
         expect.objectContaining({ path }),
+        71,
       );
     });
     await vi.waitFor(() => {
@@ -3388,6 +3393,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace",
         expect.objectContaining({ path: secondPath }),
+        71,
       );
     });
 
@@ -4890,6 +4896,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path }),
+      71,
     );
   });
 
@@ -6868,7 +6875,7 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(
       dependencies.languageServerDocumentSyncGateway.didClose,
-    ).toHaveBeenCalledWith("/workspace", path);
+    ).toHaveBeenCalledWith("/workspace", path, 701);
     expect(getWorkbench().languageServerDiagnosticsByPath[path]).toBeUndefined();
     expect(getWorkbench().diagnosticsSummary).toEqual({
       errors: 0,
@@ -7022,7 +7029,7 @@ describe("useWorkbenchController preview tabs", () => {
     ).not.toHaveBeenCalled();
     expect(
       dependencies.languageServerDocumentSyncGateway.didClose,
-    ).toHaveBeenCalledWith("/workspace", path);
+    ).toHaveBeenCalledWith("/workspace", path, 741);
   });
 
   it("does not send a debounced JavaScript and TypeScript didChange after the document was closed", async () => {
@@ -8452,6 +8459,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path }),
+      212,
     );
   });
 
@@ -9214,6 +9222,7 @@ describe("useWorkbenchController preview tabs", () => {
           path,
           text: "<?php\nfinal class User {}\n",
         }),
+        341,
       );
     });
 
@@ -9269,6 +9278,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
         "/workspace-a",
         path,
+        351,
       );
     });
 
@@ -9321,6 +9331,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        352,
       );
     });
 
@@ -9331,7 +9342,11 @@ describe("useWorkbenchController preview tabs", () => {
       getWorkbench().closeDocument(path);
     });
     await vi.waitFor(() => {
-      expect(syncGateway.didClose).toHaveBeenCalledWith("/workspace-a", path);
+      expect(syncGateway.didClose).toHaveBeenCalledWith(
+        "/workspace-a",
+        path,
+        352,
+      );
     });
     vi.mocked(syncGateway.didOpen).mockClear();
 
@@ -9360,6 +9375,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
+      expect.any(Number),
     );
   });
 
@@ -11537,6 +11553,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        59,
       );
     });
 
@@ -12534,6 +12551,7 @@ describe("useWorkbenchController preview tabs", () => {
         path,
         text: "<?php\n$comment->load();\n",
       }),
+      54,
     );
     expect(initialFlushResolved).toBe(false);
 
@@ -12566,6 +12584,7 @@ describe("useWorkbenchController preview tabs", () => {
         path,
         text: "<?php\n$comment->forceDelete();\n",
       }),
+      54,
     );
     expect(
       vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
@@ -12688,6 +12707,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace",
         expect.objectContaining({ path }),
+        63,
       );
     });
 
@@ -12712,6 +12732,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path }),
+      64,
     );
     expect(syncGateway.didChange).toHaveBeenCalledWith(
       "/workspace",
@@ -12719,6 +12740,7 @@ describe("useWorkbenchController preview tabs", () => {
         path,
         text: "<?php\n$comment->forceDelete();\n",
       }),
+      64,
     );
     expect(
       vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
@@ -12772,6 +12794,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace",
         expect.objectContaining({ path }),
+        65,
       );
     });
 
@@ -12794,10 +12817,12 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path }),
+      66,
     );
     expect(syncGateway.didSave).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path }),
+      66,
     );
     expect(
       vi.mocked(syncGateway.didOpen).mock.invocationCallOrder[0],
@@ -12855,6 +12880,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        67,
       );
     });
 
@@ -12874,6 +12900,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(syncGateway.didOpen).not.toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
+      expect.any(Number),
     );
   });
 
@@ -12912,6 +12939,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        56,
       );
     });
 
@@ -12976,6 +13004,7 @@ describe("useWorkbenchController preview tabs", () => {
       expect(syncGateway.didOpen).toHaveBeenCalledWith(
         "/workspace-a",
         expect.objectContaining({ path }),
+        57,
       );
     });
 
@@ -13673,6 +13702,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace-a",
       expect.objectContaining({ path }),
+      55,
     );
 
     await act(async () => {
@@ -13691,6 +13721,7 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
       "/workspace-a",
       path,
+      55,
     );
     expect(
       dependencies.workspaceRuntimeLifecycleGateway.disposeWorkspace,
@@ -15479,6 +15510,7 @@ describe("useWorkbenchController preview tabs", () => {
     ).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path: previewFile.path }),
+      1,
     );
   });
 
@@ -18373,13 +18405,14 @@ describe("useWorkbenchController preview tabs", () => {
     );
     expect(
       dependencies.languageServerDocumentSyncGateway.didClose,
-    ).toHaveBeenCalledWith("/workspace", oldDocumentPath);
+    ).toHaveBeenCalledWith("/workspace", oldDocumentPath, 627);
     await flushAsyncTurns(24);
     expect(
       dependencies.languageServerDocumentSyncGateway.didOpen,
     ).toHaveBeenCalledWith(
       "/workspace",
       expect.objectContaining({ path: newDocumentPath }),
+      627,
     );
   });
 
@@ -19954,10 +19987,12 @@ describe("useWorkbenchController preview tabs", () => {
     expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
       "/workspace",
       oldPath,
+      28,
     );
     expect(dependencies.documentSyncGateway.didClose).toHaveBeenCalledWith(
       "/workspace",
       deletedPath,
+      28,
     );
     expect(dependencies.documentSyncGateway.didOpen).toHaveBeenCalledWith(
       "/workspace",
@@ -19965,6 +20000,7 @@ describe("useWorkbenchController preview tabs", () => {
         path: newPath,
         text: "<?php\nclass Account {}\n",
       }),
+      28,
     );
   });
 
@@ -35470,6 +35506,113 @@ class User
     ]);
   });
 
+  async function expectSameSourceTraitOverrideCompletion(
+    crossFileReturnType: string | null,
+    expectedReturnType: string | null,
+  ): Promise<void> {
+    const crossFileHostPath = "/workspace/app/Models/Admin.php";
+    const source = `<?php
+namespace App\\Models;
+
+trait HasHostHooks
+{
+    public function resolveHook(): TraitResult
+    {
+        $this->resolve
+    }
+}
+
+class User
+{
+    use HasHostHooks;
+
+    public function resolveHook(): LocalResult {}
+}
+`;
+    const crossFileHostSource = crossFileReturnType
+      ? `<?php
+namespace App\\Models;
+class Admin
+{
+    use \\App\\Models\\HasHostHooks;
+    public function resolveHook(): ${crossFileReturnType} {}
+}
+`
+      : null;
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: crossFileHostSource
+        ? [
+            {
+              column: 7,
+              containerName: null,
+              fullyQualifiedName: "App\\Models\\Admin",
+              kind: "class",
+              lineNumber: 3,
+              name: "Admin",
+              path: crossFileHostPath,
+              relativePath: "app/Models/Admin.php",
+            },
+          ]
+        : [],
+      readTextFile: vi.fn(async (path: string) =>
+        path === crossFileHostPath && crossFileHostSource
+          ? crossFileHostSource
+          : `<?php\n// ${path}\n`,
+      ),
+      searchText: vi.fn(async (_root, query) =>
+        query === "HasHostHooks" && crossFileHostSource
+          ? [
+              {
+                column: 5,
+                lineNumber: 5,
+                lineText: "    use \\App\\Models\\HasHostHooks;",
+                path: crossFileHostPath,
+                relativePath: "app/Models/Admin.php",
+              },
+            ]
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    await expect(
+      getWorkbench().providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$this->resolve"),
+      ),
+    ).resolves.toEqual([
+      {
+        declaringClassName: "App\\Models\\User",
+        name: "resolveHook",
+        parameters: "",
+        returnType: expectedReturnType,
+      },
+    ]);
+  }
+
+  it("lets a same-source host override the trait return type", async () => {
+    await expectSameSourceTraitOverrideCompletion(null, "LocalResult");
+  });
+
+  it("nulls conflicting same-source and cross-file host override returns", async () => {
+    await expectSameSourceTraitOverrideCompletion("CrossResult", null);
+  });
+
+  it("keeps identical same-source and cross-file host override returns typed", async () => {
+    await expectSameSourceTraitOverrideCompletion(
+      "LocalResult",
+      "LocalResult",
+    );
+  });
+
   it("does not complete trait $this host method for trait-only source", async () => {
     const source = `<?php
 namespace App\\Models;
@@ -35540,6 +35683,137 @@ class Admin
         positionAfter(source, "$this->host"),
       ),
     ).resolves.toEqual([]);
+  });
+
+  it("intersects cross-file trait hosts and includes inherited methods and properties", async () => {
+    const traitPath = "/workspace/app/Traits/SortableTrait.php";
+    const articlePath = "/workspace/app/Repositories/ArticleRepository.php";
+    const postPath = "/workspace/app/Repositories/PostRepository.php";
+    const articleBasePath = "/workspace/app/Base/ArticleRepositoryBase.php";
+    const postBasePath = "/workspace/app/Base/PostRepositoryBase.php";
+    const source = `<?php
+namespace App\\Traits;
+
+trait SortableTrait
+{
+    public function moveUp(): void
+    {
+        $this->get
+        $this->upd
+        $this->sorting
+        $this->only
+    }
+}
+`;
+    const sources = new Map<string, string>([
+      [traitPath, source],
+      [
+        articlePath,
+        `<?php
+namespace App\\Repositories;
+use App\\Base\\ArticleRepositoryBase;
+use App\\Traits\\SortableTrait;
+class ArticleRepository extends ArticleRepositoryBase { use SortableTrait; }
+`,
+      ],
+      [
+        postPath,
+        `<?php
+namespace App\\Repositories;
+use App\\Base\\PostRepositoryBase;
+use App\\Traits\\SortableTrait;
+class PostRepository extends PostRepositoryBase { use SortableTrait; }
+`,
+      ],
+      [
+        articleBasePath,
+        `<?php
+namespace App\\Base;
+class ArticleRepositoryBase
+{
+    protected string $sortingColumn = 'sorting';
+    protected int $sortingStep = 100;
+    public function getTable(): object {}
+    public function update(): bool {}
+    public function onlyArticle(): void {}
+}
+`,
+      ],
+      [
+        postBasePath,
+        `<?php
+namespace App\\Base;
+class PostRepositoryBase
+{
+    protected string $sortingColumn = 'sorting';
+    protected int $sortingStep = 100;
+    public function getTable(): object {}
+    public function update(): bool {}
+    public function onlyPost(): void {}
+}
+`,
+      ],
+    ]);
+    const symbols: ProjectSymbolSearchResult[] = [
+      ["App\\Traits\\SortableTrait", "trait", traitPath],
+      ["App\\Repositories\\ArticleRepository", "class", articlePath],
+      ["App\\Repositories\\PostRepository", "class", postPath],
+      ["App\\Base\\ArticleRepositoryBase", "class", articleBasePath],
+      ["App\\Base\\PostRepositoryBase", "class", postBasePath],
+    ].map(([fullyQualifiedName, kind, path]) => ({
+      column: 1,
+      containerName: null,
+      fullyQualifiedName,
+      kind: kind as "class" | "trait",
+      lineNumber: 1,
+      name: fullyQualifiedName.split("\\").pop() ?? fullyQualifiedName,
+      path,
+      relativePath: path.slice("/workspace/".length),
+    }));
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      projectSymbols: symbols,
+      readTextFile: vi.fn(async (path: string) => sources.get(path) ?? "<?php\n"),
+      searchText: vi.fn(async (_root, query) =>
+        query === "SortableTrait"
+          ? [articlePath, postPath].map((path) => ({
+              column: 5,
+              lineNumber: 4,
+              lineText: "use SortableTrait;",
+              path,
+              relativePath: path.slice("/workspace/".length),
+            }))
+          : [],
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+    await act(async () => {
+      await getWorkbench().setSmartMode("fullSmart");
+    });
+
+    const completionNamesAfter = async (needle: string) =>
+      (
+        await getWorkbench().providePhpMethodCompletions(
+          source,
+          positionAfter(source, needle),
+        )
+      ).map((completion) => completion.name);
+
+    await expect(completionNamesAfter("$this->get")).resolves.toEqual([
+      "getTable",
+    ]);
+    await expect(completionNamesAfter("$this->upd")).resolves.toEqual([
+      "update",
+    ]);
+    await expect(completionNamesAfter("$this->sorting")).resolves.toEqual([
+      "sortingColumn",
+      "sortingStep",
+    ]);
+    await expect(completionNamesAfter("$this->only")).resolves.toEqual([]);
   });
 
   it("resolves generic mixin method returns through PHPDoc mixin", async () => {
@@ -74338,7 +74612,7 @@ MissingClass::class;
     languageServerGateway?: LanguageServerGateway;
     languageServerPlan?: LanguageServerPlan;
     languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
-    languageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
+    languageServerDocumentSyncGateway?: SessionBoundLanguageServerDocumentSyncGateway;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
@@ -74850,7 +75124,7 @@ function createControllerDependencies({
   languageServerGateway?: LanguageServerGateway;
   languageServerPlan?: LanguageServerPlan;
   languageServerDiagnosticsGateway?: LanguageServerDiagnosticsGateway;
-  languageServerDocumentSyncGateway?: LanguageServerDocumentSyncGateway;
+  languageServerDocumentSyncGateway?: SessionBoundLanguageServerDocumentSyncGateway;
   languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
   languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
   phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
@@ -74889,12 +75163,7 @@ function createControllerDependencies({
   workspaceSettings: ReturnType<typeof defaultWorkspaceSettings>;
   workspaceTrustGateway?: WorkspaceTrustGateway;
 }): ControllerDependencies {
-  const defaultDocumentSyncGateway: LanguageServerDocumentSyncGateway = {
-    didChange: vi.fn(async () => undefined),
-    didClose: vi.fn(async () => undefined),
-    didOpen: vi.fn(async () => undefined),
-    didSave: vi.fn(async () => undefined),
-  };
+  const defaultDocumentSyncGateway = documentSyncGatewayMock();
   const phpDocumentSyncGateway =
     languageServerDocumentSyncGateway ?? defaultDocumentSyncGateway;
   const javaScriptTypeScriptDocumentSyncGateway =
@@ -75272,8 +75541,10 @@ function createDeferred<T>(): Deferred<T> {
   };
 }
 
-function documentSyncGatewayMock(): LanguageServerDocumentSyncGateway {
+function documentSyncGatewayMock(): LanguageServerDocumentSyncGateway &
+  SessionBoundLanguageServerDocumentSyncGateway {
   return {
+    [sessionBoundLanguageServerDocumentSyncGateway]: true,
     didChange: vi.fn(async () => undefined),
     didClose: vi.fn(async () => undefined),
     didOpen: vi.fn(async () => undefined),

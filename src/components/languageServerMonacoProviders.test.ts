@@ -5438,6 +5438,55 @@ function store($request): void
     await expect(rootPromise).resolves.toBeNull();
   });
 
+  it("coordinates PHP DocumentSymbol with the acquired document lifecycle", async () => {
+    const registered = createRegisteredProviders();
+    const gateway = featuresGateway();
+    const coordinatePhpDocumentSymbols = vi.fn(
+      async (
+        _request: Parameters<
+          NonNullable<
+            Parameters<
+              typeof registerLanguageServerMonacoProviders
+            >[1]["coordinatePhpDocumentSymbols"]
+          >
+        >[0],
+        load: () => Promise<LanguageServerDocumentSymbol[]>,
+      ) => load(),
+    );
+    registerLanguageServerMonacoProviders(
+      registered.monaco,
+      providerContext({
+        coordinatePhpDocumentSymbols,
+        featuresGateway: gateway,
+        isDocumentLeaseCurrent: () => true,
+        requestDocumentLease: async () => ({
+          lifecycleIdentity: 12,
+          path: "/project/src/User.php",
+          rootPath: "/project",
+          sessionId: 1,
+          syncGeneration: 4,
+        }),
+      }),
+    );
+
+    await registered.documentSymbolProvider.provideDocumentSymbols(
+      model({ content: "<?php\nclass User {}\n" }),
+    );
+
+    expect(coordinatePhpDocumentSymbols).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "<?php\nclass User {}\n",
+        lifecycleIdentity: 12,
+        path: "/project/src/User.php",
+        rootPath: "/project",
+        runtimeIdentity: gateway,
+        sessionId: 1,
+      }),
+      expect.any(Function),
+    );
+    expect(gateway.documentSymbols).toHaveBeenCalledTimes(1);
+  });
+
   it("maps PHP workspace symbol responses through the active project root", async () => {
     const registered = createRegisteredProviders();
     const gateway = featuresGateway({
@@ -13872,6 +13921,9 @@ function providerContext(
     clearLanguageServerDiagnosticsForPath: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["clearLanguageServerDiagnosticsForPath"]
     >;
+    coordinatePhpDocumentSymbols: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["coordinatePhpDocumentSymbols"]
+    >;
     featuresGateway: LanguageServerFeaturesGateway;
     flushPendingDocumentChange(path: string): Promise<void>;
     getLargeSmartDocumentPolicy(): { characterLimit: number; lineLimit: number };
@@ -13953,6 +14005,7 @@ function providerContext(
     applyWorkspaceEdit: overrides.applyWorkspaceEdit,
     clearLanguageServerDiagnosticsForPath:
       overrides.clearLanguageServerDiagnosticsForPath,
+    coordinatePhpDocumentSymbols: overrides.coordinatePhpDocumentSymbols,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
       overrides.flushPendingDocumentChange ?? vi.fn(async () => undefined),

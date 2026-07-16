@@ -878,8 +878,10 @@ describe("useWorkbenchFileOperations framework cache invalidation", () => {
     const previousPath = `${ROOT}/Old.php`;
     const path = `${ROOT}/New.php`;
     const invalidateFrameworkCachesForPath = vi.fn();
+    const invalidatePhpTraitHostClassNames = vi.fn();
     const dependencies = makeDependencies("", {
       invalidateFrameworkCachesForPath,
+      invalidatePhpTraitHostClassNames,
     });
     const operations = renderHook(dependencies);
 
@@ -904,6 +906,8 @@ describe("useWorkbenchFileOperations framework cache invalidation", () => {
     expect(
       dependencies.invalidatePhpFrameworkSourcePath,
     ).toHaveBeenNthCalledWith(2, ROOT, previousPath);
+    expect(invalidatePhpTraitHostClassNames).toHaveBeenCalledOnce();
+    expect(invalidatePhpTraitHostClassNames).toHaveBeenCalledWith(ROOT);
   });
 
   it("does not invalidate paths from a non-active root", () => {

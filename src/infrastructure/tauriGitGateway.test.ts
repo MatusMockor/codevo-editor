@@ -422,6 +422,7 @@ describe("TauriGitGateway", () => {
     const hunks = await gateway.getFileHunks("/workspace", "src/User.php", false);
     await gateway.stageHunk("/workspace", "src/User.php", 0, "stage-identity");
     await gateway.unstageHunk("/workspace", "src/User.php", 1, "unstage-identity");
+    await gateway.revertHunk("/workspace", "src/User.php", 2, "revert-identity");
 
     expect(hunks).toEqual([
       {
@@ -453,6 +454,12 @@ describe("TauriGitGateway", () => {
       relativePath: "src/User.php",
       rootPath: "/workspace",
     });
+    expect(invoke).toHaveBeenCalledWith("revert_git_hunk", {
+      expectedIdentity: "revert-identity",
+      hunkIndex: 2,
+      relativePath: "src/User.php",
+      rootPath: "/workspace",
+    });
   });
 
   it("returns empty hunks and status for hunk operations outside Tauri", async () => {
@@ -471,6 +478,14 @@ describe("TauriGitGateway", () => {
     });
     await expect(
       gateway.unstageHunk("/workspace", "src/User.php", 0, "unstage-identity"),
+    ).resolves.toEqual({
+      branch: null,
+      changes: [],
+      isRepository: false,
+      rootPath: "/workspace",
+    });
+    await expect(
+      gateway.revertHunk("/workspace", "src/User.php", 0, "revert-identity"),
     ).resolves.toEqual({
       branch: null,
       changes: [],

@@ -13,7 +13,9 @@ import {
   isJavaScriptTypeScriptLanguageServerDocument,
   languageServerDocumentSyncKey,
   languageServerUriSyncKey,
+  sessionBoundLanguageServerDocumentSyncGateway,
   type LanguageServerDocumentSyncGateway,
+  type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import { cachedLanguageServerRuntimeStatusForRoot } from "../domain/languageServerRuntimeStatusCache";
 import {
@@ -80,8 +82,10 @@ function tsDocument(overrides: Partial<EditorDocument> = {}): EditorDocument {
   };
 }
 
-function createSyncGatewaySpy(): LanguageServerDocumentSyncGateway {
+function createSyncGatewaySpy(): LanguageServerDocumentSyncGateway &
+  SessionBoundLanguageServerDocumentSyncGateway {
   return {
+    [sessionBoundLanguageServerDocumentSyncGateway]: true,
     didOpen: vi.fn(async () => undefined),
     didChange: vi.fn(async () => undefined),
     didSave: vi.fn(async () => undefined),
@@ -241,7 +245,7 @@ interface Harness {
   deps: DocumentSyncDependencies;
   php: ReturnType<typeof createFamilyRefs>;
   jsts: ReturnType<typeof createFamilyRefs>;
-  phpGateway: LanguageServerDocumentSyncGateway;
+  phpGateway: SessionBoundLanguageServerDocumentSyncGateway;
   jstsGateway: LanguageServerDocumentSyncGateway;
   currentRootRef: MutableRef<string | null>;
   activeDocumentRef: MutableRef<EditorDocument | null>;
@@ -399,6 +403,11 @@ function renderDocumentSync(deps: DocumentSyncDependencies) {
 
       return captured.api;
     },
+    rerender: (dependencies: DocumentSyncDependencies) => {
+      act(() => {
+        root.render(<Harness dependencies={dependencies} />);
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -437,7 +446,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       path: document.path,
       text: "a",
       version: 1,
-    });
+    }, SESSION);
     expect(harness.php.syncedPaths.current.has(key)).toBe(true);
     expect(harness.warmUp).toHaveBeenCalledWith(ROOT, document.path, SESSION);
   });
@@ -723,7 +732,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       path,
       text: "abc",
       version: 3,
-    });
+    }, SESSION);
   });
 
   it("does not send huge PHP edits after a normal document was synced", async () => {
@@ -763,6 +772,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.phpGateway.didChange).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "ab", version: 2 }),
+      SESSION,
     );
 
     // The debounce timer was cancelled by the flush: advancing it sends nothing.
@@ -858,7 +868,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       path: editedDocument.path,
       text: "ab",
       version: 2,
-    });
+    }, SESSION);
     expect(harness.php.syncedContent.current[syncKey]).toBe("a");
     expect(harness.php.pendingChanges.current[syncKey]).toEqual(
       expect.objectContaining({ text: "ab", version: 3 }),
@@ -871,10 +881,11 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       path: editedDocument.path,
       text: "ab",
       version: 3,
-    });
+    }, SESSION);
     expect(harness.phpGateway.didSave).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "ab", version: 3 }),
+      SESSION,
     );
     expect(harness.php.syncedContent.current[syncKey]).toBe("ab");
     expect(harness.php.pendingChanges.current[syncKey]).toBeUndefined();
@@ -894,6 +905,7 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.phpGateway.didSave).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ path: document.path, version: 1 }),
+      SESSION,
     );
     expect(harness.phpGateway.didChange).not.toHaveBeenCalled();
   });
@@ -981,16 +993,17 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       path: savedDocument.path,
       text: "formatted",
       version: 2,
-    });
+    }, SESSION);
     expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
       languageId: "php",
       path: savedDocument.path,
       text: "formatted",
       version: 3,
-    });
+    }, SESSION);
     expect(harness.phpGateway.didSave).toHaveBeenCalledWith(
       ROOT,
       expect.objectContaining({ text: "formatted", version: 3 }),
+      SESSION,
     );
     expect(harness.php.syncedContent.current[syncKey]).toBe("formatted");
     expect(harness.php.versions.current[syncKey]).toBe(3);
@@ -1056,13 +1069,13 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
       path: savedDocument.path,
       text: "formatted",
       version: 2,
-    });
+    }, SESSION);
     expect(harness.phpGateway.didChange).toHaveBeenNthCalledWith(2, ROOT, {
       languageId: "php",
       path: newerDocument.path,
       text: "formatted later",
       version: 3,
-    });
+    }, SESSION);
     expect(harness.phpGateway.didSave).not.toHaveBeenCalled();
     expect(harness.php.versions.current[syncKey]).toBe(3);
     expect(harness.php.syncedContent.current[syncKey]).toBe("formatted later");
@@ -1168,10 +1181,55 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     await api().syncClosedDocument(document);
     await flushMicrotasks();
 
-    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(ROOT, document.path);
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
+      ROOT,
+      document.path,
+      SESSION,
+    );
     expect(harness.php.syncedPaths.current.has(key)).toBe(false);
     expect(harness.php.versions.current[key]).toBeUndefined();
     expect(api().isLanguageServerDocumentSynced(document.path)).toBe(false);
+  });
+
+  it("binds a queued stale close to the old session before reopening on its replacement", async () => {
+    const harness = createHarness();
+    const change = deferred<void>();
+    vi.mocked(harness.phpGateway.didChange).mockImplementationOnce(
+      async () => change.promise,
+    );
+    const rendered = renderDocumentSync(harness.deps);
+    const { api } = rendered;
+    const original = phpDocument({ content: "a" });
+    const edited = phpDocument({ content: "ab" });
+    const replacement = phpDocument({ content: "replacement" });
+
+    await api().syncOpenDocument(original);
+    api().scheduleDocumentChange(edited);
+    await vi.advanceTimersByTimeAsync(150);
+    await flushMicrotasks();
+
+    const close = api().syncClosedDocument(edited);
+    const replacementStatus = runningStatus(ROOT, SESSION + 1);
+    harness.php.statusRef.current = replacementStatus;
+    harness.php.statusByRootRef.current = { [ROOT]: replacementStatus };
+    harness.deps.languageServerRuntimeStatus = replacementStatus;
+    rendered.rerender(harness.deps);
+    const reopen = api().syncOpenDocument(replacement);
+
+    change.resolve();
+    await Promise.all([close, reopen]);
+
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
+      ROOT,
+      original.path,
+      SESSION,
+    );
+    expect(harness.phpGateway.didOpen).toHaveBeenLastCalledWith(
+      ROOT,
+      expect.objectContaining({ path: replacement.path, text: "replacement" }),
+      SESSION + 1,
+    );
+    expect(api().isLanguageServerDocumentSynced(replacement.path)).toBe(true);
   });
 
   it("drops a debounced didChange when the workspace root changed mid-flight", async () => {
@@ -1675,8 +1733,16 @@ describe("useDocumentSync - cross-family isolation", () => {
     await api().closeSyncedLanguageServerDocumentsForRoot(ROOT);
     await flushMicrotasks();
 
-    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(ROOT, first.path);
-    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(ROOT, second.path);
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
+      ROOT,
+      first.path,
+      SESSION,
+    );
+    expect(harness.phpGateway.didClose).toHaveBeenCalledWith(
+      ROOT,
+      second.path,
+      SESSION,
+    );
     expect(harness.php.syncedPaths.current.size).toBe(0);
   });
 

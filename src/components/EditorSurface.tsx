@@ -1777,9 +1777,11 @@ function EditorSurfaceComponent({
     let timeout: number | null = null;
 
     const fetchBreadcrumbSymbols = async () => {
+      let documentLease: LanguageServerMonacoDocumentRequestLease | null = null;
+
       try {
-        const documentLease = canUseDocumentLease
-          ? await requestDocumentLease?.(requestedRoot, requestedPath)
+        documentLease = canUseDocumentLease
+          ? (await requestDocumentLease?.(requestedRoot, requestedPath)) ?? null
           : null;
 
         if (!active) {
@@ -1818,19 +1820,22 @@ function EditorSurfaceComponent({
           }
 
           if (
+            documentLease &&
             status?.kind === "running" &&
             status.rootPath &&
             workspaceRootKeysEqual(status.rootPath, requestedRoot)
           ) {
             const directLoad = load;
+            const coordinatedLease = documentLease;
             load = () =>
               runtime?.coordinatePhpDocumentSymbols(
                 {
                   content: document.content,
+                  lifecycleIdentity: coordinatedLease.lifecycleIdentity,
                   path: requestedPath,
                   rootPath: requestedRoot,
                   runtimeIdentity: languageServerFeaturesGateway,
-                  sessionId: documentLease?.sessionId ?? status.sessionId,
+                  sessionId: coordinatedLease.sessionId,
                 },
                 directLoad,
               ) ?? directLoad();
@@ -1851,9 +1856,15 @@ function EditorSurfaceComponent({
           [requestedPath]: symbols,
         }));
       } catch (error) {
-        if (active) {
-          errorReporterRef.current(error);
+        if (!active) {
+          return;
         }
+
+        if (documentLease && !isDocumentLeaseCurrent?.(documentLease)) {
+          return;
+        }
+
+        errorReporterRef.current(error);
       }
     };
 

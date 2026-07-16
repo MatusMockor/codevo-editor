@@ -8,6 +8,7 @@ import {
   languageServerPathFromDocumentSyncKey,
   languageServerUriSyncKey,
   type LanguageServerDocumentSyncGateway,
+  type SessionBoundLanguageServerDocumentSyncGateway,
   type LanguageServerTextDocument,
 } from "../domain/languageServerDocumentSync";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
@@ -106,7 +107,7 @@ export interface DocumentSyncDependencies {
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
 
   // Document-sync gateways (one per language family).
-  languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
+  languageServerDocumentSyncGateway: SessionBoundLanguageServerDocumentSyncGateway;
   javaScriptTypeScriptLanguageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway;
 
   // Shared sync primitives (shell-owned, also used by other shell flows).
@@ -411,6 +412,7 @@ export function useDocumentSync(
           await languageServerDocumentSyncGateway.didOpen(
             rootPath,
             syncedDocument,
+            requestedSessionId,
           );
 
           if (
@@ -686,6 +688,7 @@ export function useDocumentSync(
             await languageServerDocumentSyncGateway.didChange(
               rootPath,
               pendingDocument,
+              requestedSessionId,
             );
           } catch (error) {
             if (
@@ -1064,6 +1067,7 @@ export function useDocumentSync(
           await languageServerDocumentSyncGateway.didChange(
             rootPath,
             pendingDocumentToSend,
+            requestedSessionId,
           );
         } catch (error) {
           if (
@@ -1532,6 +1536,7 @@ export function useDocumentSync(
               await languageServerDocumentSyncGateway.didChange(
                 rootPath,
                 syncedDocument,
+                requestedSessionId,
               );
             } catch (error) {
               if (
@@ -1576,6 +1581,7 @@ export function useDocumentSync(
               document,
               documentVersionsRef.current[syncKey] || 0,
             ),
+            requestedSessionId,
           );
         });
       } catch (error) {
@@ -1818,9 +1824,17 @@ export function useDocumentSync(
       ];
 
       try {
-        await enqueueDocumentSync(syncKey, () =>
-          languageServerDocumentSyncGateway.didClose(rootPath, document.path),
-        );
+        await enqueueDocumentSync(syncKey, () => {
+          if (requestedSessionId === null) {
+            return Promise.resolve();
+          }
+
+          return languageServerDocumentSyncGateway.didClose(
+            rootPath,
+            document.path,
+            requestedSessionId,
+          );
+        });
       } catch (error) {
         if (
           requestedSessionId !== null &&
@@ -1965,9 +1979,17 @@ export function useDocumentSync(
         ];
 
         try {
-          await enqueueDocumentSync(key, () =>
-            languageServerDocumentSyncGateway.didClose(rootPath, path),
-          );
+          await enqueueDocumentSync(key, () => {
+            if (requestedSessionId === null) {
+              return Promise.resolve();
+            }
+
+            return languageServerDocumentSyncGateway.didClose(
+              rootPath,
+              path,
+              requestedSessionId,
+            );
+          });
         } catch (error) {
           if (
             requestedSessionId !== null &&

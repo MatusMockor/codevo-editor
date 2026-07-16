@@ -307,6 +307,7 @@ export interface GitWorkspaceDependencies {
   reportError: (source: string, error: unknown) => void;
   setMessage: (message: string | null) => void;
   prompter: WorkbenchPrompter;
+  canRevertGitChange?: (change: GitChangedFile) => boolean;
   // Effective repository mappings (manual + auto-detected, always incl. `""`).
   // Defaults to `[""]` (single-repo / workspace root) when omitted.
   gitRepositoryMappings?: GitRepositoryMapping[];
@@ -354,6 +355,12 @@ export interface GitWorkspace {
     hunkIndex: number,
     expectedIdentity: string,
   ) => Promise<void>;
+  canRevertGitChange: (change: GitChangedFile) => boolean;
+  revertGitHunk: (
+    change: GitChangedFile,
+    hunkIndex: number,
+    expectedIdentity: string,
+  ) => Promise<void>;
   revertGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   runGitCommit: (options: { pushAfterCommit: boolean }) => Promise<void>;
   amendGitChanges: () => Promise<void>;
@@ -362,6 +369,8 @@ export interface GitWorkspace {
   fetchGitChanges: () => Promise<void>;
   pullGitChanges: () => Promise<void>;
 }
+
+class GitHunkMutationPreconditionError extends Error {}
 
 export function useGitWorkspace(
   dependencies: GitWorkspaceDependencies,
@@ -376,6 +385,7 @@ export function useGitWorkspace(
     reportError,
     setMessage,
     prompter,
+    canRevertGitChange = () => true,
     gitRepositoryMappings,
     gitRepositoryStatuses,
     gitCommitMessageHistory = [],
@@ -721,6 +731,7 @@ export function useGitWorkspace(
         expectedIdentity: string,
       ) => Promise<GitStatus>,
       messagePrefix: string,
+      beforeMutation?: () => boolean,
     ) => {
       if (!workspaceRoot) {
         return;
@@ -755,13 +766,20 @@ export function useGitWorkspace(
         const execution = await gitOperationCurrency.runRepositoryMutation(
           reservation,
           repositoryRoot,
-          () =>
-            operation(
+          async () => {
+            if (beforeMutation && !beforeMutation()) {
+              throw new GitHunkMutationPreconditionError(
+                `Save or discard editor changes before reverting ${change.relativePath}`,
+              );
+            }
+
+            return operation(
               repositoryRoot,
               repositoryRelativePath,
               hunkIndex,
               expectedIdentity,
-            ),
+            );
+          },
         );
 
         if (!execution.executed || !isCurrentMutation()) {
@@ -778,6 +796,11 @@ export function useGitWorkspace(
         ]);
         setMessage(`${messagePrefix} ${change.relativePath}`);
       } catch (error) {
+        if (error instanceof GitHunkMutationPreconditionError) {
+          setMessage(error.message);
+          return;
+        }
+
         // A rejected patch (stale hunk / already staged) fails atomically on
         // the Rust side - the index is untouched, so this is a safe no-op.
         if (isCurrentMutation()) {
@@ -824,9 +847,53 @@ export function useGitWorkspace(
     [gitGateway, runHunkOperation],
   );
 
+  const revertGitHunk = useCallback(
+    async (change: GitChangedFile, hunkIndex: number, expectedIdentity: string) => {
+      if (!canRevertGitChange(change)) {
+        setMessage(`Save or discard editor changes before reverting ${change.relativePath}`);
+        return;
+      }
+
+      if (!prompter.confirm("Revert this Git hunk? This discards local changes.")) {
+        return;
+      }
+
+      if (!gitGateway.revertHunk) {
+        reportError("Git", new Error("Reverting a Git hunk is unavailable."));
+        return;
+      }
+
+      await runHunkOperation(
+        change,
+        hunkIndex,
+        expectedIdentity,
+        (root, repoRelative, index, identity) =>
+          gitGateway.revertHunk!(root, repoRelative, index, identity),
+        "Reverted hunk in",
+        () => canRevertGitChange(change),
+      );
+    },
+    [
+      canRevertGitChange,
+      gitGateway,
+      prompter,
+      reportError,
+      runHunkOperation,
+      setMessage,
+    ],
+  );
+
   const revertGitChanges = useCallback(
     async (changes: GitChangedFile[]) => {
       if (!workspaceRoot || changes.length === 0) {
+        return;
+      }
+
+      const dirtyChange = changes.find((change) => !canRevertGitChange(change));
+      if (dirtyChange) {
+        setMessage(
+          `Save or discard editor changes before reverting ${dirtyChange.relativePath}`,
+        );
         return;
       }
 
@@ -838,7 +905,14 @@ export function useGitWorkspace(
         gitGateway.revertFiles(root, groupChanges),
       );
     },
-    [gitGateway, prompter, runFileOperation, workspaceRoot],
+    [
+      canRevertGitChange,
+      gitGateway,
+      prompter,
+      runFileOperation,
+      setMessage,
+      workspaceRoot,
+    ],
   );
 
   const runGitCommit = useCallback(
@@ -1335,6 +1409,8 @@ export function useGitWorkspace(
     loadGitFileHunks,
     stageGitHunk,
     unstageGitHunk,
+    canRevertGitChange,
+    revertGitHunk,
     revertGitChanges,
     runGitCommit,
     amendGitChanges,

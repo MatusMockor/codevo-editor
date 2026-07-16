@@ -108,8 +108,8 @@ import {
   TauriLanguageServerDiagnosticsGateway,
 } from "./infrastructure/tauriLanguageServerDiagnosticsGateway";
 import {
-  JAVASCRIPT_TYPESCRIPT_DOCUMENT_SYNC_COMMANDS,
   TauriLanguageServerDocumentSyncGateway,
+  TauriSessionBoundLanguageServerDocumentSyncGateway,
 } from "./infrastructure/tauriLanguageServerDocumentSyncGateway";
 import {
   JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
@@ -187,13 +187,9 @@ const javaScriptTypeScriptLanguageServerRuntimeGateway =
     JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
   );
 const languageServerDocumentSyncGateway =
-  new TauriLanguageServerDocumentSyncGateway();
+  new TauriSessionBoundLanguageServerDocumentSyncGateway();
 const javaScriptTypeScriptLanguageServerDocumentSyncGateway =
-  new TauriLanguageServerDocumentSyncGateway(
-    undefined,
-    undefined,
-    JAVASCRIPT_TYPESCRIPT_DOCUMENT_SYNC_COMMANDS,
-  );
+  new TauriLanguageServerDocumentSyncGateway();
 const languageServerDiagnosticsGateway =
   new TauriLanguageServerDiagnosticsGateway();
 const javaScriptTypeScriptLanguageServerDiagnosticsGateway =
@@ -1173,9 +1169,15 @@ function App() {
               editorFontLigatures={workbench.appSettings.editorFontLigatures}
               editorFontSize={workbench.appSettings.editorFontSize}
               gitOperationLoading={workbench.gitOperationLoading}
+              canRevertChange={
+                worktreeDiff.diff
+                  ? workbench.canRevertGitChange(worktreeDiff.diff.change)
+                  : false
+              }
               loadFileHunks={workbench.loadGitFileHunks}
               onClose={() => closeEditorGroupTab(groupId, path)}
               onRevertFile={(change) => workbench.revertGitChanges([change])}
+              onRevertHunk={workbench.revertGitHunk}
               onStageHunk={workbench.stageGitHunk}
               onUnstageHunk={workbench.unstageGitHunk}
             />

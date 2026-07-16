@@ -486,6 +486,57 @@ describe("GitDiffPreview", () => {
     expect(onRevertFile).toHaveBeenCalledWith(current.change);
   });
 
+  it("removes destructive revert actions from a staged preview", async () => {
+    const onRevertFile = vi.fn();
+    const onRevertHunk = vi.fn();
+    await renderPreview(
+      { ...diff(), change: { ...diff().change, isStaged: true } },
+      {
+        loadFileHunks: vi.fn(async () => [gitHunk(0, true)]),
+        onRevertFile,
+        onRevertHunk,
+        onUnstageHunk: vi.fn(),
+      },
+    );
+
+    expect(queryButtonByTitle("Revert file")).toBeNull();
+    expect(hunkRevertButtons()).toHaveLength(0);
+    expect(hunkCheckboxes()[0]?.getAttribute("aria-label")).toBe(
+      "Unstage hunk 1",
+    );
+  });
+
+  it("disables file and hunk revert when the editor document is dirty", async () => {
+    const onRevertFile = vi.fn();
+    const onRevertHunk = vi.fn();
+    await renderPreview(diff(), {
+      canRevertChange: false,
+      loadFileHunks: vi.fn(async () => [gitHunk(0, false)]),
+      onRevertFile,
+      onRevertHunk,
+      onStageHunk: vi.fn(),
+    });
+
+    const fileButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Revert file"]',
+    );
+    const hunkButton = hunkRevertButtons()[0];
+    const stageCheckbox = hunkCheckboxes()[0];
+    expect(fileButton?.disabled).toBe(true);
+    expect(fileButton?.title).toBe("Save or discard editor changes first");
+    expect(hunkButton?.disabled).toBe(true);
+    expect(hunkButton?.title).toBe("Save or discard editor changes first");
+    expect(stageCheckbox?.disabled).toBe(false);
+    expect(stageCheckbox?.getAttribute("aria-label")).toBe("Stage hunk 1");
+
+    await act(async () => {
+      fileButton?.click();
+      hunkButton?.click();
+    });
+    expect(onRevertFile).not.toHaveBeenCalled();
+    expect(onRevertHunk).not.toHaveBeenCalled();
+  });
+
   it("navigates Monaco logical line changes instead of individual rows", async () => {
     await renderPreview(diff());
     await mountDiffEditor([
@@ -545,6 +596,29 @@ describe("GitDiffPreview", () => {
     });
 
     expect(onStageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ relativePath: "src/example.ts" }),
+      1,
+      "@@ -5 +5 @@\n-before\n+after",
+    );
+  });
+
+  it("reverts the selected worktree hunk with its verified identity", async () => {
+    const onRevertHunk = vi.fn();
+    await renderPreview(diff(), {
+      loadFileHunks: vi.fn(async () => threeHunks(false)),
+      onRevertHunk,
+      onStageHunk: vi.fn(),
+    });
+
+    const buttons = hunkRevertButtons();
+    expect(buttons).toHaveLength(3);
+    expect(buttons[1]?.getAttribute("aria-label")).toBe("Revert hunk 2");
+
+    await act(async () => {
+      buttons[1]?.click();
+    });
+
+    expect(onRevertHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts" }),
       1,
       "@@ -5 +5 @@\n-before\n+after",
@@ -1000,6 +1074,14 @@ function hunkCheckboxes(): HTMLInputElement[] {
   return Array.from(
     document.querySelectorAll<HTMLInputElement>(
       '.git-diff-hunk input[type="checkbox"]',
+    ),
+  );
+}
+
+function hunkRevertButtons(): HTMLButtonElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLButtonElement>(
+      '.git-diff-hunk button[aria-label^="Revert hunk"]',
     ),
   );
 }

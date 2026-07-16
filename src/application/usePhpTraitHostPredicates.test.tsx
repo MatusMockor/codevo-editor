@@ -13,8 +13,8 @@ const ROOT = "/workspace";
 type HookOptions = Parameters<typeof usePhpTraitHostPredicates>[0];
 type HookApi = ReturnType<typeof usePhpTraitHostPredicates>;
 
-function classPath(className: string): string {
-  return `${ROOT}/${className.split("\\").join("/")}.php`;
+function classPath(className: string, root = ROOT): string {
+  return `${root}/${className.split("\\").join("/")}.php`;
 }
 
 function searchResult(path: string, query: string): TextSearchResult {
@@ -31,10 +31,13 @@ function makeOptions(
   sources: Record<string, string>,
   overrides: Partial<HookOptions> = {},
 ): HookOptions {
-  const currentWorkspaceRootRef = { current: ROOT };
+  const workspaceRoot = overrides.workspaceRoot ?? ROOT;
+  const currentWorkspaceRootRef = overrides.currentWorkspaceRootRef ?? {
+    current: workspaceRoot,
+  };
   const pathToSource = new Map(
     Object.entries(sources).map(([className, source]) => [
-      classPath(className),
+      classPath(className, workspaceRoot),
       source,
     ]),
   );
@@ -62,7 +65,7 @@ function makeOptions(
         .filter(([path, source]) => path.includes(query) || source.includes(query))
         .map(([path]) => searchResult(path, query)),
     ),
-    workspaceRoot: ROOT,
+    workspaceRoot,
     ...overrides,
   };
 }
@@ -89,6 +92,11 @@ function renderHook(options: HookOptions) {
 
       return captured.api;
     },
+    rerender: (nextOptions: HookOptions) => {
+      act(() => {
+        root.render(<Harness hookOptions={nextOptions} />);
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -107,6 +115,263 @@ function createDeferred<T>() {
 }
 
 describe("usePhpTraitHostPredicates", () => {
+  it("invalidates edited, added, and deleted trait hosts within one root", async () => {
+    const sourcesByPath = new Map<string, string>([
+      [
+        classPath("App\\Models\\Post"),
+        `<?php
+namespace App\\Models;
+class Post { use \\App\\Traits\\HasSlugs; }
+`,
+      ],
+    ]);
+    const options = makeOptions(
+      {},
+      {
+        phpClassHierarchyHasMethod: vi.fn(async () => true),
+        readNavigationFileContent: vi.fn(async (path: string) => {
+          const source = sourcesByPath.get(path);
+
+          if (!source) {
+            throw new Error(`Missing source for ${path}`);
+          }
+
+          return source;
+        }),
+        searchText: vi.fn(async (_root, query) =>
+          Array.from(sourcesByPath.keys()).map((path) =>
+            searchResult(path, query),
+          ),
+        ),
+      },
+    );
+    const harness = renderHook(options);
+    const resolveHosts = () =>
+      harness
+        .api()
+        .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs");
+
+    await expect(resolveHosts()).resolves.toEqual(["App\\Models\\Post"]);
+    await expect(
+      harness
+        .api()
+        .phpTraitHostMethodExists("App\\Traits\\HasSlugs", "slug"),
+    ).resolves.toBe(true);
+
+    sourcesByPath.set(
+      classPath("App\\Models\\Post"),
+      `<?php
+namespace App\\Models;
+class Post {}
+`,
+    );
+    harness.api().invalidatePhpTraitHostClassNames(ROOT);
+    await expect(resolveHosts()).resolves.toEqual([]);
+    await expect(
+      harness
+        .api()
+        .phpTraitHostMethodExists("App\\Traits\\HasSlugs", "slug"),
+    ).resolves.toBe(false);
+
+    sourcesByPath.set(
+      classPath("App\\Models\\Article"),
+      `<?php
+namespace App\\Models;
+class Article { use \\App\\Traits\\HasSlugs; }
+`,
+    );
+    harness.api().invalidatePhpTraitHostClassNames(ROOT);
+    await expect(resolveHosts()).resolves.toEqual(["App\\Models\\Article"]);
+
+    sourcesByPath.delete(classPath("App\\Models\\Article"));
+    harness.api().invalidatePhpTraitHostClassNames(ROOT);
+    await expect(resolveHosts()).resolves.toEqual([]);
+
+    harness.unmount();
+  });
+
+  it("invalidates one root without evicting identical trait names in another", async () => {
+    const currentWorkspaceRootRef = { current: ROOT };
+    const firstOptions = makeOptions(
+      {
+        "App\\Models\\Post": `<?php
+namespace App\\Models;
+class Post { use \\App\\Traits\\HasSlugs; }
+`,
+      },
+      { currentWorkspaceRootRef },
+    );
+    const harness = renderHook(firstOptions);
+
+    await harness
+      .api()
+      .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs");
+
+    const otherRoot = "/other";
+    currentWorkspaceRootRef.current = otherRoot;
+    const secondOptions = makeOptions(
+      {
+        "App\\Models\\Article": `<?php
+namespace App\\Models;
+class Article { use \\App\\Traits\\HasSlugs; }
+`,
+      },
+      { currentWorkspaceRootRef, workspaceRoot: otherRoot },
+    );
+    harness.rerender(secondOptions);
+    await harness
+      .api()
+      .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs");
+
+    harness.api().invalidatePhpTraitHostClassNames(ROOT);
+    await harness
+      .api()
+      .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs");
+
+    expect(secondOptions.searchText).toHaveBeenCalledTimes(1);
+
+    currentWorkspaceRootRef.current = ROOT;
+    harness.rerender(firstOptions);
+    await harness
+      .api()
+      .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs");
+    expect(firstOptions.searchText).toHaveBeenCalledTimes(2);
+
+    harness.unmount();
+  });
+
+  it("accepts only direct trait uses on the declaring named class", async () => {
+    const options = makeOptions({
+      "App\\Models\\Outer": `<?php
+namespace App\\Models;
+class Outer
+{
+    public function create(): object
+    {
+        return new class { use \\App\\Traits\\HasSlugs; };
+    }
+}
+class Secondary { use \\App\\Traits\\HasSlugs; }
+`,
+      "App\\Models\\Direct": `<?php
+namespace App\\Models;
+class Direct
+{
+    use \\App\\Traits\\HasSlugs;
+
+    public function create(): object
+    {
+        return new class { use \\App\\Traits\\OtherTrait; };
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs"),
+    ).resolves.toEqual(["App\\Models\\Direct"]);
+
+    harness.unmount();
+  });
+
+  it("resolves concrete trait host class names once per root", async () => {
+    const options = makeOptions({
+      "App\\Models\\Post": `<?php
+namespace App\\Models;
+
+class Post
+{
+    use \\App\\Traits\\HasSlugs;
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const first = harness
+      .api()
+      .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs");
+    const second = harness
+      .api()
+      .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs");
+
+    await expect(first).resolves.toEqual(["App\\Models\\Post"]);
+    await expect(second).resolves.toEqual(["App\\Models\\Post"]);
+    expect(options.searchText).toHaveBeenCalledTimes(1);
+
+    harness.unmount();
+  });
+
+  it("keeps identical trait-name caches isolated across root changes", async () => {
+    const currentWorkspaceRootRef = { current: ROOT };
+    const firstOptions = makeOptions(
+      {
+        "App\\Models\\Post": `<?php
+namespace App\\Models;
+class Post { use \\App\\Traits\\HasSlugs; }
+`,
+      },
+      { currentWorkspaceRootRef },
+    );
+    const harness = renderHook(firstOptions);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs"),
+    ).resolves.toEqual(["App\\Models\\Post"]);
+
+    const otherRoot = "/other";
+    currentWorkspaceRootRef.current = otherRoot;
+    const secondOptions = makeOptions(
+      {
+        "App\\Models\\Article": `<?php
+namespace App\\Models;
+class Article { use \\App\\Traits\\HasSlugs; }
+`,
+      },
+      { currentWorkspaceRootRef, workspaceRoot: otherRoot },
+    );
+    harness.rerender(secondOptions);
+
+    await expect(
+      harness
+        .api()
+        .resolvePhpTraitHostClassNames("App\\Traits\\HasSlugs"),
+    ).resolves.toEqual(["App\\Models\\Article"]);
+    expect(secondOptions.searchText).toHaveBeenCalledWith(
+      otherRoot,
+      "HasSlugs",
+      200,
+    );
+
+    harness.unmount();
+  });
+
+  it("does not return a cached host result through a stale root callback", async () => {
+    const options = makeOptions({
+      "App\\Models\\Post": `<?php
+namespace App\\Models;
+class Post { use \\App\\Traits\\HasSlugs; }
+`,
+    });
+    const harness = renderHook(options);
+    const resolveHosts = harness.api().resolvePhpTraitHostClassNames;
+
+    await expect(resolveHosts("App\\Traits\\HasSlugs")).resolves.toEqual([
+      "App\\Models\\Post",
+    ]);
+
+    options.currentWorkspaceRootRef.current = "/other";
+
+    await expect(resolveHosts("App\\Traits\\HasSlugs")).resolves.toEqual([]);
+    expect(options.searchText).toHaveBeenCalledTimes(1);
+
+    harness.unmount();
+  });
+
   it("finds a method on a concrete class using the trait", async () => {
     const options = makeOptions(
       {

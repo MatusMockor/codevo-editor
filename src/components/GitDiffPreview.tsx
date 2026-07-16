@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 import type * as Monaco from "monaco-editor";
+import { createRoot } from "react-dom/client";
 import {
   defaultEditorFontFamily,
   defaultEditorFontLigatures,
@@ -38,8 +39,10 @@ interface GitDiffPreviewProps {
   editorFontLigatures?: boolean;
   editorFontSize?: number;
   gitOperationLoading?: boolean;
+  canRevertChange?: boolean;
   onClose(): void;
   onRevertFile?(change: GitChangedFile): void;
+  onRevertHunk?(change: GitChangedFile, hunkIndex: number, expectedIdentity: string): void;
   loadFileHunks?(change: GitChangedFile, staged: boolean): Promise<GitDiffHunk[]>;
   onStageHunk?(change: GitChangedFile, hunkIndex: number, expectedIdentity: string): void;
   onUnstageHunk?(change: GitChangedFile, hunkIndex: number, expectedIdentity: string): void;
@@ -65,8 +68,10 @@ export function GitDiffPreview({
   editorFontLigatures = defaultEditorFontLigatures,
   editorFontSize = defaultEditorFontSize,
   gitOperationLoading = false,
+  canRevertChange = true,
   onClose,
   onRevertFile,
+  onRevertHunk,
   loadFileHunks,
   onStageHunk,
   onUnstageHunk,
@@ -341,6 +346,25 @@ export function GitDiffPreview({
     [diff?.change, gitOperationLoading, onStageHunk, onUnstageHunk],
   );
 
+  const onRevertSelectedHunk = useCallback(
+    (hunkIndex: number, hunkIdentity: string, selectionIdentity: string) => {
+      const change = diff?.change;
+      if (
+        !change ||
+        change.isStaged ||
+        !canRevertChange ||
+        gitOperationLoading ||
+        selectionIdentity !== currentHunkSelectionIdentityRef.current ||
+        selectionIdentity !== loadedHunkSelectionIdentityRef.current
+      ) {
+        return;
+      }
+
+      onRevertHunk?.(change, hunkIndex, hunkIdentity);
+    },
+    [canRevertChange, diff?.change, gitOperationLoading, onRevertHunk],
+  );
+
   useLayoutEffect(() => {
     disposeHunkWidgets();
     const editor = diffEditorRef.current;
@@ -358,8 +382,10 @@ export function GitDiffPreview({
       hunks,
       changeIsStaged,
       gitOperationLoading,
+      canRevertChange,
       hunkSelectionIdentity,
       onToggleHunk,
+      onRevertSelectedHunk,
     );
 
     return disposeHunkWidgets;
@@ -368,19 +394,21 @@ export function GitDiffPreview({
     disposeHunkWidgets,
     editorEpoch,
     gitOperationLoading,
+    canRevertChange,
     hunkSelectionIdentity,
     hunks,
     onToggleHunk,
+    onRevertSelectedHunk,
     supportsHunkStaging,
   ]);
 
   const onRevert = useCallback(() => {
-    if (!diff || !onRevertFile) {
+    if (!diff || !onRevertFile || !canRevertChange || diff.change.isStaged) {
       return;
     }
 
     onRevertFile(diff.change);
-  }, [diff, onRevertFile]);
+  }, [canRevertChange, diff, onRevertFile]);
 
   if (isLoading) {
     return <EmptyDiff message="Loading diff" />;
@@ -416,8 +444,14 @@ export function GitDiffPreview({
           >
             <ChevronDown aria-hidden="true" size={14} />
           </button>
-          {onRevertFile ? (
-            <button aria-label="Revert file" onClick={onRevert} title="Revert file" type="button">
+          {onRevertFile && !changeIsStaged ? (
+            <button
+              aria-label="Revert file"
+              disabled={!canRevertChange || gitOperationLoading}
+              onClick={onRevert}
+              title={canRevertChange ? "Revert file" : "Save or discard editor changes first"}
+              type="button"
+            >
               <RotateCcw aria-hidden="true" size={14} />
             </button>
           ) : null}
@@ -604,8 +638,14 @@ function createGitDiffHunkWidgets(
   hunks: GitDiffHunk[],
   staged: boolean,
   disabled: boolean,
+  canRevert: boolean,
   selectionIdentity: string,
   onToggleHunk: (
+    hunkIndex: number,
+    hunkIdentity: string,
+    selectionIdentity: string,
+  ) => void,
+  onRevertHunk: (
     hunkIndex: number,
     hunkIdentity: string,
     selectionIdentity: string,
@@ -616,27 +656,25 @@ function createGitDiffHunkWidgets(
   const lineCount = editor.getModel()?.getLineCount() ?? Number.MAX_SAFE_INTEGER;
 
   for (const hunk of hunks) {
-    const domNode = document.createElement("label");
+    const domNode = document.createElement("div");
     const label = `${actionVerb} hunk ${hunk.index + 1}`;
     domNode.className = "git-diff-hunk";
     domNode.title = `${label}: ${hunk.header}`;
-
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = staged;
-    checkbox.disabled = disabled;
-    checkbox.setAttribute("aria-label", label);
-    checkbox.title = label;
-
-    const icon = document.createElement("span");
-    icon.className = "git-diff-hunk-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = staged ? "-" : "+";
-    domNode.append(checkbox, icon);
-
-    const handleChange = () =>
-      onToggleHunk(hunk.index, hunk.identity, selectionIdentity);
-    checkbox.addEventListener("change", handleChange);
+    const widgetRoot = createRoot(domNode);
+    widgetRoot.render(
+      <GitDiffHunkControls
+        canRevert={canRevert}
+        disabled={disabled}
+        hunk={hunk}
+        onRevert={() =>
+          onRevertHunk(hunk.index, hunk.identity, selectionIdentity)
+        }
+        onToggle={() =>
+          onToggleHunk(hunk.index, hunk.identity, selectionIdentity)
+        }
+        staged={staged}
+      />,
+    );
     const lineNumber = Math.min(Math.max(hunk.modifiedStart, 1), lineCount);
     const widget: Monaco.editor.IContentWidget = {
       allowEditorOverflow: false,
@@ -652,8 +690,8 @@ function createGitDiffHunkWidgets(
     editor.addContentWidget(widget);
     registrations.push({
       dispose: () => {
-        checkbox.removeEventListener("change", handleChange);
         editor.removeContentWidget(widget);
+        widgetRoot.unmount();
         domNode.remove();
       },
       editor,
@@ -662,6 +700,54 @@ function createGitDiffHunkWidgets(
   }
 
   return registrations;
+}
+
+interface GitDiffHunkControlsProps {
+  canRevert: boolean;
+  disabled: boolean;
+  hunk: GitDiffHunk;
+  onRevert(): void;
+  onToggle(): void;
+  staged: boolean;
+}
+
+function GitDiffHunkControls({
+  canRevert,
+  disabled,
+  hunk,
+  onRevert,
+  onToggle,
+  staged,
+}: GitDiffHunkControlsProps) {
+  const actionLabel = `${staged ? "Unstage" : "Stage"} hunk ${hunk.index + 1}`;
+  const revertLabel = `Revert hunk ${hunk.index + 1}`;
+
+  return (
+    <>
+      <input
+        aria-label={actionLabel}
+        checked={staged}
+        disabled={disabled}
+        onChange={onToggle}
+        title={actionLabel}
+        type="checkbox"
+      />
+      <span aria-hidden="true" className="git-diff-hunk-icon">
+        {staged ? "-" : "+"}
+      </span>
+      {!staged ? (
+        <button
+          aria-label={revertLabel}
+          disabled={disabled || !canRevert}
+          onClick={onRevert}
+          title={canRevert ? revertLabel : "Save or discard editor changes first"}
+          type="button"
+        >
+          <RotateCcw aria-hidden="true" size={10} />
+        </button>
+      ) : null}
+    </>
+  );
 }
 
 function revealLogicalChange(

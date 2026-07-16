@@ -2701,6 +2701,27 @@ async fn unstage_git_hunk(
 }
 
 #[tauri::command]
+async fn revert_git_hunk(
+    root_path: String,
+    relative_path: String,
+    hunk_index: u32,
+    expected_identity: String,
+    trust: GitTrustState<'_>,
+) -> Result<GitStatus, String> {
+    let trusted = trusted_for(&trust, &root_path)?;
+    // Reverting one hunk runs `git diff` + `git apply --reverse` and re-reads
+    // status off the main thread. The identity fence and Git's atomic apply
+    // make a stale request a safe worktree no-op; the index is never targeted.
+    run_blocking_command(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        CommandGitRepositoryGateway::new(trusted)
+            .revert_hunk(&root, &relative_path, hunk_index, &expected_identity)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn revert_git_files(
     root_path: String,
     changes: Vec<GitChangedFile>,
@@ -3680,48 +3701,68 @@ fn stop_all_terminal_sessions(supervisor: State<'_, TerminalSupervisor>) -> Resu
 fn text_document_did_open(
     root_path: String,
     document: TextDocumentContent,
+    expected_session_id: u64,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_open(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_open(&document),
+    )
 }
 
 #[tauri::command]
 fn text_document_did_change(
     root_path: String,
     document: TextDocumentContent,
+    expected_session_id: u64,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_change(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_change(&document),
+    )
 }
 
 #[tauri::command]
 fn text_document_did_save(
     root_path: String,
     document: TextDocumentContent,
+    expected_session_id: u64,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_content_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_save(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_save(&document),
+    )
 }
 
 #[tauri::command]
 fn text_document_did_close(
     root_path: String,
     document: TextDocumentPath,
+    expected_session_id: u64,
     registry: State<'_, PhpLanguageServerRegistry>,
 ) -> Result<(), String> {
     ensure_lsp_text_document_path_in_workspace(&root_path, &document)?;
 
     let factory = LspTextDocumentSyncNotificationFactory;
-    registry.send_notification(&root_path, &factory.did_close(&document))
+    registry.send_notification_for_session(
+        &root_path,
+        expected_session_id,
+        &factory.did_close(&document),
+    )
 }
 
 #[tauri::command]
@@ -6392,12 +6433,12 @@ mod tests {
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
         register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
-        reword_git_commit, run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
-        run_php_tests_junit_with_trust, run_phpstan_analysis_with_trust,
-        run_pint_format_with_trust, save_git_stash, search_files, stage_git_files, stage_git_hunk,
-        stash_apply_git, stash_drop_git, stash_pop_git, switch_git_branch, unstage_git_hunk,
-        workspace_root_for_disposal, workspace_text_edits_from_language_server,
-        LegacyLocalHistoryWorkspaceAuthorizer,
+        revert_git_hunk, reword_git_commit, run_artisan_route_list_with_trust,
+        run_eslint_analysis_with_trust, run_php_tests_junit_with_trust,
+        run_phpstan_analysis_with_trust, run_pint_format_with_trust, save_git_stash, search_files,
+        stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
+        switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
+        workspace_text_edits_from_language_server, LegacyLocalHistoryWorkspaceAuthorizer,
     };
     use crate::artisan::ArtisanRoutesResponse;
     use crate::eslint::EslintAnalysisResponse;
@@ -7994,6 +8035,41 @@ mod tests {
             "expected the unstaged hunk back in the worktree, got {worktree:?}"
         );
         assert!(worktree[0].lines.contains(&"+A".to_string()));
+    }
+
+    #[test]
+    fn revert_git_hunk_off_thread_reverts_only_selected_worktree_hunk() {
+        let root = temp_workspace("git-revert-hunk-off-thread");
+        init_test_git_repo(&root);
+        fs::write(root.join("f.txt"), "a\nb\nc\nd\ne\n").expect("write");
+        run_test_git(&root, &["add", "f.txt"]);
+        run_test_git(&root, &["commit", "-m", "initial"]);
+        fs::write(root.join("f.txt"), "A\nb\nc\nd\ne\n").expect("stage change");
+        run_test_git(&root, &["add", "f.txt"]);
+        fs::write(root.join("f.txt"), "A\nb\nC\nd\nE\n").expect("worktree changes");
+
+        let before = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            false,
+            true,
+        ))
+        .expect("worktree hunks before revert");
+
+        tauri::async_runtime::block_on(revert_git_hunk(
+            path_string(&root),
+            "f.txt".to_string(),
+            0,
+            before[0].identity.clone(),
+            true,
+        ))
+        .expect("revert hunk");
+
+        assert_eq!(
+            fs::read_to_string(root.join("f.txt")).expect("worktree"),
+            "A\nb\nc\nd\nE\n"
+        );
+        assert_eq!(test_git_output(&root, &["show", ":f.txt"]), "A\nb\nc\nd\ne");
     }
 
     #[test]
@@ -9883,6 +9959,7 @@ pub fn run() {
             stage_git_files,
             stage_git_hunk,
             unstage_git_hunk,
+            revert_git_hunk,
             start_initial_metadata_scan,
             start_javascript_typescript_language_server,
             start_workspace_reindex,

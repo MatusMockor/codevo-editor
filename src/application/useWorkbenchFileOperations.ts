@@ -111,6 +111,7 @@ export interface WorkbenchFileOperationsDependencies {
   invalidatePhpFrameworkBindingsForFileChange: (
     event: WorkspaceFileChangeEvent,
   ) => void;
+  invalidatePhpTraitHostClassNames?: (rootPath: string) => void;
   markExternallyRemovedDocumentPath: (rootPath: string, path: string) => void;
   notifyJavaScriptTypeScriptFileCreated: (path: string) => Promise<void>;
   notifyJavaScriptTypeScriptFileDeleted: (path: string) => Promise<void>;
@@ -198,6 +199,7 @@ export function useWorkbenchFileOperations(
     runWithDocumentSaveExclusion,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
+    invalidatePhpTraitHostClassNames,
     markExternallyRemovedDocumentPath,
     notifyJavaScriptTypeScriptFileCreated,
     notifyJavaScriptTypeScriptFileDeleted,
@@ -988,6 +990,7 @@ export function useWorkbenchFileOperations(
 
       queueWorkspaceGitStatusRefresh(requestedRoot);
       invalidatePhpFrameworkBindingsForFileChange(event);
+      invalidatePhpTraitHostClassNames?.(requestedRoot);
 
       invalidatePhpFrameworkSourcePath(requestedRoot, event.path);
       invalidateFrameworkCachesForPath(requestedRoot, event.path);
@@ -1027,6 +1030,7 @@ export function useWorkbenchFileOperations(
       invalidateFrameworkCachesForPath,
       invalidatePhpFrameworkBindingsForFileChange,
       invalidatePhpFrameworkSourcePath,
+      invalidatePhpTraitHostClassNames,
       queueWorkspaceDirectoryRefresh,
       queueWorkspaceGitStatusRefresh,
       refreshOpenDocumentFromExternalFileChange,

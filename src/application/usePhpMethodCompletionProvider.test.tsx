@@ -138,6 +138,7 @@ function makeDeps(
     resolvePhpFrameworkRelationPathOwnerType: vi.fn(async () => null),
     resolvePhpReceiverMethodCompletions: vi.fn(async () => []),
     resolvePhpStaticMethodCompletions: vi.fn(async () => []),
+    resolvePhpTraitHostClassNames: vi.fn(async () => []),
     workspaceRoot: ROOT,
     ...overrides,
   };

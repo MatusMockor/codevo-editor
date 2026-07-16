@@ -31,6 +31,10 @@ export interface PhpClassMemberReadResult {
   members: PhpMethodCompletion[];
 }
 
+export interface PhpClassMemberCollectionOptions {
+  includeNonPublicMembers?: boolean;
+}
+
 interface PhpClassMemberCacheEntry {
   members: PhpMethodCompletion[];
   sourceSignature: string;
@@ -61,10 +65,12 @@ export interface PhpClassMemberCollectors {
   ) => Promise<PhpMethodCompletion[]>;
   collectPhpMethodsForClass: (
     className: string,
+    options?: PhpClassMemberCollectionOptions,
   ) => Promise<PhpMethodCompletion[]>;
   readPhpClassMembersFromPath: (
     path: string,
     className: string,
+    options?: PhpClassMemberCollectionOptions,
   ) => Promise<PhpClassMemberReadResult>;
   resetPhpClassMemberCache: () => void;
   resolvePhpGenericTemplateTypesForInheritedClass: (
@@ -216,6 +222,7 @@ export function usePhpClassMemberCollectors({
     async (
       path: string,
       className: string,
+      options: PhpClassMemberCollectionOptions = {},
     ): Promise<PhpClassMemberReadResult> => {
       const content = await readNavigationFileContent(path);
       const sourceSignature = phpSourceSignature(content);
@@ -226,6 +233,7 @@ export function usePhpClassMemberCollectors({
         className,
         frameworkProviderSignature,
         frameworkSourceSignature,
+        options.includeNonPublicMembers === true,
       );
       const cached = phpClassMemberCacheRef.current[cacheKey];
 
@@ -240,6 +248,7 @@ export function usePhpClassMemberCollectors({
         frameworkProviders,
         frameworkSourceContext:
           workspaceSources.length > 0 ? { workspaceSources } : undefined,
+        includeNonPublicMembers: options.includeNonPublicMembers,
       });
       phpClassMemberCacheRef.current[cacheKey] = {
         members,
@@ -260,7 +269,10 @@ export function usePhpClassMemberCollectors({
   );
 
   const collectPhpMethodsForClass = useCallback(
-    async (className: string): Promise<PhpMethodCompletion[]> => {
+    async (
+      className: string,
+      options: PhpClassMemberCollectionOptions = {},
+    ): Promise<PhpMethodCompletion[]> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
@@ -275,23 +287,44 @@ export function usePhpClassMemberCollectors({
       const rememberMethods = (
         methods: PhpMethodCompletion[],
         templateTypes: ReadonlyMap<string, string> = new Map(),
+        declaringClassDepth = 0,
       ) => {
         for (const method of methods) {
+          if (
+            options.includeNonPublicMembers &&
+            method.visibility === "private" &&
+            declaringClassDepth > 0
+          ) {
+            continue;
+          }
+
           const key = `${method.kind ?? "method"}:${method.name.toLowerCase()}`;
 
           if (completions.has(key)) {
             continue;
           }
 
-          completions.set(
-            key,
-            phpMethodCompletionWithTemplateReturnType(method, templateTypes),
+          let completion = phpMethodCompletionWithTemplateReturnType(
+            method,
+            templateTypes,
           );
+
+          if (options.includeNonPublicMembers) {
+            completion = { ...completion };
+            Object.defineProperty(completion, "declaringClassDepth", {
+              configurable: true,
+              enumerable: false,
+              value: declaringClassDepth,
+            });
+          }
+
+          completions.set(key, completion);
         }
       };
       const collectMethods = async (
         className: string,
         templateTypes: ReadonlyMap<string, string> = new Map(),
+        declaringClassDepth = 0,
       ): Promise<void> => {
         const normalizedClassName = className.trim().replace(/^\\+/, "");
         const visitedKey = normalizedClassName.toLowerCase();
@@ -315,13 +348,14 @@ export function usePhpClassMemberCollectors({
             const { content, members } = await readPhpClassMembersFromPath(
               path,
               normalizedClassName,
+              options,
             );
 
             if (!isRequestedRootActive()) {
               return;
             }
 
-            rememberMethods(members, templateTypes);
+            rememberMethods(members, templateTypes, declaringClassDepth);
 
             for (const traitName of phpTraitClassNames(content)) {
               const resolvedTraitName = resolvePhpClassName(content, traitName);
@@ -338,7 +372,11 @@ export function usePhpClassMemberCollectors({
                   return;
                 }
 
-                await collectMethods(resolvedTraitName, traitTemplateTypes);
+                await collectMethods(
+                  resolvedTraitName,
+                  traitTemplateTypes,
+                  declaringClassDepth,
+                );
 
                 if (!isRequestedRootActive()) {
                   return;
@@ -361,7 +399,11 @@ export function usePhpClassMemberCollectors({
                   return;
                 }
 
-                await collectMethods(resolvedMixinName, mixinTemplateTypes);
+                await collectMethods(
+                  resolvedMixinName,
+                  mixinTemplateTypes,
+                  declaringClassDepth + 1,
+                );
 
                 if (!isRequestedRootActive()) {
                   return;
@@ -390,6 +432,7 @@ export function usePhpClassMemberCollectors({
                 await collectMethods(
                   resolvedSuperTypeName,
                   superTypeTemplateTypes,
+                  declaringClassDepth + 1,
                 );
 
                 if (!isRequestedRootActive()) {
@@ -671,8 +714,9 @@ function phpClassMemberCacheKey(
   className: string,
   frameworkProviderSignature: string,
   migrationSourcesSignature: string,
+  includeNonPublicMembers: boolean,
 ): string {
-  return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}#${migrationSourcesSignature}`;
+  return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}#${migrationSourcesSignature}#${includeNonPublicMembers ? "all" : "public"}`;
 }
 
 function phpFrameworkRuntimeProviderSignature(

@@ -26,7 +26,10 @@ import {
   resolvePhpFrameworkScopedCompletions,
   type PhpFrameworkScopedCompletionDependencies,
 } from "./phpFrameworkScopedCompletions";
-import { phpTraitThisCompletionContextAt } from "./phpTraitThisCompletionContext";
+import {
+  phpTraitDeclarationCompletionContextAt,
+  phpTraitThisCompletionContextAt,
+} from "./phpTraitThisCompletionContext";
 
 export interface PhpMethodCompletionProviderDependencies
   extends Omit<
@@ -62,7 +65,9 @@ export interface PhpMethodCompletionProviderDependencies
     position: EditorPosition,
     receiverExpression: string,
     traitThisContext?: ReturnType<typeof phpTraitThisCompletionContextAt>,
+    isRequestStillCurrent?: () => boolean,
   ): Promise<PhpMethodCompletion[]>;
+  resolvePhpTraitHostClassNames(traitClassName: string): Promise<string[]>;
   resolvePhpStaticMethodCompletions(
     source: string,
     className: string,
@@ -110,6 +115,7 @@ export function usePhpMethodCompletionProvider({
   resolvePhpFrameworkRelationPathOwnerType,
   resolvePhpReceiverMethodCompletions,
   resolvePhpStaticMethodCompletions,
+  resolvePhpTraitHostClassNames,
   workspaceRoot,
 }: PhpMethodCompletionProviderDependencies): PhpMethodCompletionProvider {
   const frameworkProviders = frameworkRuntime.providers;
@@ -291,9 +297,44 @@ export function usePhpMethodCompletionProvider({
         staticAccessContext,
       });
 
-      const traitThisContext = accessContext
+      const sameSourceTraitThisContext = accessContext
         ? phpTraitThisCompletionContextAt(source, position)
         : null;
+      const traitDeclarationContext =
+        accessContext &&
+        phpNormalizedReceiverExpressionIsThis(accessContext.receiverExpression)
+          ? phpTraitDeclarationCompletionContextAt(source, position)
+          : null;
+      const traitHostClassNames = traitDeclarationContext
+        ? await resolvePhpTraitHostClassNames(
+            traitDeclarationContext.declaringClassName,
+          )
+        : [];
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      const crossFileTraitHostClassNames = sameSourceTraitThisContext
+        ? traitHostClassNames.filter(
+            (className) =>
+              className.toLowerCase() !==
+              sameSourceTraitThisContext.declaringClassName.toLowerCase(),
+          )
+        : traitHostClassNames;
+      const traitThisContext = sameSourceTraitThisContext
+        ? {
+            ...sameSourceTraitThisContext,
+            hostClassNames: crossFileTraitHostClassNames,
+          }
+        : traitDeclarationContext
+          ? {
+              contextualThisClassName: null,
+              declaringClassName: traitDeclarationContext.declaringClassName,
+              hostClassNames: crossFileTraitHostClassNames,
+              memberSource: traitDeclarationContext.memberSource,
+            }
+          : null;
 
       const methods = staticAccessContext
         ? await resolvePhpStaticMethodCompletions(
@@ -306,6 +347,7 @@ export function usePhpMethodCompletionProvider({
               position,
               accessContext.receiverExpression,
               traitThisContext,
+              isRequestedRootActive,
             )
           : [];
 
@@ -357,6 +399,7 @@ export function usePhpMethodCompletionProvider({
       methodCompletionAdapter,
       resolvePhpReceiverMethodCompletions,
       resolvePhpStaticMethodCompletions,
+      resolvePhpTraitHostClassNames,
       workspaceRoot,
     ],
   );

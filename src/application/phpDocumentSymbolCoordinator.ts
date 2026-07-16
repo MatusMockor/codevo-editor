@@ -3,6 +3,7 @@ import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 
 export interface PhpDocumentSymbolRequest {
   content: string;
+  lifecycleIdentity: number;
   path: string;
   rootPath: string;
   runtimeIdentity: object;
@@ -64,6 +65,7 @@ function requestKey(
     request.sessionId,
     normalizedWorkspaceRootKey(request.rootPath),
     request.path,
+    request.lifecycleIdentity,
     request.content,
   ]);
 }

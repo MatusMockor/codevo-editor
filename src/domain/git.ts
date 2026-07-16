@@ -110,8 +110,8 @@ export interface GitFileDiff {
 /**
  * A single hunk from `git diff` (or `git diff --cached`) for one file. `index`
  * is the hunk's position within that file's diff and is the stable id sent back
- * to stage/unstage exactly that hunk. The ranges are parsed from `header` by
- * the backend; counts can be zero for pure additions or deletions.
+ * to stage, unstage, or revert exactly that hunk. The ranges are parsed from
+ * `header` by the backend; counts can be zero for pure additions or deletions.
  */
 export interface GitDiffHunk {
   header: string;
@@ -191,6 +191,12 @@ export interface GitGateway {
     staged: boolean,
   ): Promise<GitDiffHunk[]>;
   push(rootPath: string): Promise<GitStatus>;
+  revertHunk?(
+    rootPath: string,
+    relativePath: string,
+    hunkIndex: number,
+    expectedIdentity: string,
+  ): Promise<GitStatus>;
   revertCommit?(rootPath: string, commitHash: string): Promise<Commit>;
   cherryPickCommit?(rootPath: string, commitHash: string): Promise<Commit>;
   revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;

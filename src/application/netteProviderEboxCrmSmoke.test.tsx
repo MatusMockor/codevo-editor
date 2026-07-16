@@ -42,6 +42,11 @@ import {
   usePhpMethodReturnTypeResolver,
   type UsePhpMethodReturnTypeResolverOptions,
 } from "./usePhpMethodReturnTypeResolver";
+import {
+  usePhpMethodCompletionResolvers,
+  type PhpMethodCompletionResolverDependencies,
+  type PhpMethodCompletionResolvers,
+} from "./usePhpMethodCompletionResolvers";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -389,6 +394,32 @@ function renderPhpMethodResolver(options: UsePhpMethodReturnTypeResolverOptions)
   };
 }
 
+function renderPhpCompletionResolvers(
+  options: PhpMethodCompletionResolverDependencies,
+) {
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const captured: { api: PhpMethodCompletionResolvers | null } = { api: null };
+
+  function Harness({ hookOptions }: { hookOptions: PhpMethodCompletionResolverDependencies }) {
+    captured.api = usePhpMethodCompletionResolvers(hookOptions);
+    return null;
+  }
+
+  act(() => root.render(<Harness hookOptions={options} />));
+
+  return {
+    api: () => {
+      if (!captured.api) {
+        throw new Error("completion resolver hook not mounted");
+      }
+
+      return captured.api;
+    },
+    unmount: () => act(() => root.unmount()),
+  };
+}
+
 function makePhpClassMemberCollectorOptions(
   frameworkSources: readonly string[],
   classSourcePaths: ReadonlyMap<string, string>,
@@ -424,6 +455,107 @@ function makePhpClassMemberCollectorOptions(
 }
 
 describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
+  it("completes real SortableTrait host members from SubscriptionTypeGroupsRepository", async () => {
+    const traitPath =
+      "app/modules/applicationModule/Models/Repository/SortableTrait.php";
+    const repositoryPath =
+      "app/modules/efabricaSubscriptionsModule/model/Repository/SubscriptionTypeGroupsRepository.php";
+    const baseRepositoryPath =
+      "app/modules/applicationModule/Models/Repository/Repository.php";
+    const [traitSource, repositorySource, baseRepositorySource] =
+      await Promise.all(
+        [traitPath, repositoryPath, baseRepositoryPath].map((relativePath) =>
+          readFileContent(joinPath(EBOX_CRM_ROOT, relativePath)),
+        ),
+      );
+    const traitClassName =
+      "Efabrica\\Crm\\NotificationModule\\Repository\\SortableTrait";
+    const repositoryClassName =
+      "Efabrica\\Crm\\SubscriptionsModule\\Repository\\SubscriptionTypeGroupsRepository";
+    const classSourcePaths = new Map<string, string>([
+      [traitClassName, joinPath(EBOX_CRM_ROOT, traitPath)],
+      [repositoryClassName, joinPath(EBOX_CRM_ROOT, repositoryPath)],
+      [
+        "Crm\\ApplicationModule\\Repository",
+        joinPath(EBOX_CRM_ROOT, baseRepositoryPath),
+      ],
+    ]);
+    const frameworkSources = [
+      traitSource,
+      repositorySource,
+      baseRepositorySource,
+    ];
+    const collectors = renderPhpClassMemberCollectors(
+      makePhpClassMemberCollectorOptions(
+        frameworkSources,
+        classSourcePaths,
+        vi.fn(async () => null),
+      ),
+    );
+    const completionResolvers = renderPhpCompletionResolvers({
+      collectPhpFrameworkSyntheticMethodsForClass: vi.fn(async () => []),
+      collectPhpMethodsForClass: collectors.api().collectPhpMethodsForClass,
+      currentPhpFrameworkSourceContext: () => ({
+        workspaceSources: frameworkSources,
+      }),
+      frameworkRuntime: createPhpFrameworkRuntimeContext(NETTE_FRAMEWORK),
+      phpNormalizedReceiverExpressionIsThis: (expression) =>
+        expression.trim() === "$this",
+      resolvePhpClassReference: (source, className) =>
+        resolvePhpClassName(source, className),
+      resolvePhpExpressionType: vi.fn(async () => null),
+      resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
+    });
+
+    const completions = await completionResolvers
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        traitSource,
+        positionAtOffset(
+          traitSource,
+          traitSource.indexOf("$this->getTable") + "$this->getTable".length,
+        ),
+        "$this",
+        {
+          contextualThisClassName: null,
+          declaringClassName: traitClassName,
+          hostClassNames: [repositoryClassName],
+          memberSource: traitSource,
+        },
+      );
+    const completionNames = completions.map((completion) => completion.name);
+
+    expect(completionNames).toEqual(
+      expect.arrayContaining([
+        "getTable",
+        "update",
+        "sortingColumn",
+        "sortingStep",
+      ]),
+    );
+    expect(completions).toContainEqual(
+      expect.objectContaining({
+        declaringClassName: "Crm\\ApplicationModule\\Repository",
+        name: "getTable",
+      }),
+    );
+    expect(completions).toContainEqual(
+      expect.objectContaining({
+        declaringClassName: repositoryClassName,
+        name: "update",
+      }),
+    );
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "property", name: "sortingColumn" }),
+    );
+    expect(completions).toContainEqual(
+      expect.objectContaining({ kind: "property", name: "sortingStep" }),
+    );
+
+    completionResolvers.unmount();
+    collectors.unmount();
+  });
+
   it("infers UsersRepository rows through presenter view data into Latte members", async () => {
     const repositoryPath =
       "app/modules/usersModule/Models/Repositories/UsersRepository.php";

@@ -22,7 +22,11 @@ import type {
   LanguageServerPlan,
 } from "../domain/languageServer";
 import type { LanguageServerDiagnosticsGateway } from "../domain/languageServerDiagnostics";
-import type { LanguageServerDocumentSyncGateway } from "../domain/languageServerDocumentSync";
+import {
+  sessionBoundLanguageServerDocumentSyncGateway,
+  type LanguageServerDocumentSyncGateway,
+  type SessionBoundLanguageServerDocumentSyncGateway,
+} from "../domain/languageServerDocumentSync";
 import type { LanguageServerFeaturesGateway } from "../domain/languageServerFeatures";
 import {
   type LanguageServerRuntimeGateway,
@@ -234,7 +238,14 @@ function buildDependencies({
   gitGateway = stubGitGateway(),
   settingsGateway,
 }: RenderOptions) {
-  const documentSyncGateway: LanguageServerDocumentSyncGateway = {
+  const documentSyncGateway: SessionBoundLanguageServerDocumentSyncGateway = {
+    [sessionBoundLanguageServerDocumentSyncGateway]: true,
+    didChange: vi.fn(async () => undefined),
+    didClose: vi.fn(async () => undefined),
+    didOpen: vi.fn(async () => undefined),
+    didSave: vi.fn(async () => undefined),
+  };
+  const javaScriptTypeScriptDocumentSyncGateway: LanguageServerDocumentSyncGateway = {
     didChange: vi.fn(async () => undefined),
     didClose: vi.fn(async () => undefined),
     didOpen: vi.fn(async () => undefined),
@@ -404,7 +415,7 @@ function buildDependencies({
       diagnosticsGateway(),
       stubFeaturesGateway(),
       runtimeGateway(),
-      documentSyncGateway,
+      javaScriptTypeScriptDocumentSyncGateway,
       diagnosticsGateway(),
       stubFeaturesGateway(),
       workspaceRuntimeLifecycleGateway,

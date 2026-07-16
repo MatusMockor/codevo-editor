@@ -12,7 +12,13 @@ import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 export interface PhpTraitThisCompletionContext {
   contextualThisClassName: string | null;
   declaringClassName: string;
+  hostClassNames?: readonly string[];
   memberSource: string;
+  sameSourceHost?: {
+    className: string;
+    memberSource: string;
+  };
+  traitMemberSource?: string;
 }
 
 interface PhpFrameworkSourceRegistryContext {
@@ -24,7 +30,10 @@ export interface PhpMethodCompletionResolverDependencies {
     className: string,
     options?: { isStatic?: boolean },
   ): Promise<PhpMethodCompletion[]>;
-  collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
+  collectPhpMethodsForClass(
+    className: string,
+    options?: { includeNonPublicMembers?: boolean },
+  ): Promise<PhpMethodCompletion[]>;
   currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
   frameworkRuntime: PhpFrameworkRuntimeContext;
   phpNormalizedReceiverExpressionIsThis(receiverExpression: string): boolean;
@@ -47,6 +56,7 @@ export interface PhpMethodCompletionResolvers {
     position: EditorPosition,
     receiverExpression: string,
     traitThisContext?: PhpTraitThisCompletionContext | null,
+    isRequestStillCurrent?: () => boolean,
   ): Promise<PhpMethodCompletion[]>;
   resolvePhpStaticMethodCompletions(
     source: string,
@@ -88,6 +98,7 @@ export function usePhpMethodCompletionResolvers(
       position: EditorPosition,
       receiverExpression: string,
       traitThisContext: PhpTraitThisCompletionContext | null = null,
+      isRequestStillCurrent: () => boolean = () => true,
     ): Promise<PhpMethodCompletion[]> => {
       if (
         traitThisContext &&
@@ -108,14 +119,58 @@ export function usePhpMethodCompletionResolvers(
           ) ?? traitThisContext.declaringClassName;
         const { workspaceSources } = currentPhpFrameworkSourceContext();
 
-        return phpMethodCompletionsFromSource(
-          traitThisContext.memberSource,
+        const traitMethods = phpMethodCompletionsFromSource(
+          traitThisContext.traitMemberSource ?? traitThisContext.memberSource,
           declaringClassName,
           {
             frameworkProviders,
             frameworkSourceContext:
               workspaceSources.length > 0 ? { workspaceSources } : undefined,
+            includeNonPublicMembers: true,
           },
+        );
+
+        if (
+          !traitThisContext.hostClassNames &&
+          !traitThisContext.sameSourceHost
+        ) {
+          return traitMethods;
+        }
+
+        const hostMethodGroups: PhpMethodCompletion[][] = [];
+
+        if (traitThisContext.sameSourceHost) {
+          hostMethodGroups.push(
+            phpMethodCompletionsFromSource(
+              traitThisContext.sameSourceHost.memberSource,
+              traitThisContext.sameSourceHost.className,
+              {
+                frameworkProviders,
+                frameworkSourceContext:
+                  workspaceSources.length > 0
+                    ? { workspaceSources }
+                    : undefined,
+                includeNonPublicMembers: true,
+              },
+            ),
+          );
+        }
+
+        for (const hostClassName of traitThisContext.hostClassNames ?? []) {
+          const hostMethods = await collectPhpMethodsForClass(hostClassName, {
+            includeNonPublicMembers: true,
+          });
+
+          if (!isRequestStillCurrent()) {
+            return [];
+          }
+
+          hostMethodGroups.push(hostMethods);
+        }
+
+        return mergePhpTraitAndHostMethodCompletions(
+          traitMethods,
+          hostMethodGroups,
         );
       }
 
@@ -222,4 +277,57 @@ function mergePhpMethodCompletions(
   }
 
   return Array.from(completions.values());
+}
+
+export function mergePhpTraitAndHostMethodCompletions(
+  traitMethods: PhpMethodCompletion[],
+  hostMethodGroups: readonly PhpMethodCompletion[][],
+): PhpMethodCompletion[] {
+  const traitMap = new Map(
+    traitMethods.map((method) => [phpMethodCompletionKey(method), method]),
+  );
+
+  if (hostMethodGroups.length === 0) {
+    return Array.from(traitMap.values());
+  }
+
+  const hostMaps = hostMethodGroups.map(
+    (methods) =>
+      new Map(methods.map((method) => [phpMethodCompletionKey(method), method])),
+  );
+  const candidateKeys = new Set([
+    ...traitMap.keys(),
+    ...hostMaps.flatMap((hostMethods) => Array.from(hostMethods.keys())),
+  ]);
+  const merged = new Map<string, PhpMethodCompletion>();
+
+  for (const key of candidateKeys) {
+    const effectiveMethods = hostMaps
+      .map((hostMethods) => hostMethods.get(key) ?? traitMap.get(key))
+      .filter((candidate): candidate is PhpMethodCompletion => Boolean(candidate));
+
+    if (effectiveMethods.length !== hostMaps.length) {
+      continue;
+    }
+
+    const returnTypes = new Set(
+      effectiveMethods.map((candidate) => candidate.returnType ?? null),
+    );
+    const method = effectiveMethods[0];
+
+    if (!method) {
+      continue;
+    }
+
+    merged.set(
+      key,
+      returnTypes.size === 1 ? method : { ...method, returnType: null },
+    );
+  }
+
+  return Array.from(merged.values());
+}
+
+function phpMethodCompletionKey(completion: PhpMethodCompletion): string {
+  return `${completion.kind ?? "method"}:${completion.name.toLowerCase()}`;
 }

@@ -13238,6 +13238,98 @@ class Foo
     expect(host.querySelector(".breadcrumb-symbol")).toBeNull();
   });
 
+  it("suppresses a breadcrumb rejection from a stale PHP document lifecycle", async () => {
+    const activeDocument: EditorDocument = {
+      content: "<?php\nclass Example {}\n",
+      language: "php",
+      name: "Example.php",
+      path: "/workspace/app/Example.php",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      getValue: vi.fn(() => activeDocument.content),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    const gateway = languageServerFeaturesGateway();
+    let rejectSymbols: (error: Error) => void = () => undefined;
+    gateway.documentSymbols = vi.fn(
+      async () =>
+        new Promise<LanguageServerDocumentSymbol[]>((_resolve, reject) => {
+          rejectSymbols = reject;
+        }),
+    ) as unknown as typeof gateway.documentSymbols;
+    const lease = {
+      lifecycleIdentity: 2,
+      path: activeDocument.path,
+      rootPath: "/workspace",
+      sessionId: 1,
+      syncGeneration: 3,
+    };
+    let leaseIsCurrent = true;
+    const onLanguageServerError = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          isLanguageServerDocumentRequestLeaseCurrent={vi.fn(
+            () => leaseIsCurrent,
+          )}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={gateway}
+          languageServerRuntimeStatus={{
+            capabilities: emptyLanguageServerCapabilities(),
+            kind: "running",
+            rootPath: "/workspace",
+            sessionId: 1,
+          }}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onLanguageServerError={onLanguageServerError}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+          requestLanguageServerDocumentLease={vi.fn(async () => lease)}
+          workspaceRoot="/workspace"
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() =>
+      expect(gateway.documentSymbols).toHaveBeenCalledTimes(1),
+    );
+    leaseIsCurrent = false;
+
+    await act(async () => {
+      rejectSymbols(new Error("UnknownDocument"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onLanguageServerError).not.toHaveBeenCalled();
+  });
+
   it("forwards isLanguageServerDocumentSynced into the language server provider context", async () => {
     const activeDocument: EditorDocument = {
       content: "<?php\nclass Example {}\n",

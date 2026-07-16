@@ -22,6 +22,34 @@ export interface LanguageServerDocumentSyncGateway {
   didClose(rootPath: string, path: string): Promise<void>;
 }
 
+export const sessionBoundLanguageServerDocumentSyncGateway = Symbol(
+  "sessionBoundLanguageServerDocumentSyncGateway",
+);
+
+export interface SessionBoundLanguageServerDocumentSyncGateway {
+  readonly [sessionBoundLanguageServerDocumentSyncGateway]: true;
+  didOpen(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void>;
+  didChange(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void>;
+  didSave(
+    rootPath: string,
+    document: LanguageServerTextDocument,
+    expectedSessionId: number,
+  ): Promise<void>;
+  didClose(
+    rootPath: string,
+    path: string,
+    expectedSessionId: number,
+  ): Promise<void>;
+}
+
 export function isLanguageServerDocument(document: EditorDocument): boolean {
   return document.language === "php";
 }

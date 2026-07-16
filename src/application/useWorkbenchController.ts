@@ -8,6 +8,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { useEditorSessionState } from "./useEditorSessionState";
+import { canRevertGitChangeForDocuments } from "./gitRevertCapability";
 import { useChangedDocumentSyncScheduling } from "./useChangedDocumentSyncScheduling";
 import type { EditorGroupFocusRunner } from "./editorGroupFocusPort";
 import { useGitStashPanel } from "./useGitStashPanel";
@@ -259,6 +260,7 @@ import {
   isJavaScriptTypeScriptLanguageServerDocument,
   isLanguageServerDocument,
   type LanguageServerDocumentSyncGateway,
+  type SessionBoundLanguageServerDocumentSyncGateway,
 } from "../domain/languageServerDocumentSync";
 import type {
   LanguageServerGateway,
@@ -648,7 +650,7 @@ export function useWorkbenchController(
   localHistoryGateway: LocalHistoryGateway,
   languageServerGateway: LanguageServerGateway,
   languageServerRuntimeGateway: LanguageServerRuntimeGateway,
-  languageServerDocumentSyncGateway: LanguageServerDocumentSyncGateway,
+  languageServerDocumentSyncGateway: SessionBoundLanguageServerDocumentSyncGateway,
   languageServerDiagnosticsGateway: LanguageServerDiagnosticsGateway,
   languageServerFeaturesGateway: LanguageServerFeaturesGateway,
   javaScriptTypeScriptLanguageServerRuntimeGateway: LanguageServerRuntimeGateway,
@@ -4823,6 +4825,12 @@ export function useWorkbenchController(
     [persistWorkspaceSettings, reportErrorForActiveWorkspaceRoot],
   );
 
+  const canRevertGitChange = useCallback(
+    (change: GitChangedFile) =>
+      canRevertGitChangeForDocuments(change, documentsRef.current),
+    [documentsRef],
+  );
+
   const {
     gitAmendEnabled,
     gitCommitMessage,
@@ -4837,6 +4845,7 @@ export function useWorkbenchController(
     loadGitFileHunks,
     stageGitHunk,
     unstageGitHunk,
+    revertGitHunk,
     revertGitChanges,
     amendGitChanges,
     commitGitChanges,
@@ -4851,6 +4860,7 @@ export function useWorkbenchController(
     reportError,
     setMessage,
     prompter,
+    canRevertGitChange,
     gitRepositoryMappings,
     gitRepositoryStatuses,
     gitCommitMessageHistory: workspaceSettings.gitCommitMessageHistory,
@@ -7583,10 +7593,12 @@ export function useWorkbenchController(
   });
 
   const {
+    invalidatePhpTraitHostClassNames,
     phpTraitHostConstantExists,
     phpTraitHostMethodExists,
     phpTraitHostPropertyExists,
     phpTraitHostPropertyMethodExists,
+    resolvePhpTraitHostClassNames,
   } = usePhpTraitHostPredicates({
     currentWorkspaceRootRef,
     isPhpPath,
@@ -7672,6 +7684,7 @@ export function useWorkbenchController(
     resolvePhpFrameworkRelationPathOwnerType,
     resolvePhpReceiverMethodCompletions,
     resolvePhpStaticMethodCompletions,
+    resolvePhpTraitHostClassNames,
     workspaceRoot,
   });
 
@@ -7947,6 +7960,7 @@ export function useWorkbenchController(
   );
   resetPhpFrameworkCachesRef.current = () => {
     phpClassSourcePathCacheRef.current = {};
+    invalidatePhpTraitHostClassNames();
     resetPhpClassMemberCacheRef.current();
     invalidatePhpFrameworkBindingCache();
     resetPhpFrameworkMorphMapModelTypeCache();
@@ -8211,6 +8225,7 @@ export function useWorkbenchController(
     runWithDocumentSaveExclusion,
     invalidatePhpFrameworkBindingsForFileChange,
     invalidatePhpFrameworkSourcePath,
+    invalidatePhpTraitHostClassNames,
     markExternallyRemovedDocumentPath,
     notifyJavaScriptTypeScriptFileCreated,
     notifyJavaScriptTypeScriptFileDeleted,
@@ -10005,6 +10020,8 @@ export function useWorkbenchController(
     stageGitHunk,
     unstageGitChanges,
     unstageGitHunk,
+    canRevertGitChange,
+    revertGitHunk,
     togglePhpFileOutline,
     togglePhpFileOutlineNode,
     togglePhpTreeNode,

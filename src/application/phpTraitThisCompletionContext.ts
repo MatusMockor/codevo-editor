@@ -10,6 +10,11 @@ interface PhpSameSourceTypeDeclaration {
   name: string;
 }
 
+export interface PhpTraitDeclarationCompletionContext {
+  declaringClassName: string;
+  memberSource: string;
+}
+
 export function phpTraitThisCompletionContextAt(
   source: string,
   position: EditorPosition,
@@ -45,6 +50,33 @@ export function phpTraitThisCompletionContextAt(
       source,
       host,
     )}`,
+    sameSourceHost: {
+      className: host.fullyQualifiedName,
+      memberSource: phpSameSourceTypeBody(source, host),
+    },
+    traitMemberSource: phpSameSourceTypeBody(source, trait),
+  };
+}
+
+export function phpTraitDeclarationCompletionContextAt(
+  source: string,
+  position: EditorPosition,
+): PhpTraitDeclarationCompletionContext | null {
+  const offset = phpOffsetAtPosition(source, position);
+  const trait = phpSameSourceTypeDeclarations(source).find(
+    (type) =>
+      type.kind === "trait" &&
+      offset > type.bodyStart &&
+      offset < type.bodyEnd,
+  );
+
+  if (!trait) {
+    return null;
+  }
+
+  return {
+    declaringClassName: trait.fullyQualifiedName,
+    memberSource: phpSameSourceTypeBody(source, trait),
   };
 }
 

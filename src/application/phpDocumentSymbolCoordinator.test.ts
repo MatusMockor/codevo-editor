@@ -3,6 +3,7 @@ import { PhpDocumentSymbolCoordinator } from "./phpDocumentSymbolCoordinator";
 
 const request = {
   content: "<?php class User {}",
+  lifecycleIdentity: 1,
   path: "/project/User.php",
   rootPath: "/project",
   runtimeIdentity: {},
@@ -35,6 +36,7 @@ describe("PhpDocumentSymbolCoordinator", () => {
     ["different root", { rootPath: "/other" }],
     ["different session", { sessionId: 8 }],
     ["different runtime", { runtimeIdentity: {} }],
+    ["different document lifecycle", { lifecycleIdentity: 2 }],
   ])("does not share for %s", async (_label, difference) => {
     const coordinator = new PhpDocumentSymbolCoordinator();
     let resolveFirst!: (value: []) => void;
@@ -51,6 +53,30 @@ describe("PhpDocumentSymbolCoordinator", () => {
     await first;
     expect(firstLoad).toHaveBeenCalledTimes(1);
     expect(secondLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not share a pending request after an identical document is closed and reopened", async () => {
+    const coordinator = new PhpDocumentSymbolCoordinator();
+    let rejectClosed!: (error: Error) => void;
+    const closedLoad = vi.fn(
+      () =>
+        new Promise<[]>((_resolve, reject) => {
+          rejectClosed = reject;
+        }),
+    );
+    const reopenedLoad = vi.fn(async () => []);
+
+    const closed = coordinator.coordinate(request, closedLoad);
+    const reopened = coordinator.coordinate(
+      { ...request, lifecycleIdentity: 2 },
+      reopenedLoad,
+    );
+
+    await expect(reopened).resolves.toEqual([]);
+    rejectClosed(new Error("UnknownDocument"));
+    await expect(closed).rejects.toThrow("UnknownDocument");
+    expect(closedLoad).toHaveBeenCalledTimes(1);
+    expect(reopenedLoad).toHaveBeenCalledTimes(1);
   });
 
   it("evicts a rejected request so a later call can retry", async () => {

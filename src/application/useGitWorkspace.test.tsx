@@ -91,6 +91,7 @@ function createFakeGitGateway(
     unstageFiles: vi.fn(async (rootPath: string) => status(rootPath)),
     stageHunk: vi.fn(async (rootPath: string) => status(rootPath)),
     unstageHunk: vi.fn(async (rootPath: string) => status(rootPath)),
+    revertHunk: vi.fn(async (rootPath: string) => status(rootPath)),
     getFileHunks: vi.fn(async () => [] as GitDiffHunk[]),
     revertFiles: vi.fn(async (rootPath: string) => status(rootPath)),
     commit: vi.fn(async (rootPath: string) => status(rootPath)),
@@ -611,6 +612,181 @@ describe("useGitWorkspace", () => {
     expect(harness.setMessage).toHaveBeenCalledWith(
       "Unstaged hunk in src/foo.php",
     );
+    harness.unmount();
+  });
+
+  it("reverts a confirmed hunk in its owning nested repository and refreshes it", async () => {
+    const nestedRoot = `${ROOT}/workbench/lcsk/x`;
+    const nestedStatus = status(nestedRoot);
+    const revertHunk = vi.fn(async () => nestedStatus);
+    const confirm = vi.fn(() => true);
+    const applyGitOperationStatuses = vi.fn();
+    const nestedChange = changedFile("src/foo.php", {
+      path: `${nestedRoot}/src/foo.php`,
+    });
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ revertHunk }),
+      gitRepositoryMappings: [
+        { rootRelativePath: "" },
+        { rootRelativePath: "workbench/lcsk/x" },
+      ],
+      applyGitOperationStatuses,
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+
+    await act(async () => {
+      await harness.workspace().revertGitHunk(nestedChange, 1, "nested-hunk");
+    });
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Revert this Git hunk? This discards local changes.",
+    );
+    expect(revertHunk).toHaveBeenCalledWith(
+      nestedRoot,
+      "src/foo.php",
+      1,
+      "nested-hunk",
+    );
+    expect(applyGitOperationStatuses).toHaveBeenCalledWith([
+      expect.objectContaining({ root: nestedRoot, status: nestedStatus }),
+    ]);
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Reverted hunk in src/foo.php",
+    );
+    harness.unmount();
+  });
+
+  it("does not revert a hunk when destructive confirmation is declined", async () => {
+    const revertHunk = vi.fn(async () => status(ROOT));
+    const confirm = vi.fn(() => false);
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ revertHunk }),
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+
+    await act(async () => {
+      await harness.workspace().revertGitHunk(changedFile("a.ts"), 0, "hunk-0");
+    });
+
+    expect(confirm).toHaveBeenCalled();
+    expect(revertHunk).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("blocks hunk and file revert while the corresponding editor document is dirty", async () => {
+    const revertHunk = vi.fn(async () => status(ROOT));
+    const revertFiles = vi.fn(async () => status(ROOT));
+    const confirm = vi.fn(() => true);
+    const canRevertGitChange = vi.fn(() => false);
+    const change = changedFile("dirty.ts");
+    const harness = renderGitWorkspace({
+      canRevertGitChange,
+      gitGateway: createFakeGitGateway({ revertHunk, revertFiles }),
+      prompter: { confirm, prompt: vi.fn(() => null) },
+    });
+
+    await act(async () => {
+      await harness.workspace().revertGitHunk(change, 0, "hunk-0");
+      await harness.workspace().revertGitChanges([change]);
+    });
+
+    expect(harness.workspace().canRevertGitChange(change)).toBe(false);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(revertHunk).not.toHaveBeenCalled();
+    expect(revertFiles).not.toHaveBeenCalled();
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Save or discard editor changes before reverting dirty.ts",
+    );
+    harness.unmount();
+  });
+
+  it("rechecks dirty state after a hunk revert waits in the repository queue", async () => {
+    const pendingStage = createDeferred<GitStatus>();
+    const stageHunk = vi.fn(() => pendingStage.promise);
+    const revertHunk = vi.fn(async () => status(ROOT));
+    let dirty = false;
+    const canRevertGitChange = vi.fn(() => !dirty);
+    const change = changedFile("queued.ts");
+    const harness = renderGitWorkspace({
+      canRevertGitChange,
+      gitGateway: createFakeGitGateway({ revertHunk, stageHunk }),
+    });
+    let stageOperation!: Promise<void>;
+    let revertOperation!: Promise<void>;
+
+    act(() => {
+      stageOperation = harness.workspace().stageGitHunk(change, 0, "stage-hunk");
+    });
+    act(() => {
+      revertOperation = harness.workspace().revertGitHunk(
+        change,
+        0,
+        "revert-hunk",
+      );
+    });
+    dirty = true;
+
+    await act(async () => {
+      pendingStage.resolve(status(ROOT));
+      await stageOperation;
+      await revertOperation;
+    });
+
+    expect(canRevertGitChange).toHaveBeenCalledTimes(2);
+    expect(revertHunk).not.toHaveBeenCalled();
+    expect(harness.setMessage).toHaveBeenCalledWith(
+      "Save or discard editor changes before reverting queued.ts",
+    );
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("reports a rejected hunk revert and leaves status unchanged", async () => {
+    const error = new Error("Git hunk changed since preview; refresh and try again.");
+    const revertHunk = vi.fn(async () => {
+      throw error;
+    });
+    const applyGitOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      applyGitOperationStatuses,
+      gitGateway: createFakeGitGateway({ revertHunk }),
+    });
+
+    await act(async () => {
+      await harness.workspace().revertGitHunk(changedFile("a.ts"), 0, "hunk-0");
+    });
+
+    expect(harness.reportError).toHaveBeenCalledWith("Git", error);
+    expect(applyGitOperationStatuses).not.toHaveBeenCalled();
+    expect(harness.workspace().gitOperationLoading).toBe(false);
+    harness.unmount();
+  });
+
+  it("drops a hunk revert result from a previous workspace currency", async () => {
+    const pending = createDeferred<GitStatus>();
+    const applyGitOperationStatuses = vi.fn();
+    const harness = renderGitWorkspace({
+      applyGitOperationStatuses,
+      gitGateway: createFakeGitGateway({ revertHunk: vi.fn(() => pending.promise) }),
+    });
+    let operation!: Promise<void>;
+
+    act(() => {
+      operation = harness.workspace().revertGitHunk(
+        changedFile("a.ts"),
+        0,
+        "hunk-0",
+      );
+    });
+    harness.ref.current = "/workspace-b";
+    harness.rerender({ workspaceRoot: "/workspace-b" });
+    await act(async () => {
+      pending.resolve(status(ROOT));
+      await operation;
+    });
+
+    expect(applyGitOperationStatuses).not.toHaveBeenCalled();
+    expect(harness.workspace().gitOperationLoading).toBe(false);
     harness.unmount();
   });
 

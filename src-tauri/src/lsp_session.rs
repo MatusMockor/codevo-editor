@@ -742,6 +742,7 @@ struct RunningSession {
     pending_requests: PendingRequests,
     reader: Option<JoinHandle<()>>,
     server_configuration: Arc<Mutex<Value>>,
+    session_id: u64,
     status_sink: Arc<dyn StatusSink>,
     stop_requested: Arc<AtomicBool>,
 }
@@ -1398,6 +1399,19 @@ impl LanguageServerRegistry {
         supervisor.send_notification(notification)
     }
 
+    pub fn send_notification_for_session(
+        &self,
+        root_path: &str,
+        expected_session_id: u64,
+        notification: &JsonRpcNotification,
+    ) -> Result<(), String> {
+        let Some(supervisor) = self.existing_supervisor(root_path) else {
+            return Ok(());
+        };
+
+        supervisor.send_notification_for_session(expected_session_id, notification)
+    }
+
     pub fn update_server_configuration(
         &self,
         root_path: &str,
@@ -1769,6 +1783,7 @@ impl LanguageServerSupervisor {
             pending_requests: Arc::clone(&pending_requests),
             reader: None,
             server_configuration: Arc::clone(&server_configuration),
+            session_id,
             status_sink: Arc::clone(&status_sink),
             stop_requested: Arc::clone(&stop_requested),
         });
@@ -1917,6 +1932,21 @@ impl LanguageServerSupervisor {
         }
 
         let Some(stdin) = self.session_stdin() else {
+            return Ok(());
+        };
+        let bytes = serde_json::to_vec(notification)
+            .map_err(|error| format!("Failed to serialize LSP notification: {error}"))?;
+
+        write_with_session_stdin(&stdin, &bytes)
+            .map_err(|error| format!("Failed to send LSP notification: {error}"))
+    }
+
+    pub fn send_notification_for_session(
+        &self,
+        expected_session_id: u64,
+        notification: &JsonRpcNotification,
+    ) -> Result<(), String> {
+        let Some(stdin) = self.session_stdin_for(expected_session_id) else {
             return Ok(());
         };
         let bytes = serde_json::to_vec(notification)
@@ -2170,6 +2200,28 @@ impl LanguageServerSupervisor {
             .ok()?
             .as_ref()
             .map(|session| Arc::clone(&session.stdin))
+    }
+
+    fn session_stdin_for(
+        &self,
+        expected_session_id: u64,
+    ) -> Option<Arc<Mutex<Box<dyn Write + Send>>>> {
+        if !matches!(
+            self.status(),
+            LanguageServerRuntimeStatus::Running { session_id, .. }
+                if session_id == expected_session_id
+        ) {
+            return None;
+        }
+
+        let session = self.session.lock().ok()?;
+        let session = session.as_ref()?;
+
+        if session.session_id != expected_session_id {
+            return None;
+        }
+
+        Some(Arc::clone(&session.stdin))
     }
 
     fn session_request_parts(
@@ -4183,11 +4235,14 @@ mod tests {
             )
             .expect("start");
         supervisor
-            .send_notification(&JsonRpcNotification {
-                jsonrpc: "2.0".to_string(),
-                method: "textDocument/didSave".to_string(),
-                params: json!({ "textDocument": { "uri": "file:///tmp/User.php" } }),
-            })
+            .send_notification_for_session(
+                1,
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/didSave".to_string(),
+                    params: json!({ "textDocument": { "uri": "file:///tmp/User.php" } }),
+                },
+            )
             .expect("send notification");
 
         let written = capture.lock().expect("capture lock").clone();
@@ -4198,6 +4253,70 @@ mod tests {
             serde_json::from_slice(&read_message(&mut reader).unwrap().unwrap()).unwrap();
 
         assert_eq!(notification["method"], "textDocument/didSave");
+    }
+
+    #[test]
+    fn rapid_restart_drops_stale_close_and_keeps_replacement_document_open() {
+        let spawner = Arc::new(FakeSpawner::new(ready_script(), true));
+        let capture = Arc::clone(&spawner.stdin_capture);
+        let held = Arc::clone(&spawner.held_writer);
+        let (sink, rx) = ChannelSink::new();
+        let supervisor = Arc::new(LanguageServerSupervisor::new());
+
+        supervisor
+            .start_with_auto_restart(
+                &command(),
+                &initialize_request(),
+                Arc::clone(&spawner) as Arc<dyn ServerProcessSpawner + Send + Sync>,
+                sink,
+                noop_diagnostics_sink(),
+                Arc::new(NoopWorkspaceEditSink),
+                Arc::new(NoopRefreshSink),
+                test_restart_controller(),
+            )
+            .expect("start");
+        wait_for(&rx, &running_status());
+
+        *held.lock().expect("held writer lock") = None;
+        wait_for(
+            &rx,
+            &LanguageServerRuntimeStatus::Running {
+                session_id: 2,
+                capabilities: LanguageServerCapabilities::default(),
+            },
+        );
+
+        supervisor
+            .send_notification_for_session(
+                2,
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/didOpen".to_string(),
+                    params: json!({ "textDocument": { "uri": "file:///tmp/User.php" } }),
+                },
+            )
+            .expect("open replacement document");
+        supervisor
+            .send_notification_for_session(
+                1,
+                &JsonRpcNotification {
+                    jsonrpc: "2.0".to_string(),
+                    method: "textDocument/didClose".to_string(),
+                    params: json!({ "textDocument": { "uri": "file:///tmp/User.php" } }),
+                },
+            )
+            .expect("drop stale close");
+
+        let methods = captured_messages(&capture)
+            .into_iter()
+            .filter_map(|message| message["method"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        assert!(methods.contains(&"textDocument/didOpen".to_string()));
+        assert!(!methods.contains(&"textDocument/didClose".to_string()));
+        assert!(matches!(
+            supervisor.status(),
+            LanguageServerRuntimeStatus::Running { session_id: 2, .. }
+        ));
     }
 
     #[test]

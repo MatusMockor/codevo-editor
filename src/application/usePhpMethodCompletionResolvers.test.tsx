@@ -8,12 +8,63 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
+  mergePhpTraitAndHostMethodCompletions,
   usePhpMethodCompletionResolvers,
   type PhpMethodCompletionResolverDependencies,
   type PhpMethodCompletionResolvers,
 } from "./usePhpMethodCompletionResolvers";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+describe("mergePhpTraitAndHostMethodCompletions", () => {
+  it("merges trait-local members with the intersection of host members", () => {
+    expect(
+      mergePhpTraitAndHostMethodCompletions(
+        [method("moveUp")],
+        [
+          [method("getTable", { returnType: "Selection" }), method("onlyPost")],
+          [method("getTable", { returnType: "Selection" }), method("onlyUser")],
+        ],
+      ).map(({ name, returnType }) => ({ name, returnType })),
+    ).toEqual([
+      { name: "moveUp", returnType: "void" },
+      { name: "getTable", returnType: "Selection" },
+    ]);
+  });
+
+  it("drops conflicting return types from shared host members", () => {
+    expect(
+      mergePhpTraitAndHostMethodCompletions(
+        [method("resolve", { returnType: "TraitResult" })],
+        [
+        [method("resolve", { returnType: "Post" })],
+        [method("resolve", { returnType: "User" })],
+        ],
+      ),
+    ).toEqual([method("resolve", { returnType: null })]);
+  });
+
+  it("keeps identical effective host override return types", () => {
+    expect(
+      mergePhpTraitAndHostMethodCompletions(
+        [method("resolve", { returnType: "TraitResult" })],
+        [
+          [method("resolve", { returnType: "HostResult" })],
+          [method("resolve", { returnType: "HostResult" })],
+        ],
+      ),
+    ).toEqual([method("resolve", { returnType: "HostResult" })]);
+  });
+
+  it("keeps a trait-local member when hosts do not override it", () => {
+    expect(
+      mergePhpTraitAndHostMethodCompletions(
+        [method("moveUp", { returnType: "bool" })],
+        [[], []],
+      ),
+    ).toEqual([method("moveUp", { returnType: "bool" })]);
+  });
+});
 
 const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
   createPhpFrameworkIntelligence({
@@ -115,7 +166,51 @@ function positionAfter(source: string, needle: string) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
+}
+
 describe("usePhpMethodCompletionResolvers", () => {
+  it("drops stale trait host completions after member collection", async () => {
+    const source = `<?php
+namespace App\\Traits;
+trait SortableTrait { public function moveUp(): void { $this->get; } }
+`;
+    const collectedMembers = deferred<PhpMethodCompletion[]>();
+    const collectPhpMethodsForClass = vi.fn(() => collectedMembers.promise);
+    let isCurrent = true;
+    const harness = renderHook(makeDeps({ collectPhpMethodsForClass }));
+    const completions = harness.api().resolvePhpReceiverMethodCompletions(
+      source,
+      positionAfter(source, "$this->get"),
+      "$this",
+      {
+        contextualThisClassName: null,
+        declaringClassName: "App\\Traits\\SortableTrait",
+        hostClassNames: ["App\\Repositories\\ArticleRepository"],
+        memberSource: source,
+      },
+      () => isCurrent,
+    );
+
+    await vi.waitFor(() => {
+      expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
+        "App\\Repositories\\ArticleRepository",
+        { includeNonPublicMembers: true },
+      );
+    });
+    isCurrent = false;
+    collectedMembers.resolve([method("getTable")]);
+
+    await expect(completions).resolves.toEqual([]);
+    harness.unmount();
+  });
+
   it("uses runtime Laravel state for the Laravel gate", async () => {
     const source = "<?php\n$post->";
     const collectPhpFrameworkSyntheticMethodsForClass = vi.fn(async () => [
