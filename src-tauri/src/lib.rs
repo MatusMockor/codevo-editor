@@ -2663,6 +2663,7 @@ async fn stage_git_hunk(
     root_path: String,
     relative_path: String,
     hunk_index: u32,
+    expected_identity: String,
     trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
     let trusted = trusted_for(&trust, &root_path)?;
@@ -2672,7 +2673,7 @@ async fn stage_git_hunk(
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         CommandGitRepositoryGateway::new(trusted)
-            .stage_hunk(&root, &relative_path, hunk_index)
+            .stage_hunk(&root, &relative_path, hunk_index, &expected_identity)
             .map_err(|error| error.to_string())
     })
     .await
@@ -2683,6 +2684,7 @@ async fn unstage_git_hunk(
     root_path: String,
     relative_path: String,
     hunk_index: u32,
+    expected_identity: String,
     trust: GitTrustState<'_>,
 ) -> Result<GitStatus, String> {
     let trusted = trusted_for(&trust, &root_path)?;
@@ -2692,7 +2694,7 @@ async fn unstage_git_hunk(
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         CommandGitRepositoryGateway::new(trusted)
-            .unstage_hunk(&root, &relative_path, hunk_index)
+            .unstage_hunk(&root, &relative_path, hunk_index, &expected_identity)
             .map_err(|error| error.to_string())
     })
     .await
@@ -7901,6 +7903,7 @@ mod tests {
             path_string(&root),
             "f.txt".to_string(),
             0,
+            hunks[0].identity.clone(),
             true,
         ))
         .expect("stage hunk");
@@ -7944,10 +7947,19 @@ mod tests {
         fs::write(root.join("f.txt"), "A\nb\nc\nd\nE\n").expect("modify");
         run_test_git(&root, &["add", "f.txt"]);
 
+        let before = tauri::async_runtime::block_on(get_git_file_hunks(
+            path_string(&root),
+            "f.txt".to_string(),
+            true,
+            true,
+        ))
+        .expect("staged hunks before unstage");
+
         tauri::async_runtime::block_on(unstage_git_hunk(
             path_string(&root),
             "f.txt".to_string(),
             0,
+            before[0].identity.clone(),
             true,
         ))
         .expect("unstage hunk");

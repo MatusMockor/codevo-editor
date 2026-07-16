@@ -24,7 +24,13 @@ interface MockModelLifecycle {
 const gitDiffPreviewMocks = vi.hoisted(() => ({
   diffEditorProps: [] as Array<Record<string, unknown>>,
   diffEditorMounted: vi.fn(),
+  diffListeners: [] as Array<() => void>,
   focus: vi.fn(),
+  hunkWidgetLayouts: [] as Array<{ column: number; lineNumber: number } | null>,
+  hunkWidgets: [] as Array<{
+    getDomNode(): HTMLElement;
+    getPosition(): { position: { column: number; lineNumber: number } } | null;
+  }>,
   modifiedReveal: vi.fn(),
   modelLifecycles: [] as MockModelLifecycle[],
   modelRegistry: new Map<string, MockTextModel>(),
@@ -84,12 +90,33 @@ vi.mock("@monaco-editor/react", () => ({
       lifecycleRef.current = lifecycle;
       const originalModel = acquireModel(lifecycle.originalPath, "original");
       const modifiedModel = acquireModel(lifecycle.modifiedPath, "modified");
+      const modifiedEditor = {
+        addContentWidget: (widget: typeof gitDiffPreviewMocks.hunkWidgets[number]) => {
+          gitDiffPreviewMocks.hunkWidgets.push(widget);
+          document.body.append(widget.getDomNode());
+        },
+        getModel: () => ({ getLineCount: () => 100 }),
+        layoutContentWidget: (widget: typeof gitDiffPreviewMocks.hunkWidgets[number]) => {
+          gitDiffPreviewMocks.hunkWidgetLayouts.push(widget.getPosition()?.position ?? null);
+        },
+        removeContentWidget: (widget: typeof gitDiffPreviewMocks.hunkWidgets[number]) => {
+          const index = gitDiffPreviewMocks.hunkWidgets.indexOf(widget);
+          if (index >= 0) {
+            gitDiffPreviewMocks.hunkWidgets.splice(index, 1);
+          }
+          widget.getDomNode().remove();
+        },
+      };
       const editor = {
         getLineChanges: () => [],
+        getModifiedEditor: () => modifiedEditor,
         getModel: () => attached
           ? { modified: modifiedModel, original: originalModel }
           : null,
-        onDidUpdateDiff: () => ({ dispose: vi.fn() }),
+        onDidUpdateDiff: (listener: () => void) => {
+          gitDiffPreviewMocks.diffListeners.push(listener);
+          return { dispose: vi.fn() };
+        },
         setModel: (next: unknown) => {
           if (next !== null) {
             return;
@@ -154,7 +181,10 @@ describe("GitDiffPreview", () => {
     host.remove();
     gitDiffPreviewMocks.diffEditorProps.length = 0;
     gitDiffPreviewMocks.diffEditorMounted.mockReset();
+    gitDiffPreviewMocks.diffListeners.length = 0;
     gitDiffPreviewMocks.focus.mockReset();
+    gitDiffPreviewMocks.hunkWidgetLayouts.length = 0;
+    gitDiffPreviewMocks.hunkWidgets.length = 0;
     gitDiffPreviewMocks.modifiedReveal.mockReset();
     gitDiffPreviewMocks.modelLifecycles.length = 0;
     gitDiffPreviewMocks.modelRegistry.clear();
@@ -257,12 +287,13 @@ describe("GitDiffPreview", () => {
     expect(secondPath).not.toBe(firstPath);
   });
 
-  it("disposes prior Monaco models when model paths change without losing hunk UI", async () => {
+  it("disposes prior Monaco models and reanchors hunk widgets on replacement", async () => {
     const loadFileHunks = vi.fn(async () => [
-      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+      gitHunk(0, false),
     ]);
     await renderPreview(diff(), { loadFileHunks });
     const firstLifecycle = gitDiffPreviewMocks.modelLifecycles[0];
+    const firstWidgetNode = gitDiffPreviewMocks.hunkWidgets[0]?.getDomNode();
 
     expect(firstLifecycle?.disposed).toBe(false);
     expect(hunkCheckboxes()).toHaveLength(1);
@@ -277,12 +308,77 @@ describe("GitDiffPreview", () => {
     }, { loadFileHunks });
 
     expect(firstLifecycle?.disposed).toBe(true);
+    expect(firstWidgetNode?.isConnected).toBe(false);
+    expect(gitDiffPreviewMocks.hunkWidgets).toHaveLength(1);
     expect(gitDiffPreviewMocks.modelLifecycles).toHaveLength(2);
     expect(gitDiffPreviewMocks.modelLifecycles[1]?.disposed).toBe(false);
     expect(gitDiffPreviewMocks.modelLifecycles[1]?.modifiedPath).toContain(
       encodeURIComponent("/workspace/src/other.ts"),
     );
     expect(hunkCheckboxes()).toHaveLength(1);
+  });
+
+  it("cannot stage the newly selected file through a stale widget while hunks load", async () => {
+    const secondLoad = createDeferred<GitDiffHunk[]>();
+    const loadFileHunks = vi.fn((change: GitFileDiff["change"]) => {
+      if (change.path === "/workspace-a/src/example.ts") {
+        return Promise.resolve([gitHunk(0, false)]);
+      }
+
+      return secondLoad.promise;
+    });
+    const onStageHunk = vi.fn();
+    const first = {
+      ...diff(),
+      change: {
+        ...diff().change,
+        path: "/workspace-a/src/example.ts",
+      },
+    };
+    const second = {
+      ...diff(),
+      change: {
+        ...diff().change,
+        path: "/workspace-b/src/example.ts",
+      },
+    };
+
+    await renderPreview(first, {
+      loadFileHunks,
+      onStageHunk,
+      previewIdentity: "mockor-git-diff:worktree:/workspace-a/src/example.ts",
+    });
+    const staleCheckbox = hunkCheckboxes()[0];
+    expect(staleCheckbox).toBeDefined();
+
+    await renderPreview(second, {
+      loadFileHunks,
+      onStageHunk,
+      previewIdentity: "mockor-git-diff:worktree:/workspace-b/src/example.ts",
+    });
+
+    expect(hunkCheckboxes()).toHaveLength(0);
+    expect(staleCheckbox.isConnected).toBe(false);
+    await act(async () => {
+      staleCheckbox.click();
+    });
+    expect(onStageHunk).not.toHaveBeenCalled();
+
+    await act(async () => {
+      secondLoad.resolve([gitHunk(0, false)]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(hunkCheckboxes()).toHaveLength(1);
+
+    await act(async () => {
+      hunkCheckboxes()[0].click();
+    });
+    expect(onStageHunk).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "/workspace-b/src/example.ts" }),
+      0,
+      "@@ -1 +1 @@\n-before\n+after",
+    );
   });
 
   it("resets the diff widget before disposing replaced worktree models", async () => {
@@ -412,8 +508,8 @@ describe("GitDiffPreview", () => {
 
   it("renders a stage checkbox per worktree hunk and stages the clicked hunk", async () => {
     const loadFileHunks = vi.fn(async () => [
-      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
-      { header: "@@ -5 +5 @@", index: 1, lines: ["-e", "+E"], isStaged: false },
+      gitHunk(0, false),
+      gitHunk(1, false),
     ]);
     const onStageHunk = vi.fn();
 
@@ -429,6 +525,20 @@ describe("GitDiffPreview", () => {
     );
     const checkboxes = hunkCheckboxes();
     expect(checkboxes).toHaveLength(2);
+    expect(checkboxes[0].getAttribute("aria-label")).toBe("Stage hunk 1");
+    expect(checkboxes[0].title).toBe("Stage hunk 1");
+    expect(gitDiffPreviewMocks.hunkWidgets.map((widget) => widget.getPosition()?.position)).toEqual([
+      { column: 1, lineNumber: 1 },
+      { column: 1, lineNumber: 5 },
+    ]);
+
+    await act(async () => {
+      gitDiffPreviewMocks.diffListeners[0]?.();
+    });
+    expect(gitDiffPreviewMocks.hunkWidgetLayouts).toEqual([
+      { column: 1, lineNumber: 1 },
+      { column: 1, lineNumber: 5 },
+    ]);
 
     await act(async () => {
       checkboxes[1].click();
@@ -437,6 +547,7 @@ describe("GitDiffPreview", () => {
     expect(onStageHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts" }),
       1,
+      "@@ -5 +5 @@\n-before\n+after",
     );
   });
 
@@ -460,6 +571,7 @@ describe("GitDiffPreview", () => {
     expect(onStageHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts" }),
       0,
+      "@@ -1 +1 @@\n-before\n+after",
     );
   });
 
@@ -483,6 +595,7 @@ describe("GitDiffPreview", () => {
     expect(onStageHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts" }),
       2,
+      "@@ -9 +9 @@\n-before\n+after",
     );
   });
 
@@ -509,18 +622,23 @@ describe("GitDiffPreview", () => {
     expect(onUnstageHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts" }),
       1,
+      "@@ -5 +5 @@\n-before\n+after",
     );
   });
 
-  it("renders only additions for a pure-add hunk and stages it", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      {
-        header: "@@ -3,0 +4,2 @@",
-        index: 0,
-        lines: ["+added one", "+added two"],
-        isStaged: false,
-      },
-    ]);
+  it("anchors a pure-add hunk to its modified start and stages it", async () => {
+    const added = {
+      ...gitHunk(0, false, {
+        modifiedCount: 2,
+        modifiedStart: 4,
+        originalCount: 0,
+        originalStart: 3,
+      }),
+      header: "@@ -3,0 +4,2 @@",
+      identity: "@@ -3,0 +4,2 @@\n+added one\n+added two",
+      lines: ["+added one", "+added two"],
+    };
+    const loadFileHunks = vi.fn(async () => [added]);
     const onStageHunk = vi.fn();
 
     await renderPreview(diff(), {
@@ -529,9 +647,10 @@ describe("GitDiffPreview", () => {
       onUnstageHunk: vi.fn(),
     });
 
-    const hunk = document.querySelector(".git-diff-hunk");
-    expect(hunk?.textContent).toContain("+2");
-    expect(hunk?.querySelector(".git-diff-hunk-removed")).toBeNull();
+    expect(gitDiffPreviewMocks.hunkWidgets[0]?.getPosition()?.position).toEqual({
+      column: 1,
+      lineNumber: 4,
+    });
 
     await act(async () => {
       hunkCheckboxes()[0].click();
@@ -540,18 +659,23 @@ describe("GitDiffPreview", () => {
     expect(onStageHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts" }),
       0,
+      "@@ -3,0 +4,2 @@\n+added one\n+added two",
     );
   });
 
-  it("renders only deletions for a pure-delete hunk and stages it", async () => {
-    const loadFileHunks = vi.fn(async () => [
-      {
-        header: "@@ -4,2 +3,0 @@",
-        index: 0,
-        lines: ["-gone one", "-gone two"],
-        isStaged: false,
-      },
-    ]);
+  it("anchors a pure-delete hunk to its modified insertion point and stages it", async () => {
+    const deleted = {
+      ...gitHunk(0, false, {
+        modifiedCount: 0,
+        modifiedStart: 3,
+        originalCount: 2,
+        originalStart: 4,
+      }),
+      header: "@@ -4,2 +3,0 @@",
+      identity: "@@ -4,2 +3,0 @@\n-gone one\n-gone two",
+      lines: ["-gone one", "-gone two"],
+    };
+    const loadFileHunks = vi.fn(async () => [deleted]);
     const onStageHunk = vi.fn();
 
     await renderPreview(diff(), {
@@ -560,9 +684,10 @@ describe("GitDiffPreview", () => {
       onUnstageHunk: vi.fn(),
     });
 
-    const hunk = document.querySelector(".git-diff-hunk");
-    expect(hunk?.textContent).toContain("-2");
-    expect(hunk?.querySelector(".git-diff-hunk-added")).toBeNull();
+    expect(gitDiffPreviewMocks.hunkWidgets[0]?.getPosition()?.position).toEqual({
+      column: 1,
+      lineNumber: 3,
+    });
 
     await act(async () => {
       hunkCheckboxes()[0].click();
@@ -571,10 +696,11 @@ describe("GitDiffPreview", () => {
     expect(onStageHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts" }),
       0,
+      "@@ -4,2 +3,0 @@\n-gone one\n-gone two",
     );
   });
 
-  it("does not render the hunk list for a deleted (binary-like absent diff) change", async () => {
+  it("does not render hunk widgets for a deleted (binary-like absent diff) change", async () => {
     const loadFileHunks = vi.fn(async () => []);
 
     await renderPreview(
@@ -586,14 +712,14 @@ describe("GitDiffPreview", () => {
       },
     );
 
-    // A deleted file with no parseable text hunks must keep the hunk list empty
+    // A deleted file with no parseable text hunks must keep the widget set empty
     // rather than rendering a phantom toggle that cannot map to a hunk index.
     expect(hunkCheckboxes()).toHaveLength(0);
   });
 
   it("clears loaded hunks and diff rows when rerendered without a diff", async () => {
     const loadFileHunks = vi.fn(async () => [
-      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+      gitHunk(0, false),
     ]);
 
     await renderPreview(diff(), {
@@ -603,6 +729,7 @@ describe("GitDiffPreview", () => {
     });
 
     expect(hunkCheckboxes()).toHaveLength(1);
+    const widgetNode = gitDiffPreviewMocks.hunkWidgets[0]?.getDomNode();
     expect(lastDiffEditorProps().modified).toBe("const value = 2;\n");
 
     await renderPreview(null, {
@@ -612,13 +739,15 @@ describe("GitDiffPreview", () => {
     });
 
     expect(hunkCheckboxes()).toHaveLength(0);
+    expect(gitDiffPreviewMocks.hunkWidgets).toHaveLength(0);
+    expect(widgetNode?.isConnected).toBe(false);
     expect(host.textContent).toContain("Select a changed file to preview diff.");
     expect(host.querySelector('[data-testid="diff-editor"]')).toBeNull();
   });
 
   it("unstages the clicked hunk when the change is staged", async () => {
     const loadFileHunks = vi.fn(async () => [
-      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: true },
+      gitHunk(0, true),
     ]);
     const onUnstageHunk = vi.fn();
 
@@ -645,6 +774,7 @@ describe("GitDiffPreview", () => {
     expect(onUnstageHunk).toHaveBeenCalledWith(
       expect.objectContaining({ relativePath: "src/example.ts", isStaged: true }),
       0,
+      "@@ -1 +1 @@\n-before\n+after",
     );
   });
 
@@ -669,7 +799,7 @@ describe("GitDiffPreview", () => {
 
   it("disables hunk checkboxes while a git operation is running", async () => {
     const loadFileHunks = vi.fn(async () => [
-      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+      gitHunk(0, false),
     ]);
     const onStageHunk = vi.fn();
 
@@ -718,9 +848,25 @@ describe("GitDiffPreview", () => {
           null,
           {
             header: "@@ -1 +1 @@",
+            identity: "@@ -1 +1 @@\n-a\n+A",
             index: 0,
             lines: ["-a", null, "+A"],
             isStaged: false,
+            modifiedCount: 1,
+            modifiedStart: 1,
+            originalCount: 1,
+            originalStart: 1,
+          },
+          {
+            header: "@@ -9 +9 @@",
+            identity: "",
+            index: 1,
+            lines: ["-x", "+y"],
+            isStaged: false,
+            modifiedCount: 1,
+            modifiedStart: 9,
+            originalCount: 1,
+            originalStart: 9,
           },
           {
             header: "@@ -9 +9 @@",
@@ -745,8 +891,7 @@ describe("GitDiffPreview", () => {
 
     expect(host.querySelector('[data-testid="diff-editor"]')).not.toBeNull();
     expect(hunkCheckboxes()).toHaveLength(1);
-    expect(host.textContent).toContain("+1");
-    expect(host.textContent).toContain("-1");
+    expect(hunkCheckboxes()[0].getAttribute("aria-label")).toBe("Stage hunk 1");
   });
 
   it("uses a safe fallback for binary payloads", async () => {
@@ -786,7 +931,7 @@ describe("GitDiffPreview", () => {
 
   it("uses the backend large marker without receiving a large IPC payload", async () => {
     const loadFileHunks = vi.fn(async () => [
-      { header: "@@ -1 +1 @@", index: 0, isStaged: false, lines: ["-a", "+b"] },
+      gitHunk(0, false),
     ]);
     await renderPreview({
       ...diff(),
@@ -857,6 +1002,37 @@ function hunkCheckboxes(): HTMLInputElement[] {
       '.git-diff-hunk input[type="checkbox"]',
     ),
   );
+}
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function gitHunk(
+  index: number,
+  isStaged: boolean,
+  ranges: Partial<Pick<GitDiffHunk, "modifiedCount" | "modifiedStart" | "originalCount" | "originalStart">> = {},
+): GitDiffHunk {
+  const line = index * 4 + 1;
+  return {
+    header: `@@ -${line} +${line} @@`,
+    identity: `@@ -${line} +${line} @@\n-before\n+after`,
+    index,
+    isStaged,
+    lines: ["-before", "+after"],
+    modifiedCount: 1,
+    modifiedStart: line,
+    originalCount: 1,
+    originalStart: line,
+    ...ranges,
+  };
 }
 
 function lastDiffEditorProps(): Record<string, unknown> & {
@@ -933,11 +1109,7 @@ function queryButtonByTitle(title: string): HTMLButtonElement | null {
 }
 
 function threeHunks(isStaged: boolean): GitDiffHunk[] {
-  return [
-    { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged },
-    { header: "@@ -5 +5 @@", index: 1, lines: ["-e", "+E"], isStaged },
-    { header: "@@ -9 +9 @@", index: 2, lines: ["-i", "+I"], isStaged },
-  ];
+  return [gitHunk(0, isStaged), gitHunk(1, isStaged), gitHunk(2, isStaged)];
 }
 
 function diff(): GitFileDiff {

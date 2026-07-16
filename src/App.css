@@ -1749,66 +1749,47 @@ button {
   gap: 4px;
 }
 
-.git-diff-hunks {
-  display: flex;
-  flex: 0 0 auto;
-  max-height: 30%;
-  flex-direction: column;
-  margin: 0;
-  padding: 4px 0;
-  overflow-y: auto;
-  list-style: none;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-panel);
-}
-
 .git-diff-hunk {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 12px;
-  font-size: 12px;
-}
-
-.git-diff-hunk-toggle {
   display: inline-flex;
+  height: 18px;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  padding: 0 3px;
+  transform: translateX(calc(-100% - 4px));
+  border: 1px solid var(--color-border-strong);
+  border-radius: 3px;
+  background: var(--color-panel);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-border-strong) 65%, transparent);
+  color: var(--color-text-muted);
   cursor: pointer;
 }
 
-.git-diff-hunk-toggle input:disabled {
+.git-diff-hunk:hover:not(:has(input:disabled)) {
+  background: var(--color-panel-soft);
+  color: var(--color-text);
+}
+
+.git-diff-hunk input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.git-diff-hunk:has(input:disabled) {
   cursor: default;
+  opacity: 0.5;
 }
 
 .git-diff-hunk-icon {
   display: inline-flex;
+  width: 10px;
   align-items: center;
-  color: var(--color-text-muted);
-}
-
-.git-diff-hunk-header {
-  flex: 1 1 auto;
-  overflow: hidden;
-  color: var(--color-text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  justify-content: center;
   font-family: var(--font-mono, monospace);
-}
-
-.git-diff-hunk-summary {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 6px;
-  font-variant-numeric: tabular-nums;
-}
-
-.git-diff-hunk-added {
-  color: #7ddc9f;
-}
-
-.git-diff-hunk-removed {
-  color: #ef7373;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .git-diff-pane-labels {

@@ -14354,10 +14354,15 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().stageGitHunk(change, 1);
+      await getWorkbench().stageGitHunk(change, 1, "expected-stage-hunk");
     });
 
-    expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 1);
+    expect(gitGateway.stageHunk).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      1,
+      "expected-stage-hunk",
+    );
     expect(getWorkbench().gitStatus.changes).toEqual([stagedChange]);
   });
 
@@ -14381,10 +14386,15 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().unstageGitHunk(change, 0);
+      await getWorkbench().unstageGitHunk(change, 0, "expected-unstage-hunk");
     });
 
-    expect(gitGateway.unstageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
+    expect(gitGateway.unstageHunk).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      0,
+      "expected-unstage-hunk",
+    );
     expect(getWorkbench().gitStatus.changes).toEqual([unstagedChange]);
   });
 
@@ -14403,17 +14413,36 @@ describe("useWorkbenchController preview tabs", () => {
     await flushAsyncTurns();
 
     await act(async () => {
-      await getWorkbench().stageGitHunk(gitChangedFile("src/User.php", false), 0);
+      await getWorkbench().stageGitHunk(
+        gitChangedFile("src/User.php", false),
+        0,
+        "expected-rejected-hunk",
+      );
     });
 
-    expect(gitGateway.stageHunk).toHaveBeenCalledWith("/workspace", "src/User.php", 0);
+    expect(gitGateway.stageHunk).toHaveBeenCalledWith(
+      "/workspace",
+      "src/User.php",
+      0,
+      "expected-rejected-hunk",
+    );
     // A rejected patch must not leave the operation spinner stuck.
     expect(getWorkbench().gitOperationLoading).toBe(false);
   });
 
   it("loads a file's hunks through the gateway for the active workspace", async () => {
     const hunks = [
-      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+      {
+        header: "@@ -1 +1 @@",
+        identity: "@@ -1 +1 @@\n-a\n+A",
+        index: 0,
+        lines: ["-a", "+A"],
+        isStaged: false,
+        modifiedCount: 1,
+        modifiedStart: 1,
+        originalCount: 1,
+        originalStart: 1,
+      },
     ];
     const gitGateway = fileHistoryGitGateway({});
     gitGateway.getFileHunks = vi.fn(async () => hunks);

@@ -61,9 +61,14 @@ function status(rootPath: string, changes: GitChangedFile[] = []): GitStatus {
 function hunk(index: number): GitDiffHunk {
   return {
     header: `@@ -${index},1 +${index},1 @@`,
+    identity: `hunk-${index}`,
     index,
     isStaged: false,
     lines: [`+line ${index}`],
+    modifiedCount: 1,
+    modifiedStart: index,
+    originalCount: 1,
+    originalStart: index,
   };
 }
 
@@ -389,16 +394,36 @@ describe("useGitWorkspace", () => {
 
     const change = changedFile("a.ts");
     await act(async () => {
-      await harness.workspace().stageGitHunk(change, 2);
+      await harness.workspace().stageGitHunk(change, 2, "hunk-2");
     });
-    expect(stageHunk).toHaveBeenCalledWith(ROOT, "a.ts", 2);
+    expect(stageHunk).toHaveBeenCalledWith(ROOT, "a.ts", 2, "hunk-2");
     expect(harness.setMessage).toHaveBeenCalledWith("Staged hunk in a.ts");
 
     await act(async () => {
-      await harness.workspace().unstageGitHunk(change, 2);
+      await harness.workspace().unstageGitHunk(change, 2, "hunk-2");
     });
-    expect(unstageHunk).toHaveBeenCalledWith(ROOT, "a.ts", 2);
+    expect(unstageHunk).toHaveBeenCalledWith(ROOT, "a.ts", 2, "hunk-2");
     expect(harness.setMessage).toHaveBeenCalledWith("Unstaged hunk in a.ts");
+    harness.unmount();
+  });
+
+  it("rejects a hunk operation without an expected identity", async () => {
+    const stageHunk = vi.fn(async () => status(ROOT));
+    const harness = renderGitWorkspace({
+      gitGateway: createFakeGitGateway({ stageHunk }),
+    });
+
+    await act(async () => {
+      await harness.workspace().stageGitHunk(changedFile("a.ts"), 0, "");
+    });
+
+    expect(stageHunk).not.toHaveBeenCalled();
+    expect(harness.reportError).toHaveBeenCalledWith(
+      "Git",
+      expect.objectContaining({
+        message: "Expected Git hunk identity is required; refresh the diff and try again.",
+      }),
+    );
     harness.unmount();
   });
 
@@ -556,9 +581,14 @@ describe("useGitWorkspace", () => {
     });
 
     await act(async () => {
-      await harness.workspace().stageGitHunk(nestedChange, 1);
+      await harness.workspace().stageGitHunk(nestedChange, 1, "nested-hunk");
     });
-    expect(stageHunk).toHaveBeenCalledWith(nestedRoot, "src/foo.php", 1);
+    expect(stageHunk).toHaveBeenCalledWith(
+      nestedRoot,
+      "src/foo.php",
+      1,
+      "nested-hunk",
+    );
     expect(harness.setMessage).toHaveBeenCalledWith(
       "Staged hunk in src/foo.php",
     );
@@ -570,9 +600,14 @@ describe("useGitWorkspace", () => {
     expect(harness.applyGitOperationStatus).not.toHaveBeenCalled();
 
     await act(async () => {
-      await harness.workspace().unstageGitHunk(nestedChange, 1);
+      await harness.workspace().unstageGitHunk(nestedChange, 1, "nested-hunk");
     });
-    expect(unstageHunk).toHaveBeenCalledWith(nestedRoot, "src/foo.php", 1);
+    expect(unstageHunk).toHaveBeenCalledWith(
+      nestedRoot,
+      "src/foo.php",
+      1,
+      "nested-hunk",
+    );
     expect(harness.setMessage).toHaveBeenCalledWith(
       "Unstaged hunk in src/foo.php",
     );
@@ -589,7 +624,7 @@ describe("useGitWorkspace", () => {
     });
 
     await act(async () => {
-      await harness.workspace().stageGitHunk(orphanChange, 0);
+      await harness.workspace().stageGitHunk(orphanChange, 0, "orphan-hunk");
     });
 
     expect(stageHunk).not.toHaveBeenCalled();

@@ -110,14 +110,19 @@ export interface GitFileDiff {
 /**
  * A single hunk from `git diff` (or `git diff --cached`) for one file. `index`
  * is the hunk's position within that file's diff and is the stable id sent back
- * to stage/unstage exactly that hunk. `header` is the `@@ ... @@` line; `lines`
- * are the body lines with their leading `-`/`+`/` ` markers preserved.
+ * to stage/unstage exactly that hunk. The ranges are parsed from `header` by
+ * the backend; counts can be zero for pure additions or deletions.
  */
 export interface GitDiffHunk {
   header: string;
+  identity: string;
   index: number;
   lines: string[];
   isStaged: boolean;
+  originalStart: number;
+  originalCount: number;
+  modifiedStart: number;
+  modifiedCount: number;
 }
 
 export interface GitBlameLine {
@@ -194,12 +199,14 @@ export interface GitGateway {
     rootPath: string,
     relativePath: string,
     hunkIndex: number,
+    expectedIdentity: string,
   ): Promise<GitStatus>;
   unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   unstageHunk(
     rootPath: string,
     relativePath: string,
     hunkIndex: number,
+    expectedIdentity: string,
   ): Promise<GitStatus>;
   stashSave(rootPath: string, message: string): Promise<void>;
   stashList(rootPath: string): Promise<GitStashEntry[]>;

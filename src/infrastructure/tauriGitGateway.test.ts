@@ -396,7 +396,17 @@ describe("TauriGitGateway", () => {
     const invoke = vi.fn(async (command: string) => {
       if (command === "get_git_file_hunks") {
         return [
-          { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+          {
+            header: "@@ -1 +1 @@",
+            identity: "@@ -1 +1 @@\n-a\n+A",
+            index: 0,
+            lines: ["-a", "+A"],
+            isStaged: false,
+            modifiedCount: 1,
+            modifiedStart: 1,
+            originalCount: 1,
+            originalStart: 1,
+          },
         ];
       }
 
@@ -410,11 +420,21 @@ describe("TauriGitGateway", () => {
     const gateway = new TauriGitGateway(invoke, () => true);
 
     const hunks = await gateway.getFileHunks("/workspace", "src/User.php", false);
-    await gateway.stageHunk("/workspace", "src/User.php", 0);
-    await gateway.unstageHunk("/workspace", "src/User.php", 1);
+    await gateway.stageHunk("/workspace", "src/User.php", 0, "stage-identity");
+    await gateway.unstageHunk("/workspace", "src/User.php", 1, "unstage-identity");
 
     expect(hunks).toEqual([
-      { header: "@@ -1 +1 @@", index: 0, lines: ["-a", "+A"], isStaged: false },
+      {
+        header: "@@ -1 +1 @@",
+        identity: "@@ -1 +1 @@\n-a\n+A",
+        index: 0,
+        lines: ["-a", "+A"],
+        isStaged: false,
+        modifiedCount: 1,
+        modifiedStart: 1,
+        originalCount: 1,
+        originalStart: 1,
+      },
     ]);
     expect(invoke).toHaveBeenCalledWith("get_git_file_hunks", {
       relativePath: "src/User.php",
@@ -422,11 +442,13 @@ describe("TauriGitGateway", () => {
       staged: false,
     });
     expect(invoke).toHaveBeenCalledWith("stage_git_hunk", {
+      expectedIdentity: "stage-identity",
       hunkIndex: 0,
       relativePath: "src/User.php",
       rootPath: "/workspace",
     });
     expect(invoke).toHaveBeenCalledWith("unstage_git_hunk", {
+      expectedIdentity: "unstage-identity",
       hunkIndex: 1,
       relativePath: "src/User.php",
       rootPath: "/workspace",
@@ -440,7 +462,7 @@ describe("TauriGitGateway", () => {
       gateway.getFileHunks("/workspace", "src/User.php", false),
     ).resolves.toEqual([]);
     await expect(
-      gateway.stageHunk("/workspace", "src/User.php", 0),
+      gateway.stageHunk("/workspace", "src/User.php", 0, "stage-identity"),
     ).resolves.toEqual({
       branch: null,
       changes: [],
@@ -448,7 +470,7 @@ describe("TauriGitGateway", () => {
       rootPath: "/workspace",
     });
     await expect(
-      gateway.unstageHunk("/workspace", "src/User.php", 0),
+      gateway.unstageHunk("/workspace", "src/User.php", 0, "unstage-identity"),
     ).resolves.toEqual({
       branch: null,
       changes: [],

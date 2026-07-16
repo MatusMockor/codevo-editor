@@ -192,12 +192,14 @@ export class TauriGitGateway implements GitGateway {
     rootPath: string,
     relativePath: string,
     hunkIndex: number,
+    expectedIdentity: string,
   ): Promise<GitStatus> {
     if (!this.isRuntimeAvailable()) {
       return emptyGitStatus(rootPath);
     }
 
     return this.invokeCommand("stage_git_hunk", {
+      expectedIdentity,
       hunkIndex,
       relativePath,
       rootPath,
@@ -208,12 +210,14 @@ export class TauriGitGateway implements GitGateway {
     rootPath: string,
     relativePath: string,
     hunkIndex: number,
+    expectedIdentity: string,
   ): Promise<GitStatus> {
     if (!this.isRuntimeAvailable()) {
       return emptyGitStatus(rootPath);
     }
 
     return this.invokeCommand("unstage_git_hunk", {
+      expectedIdentity,
       hunkIndex,
       relativePath,
       rootPath,

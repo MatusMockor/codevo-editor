@@ -344,8 +344,16 @@ export interface GitWorkspace {
     change: GitChangedFile,
     staged: boolean,
   ) => Promise<GitDiffHunk[]>;
-  stageGitHunk: (change: GitChangedFile, hunkIndex: number) => Promise<void>;
-  unstageGitHunk: (change: GitChangedFile, hunkIndex: number) => Promise<void>;
+  stageGitHunk: (
+    change: GitChangedFile,
+    hunkIndex: number,
+    expectedIdentity: string,
+  ) => Promise<void>;
+  unstageGitHunk: (
+    change: GitChangedFile,
+    hunkIndex: number,
+    expectedIdentity: string,
+  ) => Promise<void>;
   revertGitChanges: (changes: GitChangedFile[]) => Promise<void>;
   runGitCommit: (options: { pushAfterCommit: boolean }) => Promise<void>;
   amendGitChanges: () => Promise<void>;
@@ -705,14 +713,24 @@ export function useGitWorkspace(
     async (
       change: GitChangedFile,
       hunkIndex: number,
+      expectedIdentity: string,
       operation: (
         repositoryRoot: string,
         repositoryRelativePath: string,
         hunkIndex: number,
+        expectedIdentity: string,
       ) => Promise<GitStatus>,
       messagePrefix: string,
     ) => {
       if (!workspaceRoot) {
+        return;
+      }
+
+      if (!expectedIdentity) {
+        reportError(
+          "Git",
+          new Error("Expected Git hunk identity is required; refresh the diff and try again."),
+        );
         return;
       }
 
@@ -742,6 +760,7 @@ export function useGitWorkspace(
               repositoryRoot,
               repositoryRelativePath,
               hunkIndex,
+              expectedIdentity,
             ),
         );
 
@@ -780,24 +799,26 @@ export function useGitWorkspace(
   );
 
   const stageGitHunk = useCallback(
-    async (change: GitChangedFile, hunkIndex: number) =>
+    async (change: GitChangedFile, hunkIndex: number, expectedIdentity: string) =>
       runHunkOperation(
         change,
         hunkIndex,
-        (root, repoRelative, index) =>
-          gitGateway.stageHunk(root, repoRelative, index),
+        expectedIdentity,
+        (root, repoRelative, index, identity) =>
+          gitGateway.stageHunk(root, repoRelative, index, identity),
         "Staged hunk in",
       ),
     [gitGateway, runHunkOperation],
   );
 
   const unstageGitHunk = useCallback(
-    async (change: GitChangedFile, hunkIndex: number) =>
+    async (change: GitChangedFile, hunkIndex: number, expectedIdentity: string) =>
       runHunkOperation(
         change,
         hunkIndex,
-        (root, repoRelative, index) =>
-          gitGateway.unstageHunk(root, repoRelative, index),
+        expectedIdentity,
+        (root, repoRelative, index, identity) =>
+          gitGateway.unstageHunk(root, repoRelative, index, identity),
         "Unstaged hunk in",
       ),
     [gitGateway, runHunkOperation],
