@@ -6,6 +6,7 @@ import {
 } from "../domain/latteFilterRegistrations";
 import {
   lattePhpExtensionFiltersFromSource,
+  type LattePhpExtensionCallableKind,
 } from "../domain/lattePhpExtensionFilters";
 import type { LatteDirectoryEntry } from "./netteTemplateDiscovery";
 
@@ -17,6 +18,7 @@ export interface LatteFilterDiscoveryDependencies {
 
 export interface LatteFilterRegistrationTarget {
   callableOffset?: number;
+  callableKind?: LattePhpExtensionCallableKind;
   callable?: LatteFilterRegistrationCallableTarget;
   methodName?: string;
   name: string;
@@ -234,6 +236,7 @@ function latteFilterRegistrationTarget(
   registration: {
     callable?: LatteFilterRegistrationCallableTarget;
     callableOffset?: number;
+    callableKind?: LattePhpExtensionCallableKind;
     methodName?: string;
     name: string;
     offset: number;

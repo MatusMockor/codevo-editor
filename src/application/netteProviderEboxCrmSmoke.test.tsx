@@ -1694,11 +1694,11 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         offsetInside(subscriptionSource, "formatContentGroups"),
       ),
     ).resolves.toBe(true);
-    expect(subscriptionDeps.openTarget).toHaveBeenLastCalledWith(
-      joinPath(EBOX_CRM_ROOT, "app/modules/integrationModule/config/config.neon"),
-      { column: 25, lineNumber: 31 },
-      "formatContentGroups",
+    expect(subscriptionDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
+      "Crm\\IntegrationModule\\Helper\\ContentGroupHelper",
+      "getFormattedContentGroupData",
     );
+    expect(subscriptionDeps.openTarget).not.toHaveBeenCalled();
 
     const apiTokensTemplatePath =
       "app/modules/apiModule/templates/ApiTokensAdmin/default.latte";
@@ -1713,11 +1713,11 @@ describeIfEboxCrmExists("ebox-crm Nette provider smoke", () => {
         offsetInside(apiTokensSource, "userDate"),
       ),
     ).resolves.toBe(true);
-    expect(apiTokensDeps.openTarget).toHaveBeenLastCalledWith(
-      joinPath(EBOX_CRM_ROOT, "app/modules/applicationModule/config/config.neon"),
-      { column: 25, lineNumber: 35 },
-      "userDate",
+    expect(apiTokensDeps.openPhpMethodTarget).toHaveBeenLastCalledWith(
+      "Crm\\ApplicationModule\\Helpers\\UserDateHelper",
+      "process",
     );
+    expect(apiTokensDeps.openTarget).not.toHaveBeenCalled();
   });
 
   it("covers NEON class refs, service reference definition, service completions, and setup methods over real config", async () => {

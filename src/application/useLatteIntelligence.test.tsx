@@ -372,12 +372,11 @@ describe("createLatteIntelligence definition", () => {
       latte.provideLatteDefinition(source, source.indexOf("UserDate")),
     ).resolves.toBe(true);
 
-    expect(openTarget).toHaveBeenCalledWith(
-      `${ROOT}/app/config/filters.neon`,
-      expect.any(Object),
-      "UserDate",
+    expect(openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
-    expect(openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(openTarget).not.toHaveBeenCalled();
   });
 
   it("does not scan the active template directory as NEON project config for filters", async () => {
@@ -419,12 +418,11 @@ describe("createLatteIntelligence definition", () => {
       latte.provideLatteDefinition(source, source.indexOf("UserDate")),
     ).resolves.toBe(true);
 
-    expect(openTarget).toHaveBeenCalledWith(
-      `${ROOT}/app/config/filters.neon`,
-      expect.any(Object),
-      "UserDate",
+    expect(openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
-    expect(openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(openTarget).not.toHaveBeenCalled();
   });
 
   it("keeps filter registration navigation stable after project config cache invalidation", async () => {
@@ -471,19 +469,17 @@ describe("createLatteIntelligence definition", () => {
       latte.provideLatteDefinition(source, source.indexOf("UserDate")),
     ).resolves.toBe(true);
 
-    expect(openTarget).toHaveBeenNthCalledWith(
+    expect(openPhpMethodTarget).toHaveBeenNthCalledWith(
       1,
-      `${ROOT}/app/config/filters.neon`,
-      expect.any(Object),
-      "UserDate",
+      "App\\Filters\\OldUserDateFilter",
+      "format",
     );
-    expect(openTarget).toHaveBeenNthCalledWith(
+    expect(openPhpMethodTarget).toHaveBeenNthCalledWith(
       2,
-      `${ROOT}/app/config/filters.neon`,
-      expect.any(Object),
-      "UserDate",
+      "App\\Filters\\NewUserDateFilter",
+      "format",
     );
-    expect(openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(openTarget).not.toHaveBeenCalled();
   });
 
   it("navigates a bare {layout} to the auto-looked-up @layout.latte", async () => {

@@ -73,6 +73,7 @@ export interface LatteProviderFlows {
   collectCompleteLatteTemplateRelativePaths(): Promise<readonly string[]>;
   collectLatteTemplateRelativePaths(): Promise<readonly string[]>;
   invalidateLatteExpressionDataForPath(rootPath: string, path: string): void;
+  invalidateLatteFilterDataForPath(rootPath: string, path: string): void;
   provideLatteCodeActions(
     source: string,
     range: PhpCodeActionRange,
@@ -176,6 +177,7 @@ export function createLatteIntelligence(
         rootPath,
         path,
       );
+      flows.invalidateLatteFilterDataForPath(rootPath, path);
     },
   };
 }
@@ -195,6 +197,8 @@ export function createLatteProviderFlows(
       collectLatteTemplateRelativePaths(options),
     invalidateLatteExpressionDataForPath: (rootPath, path) =>
       invalidateLatteExpressionDataForPath(options, rootPath, path),
+    invalidateLatteFilterDataForPath: (rootPath, path) =>
+      invalidateLatteFilterDataForPath(options, rootPath, path),
     provideLatteCodeActions: (source, range, context) =>
       provideLatteCodeActionsFlow(options, source, range, context),
     provideLatteCompletions: (source, position) =>
@@ -223,6 +227,7 @@ function invalidateLatteExpressionDataForPath(
   }
 
   const generation = bumpLatteExpressionGeneration(options.caches, rootPath);
+  invalidateLatteFilterDataForPath(options, rootPath, path, true);
   deleteCacheEntriesForRoot(options.caches.includeArgumentCache, rootPath);
   deleteCacheEntriesForRoot(options.caches.viewDataCache, rootPath);
   deleteCacheEntriesForRoot(options.caches.templateTypeCache, rootPath);
@@ -245,6 +250,24 @@ function invalidateLatteExpressionDataForPath(
     options.caches.viewDataCache,
     rootPath,
   );
+}
+
+function invalidateLatteFilterDataForPath(
+  options: LatteProviderFlowFactoryOptions,
+  rootPath: string,
+  path: string,
+  generationAlreadyBumped = false,
+): void {
+  if (!path.endsWith(".php") && !path.endsWith(".neon")) {
+    return;
+  }
+
+  if (!generationAlreadyBumped) {
+    bumpLatteExpressionGeneration(options.caches, rootPath);
+  }
+
+  deleteCacheEntriesForRoot(options.caches.filterCache, rootPath);
+  deleteInFlightForRoot(options.inFlight.filterInFlight, rootPath);
 }
 
 function deleteInFlightForRoot(

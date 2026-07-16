@@ -15,6 +15,7 @@ import {
 } from "./latteCompletionItems";
 import type { LatteVariableCandidate } from "./latteVariableCandidates";
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import type { ResolvedLatteProjectFilter } from "./latteFilterCallableResolution";
 
 export interface LatteExpressionCompletionDependencies {
   resolvePhpReceiverCompletions(
@@ -29,7 +30,7 @@ export interface LatteExpressionCompletionDependencies {
 }
 
 export interface LatteExpressionCompletionContext {
-  collectFilterNames(): Promise<readonly string[]>;
+  collectFilters(prefix: string): Promise<readonly ResolvedLatteProjectFilter[]>;
   collectVariableCandidates(
     source: string,
     offset: number,
@@ -76,7 +77,7 @@ async function latteProjectAwareFilterCompletions(
   context: LatteExpressionCompletionContext,
   filter: LatteFilterCompletionContext,
 ): Promise<LatteCompletionItem[]> {
-  const projectFilterNames = await context.collectFilterNames();
+  const projectFilters = await context.collectFilters(filter.prefix);
 
   if (!context.isRequestedRootActive()) {
     return [];
@@ -85,7 +86,7 @@ async function latteProjectAwareFilterCompletions(
   return latteFilterCompletions(
     filter,
     context.maxCompletions,
-    projectFilterNames,
+    projectFilters,
   );
 }
 

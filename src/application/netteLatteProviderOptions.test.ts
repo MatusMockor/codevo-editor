@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
-import type { LatteProviderFlowFactoryOptions } from "./latteProviderFlowContext";
+import {
+  evictLatteProviderCaches,
+  type LatteProviderFlowFactoryOptions,
+} from "./latteProviderFlowContext";
 import type { LatteProviderRequestContext } from "./latteProviderRequestContext";
 import {
+  latteFilterDiscoveryContext,
   latteExpressionResolutionContext,
   latteTemplateCompletionContext,
 } from "./netteLatteProviderOptions";
 import { createLatteProviderFlows } from "./latteProviderFlows";
+import { loadLatteFilterRegistrations } from "./latteFilterDiscovery";
 import { listLatteTemplateRelativePaths } from "./netteTemplateDiscovery";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
@@ -159,6 +164,141 @@ describe("latteExpressionResolutionContext", () => {
     expect(flowOptions.caches.templateCache).toEqual({});
     expect(flowOptions.caches.includeArgumentGenerationByRoot).toEqual({
       "/workspace": 1,
+    });
+  });
+
+  it("does not let an invalidated PHP filter scan repopulate its cache", async () => {
+    let resolveDirectory!: (
+      entries: Array<{ kind: "file"; path: string }>,
+    ) => void;
+    const pendingDirectory = new Promise<Array<{ kind: "file"; path: string }>>(
+      (resolve) => {
+        resolveDirectory = resolve;
+      },
+    );
+    const deps = dependencies();
+    deps.listDirectory = vi.fn(() => pendingDirectory);
+    const flowOptions = options(deps);
+    const request = requestContext(
+      "app/UI/Home/default.latte",
+      deps,
+      "/workspace/",
+    );
+    const scan = loadLatteFilterRegistrations(
+      latteFilterDiscoveryContext(flowOptions, request),
+    );
+    await vi.waitFor(() => expect(deps.listDirectory).toHaveBeenCalledOnce());
+
+    createLatteProviderFlows(
+      flowOptions,
+    ).invalidateLatteExpressionDataForPath(
+      "/workspace",
+      "/workspace/app/Latte/ProjectExtension.php",
+    );
+    resolveDirectory([
+      {
+        kind: "file",
+        path: "/workspace/app/Latte/ProjectExtension.php",
+      },
+    ]);
+
+    await expect(scan).resolves.toEqual([]);
+    expect(flowOptions.caches.filterCache).toEqual({});
+    expect(flowOptions.inFlight.filterInFlight).toEqual(new Map());
+    expect(flowOptions.caches.includeArgumentGenerationByRoot).toEqual({
+      "/workspace": 1,
+    });
+  });
+
+  it("clears equivalent-root filter state for NEON invalidation", () => {
+    const flowOptions = options();
+    flowOptions.caches.filterCache["/workspace/"] = {
+      expiresAt: Number.POSITIVE_INFINITY,
+      registrations: [],
+    };
+    flowOptions.inFlight.filterInFlight.set(
+      "/workspace/",
+      Promise.resolve([]),
+    );
+
+    createLatteProviderFlows(flowOptions).invalidateLatteFilterDataForPath(
+      "/workspace",
+      "/workspace/app/config/config.neon",
+    );
+
+    expect(flowOptions.caches.filterCache).toEqual({});
+    expect(flowOptions.inFlight.filterInFlight).toEqual(new Map());
+    expect(flowOptions.caches.includeArgumentGenerationByRoot).toEqual({
+      "/workspace": 1,
+    });
+  });
+
+  it("starts a fresh A filter scan after a rapid A to B to A switch", async () => {
+    let resolveOldA!: (
+      entries: Array<{ kind: "file"; path: string }>,
+    ) => void;
+    const oldADirectory = new Promise<Array<{ kind: "file"; path: string }>>(
+      (resolve) => {
+        resolveOldA = resolve;
+      },
+    );
+    const freshConfigPath = "/workspace-a/app/config.neon";
+    const deps = dependencies();
+    deps.listDirectory = vi
+      .fn()
+      .mockImplementationOnce(() => oldADirectory)
+      .mockImplementationOnce(async () => [
+        { kind: "file" as const, path: freshConfigPath },
+      ])
+      .mockImplementation(async () => []);
+    deps.readFileContent = vi.fn(async () => `services:
+  filterLoader:
+    setup:
+      - register('freshFilter', [@helper, process])
+`);
+    const flowOptions = options(deps);
+    const oldA = loadLatteFilterRegistrations(
+      latteFilterDiscoveryContext(
+        flowOptions,
+        requestContext("app/default.latte", deps, "/workspace-a/"),
+      ),
+    );
+    await vi.waitFor(() => expect(deps.listDirectory).toHaveBeenCalledOnce());
+
+    const bInFlight = Promise.resolve([]);
+    flowOptions.inFlight.filterInFlight.set("/workspace-b/", bInFlight);
+    evictLatteProviderCaches(
+      flowOptions.caches,
+      "/workspace-b",
+      flowOptions.inFlight.includeArgumentInFlight,
+      flowOptions.inFlight.filterInFlight,
+    );
+    expect(flowOptions.inFlight.filterInFlight).toEqual(
+      new Map([["/workspace-b/", bInFlight]]),
+    );
+
+    evictLatteProviderCaches(
+      flowOptions.caches,
+      "/workspace-a",
+      flowOptions.inFlight.includeArgumentInFlight,
+      flowOptions.inFlight.filterInFlight,
+    );
+    const freshA = loadLatteFilterRegistrations(
+      latteFilterDiscoveryContext(
+        flowOptions,
+        requestContext("app/default.latte", deps, "/workspace-a"),
+      ),
+    );
+
+    await expect(freshA).resolves.toMatchObject([{ name: "freshFilter" }]);
+    expect(deps.listDirectory).toHaveBeenCalledTimes(3);
+
+    resolveOldA([
+      { kind: "file", path: "/workspace-a/app/stale.neon" },
+    ]);
+    await expect(oldA).resolves.toEqual([]);
+    expect(flowOptions.caches.filterCache["/workspace-a"]).toMatchObject({
+      registrations: [expect.objectContaining({ name: "freshFilter" })],
     });
   });
 });

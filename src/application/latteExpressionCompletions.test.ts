@@ -31,7 +31,9 @@ function makeContext({
   const isActive = typeof active === "function" ? active : () => active;
 
   return {
-    collectFilterNames: vi.fn(async () => projectFilterNames),
+    collectFilters: vi.fn(async () =>
+      projectFilterNames.map((name) => ({ name })),
+    ),
     collectVariableCandidates: vi.fn(async () => [
       {
         detail: "presenter data",
@@ -141,10 +143,42 @@ describe("latteExpressionCompletions", () => {
     ]);
   });
 
+  it("preserves resolved project filter callable details", async () => {
+    const context = makeContext();
+    context.collectFilters = vi.fn(async () => [
+      {
+        callable: {
+          className: "Crm\\ApplicationModule\\Helpers\\PriceHelper",
+          declaringClassName:
+            "Crm\\ApplicationModule\\Helpers\\PriceHelper",
+          methodName: "convertIntToFloatPrice",
+          parameters: "int $value",
+          returnType: "float",
+        },
+        name: "convertIntToFloatPrice",
+      },
+    ]);
+    const source = "{$amount|convertInt}";
+
+    await expect(
+      latteExpressionCompletions(context, source, source.length - 1),
+    ).resolves.toEqual([
+      {
+        detail:
+          "Crm\\ApplicationModule\\Helpers\\PriceHelper::convertIntToFloatPrice(int $value): float",
+        insertText: "convertIntToFloatPrice",
+        kind: "filter",
+        label: "convertIntToFloatPrice",
+        replaceEnd: source.length - 1,
+        replaceStart: source.indexOf("convertInt"),
+      },
+    ]);
+  });
+
   it("drops filter completions when the root goes stale during project filter collection", async () => {
     let active = true;
     const context = makeContext({ active: () => active });
-    context.collectFilterNames = vi.fn(async () => {
+    context.collectFilters = vi.fn(async () => {
       active = false;
 
       return [];

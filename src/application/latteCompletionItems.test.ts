@@ -88,6 +88,37 @@ describe("latteFilterCompletions", () => {
     ]);
   });
 
+  it("shows resolved callable signatures for project filters", () => {
+    expect(
+      latteFilterCompletions(
+        { end: 8, prefix: "pri", start: 5 },
+        10,
+        [
+          {
+            callable: {
+              className: "App\\Helpers\\PriceHelper",
+              declaringClassName: "App\\Helpers\\PriceHelper",
+              methodName: "process",
+              parameters: "float $price, ?string $currency = null",
+              returnType: "string",
+            },
+            name: "price",
+          },
+        ],
+      ),
+    ).toEqual([
+      {
+        detail:
+          "App\\Helpers\\PriceHelper::process(float $price, ?string $currency = null): string",
+        insertText: "price",
+        kind: "filter",
+        label: "price",
+        replaceEnd: 8,
+        replaceStart: 5,
+      },
+    ]);
+  });
+
   it("filters filters by prefix, caps results and preserves replacement range", () => {
     expect(
       latteFilterCompletions(

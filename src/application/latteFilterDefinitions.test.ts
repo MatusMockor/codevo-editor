@@ -77,6 +77,19 @@ function makeContext({
       openPhpMethodTarget: vi.fn(async () => true),
       openTarget: vi.fn(async () => true),
       readFileContent: vi.fn(async () => configSource),
+      resolvePhpReceiverCompletions: vi.fn(async () => [
+        {
+          declaringClassName: "App\\Filters\\UserDateFilter",
+          isStatic: true,
+          name: "format",
+          parameters: "string $value",
+          returnType: "string",
+        },
+      ]),
+      synthesizeTypedReceiverSource: vi.fn((variableName, typeName) => ({
+        position: { column: 1, lineNumber: 3 },
+        source: `<?php\n/** @var \\${typeName} $${variableName} */\n$${variableName}->`,
+      })),
     },
     isRequestedRootActive: isActive,
     loadFilterRegistrations: vi.fn(async () => [
@@ -175,7 +188,7 @@ describe("resolveLatteFilterDefinition", () => {
     expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
   });
 
-  it("opens a same-file NEON filter registration before its callable service method", async () => {
+  it("opens a same-file NEON callable service method before its registration", async () => {
     const context = makeContext({ configSource: CALLABLE_CONFIG_SOURCE });
     context.loadFilterRegistrations = vi.fn(async () => [
       {
@@ -196,15 +209,14 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
-    expect(context.deps.openTarget).toHaveBeenCalledWith(
-      "/ws/app/config/common.neon",
-      { column: 24, lineNumber: 3 },
-      "UserDate",
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
-    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 
-  it("opens a cross-file NEON filter registration without resolving project config", async () => {
+  it("opens a cross-file NEON callable using the project service type", async () => {
     const context = makeContext({
       configSource: CROSS_FILE_CALLABLE_CONFIG_SOURCE,
     });
@@ -233,16 +245,15 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
-    expect(context.loadProjectConfig).not.toHaveBeenCalled();
-    expect(context.deps.openTarget).toHaveBeenCalledWith(
-      "/ws/app/config/filters.neon",
-      { column: 20, lineNumber: 4 },
-      "UserDate",
+    expect(context.loadProjectConfig).toHaveBeenCalledOnce();
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
-    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 
-  it("opens a cross-file NEON filter registration before resolving aliases", async () => {
+  it("resolves cross-file NEON aliases before opening the callable", async () => {
     const context = makeContext({
       configSource: CROSS_FILE_CALLABLE_CONFIG_SOURCE,
     });
@@ -271,12 +282,11 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
-    expect(context.deps.openTarget).toHaveBeenCalledWith(
-      "/ws/app/config/filters.neon",
-      { column: 20, lineNumber: 4 },
-      "UserDate",
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
-    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 
   it("opens the NEON filter registration when project config has no service type", async () => {
@@ -315,7 +325,7 @@ describe("resolveLatteFilterDefinition", () => {
     );
   });
 
-  it("opens the registration without resolving project config for callable metadata", async () => {
+  it("opens the resolved project callable while the root stays active", async () => {
     let active = true;
     const context = makeContext({
       active: () => active,
@@ -347,16 +357,15 @@ describe("resolveLatteFilterDefinition", () => {
     ).resolves.toBe(true);
 
     expect(active).toBe(true);
-    expect(context.loadProjectConfig).not.toHaveBeenCalled();
-    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
-    expect(context.deps.openTarget).toHaveBeenCalledWith(
-      "/ws/app/config/filters.neon",
-      { column: 20, lineNumber: 4 },
-      "UserDate",
+    expect(context.loadProjectConfig).toHaveBeenCalledOnce();
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 
-  it("opens an @self NEON filter registration before its callable", async () => {
+  it("opens an @self NEON callable before its registration", async () => {
     const context = makeContext();
     context.loadFilterRegistrations = vi.fn(async () => [
       {
@@ -380,17 +389,16 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
-    expect(context.deps.openTarget).toHaveBeenCalledWith(
-      "/ws/app/config/common.neon",
-      { column: 20, lineNumber: 4 },
-      "UserDate",
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
-    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 
-  it("falls back to the NEON callable when the registration target cannot be opened", async () => {
+  it("falls back to the NEON registration when the callable cannot be opened", async () => {
     const context = makeContext();
-    context.deps.openTarget = vi.fn(async () => false);
+    context.deps.openPhpMethodTarget = vi.fn(async () => false);
     context.loadFilterRegistrations = vi.fn(async () => [
       {
         methodName: "format",
@@ -449,7 +457,7 @@ describe("resolveLatteFilterDefinition", () => {
     );
   });
 
-  it("opens an external PHP extension filter registration before its callable method", async () => {
+  it("opens an external PHP extension callable method before its registration", async () => {
     const context = makeContext({
       configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
     });
@@ -473,12 +481,126 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a class-string registration for a non-static method", async () => {
+    const context = makeContext({
+      configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
+    });
+    context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Filters\\UserDateFilter",
+        name: "format",
+        parameters: "string $value",
+        returnType: "string",
+      },
+    ]);
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callableKind: "static" as const,
+        callableOffset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("format"),
+        methodName: "format",
+        name: "UserDate",
+        offset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/Latte/AppLatteExtension.php",
+        serviceClassName: "App\\Filters\\UserDateFilter",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
     expect(context.deps.openTarget).toHaveBeenCalledWith(
       "/ws/app/Latte/AppLatteExtension.php",
       { column: 14, lineNumber: 7 },
       "UserDate",
     );
-    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+  });
+
+  it("opens the inherited declaring class for a valid static callable", async () => {
+    const context = makeContext({
+      configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
+    });
+    context.deps.resolvePhpReceiverCompletions = vi.fn(async () => [
+      {
+        declaringClassName: "App\\Filters\\BaseDateFilter",
+        isStatic: true,
+        name: "format",
+        parameters: "string $value",
+        returnType: "string",
+      },
+    ]);
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callableKind: "static" as const,
+        methodName: "format",
+        name: "UserDate",
+        offset: EXTERNAL_CALLABLE_EXTENSION_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/Latte/AppLatteExtension.php",
+        serviceClassName: "App\\Filters\\ChildDateFilter",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\BaseDateFilter",
+      "format",
+    );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
+  });
+
+  it("falls back to registration for an unresolved inherited $this callable", async () => {
+    const context = makeContext({ configSource: EXTENSION_SOURCE });
+    context.deps.openPhpMethodTarget = vi.fn(async () => false);
+    context.loadFilterRegistrations = vi.fn(async () => [
+      {
+        callableKind: "instance" as const,
+        methodName: "inheritedMethod",
+        name: "UserDate",
+        offset: EXTENSION_SOURCE.indexOf("UserDate"),
+        path: "/ws/app/Latte/AppLatteExtension.php",
+        serviceClassName: "App\\Latte\\ProjectExtension",
+      },
+    ]);
+    const source = "{$createdAt|UserDate}";
+
+    await expect(
+      resolveLatteFilterDefinition(
+        context,
+        source,
+        offsetAfter(source, "User"),
+      ),
+    ).resolves.toBe(true);
+
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Latte\\ProjectExtension",
+      "inheritedMethod",
+    );
+    expect(context.deps.openTarget).toHaveBeenCalledWith(
+      "/ws/app/Latte/AppLatteExtension.php",
+      { column: 14, lineNumber: 7 },
+      "UserDate",
+    );
   });
 
   it("opens a known core Latte filter method when no project registration matches", async () => {
@@ -525,18 +647,18 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
-    expect(context.deps.openTarget).toHaveBeenCalledWith(
-      "/ws/app/Latte/AppLatteExtension.php",
-      { column: 14, lineNumber: 7 },
-      "webalize",
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
     expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalledWith(
       "Nette\\Utils\\Strings",
       "webalize",
     );
   });
 
-  it("opens a PHP extension filter key before the external callable method", async () => {
+  it("opens a PHP extension external callable before the filter key", async () => {
     const context = makeContext({
       configSource: EXTERNAL_CALLABLE_EXTENSION_SOURCE,
     });
@@ -560,12 +682,11 @@ describe("resolveLatteFilterDefinition", () => {
       ),
     ).resolves.toBe(true);
 
-    expect(context.deps.openTarget).toHaveBeenCalledWith(
-      "/ws/app/Latte/AppLatteExtension.php",
-      { column: 14, lineNumber: 7 },
-      "UserDate",
+    expect(context.deps.openPhpMethodTarget).toHaveBeenCalledWith(
+      "App\\Filters\\UserDateFilter",
+      "format",
     );
-    expect(context.deps.openPhpMethodTarget).not.toHaveBeenCalled();
+    expect(context.deps.openTarget).not.toHaveBeenCalled();
   });
 
   it("drops stale-root filter registrations after async load", async () => {

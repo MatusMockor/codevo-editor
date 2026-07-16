@@ -2,10 +2,14 @@ import {
   parsePhpClassStructure,
   phpTopLevelTypeDeclarationNames,
 } from "./phpClassStructure";
+import { resolvePhpClassName } from "./phpClassNameResolution";
 import { maskPhpSource } from "./phpSourceMask";
+
+export type LattePhpExtensionCallableKind = "instance" | "static";
 
 export interface LattePhpExtensionFilter {
   callableOffset?: number;
+  callableKind?: LattePhpExtensionCallableKind;
   className?: string;
   methodName?: string;
   name: string;
@@ -14,7 +18,8 @@ export interface LattePhpExtensionFilter {
 }
 
 interface LattePhpExtensionFilterCallable {
-  callableOffset: number;
+  callableOffset?: number;
+  callableKind?: LattePhpExtensionCallableKind;
   className?: string;
   methodName?: string;
   serviceClassName?: string;
@@ -291,15 +296,31 @@ function staticArrayCallable(
       getFiltersBodyStart,
     );
 
-    return callableOffset === undefined ? undefined : { callableOffset };
+    const serviceClassName = containingPhpClassName(
+      source,
+      getFiltersBodyStart,
+    );
+
+    if (!serviceClassName) {
+      return undefined;
+    }
+
+    return {
+      callableKind: "instance",
+      ...(callableOffset === undefined ? {} : { callableOffset }),
+      className: serviceClassName,
+      methodName: thisMethodName,
+      serviceClassName,
+    };
   }
 
-  return staticClassCallable(source, valueStart);
+  return staticClassCallable(source, valueStart, getFiltersBodyStart);
 }
 
 function staticClassCallable(
   source: string,
   valueStart: number,
+  getFiltersBodyStart: number,
 ): LattePhpExtensionFilterCallable | undefined {
   const valueSource = source.slice(valueStart);
   const callable =
@@ -324,13 +345,63 @@ function staticClassCallable(
   }
 
   const callableOffset = valueStart + methodOffsetInMatch;
+  const serviceClassName = resolvedCallableClassName(
+    source,
+    className,
+    getFiltersBodyStart,
+  );
+
+  if (!serviceClassName) {
+    return undefined;
+  }
 
   return {
+    callableKind: "static",
     callableOffset,
     className,
     methodName,
-    serviceClassName: className.replace(/^\\+/, ""),
+    serviceClassName,
   };
+}
+
+function resolvedCallableClassName(
+  source: string,
+  className: string,
+  getFiltersBodyStart: number,
+): string | null {
+  const normalized = className.replace(/^\\+/, "");
+  const lower = normalized.toLowerCase();
+
+  if (lower === "self" || lower === "static") {
+    return containingPhpClassName(source, getFiltersBodyStart);
+  }
+
+  if (lower === "parent") {
+    return null;
+  }
+
+  if (lower.startsWith("namespace\\")) {
+    return resolvePhpClassName(source, normalized.slice("namespace\\".length));
+  }
+
+  return resolvePhpClassName(source, className);
+}
+
+function containingPhpClassName(source: string, offset: number): string | null {
+  const structure = phpClassStructureContainingOffset(source, offset);
+  const className = structure.typeDeclaration?.name;
+
+  if (!className) {
+    return null;
+  }
+
+  const namespace = phpNamespaceName(source);
+  return namespace ? `${namespace}\\${className}` : className;
+}
+
+function phpNamespaceName(source: string): string | null {
+  const match = /^\s*namespace\s+([^;{]+)[;{]/m.exec(source);
+  return match?.[1]?.trim().replace(/^\\+/, "") || null;
 }
 
 function phpMethodNameOffsetInContainingClass(

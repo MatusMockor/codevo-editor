@@ -27,6 +27,7 @@ export function latteProviderRequestContext(
     options.caches,
     deps.workspaceRoot,
     options.inFlight.includeArgumentInFlight,
+    options.inFlight.filterInFlight,
   );
 
   if (options.neonConfigCache) {

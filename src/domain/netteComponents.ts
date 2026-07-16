@@ -164,6 +164,18 @@ export interface NetteDelegatedFormFactoryCreate {
   propertyNameStart: number;
 }
 
+/** A createComponent method that delegates to a typed method parameter. */
+export interface NetteMethodParameterFormFactory {
+  componentName: string;
+  factoryClass: string;
+  factoryClassEnd: number;
+  factoryClassStart: number;
+  methodName: string;
+  parameterName: string;
+  parameterNameEnd: number;
+  parameterNameStart: number;
+}
+
 /** Rich PhpStorm-like facts for one `createComponent<Name>()` factory. */
 export interface NetteCreateComponentFactoryContext
   extends NetteCreateComponentDetection {
@@ -831,13 +843,25 @@ export function netteFormFieldDefinitionsInCreateComponent(
     method,
   );
 
-  if (!delegatedFactory) {
+  if (delegatedFactory) {
+    return netteFormFieldDefinitionsInFactoryCreateMethod(
+      phpSource,
+      delegatedFactory.factoryClass,
+    );
+  }
+
+  const parameterFactory = methodParameterFormFactoryFromCreateComponentMethod(
+    phpSource,
+    method,
+  );
+
+  if (!parameterFactory) {
     return [];
   }
 
   return netteFormFieldDefinitionsInFactoryCreateMethod(
     phpSource,
-    delegatedFactory.factoryClass,
+    parameterFactory.factoryClass,
   );
 }
 
@@ -865,6 +889,27 @@ export function netteDelegatedFormFactoryInCreateComponent(
   return delegatedFormFactoryFromCreateComponentMethod(phpSource, method);
 }
 
+/**
+ * Returns the typed method parameter used by a one-hop delegated form factory.
+ * The parameter and its `$parameter->create()` call must belong to the same
+ * createComponent method.
+ */
+export function netteMethodParameterFormFactoryInCreateComponent(
+  phpSource: string,
+  componentName: string,
+): NetteMethodParameterFormFactory | null {
+  const method = findPhpMethodByName(
+    phpSource,
+    netteCreateComponentMethodName(componentName),
+  );
+
+  if (!method) {
+    return null;
+  }
+
+  return methodParameterFormFactoryFromCreateComponentMethod(phpSource, method);
+}
+
 export function netteDelegatedFormFactoryCreateInCreateComponent(
   phpSource: string,
   componentName: string,
@@ -885,10 +930,11 @@ export function netteDelegatedFormFactoryCreateInCreateComponent(
     return null;
   }
 
-  const delegatedCreate = delegatedFactoryCreateInBody(
+  const delegatedCreate = factoryCreateInBody(
     phpSource,
     body.start,
     body.end,
+    readThisFactoryCreateExpression,
   );
 
   if (!delegatedCreate) {
@@ -1492,6 +1538,13 @@ interface ThisFactoryCreateExpression {
   propertyNameStart: number;
 }
 
+interface ParameterFactoryCreateExpression {
+  next: number;
+  parameterName: string;
+  parameterNameEnd: number;
+  parameterNameStart: number;
+}
+
 interface TypedPropertyDefinition {
   className: string;
   classNameEnd: number;
@@ -1522,7 +1575,12 @@ function delegatedFormFactoryFromCreateComponentMethod(
     return null;
   }
 
-  const delegatedCreate = delegatedFactoryCreateInBody(source, body.start, body.end);
+  const delegatedCreate = factoryCreateInBody(
+    source,
+    body.start,
+    body.end,
+    readThisFactoryCreateExpression,
+  );
 
   if (!delegatedCreate) {
     return null;
@@ -1560,11 +1618,155 @@ function delegatedFormFactoryFromCreateComponentMethod(
   };
 }
 
-function delegatedFactoryCreateInBody(
+function methodParameterFormFactoryFromCreateComponentMethod(
+  source: string,
+  method: PhpMethodDefinition,
+): NetteMethodParameterFormFactory | null {
+  const suffix = createComponentSuffix(method.name);
+
+  if (suffix === null) {
+    return null;
+  }
+
+  const body = phpMethodBodyRange(source, method);
+
+  if (!body) {
+    return null;
+  }
+
+  const parameters = constructorParameterDefinitions(source, method);
+
+  if (parameters.length === 0) {
+    return null;
+  }
+
+  const parameterNames = new Set(
+    parameters.map((parameter) => parameter.parameterName),
+  );
+  const readParameterCreate = (
+    candidateSource: string,
+    from: number,
+    limit: number,
+  ) =>
+    readParameterFactoryCreateExpression(
+      candidateSource,
+      from,
+      limit,
+      parameterNames,
+    );
+  const directCreates = factoryCreatesInBody(
+    source,
+    body.start,
+    body.end,
+    readParameterCreate,
+    false,
+  );
+  const assignedCreates = parameterFactoryOriginsForReturnedLocals(
+    source,
+    body.start,
+    body.end,
+    readParameterCreate,
+  );
+  const delegatedCreates = [...directCreates, ...assignedCreates];
+
+  const parameterNamesUsed = new Set(
+    delegatedCreates.map((create) => create.parameterName),
+  );
+
+  if (parameterNamesUsed.size !== 1) {
+    return null;
+  }
+
+  const delegatedCreate = delegatedCreates[0];
+
+  if (!delegatedCreate) {
+    return null;
+  }
+
+  const parameter = parameters.find(
+    (candidate) => candidate.parameterName === delegatedCreate.parameterName,
+  );
+
+  if (!parameter) {
+    return null;
+  }
+
+  return {
+    componentName: lcfirst(suffix),
+    factoryClass: parameter.className,
+    factoryClassEnd: parameter.classNameEnd,
+    factoryClassStart: parameter.classNameStart,
+    methodName: method.name,
+    parameterName: delegatedCreate.parameterName,
+    parameterNameEnd: delegatedCreate.parameterNameEnd,
+    parameterNameStart: delegatedCreate.parameterNameStart,
+  };
+}
+
+function readParameterFactoryCreateExpression(
   source: string,
   from: number,
   limit: number,
-): ThisFactoryCreateExpression | null {
+  parameterNames: ReadonlySet<string>,
+): ParameterFactoryCreateExpression | null {
+  let index = skipWhitespace(source, from);
+  const parameter = readVariableName(source, index, limit);
+
+  if (!parameter || !parameterNames.has(parameter.name)) {
+    return null;
+  }
+
+  index = skipWhitespace(source, parameter.next);
+
+  if (source.slice(index, index + 2) !== "->") {
+    return null;
+  }
+
+  index = skipWhitespace(source, index + 2);
+  const method = readIdentifierToken(source, index, limit);
+
+  if (!method || method.name !== "create") {
+    return null;
+  }
+
+  index = skipWhitespace(source, method.next);
+
+  if (source[index] !== "(") {
+    return null;
+  }
+
+  const closeParen = matchingParenClose(source, index, limit);
+
+  if (closeParen === null) {
+    return null;
+  }
+
+  return {
+    next: closeParen,
+    parameterName: parameter.name,
+    parameterNameEnd: parameter.end,
+    parameterNameStart: parameter.start,
+  };
+}
+
+function factoryCreateInBody<T extends { next: number }>(
+  source: string,
+  from: number,
+  limit: number,
+  readExpression: (source: string, from: number, limit: number) => T | null,
+): T | null {
+  return factoryCreatesInBody(source, from, limit, readExpression)[0] ?? null;
+}
+
+function factoryCreatesInBody<T extends { next: number }>(
+  source: string,
+  from: number,
+  limit: number,
+  readExpression: (source: string, from: number, limit: number) => T | null,
+  includeAssignedCreates = true,
+): T[] {
+  const creates: T[] = [];
+
   for (let index = from; index < limit; index += 1) {
     const skipped = skipPhpIgnored(source, index, limit);
 
@@ -1573,32 +1775,294 @@ function delegatedFactoryCreateInBody(
       continue;
     }
 
+    const nestedFunctionEnd = nestedFunctionBodyEndAt(source, index, limit);
+
+    if (nestedFunctionEnd !== null) {
+      index = nestedFunctionEnd - 1;
+      continue;
+    }
+
     if (keywordAt(source, index, "return")) {
-      const direct = readReturnThisFactoryCreate(source, index, limit);
+      const direct = readReturnFactoryCreate(
+        source,
+        index,
+        limit,
+        readExpression,
+      );
 
       if (direct) {
-        return direct;
+        creates.push(direct);
       }
     }
 
-    if (source[index] === "$") {
-      const assigned = readAssignedThisFactoryCreateReturn(source, index, limit);
+    if (includeAssignedCreates && source[index] === "$") {
+      const assigned = readAssignedFactoryCreateReturn(
+        source,
+        index,
+        limit,
+        readExpression,
+      );
 
       if (assigned) {
-        return assigned;
+        creates.push(assigned);
       }
+    }
+  }
+
+  return creates;
+}
+
+function parameterFactoryOriginsForReturnedLocals<
+  T extends ParameterFactoryCreateExpression,
+>(
+  source: string,
+  from: number,
+  limit: number,
+  readExpression: (source: string, from: number, limit: number) => T | null,
+): T[] {
+  const returnedLocals = returnedLocalsInOwningScope(source, from, limit);
+
+  if (returnedLocals.length === 0) {
+    return [];
+  }
+
+  const origins: T[] = [];
+
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    const nestedFunctionEnd = nestedFunctionBodyEndAt(source, index, limit);
+
+    if (nestedFunctionEnd !== null) {
+      index = nestedFunctionEnd - 1;
+      continue;
+    }
+
+    if (source[index] !== "$") {
+      continue;
+    }
+
+    const local = readVariableName(source, index, limit);
+
+    if (!local || local.name === "this") {
+      continue;
+    }
+
+    index = skipWhitespace(source, local.next);
+
+    if (source[index] !== "=") {
+      continue;
+    }
+
+    const origin = readExpression(source, index + 1, limit);
+
+    if (!origin) {
+      continue;
+    }
+
+    const afterOrigin = skipWhitespace(source, origin.next);
+
+    if (source[afterOrigin] !== ";") {
+      continue;
+    }
+
+    const reachesReturn = returnedLocals.some(
+      (returned) =>
+        returned.name === local.name &&
+        returned.start > afterOrigin &&
+        !hasNonFactoryLocalAssignment(
+          source,
+          afterOrigin + 1,
+          returned.start - 1,
+          local.name,
+          readExpression,
+        ),
+    );
+
+    if (reachesReturn) {
+      origins.push(origin);
+    }
+  }
+
+  return origins;
+}
+
+function hasNonFactoryLocalAssignment<
+  T extends ParameterFactoryCreateExpression,
+>(
+  source: string,
+  from: number,
+  limit: number,
+  localName: string,
+  readExpression: (source: string, from: number, limit: number) => T | null,
+): boolean {
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    const nestedFunctionEnd = nestedFunctionBodyEndAt(source, index, limit);
+
+    if (nestedFunctionEnd !== null) {
+      index = nestedFunctionEnd - 1;
+      continue;
+    }
+
+    if (source[index] !== "$") {
+      continue;
+    }
+
+    const local = readVariableName(source, index, limit);
+
+    if (!local || local.name !== localName) {
+      continue;
+    }
+
+    const assignment = skipWhitespace(source, local.next);
+
+    if (
+      source[assignment] !== "=" ||
+      source[assignment + 1] === "=" ||
+      source[assignment + 1] === ">"
+    ) {
+      continue;
+    }
+
+    const replacement = readExpression(source, assignment + 1, limit);
+
+    if (!replacement) {
+      return true;
+    }
+
+    const afterReplacement = skipWhitespace(source, replacement.next);
+
+    if (source[afterReplacement] !== ";") {
+      return true;
+    }
+
+    index = afterReplacement;
+  }
+
+  return false;
+}
+
+function returnedLocalsInOwningScope(
+  source: string,
+  from: number,
+  limit: number,
+): IdentifierToken[] {
+  const returnedLocals: IdentifierToken[] = [];
+
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    const nestedFunctionEnd = nestedFunctionBodyEndAt(source, index, limit);
+
+    if (nestedFunctionEnd !== null) {
+      index = nestedFunctionEnd - 1;
+      continue;
+    }
+
+    if (!keywordAt(source, index, "return")) {
+      continue;
+    }
+
+    const variableStart = skipWhitespace(source, index + "return".length);
+    const variable = readVariableName(source, variableStart, limit);
+
+    if (!variable || variable.name === "this") {
+      continue;
+    }
+
+    const afterVariable = skipWhitespace(source, variable.next);
+
+    if (source[afterVariable] === ";") {
+      returnedLocals.push(variable);
+    }
+  }
+
+  return returnedLocals;
+}
+
+function nestedFunctionBodyEndAt(
+  source: string,
+  functionStart: number,
+  limit: number,
+): number | null {
+  if (!keywordAt(source, functionStart, "function")) {
+    return null;
+  }
+
+  const openParen = functionParameterOpenParen(
+    source,
+    functionStart + "function".length,
+    limit,
+  );
+
+  if (openParen === null) {
+    return null;
+  }
+
+  const afterParams = matchingParenClose(source, openParen, limit);
+
+  if (afterParams === null) {
+    return limit;
+  }
+
+  const bodyStart = methodBodyStart(source, afterParams, limit);
+
+  if (bodyStart === null) {
+    return null;
+  }
+
+  return matchingBraceClose(source, bodyStart, limit);
+}
+
+function functionParameterOpenParen(
+  source: string,
+  from: number,
+  limit: number,
+): number | null {
+  for (let index = from; index < limit; index += 1) {
+    const skipped = skipPhpIgnored(source, index, limit);
+
+    if (skipped !== index) {
+      index = skipped - 1;
+      continue;
+    }
+
+    if (source[index] === "(") {
+      return index;
+    }
+
+    if (source[index] === ";" || source[index] === "{") {
+      return null;
     }
   }
 
   return null;
 }
 
-function readReturnThisFactoryCreate(
+function readReturnFactoryCreate<T extends { next: number }>(
   source: string,
   returnStart: number,
   limit: number,
-): ThisFactoryCreateExpression | null {
-  const expression = readThisFactoryCreateExpression(
+  readExpression: (source: string, from: number, limit: number) => T | null,
+): T | null {
+  const expression = readExpression(
     source,
     returnStart + "return".length,
     limit,
@@ -1613,11 +2077,12 @@ function readReturnThisFactoryCreate(
   return source[afterExpression] === ";" ? expression : null;
 }
 
-function readAssignedThisFactoryCreateReturn(
+function readAssignedFactoryCreateReturn<T extends { next: number }>(
   source: string,
   assignmentStart: number,
   limit: number,
-): ThisFactoryCreateExpression | null {
+  readExpression: (source: string, from: number, limit: number) => T | null,
+): T | null {
   const variable = readVariableName(source, assignmentStart, limit);
 
   if (!variable || variable.name === "this") {
@@ -1630,7 +2095,7 @@ function readAssignedThisFactoryCreateReturn(
     return null;
   }
 
-  const expression = readThisFactoryCreateExpression(source, index + 1, limit);
+  const expression = readExpression(source, index + 1, limit);
 
   if (!expression) {
     return null;
@@ -1663,6 +2128,13 @@ function returnsAssignedVariableBeforeReassignment(
 
     if (skipped !== index) {
       index = skipped - 1;
+      continue;
+    }
+
+    const nestedFunctionEnd = nestedFunctionBodyEndAt(source, index, limit);
+
+    if (nestedFunctionEnd !== null) {
+      index = nestedFunctionEnd - 1;
       continue;
     }
 
@@ -1740,9 +2212,9 @@ function readThisFactoryCreateExpression(
     return null;
   }
 
-  const closeParen = matchingParenClose(source, index);
+  const closeParen = matchingParenClose(source, index, limit);
 
-  if (closeParen === null || closeParen > limit) {
+  if (closeParen === null) {
     return null;
   }
 
@@ -3419,10 +3891,14 @@ function phpMethodBodyRange(
   };
 }
 
-function methodBodyStart(source: string, afterParams: number): number | null {
-  for (let index = afterParams; index < source.length; index += 1) {
+function methodBodyStart(
+  source: string,
+  afterParams: number,
+  limit = source.length,
+): number | null {
+  for (let index = afterParams; index < limit; index += 1) {
     const character = source[index];
-    const skipped = skipPhpIgnored(source, index, source.length);
+    const skipped = skipPhpIgnored(source, index, limit);
 
     if (skipped !== index) {
       index = skipped - 1;
@@ -3484,13 +3960,17 @@ function singleNullableUnionMember(tokens: string[]): string | null {
 /**
  * Returns the offset just past the `)` matching the `(` at `openParen`, or
  * `null` when unbalanced. Skips single / double quoted strings so a `)` inside a
- * default-value literal does not close early. Bounded by the source length.
+ * default-value literal does not close early. Bounded by the supplied limit.
  */
-function matchingParenClose(source: string, openParen: number): number | null {
+function matchingParenClose(
+  source: string,
+  openParen: number,
+  limit = source.length,
+): number | null {
   let depth = 0;
   let quote: string | null = null;
 
-  for (let index = openParen; index < source.length; index += 1) {
+  for (let index = openParen; index < limit; index += 1) {
     const character = source[index];
 
     if (quote) {
@@ -3506,7 +3986,7 @@ function matchingParenClose(source: string, openParen: number): number | null {
       continue;
     }
 
-    const skipped = skipPhpIgnored(source, index, source.length);
+    const skipped = skipPhpIgnored(source, index, limit);
 
     if (skipped !== index) {
       index = skipped - 1;
@@ -3537,13 +4017,17 @@ function matchingParenClose(source: string, openParen: number): number | null {
 
 /**
  * Returns the offset just past the `}` matching the `{` at `openBrace`, or the
- * source length when unbalanced. Skips single / double quoted strings. Bounded.
+ * supplied limit when unbalanced. Skips single / double quoted strings.
  */
-function matchingBraceClose(source: string, openBrace: number): number {
+function matchingBraceClose(
+  source: string,
+  openBrace: number,
+  limit = source.length,
+): number {
   let depth = 0;
   let quote: string | null = null;
 
-  for (let index = openBrace; index < source.length; index += 1) {
+  for (let index = openBrace; index < limit; index += 1) {
     const character = source[index];
 
     if (quote) {
@@ -3559,7 +4043,7 @@ function matchingBraceClose(source: string, openBrace: number): number {
       continue;
     }
 
-    const skipped = skipPhpIgnored(source, index, source.length);
+    const skipped = skipPhpIgnored(source, index, limit);
 
     if (skipped !== index) {
       index = skipped - 1;
@@ -3585,7 +4069,7 @@ function matchingBraceClose(source: string, openBrace: number): number {
     }
   }
 
-  return source.length;
+  return limit;
 }
 
 // --- small shared utilities -------------------------------------------------

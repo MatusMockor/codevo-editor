@@ -13,6 +13,7 @@ import {
   netteCreateComponentMethodName,
   netteDelegatedFormFactoryCreateInCreateComponent,
   netteDelegatedFormFactoryInCreateComponent,
+  netteMethodParameterFormFactoryInCreateComponent,
   type NetteFormFieldDefinition,
   netteFormFieldDefinitionsInCreateComponent,
   netteFormFieldDefinitionsInFactoryCreateMethod,
@@ -648,8 +649,13 @@ async function loadDelegatedNetteFormFactoryFields(
     ownerSource,
     componentName,
   );
+  const parameterFactory = netteMethodParameterFormFactoryInCreateComponent(
+    ownerSource,
+    componentName,
+  );
   const factoryClassName =
     typedFactory?.factoryClass ??
+    parameterFactory?.factoryClass ??
     (await delegatedFactoryClassFromProjectConfig(
       context,
       ownerSource,

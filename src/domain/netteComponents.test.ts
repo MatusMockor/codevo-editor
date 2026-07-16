@@ -19,6 +19,7 @@ import {
   netteCreateComponentMethodName,
   netteFormFieldDefinitionsInCreateComponent,
   netteFormFieldDefinitionsInFactoryCreateMethod,
+  netteMethodParameterFormFactoryInCreateComponent,
   nettePresenterLifecycleInfo,
 } from "./netteComponents";
 
@@ -801,6 +802,329 @@ class GatewayPresenter
     expect(
       netteDelegatedFormFactoryInCreateComponent(source, "gatewayForm"),
     ).toBeNull();
+  });
+});
+
+describe("netteMethodParameterFormFactoryInCreateComponent", () => {
+  it("returns the typed parameter called with create in its owning component method", () => {
+    const source = `<?php
+use App\\Forms\\SegmentRecalculationSettingsFormFactory;
+
+class StoredSegmentsPresenter
+{
+    protected function createComponentSegmentRecalculationSettingsForm(
+        SegmentRecalculationSettingsFormFactory $factory,
+    ): Form {
+        $form = $factory->create($this->getParameter('segmentId'));
+        return $form;
+    }
+}
+`;
+    const callNameStart = source.indexOf("factory->create");
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(
+        source,
+        "segmentRecalculationSettingsForm",
+      ),
+    ).toEqual({
+      componentName: "segmentRecalculationSettingsForm",
+      factoryClass: "SegmentRecalculationSettingsFormFactory",
+      factoryClassStart: source.indexOf(
+        "SegmentRecalculationSettingsFormFactory $factory",
+      ),
+      factoryClassEnd:
+        source.indexOf("SegmentRecalculationSettingsFormFactory $factory") +
+        "SegmentRecalculationSettingsFormFactory".length,
+      methodName: "createComponentSegmentRecalculationSettingsForm",
+      parameterName: "factory",
+      parameterNameStart: callNameStart,
+      parameterNameEnd: callNameStart + "factory".length,
+    });
+  });
+
+  it("rejects untyped parameters and typed parameters used outside the owning method", () => {
+    const untyped = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSegmentRecalculationSettingsForm($factory)
+    {
+        return $factory->create();
+    }
+}
+`;
+    const otherMethod = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSegmentRecalculationSettingsForm()
+    {
+        return null;
+    }
+
+    private function build(SegmentRecalculationSettingsFormFactory $factory)
+    {
+        return $factory->create();
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(
+        untyped,
+        "segmentRecalculationSettingsForm",
+      ),
+    ).toBeNull();
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(
+        otherMethod,
+        "segmentRecalculationSettingsForm",
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects distinct typed parameter factories returned conditionally", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(
+        PrimarySettingsFormFactory $primaryFactory,
+        SecondarySettingsFormFactory $secondaryFactory,
+        bool $usePrimary,
+    ): Form {
+        if ($usePrimary) {
+            return $primaryFactory->create();
+        }
+
+        return $secondaryFactory->create();
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toBeNull();
+  });
+
+  it("allows repeated owning-scope returns from the same typed parameter", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(
+        SettingsFormFactory $factory,
+        bool $compact,
+    ): Form {
+        if ($compact) {
+            return $factory->create('compact');
+        }
+
+        return $factory->create('full');
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toMatchObject({
+      factoryClass: "SettingsFormFactory",
+      parameterName: "factory",
+    });
+  });
+
+  it("rejects distinct conditional factory origins assigned to one returned local", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(
+        PrimarySettingsFormFactory $primaryFactory,
+        SecondarySettingsFormFactory $secondaryFactory,
+        bool $usePrimary,
+    ): Form {
+        if ($usePrimary) {
+            $form = $primaryFactory->create();
+        } else {
+            $form = $secondaryFactory->create();
+        }
+
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toBeNull();
+  });
+
+  it("allows repeated conditional assignments from the same typed parameter", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(
+        SettingsFormFactory $factory,
+        bool $compact,
+    ): Form {
+        if ($compact) {
+            $form = $factory->create('compact');
+        } else {
+            $form = $factory->create('full');
+        }
+
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toMatchObject({
+      factoryClass: "SettingsFormFactory",
+      parameterName: "factory",
+    });
+  });
+
+  it("rejects a factory origin killed by a later non-factory assignment", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(SettingsFormFactory $factory)
+    {
+        $form = $factory->create();
+        $form = null;
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toBeNull();
+  });
+
+  it("keeps provenance across a later assignment from the same factory", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(SettingsFormFactory $factory)
+    {
+        $form = $factory->create('initial');
+        $form = $factory->create('final');
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toMatchObject({
+      factoryClass: "SettingsFormFactory",
+      parameterName: "factory",
+    });
+  });
+
+  it("allows an earlier non-factory initialization overwritten by the factory", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(SettingsFormFactory $factory)
+    {
+        $form = null;
+        $form = $factory->create();
+        return $form;
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toMatchObject({
+      factoryClass: "SettingsFormFactory",
+      parameterName: "factory",
+    });
+  });
+
+  it("ignores factory returns inside nested closures and functions", () => {
+    const closureOnly = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(SettingsFormFactory $factory)
+    {
+        $callback = function () use ($factory) {
+            return $factory->create();
+        };
+
+        return null;
+    }
+}
+`;
+    const nestedFunctionOnly = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(SettingsFormFactory $factory)
+    {
+        function buildSettings()
+        {
+            return $factory->create();
+        }
+
+        return null;
+    }
+}
+`;
+    const assignmentReturnedOnlyByClosure = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(SettingsFormFactory $factory)
+    {
+        $form = $factory->create();
+        $callback = function () use ($form) {
+            return $form;
+        };
+
+        return null;
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(closureOnly, "settings"),
+    ).toBeNull();
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(
+        nestedFunctionOnly,
+        "settings",
+      ),
+    ).toBeNull();
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(
+        assignmentReturnedOnlyByClosure,
+        "settings",
+      ),
+    ).toBeNull();
+  });
+
+  it("does not make an owning factory ambiguous with a nested closure factory", () => {
+    const source = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(
+        SettingsFormFactory $factory,
+        PreviewFormFactory $previewFactory,
+    ): Form {
+        $preview = function () use ($previewFactory) {
+            return $previewFactory->create();
+        };
+
+        return $factory->create();
+    }
+}
+`;
+
+    expect(
+      netteMethodParameterFormFactoryInCreateComponent(source, "settings"),
+    ).toMatchObject({
+      factoryClass: "SettingsFormFactory",
+      parameterName: "factory",
+    });
   });
 });
 

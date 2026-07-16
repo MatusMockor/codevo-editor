@@ -30,8 +30,16 @@ describe("lattePhpExtensionFiltersFromSource", () => {
     ].join("\n");
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
-      { name: "userDate", offset: offsetOf(source, "userDate") },
       {
+        callableKind: "instance",
+        className: "ProjectLatteExtension",
+        methodName: "formatUserDate",
+        name: "userDate",
+        offset: offsetOf(source, "userDate"),
+        serviceClassName: "ProjectLatteExtension",
+      },
+      {
+        callableKind: "static",
         callableOffset: offsetOf(
           source,
           "format",
@@ -65,6 +73,7 @@ describe("lattePhpExtensionFiltersFromSource", () => {
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
       {
+        callableKind: "static",
         callableOffset: offsetOf(source, "format"),
         className: "\\App\\Filters\\UserDateFilter",
         methodName: "format",
@@ -73,12 +82,152 @@ describe("lattePhpExtensionFiltersFromSource", () => {
         serviceClassName: "App\\Filters\\UserDateFilter",
       },
       {
+        callableKind: "static",
         callableOffset: offsetOf(source, "formatShort"),
         className: "UserDateFilter",
         methodName: "formatShort",
         name: "shortDate",
         offset: offsetOf(source, "shortDate"),
         serviceClassName: "UserDateFilter",
+      },
+    ]);
+  });
+
+  it("resolves imported and namespace-relative class-string callables", () => {
+    const source = [
+      "<?php",
+      "namespace App\\Latte;",
+      "",
+      "use Vendor\\Filters\\MoneyFilter as ImportedMoney;",
+      "",
+      "final class ProjectLatteExtension extends \\Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'imported' => [ImportedMoney::class, 'format'],",
+      "            'relative' => [LocalFilter::class, 'render'],",
+      "            'fqcn' => [\\GlobalFilters\\RawFilter::class, 'apply'],",
+      "        ];",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      {
+        callableKind: "static",
+        callableOffset: offsetOf(source, "format"),
+        className: "ImportedMoney",
+        methodName: "format",
+        name: "imported",
+        offset: offsetOf(source, "imported"),
+        serviceClassName: "Vendor\\Filters\\MoneyFilter",
+      },
+      {
+        callableKind: "static",
+        callableOffset: offsetOf(source, "render"),
+        className: "LocalFilter",
+        methodName: "render",
+        name: "relative",
+        offset: offsetOf(source, "relative"),
+        serviceClassName: "App\\Latte\\LocalFilter",
+      },
+      {
+        callableKind: "static",
+        callableOffset: offsetOf(source, "apply"),
+        className: "\\GlobalFilters\\RawFilter",
+        methodName: "apply",
+        name: "fqcn",
+        offset: offsetOf(source, "fqcn"),
+        serviceClassName: "GlobalFilters\\RawFilter",
+      },
+    ]);
+  });
+
+  it("resolves $this and self::class to the containing namespaced extension", () => {
+    const source = [
+      "<?php",
+      "namespace App\\Latte;",
+      "",
+      "final class ProjectLatteExtension extends \\Latte\\Extension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'instance' => [$this, 'formatInstance'],",
+      "            'static' => [self::class, 'formatStatic'],",
+      "        ];",
+      "    }",
+      "",
+      "    public function formatInstance(): string",
+      "    {",
+      "        return '';",
+      "    }",
+      "",
+      "    public static function formatStatic(): string",
+      "    {",
+      "        return '';",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      {
+        callableKind: "instance",
+        callableOffset: offsetOf(
+          source,
+          "formatInstance",
+          offsetOf(source, "function formatInstance"),
+        ),
+        className: "App\\Latte\\ProjectLatteExtension",
+        methodName: "formatInstance",
+        name: "instance",
+        offset: offsetOf(source, "instance"),
+        serviceClassName: "App\\Latte\\ProjectLatteExtension",
+      },
+      {
+        callableKind: "static",
+        callableOffset: offsetOf(
+          source,
+          "formatStatic",
+          offsetOf(source, "self::class"),
+        ),
+        className: "self",
+        methodName: "formatStatic",
+        name: "static",
+        offset: offsetOf(source, "static'"),
+        serviceClassName: "App\\Latte\\ProjectLatteExtension",
+      },
+    ]);
+  });
+
+  it("retains $this metadata for a potentially inherited method", () => {
+    const source = [
+      "<?php",
+      "namespace App\\Latte;",
+      "",
+      "final class ProjectLatteExtension extends BaseLatteExtension",
+      "{",
+      "    public function getFilters(): array",
+      "    {",
+      "        return [",
+      "            'inherited' => [$this, 'inheritedMethod'],",
+      "        ];",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+
+    expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
+      {
+        callableKind: "instance",
+        className: "App\\Latte\\ProjectLatteExtension",
+        methodName: "inheritedMethod",
+        name: "inherited",
+        offset: offsetOf(source, "inherited'"),
+        serviceClassName: "App\\Latte\\ProjectLatteExtension",
       },
     ]);
   });
@@ -133,16 +282,28 @@ describe("lattePhpExtensionFiltersFromSource", () => {
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
       {
+        callableKind: "instance",
         callableOffset: offsetOf(
           source,
           "formatInside",
           source.indexOf("function formatInside"),
         ),
+        className: "ProjectLatteExtension",
+        methodName: "formatInside",
         name: "inside",
         offset: offsetOf(source, "inside"),
+        serviceClassName: "ProjectLatteExtension",
       },
-      { name: "missing", offset: offsetOf(source, "missing") },
       {
+        callableKind: "instance",
+        className: "ProjectLatteExtension",
+        methodName: "missingMethod",
+        name: "missing",
+        offset: offsetOf(source, "missing"),
+        serviceClassName: "ProjectLatteExtension",
+      },
+      {
+        callableKind: "static",
         callableOffset: offsetOf(
           source,
           "format",
@@ -185,6 +346,7 @@ describe("lattePhpExtensionFiltersFromSource", () => {
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
       {
+        callableKind: "instance",
         callableOffset: offsetOf(
           source,
           "formatInside",
@@ -193,13 +355,16 @@ describe("lattePhpExtensionFiltersFromSource", () => {
             source.indexOf("class ProjectLatteExtension"),
           ),
         ),
+        className: "ProjectLatteExtension",
+        methodName: "formatInside",
         name: "inside",
         offset: offsetOf(source, "inside"),
+        serviceClassName: "ProjectLatteExtension",
       },
     ]);
   });
 
-  it("does not resolve a callable to a nested function inside getFilters", () => {
+  it("retains containing-class metadata when only a nested function matches", () => {
     const source = [
       "<?php",
       "",
@@ -221,7 +386,14 @@ describe("lattePhpExtensionFiltersFromSource", () => {
     ].join("\n");
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
-      { name: "inside", offset: offsetOf(source, "inside") },
+      {
+        callableKind: "instance",
+        className: "ProjectLatteExtension",
+        methodName: "formatInside",
+        name: "inside",
+        offset: offsetOf(source, "inside"),
+        serviceClassName: "ProjectLatteExtension",
+      },
     ]);
   });
 
@@ -248,13 +420,17 @@ describe("lattePhpExtensionFiltersFromSource", () => {
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
       {
+        callableKind: "instance",
         callableOffset: offsetOf(
           source,
           "func",
           source.indexOf("function func") + "function ".length,
         ),
+        className: "ProjectLatteExtension",
+        methodName: "func",
         name: "short",
         offset: offsetOf(source, "short"),
+        serviceClassName: "ProjectLatteExtension",
       },
     ]);
   });
@@ -276,7 +452,14 @@ describe("lattePhpExtensionFiltersFromSource", () => {
     ].join("\n");
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
-      { name: "plainText", offset: offsetOf(source, "plainText") },
+      {
+        callableKind: "instance",
+        className: "Filters",
+        methodName: "plainText",
+        name: "plainText",
+        offset: offsetOf(source, "plainText"),
+        serviceClassName: "Filters",
+      },
     ]);
   });
 
@@ -306,7 +489,14 @@ describe("lattePhpExtensionFiltersFromSource", () => {
     ].join("\n");
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
-      { name: "inside", offset: offsetOf(source, "inside") },
+      {
+        callableKind: "instance",
+        className: "Filters",
+        methodName: "inside",
+        name: "inside",
+        offset: offsetOf(source, "inside"),
+        serviceClassName: "Filters",
+      },
     ]);
   });
 
@@ -358,7 +548,14 @@ describe("lattePhpExtensionFiltersFromSource", () => {
     ].join("\n");
 
     expect(lattePhpExtensionFiltersFromSource(source)).toEqual([
-      { name: "valid", offset: offsetOf(source, "valid") },
+      {
+        callableKind: "instance",
+        className: "Filters",
+        methodName: "valid",
+        name: "valid",
+        offset: offsetOf(source, "valid"),
+        serviceClassName: "Filters",
+      },
     ]);
   });
 

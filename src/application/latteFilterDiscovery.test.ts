@@ -132,6 +132,19 @@ function latteExtensionSource(...names: string[]): string {
   ].join("\n");
 }
 
+function latteExtensionCallable(source: string, methodName: string) {
+  return {
+    callableKind: "instance" as const,
+    callableOffset: source.indexOf(
+      methodName,
+      source.indexOf(`function ${methodName}`),
+    ),
+    className: "AppLatteExtension",
+    methodName,
+    serviceClassName: "AppLatteExtension",
+  };
+}
+
 function makeContext(
   files: Record<string, string>,
   overrides: Partial<LatteFilterDiscoveryContext> = {},
@@ -323,13 +336,13 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
-        callableOffset: extensionSource.indexOf("money", extensionSource.indexOf("function money")),
+        ...latteExtensionCallable(extensionSource, "money"),
         name: "money",
         offset: extensionSource.indexOf("money"),
         path: `${ROOT}/app/Latte/AppLatteExtension.php`,
       },
       {
-        callableOffset: extensionSource.indexOf("userLabel", extensionSource.indexOf("function userLabel")),
+        ...latteExtensionCallable(extensionSource, "userLabel"),
         name: "userLabel",
         offset: extensionSource.indexOf("userLabel"),
         path: `${ROOT}/app/Latte/AppLatteExtension.php`,
@@ -358,6 +371,7 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
+        callableKind: "static",
         callableOffset: extensionSource.indexOf("format"),
         className: "\\App\\Filters\\UserDateFilter",
         methodName: "format",
@@ -385,10 +399,7 @@ describe("loadLatteFilterRegistrations", () => {
         path: `${ROOT}/app/config/config.neon`,
       },
       {
-        callableOffset: extensionSource.indexOf(
-          "userLabel",
-          extensionSource.indexOf("function userLabel"),
-        ),
+        ...latteExtensionCallable(extensionSource, "userLabel"),
         name: "userLabel",
         offset: extensionSource.indexOf("userLabel"),
         path: `${ROOT}/app/Latte/AppLatteExtension.php`,
@@ -451,10 +462,7 @@ describe("loadLatteFilterRegistrations", () => {
 
     await expect(loadLatteFilterRegistrations(context)).resolves.toEqual([
       {
-        callableOffset: firstPhpSource.indexOf(
-          "firstPhpFilter",
-          firstPhpSource.indexOf("function firstPhpFilter"),
-        ),
+        ...latteExtensionCallable(firstPhpSource, "firstPhpFilter"),
         name: "firstPhpFilter",
         offset: firstPhpSource.indexOf("firstPhpFilter"),
         path: `${ROOT}/app/a/FirstExtension.php`,
@@ -489,10 +497,7 @@ describe("loadLatteFilterRegistrations", () => {
         path: `${ROOT}/app/a/config.neon`,
       },
       {
-        callableOffset: phpSource.indexOf(
-          "phpFilter",
-          phpSource.indexOf("function phpFilter"),
-        ),
+        ...latteExtensionCallable(phpSource, "phpFilter"),
         name: "phpFilter",
         offset: phpSource.indexOf("phpFilter"),
         path: `${ROOT}/app/c/AppLatteExtension.php`,

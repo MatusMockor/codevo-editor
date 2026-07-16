@@ -749,6 +749,137 @@ class GatewayFormFactory
     );
   });
 
+  it("offers ebox form fields from a typed createComponent method parameter", async () => {
+    const presenter = `<?php
+namespace App\\Modules\\SegmentModule\\Presenters;
+
+use App\\Forms\\SegmentRecalculationSettingsFormFactory;
+
+class StoredSegmentsPresenter
+{
+    protected function createComponentSegmentRecalculationSettingsForm(
+        SegmentRecalculationSettingsFormFactory $factory,
+    ): Form {
+        return $factory->create($this->getParameter('segmentId'));
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+use Nette\\Application\\UI\\Form;
+
+class SegmentRecalculationSettingsFormFactory
+{
+    public function create(int $segmentId): Form
+    {
+        $form = new Form();
+        $form->addText('amount', 'Amount');
+        $form->addSelect('unit', 'Unit');
+        $form->addHidden('segment_id', $segmentId);
+        return $form;
+    }
+}
+`;
+    const readPhpClassSource = vi.fn(async (className: string) =>
+      className === "App\\Forms\\SegmentRecalculationSettingsFormFactory"
+        ? {
+            path: `${ROOT}/app/Forms/SegmentRecalculationSettingsFormFactory.php`,
+            source: factory,
+          }
+        : null,
+    );
+    const source = `<form n:name="segmentRecalculationSettingsForm"><input n:name=""></form>`;
+    const offset = source.indexOf(`"></form>`);
+    const completion = latteFormNameCompletionAt(source, offset);
+    const fields = await latteFormNameCompletions(
+      {
+        componentCache: {},
+        deps: {
+          ...deps,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource,
+          resolveDeclaredType: (_source, typeHint) =>
+            typeHint === "SegmentRecalculationSettingsFormFactory"
+              ? "App\\Forms\\SegmentRecalculationSettingsFormFactory"
+              : typeHint,
+        },
+        isRequestedRootActive: () => true,
+        maxCompletions: 100,
+        requestedRoot: ROOT,
+        templateRelativePath:
+          "app/modules/segmentModule/templates/StoredSegments/show.latte",
+        ttlMs: 5000,
+      },
+      source,
+      offset,
+      completion!,
+    );
+
+    expect(fields.map((field) => field.label)).toEqual([
+      "amount",
+      "unit",
+      "segment_id",
+    ]);
+    expect(readPhpClassSource).toHaveBeenCalledWith(
+      "App\\Forms\\SegmentRecalculationSettingsFormFactory",
+    );
+  });
+
+  it("drops method-parameter factory fields when the requested root goes stale", async () => {
+    const presenter = `<?php
+class StoredSegmentsPresenter
+{
+    protected function createComponentSettings(SettingsFormFactory $factory)
+    {
+        return $factory->create();
+    }
+}
+`;
+    const factory = `<?php
+class SettingsFormFactory
+{
+    public function create()
+    {
+        $form = new Form();
+        $form->addText('amount');
+        return $form;
+    }
+}
+`;
+    let active = true;
+    const source = `<form n:name="settings"><input n:name="am"></form>`;
+    const offset = source.indexOf("am") + "am".length;
+    const completion = latteFormNameCompletionAt(source, offset);
+
+    await expect(
+      latteFormNameCompletions(
+        {
+          componentCache: {},
+          deps: {
+            ...deps,
+            readFileContent: vi.fn(async () => presenter),
+            readPhpClassSource: vi.fn(async () => {
+              active = false;
+              return {
+                path: `${ROOT}/app/Forms/SettingsFormFactory.php`,
+                source: factory,
+              };
+            }),
+          },
+          isRequestedRootActive: () => active,
+          maxCompletions: 100,
+          requestedRoot: ROOT,
+          templateRelativePath: "app/templates/StoredSegments/show.latte",
+          ttlMs: 5000,
+        },
+        source,
+        offset,
+        completion!,
+      ),
+    ).resolves.toEqual([]);
+  });
+
   it("offers n:name fields from NEON service-typed delegated form factories", async () => {
     const presenter = `<?php
 namespace App\\UI\\Home;
@@ -1649,6 +1780,68 @@ class GatewayFormFactory
       `${ROOT}/app/Forms/GatewayFormFactory.php`,
       expect.objectContaining({ lineNumber: 11 }),
       "email",
+    );
+  });
+
+  it("opens ebox field definitions from a typed createComponent method parameter", async () => {
+    const openTarget = vi.fn(async () => true);
+    const presenter = `<?php
+namespace App\\Modules\\SegmentModule\\Presenters;
+
+use App\\Forms\\SegmentRecalculationSettingsFormFactory;
+
+class StoredSegmentsPresenter
+{
+    protected function createComponentSegmentRecalculationSettingsForm(
+        SegmentRecalculationSettingsFormFactory $factory,
+    ): Form {
+        return $factory->create($this->getParameter('segmentId'));
+    }
+}
+`;
+    const factory = `<?php
+namespace App\\Forms;
+
+class SegmentRecalculationSettingsFormFactory
+{
+    public function create(): Form
+    {
+        $form = new Form();
+        $form->addText('amount');
+        $form->addSelect('unit');
+        $form->addHidden('segment_id');
+        return $form;
+    }
+}
+`;
+    const source = `<form n:name="segmentRecalculationSettingsForm"><input n:name="segment_id"></form>`;
+
+    await expect(
+      resolveNetteControlDefinition(
+        {
+          ...deps,
+          openTarget,
+          readFileContent: vi.fn(async () => presenter),
+          readPhpClassSource: vi.fn(async () => ({
+            path: `${ROOT}/app/Forms/SegmentRecalculationSettingsFormFactory.php`,
+            source: factory,
+          })),
+          resolveDeclaredType: (_source, typeHint) =>
+            typeHint === "SegmentRecalculationSettingsFormFactory"
+              ? "App\\Forms\\SegmentRecalculationSettingsFormFactory"
+              : typeHint,
+        },
+        ROOT,
+        () => true,
+        netteControlReferenceAt(source, source.indexOf("segment_id") + 2),
+        "app/modules/segmentModule/templates/StoredSegments/show.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openTarget).toHaveBeenCalledWith(
+      `${ROOT}/app/Forms/SegmentRecalculationSettingsFormFactory.php`,
+      expect.objectContaining({ lineNumber: 11 }),
+      "segment_id",
     );
   });
 

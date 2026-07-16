@@ -5,11 +5,12 @@ import {
 } from "./latteExpressionDetection";
 import type { LatteFilterRegistrationTarget } from "./latteFilterDiscovery";
 import { latteCoreFilterMethodTarget } from "./latteCoreFilterTargets";
-import { neonServiceTypeInSource } from "./netteNeonConfigFacts";
+import type { NeonProjectConfig } from "./neonProjectConfigDiscovery";
 import {
-  resolveNeonServiceTypeFromMaps,
-  type NeonProjectConfig,
-} from "./neonProjectConfigDiscovery";
+  resolveLatteFilterCallableClassName,
+  resolveLatteFilterCallableMetadata,
+  type LatteFilterCallableResolutionDependencies,
+} from "./latteFilterCallableResolution";
 
 export interface LatteFilterDefinitionDependencies {
   openPhpMethodTarget(
@@ -22,6 +23,10 @@ export interface LatteFilterDefinitionDependencies {
     label: string,
   ): Promise<boolean>;
   readFileContent(path: string): Promise<string>;
+  resolvePhpReceiverCompletions?:
+    LatteFilterCallableResolutionDependencies["resolvePhpReceiverCompletions"];
+  synthesizeTypedReceiverSource?:
+    LatteFilterCallableResolutionDependencies["synthesizeTypedReceiverSource"];
 }
 
 export interface LatteFilterDefinitionContext {
@@ -57,16 +62,13 @@ export async function resolveLatteFilterDefinition(
     return openLatteCoreFilterMethodTarget(context, reference.name);
   }
 
-  const inlineCallableOpened = await openInlineObjectCallableMethodTarget(
-    context,
-    target,
-  );
+  const callableOpened = await openLatteCallableMethodTarget(context, target);
 
   if (!context.isRequestedRootActive()) {
     return false;
   }
 
-  if (inlineCallableOpened) {
+  if (callableOpened) {
     return true;
   }
 
@@ -101,45 +103,7 @@ export async function resolveLatteFilterDefinition(
     return true;
   }
 
-  if (!context.isRequestedRootActive()) {
-    return false;
-  }
-
-  if (isInlineObjectCallable(target)) {
-    return false;
-  }
-
-  return openLatteCallableMethodTarget(context, target, targetSource);
-}
-
-async function openInlineObjectCallableMethodTarget(
-  context: LatteFilterDefinitionContext,
-  target: LatteFilterRegistrationTarget,
-): Promise<boolean> {
-  if (!isInlineObjectCallable(target)) {
-    return false;
-  }
-
-  return context.deps.openPhpMethodTarget(
-    target.callable.serviceClassName,
-    target.callable.methodName,
-  );
-}
-
-function isInlineObjectCallable(
-  target: LatteFilterRegistrationTarget,
-): target is LatteFilterRegistrationTarget & {
-  callable: {
-    methodName: string;
-    serviceClassName: string;
-    serviceName?: undefined;
-  };
-} {
-  if (!target.callable?.serviceClassName) {
-    return false;
-  }
-
-  return target.callable.serviceName === undefined;
+  return false;
 }
 
 async function openLatteCoreFilterMethodTarget(
@@ -158,59 +122,64 @@ async function openLatteCoreFilterMethodTarget(
 async function openLatteCallableMethodTarget(
   context: LatteFilterDefinitionContext,
   target: LatteFilterRegistrationTarget,
-  targetSource: string,
 ): Promise<boolean> {
   const methodName = target.methodName ?? target.callable?.methodName;
-  const serviceClassName =
-    target.serviceClassName ?? target.callable?.serviceClassName;
-  const serviceName = target.serviceName ?? target.callable?.serviceName;
 
   if (!methodName) {
     return false;
   }
 
-  const serviceType = serviceClassName
-    ? serviceClassName
-    : serviceName
-      ? await resolveLatteNeonCallableServiceType(
-          context,
-          targetSource,
-          serviceName,
-        )
-      : null;
+  if (target.callableKind === "static") {
+    return openStaticLatteCallableMethodTarget(context, target);
+  }
 
-  if (!serviceType) {
+  const serviceType = await resolveLatteFilterCallableClassName(
+    context,
+    target,
+  );
+
+  if (!context.isRequestedRootActive() || !serviceType) {
     return false;
   }
 
   return context.deps.openPhpMethodTarget(serviceType, methodName);
 }
 
-async function resolveLatteNeonCallableServiceType(
+async function openStaticLatteCallableMethodTarget(
   context: LatteFilterDefinitionContext,
-  targetSource: string,
-  serviceName: string,
-): Promise<string | null> {
-  const sameFileType = neonServiceTypeInSource(targetSource, serviceName);
+  target: LatteFilterRegistrationTarget,
+): Promise<boolean> {
+  const resolvePhpReceiverCompletions =
+    context.deps.resolvePhpReceiverCompletions;
+  const synthesizeTypedReceiverSource =
+    context.deps.synthesizeTypedReceiverSource;
 
-  if (sameFileType) {
-    return sameFileType;
+  if (!resolvePhpReceiverCompletions || !synthesizeTypedReceiverSource) {
+    return false;
   }
 
-  if (!context.loadProjectConfig) {
-    return null;
+  const callable = await resolveLatteFilterCallableMetadata(
+    {
+      deps: {
+        readFileContent: context.deps.readFileContent,
+        resolvePhpReceiverCompletions,
+        synthesizeTypedReceiverSource,
+      },
+      isRequestedRootActive: context.isRequestedRootActive,
+      ...(context.loadProjectConfig
+        ? { loadProjectConfig: context.loadProjectConfig }
+        : {}),
+    },
+    target,
+  );
+
+  if (!context.isRequestedRootActive() || !callable) {
+    return false;
   }
 
-  const config = await context.loadProjectConfig();
-
-  if (!context.isRequestedRootActive()) {
-    return null;
-  }
-
-  return resolveNeonServiceTypeFromMaps(
-    serviceName,
-    config.serviceNameTypes,
-    config.serviceAliases,
+  return context.deps.openPhpMethodTarget(
+    callable.declaringClassName,
+    callable.methodName,
   );
 }
 

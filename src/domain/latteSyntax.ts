@@ -115,13 +115,8 @@ export const LATTE_N_ATTRIBUTE_EXPRESSION_NAMES: readonly string[] = [
   "n:while",
 ];
 
-const MAX_LATTE_N_ATTRIBUTE_SCAN = 4000;
-
-const LATTE_N_ATTRIBUTE_EXPRESSION_OPENING = new RegExp(
-  `(?:^|[\\s<])(${[...LATTE_N_ATTRIBUTE_EXPRESSION_NAMES]
-    .sort((left, right) => right.length - left.length)
-    .join("|")})\\s*=\\s*(["'])`,
-  "g",
+const LATTE_N_ATTRIBUTE_EXPRESSION_NAME_SET = new Set(
+  LATTE_N_ATTRIBUTE_EXPRESSION_NAMES,
 );
 
 /** The kinds of variable declarations a `.latte` template can carry inline. */
@@ -337,34 +332,7 @@ function innermostLatteNAttributeExpressionSpanFromMaskedRegions(
     return null;
   }
 
-  const lineStart = source.lastIndexOf("\n", clamped - 1) + 1;
-  const windowStart = Math.max(lineStart, clamped - MAX_LATTE_N_ATTRIBUTE_SCAN);
-  const window = source.slice(windowStart, clamped);
-  let innermost: LatteNAttributeExpressionSpan | null = null;
-
-  for (const match of window.matchAll(LATTE_N_ATTRIBUTE_EXPRESSION_OPENING)) {
-    const attributeName = match[1] ?? "";
-    const quote = match[2] ?? "";
-    const expressionStart = windowStart + match.index + match[0].length;
-
-    if (isOffsetInsideLatteMaskedRegion(maskedRegions, expressionStart)) {
-      continue;
-    }
-
-    const contentEnd = latteNAttributeValueEnd(source, expressionStart, quote);
-
-    if (contentEnd === null) {
-      continue;
-    }
-
-    if (clamped < expressionStart || clamped > contentEnd) {
-      continue;
-    }
-
-    innermost = { attributeName, contentEnd, expressionStart };
-  }
-
-  return innermost;
+  return latteNAttributeExpressionInHtmlAt(source, maskedRegions, clamped);
 }
 
 /**
@@ -612,24 +580,274 @@ export function latteVariableDeclarations(
 
 // --- internal helpers -------------------------------------------------------
 
-function latteNAttributeValueEnd(
+interface LatteHtmlAttributeValue {
+  end: number;
+  name: string;
+  quoted: boolean;
+  start: number;
+}
+
+interface LatteHtmlStartTag {
+  attributes: LatteHtmlAttributeValue[];
+  end: number;
+}
+
+function latteNAttributeExpressionInHtmlAt(
+  source: string,
+  maskedRegions: readonly LatteMaskedRegion[],
+  offset: number,
+): LatteNAttributeExpressionSpan | null {
+  let index = 0;
+
+  while (index <= offset && index < source.length) {
+    if (source.startsWith("<!--", index)) {
+      const close = source.indexOf("-->", index + 4);
+
+      if (close < 0) {
+        return null;
+      }
+
+      index = close + 3;
+      continue;
+    }
+
+    if (source[index] !== "<") {
+      index += 1;
+      continue;
+    }
+
+    const tag = scanLatteHtmlStartTagAt(source, index);
+
+    if (!tag) {
+      index += 1;
+      continue;
+    }
+
+    if (offset > tag.end) {
+      index = tag.end + 1;
+      continue;
+    }
+
+    for (const attribute of tag.attributes) {
+      if (offset < attribute.start || offset > attribute.end) {
+        continue;
+      }
+
+      if (isOffsetInsideLatteMaskedRegion(maskedRegions, attribute.start)) {
+        return null;
+      }
+
+      if (LATTE_N_ATTRIBUTE_EXPRESSION_NAME_SET.has(attribute.name)) {
+        if (!attribute.quoted) {
+          return null;
+        }
+
+        return {
+          attributeName: attribute.name,
+          contentEnd: attribute.end,
+          expressionStart: attribute.start,
+        };
+      }
+
+      if (attribute.name !== "n:name") {
+        return null;
+      }
+
+      const value = source.slice(attribute.start, attribute.end);
+
+      if (!hasLatteVariableReference(value)) {
+        return null;
+      }
+
+      return {
+        attributeName: attribute.name,
+        contentEnd: attribute.end,
+        expressionStart: attribute.start,
+      };
+    }
+
+    return null;
+  }
+
+  return null;
+}
+
+function scanLatteHtmlStartTagAt(
+  source: string,
+  tagStart: number,
+): LatteHtmlStartTag | null {
+  let index = tagStart + 1;
+
+  if (!/[A-Za-z]/.test(source[index] ?? "")) {
+    return null;
+  }
+
+  while (/[A-Za-z0-9:_-]/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  const attributes: LatteHtmlAttributeValue[] = [];
+
+  while (index < source.length) {
+    index = skipHtmlWhitespace(source, index);
+
+    if (source[index] === ">") {
+      return { attributes, end: index };
+    }
+
+    if (source[index] === "/" && source[index + 1] === ">") {
+      return { attributes, end: index + 1 };
+    }
+
+    const nameStart = index;
+
+    while (isHtmlAttributeNameCharacter(source[index] ?? "")) {
+      index += 1;
+    }
+
+    if (index === nameStart) {
+      return { attributes: [], end: malformedHtmlTagEnd(source, index) };
+    }
+
+    const name = source.slice(nameStart, index);
+    index = skipHtmlWhitespace(source, index);
+
+    if (source[index] !== "=") {
+      continue;
+    }
+
+    index = skipHtmlWhitespace(source, index + 1);
+    const quote = source[index];
+
+    if (quote === '"' || quote === "'") {
+      const valueStart = index + 1;
+      const valueEnd = quotedHtmlAttributeValueEnd(source, valueStart, quote);
+
+      if (valueEnd === null) {
+        return { attributes: [], end: malformedHtmlTagEnd(source, valueStart) };
+      }
+
+      attributes.push({ end: valueEnd, name, quoted: true, start: valueStart });
+      index = valueEnd + 1;
+      continue;
+    }
+
+    const valueStart = index;
+    const valueEnd = unquotedHtmlAttributeValueEnd(source, valueStart);
+
+    if (valueEnd === null) {
+      return { attributes: [], end: malformedHtmlTagEnd(source, valueStart) };
+    }
+
+    if (valueEnd === valueStart) {
+      return { attributes: [], end: malformedHtmlTagEnd(source, valueStart) };
+    }
+
+    attributes.push({ end: valueEnd, name, quoted: false, start: valueStart });
+    index = valueEnd;
+  }
+
+  return { attributes: [], end: source.length };
+}
+
+function skipHtmlWhitespace(source: string, from: number): number {
+  let index = from;
+
+  while (/\s/.test(source[index] ?? "")) {
+    index += 1;
+  }
+
+  return index;
+}
+
+function isHtmlAttributeNameCharacter(character: string): boolean {
+  return character !== "" && !/[\s=/>]/.test(character);
+}
+
+function quotedHtmlAttributeValueEnd(
   source: string,
   valueStart: number,
   quote: string,
 ): number | null {
   for (let index = valueStart; index < source.length; index += 1) {
-    const char = source[index];
+    const character = source[index];
 
-    if (char === quote) {
+    if (character === quote) {
       return index;
     }
 
-    if (char === "\n") {
+    if (character === "\n") {
       return null;
     }
   }
 
   return null;
+}
+
+function unquotedHtmlAttributeValueEnd(
+  source: string,
+  valueStart: number,
+): number | null {
+  for (let index = valueStart; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+
+    if (/\s|>/.test(character)) {
+      return index;
+    }
+
+    if (character === '"' || character === "'" || character === "<") {
+      return null;
+    }
+  }
+
+  return source.length;
+}
+
+function malformedHtmlTagEnd(source: string, from: number): number {
+  const close = source.indexOf(">", from);
+
+  if (close < 0) {
+    return source.length;
+  }
+
+  return close;
+}
+
+function hasLatteVariableReference(value: string): boolean {
+  let quote: string | null = null;
+  let index = 0;
+
+  while (index < value.length) {
+    const char = value[index];
+
+    if (quote) {
+      if (char === "\\") {
+        index += 2;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      index += 1;
+      continue;
+    }
+
+    if (char === "$" && /[A-Za-z_]/.test(value[index + 1] ?? "")) {
+      return true;
+    }
+
+    index += 1;
+  }
+
+  return false;
 }
 
 function isOffsetInsideLatteMaskedRegion(

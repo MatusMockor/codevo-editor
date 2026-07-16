@@ -44,6 +44,7 @@ import type {
   LatteIntelligenceDependencies,
 } from "./latteIntelligenceContracts";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { ResolvedLatteProjectFilter } from "./latteFilterCallableResolution";
 
 const LATTE_VIEW_DATA_CACHE_TTL_MS = 5_000;
 const LATTE_VIEW_DATA_SEARCH_LIMIT = 200;
@@ -68,7 +69,9 @@ const inheritedViewDataStateByCache = new WeakMap<
 >();
 
 export interface LatteExpressionResolutionContext {
-  collectProjectFilterNames(): Promise<readonly string[]>;
+  collectProjectFilters(
+    prefix: string,
+  ): Promise<readonly ResolvedLatteProjectFilter[]>;
   readonly currentTemplateRelativePath: string;
   deps: LatteIntelligenceDependencies;
   forTemplate(relativePath: string): LatteExpressionResolutionContext;
@@ -170,7 +173,7 @@ function latteExpressionCompletionContext(
   context: LatteExpressionResolutionContext,
 ) {
   return {
-    collectFilterNames: context.collectProjectFilterNames,
+    collectFilters: context.collectProjectFilters,
     collectVariableCandidates: (source: string, offset: number) =>
       collectLatteVariableCandidates(context, source, offset),
     deps: context.deps,

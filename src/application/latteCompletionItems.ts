@@ -4,6 +4,7 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type {
   LatteFilterCompletionContext,
 } from "./latteExpressionDetection";
+import type { ResolvedLatteProjectFilter } from "./latteFilterCallableResolution";
 
 /**
  * The Monaco icon bucket a Latte completion maps to: tag -> keyword,
@@ -60,21 +61,21 @@ export function latteTagCompletions(
 export function latteFilterCompletions(
   filter: LatteFilterCompletionContext,
   maxCompletions: number,
-  projectFilterNames: readonly string[] = [],
+  projectFilters: readonly (string | ResolvedLatteProjectFilter)[] = [],
 ): LatteCompletionItem[] {
   const normalizedPrefix = filter.prefix.toLowerCase();
   const builtinNames = new Set(LATTE_BUILTIN_FILTERS);
-  const projectNames = projectFilterNames.filter(
-    (name) => !builtinNames.has(name),
-  );
+  const projectEntries = projectFilters
+    .map((filter) => (typeof filter === "string" ? { name: filter } : filter))
+    .filter((filter) => !builtinNames.has(filter.name));
   const entries = [
     ...LATTE_BUILTIN_FILTERS.map((name) => ({
       detail: "Latte filter",
       name,
     })),
-    ...projectNames.map((name) => ({
-      detail: "Project Latte filter",
-      name,
+    ...projectEntries.map((filter) => ({
+      detail: latteProjectFilterCompletionDetail(filter),
+      name: filter.name,
     })),
   ];
 
@@ -89,6 +90,23 @@ export function latteFilterCompletions(
       replaceEnd: filter.end,
       replaceStart: filter.start,
     }));
+}
+
+function latteProjectFilterCompletionDetail(
+  filter: ResolvedLatteProjectFilter,
+): string {
+  if (!filter.callable) {
+    return "Project Latte filter";
+  }
+
+  const parameters = filter.callable.parameters
+    ? `(${filter.callable.parameters})`
+    : "()";
+  const returnType = filter.callable.returnType
+    ? `: ${filter.callable.returnType}`
+    : "";
+
+  return `${filter.callable.declaringClassName}::${filter.callable.methodName}${parameters}${returnType}`;
 }
 
 export function latteMemberCompletionItem(

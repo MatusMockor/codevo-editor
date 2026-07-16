@@ -7,9 +7,9 @@ import {
 } from "../domain/nettePathResolution";
 import {
   loadLatteFilterRegistrations,
-  loadLatteFilterNames,
   type LatteFilterDiscoveryContext,
 } from "./latteFilterDiscovery";
+import { resolveLatteProjectFilters } from "./latteFilterCallableResolution";
 import type { NetteControlCompletionContext } from "./netteControlContracts";
 import type {
   NettePresenterDiscoveryContext,
@@ -54,8 +54,22 @@ export function latteExpressionResolutionContext(
   const isRequestedRootActive = () =>
     request.isRequestedRootActive() && generationFence.isCurrent();
   const shared = {
-    collectProjectFilterNames: () =>
-      loadLatteFilterNames(latteFilterDiscoveryContext(options, request)),
+    collectProjectFilters: async (prefix: string) => {
+      const registrations = await loadLatteFilterRegistrations(
+        latteFilterDiscoveryContext(options, request),
+      );
+
+      if (!isRequestedRootActive()) {
+        return [];
+      }
+
+      return resolveLatteProjectFilters(
+        latteFilterCallableResolutionContext(options, request),
+        registrations.filter((registration) =>
+          registration.name.toLowerCase().startsWith(prefix.toLowerCase()),
+        ),
+      );
+    },
     deps: request.deps,
     frameworkCapabilities: options.frameworkCapabilities,
     isRequestedRootActive,
@@ -139,10 +153,16 @@ export function latteFilterDefinitionContext(
   request: LatteProviderRequestContext,
 ) {
   const { neonConfigCache, neonConfigInFlight } = options;
+  const generation = captureLatteExpressionGeneration(
+    options.caches,
+    request.requestedRoot,
+  );
+  const isRequestedRootActive = () =>
+    request.isRequestedRootActive() && generation.isCurrent();
 
   return {
     deps: request.deps,
-    isRequestedRootActive: request.isRequestedRootActive,
+    isRequestedRootActive,
     loadFilterRegistrations: () =>
       loadLatteFilterRegistrations(latteFilterDiscoveryContext(options, request)),
     ...(neonConfigCache && neonConfigInFlight
@@ -155,7 +175,40 @@ export function latteFilterDefinitionContext(
                 ...request.deps,
                 getActiveDocument: () => null,
               },
-              isRequestedRootActive: request.isRequestedRootActive,
+              isRequestedRootActive,
+              requestedRoot: request.requestedRoot,
+            }),
+        }
+      : {}),
+  };
+}
+
+function latteFilterCallableResolutionContext(
+  options: LatteProviderFlowFactoryOptions,
+  request: LatteProviderRequestContext,
+) {
+  const { neonConfigCache, neonConfigInFlight } = options;
+  const generation = captureLatteExpressionGeneration(
+    options.caches,
+    request.requestedRoot,
+  );
+  const isRequestedRootActive = () =>
+    request.isRequestedRootActive() && generation.isCurrent();
+
+  return {
+    deps: request.deps,
+    isRequestedRootActive,
+    ...(neonConfigCache && neonConfigInFlight
+      ? {
+          loadProjectConfig: () =>
+            loadNeonProjectConfig({
+              configCache: neonConfigCache,
+              configInFlight: neonConfigInFlight,
+              deps: {
+                ...request.deps,
+                getActiveDocument: () => null,
+              },
+              isRequestedRootActive,
               requestedRoot: request.requestedRoot,
             }),
         }
@@ -167,12 +220,18 @@ export function latteFilterDiscoveryContext(
   options: LatteProviderFlowFactoryOptions,
   request: LatteProviderRequestContext,
 ): LatteFilterDiscoveryContext {
+  const generation = captureLatteExpressionGeneration(
+    options.caches,
+    request.requestedRoot,
+  );
+
   return {
     cache: options.caches.filterCache,
     deps: request.deps,
     inFlight: options.inFlight.filterInFlight,
     isDirectorySkipped: isLatteScanSkippedDirectory,
-    isRequestedRootActive: request.isRequestedRootActive,
+    isRequestedRootActive: () =>
+      request.isRequestedRootActive() && generation.isCurrent(),
     maxConfigFiles: MAX_LATTE_FILTER_CONFIG_FILES,
     maxDepth: MAX_LATTE_SCAN_DEPTH,
     requestedRoot: request.requestedRoot,

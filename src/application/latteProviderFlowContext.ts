@@ -118,6 +118,7 @@ export function evictLatteProviderCaches(
   caches: LatteProviderFlowCaches,
   requestedRoot: string | null,
   includeArgumentInFlight: NetteIncludedTemplateArgumentInFlight,
+  filterInFlight: LatteFilterInFlight,
 ): void {
   fenceEvictedIncludeArgumentRoots(caches, requestedRoot);
   evictLatteInheritedViewDataCaches(caches.viewDataCache, requestedRoot);
@@ -128,7 +129,21 @@ export function evictLatteProviderCaches(
   evictOtherRootCacheEntries(caches.templateTypeCache, requestedRoot);
   evictOtherRootCacheEntries(caches.filterCache, requestedRoot);
   evictOtherRootCacheEntries(caches.includeArgumentCache, requestedRoot);
+  evictFilterInFlight(filterInFlight, requestedRoot);
   evictIncludeArgumentInFlight(includeArgumentInFlight, requestedRoot);
+}
+
+function evictFilterInFlight(
+  inFlight: LatteFilterInFlight,
+  requestedRoot: string | null,
+): void {
+  for (const key of inFlight.keys()) {
+    if (keyRootMatches(key, requestedRoot)) {
+      continue;
+    }
+
+    inFlight.delete(key);
+  }
 }
 
 function fenceEvictedIncludeArgumentRoots(

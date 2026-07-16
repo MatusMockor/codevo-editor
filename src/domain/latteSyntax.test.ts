@@ -216,7 +216,7 @@ describe("innermostLatteNAttributeExpressionSpanAt", () => {
     ).toBeNull();
   });
 
-  it("returns null for excluded n:href and n:name attributes", () => {
+  it("returns null for excluded n:href and static n:name attributes", () => {
     const hrefSource = '<a n:href="Product:show">x</a>';
     const nameSource = '<form n:name="signInForm">x</form>';
 
@@ -230,6 +230,94 @@ describe("innermostLatteNAttributeExpressionSpanAt", () => {
       innermostLatteNAttributeExpressionSpanAt(
         nameSource,
         offsetAfter(nameSource, "signIn"),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    ['<label n:name="$container[\'from\']">From</label>', "$container['from']"],
+    ["<label n:name='$container[\"from\"]'>From</label>", '$container["from"]'],
+    ["<label n:name=$container[from]>From</label>", "$container[from]"],
+    [
+      "<label n:name=$container[from]\nclass=field>From</label>",
+      "$container[from]",
+    ],
+  ])("returns a span for a dynamic n:name value in %s", (source, value) => {
+    const span = innermostLatteNAttributeExpressionSpanAt(
+      source,
+      offsetAfter(source, "$container"),
+    );
+
+    expect(span?.attributeName).toBe("n:name");
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe(value);
+  });
+
+  it("detects an unquoted dynamic n:name at the opening dollar offset", () => {
+    const source = "<label n:name=$container[from]>From</label>";
+    const dollar = source.indexOf("$");
+    const span = innermostLatteNAttributeExpressionSpanAt(source, dollar);
+
+    expect(span?.expressionStart).toBe(dollar);
+    expect(source.slice(span!.expressionStart, span!.contentEnd)).toBe(
+      "$container[from]",
+    );
+  });
+
+  it.each([
+    '<label n:name="field">Field</label>',
+    "<label n:name='field'>Field</label>",
+    "<label n:name=field>Field</label>",
+    '<label n:name="field[\'$container\']">Field</label>',
+  ])("keeps a static n:name value out of expression detection: %s", (source) => {
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(source, offsetAfter(source, "field")),
+    ).toBeNull();
+  });
+
+  it("returns null for a dynamic n:name inside a Latte comment", () => {
+    const source = '{* <label n:name="$container[\'from\']">From</label> *}';
+
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(
+        source,
+        offsetAfter(source, "$container"),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    '<!-- <label n:name="$container[from]">From</label> -->',
+    'example n:name="$container[from]" in plain text',
+    '<div title=\'example n:name="$container[from]"\'>Text</div>',
+  ])("requires a real HTML n:name attribute: %s", (source) => {
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(
+        source,
+        offsetAfter(source, "$container"),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    '<label n:name=$container">From</label>',
+    "<label n:name=$container'>From</label>",
+  ])("rejects a dangling quote in an unquoted n:name value: %s", (source) => {
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(
+        source,
+        offsetAfter(source, "$container"),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
+    '<label data-n:name="$container[\'from\']">From</label>',
+    '<label n:name-extra="$container[\'from\']">From</label>',
+  ])("returns null for a dynamic n:name lookalike: %s", (source) => {
+    expect(
+      innermostLatteNAttributeExpressionSpanAt(
+        source,
+        offsetAfter(source, "$container"),
       ),
     ).toBeNull();
   });
@@ -328,6 +416,17 @@ describe("innermostLatteExpressionContextAt", () => {
   it("falls back to an n-attribute context matching the attribute detector", () => {
     const source = '<div n:if="$user->name">x</div>';
     const offset = offsetAfter(source, "->");
+    const context = innermostLatteExpressionContextAt(source, offset);
+
+    expect(context?.kind).toBe("nAttribute");
+    expect(context?.span).toEqual(
+      innermostLatteNAttributeExpressionSpanAt(source, offset),
+    );
+  });
+
+  it("returns an n-attribute context for a dynamic n:name value", () => {
+    const source = '<label n:name="$container[\'from\']">From</label>';
+    const offset = offsetAfter(source, "$container");
     const context = innermostLatteExpressionContextAt(source, offset);
 
     expect(context?.kind).toBe("nAttribute");

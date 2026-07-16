@@ -13,8 +13,12 @@ describe("latteProviderFlowContext", () => {
   it("evicts every per-root provider cache except the requested root", () => {
     const caches = providerCaches();
     const inFlight = includeArgumentInFlight();
+    const filterInFlight = new Map([
+      ["/active/", Promise.resolve([])],
+      ["/stale", Promise.resolve([])],
+    ]);
 
-    evictLatteProviderCaches(caches, "/active/", inFlight);
+    evictLatteProviderCaches(caches, "/active/", inFlight, filterInFlight);
 
     expect(Object.keys(caches.componentCache)).toEqual(["/active"]);
     expect(Object.keys(caches.filterCache)).toEqual(["/active"]);
@@ -26,6 +30,7 @@ describe("latteProviderFlowContext", () => {
     expect(Array.from(inFlight.graphs.keys())).toEqual([
       "/active\0generation",
     ]);
+    expect(Array.from(filterInFlight.keys())).toEqual(["/active/"]);
     expect(Object.keys(caches.presenterCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateCache)).toEqual(["/active"]);
     expect(Object.keys(caches.templateTypeCache)).toEqual(["/active"]);
@@ -35,8 +40,12 @@ describe("latteProviderFlowContext", () => {
   it("clears provider caches when no workspace is active", () => {
     const caches = providerCaches();
     const inFlight = includeArgumentInFlight();
+    const filterInFlight = new Map([
+      ["/active", Promise.resolve([])],
+      ["/stale", Promise.resolve([])],
+    ]);
 
-    evictLatteProviderCaches(caches, null, inFlight);
+    evictLatteProviderCaches(caches, null, inFlight, filterInFlight);
 
     expect(caches.componentCache).toEqual({});
     expect(caches.filterCache).toEqual({});
@@ -46,6 +55,7 @@ describe("latteProviderFlowContext", () => {
       "/stale": 3,
     });
     expect(inFlight.graphs.size).toBe(0);
+    expect(filterInFlight.size).toBe(0);
     expect(caches.presenterCache).toEqual({});
     expect(caches.templateCache).toEqual({});
     expect(caches.templateTypeCache).toEqual({});

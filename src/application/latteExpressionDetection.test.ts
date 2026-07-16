@@ -113,6 +113,50 @@ describe("latteExpressionCompletionTargetAt", () => {
     });
   });
 
+  it.each([
+    '<label n:name="$cont[\'from\']">From</label>',
+    "<label n:name='$cont[\"from\"]'>From</label>",
+    "<label n:name=$cont[from]>From</label>",
+  ])("detects variable completion inside a dynamic n:name value: %s", (source) => {
+    const target = latteExpressionCompletionTargetAt(
+      source,
+      offsetAfter(source, "$cont"),
+    );
+
+    expect(target).toEqual({
+      kind: "variable",
+      variable: {
+        end: offsetAfter(source, "$cont"),
+        prefix: "cont",
+        start: source.indexOf("$cont"),
+      },
+    });
+  });
+
+  it.each([
+    '{* <label n:name="$cont[\'from\']">From</label> *}',
+    '<!-- <label n:name="$cont[from]">From</label> -->',
+    'example n:name="$cont[from]" in plain text',
+    '<div title=\'example n:name="$cont[from]"\'>Text</div>',
+    '<label n:name=$cont">From</label>',
+    '<label data-n:name="$cont[\'from\']">From</label>',
+    '<label n:name-extra="$cont[\'from\']">From</label>',
+  ])("rejects non-attribute dynamic n:name lookalikes: %s", (source) => {
+    expect(
+      latteExpressionCompletionTargetAt(source, offsetAfter(source, "$cont")),
+    ).toBeNull();
+  });
+
+  it.each([
+    '<label n:name="field">Field</label>',
+    "<label n:name='field'>Field</label>",
+    "<label n:name=field>Field</label>",
+  ])("keeps static n:name values out of generic completion: %s", (source) => {
+    expect(
+      latteExpressionCompletionTargetAt(source, offsetAfter(source, "field")),
+    ).toBeNull();
+  });
+
   it("does not offer expression completions inside an n:href attribute value", () => {
     const source = '<a n:href="Product:sh">x</a>';
 
@@ -183,6 +227,22 @@ describe("latte variable and member reference detection", () => {
       receiverExpression: "$invoice",
       variableName: "invoice",
     });
+  });
+
+  it("finds only the variable in a dynamic n:name array access", () => {
+    const source = '<label n:name="$container[\'from\']">From</label>';
+
+    expect(latteVariableNameAt(source, offsetAfter(source, "$cont"))).toBe(
+      "container",
+    );
+    expect(latteVariableNameAt(source, offsetAfter(source, "from"))).toBeNull();
+    expect(latteMemberReferenceAt(source, offsetAfter(source, "from"))).toBeNull();
+  });
+
+  it("finds an unquoted n:name variable at its opening dollar offset", () => {
+    const source = "<label n:name=$container[from]>From</label>";
+
+    expect(latteVariableNameAt(source, source.indexOf("$"))).toBe("container");
   });
 });
 
