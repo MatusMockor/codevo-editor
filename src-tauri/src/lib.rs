@@ -28,6 +28,7 @@ mod php_test_run;
 pub mod php_tree;
 mod phpstan;
 mod pint;
+mod prettier;
 mod project;
 mod runtime_observability;
 mod search;
@@ -842,6 +843,37 @@ async fn run_pint_format_with_trust(
     }
 
     pint::run_pint_format(root_path, relative_path).await
+}
+
+#[tauri::command]
+async fn run_prettier_format(
+    root_path: String,
+    relative_path: String,
+    content: String,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<prettier::PrettierFormatResponse, String> {
+    run_prettier_format_with_trust(root_path, relative_path, content, &trust).await
+}
+
+async fn run_prettier_format_with_trust(
+    root_path: String,
+    relative_path: String,
+    content: String,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<prettier::PrettierFormatResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(prettier::PrettierFormatResponse::Unavailable {
+            message: Some("Trust this workspace to run Prettier.".to_string()),
+        });
+    }
+
+    prettier::run_prettier_format(root_path, relative_path, content).await
 }
 
 #[tauri::command]
@@ -6435,7 +6467,8 @@ mod tests {
         register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
         revert_git_hunk, reword_git_commit, run_artisan_route_list_with_trust,
         run_eslint_analysis_with_trust, run_php_tests_junit_with_trust,
-        run_phpstan_analysis_with_trust, run_pint_format_with_trust, save_git_stash, search_files,
+        run_phpstan_analysis_with_trust, run_pint_format_with_trust,
+        run_prettier_format_with_trust, save_git_stash, search_files,
         stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
         switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
         workspace_text_edits_from_language_server, LegacyLocalHistoryWorkspaceAuthorizer,
@@ -6460,6 +6493,7 @@ mod tests {
     use crate::php_test_run::PhpTestRunResponse;
     use crate::phpstan::PhpStanAnalysisResponse;
     use crate::pint::PintFormatResponse;
+    use crate::prettier::PrettierFormatResponse;
     use crate::trust::WorkspaceTrustService;
     use crate::workspace::FileEntryKind;
     use crate::workspace_file_commands::WorkspaceEditResult;
@@ -9552,6 +9586,49 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_workspace_blocks_prettier_before_dispatch() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_workspace("prettier-untrusted");
+        let binary = root.join("node_modules/.bin/prettier");
+        let marker = root.join("prettier-ran");
+        fs::create_dir_all(binary.parent().expect("binary parent"))
+            .expect("create binary directory");
+        fs::write(
+            &binary,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .expect("write prettier sentinel");
+        let mut permissions = fs::metadata(&binary)
+            .expect("prettier metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary, permissions).expect("make prettier executable");
+        fs::write(root.join(".prettierrc"), "{}").expect("write prettier config");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let response = tauri::async_runtime::block_on(run_prettier_format_with_trust(
+            path_string(&root),
+            "src/app.ts".to_string(),
+            "const value=1".to_string(),
+            &trust,
+        ))
+        .expect("prettier response");
+
+        assert_eq!(
+            response,
+            PrettierFormatResponse::Unavailable {
+                message: Some("Trust this workspace to run Prettier.".to_string()),
+            }
+        );
+        assert!(!marker.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     #[test]
     fn untrusted_workspace_blocks_artisan_route_list() {
         let root = temp_workspace("artisan-untrusted");
@@ -9949,6 +10026,7 @@ pub fn run() {
             run_eslint_analysis,
             run_phpstan_analysis,
             run_pint_format,
+            run_prettier_format,
             run_artisan_route_list,
             run_php_tests_junit,
             search_files,
