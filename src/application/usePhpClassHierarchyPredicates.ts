@@ -670,7 +670,6 @@ function phpClassSourceHasDeclaredConstant(
   const escapedConstantName = escapeRegExp(normalizedConstantName);
   const declaredConstantPattern = new RegExp(
     String.raw`(?:^|\n)\s*(?:(?:final|public|protected|private)\s+)*const\b[^\r\n;]*\b${escapedConstantName}\b`,
-    "i",
   );
 
   return declaredConstantPattern.test(source);

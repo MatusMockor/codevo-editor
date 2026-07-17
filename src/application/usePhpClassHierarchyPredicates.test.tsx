@@ -198,6 +198,36 @@ class Comment
     harness.unmount();
   });
 
+  it("treats constant names as case-sensitive", async () => {
+    const harness = renderHook(
+      makeOptions({
+        "App\\Models\\Comment": {
+          source: `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public const STATUS = 'approved';
+}
+`,
+        },
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .phpClassHierarchyHasConstant("App\\Models\\Comment", "STATUS"),
+    ).resolves.toBe(true);
+    await expect(
+      harness
+        .api()
+        .phpClassHierarchyHasConstant("App\\Models\\Comment", "Status"),
+    ).resolves.toBe(false);
+
+    harness.unmount();
+  });
+
   it("keeps method lookups case-insensitive", async () => {
     const harness = renderHook(
       makeOptions({

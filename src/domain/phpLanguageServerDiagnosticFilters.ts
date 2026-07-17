@@ -683,7 +683,6 @@ export function phpTraitHostConstantDiagnosticContext(
       String.raw`(?:self|static|parent)\s*::\s*${escapeRegExp(
         constantName,
       )}\b(?!\s*\()`,
-      "i",
     ).test(line)
   ) {
     return null;
@@ -966,9 +965,7 @@ export function phpTraitHostConstantDiagnosticKey(
   traitName: string,
   constantName: string,
 ): string {
-  return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#::${constantName
-    .trim()
-    .toLowerCase()}`;
+  return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#::${constantName.trim()}`;
 }
 
 export function phpMethodDiagnosticKey(

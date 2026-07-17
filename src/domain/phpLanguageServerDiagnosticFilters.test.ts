@@ -1779,6 +1779,98 @@ trait ResolvesHostState
     ).toEqual([unresolved]);
   });
 
+  it("keeps trait host-constant diagnostics whose constant differs only by case", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return static::Host_State;
+    }
+}
+`;
+    const misspelled = diagnostic({
+      character: 24,
+      line: 7,
+      message:
+        'Constant "Host_State" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      phpTraitHostConstantDiagnosticKey(
+        "App\\Support\\ResolvesHostState",
+        "Host_State",
+      ),
+    ).not.toBe(
+      phpTraitHostConstantDiagnosticKey(
+        "App\\Support\\ResolvesHostState",
+        "HOST_STATE",
+      ),
+    );
+    expect(
+      phpTraitHostConstantDiagnosticContext(
+        source,
+        diagnostic({
+          character: 24,
+          line: 7,
+          message:
+            'Constant "HOST_STATE" does not exist on trait "App\\Support\\ResolvesHostState"',
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [misspelled], {
+        contextualTraitHostConstants: new Set([
+          phpTraitHostConstantDiagnosticKey(
+            "App\\Support\\ResolvesHostState",
+            "HOST_STATE",
+          ),
+        ]),
+        path: "/workspace/app/Support/ResolvesHostState.php",
+      }),
+    ).toEqual([misspelled]);
+  });
+
+  it("suppresses trait host-constant diagnostics for confirmed mixed-case constants", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait ResolvesHostState
+{
+    public function resolve(): string
+    {
+        return self::HostState;
+    }
+}
+`;
+    const unresolved = diagnostic({
+      character: 21,
+      line: 7,
+      message:
+        'Constant "HostState" does not exist on trait "App\\Support\\ResolvesHostState"',
+    });
+
+    expect(
+      phpTraitHostConstantDiagnosticContext(source, unresolved),
+    ).toEqual({
+      constantName: "HostState",
+      traitName: "App\\Support\\ResolvesHostState",
+    });
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        contextualTraitHostConstants: new Set([
+          phpTraitHostConstantDiagnosticKey(
+            "App\\Support\\ResolvesHostState",
+            "HostState",
+          ),
+        ]),
+        path: "/workspace/app/Support/ResolvesHostState.php",
+      }),
+    ).toEqual([]);
+  });
+
   it("suppresses trait host-property diagnostics when host context is confirmed", () => {
     const source = `<?php
 namespace App\\Support;
