@@ -1071,3 +1071,205 @@ describe("hang safety", () => {
     expect(elapsed).toBeLessThan(1000);
   });
 });
+
+describe("nettePresenterLinkCompletionContextAt — named parameters", () => {
+  it("offers a parameter completion context after the target comma in n:href", () => {
+    const source = '<a n:href="Product:show, la">x</a>';
+    const offset = offsetOf(source, "la\">");
+
+    const completion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset + 2,
+      "latte",
+    );
+
+    expect(completion).toEqual({
+      parameter: { target: "Product:show" },
+      prefix: "la",
+      replaceEnd: offset + 2,
+      replaceStart: offset,
+    });
+  });
+
+  it("offers an empty-prefix parameter context right after the comma in {link}", () => {
+    const source = "{link Product:show, }";
+    const offset = offsetOf(source, "}");
+
+    const completion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset,
+      "latte",
+    );
+
+    expect(completion).toEqual({
+      parameter: { target: "Product:show" },
+      prefix: "",
+      replaceEnd: offset,
+      replaceStart: offset,
+    });
+  });
+
+  it("offers a parameter context for a second named parameter in {link}", () => {
+    const source = "{link Product:show, lang: 'en', pa}";
+    const offset = offsetOf(source, "pa}");
+
+    const completion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset + 2,
+      "latte",
+    );
+
+    expect(completion).toEqual({
+      parameter: { target: "Product:show" },
+      prefix: "pa",
+      replaceEnd: offset + 2,
+      replaceStart: offset,
+    });
+  });
+
+  it("keeps a parameter context for a `this` target", () => {
+    const source = '<a n:href="this, lang">x</a>';
+    const offset = offsetOf(source, "lang\"");
+
+    const completion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset + 4,
+      "latte",
+    );
+
+    expect(completion?.parameter).toEqual({ target: "this" });
+    expect(completion?.prefix).toBe("lang");
+  });
+
+  it("returns no parameter context inside a parameter value", () => {
+    const source = "{link Product:show, lang: 'en'}";
+    const offset = offsetOf(source, "en'", 1);
+
+    expect(
+      nettePresenterLinkCompletionContextAt(source, offset, "latte"),
+    ).toBeNull();
+  });
+
+  it("returns no parameter context for a dynamic target", () => {
+    const source = "{link $dest, la}";
+    const offset = offsetOf(source, "la}");
+
+    expect(
+      nettePresenterLinkCompletionContextAt(source, offset + 2, "latte"),
+    ).toBeNull();
+  });
+
+  it("offers an array-key parameter context in a PHP link call", () => {
+    const source = "$this->link('Product:show', ['la']);";
+    const offset = offsetOf(source, "la']");
+
+    const completion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset + 2,
+      "php",
+    );
+
+    expect(completion).toEqual({
+      parameter: { target: "Product:show" },
+      prefix: "la",
+      replaceEnd: offset + 2,
+      replaceStart: offset,
+    });
+  });
+
+  it("offers an array-key parameter context after an existing pair in redirect()", () => {
+    const source = "$this->redirect('Product:show', ['lang' => 'en', 'pa']);";
+    const offset = offsetOf(source, "pa']");
+
+    const completion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset + 2,
+      "php",
+    );
+
+    expect(completion).toEqual({
+      parameter: { target: "Product:show" },
+      prefix: "pa",
+      replaceEnd: offset + 2,
+      replaceStart: offset,
+    });
+  });
+
+  it("returns no parameter context inside an array value literal", () => {
+    const source = "$this->link('Product:show', ['lang' => 'en']);";
+    const offset = offsetOf(source, "en'", 1);
+
+    expect(
+      nettePresenterLinkCompletionContextAt(source, offset, "php"),
+    ).toBeNull();
+  });
+
+  it("keeps the plain target completion context inside the target token", () => {
+    const source = "{link Product:show, lang: 'en'}";
+    const offset = offsetOf(source, "Product:show", 3);
+
+    const completion = nettePresenterLinkCompletionContextAt(
+      source,
+      offset,
+      "latte",
+    );
+
+    expect(completion?.parameter).toBeUndefined();
+    expect(completion?.prefix).toBe("Pro");
+  });
+});
+
+describe("detectLatteLinkAt — named parameters", () => {
+  it("detects the parameter name in an n:href named argument", () => {
+    const source = "<a n:href=\"Product:show, lang: 'en'\">x</a>";
+    const offset = offsetOf(source, "lang", 1);
+
+    const detection = detectLatteLinkAt(source, offset);
+
+    expect(detection?.target).toBe("Product:show");
+    expect(detection?.parameterName).toBe("lang");
+  });
+
+  it("detects the parameter name in a {link} arrow argument", () => {
+    const source = "{link Product:show, lang => 'en'}";
+    const offset = offsetOf(source, "lang", 2);
+
+    const detection = detectLatteLinkAt(source, offset);
+
+    expect(detection?.target).toBe("Product:show");
+    expect(detection?.parameterName).toBe("lang");
+  });
+
+  it("detects a second named parameter after an array value", () => {
+    const source = "{link Product:show, ids: [1, 2], lang: 'en'}";
+    const offset = offsetOf(source, "lang", 1);
+
+    const detection = detectLatteLinkAt(source, offset);
+
+    expect(detection?.parameterName).toBe("lang");
+  });
+
+  it("returns no parameter detection inside a parameter value", () => {
+    const source = "{link Product:show, lang: 'en'}";
+    const offset = offsetOf(source, "en'", 1);
+
+    expect(detectLatteLinkAt(source, offset)).toBeNull();
+  });
+
+  it("returns no parameter detection for a positional argument", () => {
+    const source = "{link Product:show, 5}";
+    const offset = offsetOf(source, "5");
+
+    expect(detectLatteLinkAt(source, offset)).toBeNull();
+  });
+
+  it("keeps the plain target detection without a parameter name", () => {
+    const source = "{link Product:show, lang: 'en'}";
+    const offset = offsetOf(source, "Product:show", 2);
+
+    const detection = detectLatteLinkAt(source, offset);
+
+    expect(detection?.target).toBe("Product:show");
+    expect(detection?.parameterName).toBeUndefined();
+  });
+});

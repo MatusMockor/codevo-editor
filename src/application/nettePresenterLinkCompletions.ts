@@ -1,5 +1,9 @@
 import { nettePresenterLifecycleInfo } from "../domain/netteComponents";
 import {
+  netteActionParametersFromSource,
+  nettePersistentParametersFromSource,
+} from "../domain/nettePersistentParameters";
+import {
   componentClassCandidatePathsForTemplate,
   presenterCandidatePathsForTemplate,
 } from "../domain/nettePathResolution";
@@ -18,7 +22,12 @@ import type {
   NettePresenterLinkDependencies,
 } from "./nettePresenterLinkDiscovery";
 import {
+  collectNetteLinkParameterSources,
+  netteLinkParameterMethodNames,
+} from "./nettePresenterLinkDefinitions";
+import {
   loadNettePresenterFactoryOwnerHierarchy,
+  resolveNettePresenterOwner,
   type NettePresenterResolutionContext,
 } from "./nettePresenterResolution";
 
@@ -42,10 +51,25 @@ export interface NettePresenterLinkCompletionContext
   ): Promise<NetteFactoryTemplateOwner | null>;
 }
 
+export interface NettePresenterLinkCompletionRequest {
+  parameter?: { target: string };
+  prefix: string;
+  replaceEnd: number;
+  replaceStart: number;
+}
+
 export async function lattePresenterLinkCompletions(
   context: NettePresenterLinkCompletionContext,
-  completion: { prefix: string; replaceEnd: number; replaceStart: number },
+  completion: NettePresenterLinkCompletionRequest,
 ): Promise<NettePresenterLinkCompletionItem[]> {
+  if (completion.parameter) {
+    return lattePresenterLinkParameterCompletions(
+      context,
+      completion.parameter.target,
+      completion,
+    );
+  }
+
   const [targets, currentComponentSignalTargets, mappings] = await Promise.all([
     loadNettePresenterLinkTargets(context),
     loadCurrentComponentSignalTargets(context),
@@ -91,6 +115,128 @@ export async function lattePresenterLinkCompletions(
       replaceEnd: completion.replaceEnd,
       replaceStart: completion.replaceStart,
     }));
+}
+
+const PERSISTENT_PARAMETER_DETAIL = "persistent";
+const ACTION_PARAMETER_DETAIL = "action parameter";
+
+/**
+ * Named-parameter completions for a link target: the target action method's
+ * parameters first (declaration order), then the persistent parameters of the
+ * target presenter/component INCLUDING inherited ones, alphabetically. An
+ * action parameter shadows a same-named persistent parameter — Nette fills the
+ * action parameter in that case.
+ */
+async function lattePresenterLinkParameterCompletions(
+  context: NettePresenterLinkCompletionContext,
+  target: string,
+  completion: { prefix: string; replaceEnd: number; replaceStart: number },
+): Promise<NettePresenterLinkCompletionItem[]> {
+  const parsed = context.frameworkCapabilities.parsePresenterLinkTarget(target);
+
+  if (!parsed) {
+    return [];
+  }
+
+  const owner = await resolveNettePresenterOwner(context, parsed);
+
+  if (!isParameterCompletionCurrent(context) || !owner) {
+    return [];
+  }
+
+  const sources = await collectNetteLinkParameterSources(context, owner);
+
+  if (!isParameterCompletionCurrent(context)) {
+    return [];
+  }
+
+  const methodNames = netteLinkParameterMethodNames(
+    context.frameworkCapabilities,
+    parsed,
+  );
+  const actionParameterNames = linkActionParameterNames(sources, methodNames);
+  const persistentNames = linkPersistentParameterNames(
+    sources,
+    actionParameterNames,
+  );
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return [
+    ...actionParameterNames.map((name) => ({
+      detail: ACTION_PARAMETER_DETAIL,
+      name,
+    })),
+    ...persistentNames.map((name) => ({
+      detail: PERSISTENT_PARAMETER_DETAIL,
+      name,
+    })),
+  ]
+    .filter((entry) => entry.name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, LATTE_MAX_COMPLETIONS)
+    .map((entry) => ({
+      detail: entry.detail,
+      insertText: entry.name,
+      kind: "link" as const,
+      label: entry.name,
+      replaceEnd: completion.replaceEnd,
+      replaceStart: completion.replaceStart,
+    }));
+}
+
+function linkActionParameterNames(
+  sources: readonly { source: string }[],
+  methodNames: readonly string[],
+): string[] {
+  if (methodNames.length === 0) {
+    return [];
+  }
+
+  for (const source of sources) {
+    const parameters = netteActionParametersFromSource(
+      source.source,
+      methodNames,
+    );
+
+    if (parameters) {
+      return dedupeNames(parameters.map((parameter) => parameter.name));
+    }
+  }
+
+  return [];
+}
+
+function linkPersistentParameterNames(
+  sources: readonly { source: string }[],
+  excluded: readonly string[],
+): string[] {
+  const excludedNames = new Set(excluded);
+  const names = new Set<string>();
+
+  for (const source of sources) {
+    for (const parameter of nettePersistentParametersFromSource(source.source)) {
+      if (!excludedNames.has(parameter.name)) {
+        names.add(parameter.name);
+      }
+    }
+  }
+
+  return Array.from(names).sort((left, right) => left.localeCompare(right));
+}
+
+function dedupeNames(names: readonly string[]): string[] {
+  return Array.from(new Set(names));
+}
+
+function isParameterCompletionCurrent(
+  context: NettePresenterLinkCompletionContext,
+): boolean {
+  if (!context.isRequestedRootActive()) {
+    return false;
+  }
+
+  return context.isPresenterMappingGenerationCurrent
+    ? context.isPresenterMappingGenerationCurrent()
+    : true;
 }
 
 async function loadCurrentComponentSignalTargets(

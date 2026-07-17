@@ -99,7 +99,7 @@ describe("lattePresenterLinkCompletions", () => {
               return "<?php class CrossSellAdminPresenter { public function actionShow(): void {} }";
             }
 
-            throw new Error(`missing ${path}`);
+            return Promise.reject(new Error(`missing ${path}`));
           }),
           toRelativePath: (root, path) => path.replace(`${root}/`, ""),
         },
@@ -153,7 +153,7 @@ describe("lattePresenterLinkCompletions", () => {
               return "<?php class CrossSellTransferTimeline {}";
             }
 
-            throw new Error(`missing ${path}`);
+            return Promise.reject(new Error(`missing ${path}`));
           }),
         },
         loadFactoryTemplateOwner,
@@ -180,7 +180,7 @@ class HomePresenter
         return [{ kind: "file" as const, path: `${ROOT}/app/HomePresenter.php` }];
       }
 
-      throw new Error(`missing ${path}`);
+      return Promise.reject(new Error(`missing ${path}`));
     });
     const readFileContent = vi.fn(async () => source);
 
@@ -356,7 +356,7 @@ function emptyContext(currentRelativePath: string) {
       listDirectory: vi.fn(async () => []),
       openTarget: vi.fn(async () => true),
       readFileContent: vi.fn(async () => {
-        throw new Error("missing");
+        return Promise.reject(new Error("missing"));
       }),
       toRelativePath: (root: string, path: string) => path.replace(`${root}/`, ""),
     },
@@ -378,3 +378,201 @@ function emptyContext(currentRelativePath: string) {
     ttlMs: 5_000,
   };
 }
+
+describe("lattePresenterLinkCompletions — named parameters", () => {
+  const productSource = `<?php
+class ProductPresenter extends BasePresenter
+{
+    #[Persistent]
+    public ?string $lang = null;
+
+    public function actionShow(string $sort): void {}
+}`;
+  const basePresenterSource = `<?php
+class BasePresenter
+{
+    #[Persistent]
+    public int $page = 1;
+}`;
+
+  function parameterContext(
+    overrides: { readFileContent?: (path: string) => Promise<string> } = {},
+  ) {
+    const base = emptyContext("app/Presenters/HomePresenter.php");
+
+    return {
+      ...base,
+      deps: {
+        ...base.deps,
+        readFileContent: vi.fn(async (path: string) => {
+          if (path === `${ROOT}/app/Presenters/ProductPresenter.php`) {
+            return productSource;
+          }
+
+          return Promise.reject(new Error(`missing ${path}`));
+        }),
+        readPhpClassSource: vi.fn(async (className: string) =>
+          className === "BasePresenter"
+            ? {
+                path: `${ROOT}/app/Presenters/BasePresenter.php`,
+                source: basePresenterSource,
+              }
+            : null,
+        ),
+        resolveDeclaredType: (_source: string, typeHint: string | null) =>
+          typeHint,
+        ...overrides,
+      },
+    };
+  }
+
+  it("offers action parameters and inherited persistent parameters for a target", async () => {
+    const completions = await lattePresenterLinkCompletions(parameterContext(), {
+      parameter: { target: "Product:show" },
+      prefix: "",
+      replaceEnd: 21,
+      replaceStart: 21,
+    });
+
+    expect(
+      completions.map((completion) => [completion.label, completion.detail]),
+    ).toEqual([
+      ["sort", "action parameter"],
+      ["lang", "persistent"],
+      ["page", "persistent"],
+    ]);
+    expect(completions[0]).toMatchObject({
+      insertText: "sort",
+      kind: "link",
+      replaceEnd: 21,
+      replaceStart: 21,
+    });
+  });
+
+  it("filters parameter completions by prefix", async () => {
+    const completions = await lattePresenterLinkCompletions(parameterContext(), {
+      parameter: { target: "Product:show" },
+      prefix: "pa",
+      replaceEnd: 23,
+      replaceStart: 21,
+    });
+
+    expect(completions.map((completion) => completion.label)).toEqual(["page"]);
+  });
+
+  it("lets an action parameter win over a same-named persistent parameter", async () => {
+    const clashSource = `<?php
+class ProductPresenter
+{
+    #[Persistent]
+    public ?string $lang = null;
+
+    public function actionShow(string $lang): void {}
+}`;
+    const completions = await lattePresenterLinkCompletions(
+      parameterContext({
+        readFileContent: vi.fn(async () => clashSource),
+      }),
+      {
+        parameter: { target: "Product:show" },
+        prefix: "",
+        replaceEnd: 21,
+        replaceStart: 21,
+      },
+    );
+
+    expect(
+      completions.map((completion) => [completion.label, completion.detail]),
+    ).toEqual([["lang", "action parameter"]]);
+  });
+
+  it("offers persistent parameters of the current presenter for a `this` target", async () => {
+    const base = emptyContext("app/Presenters/ProductPresenter.php");
+    const completions = await lattePresenterLinkCompletions(
+      {
+        ...base,
+        deps: {
+          ...base.deps,
+          readFileContent: vi.fn(async (path: string) => {
+            if (path === `${ROOT}/app/Presenters/ProductPresenter.php`) {
+              return productSource;
+            }
+
+            return Promise.reject(new Error(`missing ${path}`));
+          }),
+        },
+      },
+      {
+        parameter: { target: "this" },
+        prefix: "",
+        replaceEnd: 10,
+        replaceStart: 10,
+      },
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual(["lang"]);
+    expect(completions[0]?.detail).toBe("persistent");
+  });
+
+  it("offers component signal parameters and component persistent parameters", async () => {
+    const componentPath = `${ROOT}/app/Components/CartControl/CartControl.php`;
+    const base = emptyContext("app/Components/CartControl/cart_control.latte");
+    const completions = await lattePresenterLinkCompletions(
+      {
+        ...base,
+        deps: {
+          ...base.deps,
+          readFileContent: vi.fn(async (path: string) => {
+            if (path === componentPath) {
+              return `<?php
+class CartControl
+{
+    #[Persistent]
+    public int $visibleCount = 5;
+
+    public function handleShowMore(int $count): void {}
+}`;
+            }
+
+            return Promise.reject(new Error(`missing ${path}`));
+          }),
+        },
+      },
+      {
+        parameter: { target: "showMore!" },
+        prefix: "",
+        replaceEnd: 15,
+        replaceStart: 15,
+      },
+    );
+
+    expect(
+      completions.map((completion) => [completion.label, completion.detail]),
+    ).toEqual([
+      ["count", "action parameter"],
+      ["visibleCount", "persistent"],
+    ]);
+  });
+
+  it("returns nothing after the requested root becomes inactive", async () => {
+    let active = true;
+    const context = parameterContext({
+      readFileContent: vi.fn(async () => {
+        active = false;
+        return productSource;
+      }),
+    });
+
+    await expect(
+      lattePresenterLinkCompletions(
+        { ...context, isRequestedRootActive: () => active },
+        {
+          parameter: { target: "Product:show" },
+          prefix: "",
+          replaceEnd: 21,
+          replaceStart: 21,
+        },
+      ),
+    ).resolves.toEqual([]);
+  });
+});

@@ -82,8 +82,15 @@ export interface NetteLinkTarget {
   presenter: string | null;
 }
 
-/** A detected Latte link target with its source offsets. */
+/**
+ * A detected Latte link target with its source offsets. When the cursor sits
+ * on a NAMED PARAMETER of the link (`{link Product:show, lang: 'en'}`,
+ * `n:href="Product:show, lang => 'en'"`) rather than on the target token,
+ * `parameterName` carries that parameter's name and `target`/`targetStart`/
+ * `targetEnd` still describe the link's target token.
+ */
 export interface LatteLinkDetection {
+  parameterName?: string;
   tag: NetteLatteLinkTag;
   target: string;
   targetEnd: number;
@@ -98,8 +105,20 @@ export interface PhpPresenterLinkDetection {
   targetStart: number;
 }
 
-/** The replace range for `Presenter:action` completion at a cursor. */
+/** The link target a named-parameter completion belongs to. */
+export interface NetteLinkParameterCompletionContext {
+  target: string;
+}
+
+/**
+ * The replace range for `Presenter:action` completion at a cursor. When the
+ * cursor is in a NAMED-PARAMETER position after the target (`{link X, la|}`,
+ * `$this->link('X', ['la|'])`), `parameter` is set and carries the target the
+ * parameter names belong to; the replace range then covers the parameter-name
+ * token instead of the target token.
+ */
 export interface NetteLinkCompletionContext {
+  parameter?: NetteLinkParameterCompletionContext;
   prefix: string;
   replaceEnd: number;
   replaceStart: number;
@@ -925,11 +944,27 @@ function latteLinkMacroAt(
 
   const token = readTargetToken(source, span.expressionStart, span.contentEnd);
 
-  if (!token || offset < token.start || offset > token.end) {
+  if (!token) {
+    return null;
+  }
+
+  if (offset >= token.start && offset <= token.end) {
+    return {
+      tag: span.tagName,
+      target: token.text,
+      targetEnd: token.end,
+      targetStart: token.start,
+    };
+  }
+
+  const parameterName = linkParameterNameAt(source, offset, token, span.contentEnd);
+
+  if (!parameterName) {
     return null;
   }
 
   return {
+    parameterName,
     tag: span.tagName,
     target: token.text,
     targetEnd: token.end,
@@ -1190,11 +1225,27 @@ function latteNHrefLinkAt(
 
   const token = readTargetToken(source, value.valueStart, value.valueEnd);
 
-  if (!token || offset < token.start || offset > token.end) {
+  if (!token) {
+    return null;
+  }
+
+  if (offset >= token.start && offset <= token.end) {
+    return {
+      tag: "n:href",
+      target: token.text,
+      targetEnd: token.end,
+      targetStart: token.start,
+    };
+  }
+
+  const parameterName = linkParameterNameAt(source, offset, token, value.valueEnd);
+
+  if (!parameterName) {
     return null;
   }
 
   return {
+    parameterName,
     tag: "n:href",
     target: token.text,
     targetEnd: token.end,
@@ -1343,6 +1394,7 @@ interface PhpLinkCall {
   contentEnd: number;
   contentStart: number;
   name: NettePhpLinkCall;
+  openParen: number;
   text: string;
 }
 
@@ -1375,6 +1427,7 @@ function phpLinkCalls(source: string): PhpLinkCall[] {
       contentEnd: literal.contentEnd,
       contentStart: literal.contentStart,
       name,
+      openParen,
       text: literal.text,
     });
   }
@@ -1769,8 +1822,13 @@ function nHrefCompletionAt(
     value.valueStart,
     value.valueEnd,
   );
+  const targetCompletion = completionInRegion(source, offset, region);
 
-  return completionInRegion(source, offset, region);
+  if (targetCompletion) {
+    return targetCompletion;
+  }
+
+  return linkParameterCompletionAt(source, offset, region, value.valueEnd);
 }
 
 function latteMacroCompletionAt(
@@ -1784,8 +1842,13 @@ function latteMacroCompletionAt(
   }
 
   const region = targetTokenRegion(source, span.expressionStart, span.contentEnd);
+  const targetCompletion = completionInRegion(source, offset, region);
 
-  return completionInRegion(source, offset, region);
+  if (targetCompletion) {
+    return targetCompletion;
+  }
+
+  return linkParameterCompletionAt(source, offset, region, span.contentEnd);
 }
 
 function phpLinkCompletionAt(
@@ -1793,15 +1856,178 @@ function phpLinkCompletionAt(
   offset: number,
 ): NetteLinkCompletionContext | null {
   for (const call of phpLinkCalls(source)) {
-    if (offset < call.contentStart || offset > call.contentEnd) {
+    if (offset >= call.contentStart && offset <= call.contentEnd) {
+      return {
+        prefix: source.slice(call.contentStart, offset),
+        replaceEnd: call.contentEnd,
+        replaceStart: call.contentStart,
+      };
+    }
+
+    const parameterCompletion = phpLinkArrayKeyCompletionAt(source, offset, call);
+
+    if (parameterCompletion) {
+      return parameterCompletion;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Named-parameter completion inside the parameter ARRAY of a PHP link call:
+ * `$this->link('Product:show', ['la|'])`. Only a string literal in KEY
+ * position (no `=>` seen since the element started) at the array's top level
+ * completes; value literals and nested structures stay untouched so generic
+ * string completions are not shadowed.
+ */
+function phpLinkArrayKeyCompletionAt(
+  source: string,
+  offset: number,
+  call: PhpLinkCall,
+): NetteLinkCompletionContext | null {
+  if (!isPlausibleLinkToken(call.text)) {
+    return null;
+  }
+
+  const closeParen =
+    matchingBracketOffset(source, call.openParen, "(", ")") ?? source.length;
+  const arrayOpen = topLevelArrayOpenOffset(
+    source,
+    call.contentEnd + 1,
+    closeParen,
+  );
+
+  if (arrayOpen === null) {
+    return null;
+  }
+
+  const arrayClose =
+    matchingBracketOffset(source, arrayOpen, "[", "]") ?? closeParen;
+
+  if (offset <= arrayOpen || offset >= arrayClose) {
+    return null;
+  }
+
+  const literal = arrayKeyLiteralAt(source, arrayOpen + 1, arrayClose, offset);
+
+  if (!literal) {
+    return null;
+  }
+
+  return {
+    parameter: { target: call.text },
+    prefix: source.slice(literal.contentStart, offset),
+    replaceEnd: literal.contentEnd,
+    replaceStart: literal.contentStart,
+  };
+}
+
+function topLevelArrayOpenOffset(
+  source: string,
+  from: number,
+  limit: number,
+): number | null {
+  let quote: string | null = null;
+  let depth = 0;
+
+  for (let index = from; index < limit; index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
       continue;
     }
 
-    return {
-      prefix: source.slice(call.contentStart, offset),
-      replaceEnd: call.contentEnd,
-      replaceStart: call.contentStart,
-    };
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (character === "[" && depth === 0) {
+      return index;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return null;
+}
+
+function arrayKeyLiteralAt(
+  source: string,
+  from: number,
+  limit: number,
+  offset: number,
+): StringLiteral | null {
+  let sawArrow = false;
+  let depth = 0;
+
+  for (let index = from; index < limit; index += 1) {
+    const character = source[index];
+
+    if (character === "'" || character === '"') {
+      const contentStart = index + 1;
+      const contentEnd = Math.min(
+        stringLiteralClose(source, contentStart, character),
+        limit,
+      );
+
+      if (
+        depth === 0 &&
+        !sawArrow &&
+        offset >= contentStart &&
+        offset <= contentEnd
+      ) {
+        return {
+          contentEnd,
+          contentStart,
+          text: source.slice(contentStart, contentEnd),
+        };
+      }
+
+      index = contentEnd;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (depth > 0) {
+      continue;
+    }
+
+    if (character === "=" && source[index + 1] === ">") {
+      sawArrow = true;
+      index += 1;
+      continue;
+    }
+
+    if (character === ",") {
+      sawArrow = false;
+    }
   }
 
   return null;
@@ -1826,6 +2052,187 @@ function completionInRegion(
     replaceEnd: region.end,
     replaceStart: region.start,
   };
+}
+
+// --- link named parameters --------------------------------------------------
+
+/**
+ * Named-parameter completion after the link target of a Latte link construct
+ * (`{link Product:show, la|}`, `n:href="this, |"`). The cursor must sit in a
+ * NAME position — after a top-level comma, with only whitespace and an
+ * optional identifier prefix since that comma. A value position (after `:` /
+ * `=>`, inside quotes, inside brackets) never matches, so expression and
+ * variable completions stay unaffected there.
+ */
+function linkParameterCompletionAt(
+  source: string,
+  offset: number,
+  targetRegion: TokenRegion,
+  limit: number,
+): NetteLinkCompletionContext | null {
+  const target = source.slice(targetRegion.start, targetRegion.end);
+
+  if (!isPlausibleLinkToken(target)) {
+    return null;
+  }
+
+  const argumentsStart = linkArgumentsStart(source, targetRegion);
+
+  if (offset < argumentsStart || offset > limit) {
+    return null;
+  }
+
+  const segmentStart = parameterSegmentStart(
+    source,
+    argumentsStart,
+    limit,
+    offset,
+  );
+
+  if (segmentStart === null) {
+    return null;
+  }
+
+  const segment = source.slice(segmentStart, offset);
+  const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)?$/.exec(segment);
+
+  if (!match) {
+    return null;
+  }
+
+  const prefix = match[1] ?? "";
+  let replaceEnd = offset;
+
+  while (
+    replaceEnd < limit &&
+    /[A-Za-z0-9_]/.test(source[replaceEnd] ?? "")
+  ) {
+    replaceEnd += 1;
+  }
+
+  return {
+    parameter: { target },
+    prefix,
+    replaceEnd,
+    replaceStart: offset - prefix.length,
+  };
+}
+
+/**
+ * The NAMED PARAMETER whose name token contains `offset`, or `null`. The name
+ * must be followed by `:` or `=>` — a positional argument has no navigable
+ * name.
+ */
+function linkParameterNameAt(
+  source: string,
+  offset: number,
+  targetToken: TargetToken,
+  limit: number,
+): string | null {
+  const argumentsStart = linkArgumentsStart(source, {
+    end: targetToken.end,
+    start: targetToken.start,
+  });
+
+  if (offset < argumentsStart || offset > limit) {
+    return null;
+  }
+
+  const segmentStart = parameterSegmentStart(
+    source,
+    argumentsStart,
+    limit,
+    offset,
+  );
+
+  if (segmentStart === null) {
+    return null;
+  }
+
+  const segment = source.slice(segmentStart, limit);
+  const match = /^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*(?::|=>)/.exec(segment);
+
+  if (!match) {
+    return null;
+  }
+
+  const nameStart = segmentStart + (match[1]?.length ?? 0);
+  const nameEnd = nameStart + (match[2]?.length ?? 0);
+
+  if (offset < nameStart || offset > nameEnd) {
+    return null;
+  }
+
+  return match[2] ?? null;
+}
+
+/** First offset after the target token (skipping a closing target quote). */
+function linkArgumentsStart(source: string, targetRegion: TokenRegion): number {
+  const boundary = source[targetRegion.end];
+
+  if (boundary === "'" || boundary === '"') {
+    return targetRegion.end + 1;
+  }
+
+  return targetRegion.end;
+}
+
+/**
+ * Start of the parameter segment containing `offset`: one past the last
+ * TOP-LEVEL comma (outside quotes and brackets) before the offset, or `null`
+ * when no such comma exists — the offset is then still in the target zone.
+ */
+function parameterSegmentStart(
+  source: string,
+  from: number,
+  limit: number,
+  offset: number,
+): number | null {
+  let quote: string | null = null;
+  let depth = 0;
+  let segmentStart: number | null = null;
+
+  for (let index = from; index < Math.min(offset, limit); index += 1) {
+    const character = source[index];
+
+    if (quote) {
+      if (character === "\\") {
+        index += 1;
+        continue;
+      }
+
+      if (character === quote) {
+        quote = null;
+      }
+
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === "," && depth === 0) {
+      segmentStart = index + 1;
+    }
+  }
+
+  if (quote !== null) {
+    return null;
+  }
+
+  return segmentStart;
 }
 
 // --- token reading ----------------------------------------------------------

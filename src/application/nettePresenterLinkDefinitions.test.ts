@@ -6,6 +6,7 @@ import {
 } from "../domain/latteLinkNavigation";
 import { normalizeNettePresenterMappings } from "../domain/nettePresenterMapping";
 import {
+  resolveNetteLinkDefinition,
   resolveNettePresenterLink,
   type NettePresenterLinkDefinitionContext,
 } from "./nettePresenterLinkDefinitions";
@@ -87,7 +88,7 @@ class CrossSellTransferTimeline
             return "<?php class CrossSellAdminPresenter { public function actionShow(): void {} }";
           }
 
-          throw new Error(`missing ${path}`);
+          return Promise.reject(new Error(`missing ${path}`));
         }),
         toRelativePath: (_root, path) => path,
       },
@@ -158,7 +159,7 @@ class MailTemplatesAdminPresenter
           listDirectory: vi.fn(async () => []),
           openTarget,
           readFileContent: vi.fn(async () => {
-            throw new Error("mapping should resolve first");
+            return Promise.reject(new Error("mapping should resolve first"));
           }),
           readPhpClassSource: vi.fn(async (className) =>
             className ===
@@ -246,7 +247,7 @@ function mappedDefinitionContext(
       listDirectory: vi.fn(async () => []),
       openTarget,
       readFileContent: vi.fn(async () => {
-        throw new Error("mapping should resolve first");
+        return Promise.reject(new Error("mapping should resolve first"));
       }),
       readPhpClassSource,
       resolveDeclaredType: (_source, typeHint) => typeHint,
@@ -274,3 +275,129 @@ function mappedDefinitionContext(
     requestedRoot: "/ws",
   };
 }
+
+describe("resolveNetteLinkDefinition — named parameters", () => {
+  const productPath = "/ws/app/Presenters/ProductPresenter.php";
+  const productSource = `<?php
+class ProductPresenter extends BasePresenter
+{
+    #[Persistent]
+    public ?string $lang = null;
+
+    public function actionShow(string $sort): void {}
+}`;
+  const basePath = "/ws/app/Presenters/BasePresenter.php";
+  const basePresenterSource = `<?php
+class BasePresenter
+{
+    #[Persistent]
+    public int $page = 1;
+}`;
+
+  function parameterDefinitionContext(
+    openTarget: (
+      path: string,
+      position: { column: number; lineNumber: number },
+      label: string,
+    ) => Promise<boolean>,
+  ): NettePresenterLinkDefinitionContext {
+    return {
+      currentRelativePath: "app/Presenters/HomePresenter.php",
+      deps: {
+        getActiveDocument: () => null,
+        joinPath: (root, relative) => `${root}/${relative}`,
+        listDirectory: vi.fn(async () => []),
+        openTarget,
+        readFileContent: vi.fn(async (path: string) => {
+          if (path === productPath) {
+            return productSource;
+          }
+
+          return Promise.reject(new Error(`missing ${path}`));
+        }),
+        readPhpClassSource: vi.fn(async (className: string) =>
+          className === "BasePresenter"
+            ? { path: basePath, source: basePresenterSource }
+            : null,
+        ),
+        resolveDeclaredType: (_source, typeHint) => typeHint,
+        toRelativePath: (_root, path) => path,
+      },
+      frameworkCapabilities: {
+        isPresenterSourcePath: () => true,
+        parsePresenterLinkTarget: parseNetteLinkTarget,
+        presenterActionMethodCandidates: nettePresenterActionMethodCandidates,
+        presenterClassCandidatePathsForLink:
+          nettePresenterClassCandidatePathsForLink,
+        presenterLinkTargetsFromSource: () => [],
+        presenterScanDirectories: [],
+      },
+      isDirectorySkipped: () => false,
+      isRequestedRootActive: () => true,
+      loadFactoryTemplateOwner: vi.fn(async () => null),
+      maxDepth: 1,
+      maxPresenters: 1,
+      requestedRoot: "/ws",
+    };
+  }
+
+  it("opens the #[Persistent] property for a named link parameter", async () => {
+    const openTarget = vi.fn(async () => true);
+
+    await expect(
+      resolveNetteLinkDefinition(parameterDefinitionContext(openTarget), {
+        parameterName: "lang",
+        target: "Product:show",
+      }),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      productPath,
+      { column: 20, lineNumber: 5 },
+      "lang",
+    );
+  });
+
+  it("opens an inherited persistent property from an ancestor presenter", async () => {
+    const openTarget = vi.fn(async () => true);
+
+    await expect(
+      resolveNetteLinkDefinition(parameterDefinitionContext(openTarget), {
+        parameterName: "page",
+        target: "Product:show",
+      }),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      basePath,
+      { column: 16, lineNumber: 5 },
+      "page",
+    );
+  });
+
+  it("prefers the action method parameter over a persistent property", async () => {
+    const openTarget = vi.fn(async () => true);
+
+    await expect(
+      resolveNetteLinkDefinition(parameterDefinitionContext(openTarget), {
+        parameterName: "sort",
+        target: "Product:show",
+      }),
+    ).resolves.toBe(true);
+    expect(openTarget).toHaveBeenCalledWith(
+      productPath,
+      { column: 39, lineNumber: 7 },
+      "sort",
+    );
+  });
+
+  it("returns false for an unresolvable parameter name", async () => {
+    const openTarget = vi.fn(async () => true);
+
+    await expect(
+      resolveNetteLinkDefinition(parameterDefinitionContext(openTarget), {
+        parameterName: "missing",
+        target: "Product:show",
+      }),
+    ).resolves.toBe(false);
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+});
