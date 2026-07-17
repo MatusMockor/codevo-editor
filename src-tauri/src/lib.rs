@@ -1,5 +1,6 @@
 mod artisan;
 pub mod composer;
+mod debug_adapter;
 mod eslint;
 mod file_fuzzy_matcher;
 pub mod file_watcher;
