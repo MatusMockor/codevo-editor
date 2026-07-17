@@ -7,7 +7,7 @@ import { maskPhpSource } from "./phpSourceMask";
 import { getFileName } from "./workspace";
 
 const TOKEN_PATTERN =
-  /[{}()]|\bnamespace\b(?:\s+(?<namespaceName>[A-Za-z_][A-Za-z0-9_\\]*))?\s*(?<namespaceDelimiter>[;{])|(?<![:$\\>A-Za-z0-9_])(?:(?:abstract|final|readonly)\s+)*(?<typeKind>class|interface|trait|enum)\s+(?<typeName>[A-Za-z_][A-Za-z0-9_]*)|\bfunction\s+&?\s*(?<functionName>[A-Za-z_][A-Za-z0-9_]*)(?=\s*\()|\b(?:public|protected|private|var)\b[^;=(){}$]*\$(?<propertyName>[A-Za-z_][A-Za-z0-9_]*)|\bconst\s+(?:[A-Za-z_][A-Za-z0-9_]*\s+)?(?<constantName>[A-Za-z_][A-Za-z0-9_]*)\s*=/g;
+  /[{}()]|\bnamespace\b(?:\s+(?<namespaceName>[A-Za-z_][A-Za-z0-9_\\]*))?\s*(?<namespaceDelimiter>[;{])|(?<![:$\\>A-Za-z0-9_])(?:(?:abstract|final|readonly)\s+)*(?<typeKind>class|interface|trait|enum)\s+(?<typeName>[A-Za-z_][A-Za-z0-9_]*)|\bfunction\s+&?\s*(?<functionName>[A-Za-z_][A-Za-z0-9_]*)(?=\s*\()|\b(?:public|protected|private|var|readonly|static)\b(?:[^;=(){}$:]|\(\s*set\s*\))*\$(?<propertyName>[A-Za-z_][A-Za-z0-9_]*)|\bconst\s+(?:[A-Za-z_][A-Za-z0-9_]*\s+)?(?<constantName>[A-Za-z_][A-Za-z0-9_]*)\s*=/g;
 
 const TYPE_KINDS: Record<string, PhpFileOutlineNodeKind> = {
   class: "class",

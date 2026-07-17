@@ -755,7 +755,7 @@ function parsePhpProperties(
   const properties: PhpPropertyMember[] = [];
   const declarations: PhpPropertyDeclaration[] = [];
   const pattern =
-    /\b((?:(?:public|protected|private|readonly|static)\s+)+)((?:[\\?A-Za-z_][\\A-Za-z0-9_|&?\s]*?)?)\$([A-Za-z_][A-Za-z0-9_]*)/g;
+    /\b(?=((?:(?:(?:public|protected|private)(?:\s*\(\s*set\s*\))?|readonly|static)\s+)+))\1((?:[\\?A-Za-z_][\\A-Za-z0-9_|&?\s]*?)?)\$([A-Za-z_][A-Za-z0-9_]*)/g;
   pattern.lastIndex = declaration.bodyStart;
 
   for (
@@ -802,12 +802,13 @@ function buildPropertyDeclaration(
 } | null {
   const startOffset = match.index ?? 0;
   const dollarOffset = startOffset + match[0].lastIndexOf("$");
-  const endOffset = propertyDeclarationEnd(masked, dollarOffset);
+  const span = propertyDeclarationSpan(masked, dollarOffset);
 
-  if (endOffset === null) {
+  if (span === null) {
     return null;
   }
 
+  const endOffset = span.endOffset;
   const modifiers = (match[1] ?? "").toLowerCase();
   const phpDoc = parsePropertyPhpDoc(source, typeDeclaration, startOffset);
   const prelude = propertyDeclarationPrelude(
@@ -816,11 +817,17 @@ function buildPropertyDeclaration(
     typeDeclaration,
     startOffset,
   );
-  const declarators = splitTopLevelRanges(masked, dollarOffset, endOffset - 1);
+  const declarators = splitTopLevelRanges(
+    masked,
+    dollarOffset,
+    span.declaratorsEnd,
+  );
   const declaration: PhpPropertyDeclaration = {
     endOffset,
     isComplete: true,
     isSafeForPromotion:
+      !span.isHooked &&
+      !hasSetVisibilityModifier(modifiers) &&
       prelude.trim().length === 0 &&
       phpDoc === null &&
       !containsPhpComment(source.slice(startOffset, endOffset)) &&
@@ -851,6 +858,10 @@ function buildPropertyDeclaration(
     declaration,
     properties: parsed.map((property) => ({ ...shared, ...property! })),
   };
+}
+
+function hasSetVisibilityModifier(modifiers: string): boolean {
+  return /\b(?:public|protected|private)\s*\(\s*set\s*\)/.test(modifiers);
 }
 
 function hasOnlyHorizontalWhitespaceToLineEnd(
@@ -922,7 +933,16 @@ function heredocLiteralEnd(
   return source.length - 1;
 }
 
-function propertyDeclarationEnd(masked: string, start: number): number | null {
+interface PhpPropertyDeclarationSpan {
+  declaratorsEnd: number;
+  endOffset: number;
+  isHooked: boolean;
+}
+
+function propertyDeclarationSpan(
+  masked: string,
+  start: number,
+): PhpPropertyDeclarationSpan | null {
   let depth = 0;
 
   for (let index = start; index < masked.length; index += 1) {
@@ -939,15 +959,32 @@ function propertyDeclarationEnd(masked: string, start: number): number | null {
     }
 
     if (depth === 0 && character === "{") {
-      return null;
+      return hookedPropertySpan(masked, index);
     }
 
     if (depth === 0 && character === ";") {
-      return index + 1;
+      return { declaratorsEnd: index, endOffset: index + 1, isHooked: false };
     }
   }
 
   return null;
+}
+
+function hookedPropertySpan(
+  masked: string,
+  hookBodyStart: number,
+): PhpPropertyDeclarationSpan | null {
+  const hookBodyEnd = matchingPairOffset(masked, hookBodyStart, "{", "}");
+
+  if (hookBodyEnd === null) {
+    return null;
+  }
+
+  return {
+    declaratorsEnd: hookBodyStart,
+    endOffset: hookBodyEnd + 1,
+    isHooked: true,
+  };
 }
 
 function splitTopLevelRanges(
@@ -1089,11 +1126,16 @@ function allTopLevelPropertyVariablesOwned(
 }
 
 function visibilityFromPropertyModifiers(modifiers: string): PhpVisibility {
-  if (/\bprivate\b/.test(modifiers)) {
+  const readModifiers = modifiers.replace(
+    /\b(?:public|protected|private)\s*\(\s*set\s*\)/g,
+    " ",
+  );
+
+  if (/\bprivate\b/.test(readModifiers)) {
     return "private";
   }
 
-  if (/\bprotected\b/.test(modifiers)) {
+  if (/\bprotected\b/.test(readModifiers)) {
     return "protected";
   }
 

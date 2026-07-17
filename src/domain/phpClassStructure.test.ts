@@ -758,6 +758,101 @@ class Second
     expect(methods.map((method) => method.name)).toEqual(["label"]);
   });
 
+  it("captures a PHP 8.4 hooked property", () => {
+    const source = `<?php
+      class C {
+        public int $x { get => 1; }
+      }
+    `;
+
+    const { properties, propertyDeclarations, propertyParsingComplete } =
+      parsePhpClassStructure(source);
+    const x = propertyNamed(properties, "x");
+
+    expect(propertyParsingComplete).toBe(true);
+    expect(x.type).toBe("int");
+    expect(x.visibility).toBe("public");
+    expect(x.defaultValue).toBeNull();
+    expect(
+      source.slice(
+        propertyDeclarations[0]?.startOffset,
+        propertyDeclarations[0]?.endOffset,
+      ),
+    ).toBe("public int $x { get => 1; }");
+    expect(propertyDeclarations[0]?.isSafeForPromotion).toBe(false);
+  });
+
+  it("captures a hooked property with a default and multiple hooks without losing later members", () => {
+    const source = `<?php
+      class C {
+        public string $name = 'n' {
+          get => strtoupper($this->name);
+          set(string $value) {
+            $this->name = trim($value);
+          }
+        }
+        private int $after = 2;
+      }
+    `;
+
+    const { properties, propertyParsingComplete } =
+      parsePhpClassStructure(source);
+    const name = propertyNamed(properties, "name");
+    const after = propertyNamed(properties, "after");
+
+    expect(propertyParsingComplete).toBe(true);
+    expect(name.type).toBe("string");
+    expect(name.defaultValue).toBe("'n'");
+    expect(after.visibility).toBe("private");
+    expect(after.defaultValue).toBe("2");
+  });
+
+  it("captures PHP 8.4 asymmetric visibility properties", () => {
+    const source = `<?php
+      class C {
+        public private(set) string $balance = '0';
+        private(set) string $y;
+        protected(set) readonly int $z;
+      }
+    `;
+
+    const { properties, propertyDeclarations, propertyParsingComplete } =
+      parsePhpClassStructure(source);
+    const balance = propertyNamed(properties, "balance");
+    const y = propertyNamed(properties, "y");
+    const z = propertyNamed(properties, "z");
+
+    expect(propertyParsingComplete).toBe(true);
+    expect(
+      propertyDeclarations.map((declaration) => declaration.isSafeForPromotion),
+    ).toEqual([false, false, false]);
+    expect(balance.type).toBe("string");
+    expect(balance.visibility).toBe("public");
+    expect(balance.defaultValue).toBe("'0'");
+    expect(y.type).toBe("string");
+    expect(y.visibility).toBe("public");
+    expect(z.type).toBe("int");
+    expect(z.isReadonly).toBe(true);
+  });
+
+  it("stays fast on a pathological run of property modifier keywords", () => {
+    const source = `<?php
+class C
+{
+    public ${"static ".repeat(2000)}nodollar
+}
+`;
+
+    const start = performance.now();
+    const { properties, propertyParsingComplete } =
+      parsePhpClassStructure(source);
+    const elapsed = performance.now() - start;
+
+    expect(properties).toEqual([]);
+    expect(propertyParsingComplete).toBe(true);
+    expect(elapsed).toBeLessThan(500);
+  });
+
   it("ignores method-like keywords appearing inside strings and comments", () => {
     const source = `<?php
       class Foo {

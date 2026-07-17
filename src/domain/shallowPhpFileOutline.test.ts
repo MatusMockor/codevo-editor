@@ -270,6 +270,70 @@ class Config
     expect(children[2]?.lineNumber).toBe(7);
   });
 
+  it("lists PHP 8.4 asymmetric visibility properties", () => {
+    const outline = shallowPhpFileOutline(
+      PATH,
+      `<?php
+namespace App;
+
+class Wallet
+{
+    public private(set) string $balance = '0';
+    private(set) int $limit;
+    protected(set) string $note { get => trim($this->note); }
+
+    public function pay(): void
+    {
+    }
+}
+`,
+    );
+
+    const children = outline.nodes[0]?.children ?? [];
+
+    expect(labels(children)).toEqual(["$balance", "$limit", "$note", "pay"]);
+    expect(children[0]?.fullyQualifiedName).toBe("App\\Wallet::$balance");
+    expect(children[1]?.kind).toBe("property");
+  });
+
+  it("does not emit members from promoted constructor parameters with asymmetric visibility", () => {
+    const outline = shallowPhpFileOutline(
+      PATH,
+      `<?php
+class C
+{
+    public function __construct(public private(set) int $a, private(set) int $b)
+    {
+    }
+}
+`,
+    );
+
+    expect(labels(outline.nodes[0]?.children ?? [])).toEqual(["__construct"]);
+  });
+
+  it("lists implicit-public readonly and bare static properties", () => {
+    const outline = shallowPhpFileOutline(
+      PATH,
+      `<?php
+class C
+{
+    readonly int $x;
+    static $y = [];
+
+    public function m(): void
+    {
+        static $local = 0;
+
+        return;
+    }
+}
+`,
+    );
+
+    expect(labels(outline.nodes[0]?.children ?? [])).toEqual(["$x", "$y", "m"]);
+  });
+
   it("does not emit phantom members from grouped promoted constructor parameters", () => {
     const outline = shallowPhpFileOutline(
       PATH,
@@ -337,6 +401,23 @@ class Thing
     const outline = shallowPhpFileOutline(PATH, "x".repeat(64));
 
     expect(outline.nodes).toEqual([]);
+  });
+
+  it("stays linear on a pathological run of property modifier keywords", () => {
+    const source = `<?php
+class C
+{
+    public ${"static ".repeat(2000)}nodollar
+}
+`;
+
+    const start = performance.now();
+    const outline = shallowPhpFileOutline(PATH, source);
+    const elapsed = performance.now() - start;
+
+    expect(outline.nodes).toHaveLength(1);
+    expect(outline.nodes[0]?.children).toEqual([]);
+    expect(elapsed).toBeLessThan(500);
   });
 
   it("stays fast on a CarbonInterface-sized file", () => {
