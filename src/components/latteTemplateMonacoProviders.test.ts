@@ -44,6 +44,70 @@ describe("registerLatteTemplateMonacoProviders", () => {
     expect(result?.suggestions).toHaveLength(1);
   });
 
+  it("registers ':' as a completion trigger for n: attributes", () => {
+    const registered = registerProviders();
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      templateContext({}),
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    expect(registered.completionProvider?.triggerCharacters).toEqual([
+      "{",
+      "$",
+      "-",
+      ">",
+      "|",
+      "'",
+      "\"",
+      ".",
+      "/",
+      ":",
+    ]);
+  });
+
+  it("maps insertSnippet completions to Monaco snippet inserts", async () => {
+    const registered = registerProviders();
+    const provideCompletions = vi.fn(async () => [
+      {
+        insertSnippet: 'n:if="$1"',
+        insertText: "n:if",
+        kind: "tag" as const,
+        label: "n:if",
+      },
+      {
+        insertText: "n:ifcontent",
+        kind: "tag" as const,
+        label: "n:ifcontent",
+      },
+    ]);
+    const context = templateContext({ provideCompletions });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const result = await registered.completionProvider?.provideCompletionItems(
+      textModel(NORMAL_LATTE_SOURCE),
+      latteCursorPosition(),
+      {} as Monaco.languages.CompletionContext,
+      {} as never,
+    );
+
+    expect(result?.suggestions[0]).toMatchObject({
+      insertText: 'n:if="$1"',
+      insertTextRules: 4,
+      label: "n:if",
+    });
+    expect(result?.suggestions[1]?.insertText).toBe("n:ifcontent");
+    expect(result?.suggestions[1]?.insertTextRules).toBeUndefined();
+  });
+
   it("skips Latte completions for a large document", async () => {
     const registered = registerProviders();
     const provideCompletions = vi.fn(async () => [
@@ -665,6 +729,7 @@ function registerProviders() {
         openModels.get(uri.toString()) ?? null,
     },
     languages: {
+      CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       CompletionItemKind: {
         Field: 1,
         File: 2,

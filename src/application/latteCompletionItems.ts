@@ -2,6 +2,7 @@ import { LATTE_TAGS } from "../domain/latteNavigation";
 import {
   latteNAttributeEntries,
   type LatteNAttributeCompletion,
+  type LatteNAttributeEntry,
 } from "../domain/latteAttributeCompletions";
 import {
   LATTE_BUILTIN_FILTERS,
@@ -39,6 +40,7 @@ export type LatteCompletionItemKind =
  */
 export interface LatteCompletionItem {
   detail?: string;
+  insertSnippet?: string;
   insertText: string;
   kind: LatteCompletionItemKind;
   label: string;
@@ -68,6 +70,18 @@ export function latteTagCompletions(
     }));
 }
 
+const LATTE_VALUELESS_N_ATTRIBUTE_TAGS: ReadonlySet<string> = new Set([
+  "first",
+  "ifcontent",
+  "last",
+  "nonce",
+  "sep",
+  "spaceless",
+  "translate",
+]);
+
+const LATTE_N_ATTRIBUTE_VARIANT_PREFIX = /^(?:inner|tag)-(.+)$/;
+
 export function latteNAttributeCompletions(
   completion: LatteNAttributeCompletion,
   maxCompletions: number,
@@ -81,14 +95,35 @@ export function latteNAttributeCompletions(
         !completion.usedAttributes.has(entry.name),
     )
     .slice(0, maxCompletions)
-    .map((entry) => ({
-      detail: entry.detail,
-      insertText: entry.name,
-      kind: "tag" as const,
-      label: entry.name,
-      replaceEnd: completion.replaceEnd,
-      replaceStart: completion.replaceStart,
-    }));
+    .map((entry) => latteNAttributeCompletionItem(entry, completion));
+}
+
+function latteNAttributeCompletionItem(
+  entry: LatteNAttributeEntry,
+  completion: LatteNAttributeCompletion,
+): LatteCompletionItem {
+  const item: LatteCompletionItem = {
+    detail: entry.detail,
+    insertText: entry.name,
+    kind: "tag",
+    label: entry.name,
+    replaceEnd: completion.replaceEnd,
+    replaceStart: completion.replaceStart,
+  };
+
+  if (latteNAttributeTakesValue(entry.name)) {
+    item.insertSnippet = `${entry.name}="$1"`;
+  }
+
+  return item;
+}
+
+function latteNAttributeTakesValue(name: string): boolean {
+  const withoutNPrefix = name.slice(2);
+  const variant = LATTE_N_ATTRIBUTE_VARIANT_PREFIX.exec(withoutNPrefix);
+  const baseName = variant?.[1] ?? withoutNPrefix;
+
+  return !LATTE_VALUELESS_N_ATTRIBUTE_TAGS.has(baseName);
 }
 
 export function latteFilterCompletions(

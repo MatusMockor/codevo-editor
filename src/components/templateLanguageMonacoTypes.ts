@@ -66,6 +66,7 @@ export type LatteCompletionKind =
  */
 export interface LatteCompletion {
   detail?: string;
+  insertSnippet?: string;
   insertText: string;
   kind: LatteCompletionKind;
   label: string;

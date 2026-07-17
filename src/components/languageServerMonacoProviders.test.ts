@@ -12709,6 +12709,7 @@ describe("registerLanguageServerMonacoProviders latte providers", () => {
       "\"",
       ".",
       "/",
+      ":",
     ]);
 
     disposable.dispose();

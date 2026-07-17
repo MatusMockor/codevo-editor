@@ -83,7 +83,7 @@ export function registerLatteTemplateMonacoProviders<
       })
     : { dispose: () => undefined };
   const completion = monaco.languages.registerCompletionItemProvider("latte", {
-    triggerCharacters: ["{", "$", "-", ">", "|", "'", "\"", ".", "/"],
+    triggerCharacters: ["{", "$", "-", ">", "|", "'", "\"", ".", "/", ":"],
     provideCompletionItems: (model, position) =>
       provideLatteCompletionItems(monaco, context, model, position),
   });
@@ -133,13 +133,24 @@ export function toMonacoLatteCompletion(
         )
       : fallbackRange;
 
-  return {
+  const item: Monaco.languages.CompletionItem = {
     detail: completion.detail,
     insertText: completion.insertText,
     kind: monacoLatteCompletionKind(monaco, completion.kind),
     label: completion.label,
     range,
     sortText: `0_${String(index).padStart(4, "0")}`,
+  };
+
+  if (!completion.insertSnippet) {
+    return item;
+  }
+
+  return {
+    ...item,
+    insertText: completion.insertSnippet,
+    insertTextRules:
+      monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
   };
 }
 

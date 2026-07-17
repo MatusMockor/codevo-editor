@@ -408,6 +408,62 @@ describe("latteNAttributeCompletions", () => {
     expect(completions).toHaveLength(3);
   });
 
+  it("adds a value snippet for value-taking attributes only", () => {
+    const completions = latteNAttributeCompletions(
+      {
+        prefix: "n:",
+        replaceStart: 5,
+        replaceEnd: 7,
+        usedAttributes: new Set<string>(),
+      },
+      100,
+    );
+    const byLabel = new Map(
+      completions.map((completion) => [completion.label, completion]),
+    );
+
+    expect(byLabel.get("n:if")?.insertSnippet).toBe('n:if="$1"');
+    expect(byLabel.get("n:if")?.insertText).toBe("n:if");
+    expect(byLabel.get("n:foreach")?.insertSnippet).toBe('n:foreach="$1"');
+    expect(byLabel.get("n:class")?.insertSnippet).toBe('n:class="$1"');
+    expect(byLabel.get("n:tag")?.insertSnippet).toBe('n:tag="$1"');
+    expect(byLabel.get("n:href")?.insertSnippet).toBe('n:href="$1"');
+    expect(byLabel.get("n:inner-foreach")?.insertSnippet).toBe(
+      'n:inner-foreach="$1"',
+    );
+    expect(byLabel.get("n:tag-if")?.insertSnippet).toBe('n:tag-if="$1"');
+  });
+
+  it("keeps plain name inserts for attributes used without a value", () => {
+    const completions = latteNAttributeCompletions(
+      {
+        prefix: "n:",
+        replaceStart: 5,
+        replaceEnd: 7,
+        usedAttributes: new Set<string>(),
+      },
+      100,
+    );
+    const byLabel = new Map(
+      completions.map((completion) => [completion.label, completion]),
+    );
+
+    for (const label of [
+      "n:ifcontent",
+      "n:nonce",
+      "n:spaceless",
+      "n:translate",
+      "n:first",
+      "n:last",
+      "n:sep",
+      "n:inner-spaceless",
+      "n:tag-translate",
+    ]) {
+      expect(byLabel.get(label)?.insertText).toBe(label);
+      expect(byLabel.get(label)?.insertSnippet).toBeUndefined();
+    }
+  });
+
   it("matches inner- and tag- variants by prefix", () => {
     const completions = latteNAttributeCompletions(
       {
