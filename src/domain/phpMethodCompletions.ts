@@ -491,26 +491,43 @@ export function phpMethodParameters(parameters: string): PhpMethodParameter[] {
   });
 }
 
+export interface PhpTraitMethodAlias {
+  aliasName: string | null;
+  methodName: string;
+  traitName: string | null;
+  visibility: PhpMemberVisibility | null;
+}
+
+export interface PhpTraitUseInfo {
+  aliases: PhpTraitMethodAlias[];
+  traitNames: string[];
+}
+
 export function phpTraitClassNames(source: string): string[] {
+  return phpTraitUseInfo(source).traitNames;
+}
+
+export function phpTraitUseInfo(source: string): PhpTraitUseInfo {
   const typeMatch = /\b(?:class|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*/.exec(
     source,
   );
 
   if (!typeMatch) {
-    return [];
+    return { aliases: [], traitNames: [] };
   }
 
   const bodyStart = source.indexOf("{", typeMatch.index + typeMatch[0].length);
 
   if (bodyStart < 0) {
-    return [];
+    return { aliases: [], traitNames: [] };
   }
 
   const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}") ?? source.length;
   const body = source.slice(bodyStart + 1, bodyEnd);
   const traits: string[] = [];
+  const aliases: PhpTraitMethodAlias[] = [];
 
-  for (const match of body.matchAll(/^\s*use\s+([^;{]+)\s*(?:;|\{)/gm)) {
+  for (const match of body.matchAll(/^\s*use\s+([^;{]+)(;|\{)/gm)) {
     for (const trait of (match[1] ?? "").split(",")) {
       const normalized = trait.trim().replace(/^\\+/, "");
 
@@ -520,9 +537,72 @@ export function phpTraitClassNames(source: string): string[] {
 
       traits.push(normalized);
     }
+
+    if (match[2] !== "{") {
+      continue;
+    }
+
+    const blockStart = match.index + match[0].length - 1;
+    const blockEnd = matchingPairOffset(body, blockStart, "{", "}");
+
+    if (blockEnd === null) {
+      continue;
+    }
+
+    aliases.push(
+      ...phpTraitAdaptationAliases(body.slice(blockStart + 1, blockEnd)),
+    );
   }
 
-  return Array.from(new Set(traits));
+  return { aliases, traitNames: Array.from(new Set(traits)) };
+}
+
+function phpTraitAdaptationAliases(block: string): PhpTraitMethodAlias[] {
+  const aliases: PhpTraitMethodAlias[] = [];
+  const withoutComments = block
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(?:\/\/|#(?!\[))[^\n]*/g, " ");
+
+  for (const statement of withoutComments.split(";")) {
+    const normalized = statement.trim();
+
+    if (!normalized || /\binsteadof\b/i.test(normalized)) {
+      continue;
+    }
+
+    const aliasMatch =
+      /^(?:(\\?[A-Za-z_][A-Za-z0-9_\\]*)\s*::\s*)?([A-Za-z_][A-Za-z0-9_]*)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+([A-Za-z_][A-Za-z0-9_]*))?$/i.exec(
+        normalized,
+      );
+
+    if (!aliasMatch) {
+      continue;
+    }
+
+    const traitName = aliasMatch[1]?.replace(/^\\+/, "") ?? null;
+    const methodName = aliasMatch[2] ?? "";
+    const firstToken = aliasMatch[3] ?? "";
+    const secondToken = aliasMatch[4] ?? null;
+    const visibility = phpMemberVisibilityFromToken(firstToken);
+
+    if (visibility && secondToken) {
+      aliases.push({ aliasName: secondToken, methodName, traitName, visibility });
+      continue;
+    }
+
+    if (visibility) {
+      aliases.push({ aliasName: null, methodName, traitName, visibility });
+      continue;
+    }
+
+    if (secondToken) {
+      continue;
+    }
+
+    aliases.push({ aliasName: firstToken, methodName, traitName, visibility: null });
+  }
+
+  return aliases;
 }
 
 export function phpMixinClassNames(source: string): string[] {

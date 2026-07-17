@@ -8,6 +8,7 @@ import {
   phpMethodSignatureContextAt,
   phpStaticAccessCompletionContextAt,
   phpTraitClassNames,
+  phpTraitUseInfo,
   type PhpMethodCompletion,
 } from "./phpMethodCompletions";
 import {
@@ -4560,6 +4561,100 @@ class Comment
 }
 `),
     ).toEqual(["App\\Support\\TracksChanges", "SoftDeletes"]);
+  });
+
+  it("parses trait adaptation aliases while ignoring insteadof rules", () => {
+    expect(
+      phpTraitUseInfo(`<?php
+namespace App\\Models;
+
+class Comment
+{
+    use \\App\\Support\\TracksChanges, SoftDeletes {
+        TracksChanges::boot insteadof SoftDeletes;
+        SoftDeletes::restore as restoreModel;
+        touch as protected touchQuietly;
+        render as protected;
+    }
+}
+`),
+    ).toEqual({
+      aliases: [
+        {
+          aliasName: "restoreModel",
+          methodName: "restore",
+          traitName: "SoftDeletes",
+          visibility: null,
+        },
+        {
+          aliasName: "touchQuietly",
+          methodName: "touch",
+          traitName: null,
+          visibility: "protected",
+        },
+        {
+          aliasName: null,
+          methodName: "render",
+          traitName: null,
+          visibility: "protected",
+        },
+      ],
+      traitNames: ["App\\Support\\TracksChanges", "SoftDeletes"],
+    });
+  });
+
+  it("parses aliases behind comments and leading-backslash qualifiers", () => {
+    expect(
+      phpTraitUseInfo(`<?php
+class Comment
+{
+    use TracksChanges {
+        // rename it
+        \\App\\Support\\TracksChanges::boot as bootQuietly;
+        /* keep the
+           original too */ render as renderItem;
+        # hash comment
+        touch as protected;
+    }
+}
+`),
+    ).toEqual({
+      aliases: [
+        {
+          aliasName: "bootQuietly",
+          methodName: "boot",
+          traitName: "App\\Support\\TracksChanges",
+          visibility: null,
+        },
+        {
+          aliasName: "renderItem",
+          methodName: "render",
+          traitName: null,
+          visibility: null,
+        },
+        {
+          aliasName: null,
+          methodName: "touch",
+          traitName: null,
+          visibility: "protected",
+        },
+      ],
+      traitNames: ["TracksChanges"],
+    });
+  });
+
+  it("returns empty aliases for trait uses without adaptation blocks", () => {
+    expect(
+      phpTraitUseInfo(`<?php
+class Request
+{
+    use Conditionable, Macroable;
+}
+`),
+    ).toEqual({
+      aliases: [],
+      traitNames: ["Conditionable", "Macroable"],
+    });
   });
 
   it("extracts PHPDoc mixin class names for magic OOP APIs", () => {

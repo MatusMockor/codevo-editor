@@ -1,7 +1,13 @@
 import { useCallback } from "react";
-import { parsePhpClassStructure } from "../domain/phpClassStructure";
+import {
+  parsePhpClassStructure,
+  type PhpClassStructure,
+} from "../domain/phpClassStructure";
 import { phpMethodSignatureKey } from "../domain/phpCodeGen";
-import { phpTraitClassNames } from "../domain/phpMethodCompletions";
+import {
+  phpTraitUseInfo,
+  type PhpTraitMethodAlias,
+} from "../domain/phpMethodCompletions";
 import {
   phpExtendsClassName,
   phpSuperTypeReferences,
@@ -43,11 +49,79 @@ export function usePhpInheritedMemberCollector({
       const conflictingNames = new Set<string>();
       const satisfiedNames = new Set<string>();
       const visitedClassNames = new Set<string>();
+      const parsedStructures = new Map<
+        string,
+        { content: string; structure: PhpClassStructure }
+      >();
+
+      const applyTraitAliases = (
+        traitAliases: PhpTraitMethodAlias[],
+        content: string,
+        structure: PhpClassStructure,
+        normalizedClassName: string,
+        includePrivateSatisfied: boolean,
+      ): void => {
+        for (const alias of traitAliases) {
+          const aliasedMethod = structure.methods.find(
+            (method) =>
+              method.name.toLowerCase() === alias.methodName.toLowerCase(),
+          );
+
+          if (!aliasedMethod) {
+            continue;
+          }
+
+          const targetKey = (
+            alias.aliasName ?? aliasedMethod.name
+          ).toLowerCase();
+
+          if (aliasedMethod.isAbstract) {
+            if (!alias.aliasName) {
+              continue;
+            }
+
+            const aliasedMember = {
+              ...aliasedMethod,
+              name: alias.aliasName,
+            };
+            const existing = abstractMembers.get(targetKey);
+
+            if (
+              existing &&
+              inheritedSignaturesDisagree(existing, content, aliasedMember)
+            ) {
+              conflictingNames.add(targetKey);
+            }
+
+            if (!existing) {
+              abstractMembers.set(targetKey, {
+                declaringSource: content,
+                declaringTypeName:
+                  structure.typeDeclaration?.name ??
+                  shortPhpName(normalizedClassName),
+                member: aliasedMember,
+              });
+            }
+
+            continue;
+          }
+
+          const effectiveVisibility =
+            alias.visibility ?? aliasedMethod.visibility;
+
+          if (!includePrivateSatisfied && effectiveVisibility === "private") {
+            continue;
+          }
+
+          satisfiedNames.add(targetKey);
+        }
+      };
 
       const collectSuperType = async (
         ownerSource: string,
         reference: string,
         includePrivateSatisfied: boolean,
+        traitAliases: PhpTraitMethodAlias[] = [],
       ): Promise<boolean> => {
         const resolvedClassName = resolvePhpClassName(ownerSource, reference);
 
@@ -60,7 +134,23 @@ export function usePhpInheritedMemberCollector({
           .replace(/^\\+/, "");
         const visitedKey = normalizedClassName.toLowerCase();
 
-        if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
+        if (!normalizedClassName) {
+          return true;
+        }
+
+        if (visitedClassNames.has(visitedKey)) {
+          const cached = parsedStructures.get(visitedKey);
+
+          if (cached) {
+            applyTraitAliases(
+              traitAliases,
+              cached.content,
+              cached.structure,
+              normalizedClassName,
+              includePrivateSatisfied,
+            );
+          }
+
           return true;
         }
 
@@ -88,6 +178,8 @@ export function usePhpInheritedMemberCollector({
               content,
               shortPhpName(normalizedClassName),
             );
+
+            parsedStructures.set(visitedKey, { content, structure });
 
             for (const method of structure.methods) {
               const memberKey = method.name.toLowerCase();
@@ -125,15 +217,28 @@ export function usePhpInheritedMemberCollector({
               satisfiedNames.add(memberKey);
             }
 
+            applyTraitAliases(
+              traitAliases,
+              content,
+              structure,
+              normalizedClassName,
+              includePrivateSatisfied,
+            );
+
             const traitSatisfiedFlag =
               structure.kind === "trait" ? includePrivateSatisfied : false;
+            const contentTraitUse = phpTraitUseInfo(content);
 
-            for (const traitReference of phpTraitClassNames(content)) {
+            for (const traitReference of contentTraitUse.traitNames) {
               if (
                 !(await collectSuperType(
                   content,
                   traitReference,
                   traitSatisfiedFlag,
+                  traitAliasesForReference(
+                    contentTraitUse.aliases,
+                    traitReference,
+                  ),
                 ))
               ) {
                 return false;
@@ -161,8 +266,17 @@ export function usePhpInheritedMemberCollector({
         return true;
       };
 
-      for (const traitReference of phpTraitClassNames(source)) {
-        if (!(await collectSuperType(source, traitReference, true))) {
+      const sourceTraitUse = phpTraitUseInfo(source);
+
+      for (const traitReference of sourceTraitUse.traitNames) {
+        if (
+          !(await collectSuperType(
+            source,
+            traitReference,
+            true,
+            traitAliasesForReference(sourceTraitUse.aliases, traitReference),
+          ))
+        ) {
           return null;
         }
       }
@@ -291,6 +405,27 @@ export function usePhpInheritedMemberCollector({
     collectPhpAbstractMembersToImplement,
     collectPhpOverridableParentMethods,
   };
+}
+
+function traitAliasesForReference(
+  aliases: PhpTraitMethodAlias[],
+  reference: string,
+): PhpTraitMethodAlias[] {
+  const normalizedReference = reference.replace(/^\\+/, "").toLowerCase();
+  const shortReference = shortPhpName(reference).toLowerCase();
+
+  return aliases.filter((alias) => {
+    if (!alias.traitName) {
+      return true;
+    }
+
+    const normalizedAlias = alias.traitName.replace(/^\\+/, "").toLowerCase();
+
+    return (
+      normalizedAlias === normalizedReference ||
+      shortPhpName(alias.traitName).toLowerCase() === shortReference
+    );
+  });
 }
 
 function shortPhpName(className: string): string {

@@ -419,6 +419,346 @@ trait OwnTrait
     harness.unmount();
   });
 
+  it("counts trait methods aliased in the using class as satisfied", async () => {
+    const childSource = `<?php
+
+namespace App\\Reports;
+
+use App\\Contracts\\ItemRenderer;
+use App\\Traits\\RendersBlocks;
+
+class ReportView implements ItemRenderer
+{
+    use RendersBlocks {
+        RendersBlocks::render as renderItem;
+    }
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\ItemRenderer": `<?php
+
+namespace App\\Contracts;
+
+interface ItemRenderer
+{
+    public function renderItem(): string;
+}
+`,
+      "App\\Traits\\RendersBlocks": `<?php
+
+namespace App\\Traits;
+
+trait RendersBlocks
+{
+    public function render(): string
+    {
+        return '';
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("renderitem")).toBe(true);
+    expect(collected?.satisfiedNames.has("render")).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("keeps visibility-only trait adaptations satisfied under the original name", async () => {
+    const childSource = `<?php
+
+namespace App\\Reports;
+
+use App\\Contracts\\Renderable;
+use App\\Traits\\RendersBlocks;
+
+class ReportView implements Renderable
+{
+    use RendersBlocks {
+        render as protected;
+    }
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\Renderable": `<?php
+
+namespace App\\Contracts;
+
+interface Renderable
+{
+    public function render(): string;
+}
+`,
+      "App\\Traits\\RendersBlocks": `<?php
+
+namespace App\\Traits;
+
+trait RendersBlocks
+{
+    public function render(): string
+    {
+        return '';
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("render")).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("does not inherit parent trait aliases demoted to private", async () => {
+    const childSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\ItemRenderer;
+
+class Child extends Base implements ItemRenderer
+{
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\ItemRenderer": `<?php
+
+namespace App\\Contracts;
+
+interface ItemRenderer
+{
+    public function renderItem(): string;
+
+    public function renderRow(): string;
+}
+`,
+      "App\\Services\\Base": `<?php
+
+namespace App\\Services;
+
+use App\\Traits\\RendersBlocks;
+
+abstract class Base
+{
+    use RendersBlocks {
+        RendersBlocks::render as private renderItem;
+        RendersBlocks::render as protected renderRow;
+    }
+}
+`,
+      "App\\Traits\\RendersBlocks": `<?php
+
+namespace App\\Traits;
+
+trait RendersBlocks
+{
+    public function render(): string
+    {
+        return '';
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("renderitem")).toBe(false);
+    expect(collected?.satisfiedNames.has("renderrow")).toBe(true);
+    expect(collected?.satisfiedNames.has("render")).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("applies parent trait aliases when the trait was already visited", async () => {
+    const childSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\AliasContract;
+use App\\Traits\\RendersBlocks;
+
+class Child extends Base implements AliasContract
+{
+    use RendersBlocks;
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\AliasContract": `<?php
+
+namespace App\\Contracts;
+
+interface AliasContract
+{
+    public function y(): string;
+
+    public function hidden(): string;
+}
+`,
+      "App\\Services\\Base": `<?php
+
+namespace App\\Services;
+
+use App\\Traits\\RendersBlocks;
+
+abstract class Base
+{
+    use RendersBlocks {
+        RendersBlocks::render as y;
+        RendersBlocks::render as private hidden;
+    }
+}
+`,
+      "App\\Traits\\RendersBlocks": `<?php
+
+namespace App\\Traits;
+
+trait RendersBlocks
+{
+    public function render(): string
+    {
+        return '';
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("y")).toBe(true);
+    expect(collected?.satisfiedNames.has("hidden")).toBe(false);
+    expect(collected?.satisfiedNames.has("render")).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("keeps insteadof trait resolutions satisfied under the method name", async () => {
+    const childSource = `<?php
+
+namespace App\\Models;
+
+use App\\Contracts\\Bootable;
+use App\\Traits\\TracksChanges;
+use App\\Traits\\SoftDeletes;
+
+class Comment implements Bootable
+{
+    use TracksChanges, SoftDeletes {
+        TracksChanges::boot insteadof SoftDeletes;
+    }
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\Bootable": `<?php
+
+namespace App\\Contracts;
+
+interface Bootable
+{
+    public function boot(): void;
+}
+`,
+      "App\\Traits\\SoftDeletes": `<?php
+
+namespace App\\Traits;
+
+trait SoftDeletes
+{
+    public function boot(): void
+    {
+    }
+}
+`,
+      "App\\Traits\\TracksChanges": `<?php
+
+namespace App\\Traits;
+
+trait TracksChanges
+{
+    public function boot(): void
+    {
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("boot")).toBe(true);
+    expect(options.readNavigationFileContent).toHaveBeenCalledWith(
+      classPath("App\\Traits\\TracksChanges"),
+    );
+    expect(options.readNavigationFileContent).toHaveBeenCalledWith(
+      classPath("App\\Traits\\SoftDeletes"),
+    );
+
+    harness.unmount();
+  });
+
+  it("keeps aliased abstract trait methods required under the alias name", async () => {
+    const childSource = `<?php
+
+namespace App\\Reports;
+
+use App\\Traits\\BuildsReports;
+
+class ReportGenerator
+{
+    use BuildsReports {
+        BuildsReports::build as buildReport;
+    }
+}
+`;
+    const options = makeOptions({
+      "App\\Traits\\BuildsReports": `<?php
+
+namespace App\\Traits;
+
+trait BuildsReports
+{
+    abstract public function build(): array;
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("build")).toBe(false);
+    expect(collected?.satisfiedNames.has("buildreport")).toBe(false);
+    expect(collected?.abstractMembers.has("build")).toBe(true);
+    expect(collected?.abstractMembers.get("buildreport")?.member.name).toBe(
+      "buildReport",
+    );
+
+    harness.unmount();
+  });
+
   it("cancels collection when the requested root changes during a trait read", async () => {
     const childSource = `<?php
 
