@@ -23329,6 +23329,121 @@ describe("useWorkbenchController preview tabs", () => {
     expect(method?.parameters).toEqual([{ name: "$request", type: "Request" }]);
   });
 
+  it("re-parses the live dirty buffer when file structure reopens after an edit", async () => {
+    const path = "/workspace/app/UserService.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(
+        async () =>
+          "<?php\nclass UserService { public function originalMethod() {} }\n",
+      ),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(path, "UserService.php"));
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.phpFileOutlineGateway.parsePhpFileOutline,
+    ).toHaveBeenCalledWith(path, expect.stringContaining("originalMethod"));
+
+    act(() => {
+      getWorkbench().setFileStructureOpen(false);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument(
+        "<?php\nclass UserService { public function renamedMethod() {} }\n",
+      );
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+
+    expect(
+      dependencies.phpFileOutlineGateway.parsePhpFileOutline,
+    ).toHaveBeenCalledWith(path, expect.stringContaining("renamedMethod"));
+  });
+
+  it("re-resolves the inherited outline from the live dirty buffer after an extends edit", async () => {
+    const childPath = "/workspace/app/Child.php";
+    const parentPath = "/workspace/app/ParentClass.php";
+    const otherParentPath = "/workspace/app/OtherParent.php";
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === childPath) {
+          return "<?php\nnamespace App;\nclass Child extends ParentClass {}\n";
+        }
+
+        if (path === otherParentPath) {
+          return "<?php\nnamespace App;\nclass OtherParent { public function inheritedRenamed() {} }\n";
+        }
+
+        return "<?php\nnamespace App;\nclass ParentClass { public function inheritedOriginal() {} }\n";
+      }),
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openFile(fileEntry(childPath, "Child.php"));
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().fileStructureScope).toBe("inherited");
+    expect(
+      dependencies.phpFileOutlineGateway.parsePhpFileOutline,
+    ).toHaveBeenCalledWith(
+      parentPath,
+      expect.stringContaining("inheritedOriginal"),
+    );
+
+    act(() => {
+      getWorkbench().setFileStructureOpen(false);
+    });
+    act(() => {
+      getWorkbench().updateActiveDocument(
+        "<?php\nnamespace App;\nclass Child extends OtherParent {}\n",
+      );
+    });
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+    act(() => {
+      getWorkbench().openFileStructure();
+    });
+    await flushAsyncTurns();
+
+    expect(getWorkbench().fileStructureScope).toBe("inherited");
+    expect(
+      dependencies.phpFileOutlineGateway.parsePhpFileOutline,
+    ).toHaveBeenCalledWith(
+      otherParentPath,
+      expect.stringContaining("inheritedRenamed"),
+    );
+  });
+
   it("drops delayed current PHP file structure outlines after switching project tabs", async () => {
     const workspaceAPath = "/workspace-a/app/UserService.php";
     const workspaceBPath = "/workspace-b/app/OrderService.php";

@@ -4922,7 +4922,6 @@ export function useWorkbenchController(
       if (
         scope === "inherited" &&
         activeDocument &&
-        !phpInheritedFileOutlinesByPath[activeDocument.path] &&
         !loadingInheritedPhpFileOutlinePaths.has(activeDocument.path)
       ) {
         void loadInheritedPhpFileOutline(activeDocument.path);
@@ -4932,7 +4931,6 @@ export function useWorkbenchController(
       activeDocument,
       loadInheritedPhpFileOutline,
       loadingInheritedPhpFileOutlinePaths,
-      phpInheritedFileOutlinesByPath,
     ],
   );
 
@@ -4969,10 +4967,7 @@ export function useWorkbenchController(
     setFileStructureScopeMode(nextScope);
     setFileStructureOpen(true);
 
-    if (
-      !phpFileOutlinesByPath[document.path] &&
-      !loadingPhpFileOutlinePaths.has(document.path)
-    ) {
+    if (!loadingPhpFileOutlinePaths.has(document.path)) {
       void loadPhpFileOutline(document.path);
     }
 
@@ -4982,7 +4977,6 @@ export function useWorkbenchController(
     loadPhpFileOutline,
     loadingPhpFileOutlinePaths,
     openJavaScriptTypeScriptFileStructure,
-    phpFileOutlinesByPath,
     setFileStructureScopeMode,
   ]);
 
