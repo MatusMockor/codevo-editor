@@ -4,6 +4,16 @@ import {
   latteBlockSymbolOccurrenceAt,
   latteBlockSymbolOccurrences,
 } from "../application/latteBlockSymbols";
+import {
+  collectLatteTemplateGraphDocuments,
+  joinLatteWorkspacePath,
+  latteCrossFileBlockDefinition,
+  latteCrossFileBlockOccurrences,
+  latteWorkspaceRelativePath,
+  type LatteTemplateGraphDocument,
+} from "../application/latteCrossFileBlocks";
+import type { LatteBlockSourceSpan } from "../domain/latteBlockSyntax";
+import { toWorkspaceMonacoUri } from "./phpMonacoDocumentContext";
 import type {
   LatteCompletion,
   LatteCompletionKind,
@@ -27,6 +37,11 @@ type MonacoApi = typeof Monaco;
 type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
+
+export interface LatteCrossFileBlockMonacoContext
+  extends TemplateLanguageMonacoProviderContext {
+  readTemplateFileContent?(path: string): Promise<string | null>;
+}
 
 export function registerLatteTemplateMonacoProviders<
   Context extends TemplateLanguageMonacoProviderContext,
@@ -151,13 +166,20 @@ async function provideLatteDefinition(
 
   if (occurrence) {
     if (occurrence.declarationSpan) {
+      const ancestor =
+        occurrence.kind === "declaration"
+          ? await latteAncestorDeclarationLocation(
+              monaco,
+              context,
+              documentContext,
+              source,
+              occurrence.name,
+            )
+          : null;
+
       return [
-        latteSymbolLocation(
-          monaco,
-          model,
-          source,
-          occurrence.declarationSpan,
-        ),
+        ancestor ??
+          latteSymbolLocation(monaco, model, source, occurrence.declarationSpan),
       ];
     }
 
@@ -166,11 +188,19 @@ async function provideLatteDefinition(
       occurrence.name,
     ).find((candidate) => candidate.kind === "declaration");
 
-    if (!declaration) {
-      return null;
+    if (declaration) {
+      return [latteSymbolLocation(monaco, model, source, declaration.span)];
     }
 
-    return [latteSymbolLocation(monaco, model, source, declaration.span)];
+    const ancestor = await latteAncestorDeclarationLocation(
+      monaco,
+      context,
+      documentContext,
+      source,
+      occurrence.name,
+    );
+
+    return ancestor ? [ancestor] : null;
   }
 
   const request = templateDefinitionNavigationRequest(
@@ -193,27 +223,53 @@ async function provideLatteDefinition(
   return null;
 }
 
-function provideLatteReferences(
+async function provideLatteReferences(
   monaco: MonacoApi,
   context: TemplateLanguageMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
   referenceContext: Monaco.languages.ReferenceContext,
-): Monaco.languages.Location[] | null {
+): Promise<Monaco.languages.Location[] | null> {
   const symbolContext = activeLatteSymbolContext(context, model, position);
 
   if (!symbolContext) {
     return null;
   }
 
-  const { occurrence, source } = symbolContext;
-
-  return latteBlockSymbolOccurrences(source, occurrence.name)
-    .filter(
-      (candidate) =>
-        referenceContext.includeDeclaration || candidate.kind !== "declaration",
-    )
+  const { documentContext, occurrence, source } = symbolContext;
+  const matchesReferenceContext = (candidate: { kind: string }) =>
+    referenceContext.includeDeclaration || candidate.kind !== "declaration";
+  const sameFileLocations = latteBlockSymbolOccurrences(source, occurrence.name)
+    .filter(matchesReferenceContext)
     .map((candidate) => latteSymbolLocation(monaco, model, source, candidate.span));
+  const documents = await latteTemplateGraphDocuments(
+    monaco,
+    context,
+    documentContext,
+    source,
+  );
+
+  if (!documents) {
+    return sameFileLocations;
+  }
+
+  const crossFileLocations = latteCrossFileBlockOccurrences(
+    documents.slice(1),
+    occurrence.name,
+  )
+    .filter(({ occurrence: candidate }) => matchesReferenceContext(candidate))
+    .flatMap(({ document, occurrence: candidate }) => {
+      const location = latteCrossFileSymbolLocation(
+        monaco,
+        documentContext.rootPath,
+        document,
+        candidate.span,
+      );
+
+      return location ? [location] : [];
+    });
+
+  return [...sameFileLocations, ...crossFileLocations];
 }
 
 function provideLatteRenameEdits(
@@ -308,7 +364,171 @@ function activeLatteSymbolContext(
     return null;
   }
 
-  return { occurrence, source };
+  return { documentContext, occurrence, source };
+}
+
+type LatteDocumentContext = NonNullable<
+  ReturnType<typeof activeTemplateDocumentContext>
+>;
+
+async function latteTemplateGraphDocuments(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  documentContext: LatteDocumentContext,
+  source: string,
+): Promise<LatteTemplateGraphDocument[] | null> {
+  const readTemplateFileContent = (context as LatteCrossFileBlockMonacoContext)
+    .readTemplateFileContent;
+
+  if (!readTemplateFileContent) {
+    return null;
+  }
+
+  const { path, rootPath } = documentContext;
+  const relativePath = latteWorkspaceRelativePath(rootPath, path);
+
+  if (!relativePath) {
+    return null;
+  }
+
+  const documents = await collectLatteTemplateGraphDocuments(
+    {
+      isRequestedRootActive: () => isStoredWorkspaceRootActive(context, rootPath),
+      readTemplateFile: async (relative) => {
+        const absolutePath = joinLatteWorkspacePath(rootPath, relative);
+        const openSource = openLatteModelValue(monaco, rootPath, absolutePath);
+
+        if (openSource !== null) {
+          return openSource;
+        }
+
+        try {
+          return (await readTemplateFileContent(absolutePath)) ?? null;
+        } catch {
+          return null;
+        }
+      },
+    },
+    relativePath,
+    source,
+  );
+
+  if (!documents || !isStoredWorkspaceRootActive(context, rootPath)) {
+    return null;
+  }
+
+  return documents;
+}
+
+async function latteAncestorDeclarationLocation(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  documentContext: LatteDocumentContext,
+  source: string,
+  name: string,
+): Promise<Monaco.languages.Location | null> {
+  const documents = await latteTemplateGraphDocuments(
+    monaco,
+    context,
+    documentContext,
+    source,
+  );
+
+  if (!documents) {
+    return null;
+  }
+
+  const definition = latteCrossFileBlockDefinition(documents.slice(1), name);
+
+  if (!definition) {
+    return null;
+  }
+
+  return latteCrossFileSymbolLocation(
+    monaco,
+    documentContext.rootPath,
+    definition.document,
+    definition.span,
+  );
+}
+
+function latteCrossFileSymbolLocation(
+  monaco: MonacoApi,
+  rootPath: string,
+  document: LatteTemplateGraphDocument,
+  span: LatteBlockSourceSpan,
+): Monaco.languages.Location | null {
+  const path = joinLatteWorkspacePath(rootPath, document.relativePath);
+  const uri = toWorkspaceMonacoUri(monaco, rootPath, path);
+
+  if (!uri) {
+    return null;
+  }
+
+  return { range: latteSourceRange(monaco, document.source, span), uri };
+}
+
+function openLatteModel(
+  monaco: MonacoApi,
+  rootPath: string,
+  path: string,
+): MonacoModel | null {
+  const uri = toWorkspaceMonacoUri(monaco, rootPath, path);
+
+  if (!uri) {
+    return null;
+  }
+
+  try {
+    return monaco.editor?.getModel?.(uri) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function openLatteModelValue(
+  monaco: MonacoApi,
+  rootPath: string,
+  path: string,
+): string | null {
+  const model = openLatteModel(monaco, rootPath, path);
+
+  if (!model) {
+    return null;
+  }
+
+  try {
+    return model.getValue();
+  } catch {
+    return null;
+  }
+}
+
+function latteSourceRange(
+  monaco: MonacoApi,
+  source: string,
+  span: LatteBlockSourceSpan,
+): Monaco.Range {
+  const start = lattePositionAtOffset(source, span.start);
+  const end = lattePositionAtOffset(source, span.end);
+
+  return new monaco.Range(
+    start.lineNumber,
+    start.column,
+    end.lineNumber,
+    end.column,
+  );
+}
+
+function lattePositionAtOffset(
+  source: string,
+  offset: number,
+): { column: number; lineNumber: number } {
+  const clamped = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, clamped);
+  const lineStart = before.lastIndexOf("\n") + 1;
+
+  return { column: clamped - lineStart + 1, lineNumber: before.split("\n").length };
 }
 
 function latteSymbolLocation(

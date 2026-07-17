@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type * as Monaco from "monaco-editor";
-import { registerLatteTemplateMonacoProviders } from "./latteTemplateMonacoProviders";
+import {
+  registerLatteTemplateMonacoProviders,
+  type LatteCrossFileBlockMonacoContext,
+} from "./latteTemplateMonacoProviders";
+import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import type {
   TemplateLanguageMonacoProviderContext,
   TemplateLanguageMonacoProviderHandlers,
@@ -396,8 +400,245 @@ describe("registerLatteTemplateMonacoProviders", () => {
   });
 });
 
+describe("cross-file Latte block navigation", () => {
+  const LAYOUT_PATH = "/ws/app/UI/@layout.latte";
+  const LAYOUT_SOURCE = "{block content}Layout{/block content}";
+  const CHILD_INCLUDE_SOURCE =
+    "{extends '../@layout.latte'}\n{include #content}";
+  const CHILD_OVERRIDE_SOURCE =
+    "{extends '../@layout.latte'}\n{block content}Child{/block}";
+
+  it("navigates an include of a parent-declared block to the layout declaration", async () => {
+    const registered = registerProviders();
+    const readTemplateFileContent = vi.fn(async (path: string) =>
+      path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
+    );
+    const context = templateContext({
+      content: CHILD_INCLUDE_SOURCE,
+      readTemplateFileContent,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(CHILD_INCLUDE_SOURCE);
+
+    const result = await registered.definitionProvider?.provideDefinition(
+      model,
+      positionAtOffset(
+        CHILD_INCLUDE_SOURCE,
+        CHILD_INCLUDE_SOURCE.indexOf("#content") + 2,
+      ),
+      {} as never,
+    );
+
+    expect(readTemplateFileContent).toHaveBeenCalledWith(LAYOUT_PATH);
+    expect(definitionLocation(result)?.uri.toString()).toBe(
+      workspaceModelUri("/ws", LAYOUT_PATH),
+    );
+    expect(definitionLocation(result)?.range).toMatchObject({
+      endColumn: 15,
+      endLineNumber: 1,
+      startColumn: 8,
+      startLineNumber: 1,
+    });
+  });
+
+  it("navigates a child block override to the nearest ancestor declaration", async () => {
+    const registered = registerProviders();
+    const context = templateContext({
+      content: CHILD_OVERRIDE_SOURCE,
+      readTemplateFileContent: async (path) =>
+        path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(CHILD_OVERRIDE_SOURCE);
+
+    const result = await registered.definitionProvider?.provideDefinition(
+      model,
+      positionAtOffset(
+        CHILD_OVERRIDE_SOURCE,
+        CHILD_OVERRIDE_SOURCE.indexOf("content") + 1,
+      ),
+      {} as never,
+    );
+
+    expect(definitionLocation(result)?.uri.toString()).toBe(
+      workspaceModelUri("/ws", LAYOUT_PATH),
+    );
+  });
+
+  it("keeps named closers navigating to their own same-file opener", async () => {
+    const registered = registerProviders();
+    const source =
+      "{extends '../@layout.latte'}\n{block content}Child{/block content}";
+    const context = templateContext({
+      content: source,
+      readTemplateFileContent: async (path) =>
+        path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(source);
+
+    const result = await registered.definitionProvider?.provideDefinition(
+      model,
+      positionAtOffset(source, source.lastIndexOf("content") + 1),
+      {} as never,
+    );
+
+    expect(definitionLocation(result)?.uri).toBe(model.uri);
+    expect(definitionLocation(result)?.range.startLineNumber).toBe(2);
+  });
+
+  it("returns cross-file references across the template graph", async () => {
+    const registered = registerProviders();
+    const context = templateContext({
+      content: CHILD_OVERRIDE_SOURCE,
+      readTemplateFileContent: async (path) =>
+        path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(CHILD_OVERRIDE_SOURCE);
+
+    const references = await registered.referenceProvider?.provideReferences(
+      model,
+      positionAtOffset(
+        CHILD_OVERRIDE_SOURCE,
+        CHILD_OVERRIDE_SOURCE.indexOf("content") + 1,
+      ),
+      { includeDeclaration: true },
+      {} as never,
+    );
+
+    expect(references).toHaveLength(3);
+    expect(references?.[0]?.uri).toBe(model.uri);
+    expect(references?.[1]?.uri.toString()).toBe(
+      workspaceModelUri("/ws", LAYOUT_PATH),
+    );
+    expect(references?.[2]?.uri.toString()).toBe(
+      workspaceModelUri("/ws", LAYOUT_PATH),
+    );
+  });
+
+  it("keeps rename same-file only even when the template read port is wired", async () => {
+    const registered = registerProviders();
+    const readTemplateFileContent = vi.fn(async (path: string) =>
+      path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
+    );
+    const context = templateContext({
+      content: CHILD_OVERRIDE_SOURCE,
+      readTemplateFileContent,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(CHILD_OVERRIDE_SOURCE);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(
+        CHILD_OVERRIDE_SOURCE,
+        CHILD_OVERRIDE_SOURCE.indexOf("content") + 1,
+      ),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(readTemplateFileContent).not.toHaveBeenCalled();
+    expect(rename?.rejectReason).toBeUndefined();
+    expect(rename?.edits).toHaveLength(1);
+    expect(rename?.edits[0]).toMatchObject({
+      resource: model.uri,
+      versionId: 1,
+    });
+  });
+
+  it("keeps same-file behavior when no template read port is wired", async () => {
+    const registered = registerProviders();
+    const context = templateContext({ content: CHILD_INCLUDE_SOURCE });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const result = await registered.definitionProvider?.provideDefinition(
+      textModel(CHILD_INCLUDE_SOURCE),
+      positionAtOffset(
+        CHILD_INCLUDE_SOURCE,
+        CHILD_INCLUDE_SOURCE.indexOf("#content") + 2,
+      ),
+      {} as never,
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it("drops cross-file results when the workspace root changes mid-flight", async () => {
+    const registered = registerProviders();
+    let activeRoot = "/ws";
+    const context = templateContext({
+      content: CHILD_OVERRIDE_SOURCE,
+      getWorkspaceRoot: () => activeRoot,
+      readTemplateFileContent: async (path) => {
+        activeRoot = "/other";
+        return path === LAYOUT_PATH ? LAYOUT_SOURCE : null;
+      },
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(CHILD_OVERRIDE_SOURCE);
+
+    const references = await registered.referenceProvider?.provideReferences(
+      model,
+      positionAtOffset(
+        CHILD_OVERRIDE_SOURCE,
+        CHILD_OVERRIDE_SOURCE.indexOf("content") + 1,
+      ),
+      { includeDeclaration: true },
+      {} as never,
+    );
+
+    expect(references).toHaveLength(1);
+    expect(references?.[0]?.uri).toBe(model.uri);
+  });
+});
+
 function registerProviders() {
   const disposed: string[] = [];
+  const openModels = new Map<string, Monaco.editor.ITextModel>();
   let codeActionProvider:
     | Monaco.languages.CodeActionProvider
     | undefined;
@@ -415,6 +656,13 @@ function registerProviders() {
         public endLineNumber: number,
         public endColumn: number,
       ) {}
+    },
+    Uri: {
+      parse: (value: string) => ({ toString: () => value }),
+    },
+    editor: {
+      getModel: (uri: { toString(): string }) =>
+        openModels.get(uri.toString()) ?? null,
     },
     languages: {
       CompletionItemKind: {
@@ -470,6 +718,7 @@ function registerProviders() {
 
   return {
     disposed,
+    openModels,
     get codeActionProvider() {
       return codeActionProvider;
     },
@@ -515,11 +764,14 @@ function definitionLocation(
 
 function templateContext({
   content = NORMAL_LATTE_SOURCE,
+  getWorkspaceRoot = () => "/ws",
   provideCodeActions = vi.fn(async () => []),
   provideCompletions = vi.fn(async () => []),
   provideDefinition = vi.fn(async () => false),
+  readTemplateFileContent,
 }: {
   content?: string;
+  getWorkspaceRoot?: () => string | null;
   provideCodeActions?: TemplateLanguageMonacoProviderContext["getTemplateLanguageProviders"] extends () => infer Registry
     ? Registry extends { latte: { provideCodeActions: infer Provider } }
       ? Provider
@@ -527,7 +779,8 @@ function templateContext({
     : never;
   provideCompletions?: TemplateLanguageProviderRegistry["latte"]["provideCompletions"];
   provideDefinition?: TemplateLanguageProviderRegistry["latte"]["provideDefinition"];
-}): TemplateLanguageMonacoProviderContext {
+  readTemplateFileContent?: LatteCrossFileBlockMonacoContext["readTemplateFileContent"];
+}): LatteCrossFileBlockMonacoContext {
   return {
     getActiveDocument: () => ({
       content,
@@ -537,6 +790,7 @@ function templateContext({
       savedContent: content,
     }),
     getLargeSmartDocumentPolicy: () => LARGE_DOCUMENT_POLICY,
+    readTemplateFileContent,
     getTemplateLanguageProviders: () => ({
       blade: {
         provideCodeActions: vi.fn(async () => []),
@@ -553,7 +807,7 @@ function templateContext({
         provideDefinition: vi.fn(async () => false),
       },
     }),
-    getWorkspaceRoot: () => "/ws",
+    getWorkspaceRoot,
     reportError: vi.fn(),
   };
 }
