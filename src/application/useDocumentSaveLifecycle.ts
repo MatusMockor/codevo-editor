@@ -35,6 +35,10 @@ import {
   type ResolveDocumentSaveOwnership,
 } from "./documentSaveIdentity";
 import {
+  runDocumentSaveParticipants,
+  type DocumentSaveParticipant,
+} from "./documentSaveParticipants";
+import {
   DocumentSaveService,
   type DocumentSaveResult,
 } from "./documentSaveService";
@@ -107,6 +111,7 @@ export interface DocumentSaveLifecycleDependencies {
   ) => void;
   runEslintAnalysisOnSave: (rootPath: string) => void;
   runPhpstanAnalysisOnSave: (rootPath: string) => void;
+  saveParticipants?: readonly DocumentSaveParticipant[];
 }
 
 export interface DocumentSaveLifecycle {
@@ -161,6 +166,7 @@ export function useDocumentSaveLifecycle(
     detectSaveConflict = () => {},
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
+    saveParticipants,
   } = dependencies;
   const documentSaveCoordinatorRef =
     useRef<DocumentSaveCoordinator<DocumentSaveResult> | null>(null);
@@ -206,7 +212,8 @@ export function useDocumentSaveLifecycle(
   const scheduleAnalysisOnSave = useCallback(
     (document: EditorDocument, requestedRoot: string) => {
       if (
-        workspaceSettings.eslintAnalyseOnSave &&
+        (workspaceSettings.eslintAnalyseOnSave ||
+          workspaceSettings.eslintFixOnSave) &&
         isJavaScriptTypeScriptLanguageServerDocument(document)
       ) {
         if (eslintAnalysisOnSaveTimerRef.current !== null) {
@@ -251,7 +258,65 @@ export function useDocumentSaveLifecycle(
       runEslintAnalysisOnSave,
       runPhpstanAnalysisOnSave,
       workspaceSettings.eslintAnalyseOnSave,
+      workspaceSettings.eslintFixOnSave,
       workspaceSettings.phpstanAnalyseOnSave,
+    ],
+  );
+
+  const organizedContentForSaveWithParticipants = useCallback(
+    async (
+      document: EditorDocument,
+      content: string,
+      requestedRoot: string,
+    ): Promise<string> => {
+      const organizedContent = await organizedImportsContentForSave(
+        document,
+        content,
+        requestedRoot,
+      );
+      if (!saveParticipants || saveParticipants.length === 0) {
+        return organizedContent;
+      }
+
+      const requestToken = workspaceRequestTokenRef.current;
+      const isStale = () =>
+        workspaceRequestTokenRef.current !== requestToken ||
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        ) ||
+        documentsRef.current[document.path] !== document;
+      const participantsRun = await runDocumentSaveParticipants({
+        participants: saveParticipants,
+        content: organizedContent,
+        context: {
+          document,
+          requestedRoot,
+          settings: workspaceSettings,
+          isStale,
+        },
+      });
+      participantsRun.failures.forEach((failure) => {
+        reportErrorForActiveWorkspaceRoot(
+          requestedRoot,
+          `Save Participant "${failure.participantId}"`,
+          failure.error,
+        );
+      });
+      if (isStale()) {
+        return organizedContent;
+      }
+
+      return participantsRun.content;
+    },
+    [
+      currentWorkspaceRootRef,
+      documentsRef,
+      organizedImportsContentForSave,
+      reportErrorForActiveWorkspaceRoot,
+      saveParticipants,
+      workspaceRequestTokenRef,
+      workspaceSettings,
     ],
   );
 
@@ -366,7 +431,7 @@ export function useDocumentSaveLifecycle(
         captureLocalHistorySnapshot,
         formattedContentForSave,
         optimizedImportsContentForSave,
-        organizedImportsContentForSave,
+        organizedImportsContentForSave: organizedContentForSaveWithParticipants,
         resolveEditorConfigForFile,
         syncSavedDocument,
         syncSavedJavaScriptTypeScriptDocument,
@@ -401,7 +466,7 @@ export function useDocumentSaveLifecycle(
       hasExternalFileConflict,
       beginDocumentSelfWrite,
       optimizedImportsContentForSave,
-      organizedImportsContentForSave,
+      organizedContentForSaveWithParticipants,
       presentSaveResult,
       resolveEditorConfigForFile,
       currentWorkspaceRootRef,

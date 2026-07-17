@@ -8,6 +8,11 @@ import type { LocalHistoryGateway } from "../domain/localHistory";
 import { defaultWorkspaceSettings } from "../domain/settings";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import {
+  createEslintFixOnSaveParticipant,
+  orderedDocumentSaveParticipants,
+  type DocumentSaveParticipant,
+} from "./documentSaveParticipants";
+import {
   useDocumentSaveLifecycle,
   type DocumentSaveLifecycle,
   type DocumentSaveLifecycleDependencies,
@@ -942,6 +947,181 @@ describe("useDocumentSaveLifecycle", () => {
     await act(async () => vi.advanceTimersByTimeAsync(900));
 
     expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("runs save participants after the LSP content chain on the content to be written", async () => {
+    const order: string[] = [];
+    const participantInputs: string[] = [];
+    const participant: DocumentSaveParticipant = {
+      id: "test.transform",
+      appliesTo: () => true,
+      run: async (content) => {
+        order.push("participant");
+        participantInputs.push(content);
+        return `${content}+participant`;
+      },
+    };
+    const formattedContentForSave = vi.fn(async (item: EditorDocument) => {
+      order.push("format");
+      return `${item.content}+formatted`;
+    });
+    const organizedImportsContentForSave = vi.fn(
+      async (_item: EditorDocument, content: string) => {
+        order.push("organize");
+        return `${content}+organized`;
+      },
+    );
+    const harness = renderLifecycle({
+      formattedContentForSave,
+      organizedImportsContentForSave,
+      saveParticipants: [participant],
+    });
+
+    await act(async () => harness.lifecycle().saveActiveDocument());
+
+    expect(order).toEqual(["format", "organize", "participant"]);
+    expect(participantInputs).toEqual(["edited+formatted+organized"]);
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+      PATH,
+      "edited+formatted+organized+participant",
+    );
+    harness.unmount();
+  });
+
+  it("saves the original content and reports a failing participant", async () => {
+    const error = new Error("participant exploded");
+    const failing: DocumentSaveParticipant = {
+      id: "failing",
+      appliesTo: () => true,
+      run: async () => {
+        throw error;
+      },
+    };
+    const reportErrorForActiveWorkspaceRoot = vi.fn();
+    const harness = renderLifecycle({
+      reportErrorForActiveWorkspaceRoot,
+      saveParticipants: [failing],
+    });
+
+    await act(async () => harness.lifecycle().saveActiveDocument());
+
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+      PATH,
+      "edited",
+    );
+    expect(harness.documentsRef.current[PATH].savedContent).toBe("edited");
+    expect(reportErrorForActiveWorkspaceRoot).toHaveBeenCalledWith(
+      ROOT,
+      'Save Participant "failing"',
+      error,
+    );
+    harness.unmount();
+  });
+
+  it("drops a participant transform when the workspace root goes stale mid-run", async () => {
+    const running = deferred<string>();
+    const participant: DocumentSaveParticipant = {
+      id: "slow",
+      appliesTo: () => true,
+      run: vi.fn(() => running.promise),
+    };
+    const harness = renderLifecycle({ saveParticipants: [participant] });
+
+    const save = harness.lifecycle().saveActiveDocument();
+    await vi.waitFor(() => expect(participant.run).toHaveBeenCalledOnce());
+    harness.currentWorkspaceRootRef.current = "/other";
+    running.resolve("hijacked");
+    await save;
+
+    expect(harness.workspaceFiles.writeTextFile).not.toHaveBeenCalled();
+    expect(harness.documentsRef.current[PATH].savedContent).toBe("saved");
+    harness.unmount();
+  });
+
+  it("schedules ESLint analysis after a save when only fix-on-save is enabled", async () => {
+    vi.useFakeTimers();
+    const tsDocument = { ...document(), language: "typescript" };
+    const harness = renderLifecycle({
+      activeDocument: tsDocument,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        eslintFixOnSave: true,
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().saveDocument(PATH);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+
+    expect(harness.runEslintAnalysisOnSave).toHaveBeenCalledWith(ROOT);
+    harness.unmount();
+  });
+
+  it("applies stored ESLint fixes to a clean buffer through the save pipeline", async () => {
+    vi.useFakeTimers();
+    const content = "const value = 1;;\n";
+    const clean = { ...document(content, content), language: "typescript" };
+    const eslintFixOnSave = createEslintFixOnSaveParticipant({
+      eslintFixesForFile: (rootPath, path) =>
+        rootPath === ROOT && path === PATH ? [{ range: [16, 17], text: "" }] : [],
+    });
+    const harness = renderLifecycle({
+      activeDocument: clean,
+      saveParticipants: orderedDocumentSaveParticipants({ eslintFixOnSave }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        eslintFixOnSave: true,
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+      PATH,
+      "const value = 1;\n",
+    );
+    expect(harness.documentsRef.current[PATH]).toEqual(
+      expect.objectContaining({
+        content: "const value = 1;\n",
+        savedContent: "const value = 1;\n",
+      }),
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(harness.runEslintAnalysisOnSave).toHaveBeenCalledWith(ROOT);
+    harness.unmount();
+  });
+
+  it("skips ESLint fixes when the LSP chain changes the written content", async () => {
+    const content = "const value = 1;;\n";
+    const clean = { ...document(content, content), language: "typescript" };
+    const eslintFixOnSave = createEslintFixOnSaveParticipant({
+      eslintFixesForFile: () => [{ range: [16, 17], text: "" }],
+    });
+    const harness = renderLifecycle({
+      activeDocument: clean,
+      formattedContentForSave: vi.fn(
+        async (item: EditorDocument) => `${item.content}formatted\n`,
+      ),
+      saveParticipants: orderedDocumentSaveParticipants({ eslintFixOnSave }),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        eslintFixOnSave: true,
+      },
+    });
+
+    await act(async () => {
+      await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(harness.workspaceFiles.writeTextFile).toHaveBeenCalledWith(
+      PATH,
+      "const value = 1;;\nformatted\n",
+    );
     harness.unmount();
   });
 

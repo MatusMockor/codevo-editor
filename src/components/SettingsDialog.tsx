@@ -314,6 +314,12 @@ export function SettingsDialog({
                       eslintAnalyseOnSave,
                     })
                   }
+                  onChangeEslintFixOnSave={(eslintFixOnSave) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      eslintFixOnSave,
+                    })
+                  }
                   onChangeDefaultInsertSpaces={(defaultInsertSpaces) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -684,6 +690,7 @@ interface GeneralSettingsProps {
   onChangeFormatOnPaste(formatOnPaste: boolean): void;
   onChangeFormatOnSave(formatOnSave: boolean): void;
   onChangeEslintAnalyseOnSave(enabled: boolean): void;
+  onChangeEslintFixOnSave(enabled: boolean): void;
   onChangeEslintPath(path: string): void;
   onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
@@ -738,6 +745,7 @@ function GeneralSettings({
   onChangeFormatOnPaste,
   onChangeFormatOnSave,
   onChangeEslintAnalyseOnSave,
+  onChangeEslintFixOnSave,
   onChangeEslintPath,
   onChangeOptimizeImportsOnSave,
   onChangeIntelligenceMode,
@@ -828,6 +836,18 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>ESLint analyse on save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.eslintFixOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangeEslintFixOnSave(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>ESLint fix on save</span>
       </label>
 
       <label className="settings-field">

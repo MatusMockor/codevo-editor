@@ -54,6 +54,7 @@ describe("settings defaults", () => {
       defaultTabSize: 4,
       extraIgnorePatterns: [],
       eslintAnalyseOnSave: false,
+      eslintFixOnSave: false,
       eslintPath: null,
       formatOnPaste: false,
       formatOnSave: false,
@@ -434,6 +435,7 @@ describe("normalizeWorkspaceSettings", () => {
         defaultTabSize: 6,
         extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
         eslintAnalyseOnSave: true,
+        eslintFixOnSave: true,
         eslintPath: " /tools/eslint ",
         formatOnPaste: true,
         formatOnSave: true,
@@ -505,6 +507,7 @@ describe("normalizeWorkspaceSettings", () => {
       defaultTabSize: 6,
       extraIgnorePatterns: ["vendor/generated", "var/cache"],
       eslintAnalyseOnSave: true,
+      eslintFixOnSave: true,
       eslintPath: "/tools/eslint",
       formatOnPaste: true,
       formatOnSave: true,
@@ -671,6 +674,19 @@ describe("normalizeWorkspaceSettings", () => {
     expect(
       normalizeWorkspaceSettings({ phpstanAnalyseOnSave: true })
         .phpstanAnalyseOnSave,
+    ).toBe(true);
+  });
+
+  it("defaults eslintFixOnSave to false and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).eslintFixOnSave).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ eslintFixOnSave: "yes" }).eslintFixOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ eslintFixOnSave: false }).eslintFixOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ eslintFixOnSave: true }).eslintFixOnSave,
     ).toBe(true);
   });
 

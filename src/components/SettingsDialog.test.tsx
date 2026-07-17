@@ -341,6 +341,48 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("keeps ESLint fix on save disabled by default and persists enabling it from settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="general"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const fixOnSaveCheckbox = inputWithLabel("ESLint fix on save");
+    expect(fixOnSaveCheckbox.checked).toBe(false);
+    await act(async () => {
+      fixOnSaveCheckbox.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        eslintFixOnSave: true,
+      },
+    });
+  });
+
   it("keeps Optimize imports on save disabled by default and persists enabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 

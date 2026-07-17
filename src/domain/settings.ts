@@ -157,6 +157,7 @@ export interface WorkspaceSettings {
   defaultTabSize: number;
   extraIgnorePatterns: string[];
   eslintAnalyseOnSave: boolean;
+  eslintFixOnSave: boolean;
   eslintPath: string | null;
   formatOnPaste: boolean;
   formatOnSave: boolean;
@@ -352,6 +353,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     defaultTabSize: defaultWorkspaceTabSize,
     extraIgnorePatterns: [],
     eslintAnalyseOnSave: false,
+    eslintFixOnSave: false,
     eslintPath: null,
     formatOnPaste: false,
     formatOnSave: false,
@@ -506,6 +508,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     eslintAnalyseOnSave: normalizeBoolean(
       value.eslintAnalyseOnSave,
       defaults.eslintAnalyseOnSave,
+    ),
+    eslintFixOnSave: normalizeBoolean(
+      value.eslintFixOnSave,
+      defaults.eslintFixOnSave,
     ),
     eslintPath: normalizeNullableString(value.eslintPath, defaults.eslintPath),
     formatOnPaste: normalizeBoolean(
