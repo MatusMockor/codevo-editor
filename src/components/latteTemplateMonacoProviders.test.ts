@@ -4,6 +4,10 @@ import {
   registerLatteTemplateMonacoProviders,
   type LatteCrossFileBlockMonacoContext,
 } from "./latteTemplateMonacoProviders";
+import {
+  createWorkspaceRootFromPath,
+  parseWorkspacePath,
+} from "../domain/workspacePath";
 import { workspaceModelUri } from "./phpMonacoDocumentContext";
 import type {
   TemplateLanguageMonacoProviderContext,
@@ -700,6 +704,399 @@ describe("cross-file Latte block navigation", () => {
   });
 });
 
+describe("cross-file Latte block rename", () => {
+  const LAYOUT_PATH = "/ws/app/UI/@layout.latte";
+  const HOME_PATH = "/ws/app/UI/Home/default.latte";
+  const ABOUT_PATH = "/ws/app/UI/About/default.latte";
+  const LAYOUT_SOURCE = "{block content}Layout{/block content}";
+  const HOME_SOURCE =
+    "{extends '../@layout.latte'}\n{block content}Home{/block}";
+  const ABOUT_SOURCE =
+    "{extends '../@layout.latte'}\n{block content}About{/block}";
+  const DISK_SOURCES: Record<string, string> = {
+    [ABOUT_PATH]: ABOUT_SOURCE,
+    [LAYOUT_PATH]: LAYOUT_SOURCE,
+  };
+  const listAll = async () => [LAYOUT_PATH, HOME_PATH, ABOUT_PATH];
+  const readDisk = async (path: string) => DISK_SOURCES[path] ?? null;
+
+  it("applies a rename from a page to the layout and every sibling page", async () => {
+    const registered = registerProviders();
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "accepted" as const,
+    }));
+    const pushedEdits: { range: unknown; text: string }[][] = [];
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(HOME_SOURCE, {
+      pushEditOperations: (_selections, edits) => {
+        pushedEdits.push(edits);
+      },
+    });
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toBeUndefined();
+    expect(rename?.edits).toEqual([]);
+    expect(applyWorkspaceEdit).toHaveBeenCalledTimes(1);
+
+    const [edit, applicationContext] = applyWorkspaceEdit.mock
+      .calls[0] as unknown as [
+      { changes: Record<string, { newText: string }[]> },
+      { openPaths: string[]; rootPath: string },
+    ];
+
+    expect(Object.keys(edit.changes).sort()).toEqual(
+      [
+        latteFileUri(ABOUT_PATH),
+        latteFileUri(HOME_PATH),
+        latteFileUri(LAYOUT_PATH),
+      ].sort(),
+    );
+    expect(edit.changes[latteFileUri(LAYOUT_PATH)]).toHaveLength(2);
+    expect(edit.changes[latteFileUri(ABOUT_PATH)]).toHaveLength(1);
+    expect(
+      Object.values(edit.changes)
+        .flat()
+        .every((textEdit) => textEdit.newText === "mainContent"),
+    ).toBe(true);
+    expect(applicationContext.openPaths).toEqual([HOME_PATH]);
+    expect(applicationContext.rootPath).toBe("/ws");
+    expect(pushedEdits).toHaveLength(1);
+    expect(pushedEdits[0]).toEqual([
+      { range: expect.anything(), text: "mainContent" },
+    ]);
+  });
+
+  it("applies a rename initiated from the layout declaration", async () => {
+    const registered = registerProviders();
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "accepted" as const,
+    }));
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: LAYOUT_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      path: LAYOUT_PATH,
+      readTemplateFileContent: async (path) =>
+        path === HOME_PATH ? HOME_SOURCE : DISK_SOURCES[path] ?? null,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(LAYOUT_SOURCE, { path: LAYOUT_PATH });
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(LAYOUT_SOURCE, LAYOUT_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toBeUndefined();
+    expect(rename?.edits).toEqual([]);
+
+    const [edit] = applyWorkspaceEdit.mock.calls[0] as unknown as [
+      { changes: Record<string, { newText: string }[]> },
+    ];
+
+    expect(Object.keys(edit.changes)).toHaveLength(3);
+  });
+
+  it("rejects the rename when a page in the closure has a dynamic relation", async () => {
+    const registered = registerProviders();
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "accepted" as const,
+    }));
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: async (path) =>
+        path === ABOUT_PATH
+          ? "{extends $layout}\n{block content}About{/block}"
+          : DISK_SOURCES[path] ?? null,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("dynamic");
+    expect(rename?.edits).toEqual([]);
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
+  });
+
+  it("rejects the rename when closed templates need edits without workspace edit support", async () => {
+    const registered = registerProviders();
+    const context = templateContext({
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("closed templates");
+    expect(rename?.edits).toEqual([]);
+  });
+
+  it("returns versioned multi-model edits when every closure file is open", async () => {
+    const registered = registerProviders();
+    const context = templateContext({
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: async () => null,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    registerOpenModel(registered.openModels, LAYOUT_PATH, LAYOUT_SOURCE, 7);
+    registerOpenModel(registered.openModels, ABOUT_PATH, ABOUT_SOURCE, 9);
+    const model = textModel(HOME_SOURCE);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toBeUndefined();
+    expect(rename?.edits).toHaveLength(4);
+    expect(
+      rename?.edits.filter(
+        (edit) => "versionId" in edit && edit.versionId === 7,
+      ),
+    ).toHaveLength(2);
+    expect(
+      rename?.edits.filter(
+        (edit) => "versionId" in edit && edit.versionId === 9,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("rejects the rename when an open template changes mid-computation", async () => {
+    const registered = registerProviders();
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "accepted" as const,
+    }));
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    let layoutReads = 0;
+    const layoutUri = workspaceModelUri("/ws", LAYOUT_PATH);
+    expect(layoutUri).not.toBeNull();
+    registered.openModels.set(
+      layoutUri ?? "",
+      textModel(LAYOUT_SOURCE, {
+        getValue: () => {
+          layoutReads += 1;
+          return layoutReads === 1 ? LAYOUT_SOURCE : `${LAYOUT_SOURCE} `;
+        },
+        path: LAYOUT_PATH,
+      }),
+    );
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("changed");
+    expect(rename?.edits).toEqual([]);
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
+  });
+
+  it("rejects the rename when the workspace edit application is refused", async () => {
+    const registered = registerProviders();
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "rejected" as const,
+      reason: "staleDocumentVersion" as const,
+    }));
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("could not be applied");
+    expect(rename?.edits).toEqual([]);
+  });
+
+  it("rejects the rename when the workspace root changes mid-sweep", async () => {
+    const registered = registerProviders();
+    let activeRoot = "/ws";
+    const context = templateContext({
+      content: HOME_SOURCE,
+      getWorkspaceRoot: () => activeRoot,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: async (path) => {
+        activeRoot = "/other";
+        return DISK_SOURCES[path] ?? null;
+      },
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("changed");
+    expect(rename?.edits).toEqual([]);
+  });
+
+  it("keeps the exact same-file rename shape for blocks without cross-file occurrences", async () => {
+    const registered = registerProviders();
+    const applyWorkspaceEdit = vi.fn(async () => ({
+      kind: "accepted" as const,
+    }));
+    const localSource =
+      "{extends '../@layout.latte'}\n{block onlyHere}x{/block}";
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: localSource,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: async (path) =>
+        path === HOME_PATH ? localSource : DISK_SOURCES[path] ?? null,
+    });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+    const model = textModel(localSource);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(localSource, localSource.indexOf("onlyHere") + 1),
+      "renamed",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toBeUndefined();
+    expect(applyWorkspaceEdit).not.toHaveBeenCalled();
+    expect(rename?.edits).toHaveLength(1);
+    expect(rename?.edits[0]).toMatchObject({
+      resource: model.uri,
+      textEdit: { text: "renamed" },
+      versionId: 1,
+    });
+  });
+});
+
+function latteFileUri(path: string): string {
+  const root = createWorkspaceRootFromPath("/ws");
+  expect(root.ok).toBe(true);
+
+  if (!root.ok) {
+    return "";
+  }
+
+  const parsed = parseWorkspacePath(root.value, path);
+  expect(parsed.ok).toBe(true);
+
+  return parsed.ok ? parsed.value.fileUri : "";
+}
+
+function registerOpenModel(
+  openModels: Map<string, Monaco.editor.ITextModel>,
+  path: string,
+  source: string,
+  versionId: number,
+): void {
+  const uri = workspaceModelUri("/ws", path);
+  expect(uri).not.toBeNull();
+  openModels.set(
+    uri ?? "",
+    textModel(source, { getVersionId: () => versionId, path }),
+  );
+}
+
 function registerProviders() {
   const disposed: string[] = [];
   const openModels = new Map<string, Monaco.editor.ITextModel>();
@@ -828,15 +1225,21 @@ function definitionLocation(
 }
 
 function templateContext({
+  applyWorkspaceEdit,
   content = NORMAL_LATTE_SOURCE,
   getWorkspaceRoot = () => "/ws",
+  listWorkspaceTemplateFiles,
+  path = "/ws/app/UI/Home/default.latte",
   provideCodeActions = vi.fn(async () => []),
   provideCompletions = vi.fn(async () => []),
   provideDefinition = vi.fn(async () => false),
   readTemplateFileContent,
 }: {
+  applyWorkspaceEdit?: LatteCrossFileBlockMonacoContext["applyWorkspaceEdit"];
   content?: string;
   getWorkspaceRoot?: () => string | null;
+  listWorkspaceTemplateFiles?: LatteCrossFileBlockMonacoContext["listWorkspaceTemplateFiles"];
+  path?: string;
   provideCodeActions?: TemplateLanguageMonacoProviderContext["getTemplateLanguageProviders"] extends () => infer Registry
     ? Registry extends { latte: { provideCodeActions: infer Provider } }
       ? Provider
@@ -847,14 +1250,16 @@ function templateContext({
   readTemplateFileContent?: LatteCrossFileBlockMonacoContext["readTemplateFileContent"];
 }): LatteCrossFileBlockMonacoContext {
   return {
+    applyWorkspaceEdit,
     getActiveDocument: () => ({
       content,
       language: "latte",
-      name: "default.latte",
-      path: "/ws/app/UI/Home/default.latte",
+      name: path.split("/").pop() ?? "default.latte",
+      path,
       savedContent: content,
     }),
     getLargeSmartDocumentPolicy: () => LARGE_DOCUMENT_POLICY,
+    listWorkspaceTemplateFiles,
     readTemplateFileContent,
     getTemplateLanguageProviders: () => ({
       blade: {
@@ -877,16 +1282,31 @@ function templateContext({
   };
 }
 
-function textModel(value: string): Monaco.editor.ITextModel {
+function textModel(
+  value: string,
+  options: {
+    getValue?: () => string;
+    getVersionId?: () => number;
+    path?: string;
+    pushEditOperations?: (
+      selections: unknown[],
+      edits: { range: unknown; text: string }[],
+      cursorState: () => null,
+    ) => void;
+  } = {},
+): Monaco.editor.ITextModel {
+  const path = options.path ?? "/ws/app/UI/Home/default.latte";
+
   return {
-    getVersionId: () => 1,
-    getValue: () => value,
+    getVersionId: options.getVersionId ?? (() => 1),
+    getValue: options.getValue ?? (() => value),
     getWordUntilPosition: () => ({ endColumn: 1, startColumn: 1, word: "" }),
+    pushEditOperations: options.pushEditOperations,
     uri: {
-      fsPath: "/ws/app/UI/Home/default.latte",
-      path: "/ws/app/UI/Home/default.latte",
+      fsPath: path,
+      path,
       scheme: "file",
-      toString: () => "file:///ws/app/UI/Home/default.latte",
+      toString: () => `file://${path}`,
     },
   } as unknown as Monaco.editor.ITextModel;
 }

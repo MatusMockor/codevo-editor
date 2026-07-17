@@ -20,7 +20,7 @@ import type {
   PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
 import type { UserSnippet } from "../domain/snippets";
-import type { EditorDocument } from "../domain/workspace";
+import type { EditorDocument, FileEntry } from "../domain/workspace";
 import {
   createEditorSurfaceLanguageProviderOptions,
   type EditorSurfaceLanguageProviderOptionsDependencies,
@@ -368,6 +368,115 @@ describe("editor surface language provider options", () => {
     });
   });
 
+  describe("listWorkspaceTemplateFiles", () => {
+    beforeEach(() => {
+      invoke.mockReset();
+    });
+
+    it("collects latte templates across nested workspace directories", async () => {
+      mockDirectoryTree({
+        "/workspace": [
+          directoryEntry("/workspace/app"),
+          fileEntry("/workspace/readme.md"),
+        ],
+        "/workspace/app": [
+          directoryEntry("/workspace/app/templates"),
+          fileEntry("/workspace/app/Bootstrap.php"),
+        ],
+        "/workspace/app/templates": [
+          fileEntry("/workspace/app/templates/@layout.latte"),
+          directoryEntry("/workspace/app/templates/Product"),
+        ],
+        "/workspace/app/templates/Product": [
+          fileEntry("/workspace/app/templates/Product/show.latte"),
+        ],
+      });
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      const listed = await options.listWorkspaceTemplateFiles("/workspace");
+
+      expect(listed?.slice().sort()).toEqual([
+        "/workspace/app/templates/@layout.latte",
+        "/workspace/app/templates/Product/show.latte",
+      ]);
+    });
+
+    it("skips vendor, node_modules and dot directories", async () => {
+      mockDirectoryTree({
+        "/workspace": [
+          directoryEntry("/workspace/vendor"),
+          directoryEntry("/workspace/node_modules"),
+          directoryEntry("/workspace/.git"),
+          directoryEntry("/workspace/templates"),
+        ],
+        "/workspace/templates": [
+          fileEntry("/workspace/templates/home.latte"),
+        ],
+      });
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.listWorkspaceTemplateFiles("/workspace"),
+      ).resolves.toEqual(["/workspace/templates/home.latte"]);
+      expect(readDirectoryCallPaths()).toEqual([
+        "/workspace",
+        "/workspace/templates",
+      ]);
+    });
+
+    it("stops collecting once the 2001 template limit is reached", async () => {
+      const templates = Array.from({ length: 2005 }, (_, index) =>
+        fileEntry(`/workspace/templates/t${index}.latte`),
+      );
+      mockDirectoryTree({
+        "/workspace": [...templates, directoryEntry("/workspace/extra")],
+        "/workspace/extra": [fileEntry("/workspace/extra/more.latte")],
+      });
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      const listed = await options.listWorkspaceTemplateFiles("/workspace");
+
+      expect(listed).toHaveLength(2001);
+      expect(readDirectoryCallPaths()).toEqual(["/workspace"]);
+    });
+
+    it("returns null when reading the root directory fails", async () => {
+      invoke.mockRejectedValue(new Error("read failed"));
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.listWorkspaceTemplateFiles("/workspace"),
+      ).resolves.toBeNull();
+    });
+
+    it("refuses roots outside the active workspace root", async () => {
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.listWorkspaceTemplateFiles("/elsewhere"),
+      ).resolves.toBeNull();
+      await expect(
+        options.listWorkspaceTemplateFiles("/workspace/../secrets"),
+      ).resolves.toBeNull();
+      expect(invoke).not.toHaveBeenCalled();
+    });
+  });
+
   it("keeps document sync isolated when no active workspace root is registered", () => {
     const refs = registrationRefs();
     const isDocumentSynced = vi.fn(() => true);
@@ -500,6 +609,32 @@ function registrationRefs({
     }),
     userSnippetsRef: ref(userSnippets),
   };
+}
+
+function mockDirectoryTree(tree: Record<string, FileEntry[]>): void {
+  invoke.mockImplementation(async (_command: string, args?: unknown) => {
+    const { path } = args as { path: string };
+
+    return tree[path] ?? [];
+  });
+}
+
+function readDirectoryCallPaths(): string[] {
+  return invoke.mock.calls.map(
+    ([, args]) => (args as { path: string }).path,
+  );
+}
+
+function directoryEntry(path: string): FileEntry {
+  return { kind: "directory", name: entryName(path), path };
+}
+
+function fileEntry(path: string): FileEntry {
+  return { kind: "file", name: entryName(path), path };
+}
+
+function entryName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
 function refreshGatewayStub(): LanguageServerRefreshGateway {

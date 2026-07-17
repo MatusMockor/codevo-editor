@@ -18,11 +18,13 @@ export interface LatteTemplateRelation {
 }
 
 export interface LatteTemplateRelations {
+  hasDynamicRelation: boolean;
   hasParentTag: boolean;
   relations: LatteTemplateRelation[];
 }
 
 interface RelationTagToken {
+  isDynamic: boolean;
   kind: LatteTemplateRelationKind;
   nextOffset: number;
   relation: LatteTemplateRelation | null;
@@ -47,6 +49,7 @@ export function parseLatteTemplateRelations(
 ): LatteTemplateRelations {
   const relations: LatteTemplateRelation[] = [];
   const masks = collectLatteMaskedRegions(source);
+  let hasDynamicRelation = false;
   let hasParentTag = false;
   let maskIndex = 0;
   let index = 0;
@@ -83,12 +86,16 @@ export function parseLatteTemplateRelations(
       hasParentTag = true;
     }
 
+    if (tag.isDynamic) {
+      hasDynamicRelation = true;
+    }
+
     if (tag.relation) {
       relations.push(tag.relation);
     }
   }
 
-  return { hasParentTag, relations };
+  return { hasDynamicRelation, hasParentTag, relations };
 }
 
 function readRelationTag(
@@ -153,6 +160,7 @@ function readQuotedRelationTarget(
 
   if (quoteEnd === null) {
     return {
+      isDynamic: true,
       kind,
       nextOffset: quoteStart + 1,
       relation: null,
@@ -164,6 +172,7 @@ function readQuotedRelationTarget(
 
   if (!isStaticRelationPath(path)) {
     return {
+      isDynamic: true,
       kind,
       nextOffset: quoteEnd + 1,
       relation: null,
@@ -172,6 +181,7 @@ function readQuotedRelationTarget(
   }
 
   return {
+    isDynamic: false,
     kind,
     nextOffset: quoteEnd + 1,
     relation: {
@@ -198,7 +208,23 @@ function readBareRelationTarget(
   const nextOffset = Math.max(index, targetStart + 1);
 
   if (token === "auto") {
-    return { kind, nextOffset, relation: null, suppressesAutoLayout: false };
+    return {
+      isDynamic: false,
+      kind,
+      nextOffset,
+      relation: null,
+      suppressesAutoLayout: false,
+    };
+  }
+
+  if (token === "none") {
+    return {
+      isDynamic: false,
+      kind,
+      nextOffset,
+      relation: null,
+      suppressesAutoLayout: true,
+    };
   }
 
   if (
@@ -206,10 +232,17 @@ function readBareRelationTarget(
     !isStaticRelationPath(token) ||
     !looksLikeFilePath(token)
   ) {
-    return { kind, nextOffset, relation: null, suppressesAutoLayout: true };
+    return {
+      isDynamic: true,
+      kind,
+      nextOffset,
+      relation: null,
+      suppressesAutoLayout: true,
+    };
   }
 
   return {
+    isDynamic: false,
     kind,
     nextOffset,
     relation: {

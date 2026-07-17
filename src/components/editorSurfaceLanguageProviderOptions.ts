@@ -15,7 +15,7 @@ import type {
   PhpMethodSignature,
 } from "../domain/phpMethodCompletions";
 import type { UserSnippet } from "../domain/snippets";
-import type { EditorDocument } from "../domain/workspace";
+import type { EditorDocument, FileEntry } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import {
   createWorkspaceRootFromPath,
@@ -142,7 +142,12 @@ export function createEditorSurfaceLanguageProviderOptions({
   dependencies: EditorSurfaceLanguageProviderOptionsDependencies;
   refs: EditorSurfaceLanguageProviderRegistrationRefs;
 }): LanguageServerMonacoProviderContext &
-  Required<Pick<LatteCrossFileBlockMonacoContext, "readTemplateFileContent">> {
+  Required<
+    Pick<
+      LatteCrossFileBlockMonacoContext,
+      "listWorkspaceTemplateFiles" | "readTemplateFileContent"
+    >
+  > {
   const {
     featuresGateway,
     coordinatePhpDocumentSymbols,
@@ -230,6 +235,12 @@ export function createEditorSurfaceLanguageProviderOptions({
       Boolean(isLanguageServerDocumentSyncedRef.current?.(path)),
     isPhpInlayHintsEnabled: () => phpInlayHintsEnabledRef.current,
     limitNavigationResultsToOpenModels: true,
+    listWorkspaceTemplateFiles: (rootPath) =>
+      listWorkspaceLatteTemplateFiles(
+        rootPath,
+        workspaceRoot,
+        workspaceIdentityDescriptor ?? null,
+      ),
     providePhpPresenterLinkDefinition: (source, offset, request) =>
       callOffsetProvider(
         phpPresenterLinkDefinitionRef.current,
@@ -281,6 +292,87 @@ async function readWorkspaceTemplateFileContent(
   } catch {
     return null;
   }
+}
+
+const WORKSPACE_TEMPLATE_FILE_LIMIT = 2001;
+const WORKSPACE_TEMPLATE_SKIPPED_DIRECTORIES = new Set([
+  "node_modules",
+  "vendor",
+]);
+const WORKSPACE_TEMPLATE_EXTENSION = ".latte";
+
+async function listWorkspaceLatteTemplateFiles(
+  rootPath: string,
+  workspaceRoot: string | null,
+  descriptor: WorkspaceIdentityDescriptor | null,
+): Promise<string[] | null> {
+  if (!isWorkspaceContainedPath(rootPath, workspaceRoot, descriptor)) {
+    return null;
+  }
+
+  const gateway = workspaceTemplateFileGateway(descriptor);
+  const collected: string[] = [];
+  const pendingDirectories = [rootPath];
+
+  for (let index = 0; index < pendingDirectories.length; index += 1) {
+    const entries = await readWorkspaceDirectoryEntries(
+      gateway,
+      pendingDirectories[index],
+    );
+
+    if (entries === null) {
+      return null;
+    }
+
+    for (const entry of entries) {
+      if (entry.kind === "directory") {
+        queueWorkspaceTemplateDirectory(pendingDirectories, entry);
+        continue;
+      }
+
+      if (!entry.name.endsWith(WORKSPACE_TEMPLATE_EXTENSION)) {
+        continue;
+      }
+
+      collected.push(entry.path);
+
+      if (collected.length >= WORKSPACE_TEMPLATE_FILE_LIMIT) {
+        return collected;
+      }
+    }
+  }
+
+  return collected;
+}
+
+async function readWorkspaceDirectoryEntries(
+  gateway: TauriWorkspaceGateway,
+  directory: string,
+): Promise<FileEntry[] | null> {
+  try {
+    return await gateway.readDirectory(directory);
+  } catch {
+    return null;
+  }
+}
+
+function queueWorkspaceTemplateDirectory(
+  pendingDirectories: string[],
+  entry: FileEntry,
+): void {
+  if (isSkippedWorkspaceTemplateDirectory(entry.name)) {
+    return;
+  }
+
+  pendingDirectories.push(entry.path);
+}
+
+function isSkippedWorkspaceTemplateDirectory(name: string): boolean {
+  if (name.startsWith(".")) {
+    return true;
+  }
+
+  return WORKSPACE_TEMPLATE_SKIPPED_DIRECTORIES.has(name);
 }
 
 function isWorkspaceContainedPath(

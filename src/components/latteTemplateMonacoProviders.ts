@@ -5,6 +5,10 @@ import {
   latteBlockSymbolOccurrences,
 } from "../application/latteBlockSymbols";
 import {
+  sweepLatteBlockRename,
+  type LatteBlockRenameSweepFile,
+} from "../application/latteBlockRenameSweep";
+import {
   collectLatteTemplateGraphDocuments,
   joinLatteWorkspacePath,
   latteCrossFileBlockDefinition,
@@ -12,7 +16,20 @@ import {
   latteWorkspaceRelativePath,
   type LatteTemplateGraphDocument,
 } from "../application/latteCrossFileBlocks";
+import type {
+  WorkspaceEditApplicationContext,
+  WorkspaceEditApplicationDecision,
+  WorkspaceEditOpenModelCommitResult,
+} from "../application/workspaceEditApplication";
 import type { LatteBlockSourceSpan } from "../domain/latteBlockSyntax";
+import type {
+  LanguageServerTextEdit,
+  LanguageServerWorkspaceEdit,
+} from "../domain/languageServerFeatures";
+import {
+  createWorkspaceRootFromPath,
+  parseWorkspacePath,
+} from "../domain/workspacePath";
 import { toWorkspaceMonacoUri } from "./phpMonacoDocumentContext";
 import type {
   LatteCompletion,
@@ -40,6 +57,11 @@ type Disposable = Monaco.IDisposable;
 
 export interface LatteCrossFileBlockMonacoContext
   extends TemplateLanguageMonacoProviderContext {
+  applyWorkspaceEdit?(
+    edit: LanguageServerWorkspaceEdit,
+    applicationContext: WorkspaceEditApplicationContext,
+  ): Promise<WorkspaceEditApplicationDecision>;
+  listWorkspaceTemplateFiles?(rootPath: string): Promise<string[] | null>;
   readTemplateFileContent?(path: string): Promise<string | null>;
 }
 
@@ -283,46 +305,408 @@ async function provideLatteReferences(
   return [...sameFileLocations, ...crossFileLocations];
 }
 
-function provideLatteRenameEdits(
+const LATTE_RENAME_STALE_REASON =
+  "The workspace changed while computing the Latte block rename.";
+const LATTE_RENAME_CHANGED_REASON =
+  "A template changed while computing the Latte block rename.";
+
+interface LatteRenamePlanEntry {
+  absolutePath: string;
+  file: LatteBlockRenameSweepFile;
+  model: MonacoModel | null;
+  versionId: number | null;
+}
+
+async function provideLatteRenameEdits(
   monaco: MonacoApi,
   context: TemplateLanguageMonacoProviderContext,
   model: MonacoModel,
   position: MonacoPosition,
   newName: string,
-): Monaco.languages.ProviderResult<
-  Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection
-> {
+): Promise<Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection> {
   if (!isValidLatteBlockSymbolName(newName)) {
-    return { edits: [], rejectReason: "Enter a valid Latte block name." };
+    return latteRenameRejection("Enter a valid Latte block name.");
   }
 
   const symbolContext = activeLatteSymbolContext(context, model, position);
 
   if (!symbolContext) {
-    return { edits: [], rejectReason: "No same-file Latte block at this position." };
+    return latteRenameRejection("No same-file Latte block at this position.");
   }
 
-  const { occurrence, source } = symbolContext;
+  const { documentContext, occurrence, source } = symbolContext;
+  const crossFile = await latteCrossFileRenameEdits(
+    monaco,
+    context,
+    model,
+    documentContext,
+    source,
+    occurrence.name,
+    newName,
+  );
+
+  if (crossFile) {
+    return crossFile;
+  }
+
+  return sameFileLatteRenameEdits(monaco, model, source, occurrence.name, newName);
+}
+
+function sameFileLatteRenameEdits(
+  monaco: MonacoApi,
+  model: MonacoModel,
+  source: string,
+  name: string,
+  newName: string,
+): Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection {
   const versionId = model.getVersionId?.();
 
   return {
-    edits: latteBlockSymbolOccurrences(source, occurrence.name).map(
-      (candidate) => ({
-        resource: model.uri,
-        textEdit: {
-          range: templateReplaceRange(
-            monaco,
-            model,
-            source,
-            candidate.span.start,
-            candidate.span.end,
-          ),
-          text: newName,
-        },
-        versionId,
-      }),
-    ),
+    edits: latteBlockSymbolOccurrences(source, name).map((candidate) => ({
+      resource: model.uri,
+      textEdit: {
+        range: templateReplaceRange(
+          monaco,
+          model,
+          source,
+          candidate.span.start,
+          candidate.span.end,
+        ),
+        text: newName,
+      },
+      versionId,
+    })),
   };
+}
+
+async function latteCrossFileRenameEdits(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  documentContext: LatteDocumentContext,
+  source: string,
+  name: string,
+  newName: string,
+): Promise<(Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection) | null> {
+  const crossFileContext = context as LatteCrossFileBlockMonacoContext;
+  const { listWorkspaceTemplateFiles, readTemplateFileContent } =
+    crossFileContext;
+
+  if (!listWorkspaceTemplateFiles || !readTemplateFileContent) {
+    return null;
+  }
+
+  const { path, rootPath } = documentContext;
+  const currentRelativePath = latteWorkspaceRelativePath(rootPath, path);
+
+  if (!currentRelativePath) {
+    return null;
+  }
+
+  const sweep = await sweepLatteBlockRename(
+    {
+      isRequestedRootActive: () =>
+        isStoredWorkspaceRootActive(context, rootPath),
+      listTemplateFiles: () =>
+        listLatteSweepTemplates(listWorkspaceTemplateFiles, rootPath),
+      readTemplateFile: (relativePath) =>
+        relativePath === currentRelativePath
+          ? Promise.resolve(source)
+          : readLatteTemplateSource(
+              monaco,
+              rootPath,
+              relativePath,
+              readTemplateFileContent,
+            ),
+    },
+    currentRelativePath,
+    name,
+  );
+
+  if (sweep.kind === "unavailable") {
+    return null;
+  }
+
+  if (sweep.kind === "rejected") {
+    return latteRenameRejection(sweep.reason);
+  }
+
+  if (!isStoredWorkspaceRootActive(context, rootPath)) {
+    return latteRenameRejection(LATTE_RENAME_STALE_REASON);
+  }
+
+  const files = sweep.files;
+
+  if (files.length === 0) {
+    return null;
+  }
+
+  if (files.length === 1 && files[0]?.relativePath === currentRelativePath) {
+    return null;
+  }
+
+  if (!files.some((file) => file.relativePath === currentRelativePath)) {
+    return latteRenameRejection(LATTE_RENAME_CHANGED_REASON);
+  }
+
+  const plan: LatteRenamePlanEntry[] = [];
+
+  for (const file of files) {
+    const absolutePath = joinLatteWorkspacePath(rootPath, file.relativePath);
+    const openModel =
+      file.relativePath === currentRelativePath
+        ? model
+        : openLatteModel(monaco, rootPath, absolutePath);
+
+    if (!openModel) {
+      plan.push({ absolutePath, file, model: null, versionId: null });
+      continue;
+    }
+
+    const staged = latteModelValueAndVersion(openModel);
+
+    if (!staged || staged.value !== file.source) {
+      return latteRenameRejection(LATTE_RENAME_CHANGED_REASON);
+    }
+
+    plan.push({
+      absolutePath,
+      file,
+      model: openModel,
+      versionId: staged.versionId,
+    });
+  }
+
+  if (crossFileContext.applyWorkspaceEdit) {
+    return applyLatteRenameThroughWorkspaceEdit(
+      monaco,
+      crossFileContext,
+      rootPath,
+      plan,
+      newName,
+    );
+  }
+
+  if (plan.every((entry) => entry.model !== null)) {
+    return {
+      edits: plan.flatMap((entry) => latteModelRenameEdits(monaco, entry, newName)),
+    };
+  }
+
+  return latteRenameRejection(
+    "The rename touches closed templates, and workspace edit support is unavailable.",
+  );
+}
+
+async function applyLatteRenameThroughWorkspaceEdit(
+  monaco: MonacoApi,
+  context: LatteCrossFileBlockMonacoContext,
+  rootPath: string,
+  plan: LatteRenamePlanEntry[],
+  newName: string,
+): Promise<Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection> {
+  const root = createWorkspaceRootFromPath(rootPath);
+
+  if (!root.ok) {
+    return latteRenameRejection(LATTE_RENAME_STALE_REASON);
+  }
+
+  const changes: Record<string, LanguageServerTextEdit[]> = {};
+
+  for (const entry of plan) {
+    const parsed = parseWorkspacePath(root.value, entry.absolutePath);
+
+    if (!parsed.ok) {
+      return latteRenameRejection(LATTE_RENAME_STALE_REASON);
+    }
+
+    changes[parsed.value.fileUri] = languageServerLatteRenameEdits(
+      entry.file,
+      newName,
+    );
+  }
+
+  const staged = plan.filter((entry) => entry.model !== null);
+  let commit: WorkspaceEditOpenModelCommitResult | undefined;
+  const applyOpenModels = () => {
+    if (commit) {
+      return commit;
+    }
+
+    commit = commitLatteRenameToOpenModels(monaco, staged, newName);
+    return commit;
+  };
+
+  const decision = await context.applyWorkspaceEdit?.(
+    { changes },
+    {
+      applyOpenModels,
+      openPaths: staged.map((entry) => entry.absolutePath),
+      rootPath,
+    },
+  );
+
+  if (!decision || decision.kind === "rejected") {
+    return latteRenameRejection(
+      "The Latte block rename could not be applied safely.",
+    );
+  }
+
+  const finalCommit = applyOpenModels();
+
+  if (finalCommit.kind === "rejected") {
+    return latteRenameRejection(LATTE_RENAME_CHANGED_REASON);
+  }
+
+  return { edits: [] };
+}
+
+function commitLatteRenameToOpenModels(
+  monaco: MonacoApi,
+  staged: LatteRenamePlanEntry[],
+  newName: string,
+): WorkspaceEditOpenModelCommitResult {
+  for (const entry of staged) {
+    if (!entry.model) {
+      continue;
+    }
+
+    const current = latteModelValueAndVersion(entry.model);
+
+    if (
+      !current ||
+      current.value !== entry.file.source ||
+      (entry.versionId !== null && current.versionId !== entry.versionId)
+    ) {
+      return {
+        kind: "rejected",
+        path: entry.absolutePath,
+        reason: "invalidOpenModelEdits",
+      };
+    }
+  }
+
+  for (const entry of staged) {
+    entry.model?.pushEditOperations?.(
+      [],
+      entry.file.occurrences.map((occurrence) => ({
+        range: latteSourceRange(monaco, entry.file.source, occurrence.span),
+        text: newName,
+      })),
+      () => null,
+    );
+  }
+
+  return {
+    documents: staged.map((entry) => ({
+      content: entry.model?.getValue() ?? entry.file.source,
+      path: entry.absolutePath,
+      versionId: entry.model?.getVersionId?.() ?? 0,
+    })),
+    kind: "applied",
+  };
+}
+
+function latteModelRenameEdits(
+  monaco: MonacoApi,
+  entry: LatteRenamePlanEntry,
+  newName: string,
+): Monaco.languages.IWorkspaceTextEdit[] {
+  const renameModel = entry.model;
+
+  if (!renameModel) {
+    return [];
+  }
+
+  return entry.file.occurrences.map((occurrence) => ({
+    resource: renameModel.uri,
+    textEdit: {
+      range: latteSourceRange(monaco, entry.file.source, occurrence.span),
+      text: newName,
+    },
+    versionId: entry.versionId ?? undefined,
+  }));
+}
+
+function languageServerLatteRenameEdits(
+  file: LatteBlockRenameSweepFile,
+  newName: string,
+): LanguageServerTextEdit[] {
+  return [...file.occurrences]
+    .sort((left, right) => right.span.start - left.span.start)
+    .map((occurrence) => ({
+      newText: newName,
+      range: {
+        end: languageServerPositionAtOffset(file.source, occurrence.span.end),
+        start: languageServerPositionAtOffset(file.source, occurrence.span.start),
+      },
+    }));
+}
+
+function languageServerPositionAtOffset(
+  source: string,
+  offset: number,
+): { character: number; line: number } {
+  const clamped = Math.max(0, Math.min(offset, source.length));
+  const before = source.slice(0, clamped);
+  const lineStart = before.lastIndexOf("\n") + 1;
+
+  return {
+    character: clamped - lineStart,
+    line: before.split("\n").length - 1,
+  };
+}
+
+async function listLatteSweepTemplates(
+  listWorkspaceTemplateFiles: (rootPath: string) => Promise<string[] | null>,
+  rootPath: string,
+): Promise<string[] | null> {
+  const listed = await listWorkspaceTemplateFiles(rootPath);
+
+  if (listed === null) {
+    return null;
+  }
+
+  return listed.flatMap((path) => {
+    const relativePath = latteWorkspaceRelativePath(rootPath, path);
+
+    return relativePath === null ? [] : [relativePath];
+  });
+}
+
+async function readLatteTemplateSource(
+  monaco: MonacoApi,
+  rootPath: string,
+  relativePath: string,
+  readTemplateFileContent: (path: string) => Promise<string | null>,
+): Promise<string | null> {
+  const absolutePath = joinLatteWorkspacePath(rootPath, relativePath);
+  const openSource = openLatteModelValue(monaco, rootPath, absolutePath);
+
+  if (openSource !== null) {
+    return openSource;
+  }
+
+  return (await readTemplateFileContent(absolutePath)) ?? null;
+}
+
+function latteModelValueAndVersion(
+  model: MonacoModel,
+): { value: string; versionId: number | null } | null {
+  try {
+    return {
+      value: model.getValue(),
+      versionId: model.getVersionId?.() ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function latteRenameRejection(
+  reason: string,
+): Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection {
+  return { edits: [], rejectReason: reason };
 }
 
 function resolveLatteRenameLocation(

@@ -114,4 +114,38 @@ describe("parseLatteTemplateRelations", () => {
     expect(parsed.hasParentTag).toBe(true);
     expect(parsed.relations).toEqual([]);
   });
+
+  it("reports no dynamic relation for static, auto, and none targets", () => {
+    const source = [
+      "{extends '../@layout.latte'}",
+      "{import 'blocks.latte'}",
+      "{layout none}",
+      "{extends auto}",
+    ].join("\n");
+
+    expect(parseLatteTemplateRelations(source).hasDynamicRelation).toBe(false);
+  });
+
+  it("reports a dynamic relation for a variable parent target", () => {
+    const parsed = parseLatteTemplateRelations("{extends $layoutFile}");
+
+    expect(parsed.hasDynamicRelation).toBe(true);
+  });
+
+  it("reports a dynamic relation for unresolvable relation targets", () => {
+    expect(
+      parseLatteTemplateRelations("{extends 'broken.latte\n}").hasDynamicRelation,
+    ).toBe(true);
+    expect(
+      parseLatteTemplateRelations("{import block}").hasDynamicRelation,
+    ).toBe(true);
+  });
+
+  it("ignores dynamic relations inside comments and syntax-off regions", () => {
+    const parsed = parseLatteTemplateRelations(
+      "{* {extends $commented} *}\n{syntax off}{import $masked}{/syntax}",
+    );
+
+    expect(parsed.hasDynamicRelation).toBe(false);
+  });
 });
