@@ -1,6 +1,11 @@
 import type { MutableRefObject } from "react";
 import type * as Monaco from "monaco-editor";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const invoke = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke, isTauri: () => false }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 import type {
   LanguageServerFeaturesGateway,
   LanguageServerRefreshGateway,
@@ -30,6 +35,7 @@ import type {
   PhpCodeActionRange,
   PhpWorkspaceEditApplicationContext,
 } from "./languageServerMonacoProviders";
+import type { WorkspaceIdentityDescriptor } from "./phpMonacoDocumentContext";
 
 describe("editor surface language provider options", () => {
   it("forwards provider callbacks through the current refs", async () => {
@@ -262,6 +268,106 @@ describe("editor surface language provider options", () => {
     expect(options.getTemplateLanguageProviders()).toBe(nextRegistry);
   });
 
+  describe("readTemplateFileContent", () => {
+    beforeEach(() => {
+      invoke.mockReset();
+    });
+
+    it("reads template content inside the active workspace root", async () => {
+      invoke.mockResolvedValue("{block content}Hi{/block}");
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.readTemplateFileContent(
+          "/workspace/app/templates/@layout.latte",
+        ),
+      ).resolves.toBe("{block content}Hi{/block}");
+      expect(invoke).toHaveBeenCalledWith("read_text_file", {
+        path: "/workspace/app/templates/@layout.latte",
+      });
+    });
+
+    it("routes reads through the trusted workspace command when identity is known", async () => {
+      invoke.mockResolvedValue({ content: "{block sidebar}{/block}", revision: 3 });
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies({
+          workspaceIdentityDescriptor: identityDescriptor(),
+        }),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.readTemplateFileContent(
+          "/workspace/app/templates/@layout.latte",
+        ),
+      ).resolves.toBe("{block sidebar}{/block}");
+      expect(invoke).toHaveBeenCalledWith("workspace_read_text_file", {
+        workspaceId: "ws-1",
+        relativePath: "app/templates/@layout.latte",
+      });
+    });
+
+    it("refuses paths outside the active workspace root", async () => {
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.readTemplateFileContent("/elsewhere/@layout.latte"),
+      ).resolves.toBeNull();
+      await expect(
+        options.readTemplateFileContent("/workspace/../secrets/@layout.latte"),
+      ).resolves.toBeNull();
+      expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("refuses descriptor-relative paths outside the trusted workspace root", async () => {
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies({
+          workspaceIdentityDescriptor: identityDescriptor(),
+        }),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.readTemplateFileContent("/elsewhere/@layout.latte"),
+      ).resolves.toBeNull();
+      expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("refuses reads when no workspace root is active", async () => {
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies({ workspaceRoot: null }),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.readTemplateFileContent(
+          "/workspace/app/templates/@layout.latte",
+        ),
+      ).resolves.toBeNull();
+      expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("returns null when reading the template file fails", async () => {
+      invoke.mockRejectedValue(new Error("read failed"));
+      const options = createEditorSurfaceLanguageProviderOptions({
+        dependencies: dependencies(),
+        refs: registrationRefs(),
+      });
+
+      await expect(
+        options.readTemplateFileContent(
+          "/workspace/app/templates/@layout.latte",
+        ),
+      ).resolves.toBeNull();
+    });
+  });
+
   it("keeps document sync isolated when no active workspace root is registered", () => {
     const refs = registrationRefs();
     const isDocumentSynced = vi.fn(() => true);
@@ -309,17 +415,31 @@ const parameterInlayHints = [
 function dependencies({
   refreshGateway,
   workspaceEditGateway,
+  workspaceIdentityDescriptor = null,
   workspaceRoot = "/workspace",
 }: {
   refreshGateway?: LanguageServerRefreshGateway;
   workspaceEditGateway?: LanguageServerWorkspaceEditGateway;
+  workspaceIdentityDescriptor?: WorkspaceIdentityDescriptor | null;
   workspaceRoot?: string | null;
 } = {}): EditorSurfaceLanguageProviderOptionsDependencies {
   return {
     featuresGateway,
     refreshGateway,
     workspaceEditGateway,
+    workspaceIdentityDescriptor,
     workspaceRoot,
+  };
+}
+
+function identityDescriptor(): WorkspaceIdentityDescriptor {
+  return {
+    workspaceId: "ws-1",
+    selectedPath: "/workspace",
+    canonicalRoot: "/workspace",
+    caseSensitive: true,
+    unicodeNormalizationPolicy: "preserved",
+    policy: { caseSensitive: true, unicodeNormalization: "none" },
   };
 }
 

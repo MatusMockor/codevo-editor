@@ -17,6 +17,13 @@ import type {
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import {
+  createWorkspaceRootFromPath,
+  parseWorkspacePath,
+} from "../domain/workspacePath";
+import { TauriWorkspaceGateway } from "../infrastructure/tauriWorkspaceGateway";
+import { workspaceRelativePathForDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
+import type { LatteCrossFileBlockMonacoContext } from "./latteTemplateMonacoProviders";
 import type {
   LanguageServerMonacoDocumentRequestLease,
   LanguageServerMonacoProviderContext,
@@ -134,7 +141,8 @@ export function createEditorSurfaceLanguageProviderOptions({
 }: {
   dependencies: EditorSurfaceLanguageProviderOptionsDependencies;
   refs: EditorSurfaceLanguageProviderRegistrationRefs;
-}): LanguageServerMonacoProviderContext {
+}): LanguageServerMonacoProviderContext &
+  Required<Pick<LatteCrossFileBlockMonacoContext, "readTemplateFileContent">> {
   const {
     featuresGateway,
     coordinatePhpDocumentSymbols,
@@ -245,12 +253,68 @@ export function createEditorSurfaceLanguageProviderOptions({
       phpMethodSignatureRef.current(source, position),
     providePhpParameterInlayHints: (source, range) =>
       phpParameterInlayHintsRef.current(source, range),
+    readTemplateFileContent: (path) =>
+      readWorkspaceTemplateFileContent(
+        path,
+        workspaceRoot,
+        workspaceIdentityDescriptor ?? null,
+      ),
     recordCompletionLatency: (durationMs, rootPath) =>
       recordCompletionLatencyRef.current?.(durationMs, rootPath),
     refreshGateway,
     reportError: (error) => errorReporterRef.current(error),
     workspaceEditGateway,
   };
+}
+
+async function readWorkspaceTemplateFileContent(
+  path: string,
+  workspaceRoot: string | null,
+  descriptor: WorkspaceIdentityDescriptor | null,
+): Promise<string | null> {
+  if (!isWorkspaceContainedPath(path, workspaceRoot, descriptor)) {
+    return null;
+  }
+
+  try {
+    return await workspaceTemplateFileGateway(descriptor).readTextFile(path);
+  } catch {
+    return null;
+  }
+}
+
+function isWorkspaceContainedPath(
+  path: string,
+  workspaceRoot: string | null,
+  descriptor: WorkspaceIdentityDescriptor | null,
+): boolean {
+  if (descriptor) {
+    return workspaceRelativePathForDescriptor(descriptor, path) !== null;
+  }
+
+  if (!workspaceRoot) {
+    return false;
+  }
+
+  const root = createWorkspaceRootFromPath(workspaceRoot);
+
+  if (!root.ok) {
+    return false;
+  }
+
+  return parseWorkspacePath(root.value, path).ok;
+}
+
+function workspaceTemplateFileGateway(
+  descriptor: WorkspaceIdentityDescriptor | null,
+): TauriWorkspaceGateway {
+  if (!descriptor) {
+    return new TauriWorkspaceGateway();
+  }
+
+  return new TauriWorkspaceGateway({
+    descriptorForPath: () => descriptor,
+  });
 }
 
 function callOffsetProvider<T>(
