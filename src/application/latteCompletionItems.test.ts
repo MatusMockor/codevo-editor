@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
   latteFilterCompletions,
+  latteFunctionCompletionContextAt,
+  latteFunctionCompletions,
   latteMemberCompletionItem,
   latteTagCompletions,
 } from "./latteCompletionItems";
@@ -137,6 +139,152 @@ describe("latteFilterCompletions", () => {
         label: "localDate",
         replaceEnd: 21,
         replaceStart: 19,
+      },
+    ]);
+  });
+});
+
+describe("latteFunctionCompletionContextAt", () => {
+  it("detects a partial function name inside a known tag expression", () => {
+    const source = "{if divisi}";
+    const offset = source.indexOf("divisi") + "divisi".length;
+
+    expect(latteFunctionCompletionContextAt(source, offset)).toEqual({
+      end: offset,
+      prefix: "divisi",
+      start: source.indexOf("divisi"),
+    });
+  });
+
+  it("detects a partial function name after an operator in an expression", () => {
+    const source = "{$total + mon}";
+    const offset = source.indexOf("mon") + "mon".length;
+
+    expect(latteFunctionCompletionContextAt(source, offset)).toEqual({
+      end: offset,
+      prefix: "mon",
+      start: source.indexOf("mon"),
+    });
+  });
+
+  it("ignores filter, variable, member, and static prefixes", () => {
+    const filterSource = "{$total|mon}";
+    const variableSource = "{if $mon}";
+    const memberSource = "{$order->mon}";
+    const staticSource = "{if Helpers::mon}";
+
+    for (const source of [
+      filterSource,
+      variableSource,
+      memberSource,
+      staticSource,
+    ]) {
+      const offset = source.indexOf("mon") + "mon".length;
+
+      expect(latteFunctionCompletionContextAt(source, offset)).toBeNull();
+    }
+  });
+
+  it("ignores empty prefixes, strings, and positions outside expressions", () => {
+    const emptySource = "{if }";
+    const stringSource = "{if $label === 'mon'}";
+    const htmlSource = "<p>mon</p>";
+
+    expect(
+      latteFunctionCompletionContextAt(emptySource, "{if ".length),
+    ).toBeNull();
+    expect(
+      latteFunctionCompletionContextAt(
+        stringSource,
+        stringSource.indexOf("mon") + 3,
+      ),
+    ).toBeNull();
+    expect(
+      latteFunctionCompletionContextAt(htmlSource, htmlSource.indexOf("mon") + 3),
+    ).toBeNull();
+  });
+
+  it("does not treat the tag name itself as a function prefix", () => {
+    const source = "{foreach}";
+    const offset = "{fore".length;
+
+    expect(latteFunctionCompletionContextAt(source, offset)).toBeNull();
+  });
+});
+
+describe("latteFunctionCompletions", () => {
+  it("offers builtin functions and appends project functions with details", () => {
+    expect(
+      latteFunctionCompletions({ end: 8, prefix: "", start: 4 }, 3, [
+        "money",
+      ]),
+    ).toEqual([
+      {
+        detail: "Latte function",
+        insertText: "clamp",
+        kind: "filter",
+        label: "clamp",
+        replaceEnd: 8,
+        replaceStart: 4,
+      },
+      {
+        detail: "Latte function",
+        insertText: "divisibleBy",
+        kind: "filter",
+        label: "divisibleBy",
+        replaceEnd: 8,
+        replaceStart: 4,
+      },
+      {
+        detail: "Latte function",
+        insertText: "even",
+        kind: "filter",
+        label: "even",
+        replaceEnd: 8,
+        replaceStart: 4,
+      },
+    ]);
+  });
+
+  it("shows resolved callable signatures for project functions", () => {
+    expect(
+      latteFunctionCompletions({ end: 8, prefix: "mon", start: 5 }, 10, [
+        {
+          callable: {
+            className: "App\\Latte\\AppLatteExtension",
+            declaringClassName: "App\\Latte\\AppLatteExtension",
+            methodName: "formatMoney",
+            parameters: "float $value",
+            returnType: "string",
+          },
+          name: "money",
+        },
+      ]),
+    ).toEqual([
+      {
+        detail: "App\\Latte\\AppLatteExtension::formatMoney(float $value): string",
+        insertText: "money",
+        kind: "filter",
+        label: "money",
+        replaceEnd: 8,
+        replaceStart: 5,
+      },
+    ]);
+  });
+
+  it("keeps the builtin detail when a project function re-registers a builtin", () => {
+    expect(
+      latteFunctionCompletions({ end: 6, prefix: "clamp", start: 1 }, 10, [
+        "clamp",
+      ]),
+    ).toEqual([
+      {
+        detail: "Latte function",
+        insertText: "clamp",
+        kind: "filter",
+        label: "clamp",
+        replaceEnd: 6,
+        replaceStart: 1,
       },
     ]);
   });

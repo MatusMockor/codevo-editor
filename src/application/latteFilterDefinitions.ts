@@ -29,13 +29,17 @@ export interface LatteFilterDefinitionDependencies {
     LatteFilterCallableResolutionDependencies["synthesizeTypedReceiverSource"];
 }
 
-export interface LatteFilterDefinitionContext {
+export interface LatteRegistrationNavigationContext {
   deps: LatteFilterDefinitionDependencies;
   isRequestedRootActive(): boolean;
-  loadFilterRegistrations(): Promise<LatteFilterRegistrationTarget[]>;
   loadProjectConfig?(): Promise<
     Pick<NeonProjectConfig, "serviceAliases" | "serviceNameTypes">
   >;
+}
+
+export interface LatteFilterDefinitionContext
+  extends LatteRegistrationNavigationContext {
+  loadFilterRegistrations(): Promise<LatteFilterRegistrationTarget[]>;
 }
 
 export async function resolveLatteFilterDefinition(
@@ -62,6 +66,13 @@ export async function resolveLatteFilterDefinition(
     return openLatteCoreFilterMethodTarget(context, reference.name);
   }
 
+  return openLatteRegistrationTarget(context, target);
+}
+
+export async function openLatteRegistrationTarget(
+  context: LatteRegistrationNavigationContext,
+  target: LatteFilterRegistrationTarget,
+): Promise<boolean> {
   const callableOpened = await openLatteCallableMethodTarget(context, target);
 
   if (!context.isRequestedRootActive()) {
@@ -107,7 +118,7 @@ export async function resolveLatteFilterDefinition(
 }
 
 async function openLatteCoreFilterMethodTarget(
-  context: LatteFilterDefinitionContext,
+  context: LatteRegistrationNavigationContext,
   filterName: string,
 ): Promise<boolean> {
   const target = latteCoreFilterMethodTarget(filterName);
@@ -120,7 +131,7 @@ async function openLatteCoreFilterMethodTarget(
 }
 
 async function openLatteCallableMethodTarget(
-  context: LatteFilterDefinitionContext,
+  context: LatteRegistrationNavigationContext,
   target: LatteFilterRegistrationTarget,
 ): Promise<boolean> {
   const methodName = target.methodName ?? target.callable?.methodName;
@@ -146,7 +157,7 @@ async function openLatteCallableMethodTarget(
 }
 
 async function openStaticLatteCallableMethodTarget(
-  context: LatteFilterDefinitionContext,
+  context: LatteRegistrationNavigationContext,
   target: LatteFilterRegistrationTarget,
 ): Promise<boolean> {
   const resolvePhpReceiverCompletions =

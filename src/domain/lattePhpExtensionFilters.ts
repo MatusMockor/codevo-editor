@@ -17,7 +17,7 @@ export interface LattePhpExtensionFilter {
   serviceClassName?: string;
 }
 
-interface LattePhpExtensionFilterCallable {
+export interface LattePhpExtensionFilterCallable {
   callableOffset?: number;
   callableKind?: LattePhpExtensionCallableKind;
   className?: string;
@@ -30,18 +30,27 @@ interface ArrayReturnRange {
   start: number;
 }
 
-const GET_FILTERS_METHOD_PATTERN = /\bfunction\s+getFilters\s*\(/g;
-
 export function lattePhpExtensionFiltersFromSource(
   source: string,
 ): LattePhpExtensionFilter[] {
+  return lattePhpExtensionCallableMapEntriesFromSource(source, "getFilters");
+}
+
+export function lattePhpExtensionCallableMapEntriesFromSource(
+  source: string,
+  getterMethodName: string,
+): LattePhpExtensionFilter[] {
   const masked = maskPhpSource(source);
   const filters: LattePhpExtensionFilter[] = [];
+  const getterMethodPattern = new RegExp(
+    `\\bfunction\\s+${getterMethodName}\\s*\\(`,
+    "g",
+  );
 
   for (
-    let match = GET_FILTERS_METHOD_PATTERN.exec(masked);
+    let match = getterMethodPattern.exec(masked);
     match;
-    match = GET_FILTERS_METHOD_PATTERN.exec(masked)
+    match = getterMethodPattern.exec(masked)
   ) {
     const methodBody = getFiltersMethodBody(masked, match.index);
 
@@ -273,6 +282,14 @@ function stringKeyFiltersFromArray(
   return filters;
 }
 
+export function lattePhpExtensionArrayCallableAt(
+  source: string,
+  valueStart: number,
+  containingOffset: number,
+): LattePhpExtensionFilterCallable | undefined {
+  return staticArrayCallable(source, valueStart, containingOffset);
+}
+
 function staticArrayCallable(
   source: string,
   valueStart: number,
@@ -449,6 +466,14 @@ function phpClassStructureContainingOffset(source: string, offset: number) {
   }
 
   return parsePhpClassStructure(source);
+}
+
+export function lattePhpStringLiteralAt(
+  source: string,
+  quoteOffset: number,
+  quote: string,
+): { end: number; name: string } | null {
+  return stringLiteralAt(source, quoteOffset, quote);
 }
 
 function stringLiteralAt(

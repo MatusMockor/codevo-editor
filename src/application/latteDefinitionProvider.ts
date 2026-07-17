@@ -17,6 +17,10 @@ import {
   resolveLatteFilterDefinition,
 } from "./latteFilterDefinitions";
 import {
+  latteFunctionDefinitionContext,
+  resolveLatteFunctionDefinition,
+} from "./latteFunctionDefinitions";
+import {
   resolveLatteMemberDefinition,
   resolveNettePresenterVariableDefinition,
 } from "./latteExpressionIntelligence";
@@ -170,6 +174,16 @@ export async function provideLatteDefinitionOutcome(
   );
 
   if (filterHandled) {
+    return latteDefinitionOutcome(true, shouldBlockFallback);
+  }
+
+  const functionHandled = await resolveLatteFunctionDefinition(
+    latteFunctionDefinitionContext(options, request),
+    source,
+    offset,
+  );
+
+  if (functionHandled) {
     return latteDefinitionOutcome(true, shouldBlockFallback);
   }
 

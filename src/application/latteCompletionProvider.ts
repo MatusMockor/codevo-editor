@@ -4,9 +4,17 @@ import {
   detectLatteTagCompletionAt,
 } from "../domain/latteNavigation";
 import {
+  latteFunctionCompletionContextAt,
+  latteFunctionCompletions,
   latteTagCompletions as buildLatteTagCompletions,
   type LatteCompletionItem,
+  type LatteFunctionCompletionContext,
 } from "./latteCompletionItems";
+import {
+  latteFunctionDiscoveryContext,
+  loadLatteFunctionRegistrations,
+} from "./latteFunctionDiscovery";
+import { resolveLatteProjectFilters } from "./latteFilterCallableResolution";
 import {
   latteExpressionCompletions,
 } from "./latteExpressionIntelligence";
@@ -47,6 +55,7 @@ import {
 } from "./latteProviderFlowContext";
 import {
   latteProviderRequestContext,
+  type LatteProviderRequestContext,
 } from "./latteProviderRequestContext";
 import { latteBlockIncludeCompletionAt } from "./latteBlockSymbols";
 
@@ -90,12 +99,21 @@ export async function provideLatteCompletions(
   const tagCompletion = detectLatteTagCompletionAt(source, offset);
 
   if (tagCompletion) {
-    return buildLatteTagCompletions(
+    const tagCompletions = buildLatteTagCompletions(
       tagCompletion.prefix,
       tagCompletion.start,
       offset,
       LATTE_MAX_COMPLETIONS,
     );
+    const functionCompletions = await latteTagPositionFunctionCompletions(
+      options,
+      request,
+      source,
+      tagCompletion,
+      offset,
+    );
+
+    return [...tagCompletions, ...functionCompletions];
   }
 
   if (isLattePresenterLinkIntelligenceActive(deps, options.frameworkCapabilities)) {
@@ -156,9 +174,81 @@ export async function provideLatteCompletions(
     return snippetCompletions;
   }
 
-  return latteExpressionCompletions(
+  const expressionCompletions = await latteExpressionCompletions(
     latteExpressionResolutionContext(options, request),
     source,
     offset,
+  );
+
+  if (expressionCompletions.length > 0) {
+    return expressionCompletions;
+  }
+
+  const functionCompletion = latteFunctionCompletionContextAt(source, offset);
+
+  if (!functionCompletion) {
+    return [];
+  }
+
+  return projectAwareLatteFunctionCompletions(
+    options,
+    request,
+    functionCompletion,
+  );
+}
+
+async function latteTagPositionFunctionCompletions(
+  options: LatteProviderFlowFactoryOptions,
+  request: LatteProviderRequestContext,
+  source: string,
+  tagCompletion: { prefix: string; start: number },
+  offset: number,
+): Promise<LatteCompletionItem[]> {
+  if (source[tagCompletion.start + 1] === "/") {
+    return [];
+  }
+
+  if (tagCompletion.prefix.length === 0) {
+    return [];
+  }
+
+  return projectAwareLatteFunctionCompletions(options, request, {
+    end: offset,
+    prefix: tagCompletion.prefix,
+    start: tagCompletion.start + 1,
+  });
+}
+
+async function projectAwareLatteFunctionCompletions(
+  options: LatteProviderFlowFactoryOptions,
+  request: LatteProviderRequestContext,
+  completion: LatteFunctionCompletionContext,
+): Promise<LatteCompletionItem[]> {
+  const discovery = latteFunctionDiscoveryContext(options, request);
+  const registrations = await loadLatteFunctionRegistrations(discovery);
+
+  if (!discovery.isRequestedRootActive()) {
+    return [];
+  }
+
+  const normalizedPrefix = completion.prefix.toLowerCase();
+  const resolvedFunctions = await resolveLatteProjectFilters(
+    {
+      deps: request.deps,
+      isRequestedRootActive: discovery.isRequestedRootActive,
+    },
+    registrations.filter((registration) =>
+      registration.name.toLowerCase().startsWith(normalizedPrefix),
+    ),
+  );
+
+  if (!discovery.isRequestedRootActive()) {
+    return [];
+  }
+
+  return latteFunctionCompletions(
+    completion,
+    LATTE_MAX_COMPLETIONS,
+    resolvedFunctions,
   );
 }
