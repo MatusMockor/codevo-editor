@@ -40,22 +40,28 @@ export interface JsonSchemaLoaderDependencies {
 
 export interface BundledJsonSchema {
   uri: string;
-  fileMatch: string;
+  fileMatch: string[];
   load(): Promise<unknown>;
 }
 
 export const BUNDLED_JSON_SCHEMAS: BundledJsonSchema[] = [
   {
     uri: "editor://schemas/composer.json",
-    fileMatch: "composer.json",
+    fileMatch: ["composer.json"],
     load: async () =>
       (await import("../assets/schemas/composer.schema.json")).default,
   },
   {
     uri: "editor://schemas/package.json",
-    fileMatch: "package.json",
+    fileMatch: ["package.json"],
     load: async () =>
       (await import("../assets/schemas/package.schema.json")).default,
+  },
+  {
+    uri: "editor://schemas/tsconfig.json",
+    fileMatch: ["tsconfig.json", "tsconfig.*.json", "jsconfig.json"],
+    load: async () =>
+      (await import("../assets/schemas/tsconfig.schema.json")).default,
   },
 ];
 
@@ -149,8 +155,12 @@ async function loadBundledJsonSchemaForDocument(
   document: JsonSchemaDocument,
   deps: JsonSchemaLoaderDependencies,
 ): Promise<void> {
+  const documentFileName = fileName(document.path);
   const bundledSchema = (deps.bundledSchemas ?? BUNDLED_JSON_SCHEMAS).find(
-    (candidate) => candidate.fileMatch === fileName(document.path),
+    (candidate) =>
+      candidate.fileMatch.some((pattern) =>
+        matchesFileNamePattern(pattern, documentFileName),
+      ),
   );
 
   if (!bundledSchema) {
@@ -171,7 +181,7 @@ async function loadBundledJsonSchemaForDocument(
 
   const registration = buildBundledJsonSchemaRegistration({
     uri: bundledSchema.uri,
-    fileMatch: [bundledSchema.fileMatch],
+    fileMatch: bundledSchema.fileMatch,
     schema,
   });
   const latest = jsonDefaults.diagnosticsOptions as JsonDiagnosticsOptionsLike;
@@ -194,6 +204,19 @@ async function loadBundledSchema(
   } catch {
     return null;
   }
+}
+
+function matchesFileNamePattern(pattern: string, name: string): boolean {
+  if (!pattern.includes("*")) {
+    return pattern === name;
+  }
+
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+
+  return new RegExp(`^${escaped}$`).test(name);
 }
 
 function fileName(path: string): string {

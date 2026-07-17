@@ -46,21 +46,23 @@ function deps(
 
 describe("loadJsonSchemaForDocument", () => {
   it.each([
-    ["/project/composer.json", "composer.json", "editor://schemas/composer.json"],
-    [
-      "/project/apps/site/package.json",
-      "package.json",
-      "editor://schemas/package.json",
-    ],
-  ])("registers the bundled schema matching %s", async (path, fileMatch, uri) => {
+    ["/project/composer.json", "editor://schemas/composer.json"],
+    ["/project/apps/site/package.json", "editor://schemas/package.json"],
+    ["/project/tsconfig.json", "editor://schemas/tsconfig.json"],
+    ["/project/tsconfig.build.json", "editor://schemas/tsconfig.json"],
+    ["/project/packages/lib/jsconfig.json", "editor://schemas/tsconfig.json"],
+  ])("registers the bundled schema matching %s", async (path, uri) => {
     const jsonDefaults = fakeJsonDefaults();
     const schema = { type: "object", properties: { name: { type: "string" } } };
     const matchingLoad = vi.fn(async () => schema);
     const otherLoad = vi.fn(async () => ({ type: "object" }));
     const bundledSchemas = BUNDLED_JSON_SCHEMAS.map((candidate) => ({
       ...candidate,
-      load: candidate.fileMatch === fileMatch ? matchingLoad : otherLoad,
+      load: candidate.uri === uri ? matchingLoad : otherLoad,
     }));
+    const expected = BUNDLED_JSON_SCHEMAS.find(
+      (candidate) => candidate.uri === uri,
+    );
 
     await loadJsonSchemaForDocument(
       monacoWith(jsonDefaults),
@@ -72,9 +74,31 @@ describe("loadJsonSchemaForDocument", () => {
     expect(otherLoad).not.toHaveBeenCalled();
     expect(jsonDefaults.diagnosticsOptions.schemas).toContainEqual({
       uri,
-      fileMatch: [fileMatch],
+      fileMatch: expected?.fileMatch,
       schema,
     });
+  });
+
+  it.each([
+    "/project/config.json",
+    "/project/mytsconfig.json",
+    "/project/tsconfig.jsonc",
+  ])("does not match the tsconfig bundled schema for %s", async (path) => {
+    const jsonDefaults = fakeJsonDefaults();
+    const load = vi.fn(async () => ({ type: "object" }));
+    const bundledSchemas = BUNDLED_JSON_SCHEMAS.map((candidate) => ({
+      ...candidate,
+      load,
+    }));
+
+    await loadJsonSchemaForDocument(
+      monacoWith(jsonDefaults),
+      { path, content: "{}", language: "json" },
+      deps({ bundledSchemas }),
+    );
+
+    expect(load).not.toHaveBeenCalled();
+    expect(jsonDefaults.setDiagnosticsOptions).not.toHaveBeenCalled();
   });
 
   it("does not load a bundled schema for an unrelated JSON document", async () => {
@@ -136,13 +160,13 @@ describe("loadJsonSchemaForDocument", () => {
     ];
     const loads = new Map(
       BUNDLED_JSON_SCHEMAS.map((candidate) => [
-        candidate.fileMatch,
-        vi.fn(async () => ({ title: candidate.fileMatch })),
+        candidate.uri,
+        vi.fn(async () => ({ title: candidate.uri })),
       ]),
     );
     const bundledSchemas = BUNDLED_JSON_SCHEMAS.map((candidate) => ({
       ...candidate,
-      load: loads.get(candidate.fileMatch)!,
+      load: loads.get(candidate.uri)!,
     }));
     const monaco = monacoWith(jsonDefaults);
 
@@ -151,6 +175,9 @@ describe("loadJsonSchemaForDocument", () => {
       "/workspace-b/composer.json",
       "/workspace-c/package.json",
       "/workspace-d/composer.json",
+      "/workspace-e/tsconfig.json",
+      "/workspace-f/tsconfig.node.json",
+      "/workspace-g/jsconfig.json",
     ]) {
       await loadJsonSchemaForDocument(
         monaco,
@@ -166,9 +193,11 @@ describe("loadJsonSchemaForDocument", () => {
       "editor://schemas/existing.json",
       "editor://schemas/package.json",
       "editor://schemas/composer.json",
+      "editor://schemas/tsconfig.json",
     ]);
-    expect(loads.get("package.json")).toHaveBeenCalledTimes(1);
-    expect(loads.get("composer.json")).toHaveBeenCalledTimes(1);
+    expect(loads.get("editor://schemas/package.json")).toHaveBeenCalledTimes(1);
+    expect(loads.get("editor://schemas/composer.json")).toHaveBeenCalledTimes(1);
+    expect(loads.get("editor://schemas/tsconfig.json")).toHaveBeenCalledTimes(1);
   });
 
   it("reads the local $schema file and registers it inline so Monaco never hits the request service", async () => {
@@ -347,21 +376,117 @@ describe("loadJsonSchemaForDocument", () => {
 });
 
 describe("bundled JSON schema assets", () => {
-  it.each(["composer.schema.json", "package.schema.json"])(
-    "%s contains no remote $ref",
-    (fileName) => {
-      const path = fileURLToPath(
-        new URL(`../assets/schemas/${fileName}`, import.meta.url),
+  it.each([
+    "composer.schema.json",
+    "package.schema.json",
+    "tsconfig.schema.json",
+  ])("%s contains no remote $ref", (fileName) => {
+    const schema = readBundledSchemaAsset(fileName);
+    const remoteRefs: string[] = [];
+
+    collectRemoteRefs(schema, remoteRefs);
+
+    expect(remoteRefs).toEqual([]);
+  });
+
+  it("tsconfig.schema.json exposes the top-level tsconfig sections", () => {
+    const schema = readBundledSchemaAsset("tsconfig.schema.json");
+
+    expect(Object.keys(schema.properties as Record<string, unknown>)).toEqual(
+      expect.arrayContaining([
+        "compilerOptions",
+        "include",
+        "exclude",
+        "files",
+        "extends",
+        "references",
+        "watchOptions",
+      ]),
+    );
+  });
+
+  it("tsconfig.schema.json describes the most-used compilerOptions with enums", () => {
+    const schema = readBundledSchemaAsset("tsconfig.schema.json");
+    const compilerOptions = (
+      schema.properties as Record<
+        string,
+        { properties: Record<string, { enum?: string[]; description?: string }> }
+      >
+    ).compilerOptions.properties;
+
+    for (const option of [
+      "target",
+      "module",
+      "moduleResolution",
+      "lib",
+      "jsx",
+      "strict",
+      "strictNullChecks",
+      "strictFunctionTypes",
+      "strictBindCallApply",
+      "strictPropertyInitialization",
+      "noImplicitAny",
+      "noImplicitThis",
+      "alwaysStrict",
+      "useUnknownInCatchVariables",
+      "esModuleInterop",
+      "skipLibCheck",
+      "outDir",
+      "rootDir",
+      "baseUrl",
+      "paths",
+      "types",
+      "typeRoots",
+      "declaration",
+      "sourceMap",
+      "noEmit",
+      "allowJs",
+      "checkJs",
+      "resolveJsonModule",
+      "isolatedModules",
+      "verbatimModuleSyntax",
+      "incremental",
+      "composite",
+      "noUncheckedIndexedAccess",
+      "noImplicitOverride",
+      "allowImportingTsExtensions",
+      "moduleDetection",
+      "customConditions",
+    ]) {
+      expect(compilerOptions, `missing compilerOptions.${option}`).toHaveProperty(
+        option,
       );
-      const schema = JSON.parse(readFileSync(path, "utf8"));
-      const remoteRefs: string[] = [];
+      expect(
+        compilerOptions[option].description,
+        `missing description for compilerOptions.${option}`,
+      ).toBeTruthy();
+    }
 
-      collectRemoteRefs(schema, remoteRefs);
-
-      expect(remoteRefs).toEqual([]);
-    },
-  );
+    expect(compilerOptions.target.enum).toEqual(
+      expect.arrayContaining(["es5", "es2022", "esnext"]),
+    );
+    expect(compilerOptions.module.enum).toEqual(
+      expect.arrayContaining(["commonjs", "esnext", "node16", "nodenext", "preserve"]),
+    );
+    expect(compilerOptions.moduleResolution.enum).toEqual(
+      expect.arrayContaining(["node16", "nodenext", "bundler"]),
+    );
+    expect(compilerOptions.jsx.enum).toEqual(
+      expect.arrayContaining(["preserve", "react-jsx", "react-jsxdev"]),
+    );
+    expect(compilerOptions.moduleDetection.enum).toEqual(
+      expect.arrayContaining(["auto", "legacy", "force"]),
+    );
+  });
 });
+
+function readBundledSchemaAsset(fileName: string): Record<string, unknown> {
+  const path = fileURLToPath(
+    new URL(`../assets/schemas/${fileName}`, import.meta.url),
+  );
+
+  return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+}
 
 function collectRemoteRefs(value: unknown, remoteRefs: string[]): void {
   if (!value || typeof value !== "object") {

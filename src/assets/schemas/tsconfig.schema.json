@@ -1,0 +1,379 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TypeScript / JavaScript project configuration",
+  "description": "Configuration for the TypeScript compiler (tsconfig.json) or a JavaScript project (jsconfig.json).",
+  "type": "object",
+  "properties": {
+    "extends": {
+      "description": "Path to a base configuration file to inherit from, or an array of such paths (later entries override earlier ones).",
+      "anyOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "files": {
+      "description": "An allowlist of files to include in the program. Errors when any file is missing.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "include": {
+      "description": "Glob patterns of files to include in the program.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "exclude": {
+      "description": "Glob patterns of files skipped when resolving 'include'.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "references": {
+      "description": "Project references for composite builds.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "description": "Path to a referenced project's directory or tsconfig file.",
+            "type": "string"
+          },
+          "circular": {
+            "description": "Allow this reference to form a cycle.",
+            "type": "boolean"
+          }
+        },
+        "required": ["path"]
+      }
+    },
+    "watchOptions": {
+      "description": "Options for the compiler's --watch mode.",
+      "type": "object",
+      "properties": {
+        "watchFile": {
+          "description": "Strategy for watching individual files.",
+          "type": "string",
+          "enum": [
+            "fixedpollinginterval",
+            "prioritypollinginterval",
+            "dynamicprioritypolling",
+            "fixedchunksizepolling",
+            "usefsevents",
+            "usefseventsonparentdirectory"
+          ]
+        },
+        "watchDirectory": {
+          "description": "Strategy for watching whole directory trees.",
+          "type": "string",
+          "enum": [
+            "usefsevents",
+            "fixedpollinginterval",
+            "dynamicprioritypolling",
+            "fixedchunksizepolling"
+          ]
+        },
+        "fallbackPolling": {
+          "description": "Polling strategy used when file system events are unavailable.",
+          "type": "string",
+          "enum": [
+            "fixedinterval",
+            "priorityinterval",
+            "dynamicpriority",
+            "fixedchunksize"
+          ]
+        },
+        "synchronousWatchDirectory": {
+          "description": "Disable deferred watching on directories.",
+          "type": "boolean"
+        },
+        "excludeDirectories": {
+          "description": "Directories excluded from the watch process.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "excludeFiles": {
+          "description": "Files excluded from the watch process.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "compilerOptions": {
+      "description": "Instructions for the TypeScript compiler.",
+      "type": "object",
+      "properties": {
+        "target": {
+          "description": "ECMAScript version emitted JavaScript targets.",
+          "type": "string",
+          "enum": [
+            "es3",
+            "es5",
+            "es6",
+            "es2015",
+            "es2016",
+            "es2017",
+            "es2018",
+            "es2019",
+            "es2020",
+            "es2021",
+            "es2022",
+            "es2023",
+            "es2024",
+            "esnext"
+          ]
+        },
+        "module": {
+          "description": "Module code generation for emitted JavaScript.",
+          "type": "string",
+          "enum": [
+            "none",
+            "commonjs",
+            "amd",
+            "umd",
+            "system",
+            "es6",
+            "es2015",
+            "es2020",
+            "es2022",
+            "esnext",
+            "node16",
+            "node18",
+            "nodenext",
+            "preserve"
+          ]
+        },
+        "moduleResolution": {
+          "description": "How module specifiers are resolved to files.",
+          "type": "string",
+          "enum": ["classic", "node", "node10", "node16", "nodenext", "bundler"]
+        },
+        "lib": {
+          "description": "Built-in library declaration files included in the compilation.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "anyOf": [
+              {
+                "enum": [
+                  "es5",
+                  "es6",
+                  "es2015",
+                  "es2016",
+                  "es2017",
+                  "es2018",
+                  "es2019",
+                  "es2020",
+                  "es2021",
+                  "es2022",
+                  "es2023",
+                  "es2024",
+                  "esnext",
+                  "dom",
+                  "dom.iterable",
+                  "dom.asynciterable",
+                  "webworker",
+                  "webworker.importscripts",
+                  "scripthost",
+                  "decorators",
+                  "decorators.legacy"
+                ]
+              },
+              { "type": "string" }
+            ]
+          }
+        },
+        "jsx": {
+          "description": "How JSX in .tsx files is emitted.",
+          "type": "string",
+          "enum": ["preserve", "react", "react-native", "react-jsx", "react-jsxdev"]
+        },
+        "jsxImportSource": {
+          "description": "Module specifier for the JSX factory functions when using 'react-jsx'.",
+          "type": "string"
+        },
+        "strict": {
+          "description": "Enable all strict type-checking options.",
+          "type": "boolean"
+        },
+        "strictNullChecks": {
+          "description": "Treat null and undefined as distinct types.",
+          "type": "boolean"
+        },
+        "strictFunctionTypes": {
+          "description": "Check function parameters contravariantly when comparing function types.",
+          "type": "boolean"
+        },
+        "strictBindCallApply": {
+          "description": "Type-check the arguments of bind, call, and apply.",
+          "type": "boolean"
+        },
+        "strictPropertyInitialization": {
+          "description": "Error on class properties declared but not set in the constructor.",
+          "type": "boolean"
+        },
+        "strictBuiltinIteratorReturn": {
+          "description": "Type built-in iterator TReturn as undefined instead of any.",
+          "type": "boolean"
+        },
+        "noImplicitAny": {
+          "description": "Error on expressions and declarations with an implied 'any' type.",
+          "type": "boolean"
+        },
+        "noImplicitThis": {
+          "description": "Error on 'this' expressions with an implied 'any' type.",
+          "type": "boolean"
+        },
+        "alwaysStrict": {
+          "description": "Parse in strict mode and emit \"use strict\" in each file.",
+          "type": "boolean"
+        },
+        "useUnknownInCatchVariables": {
+          "description": "Type catch clause variables as 'unknown' instead of 'any'.",
+          "type": "boolean"
+        },
+        "esModuleInterop": {
+          "description": "Emit interop helpers so CommonJS modules import cleanly; implies allowSyntheticDefaultImports.",
+          "type": "boolean"
+        },
+        "allowSyntheticDefaultImports": {
+          "description": "Allow default imports from modules without a default export (type-checking only).",
+          "type": "boolean"
+        },
+        "skipLibCheck": {
+          "description": "Skip type checking of declaration (.d.ts) files.",
+          "type": "boolean"
+        },
+        "outDir": {
+          "description": "Output directory for emitted files.",
+          "type": "string"
+        },
+        "rootDir": {
+          "description": "Root directory of source files; controls the emitted directory structure.",
+          "type": "string"
+        },
+        "baseUrl": {
+          "description": "Base directory for resolving non-relative module names.",
+          "type": "string"
+        },
+        "paths": {
+          "description": "Path mapping entries that re-map imports relative to baseUrl.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "types": {
+          "description": "Type package names included globally; limits automatic @types inclusion.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "typeRoots": {
+          "description": "Directories treated like ./node_modules/@types for global type packages.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "declaration": {
+          "description": "Emit .d.ts declaration files.",
+          "type": "boolean"
+        },
+        "declarationMap": {
+          "description": "Emit source maps for .d.ts files.",
+          "type": "boolean"
+        },
+        "sourceMap": {
+          "description": "Emit .js.map source map files.",
+          "type": "boolean"
+        },
+        "noEmit": {
+          "description": "Type-check only; do not emit output files.",
+          "type": "boolean"
+        },
+        "allowJs": {
+          "description": "Allow JavaScript files to be part of the program.",
+          "type": "boolean"
+        },
+        "checkJs": {
+          "description": "Report errors in JavaScript files; used with allowJs.",
+          "type": "boolean"
+        },
+        "resolveJsonModule": {
+          "description": "Allow importing .json files with generated types.",
+          "type": "boolean"
+        },
+        "isolatedModules": {
+          "description": "Ensure each file can be transpiled independently (safe for single-file transpilers).",
+          "type": "boolean"
+        },
+        "verbatimModuleSyntax": {
+          "description": "Emit imports/exports exactly as written; requires type-only imports for types.",
+          "type": "boolean"
+        },
+        "incremental": {
+          "description": "Save .tsbuildinfo files for faster incremental compilation.",
+          "type": "boolean"
+        },
+        "composite": {
+          "description": "Enable constraints so the project can be used with project references.",
+          "type": "boolean"
+        },
+        "tsBuildInfoFile": {
+          "description": "Path of the .tsbuildinfo incremental compilation file.",
+          "type": "string"
+        },
+        "noUncheckedIndexedAccess": {
+          "description": "Add 'undefined' to types read through index signatures.",
+          "type": "boolean"
+        },
+        "noImplicitOverride": {
+          "description": "Require the 'override' modifier on members overriding a base class member.",
+          "type": "boolean"
+        },
+        "noFallthroughCasesInSwitch": {
+          "description": "Error on switch cases that fall through.",
+          "type": "boolean"
+        },
+        "noUnusedLocals": {
+          "description": "Error on unused local variables.",
+          "type": "boolean"
+        },
+        "noUnusedParameters": {
+          "description": "Error on unused function parameters.",
+          "type": "boolean"
+        },
+        "allowImportingTsExtensions": {
+          "description": "Allow imports with .ts/.tsx extensions; requires noEmit or emitDeclarationOnly, or 'rewriteRelativeImportExtensions'.",
+          "type": "boolean"
+        },
+        "moduleDetection": {
+          "description": "How the compiler decides whether a file is a module or a script.",
+          "type": "string",
+          "enum": ["auto", "legacy", "force"]
+        },
+        "customConditions": {
+          "description": "Extra conditions applied when resolving package.json 'exports'/'imports'.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "forceConsistentCasingInFileNames": {
+          "description": "Error on imports whose casing differs from the file on disk.",
+          "type": "boolean"
+        },
+        "emitDeclarationOnly": {
+          "description": "Only emit .d.ts files; skip .js output.",
+          "type": "boolean"
+        },
+        "useDefineForClassFields": {
+          "description": "Emit class fields with ECMAScript-standard 'define' semantics.",
+          "type": "boolean"
+        },
+        "experimentalDecorators": {
+          "description": "Enable legacy (TC39 stage 2) experimental decorators.",
+          "type": "boolean"
+        },
+        "emitDecoratorMetadata": {
+          "description": "Emit design-type metadata for decorated declarations.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
