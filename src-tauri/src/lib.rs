@@ -10,6 +10,7 @@ pub mod index_reindex;
 pub mod index_scan;
 pub mod index_update;
 pub mod job_scheduler;
+mod js_test_run;
 pub mod js_ts_file_watcher;
 pub mod js_ts_symbols;
 pub mod local_history;
@@ -25,7 +26,6 @@ pub mod php_file_outline;
 pub mod php_parser;
 pub mod php_symbols;
 mod php_test_run;
-mod test_run_support;
 pub mod php_tree;
 mod phpstan;
 mod pint;
@@ -36,6 +36,7 @@ mod search;
 mod smart_mode;
 mod terminal;
 mod terminal_session;
+mod test_run_support;
 mod tools;
 mod trust;
 mod workspace;
@@ -937,6 +938,41 @@ async fn run_php_tests_junit_with_trust(
     }
 
     php_test_run::run_php_tests(root_path, app_data_base, filter).await
+}
+
+#[tauri::command]
+async fn run_js_tests_json(
+    root_path: String,
+    filter: Option<String>,
+    app: AppHandle,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<php_test_run::PhpTestRunResponse, String> {
+    let app_data_base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
+    run_js_tests_json_with_trust(root_path, app_data_base, filter, &trust).await
+}
+
+async fn run_js_tests_json_with_trust(
+    root_path: String,
+    app_data_base: PathBuf,
+    filter: Option<String>,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<php_test_run::PhpTestRunResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(php_test_run::PhpTestRunResponse::Unavailable {
+            message: "Trust this workspace to run JavaScript tests.".to_string(),
+        });
+    }
+
+    js_test_run::run_js_tests(root_path, app_data_base, filter).await
 }
 
 #[tauri::command]
@@ -6467,9 +6503,9 @@ mod tests {
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
         register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
         revert_git_hunk, reword_git_commit, run_artisan_route_list_with_trust,
-        run_eslint_analysis_with_trust, run_php_tests_junit_with_trust,
-        run_phpstan_analysis_with_trust, run_pint_format_with_trust,
-        run_prettier_format_with_trust, save_git_stash, search_files,
+        run_eslint_analysis_with_trust, run_js_tests_json_with_trust,
+        run_php_tests_junit_with_trust, run_phpstan_analysis_with_trust,
+        run_pint_format_with_trust, run_prettier_format_with_trust, save_git_stash, search_files,
         stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
         switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
         workspace_text_edits_from_language_server, LegacyLocalHistoryWorkspaceAuthorizer,
@@ -9684,6 +9720,49 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn js_test_untrusted_workspace_blocks_dispatch() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_workspace("js-test-untrusted");
+        let marker = root.join("js-tests-ran");
+        fs::write(root.join("vitest.config.ts"), "export default {}").expect("write vitest config");
+        let binary = root.join("node_modules/.bin/vitest");
+        fs::create_dir_all(binary.parent().expect("binary parent"))
+            .expect("create binary directory");
+        fs::write(
+            &binary,
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .expect("write vitest sentinel");
+        let mut permissions = fs::metadata(&binary)
+            .expect("vitest metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary, permissions).expect("make vitest executable");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let response = tauri::async_runtime::block_on(run_js_tests_json_with_trust(
+            path_string(&root),
+            root.join("app-data"),
+            None,
+            &trust,
+        ))
+        .expect("js test response");
+
+        assert_eq!(
+            response,
+            PhpTestRunResponse::Unavailable {
+                message: "Trust this workspace to run JavaScript tests.".to_string(),
+            }
+        );
+        assert!(!marker.exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     #[test]
     fn trusted_workspace_dispatches_phpstan_analysis() {
         let root = temp_workspace("phpstan-trusted");
@@ -10029,6 +10108,7 @@ pub fn run() {
             run_pint_format,
             run_prettier_format,
             run_artisan_route_list,
+            run_js_tests_json,
             run_php_tests_junit,
             search_files,
             search_project_symbols,

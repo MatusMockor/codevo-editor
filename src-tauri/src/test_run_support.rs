@@ -18,14 +18,26 @@ pub fn prepare_result_path(
     subdirectory: &str,
     label: &str,
 ) -> Result<PathBuf, String> {
+    prepare_result_path_with_extension(app_data_base, subdirectory, label, "xml")
+}
+
+pub fn prepare_result_path_with_extension(
+    app_data_base: &Path,
+    subdirectory: &str,
+    label: &str,
+    extension: &str,
+) -> Result<PathBuf, String> {
     let directory = app_data_base.join(subdirectory);
     ensure_private_directory(&directory, label)?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("Failed to create JUnit result filename: {error}"))?
+        .map_err(|error| format!("Failed to create {label} filename: {error}"))?
         .as_nanos();
     let sequence = RESULT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    Ok(directory.join(format!("{}-{timestamp}-{sequence}.xml", std::process::id())))
+    Ok(directory.join(format!(
+        "{}-{timestamp}-{sequence}.{extension}",
+        std::process::id()
+    )))
 }
 
 pub fn ensure_private_directory(path: &Path, label: &str) -> Result<(), String> {
