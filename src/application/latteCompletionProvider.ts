@@ -3,9 +3,11 @@ import {
   detectLatteIncludeCompletionAt,
   detectLatteTagCompletionAt,
 } from "../domain/latteNavigation";
+import { detectLatteNAttributeCompletionAt } from "../domain/latteAttributeCompletions";
 import {
   latteFunctionCompletionContextAt,
   latteFunctionCompletions,
+  latteNAttributeCompletions,
   latteTagCompletions as buildLatteTagCompletions,
   type LatteCompletionItem,
   type LatteFunctionCompletionContext,
@@ -78,6 +80,12 @@ export async function provideLatteCompletions(
         replaceEnd: blockCompletion.replaceSpan.end,
         replaceStart: blockCompletion.replaceSpan.start,
       }));
+  }
+
+  const attributeCompletion = detectLatteNAttributeCompletionAt(source, offset);
+
+  if (attributeCompletion) {
+    return latteNAttributeCompletions(attributeCompletion, LATTE_MAX_COMPLETIONS);
   }
 
   const request = latteProviderRequestContext(options);

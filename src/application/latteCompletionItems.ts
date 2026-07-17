@@ -1,5 +1,9 @@
 import { LATTE_TAGS } from "../domain/latteNavigation";
 import {
+  latteNAttributeEntries,
+  type LatteNAttributeCompletion,
+} from "../domain/latteAttributeCompletions";
+import {
   LATTE_BUILTIN_FILTERS,
   innermostLatteExpressionContextAt,
 } from "../domain/latteSyntax";
@@ -61,6 +65,29 @@ export function latteTagCompletions(
       label: tag,
       replaceEnd: offset,
       replaceStart: braceStart + 1,
+    }));
+}
+
+export function latteNAttributeCompletions(
+  completion: LatteNAttributeCompletion,
+  maxCompletions: number,
+): LatteCompletionItem[] {
+  const normalizedPrefix = completion.prefix.toLowerCase();
+
+  return latteNAttributeEntries()
+    .filter(
+      (entry) =>
+        entry.name.toLowerCase().startsWith(normalizedPrefix) &&
+        !completion.usedAttributes.has(entry.name),
+    )
+    .slice(0, maxCompletions)
+    .map((entry) => ({
+      detail: entry.detail,
+      insertText: entry.name,
+      kind: "tag" as const,
+      label: entry.name,
+      replaceEnd: completion.replaceEnd,
+      replaceStart: completion.replaceStart,
     }));
 }
 

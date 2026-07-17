@@ -228,6 +228,71 @@ describe("provideLatteCompletions same-file blocks", () => {
     expect(getDependencies).not.toHaveBeenCalled();
   });
 
+  it("offers n: attribute names before the framework request gate", async () => {
+    const source = '<div class="row" n:fo';
+    const getDependencies = vi.fn(() => {
+      throw new Error("framework request should not be created");
+    });
+
+    const completions = await provideLatteCompletions(
+      { getDependencies } as unknown as LatteProviderFlowFactoryOptions,
+      source,
+      { column: source.length + 1, lineNumber: 1 },
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("n:foreach");
+    expect(labels).toContain("n:for");
+    expect(labels).not.toContain("n:if");
+    expect(completions[0]).toMatchObject({
+      kind: "tag",
+      replaceEnd: source.length,
+      replaceStart: source.length - 4,
+    });
+    expect(getDependencies).not.toHaveBeenCalled();
+  });
+
+  it("skips n: attributes already present on the tag", async () => {
+    const source = '<div n:if="$ok" n:';
+    const getDependencies = vi.fn(() => {
+      throw new Error("framework request should not be created");
+    });
+
+    const completions = await provideLatteCompletions(
+      { getDependencies } as unknown as LatteProviderFlowFactoryOptions,
+      source,
+      { column: source.length + 1, lineNumber: 1 },
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("n:foreach");
+    expect(labels).toContain("n:ifset");
+    expect(labels).not.toContain("n:if");
+  });
+
+  it("does not offer n: attributes inside an attribute value or closing tag", async () => {
+    const insideValue = '<a href="n:';
+    const closingTag = "</div n:";
+    const getDependencies = vi.fn(() => {
+      throw new Error("framework request reached");
+    });
+
+    await expect(
+      provideLatteCompletions(
+        { getDependencies } as unknown as LatteProviderFlowFactoryOptions,
+        insideValue,
+        { column: insideValue.length + 1, lineNumber: 1 },
+      ),
+    ).rejects.toThrow("framework request reached");
+    await expect(
+      provideLatteCompletions(
+        { getDependencies } as unknown as LatteProviderFlowFactoryOptions,
+        closingTag,
+        { column: closingTag.length + 1, lineNumber: 1 },
+      ),
+    ).rejects.toThrow("framework request reached");
+  });
+
   it("passes a bare dotted include through to framework template completion", async () => {
     const source = [
       "{block #price.total}{/block price.total}",

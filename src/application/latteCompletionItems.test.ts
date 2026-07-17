@@ -5,6 +5,7 @@ import {
   latteFunctionCompletionContextAt,
   latteFunctionCompletions,
   latteMemberCompletionItem,
+  latteNAttributeCompletions,
   latteTagCompletions,
 } from "./latteCompletionItems";
 
@@ -341,5 +342,87 @@ describe("latteMemberCompletionItem", () => {
       detail: "App\\Model\\Invoice::items: Collection",
       insertText: "items",
     });
+  });
+});
+
+describe("latteNAttributeCompletions", () => {
+  it("filters attributes by the typed n: prefix and replaces the whole token", () => {
+    const completions = latteNAttributeCompletions(
+      {
+        prefix: "n:fo",
+        replaceStart: 5,
+        replaceEnd: 9,
+        usedAttributes: new Set<string>(),
+      },
+      100,
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("n:foreach");
+    expect(labels).toContain("n:for");
+    expect(labels).not.toContain("n:if");
+    expect(completions[0]).toMatchObject({
+      insertText: completions[0]?.label,
+      kind: "tag",
+      replaceEnd: 9,
+      replaceStart: 5,
+    });
+  });
+
+  it("offers the full attribute set for a bare n: prefix without doubling n:", () => {
+    const completions = latteNAttributeCompletions(
+      {
+        prefix: "n:",
+        replaceStart: 5,
+        replaceEnd: 7,
+        usedAttributes: new Set<string>(),
+      },
+      100,
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).toContain("n:if");
+    expect(labels).toContain("n:class");
+    expect(labels).toContain("n:inner-foreach");
+    expect(labels).toContain("n:tag-if");
+    for (const completion of completions) {
+      expect(completion.insertText.startsWith("n:")).toBe(true);
+      expect(completion.insertText.startsWith("n:n:")).toBe(false);
+    }
+  });
+
+  it("skips attributes already used on the tag and caps results", () => {
+    const completions = latteNAttributeCompletions(
+      {
+        prefix: "n:",
+        replaceStart: 5,
+        replaceEnd: 7,
+        usedAttributes: new Set(["n:if", "n:class"]),
+      },
+      3,
+    );
+    const labels = completions.map((completion) => completion.label);
+
+    expect(labels).not.toContain("n:if");
+    expect(labels).not.toContain("n:class");
+    expect(completions).toHaveLength(3);
+  });
+
+  it("matches inner- and tag- variants by prefix", () => {
+    const completions = latteNAttributeCompletions(
+      {
+        prefix: "n:inner-f",
+        replaceStart: 0,
+        replaceEnd: 9,
+        usedAttributes: new Set<string>(),
+      },
+      100,
+    );
+
+    expect(completions.map((completion) => completion.label)).toEqual([
+      "n:inner-first",
+      "n:inner-for",
+      "n:inner-foreach",
+    ]);
   });
 });
