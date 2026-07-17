@@ -154,9 +154,7 @@ async function diagnosticForDetection(
   }
 
   if (!factoryHierarchy &&
-    !canProveNettePresenterMethodAbsenceLocally(owner.source, undefined, {
-      barePresenterParentPolicy: "resolve-import",
-    })) {
+    !canProveNettePresenterMethodAbsenceLocally(owner.source)) {
     return null;
   }
 

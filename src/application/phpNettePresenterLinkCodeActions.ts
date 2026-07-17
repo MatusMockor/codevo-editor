@@ -58,14 +58,10 @@ export function phpNettePresenterLinkCodeActions(
   }
 
   if (
-    !canProveNettePresenterMethodAbsenceLocally(
-      source,
-      {
-        ...activeClass.typeDeclaration,
-        name: activeClass.name,
-      },
-      { barePresenterParentPolicy: "resolve-import" },
-    )
+    !canProveNettePresenterMethodAbsenceLocally(source, {
+      ...activeClass.typeDeclaration,
+      name: activeClass.name,
+    })
   ) {
     return [];
   }

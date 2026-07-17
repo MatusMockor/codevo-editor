@@ -90,11 +90,7 @@ function safePresenterClassTarget(
     }
 
     if (
-      !canProveNettePresenterMethodAbsenceLocally(
-        source,
-        typeDeclaration,
-        { barePresenterParentPolicy: "resolve-import" },
-      )
+      !canProveNettePresenterMethodAbsenceLocally(source, typeDeclaration)
     ) {
       continue;
     }

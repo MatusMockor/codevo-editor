@@ -21,7 +21,7 @@ describe("canProveNettePresenterMethodAbsenceLocally", () => {
     expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(false);
   });
 
-  it("keeps the diagnostics-compatible bare Presenter accept policy", () => {
+  it("rejects a bare Presenter that resolves to an app import", () => {
     const source = `<?php
 
 use App\\UI\\Presenter;
@@ -31,28 +31,7 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(
-      canProveNettePresenterMethodAbsenceLocally(source, undefined, {
-        barePresenterParentPolicy: "accept",
-      }),
-    ).toBe(true);
-  });
-
-  it("rejects a bare Presenter that resolves to an app import when requested", () => {
-    const source = `<?php
-
-use App\\UI\\Presenter;
-
-class ProductPresenter extends Presenter
-{
-}
-`;
-
-    expect(
-      canProveNettePresenterMethodAbsenceLocally(source, undefined, {
-        barePresenterParentPolicy: "resolve-import",
-      }),
-    ).toBe(false);
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(false);
   });
 
   it("allows a bare Presenter that resolves to the Nette import", () => {
@@ -65,11 +44,85 @@ class ProductPresenter extends Presenter
 }
 `;
 
-    expect(
-      canProveNettePresenterMethodAbsenceLocally(source, undefined, {
-        barePresenterParentPolicy: "resolve-import",
-      }),
-    ).toBe(true);
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(true);
+  });
+
+  it("rejects a bare Presenter imported through a grouped app use", () => {
+    const source = `<?php
+
+use App\\UI\\{Presenter};
+
+class ProductPresenter extends Presenter
+{
+}
+`;
+
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(false);
+  });
+
+  it("rejects a bare Presenter found among multiple grouped app imports", () => {
+    const source = `<?php
+
+use App\\UI\\{Presenter, Control};
+
+class ProductPresenter extends Presenter
+{
+}
+`;
+
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(false);
+  });
+
+  it("rejects a bare Presenter imported through a nested grouped app path", () => {
+    const source = `<?php
+
+use App\\UI\\{UI\\Presenter};
+
+class ProductPresenter extends Presenter
+{
+}
+`;
+
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(false);
+  });
+
+  it("rejects a bare Presenter aliased inside a grouped app use", () => {
+    const source = `<?php
+
+use App\\UI\\{Base as Presenter};
+
+class ProductPresenter extends Presenter
+{
+}
+`;
+
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(false);
+  });
+
+  it("rejects a bare Presenter matching a lowercased grouped app import", () => {
+    const source = `<?php
+
+use App\\UI\\{presenter};
+
+class ProductPresenter extends Presenter
+{
+}
+`;
+
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(false);
+  });
+
+  it("allows a bare Presenter imported through a grouped Nette use", () => {
+    const source = `<?php
+
+use Nette\\Application\\{UI\\Presenter};
+
+class ProductPresenter extends Presenter
+{
+}
+`;
+
+    expect(canProveNettePresenterMethodAbsenceLocally(source)).toBe(true);
   });
 
   it("rejects trait use anywhere inside the class body", () => {

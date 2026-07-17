@@ -1,7 +1,5 @@
 import type { PhpTypeDeclarationIdentity } from "./phpClassStructure";
 
-export type NetteBarePresenterParentPolicy = "accept" | "resolve-import";
-
 export interface NettePresenterClassTarget {
   bodyEndOffset: number;
   bodyStartOffset: number;
@@ -17,9 +15,6 @@ const DIRECT_NETTE_PRESENTER_PARENTS = new Set([
 export function canProveNettePresenterMethodAbsenceLocally(
   source: string,
   target?: NettePresenterClassTarget | PhpTypeDeclarationIdentity,
-  options: {
-    barePresenterParentPolicy?: NetteBarePresenterParentPolicy;
-  } = {},
 ): boolean {
   const classTarget = target ?? firstClassTarget(source);
 
@@ -43,10 +38,6 @@ export function canProveNettePresenterMethodAbsenceLocally(
 
   if (parent !== "Presenter") {
     return false;
-  }
-
-  if ((options.barePresenterParentPolicy ?? "accept") === "accept") {
-    return true;
   }
 
   return barePresenterParentResolvesToNette(source, classTarget);
@@ -133,26 +124,91 @@ function topLevelUseImportForShortName(
   header: string,
   shortName: string,
 ): string | null {
-  const importPattern =
-    /^\s*use\s+([^;{]+?)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;/gim;
+  const importPattern = /^\s*use\s+(?!function\b|const\b)([^;]+);/gim;
 
   for (const match of header.matchAll(importPattern)) {
-    const importedName = match[1]?.trim();
+    const importClause = match[1]?.trim();
 
-    if (!importedName) {
+    if (!importClause) {
       continue;
     }
 
-    const alias = match[2]?.trim() ?? importedName.split("\\").pop();
+    const importedName = useImportForShortName(importClause, shortName);
 
-    if (alias !== shortName) {
-      continue;
+    if (importedName !== null) {
+      return importedName;
     }
-
-    return importedName.replace(/^\\/, "");
   }
 
   return null;
+}
+
+function useImportForShortName(
+  importClause: string,
+  shortName: string,
+): string | null {
+  if (importClause.includes("{")) {
+    return groupedUseImportForShortName(importClause, shortName);
+  }
+
+  return matchingImportName(parseUseImport(importClause), shortName);
+}
+
+function groupedUseImportForShortName(
+  importClause: string,
+  shortName: string,
+): string | null {
+  const match = /^(.*?)\{([\s\S]+)\}$/.exec(importClause);
+  const prefix = match?.[1]?.trim().replace(/\\+$/, "") ?? "";
+  const body = match?.[2] ?? "";
+
+  if (!prefix || !body) {
+    return null;
+  }
+
+  for (const entry of body.split(",")) {
+    const importedName = matchingImportName(
+      parseUseImport(`${prefix}\\${entry.trim()}`),
+      shortName,
+    );
+
+    if (importedName !== null) {
+      return importedName;
+    }
+  }
+
+  return null;
+}
+
+function matchingImportName(
+  parsedImport: { alias: string; name: string } | null,
+  shortName: string,
+): string | null {
+  if (!parsedImport) {
+    return null;
+  }
+
+  if (parsedImport.alias.toLowerCase() !== shortName.toLowerCase()) {
+    return null;
+  }
+
+  return parsedImport.name;
+}
+
+function parseUseImport(
+  importClause: string,
+): { alias: string; name: string } | null {
+  const aliasMatch = /^(.*?)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(
+    importClause,
+  );
+  const name = (aliasMatch?.[1] ?? importClause).trim().replace(/^\\+/, "");
+  const alias = aliasMatch?.[2] ?? name.split("\\").pop() ?? "";
+
+  if (!name || !alias) {
+    return null;
+  }
+
+  return { alias, name };
 }
 
 function firstClassBodyEnd(source: string, bodyStart: number): number {
