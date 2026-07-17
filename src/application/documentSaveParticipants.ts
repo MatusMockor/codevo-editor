@@ -15,6 +15,7 @@ export interface DocumentSaveParticipantContext {
 
 export interface DocumentSaveParticipant {
   id: string;
+  timeoutMs?: number;
   appliesTo(document: EditorDocument, settings: WorkspaceSettings): boolean;
   run(
     content: string,
@@ -63,7 +64,7 @@ export async function runDocumentSaveParticipants(
       participant,
       content,
       context,
-      timeoutMs,
+      participant.timeoutMs ?? timeoutMs,
     );
     if (outcome.status !== "ok") {
       failures.push(outcome.failure);
@@ -139,12 +140,13 @@ async function runParticipantWithTimeout(
 
 export interface DocumentSaveParticipantRegistry {
   eslintFixOnSave: DocumentSaveParticipant;
+  prettierFormatOnSave: DocumentSaveParticipant;
 }
 
 export function orderedDocumentSaveParticipants(
   registry: DocumentSaveParticipantRegistry,
 ): readonly DocumentSaveParticipant[] {
-  return [registry.eslintFixOnSave];
+  return [registry.eslintFixOnSave, registry.prettierFormatOnSave];
 }
 
 export const eslintFixOnSaveParticipantId = "eslint.fixAll";

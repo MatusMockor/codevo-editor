@@ -91,6 +91,7 @@ describe("settings defaults", () => {
       phpstanPath: null,
       phpVersionOverride: null,
       phpactorPath: null,
+      prettierFormatOnSave: false,
       revealActiveFileInTree: true,
       session: {
         bottomPanelView: "problems",
@@ -477,6 +478,7 @@ describe("normalizeWorkspaceSettings", () => {
         phpstanPath: " /tools/phpstan ",
         phpVersionOverride: "8.3",
         phpactorPath: " /tools/phpactor ",
+        prettierFormatOnSave: true,
         revealActiveFileInTree: false,
         session: {
           activePath: "/project/src/User.php",
@@ -548,6 +550,7 @@ describe("normalizeWorkspaceSettings", () => {
       phpstanPath: "/tools/phpstan",
       phpVersionOverride: "8.3",
       phpactorPath: "/tools/phpactor",
+      prettierFormatOnSave: true,
       revealActiveFileInTree: false,
       session: {
         bottomPanelView: "history",
@@ -687,6 +690,22 @@ describe("normalizeWorkspaceSettings", () => {
     ).toBe(false);
     expect(
       normalizeWorkspaceSettings({ eslintFixOnSave: true }).eslintFixOnSave,
+    ).toBe(true);
+  });
+
+  it("defaults prettierFormatOnSave to false and respects explicit boolean values", () => {
+    expect(normalizeWorkspaceSettings({}).prettierFormatOnSave).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ prettierFormatOnSave: "yes" })
+        .prettierFormatOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ prettierFormatOnSave: false })
+        .prettierFormatOnSave,
+    ).toBe(false);
+    expect(
+      normalizeWorkspaceSettings({ prettierFormatOnSave: true })
+        .prettierFormatOnSave,
     ).toBe(true);
   });
 

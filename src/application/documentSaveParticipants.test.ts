@@ -150,6 +150,27 @@ describe("runDocumentSaveParticipants", () => {
     ]);
   });
 
+  it("lets a participant extend its own timeout beyond the run default", async () => {
+    const slow = participant({
+      id: "slow",
+      timeoutMs: 100,
+      run: (content) =>
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve(`${content}+slow`), 20);
+        }),
+    });
+
+    const run = await runDocumentSaveParticipants({
+      participants: [slow],
+      content: "base",
+      context: context(),
+      timeoutMs: 5,
+    });
+
+    expect(run.content).toBe("base+slow");
+    expect(run.failures).toEqual([]);
+  });
+
   it("records a failure when a participant resolves to a non-string", async () => {
     const invalid = participant({
       id: "invalid",
@@ -194,12 +215,13 @@ describe("runDocumentSaveParticipants", () => {
 });
 
 describe("orderedDocumentSaveParticipants", () => {
-  it("places the ESLint fix participant before future formatters", () => {
+  it("runs the ESLint fix participant before the Prettier participant", () => {
     const eslintFixOnSave = participant({ id: eslintFixOnSaveParticipantId });
+    const prettierFormatOnSave = participant({ id: "prettier.formatOnSave" });
 
-    expect(orderedDocumentSaveParticipants({ eslintFixOnSave })).toEqual([
-      eslintFixOnSave,
-    ]);
+    expect(
+      orderedDocumentSaveParticipants({ eslintFixOnSave, prettierFormatOnSave }),
+    ).toEqual([eslintFixOnSave, prettierFormatOnSave]);
   });
 });
 

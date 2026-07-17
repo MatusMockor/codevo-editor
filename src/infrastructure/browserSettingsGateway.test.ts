@@ -342,6 +342,7 @@ describe("BrowserSettingsGateway", () => {
       phpstanPath: null,
       phpVersionOverride: null,
       phpactorPath: null,
+      prettierFormatOnSave: false,
       revealActiveFileInTree: true,
       session: {
         bottomPanelView: "problems",
@@ -445,6 +446,7 @@ describe("BrowserSettingsGateway", () => {
       phpstanPath: "/tools/phpstan",
       phpVersionOverride: "8.2",
       phpactorPath: "/tools/phpactor",
+      prettierFormatOnSave: true,
       revealActiveFileInTree: false,
       session: {
         bottomPanelView: "index",
@@ -547,6 +549,7 @@ describe("BrowserSettingsGateway", () => {
       phpstanPath: "/tools/phpstan",
       phpVersionOverride: "8.2",
       phpactorPath: "/tools/phpactor",
+      prettierFormatOnSave: true,
       revealActiveFileInTree: false,
       session: {
         bottomPanelView: "index",
@@ -647,6 +650,7 @@ describe("BrowserSettingsGateway", () => {
       phpstanPath: null,
       phpVersionOverride: null,
       phpactorPath: null,
+      prettierFormatOnSave: false,
       revealActiveFileInTree: true,
       session: {
         bottomPanelView: "problems",

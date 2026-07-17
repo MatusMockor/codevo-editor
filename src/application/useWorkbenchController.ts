@@ -71,6 +71,11 @@ import { useDocumentLifecycle } from "./useDocumentLifecycle";
 import type { DirtyCloseDecisionPort } from "./dirtyCloseDecisionPort";
 import type { RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import {
+  createEslintFixOnSaveParticipant,
+  orderedDocumentSaveParticipants,
+} from "./documentSaveParticipants";
+import { createPrettierSaveParticipant } from "./prettierSaveParticipant";
+import {
   createDocumentSaveIdentity,
   legacyDocumentSaveIdentity,
   type ResolveDocumentSaveOwnership,
@@ -293,6 +298,8 @@ import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSynt
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
 import { TauriPintGateway } from "../infrastructure/tauriPintGateway";
+import { TauriPrettierGateway } from "../infrastructure/tauriPrettierGateway";
+import type { PrettierFormattingGateway } from "../domain/prettierFormatting";
 import {
   replaceEslintDiagnosticsForRoot,
   supportsEslintLineComment,
@@ -480,6 +487,7 @@ export interface WorkbenchControllerOptions {
   markdownPreviewRenderer?: (markdown: string) => Promise<string>;
   dirtyCloseDecisionPort?: DirtyCloseDecisionPort;
   onDidCloseEditorPaths?: (paths: readonly string[]) => void;
+  prettierFormattingGateway?: PrettierFormattingGateway;
 }
 
 interface OpenWorkspacePathOptions {
@@ -549,6 +557,7 @@ const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
 const eslintDiagnosticsGateway = new TauriEslintDiagnosticsGateway();
 const phpstanDiagnosticsGateway = new TauriPhpstanDiagnosticsGateway();
 const pintGateway = new TauriPintGateway();
+const defaultPrettierFormattingGateway = new TauriPrettierGateway();
 
 export type SidebarView = "files" | "git" | "php";
 
@@ -5741,6 +5750,28 @@ export function useWorkbenchController(
     [editorSessionOwnerKeyForRoot, setEditorRevealTarget],
   );
 
+  const eslintFixesByRootRef = useRef(eslintFixesByRoot);
+  eslintFixesByRootRef.current = eslintFixesByRoot;
+  const workspaceTrustedRef = useRef(workspaceTrust?.trusted === true);
+  workspaceTrustedRef.current = workspaceTrust?.trusted === true;
+  const prettierFormattingGateway =
+    options.prettierFormattingGateway ?? defaultPrettierFormattingGateway;
+  const saveParticipants = useMemo(
+    () =>
+      orderedDocumentSaveParticipants({
+        eslintFixOnSave: createEslintFixOnSaveParticipant({
+          eslintFixesForFile: (rootPath, path) =>
+            eslintFixesByRootRef.current[rootPath]?.[path] ?? [],
+          isWorkspaceTrusted: () => workspaceTrustedRef.current,
+        }),
+        prettierFormatOnSave: createPrettierSaveParticipant({
+          prettierFormatting: prettierFormattingGateway,
+          isWorkspaceTrusted: () => workspaceTrustedRef.current,
+        }),
+      }),
+    [prettierFormattingGateway],
+  );
+
   const {
     captureLocalHistorySnapshot,
     requestOwnerDocumentSave: requestCoordinatedOwnerDocumentSave,
@@ -5809,6 +5840,7 @@ export function useWorkbenchController(
     detectSaveConflict: externalFileConflicts.detectSaveConflict,
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
+    saveParticipants,
     recentlyClosedDocumentViewState,
     openRecentlyClosedDocument,
     restoreRecentlyClosedDocumentViewState,

@@ -320,6 +320,12 @@ export function SettingsDialog({
                       eslintFixOnSave,
                     })
                   }
+                  onChangePrettierFormatOnSave={(prettierFormatOnSave) =>
+                    updateWorkspaceSettings({
+                      ...draftWorkspaceSettingsRef.current,
+                      prettierFormatOnSave,
+                    })
+                  }
                   onChangeDefaultInsertSpaces={(defaultInsertSpaces) =>
                     updateWorkspaceSettings({
                       ...draftWorkspaceSettingsRef.current,
@@ -693,6 +699,7 @@ interface GeneralSettingsProps {
   onChangeEslintFixOnSave(enabled: boolean): void;
   onChangeEslintPath(path: string): void;
   onChangeOptimizeImportsOnSave(optimizeImportsOnSave: boolean): void;
+  onChangePrettierFormatOnSave(enabled: boolean): void;
   onChangeIntelligenceMode(mode: IntelligenceMode): void;
   onChangeJavaScriptTypeScriptService(
     mode: JavaScriptTypeScriptServiceMode,
@@ -748,6 +755,7 @@ function GeneralSettings({
   onChangeEslintFixOnSave,
   onChangeEslintPath,
   onChangeOptimizeImportsOnSave,
+  onChangePrettierFormatOnSave,
   onChangeIntelligenceMode,
   onChangeJavaScriptTypeScriptAutoImports,
   onChangeJavaScriptTypeScriptAutomaticTypeAcquisition,
@@ -848,6 +856,18 @@ function GeneralSettings({
           type="checkbox"
         />
         <span>ESLint fix on save</span>
+      </label>
+
+      <label className="settings-toggle">
+        <input
+          checked={workspaceSettings.prettierFormatOnSave}
+          disabled={!hasWorkspace}
+          onChange={(event) =>
+            onChangePrettierFormatOnSave(event.currentTarget.checked)
+          }
+          type="checkbox"
+        />
+        <span>Prettier format on save</span>
       </label>
 
       <label className="settings-field">

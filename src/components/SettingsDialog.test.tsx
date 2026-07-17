@@ -383,6 +383,48 @@ describe("SettingsDialog", () => {
     });
   });
 
+  it("keeps Prettier format on save disabled by default and persists enabling it from settings", async () => {
+    const onSave = vi.fn(async () => undefined);
+
+    await act(async () => {
+      root.render(
+        <SettingsDialog
+          appSettings={defaultAppSettings()}
+          initialSection="general"
+          isOpen={true}
+          onClose={vi.fn()}
+          onOpenJavaScriptTypeScriptServiceLog={vi.fn()}
+          onRestartJavaScriptTypeScriptService={vi.fn()}
+          onSave={onSave}
+          phpTools={null}
+          workspaceDescriptor={null}
+          workspaceRoot="/workspace"
+          workspaceSettings={defaultWorkspaceSettings()}
+          workspaceTrust={{ rootPath: "/workspace", trusted: true }}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const prettierCheckbox = inputWithLabel("Prettier format on save");
+    expect(prettierCheckbox.checked).toBe(false);
+    await act(async () => {
+      prettierCheckbox.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: defaultAppSettings(),
+      trusted: true,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        prettierFormatOnSave: true,
+      },
+    });
+  });
+
   it("keeps Optimize imports on save disabled by default and persists enabling it from settings", async () => {
     const onSave = vi.fn(async () => undefined);
 

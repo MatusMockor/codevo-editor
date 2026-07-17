@@ -206,6 +206,7 @@ export interface WorkspaceSettings {
   phpstanPath: string | null;
   phpVersionOverride: string | null;
   phpactorPath: string | null;
+  prettierFormatOnSave: boolean;
   revealActiveFileInTree: boolean;
   session: WorkspaceSessionState;
   statusBar: StatusBarItemVisibility;
@@ -387,6 +388,7 @@ export function defaultWorkspaceSettings(): WorkspaceSettings {
     phpstanPath: null,
     phpVersionOverride: null,
     phpactorPath: null,
+    prettierFormatOnSave: false,
     revealActiveFileInTree: true,
     session: defaultWorkspaceSessionState(),
     statusBar: defaultStatusBarItemVisibility(),
@@ -642,6 +644,10 @@ export function normalizeWorkspaceSettings(value: unknown): WorkspaceSettings {
     phpactorPath: normalizeNullableString(
       value.phpactorPath,
       defaults.phpactorPath,
+    ),
+    prettierFormatOnSave: normalizeBoolean(
+      value.prettierFormatOnSave,
+      defaults.prettierFormatOnSave,
     ),
     revealActiveFileInTree:
       typeof value.revealActiveFileInTree === "boolean"

@@ -9728,6 +9728,110 @@ describe("useWorkbenchController preview tabs", () => {
       ).toHaveBeenCalledWith(path, "export const value=2;\n");
     });
 
+    it("writes prettier-formatted content on save in a trusted workspace when prettierFormatOnSave is enabled", async () => {
+      const path = "/workspace/src/App.ts";
+      const unformatted = "export const value=2;\n";
+      const formatted = "export const value = 2;\n";
+      const prettierFormattingGateway = {
+        format: vi.fn(async () => ({
+          status: "ok" as const,
+          formatted,
+        })),
+      };
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        prettierFormattingGateway,
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          prettierFormatOnSave: true,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(prettierFormattingGateway.format).toHaveBeenCalledWith(
+        "/workspace",
+        "src/App.ts",
+        unformatted,
+      );
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, formatted);
+      expect(getWorkbench().activeDocument?.content).toBe(formatted);
+    });
+
+    it("saves the buffer untouched by prettier when prettierFormatOnSave is disabled", async () => {
+      const path = "/workspace/src/App.ts";
+      const unformatted = "export const value=2;\n";
+      const prettierFormattingGateway = {
+        format: vi.fn(async () => ({
+          status: "ok" as const,
+          formatted: "export const value = 2;\n",
+        })),
+      };
+      const { dependencies, getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+          workspaceTabs: ["/workspace"],
+        },
+        javaScriptTypeScriptInitialRuntimeStatus:
+          runningJavaScriptTypeScriptStatus(),
+        javaScriptTypeScriptRuntimeStatus: runningJavaScriptTypeScriptStatus(),
+        prettierFormattingGateway,
+        readTextFile: vi.fn(async () => "export const value=1;\n"),
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+        workspaceSettings: {
+          ...defaultWorkspaceSettings(),
+          autoSave: false,
+          formatOnSave: false,
+          prettierFormatOnSave: false,
+        },
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(path, "App.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveDocument(unformatted);
+      });
+      await flushAsyncTurns(24);
+
+      await act(async () => {
+        await getWorkbench().saveActiveDocument();
+      });
+      await flushAsyncTurns(24);
+
+      expect(prettierFormattingGateway.format).not.toHaveBeenCalled();
+      expect(
+        dependencies.workspaceGateways.files.writeTextFile,
+      ).toHaveBeenCalledWith(path, unformatted);
+    });
+
     it("formats the active document through the formatting provider before writing it when formatOnSave is enabled", async () => {
       const path = "/workspace/src/App.ts";
       const unformatted = "export const value=2;\n";
@@ -74733,6 +74837,7 @@ MissingClass::class;
     languageServerFeaturesGateway,
     languageServerRuntimeGateway,
     phpToolGateway,
+    prettierFormattingGateway,
     projectSymbols = [],
     prompter,
     readDirectory,
@@ -74772,6 +74877,7 @@ MissingClass::class;
     languageServerFeaturesGateway?: LanguageServerFeaturesGateway;
     languageServerRuntimeGateway?: LanguageServerRuntimeGateway;
     phpToolGateway?: WorkbenchWorkspaceGateways["phpTools"];
+    prettierFormattingGateway?: WorkbenchControllerOptions["prettierFormattingGateway"];
     projectSymbols?: ProjectSymbolSearchResult[];
     prompter?: WorkbenchPrompter;
     readDirectory?: (path: string) => Promise<FileEntry[]>;
@@ -74853,6 +74959,8 @@ MissingClass::class;
     });
     dependencies.controllerOptions.markdownPreviewRenderer = markdownPreviewRenderer;
     dependencies.controllerOptions.editorGroupFocusRunner = editorGroupFocusRunner;
+    dependencies.controllerOptions.prettierFormattingGateway =
+      prettierFormattingGateway;
     const getWorkbench = () => {
       if (!workbench) {
         throw new Error("Workbench controller was not rendered.");

@@ -12,6 +12,7 @@ import {
   orderedDocumentSaveParticipants,
   type DocumentSaveParticipant,
 } from "./documentSaveParticipants";
+import { createPrettierSaveParticipant } from "./prettierSaveParticipant";
 import {
   useDocumentSaveLifecycle,
   type DocumentSaveLifecycle,
@@ -1069,7 +1070,14 @@ describe("useDocumentSaveLifecycle", () => {
     });
     const harness = renderLifecycle({
       activeDocument: clean,
-      saveParticipants: orderedDocumentSaveParticipants({ eslintFixOnSave }),
+      saveParticipants: orderedDocumentSaveParticipants({
+        eslintFixOnSave,
+        prettierFormatOnSave: createPrettierSaveParticipant({
+          prettierFormatting: {
+            format: async () => ({ status: "unavailable" as const }),
+          },
+        }),
+      }),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         eslintFixOnSave: true,
@@ -1107,7 +1115,14 @@ describe("useDocumentSaveLifecycle", () => {
       formattedContentForSave: vi.fn(
         async (item: EditorDocument) => `${item.content}formatted\n`,
       ),
-      saveParticipants: orderedDocumentSaveParticipants({ eslintFixOnSave }),
+      saveParticipants: orderedDocumentSaveParticipants({
+        eslintFixOnSave,
+        prettierFormatOnSave: createPrettierSaveParticipant({
+          prettierFormatting: {
+            format: async () => ({ status: "unavailable" as const }),
+          },
+        }),
+      }),
       workspaceSettings: {
         ...defaultWorkspaceSettings(),
         eslintFixOnSave: true,
