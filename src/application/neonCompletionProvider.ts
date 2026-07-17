@@ -3,6 +3,14 @@ import {
   neonServiceClassCompletionContextAt,
 } from "../domain/neonConfig";
 import {
+  neonConfigKeyCompletionContextAt,
+  neonConfigKeySpecsForScope,
+  neonExtensionNamesFromSource,
+  neonIndentUnitFromSource,
+  type NeonConfigKeyCompletionContext,
+  type NeonConfigKeySpec,
+} from "../domain/neonConfigSchema";
+import {
   neonParameterCompletionContextAt,
   neonServiceReferenceCompletionContextAt,
   neonServiceSetupMethodCompletionContextAt,
@@ -70,6 +78,12 @@ export async function provideNeonCompletions(
     return neonServiceSetupMethodCompletions(context, setupMethodCompletion);
   }
 
+  const keyCompletion = neonConfigKeyCompletionContextAt(source, offset);
+
+  if (keyCompletion) {
+    return neonConfigKeyCompletions(source, keyCompletion);
+  }
+
   const classContext = neonServiceClassCompletionContextAt(source, offset);
 
   if (!classContext) {
@@ -94,4 +108,68 @@ export async function provideNeonCompletions(
     replaceEnd: classContext.span.end,
     replaceStart: classContext.span.start,
   }));
+}
+
+function neonConfigKeyCompletions(
+  source: string,
+  completion: NeonConfigKeyCompletionContext,
+): NeonCompletionItem[] {
+  const normalizedPrefix = completion.prefix.toLowerCase();
+  const indentUnit = neonIndentUnitFromSource(source);
+
+  return neonConfigKeySpecs(source, completion)
+    .filter((spec) => spec.name.toLowerCase().startsWith(normalizedPrefix))
+    .slice(0, NEON_MAX_COMPLETIONS)
+    .map((spec) => ({
+      detail: spec.description,
+      insertText: neonConfigKeyInsertText(spec, completion, indentUnit),
+      kind: "parameter" as const,
+      label: spec.name,
+      replaceEnd: completion.span.end,
+      replaceStart: completion.span.start,
+    }));
+}
+
+function neonConfigKeySpecs(
+  source: string,
+  completion: NeonConfigKeyCompletionContext,
+): NeonConfigKeySpec[] {
+  const specs = [...neonConfigKeySpecsForScope(completion.scope)];
+
+  if (completion.scope.kind !== "top-level") {
+    return specs;
+  }
+
+  const knownNames = new Set(specs.map((spec) => spec.name.toLowerCase()));
+
+  for (const name of neonExtensionNamesFromSource(source)) {
+    if (knownNames.has(name.toLowerCase())) {
+      continue;
+    }
+
+    knownNames.add(name.toLowerCase());
+    specs.push({
+      description: `Configuration of the ${name} extension`,
+      name,
+      valueKind: "section",
+    });
+  }
+
+  return specs;
+}
+
+function neonConfigKeyInsertText(
+  spec: NeonConfigKeySpec,
+  completion: NeonConfigKeyCompletionContext,
+  indentUnit: string,
+): string {
+  if (completion.followedByColon) {
+    return spec.name;
+  }
+
+  if (completion.scope.kind === "top-level" && spec.valueKind === "section") {
+    return `${spec.name}:\n${indentUnit}`;
+  }
+
+  return `${spec.name}: `;
 }

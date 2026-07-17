@@ -1,0 +1,250 @@
+import { describe, expect, it } from "vitest";
+import {
+  NEON_SECTION_KEYS,
+  NEON_SERVICE_ITEM_KEYS,
+  NEON_TOP_LEVEL_SECTIONS,
+  neonConfigKeyCompletionContextAt,
+  neonConfigKeySpecsForScope,
+  neonExtensionNamesFromSource,
+  neonIndentUnitFromSource,
+} from "./neonConfigSchema";
+
+describe("neon config schema data", () => {
+  it("lists the standard top-level sections", () => {
+    const names = NEON_TOP_LEVEL_SECTIONS.map((section) => section.name);
+
+    for (const expected of [
+      "application",
+      "database",
+      "di",
+      "extensions",
+      "http",
+      "includes",
+      "latte",
+      "parameters",
+      "security",
+      "services",
+      "session",
+      "tracy",
+    ]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  it("matches the nette/di DefinitionSchema service keys", () => {
+    const names = NEON_SERVICE_ITEM_KEYS.map((key) => key.name);
+
+    expect(names).toEqual([
+      "alteration",
+      "arguments",
+      "autowired",
+      "class",
+      "create",
+      "factory",
+      "implement",
+      "imported",
+      "inject",
+      "lazy",
+      "references",
+      "reset",
+      "setup",
+      "tagged",
+      "tags",
+      "type",
+    ]);
+  });
+
+  it("describes service item keys with value kinds", () => {
+    const byName = new Map(
+      NEON_SERVICE_ITEM_KEYS.map((key) => [key.name, key]),
+    );
+
+    expect(byName.get("factory")?.valueKind).toBe("string");
+    expect(byName.get("setup")?.valueKind).toBe("array");
+    expect(byName.get("autowired")?.valueKind).toBe("boolean");
+    expect(byName.get("tags")?.valueKind).toBe("array");
+    expect(byName.get("reset")?.valueKind).toBe("array");
+    expect(byName.get("alteration")?.valueKind).toBe("boolean");
+    expect(byName.get("factory")?.description).toContain("alias of create");
+    expect(byName.get("class")?.description).toContain("deprecated");
+  });
+
+  it("provides nested keys for common sections", () => {
+    const applicationKeys = (NEON_SECTION_KEYS["application"] ?? []).map(
+      (key) => key.name,
+    );
+    const sessionKeys = (NEON_SECTION_KEYS["session"] ?? []).map(
+      (key) => key.name,
+    );
+
+    expect(applicationKeys).toContain("mapping");
+    expect(applicationKeys).toContain("errorPresenter");
+    expect(sessionKeys).toContain("expiration");
+    expect(sessionKeys).toContain("autoStart");
+  });
+
+  it("resolves specs per scope", () => {
+    expect(neonConfigKeySpecsForScope({ kind: "top-level" })).toBe(
+      NEON_TOP_LEVEL_SECTIONS,
+    );
+    expect(neonConfigKeySpecsForScope({ kind: "service-item" })).toBe(
+      NEON_SERVICE_ITEM_KEYS,
+    );
+    expect(
+      neonConfigKeySpecsForScope({ kind: "section", section: "tracy" }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      neonConfigKeySpecsForScope({ kind: "section", section: "parameters" }),
+    ).toEqual([]);
+  });
+});
+
+describe("neonConfigKeyCompletionContextAt", () => {
+  it("detects a top-level key position with prefix and span", () => {
+    const source = "serv";
+    const context = neonConfigKeyCompletionContextAt(source, 4);
+
+    expect(context).toEqual({
+      followedByColon: false,
+      prefix: "serv",
+      scope: { kind: "top-level" },
+      span: { end: 4, start: 0 },
+    });
+  });
+
+  it("detects a top-level position on an empty document", () => {
+    const context = neonConfigKeyCompletionContextAt("", 0);
+
+    expect(context?.scope).toEqual({ kind: "top-level" });
+    expect(context?.prefix).toBe("");
+  });
+
+  it("detects a section scope from indentation", () => {
+    const source = "application:\n\tmapp";
+    const context = neonConfigKeyCompletionContextAt(source, source.length);
+
+    expect(context?.scope).toEqual({ kind: "section", section: "application" });
+    expect(context?.prefix).toBe("mapp");
+    expect(context?.span).toEqual({ end: source.length, start: 14 });
+  });
+
+  it("detects a section scope on a blank indented line", () => {
+    const source = "session:\n\t";
+    const context = neonConfigKeyCompletionContextAt(source, source.length);
+
+    expect(context?.scope).toEqual({ kind: "section", section: "session" });
+    expect(context?.prefix).toBe("");
+  });
+
+  it("detects a service-item scope inside a named service", () => {
+    const source = "services:\n\tfoo:\n\t\tfact";
+    const context = neonConfigKeyCompletionContextAt(source, source.length);
+
+    expect(context?.scope).toEqual({ kind: "service-item" });
+    expect(context?.prefix).toBe("fact");
+  });
+
+  it("detects a service-item scope inside an anonymous service", () => {
+    const source = "services:\n\t-\n\t\targ";
+    const context = neonConfigKeyCompletionContextAt(source, source.length);
+
+    expect(context?.scope).toEqual({ kind: "service-item" });
+    expect(context?.prefix).toBe("arg");
+  });
+
+  it("reports a key that is already followed by a colon", () => {
+    const source = "tracy: true";
+    const context = neonConfigKeyCompletionContextAt(source, 3);
+
+    expect(context?.followedByColon).toBe(true);
+    expect(context?.prefix).toBe("tra");
+    expect(context?.span).toEqual({ end: 5, start: 0 });
+  });
+
+  it("returns null in a value position", () => {
+    const source = "services:\n\tfoo:\n\t\tfactory: App";
+
+    expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
+  });
+
+  it("returns null on a list-item line", () => {
+    const source = "services:\n\t- App";
+
+    expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
+  });
+
+  it("returns null at the service-name level of services", () => {
+    const source = "services:\n\tfo";
+
+    expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
+  });
+
+  it("returns null on comment lines", () => {
+    const source = "# serv";
+
+    expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
+  });
+
+  it("returns null when the typed text is not a key fragment", () => {
+    const source = "%ap";
+
+    expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
+  });
+
+  it("returns null below known nesting depths", () => {
+    const source = "services:\n\tfoo:\n\t\tsetup:\n\t\t\tab";
+
+    expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
+  });
+});
+
+describe("neonExtensionNamesFromSource", () => {
+  it("collects extension names registered under extensions:", () => {
+    const source = [
+      "extensions:",
+      "\tmyExt: App\\DI\\MyExtension",
+      "\tmigrations: Nextras\\Migrations\\Bridges\\NetteDI\\MigrationsExtension(%dbal%)",
+      "services:",
+      "\tfoo: App\\Foo",
+    ].join("\n");
+
+    expect(neonExtensionNamesFromSource(source)).toEqual([
+      "myExt",
+      "migrations",
+    ]);
+  });
+
+  it("returns an empty list without an extensions section", () => {
+    expect(neonExtensionNamesFromSource("services:\n\tfoo: App\\Foo")).toEqual(
+      [],
+    );
+  });
+});
+
+describe("neonIndentUnitFromSource", () => {
+  it("defaults to a tab", () => {
+    expect(neonIndentUnitFromSource("services:")).toBe("\t");
+  });
+
+  it("detects tab indentation", () => {
+    expect(neonIndentUnitFromSource("services:\n\tfoo: App\\Foo")).toBe("\t");
+  });
+
+  it("detects space indentation", () => {
+    expect(neonIndentUnitFromSource("services:\n    foo: App\\Foo")).toBe(
+      "    ",
+    );
+  });
+
+  it("normalizes space indentation to the smallest indent step", () => {
+    const source = "services:\n  foo:\n      setup:\n        - a()";
+
+    expect(neonIndentUnitFromSource(source)).toBe("  ");
+  });
+
+  it("prefers tabs when any line is tab-indented", () => {
+    expect(
+      neonIndentUnitFromSource("services:\n    foo:\n\tbar: App\\Bar"),
+    ).toBe("\t");
+  });
+});
