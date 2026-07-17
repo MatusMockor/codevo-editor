@@ -25,7 +25,9 @@ import { workspaceRelativePath } from "../domain/pathDerivation";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { ArtisanRoutesPanel } from "./ArtisanRoutesPanel";
 import type { PhpTestCase, PhpTestRunOk } from "../domain/phpTestResults";
+import type { TestCase, TestRunOk } from "../domain/testResults";
 import { PhpTestResultsPanel } from "./PhpTestResultsPanel";
+import { JsTestResultsPanel } from "./JsTestResultsPanel";
 
 interface BottomPanelProps {
   activeView: WorkbenchBottomPanelView;
@@ -36,6 +38,7 @@ interface BottomPanelProps {
   artisanRoutesTotal?: number;
   artisanRoutesUnavailable?: string | null;
   hasArtisan?: boolean;
+  hasJsWorkspace?: boolean;
   hasPhpWorkspace?: boolean;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
@@ -49,6 +52,9 @@ interface BottomPanelProps {
   onOpenPhpTestCase?(testCase: PhpTestCase): void;
   onRunPhpTestCase?(testCase: PhpTestCase): void;
   onRunPhpTests?(): void;
+  onOpenJsTestCase?(testCase: TestCase): void;
+  onRunJsTestCase?(testCase: TestCase): void;
+  onRunJsTests?(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onRevealDirectoryInTree?(path: string): void;
@@ -77,6 +83,11 @@ interface BottomPanelProps {
   phpTestIsRunning?: boolean;
   phpTestResult?: PhpTestRunOk | null;
   phpTestUnavailable?: string | null;
+  jsTestError?: string | null;
+  jsTestFilter?: string | null;
+  jsTestIsRunning?: boolean;
+  jsTestResult?: TestRunOk | null;
+  jsTestUnavailable?: string | null;
 }
 
 const bottomPanelViews: WorkbenchBottomPanelView[] = [
@@ -101,6 +112,7 @@ export function BottomPanel({
   artisanRoutesTotal = 0,
   artisanRoutesUnavailable = null,
   hasArtisan = false,
+  hasJsWorkspace = false,
   hasPhpWorkspace = false,
   indexHealthLogs,
   indexProgress,
@@ -114,6 +126,9 @@ export function BottomPanel({
   onOpenPhpTestCase = () => undefined,
   onRunPhpTestCase = () => undefined,
   onRunPhpTests = () => undefined,
+  onOpenJsTestCase = () => undefined,
+  onRunJsTestCase = () => undefined,
+  onRunJsTests = () => undefined,
   onOpenProblem,
   onPhpReindex,
   onRevealDirectoryInTree,
@@ -137,6 +152,11 @@ export function BottomPanel({
   phpTestIsRunning = false,
   phpTestResult = null,
   phpTestUnavailable = null,
+  jsTestError = null,
+  jsTestFilter = null,
+  jsTestIsRunning = false,
+  jsTestResult = null,
+  jsTestUnavailable = null,
 }: BottomPanelProps) {
   const [terminalMounted, setTerminalMounted] = useState(
     activeView === "terminal",
@@ -208,11 +228,19 @@ export function BottomPanel({
     artisanRoutesQuery,
     artisanRoutesTotal,
     artisanRoutesUnavailable,
+    hasArtisan,
+    hasJsWorkspace,
+    hasPhpWorkspace,
     phpTestError,
     phpTestFilter,
     phpTestIsRunning,
     phpTestResult,
     phpTestUnavailable,
+    jsTestError,
+    jsTestFilter,
+    jsTestIsRunning,
+    jsTestResult,
+    jsTestUnavailable,
     indexHealthLogs,
     indexProgress,
     notices,
@@ -223,6 +251,9 @@ export function BottomPanel({
     onOpenPhpTestCase,
     onRunPhpTestCase,
     onRunPhpTests,
+    onOpenJsTestCase,
+    onRunJsTestCase,
+    onRunJsTests,
     onOpenProblem,
     onPhpReindex,
     onOpenCommitFileDiff,
@@ -252,7 +283,7 @@ export function BottomPanel({
           {[
             ...bottomPanelViews,
             ...(hasArtisan ? (["routes"] as const) : []),
-            ...(hasArtisan || hasPhpWorkspace
+            ...(hasArtisan || hasPhpWorkspace || hasJsWorkspace
               ? (["testResults"] as const)
               : []),
           ].map((view) => (
@@ -408,11 +439,19 @@ interface RenderActivePanelOptions {
   artisanRoutesQuery: string;
   artisanRoutesTotal: number;
   artisanRoutesUnavailable: string | null;
+  hasArtisan: boolean;
+  hasJsWorkspace: boolean;
+  hasPhpWorkspace: boolean;
   phpTestError: string | null;
   phpTestFilter: string | null;
   phpTestIsRunning: boolean;
   phpTestResult: PhpTestRunOk | null;
   phpTestUnavailable: string | null;
+  jsTestError: string | null;
+  jsTestFilter: string | null;
+  jsTestIsRunning: boolean;
+  jsTestResult: TestRunOk | null;
+  jsTestUnavailable: string | null;
   indexHealthLogs: IndexHealthLogEntry[];
   indexProgress: IndexProgressState;
   notices: WorkbenchNotice[];
@@ -423,6 +462,9 @@ interface RenderActivePanelOptions {
   onOpenPhpTestCase(testCase: PhpTestCase): void;
   onRunPhpTestCase(testCase: PhpTestCase): void;
   onRunPhpTests(): void;
+  onOpenJsTestCase(testCase: TestCase): void;
+  onRunJsTestCase(testCase: TestCase): void;
+  onRunJsTests(): void;
   onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
   onPhpReindex(): void;
   onSoftReindex(): void;
@@ -438,6 +480,21 @@ interface RenderActivePanelOptions {
   workspaceRoot: string | null;
 }
 
+const splitTestResultsStyles = {
+  container: {
+    display: "grid",
+    gridTemplateRows: "1fr 1fr",
+    height: "100%",
+    minHeight: 0,
+  },
+  jsBlock: { minHeight: 0, overflow: "hidden" },
+  phpBlock: {
+    borderBottom: "1px solid var(--border-subtle)",
+    minHeight: 0,
+    overflow: "hidden",
+  },
+} as const;
+
 function renderActivePanel({
   activeView,
   artisanRoutes,
@@ -446,11 +503,19 @@ function renderActivePanel({
   artisanRoutesQuery,
   artisanRoutesTotal,
   artisanRoutesUnavailable,
+  hasArtisan,
+  hasJsWorkspace,
+  hasPhpWorkspace,
   phpTestError,
   phpTestFilter,
   phpTestIsRunning,
   phpTestResult,
   phpTestUnavailable,
+  jsTestError,
+  jsTestFilter,
+  jsTestIsRunning,
+  jsTestResult,
+  jsTestUnavailable,
   indexHealthLogs,
   indexProgress,
   notices,
@@ -461,6 +526,9 @@ function renderActivePanel({
   onOpenPhpTestCase,
   onRunPhpTestCase,
   onRunPhpTests,
+  onOpenJsTestCase,
+  onRunJsTestCase,
+  onRunJsTests,
   onOpenProblem,
   onPhpReindex,
   onOpenCommitFileDiff,
@@ -472,7 +540,7 @@ function renderActivePanel({
   workspaceRoot,
 }: RenderActivePanelOptions) {
   if (activeView === "testResults") {
-    return (
+    const phpPanel = (
       <PhpTestResultsPanel
         error={phpTestError}
         filter={phpTestFilter}
@@ -485,6 +553,36 @@ function renderActivePanel({
         unavailable={phpTestUnavailable}
       />
     );
+    const jsPanel = (
+      <JsTestResultsPanel
+        error={jsTestError}
+        filter={jsTestFilter}
+        isRunning={jsTestIsRunning}
+        onOpenCase={onOpenJsTestCase}
+        onRun={onRunJsTests}
+        onRunCase={onRunJsTestCase}
+        result={jsTestResult}
+        rootPath={workspaceRoot}
+        unavailable={jsTestUnavailable}
+      />
+    );
+    const showJsBlock = hasJsWorkspace;
+    const showPhpBlock = hasArtisan || hasPhpWorkspace || !showJsBlock;
+
+    if (showPhpBlock && showJsBlock) {
+      return (
+        <div style={splitTestResultsStyles.container}>
+          <div style={splitTestResultsStyles.phpBlock}>{phpPanel}</div>
+          <div style={splitTestResultsStyles.jsBlock}>{jsPanel}</div>
+        </div>
+      );
+    }
+
+    if (showJsBlock) {
+      return jsPanel;
+    }
+
+    return phpPanel;
   }
 
   if (activeView === "routes") {

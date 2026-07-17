@@ -186,6 +186,113 @@ describe("BottomPanel terminal links", () => {
     expect(labels).toContain("Tests");
     expect(labels).not.toContain("Routes");
   });
+
+  it("shows the Tests tab for a JavaScript-only workspace", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      { hasArtisan: false, hasJsWorkspace: true, hasPhpWorkspace: false },
+    );
+    const labels = Array.from(
+      host.querySelectorAll<HTMLButtonElement>("[role='tab']"),
+      (button) => button.textContent,
+    );
+
+    expect(labels).toContain("Tests");
+  });
+
+  it("renders only the JavaScript results block for a JS-only workspace", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "testResults",
+        hasArtisan: false,
+        hasJsWorkspace: true,
+        hasPhpWorkspace: false,
+      },
+    );
+
+    expect(
+      host.querySelector('[aria-label="JavaScript test results"]'),
+    ).not.toBeNull();
+    expect(host.querySelector('[aria-label="PHP test results"]')).toBeNull();
+  });
+
+  it("renders PHP and JavaScript results blocks for a mixed workspace", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "testResults",
+        hasArtisan: false,
+        hasJsWorkspace: true,
+        hasPhpWorkspace: true,
+      },
+    );
+
+    expect(
+      host.querySelector('[aria-label="JavaScript test results"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('[aria-label="PHP test results"]'),
+    ).not.toBeNull();
+  });
+
+  it("keeps the PHP-only results block for a PHP workspace", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "testResults",
+        hasArtisan: true,
+        hasJsWorkspace: false,
+        hasPhpWorkspace: true,
+      },
+    );
+
+    expect(
+      host.querySelector('[aria-label="PHP test results"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('[aria-label="JavaScript test results"]'),
+    ).toBeNull();
+  });
+
+  it("runs JavaScript tests from the JS results block", async () => {
+    const onRunJsTests = vi.fn();
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "testResults",
+        hasArtisan: false,
+        hasJsWorkspace: true,
+        hasPhpWorkspace: false,
+        onRunJsTests,
+      },
+    );
+
+    act(() => {
+      (
+        host.querySelector(
+          '[aria-label="Run JavaScript tests"]',
+        ) as HTMLButtonElement
+      ).click();
+    });
+
+    expect(onRunJsTests).toHaveBeenCalledTimes(1);
+  });
 });
 
 function terminalProps(): CapturedTerminalPanelProps {

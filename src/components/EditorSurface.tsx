@@ -108,6 +108,7 @@ import {
   isUncommittedBlameLine,
   type GitBlameLine,
 } from "../domain/git";
+import { jsGutterTargetsCoordinator } from "../domain/jsGutterTargetsCoordinator";
 import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
 import type { PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
@@ -348,6 +349,7 @@ export interface EditorSurfaceProps {
    */
   readWorkspaceFile?(path: string): Promise<string>;
   isActiveDocumentPhpTest?: boolean;
+  isActiveDocumentJsTest?: boolean;
   onEditorFocused(): void;
   onOpenClass(): void;
   onOpenFile(): void;
@@ -477,6 +479,7 @@ function EditorSurfaceComponent({
   formatOnPaste = false,
   gitBlameEnabled = false,
   isActiveDocumentPhpTest = false,
+  isActiveDocumentJsTest = false,
   isLanguageServerDocumentSynced,
   languageServerDiagnosticsByPath,
   languageServerFeaturesGateway,
@@ -3043,6 +3046,15 @@ function EditorSurfaceComponent({
       ? activeDocument.content
       : null,
   );
+  const jsTestEditTick = useDebouncedPhpEditTick(
+    activeDocument && isActiveDocumentJsTest && !activeDocumentIsLargeSmart
+      ? activeDocument.path
+      : null,
+    activeDocument && isActiveDocumentJsTest && !activeDocumentIsLargeSmart
+      ? activeDocument.content
+      : null,
+  );
+  const testEditTick = isActiveDocumentJsTest ? jsTestEditTick : phpEditTick;
   const applyLocalPhpDiagnostics = useCallback(
     async (
       path: string,
@@ -3288,7 +3300,8 @@ function EditorSurfaceComponent({
     const isPathSwitch =
       decoratedPath !== null && decoratedPath !== activeDocument.path;
     const isApplicable =
-      activeDocument.language === "php" && isActiveDocumentPhpTest;
+      (activeDocument.language === "php" && isActiveDocumentPhpTest) ||
+      isActiveDocumentJsTest;
 
     if (!isApplicable || isPathSwitch) {
       testGutterTargetsRef.current = new Map();
@@ -3302,6 +3315,7 @@ function EditorSurfaceComponent({
     activeDocument?.language,
     activeDocument?.path,
     editorApi,
+    isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
     monacoApi,
     workspaceRoot,
@@ -3312,21 +3326,32 @@ function EditorSurfaceComponent({
   // knows the document is PHP) and re-checks the live model path AFTER the
   // debounce so a stale tab's snapshot can never decorate the active model.
   useEffect(() => {
-    if (!phpEditTick || !editorApi || !monacoApi || !isActiveDocumentPhpTest) {
+    if (
+      !testEditTick ||
+      !editorApi ||
+      !monacoApi ||
+      (!isActiveDocumentPhpTest && !isActiveDocumentJsTest)
+    ) {
       return;
     }
 
     const liveModel = editorApi.getModel();
 
-    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, phpEditTick.path)) {
+    if (!liveModel || !modelMatchesProject(liveModel, workspaceRoot, testEditTick.path)) {
       return;
     }
 
-    const targets = phpGutterTargetsCoordinator.resolveTest(
-      workspaceRoot,
-      phpEditTick.path,
-      phpEditTick.content,
-    );
+    const targets = isActiveDocumentJsTest
+      ? jsGutterTargetsCoordinator.resolveTest(
+          workspaceRoot,
+          testEditTick.path,
+          testEditTick.content,
+        )
+      : phpGutterTargetsCoordinator.resolveTest(
+          workspaceRoot,
+          testEditTick.path,
+          testEditTick.content,
+        );
     testGutterTargetsRef.current = new Map(
       targets.map((target) => [target.position.lineNumber, target]),
     );
@@ -3354,12 +3379,13 @@ function EditorSurfaceComponent({
         ),
       })),
     );
-    testGutterDecoratedPathRef.current = phpEditTick.path;
+    testGutterDecoratedPathRef.current = testEditTick.path;
   }, [
     editorApi,
+    isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
     monacoApi,
-    phpEditTick,
+    testEditTick,
     workspaceRoot,
   ]);
 

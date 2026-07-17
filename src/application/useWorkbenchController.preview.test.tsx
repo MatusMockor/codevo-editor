@@ -69311,6 +69311,188 @@ class SampleTest extends TestCase
     );
   });
 
+  it("runs a JS gutter test by writing a vitest command into the active terminal", async () => {
+    const testPath = "/workspace/src/sum.test.ts";
+    const testSource = `describe("sum", () => {
+  it("adds numbers", () => {});
+});
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return testSource;
+      }
+
+      if (path === "/workspace/vitest.config.ts") {
+        return "export default {};";
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "sum.test.ts"));
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(15);
+    });
+
+    await act(async () => {
+      await getWorkbench().runTestAt({
+        filter: "adds numbers",
+        kind: "method",
+        label: "Run adds numbers",
+        match: "description",
+        position: { column: 3, lineNumber: 2 },
+      });
+      await flushAsyncTurns();
+    });
+
+    expect(getWorkbench().bottomPanelView).toBe("terminal");
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenCalledWith(
+      15,
+      "node_modules/.bin/vitest run 'src/sum.test.ts' -t 'adds numbers'\r",
+    );
+  });
+
+  it("runs the whole JS test file via the js.runTestFile command", async () => {
+    const testPath = "/workspace/src/sum.test.ts";
+    const testSource = `it("adds numbers", () => {});
+`;
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return testSource;
+      }
+
+      if (path === "/workspace/vitest.config.ts") {
+        return "export default {};";
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "sum.test.ts"));
+    });
+
+    expect(getWorkbench().isActiveDocumentJsTest).toBe(true);
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(16);
+    });
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "js.runTestFile");
+      await flushAsyncTurns();
+    });
+
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenCalledWith(
+      16,
+      "node_modules/.bin/vitest run 'src/sum.test.ts'\r",
+    );
+  });
+
+  it("opens the shared test results panel and bumps only the JS run request version", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    const phpVersionBefore = getWorkbench().phpTestRunRequestVersion;
+    const jsVersionBefore = getWorkbench().jsTestRunRequestVersion;
+
+    await act(async () => {
+      await runCommand(getWorkbench(), "js.runTestsWithResultsPanel");
+    });
+
+    expect(String(getWorkbench().bottomPanelView)).toBe("testResults");
+    expect(getWorkbench().bottomPanelVisible).toBe(true);
+    expect(getWorkbench().jsTestRunRequestVersion).toBe(jsVersionBefore + 1);
+    expect(getWorkbench().phpTestRunRequestVersion).toBe(phpVersionBefore);
+  });
+
+  it("does not flag a JS-test path carrying a non-JS language id as a JS test", async () => {
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+    });
+    await flushAsyncTurns();
+
+    act(() => {
+      getWorkbench().openReadOnlyDocument(
+        {
+          content: "plain text body",
+          language: "plaintext",
+          name: "sum.test.ts",
+          path: "/workspace/src/sum.test.ts",
+          readOnly: true,
+          savedContent: "plain text body",
+        },
+        { pin: true },
+      );
+    });
+
+    expect(getWorkbench().activePath).toBe("/workspace/src/sum.test.ts");
+    expect(getWorkbench().isActiveDocumentJsTest).toBe(false);
+  });
+
+  it("does not flag a PHP test document as a JS test", async () => {
+    const testPath = "/workspace/tests/Unit/SampleTest.php";
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === testPath) {
+        return "<?php\n\nclass SampleTest extends TestCase\n{\n}\n";
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile,
+      workspaceDescriptor: phpWorkspaceDescriptor({
+        psr4Roots: [
+          { dev: false, namespace: "App\\", paths: ["app/"] },
+          { dev: true, namespace: "Tests\\", paths: ["tests/"] },
+        ],
+      }),
+    });
+    await flushAsyncTurns();
+
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(testPath, "SampleTest.php"));
+    });
+
+    expect(getWorkbench().isActiveDocumentPhpTest).toBe(true);
+    expect(getWorkbench().isActiveDocumentJsTest).toBe(false);
+  });
+
   it("runs a Pest test by description with a safely single-quoted --filter", async () => {
     const testPath = "/workspace/tests/Feature/CalculatorTest.php";
     const testSource = `<?php

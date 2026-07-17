@@ -304,6 +304,7 @@ function createWorkbench() {
       openGitBranchPanel: mocks.openGitBranchPanel,
       openTabs: [],
       paletteOpen: false,
+      jsTestRunRequestVersion: 0,
       phpTestRunRequestVersion: 0,
       phpTreeLoading: false,
       previewPath: null,

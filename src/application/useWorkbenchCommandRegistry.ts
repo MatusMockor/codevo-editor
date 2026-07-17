@@ -50,6 +50,7 @@ import { workbenchLanguagePanelCommands } from "./workbenchLanguagePanelCommands
 import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
+import { workbenchJsTestCommands } from "./workbenchJsTestCommands";
 import { workbenchPhpTestCommands } from "./workbenchPhpTestCommands";
 import { workbenchPhpstanCommands } from "./workbenchPhpstanCommands";
 import { workbenchPintCommands } from "./workbenchPintCommands";
@@ -123,6 +124,7 @@ interface UseWorkbenchCommandRegistryOptions {
   installingManagedPhpactor: boolean;
   installManagedPhpactor: CommandRun;
   intelligenceMode: IntelligenceMode;
+  isActiveDocumentJsTest: boolean;
   isActiveDocumentPhpTest: boolean;
   isLanguageServerActiveForWorkspace(
     status: LanguageServerRuntimeStatus | null,
@@ -152,6 +154,7 @@ interface UseWorkbenchCommandRegistryOptions {
   openGitBranchPanel: CommandRun;
   openGitStashPanel: CommandRun;
   openLocalHistory(): Promise<void>;
+  openJsTestResultsPanel: CommandRun;
   openMarkdownPreview: CommandRun;
   openPhpTestResultsPanel: CommandRun;
   openRecentFilesSwitcher: CommandRun;
@@ -176,9 +179,11 @@ interface UseWorkbenchCommandRegistryOptions {
   resetEditorFontSize: CommandRun;
   revertSelectedGitCommit: CommandRun;
   rewordSelectedGitCommit: CommandRun;
+  runAllJsTestsForActiveDocument: CommandRun;
   runAllTestsForActiveDocument: CommandRun;
   runEslintAnalysis: CommandRun;
   runInActiveTerminal(command: string): void;
+  runJsTestForActiveDocument: CommandRun;
   runPhpstanAnalysis: CommandRun;
   runTestForActiveDocument: CommandRun;
   saveActiveDocument: CommandRun;
@@ -268,6 +273,7 @@ export function useWorkbenchCommandRegistry(
     installingManagedPhpactor,
     installManagedPhpactor,
     intelligenceMode,
+    isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
     isLanguageServerActiveForWorkspace,
     isNavigationCommandScopeCurrent,
@@ -291,6 +297,7 @@ export function useWorkbenchCommandRegistry(
     openGitBranchPanel,
     openGitStashPanel,
     openLocalHistory,
+    openJsTestResultsPanel,
     openMarkdownPreview,
     openPhpTestResultsPanel,
     openRecentFilesSwitcher,
@@ -315,9 +322,11 @@ export function useWorkbenchCommandRegistry(
     resetEditorFontSize,
     revertSelectedGitCommit,
     rewordSelectedGitCommit,
+    runAllJsTestsForActiveDocument,
     runAllTestsForActiveDocument,
     runEslintAnalysis,
     runInActiveTerminal,
+    runJsTestForActiveDocument,
     runPhpstanAnalysis,
     runTestForActiveDocument,
     saveActiveDocument,
@@ -414,6 +423,14 @@ export function useWorkbenchCommandRegistry(
       runTestForActiveDocument,
       runAllTestsForActiveDocument,
       openTestResultsPanel: openPhpTestResultsPanel,
+    }).forEach((command) => registry.register(command));
+
+    workbenchJsTestCommands({
+      hasJsWorkspace: Boolean(workspaceDescriptor?.javaScriptTypeScript),
+      isActiveDocumentJsTest,
+      runTestForActiveDocument: runJsTestForActiveDocument,
+      runAllTestsForActiveDocument: runAllJsTestsForActiveDocument,
+      openTestResultsPanel: openJsTestResultsPanel,
     }).forEach((command) => registry.register(command));
 
     workbenchPhpstanCommands({
@@ -693,9 +710,13 @@ export function useWorkbenchCommandRegistry(
     deleteActiveDocument,
     generateTestForActiveDocument,
     goToTestForActiveDocument,
+    isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
+    openJsTestResultsPanel,
     runTestForActiveDocument,
     runAllTestsForActiveDocument,
+    runJsTestForActiveDocument,
+    runAllJsTestsForActiveDocument,
     runPhpstanAnalysis,
     phpstanAnalysisRunning,
     activePhpstanBufferClean,

@@ -21,6 +21,7 @@ import {
 import { DirtyCloseDecisionCoordinator } from "./application/dirtyCloseDecisionCoordinator";
 import { useNoticeToastRenderers } from "./application/useNoticeToastRenderers";
 import { useArtisanRoutes } from "./application/useArtisanRoutes";
+import { useJsTestResults } from "./application/useJsTestResults";
 import { usePhpTestResults } from "./application/usePhpTestResults";
 import { useScopedEditorSurfaceRunners } from "./application/useScopedEditorSurfaceRunners";
 import { useGitHistoryDiffDocuments } from "./application/useGitHistoryDiffDocuments";
@@ -148,6 +149,7 @@ import { TauriWorkspaceIdentityGateway } from "./infrastructure/tauriWorkspaceId
 import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
+import { TauriJsTestGateway } from "./infrastructure/tauriJsTestGateway";
 import { TauriPhpTestGateway } from "./infrastructure/tauriPhpTestGateway";
 import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
 import "./App.css";
@@ -157,6 +159,7 @@ const workspaceGateway = new TauriWorkspaceGateway(workspaceIdentityGateway);
 const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
 const artisanRoutesGateway = new TauriArtisanRoutesGateway();
 const phpTestGateway = new TauriPhpTestGateway();
+const jsTestGateway = new TauriJsTestGateway();
 const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
 const workspaceGateways = {
   detection: workspaceGateway,
@@ -335,6 +338,16 @@ function App() {
       String(workbench.bottomPanelView) === "testResults",
     rootPath: workbench.workspaceRoot,
     runRequestVersion: workbench.phpTestRunRequestVersion,
+    workspaceTrusted: workbench.workspaceTrust?.trusted === true,
+  });
+  const jsTestResults = useJsTestResults({
+    gateway: jsTestGateway,
+    isOpen:
+      workbench.bottomPanelVisible &&
+      String(workbench.bottomPanelView) === "testResults" &&
+      Boolean(workbench.workspaceDescriptor?.javaScriptTypeScript),
+    rootPath: workbench.workspaceRoot,
+    runRequestVersion: workbench.jsTestRunRequestVersion,
     workspaceTrusted: workbench.workspaceTrust?.trusted === true,
   });
   const gitHistoryDiffDocuments = useGitHistoryDiffDocuments({
@@ -998,6 +1011,7 @@ function App() {
           }
           formatOnPaste={workbench.workspaceSettings.formatOnPaste}
           gitBlameEnabled={groupIsActive && workbench.isActiveDocumentGitBlameEnabled}
+          isActiveDocumentJsTest={groupIsActive && workbench.isActiveDocumentJsTest}
           isActiveDocumentPhpTest={groupIsActive && workbench.isActiveDocumentPhpTest}
           isLanguageServerDocumentSynced={workbench.isLanguageServerDocumentSynced}
           javaScriptTypeScriptLanguageServerFeaturesGateway={
@@ -1516,6 +1530,9 @@ function App() {
             artisanRoutesTotal={artisanRoutes.total}
             artisanRoutesUnavailable={artisanRoutes.unavailable}
             hasArtisan={workbench.hasArtisan}
+            hasJsWorkspace={Boolean(
+              workbench.workspaceDescriptor?.javaScriptTypeScript,
+            )}
             hasPhpWorkspace={Boolean(workbench.workspaceDescriptor?.php)}
             indexHealthLogs={workbench.indexHealthLogs}
             indexProgress={workbench.indexProgress}
@@ -1524,6 +1541,7 @@ function App() {
             onClose={() => {
               artisanRoutes.clear();
               phpTestResults.clear();
+              jsTestResults.clear();
               workbench.hideBottomPanel();
             }}
             onHardReindex={workbench.startHardReindex}
@@ -1539,6 +1557,13 @@ function App() {
               void phpTestResults.runCase(testCase);
             }}
             onRunPhpTests={() => void phpTestResults.run()}
+            onOpenJsTestCase={(testCase) => {
+              void workbench.openJsTestCase(testCase);
+            }}
+            onRunJsTestCase={(testCase) => {
+              void jsTestResults.runCase(testCase);
+            }}
+            onRunJsTests={() => void jsTestResults.run()}
             onOpenProblem={workbench.openProblemNotice}
             onPhpReindex={workbench.startPhpReindex}
             onRevealDirectoryInTree={workbench.revealDirectoryInTree}
@@ -1563,6 +1588,11 @@ function App() {
             phpTestIsRunning={phpTestResults.isRunning}
             phpTestResult={phpTestResults.result}
             phpTestUnavailable={phpTestResults.unavailable}
+            jsTestError={jsTestResults.error}
+            jsTestFilter={jsTestResults.filter}
+            jsTestIsRunning={jsTestResults.isRunning}
+            jsTestResult={jsTestResults.result}
+            jsTestUnavailable={jsTestResults.unavailable}
             workspaceRoot={workbench.workspaceRoot}
           />
         ) : null}

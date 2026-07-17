@@ -194,6 +194,60 @@ function target(
   };
 }
 
+function jsWorkspaceDescriptor(): WorkspaceDescriptor {
+  return {
+    javaScriptTypeScript: {
+      frameworks: [],
+      hasJsconfig: false,
+      hasPackageJson: true,
+      hasTsconfig: true,
+      packageManager: "npm",
+      packageName: "app",
+      typeScriptDependencyVersion: "^5.0.0",
+      usesTypeScript: true,
+      workspaceTypeScriptVersion: "5.0.0",
+    },
+    php: null,
+    rootPath: ROOT,
+  };
+}
+
+function jsDocument(path: string, content: string): EditorDocument {
+  return {
+    content,
+    language: "typescript",
+    name: path.split("/").pop() ?? path,
+    path,
+    savedContent: content,
+  };
+}
+
+function jsTarget(
+  overrides: Partial<PhpTestGutterTarget> = {},
+): PhpTestGutterTarget {
+  return {
+    filter: "adds numbers",
+    kind: "method",
+    label: "Run adds numbers",
+    match: "description",
+    position: { column: 3, lineNumber: 2 },
+    ...overrides,
+  };
+}
+
+const JS_TEST_SOURCE = `describe("sum", () => {
+  it("adds numbers", () => {});
+
+  it("subtracts numbers", () => {});
+});
+`;
+
+function vitestWorkspaceReader(): (path: string) => Promise<string | null> {
+  return vi.fn(async (path: string) =>
+    path === `${ROOT}/vitest.config.ts` ? "export default {};" : null,
+  );
+}
+
 describe("useTerminalTestRunner", () => {
   describe("bottom panel visibility", () => {
     it("showBottomPanelView sets the view and reveals the panel", () => {
@@ -659,6 +713,251 @@ it('subtracts two numbers', function () {
       });
 
       expect(writeInput).toHaveBeenCalledWith(23, "php artisan test\r");
+      harness.unmount();
+    });
+  });
+
+  describe("JavaScript test runs", () => {
+    it("runTestAt routes a JS gutter target to vitest with the file path and -t filter", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vitestWorkspaceReader(),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(31);
+      });
+
+      await act(async () => {
+        await harness.runner().runTestAt(jsTarget());
+      });
+
+      expect(harness.bottomPanelView()).toBe("terminal");
+      expect(writeInput).toHaveBeenCalledWith(
+        31,
+        "node_modules/.bin/vitest run 'src/sum.test.ts' -t 'adds numbers'\r",
+      );
+      harness.unmount();
+    });
+
+    it("runTestAt uses jest when the workspace is configured for jest", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vi.fn(async (path: string) =>
+          path === `${ROOT}/jest.config.js` ? "module.exports = {};" : null,
+        ),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(32);
+      });
+
+      await act(async () => {
+        await harness.runner().runTestAt(jsTarget());
+      });
+
+      expect(writeInput).toHaveBeenCalledWith(
+        32,
+        "node_modules/.bin/jest 'src/sum.test.ts' -t 'adds numbers'\r",
+      );
+      harness.unmount();
+    });
+
+    it("runJsTestForActiveDocument runs the test that owns the cursor line", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vitestWorkspaceReader(),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+      harness.activeEditorPositionRef.current = { column: 3, lineNumber: 4 };
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(33);
+      });
+
+      await act(async () => {
+        await harness.runner().runJsTestForActiveDocument();
+      });
+
+      expect(writeInput).toHaveBeenCalledWith(
+        33,
+        "node_modules/.bin/vitest run 'src/sum.test.ts' -t 'subtracts numbers'\r",
+      );
+      harness.unmount();
+    });
+
+    it("runAllJsTestsForActiveDocument runs the whole file with no filter", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vitestWorkspaceReader(),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(34);
+      });
+
+      await act(async () => {
+        await harness.runner().runAllJsTestsForActiveDocument();
+      });
+
+      expect(writeInput).toHaveBeenCalledWith(
+        34,
+        "node_modules/.bin/vitest run 'src/sum.test.ts'\r",
+      );
+      harness.unmount();
+    });
+
+    it("shows a message and writes nothing when no JS runner is detected", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vi.fn(async () => null),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(35);
+      });
+
+      await act(async () => {
+        await harness.runner().runTestAt(jsTarget());
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
+      expect(harness.setMessage).toHaveBeenCalledWith(
+        "Run test: no vitest or jest setup detected in this workspace.",
+      );
+      harness.unmount();
+    });
+
+    it("rejects a JS filter carrying a control character and shows a message", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vitestWorkspaceReader(),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(36);
+      });
+
+      await act(async () => {
+        await harness.runner().runTestAt(
+          jsTarget({ filter: "evil\nrm -rf /" }),
+        );
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
+      expect(harness.setMessage).toHaveBeenCalledWith(
+        'Run test: "evil\nrm -rf /" contains a line break or control character and cannot be run safely.',
+      );
+      harness.unmount();
+    });
+
+    it("drops a JS run after a workspace switch before the write", async () => {
+      const deferred = createDeferred<string | null>();
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vi.fn(() => deferred.promise),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(37);
+      });
+
+      let run: Promise<void> | null = null;
+      act(() => {
+        run = harness.runner().runTestAt(jsTarget());
+      });
+
+      harness.rootRef.current = "/other-workspace";
+
+      await act(async () => {
+        deferred.resolve("export default {};");
+        await run;
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("does not treat a non-test JS document as a JS test run", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vitestWorkspaceReader(),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.ts`,
+        "export const sum = (a: number, b: number) => a + b;\n",
+      );
+
+      await act(async () => {
+        await harness.runner().runJsTestForActiveDocument();
+        await harness.runner().runAllJsTestsForActiveDocument();
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("does nothing when the workspace has no JavaScript descriptor", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vitestWorkspaceReader(),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(
+        `${ROOT}/src/sum.test.ts`,
+        JS_TEST_SOURCE,
+      );
+
+      await act(async () => {
+        await harness.runner().runJsTestForActiveDocument();
+        await harness.runner().runAllJsTestsForActiveDocument();
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
       harness.unmount();
     });
   });

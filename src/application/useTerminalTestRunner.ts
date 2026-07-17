@@ -6,6 +6,12 @@ import {
   type SetStateAction,
 } from "react";
 import type { BottomPanelView } from "../domain/bottomPanel";
+import { jsGutterTargetsCoordinator } from "../domain/jsGutterTargetsCoordinator";
+import {
+  jsTestRunCommand,
+  type JsTestRunCommandInput,
+} from "../domain/jsTestCommand";
+import { isJsTestRelativePath } from "../domain/jsTestFilePatterns";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
 import {
@@ -26,6 +32,7 @@ import {
   type WorkspaceDescriptor,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { detectJsTestRunner } from "./jsTestRunnerDetection";
 
 /**
  * Collaborators the terminal / PHP test runner needs from the workbench
@@ -72,9 +79,14 @@ export interface TerminalTestRunner {
   runPhpTestCommand: (
     input: Omit<PhpTestRunCommandInput, "runner">,
   ) => Promise<PhpTestRunOutcome>;
+  runJsTestCommand: (
+    input: Omit<JsTestRunCommandInput, "runner">,
+  ) => Promise<PhpTestRunOutcome>;
   runTestAt: (target: PhpTestGutterTarget) => Promise<void>;
   runTestForActiveDocument: () => Promise<void>;
   runAllTestsForActiveDocument: () => Promise<void>;
+  runJsTestForActiveDocument: () => Promise<void>;
+  runAllJsTestsForActiveDocument: () => Promise<void>;
 }
 
 // Notice shown when a parsed test target cannot be turned into a safe command.
@@ -308,8 +320,103 @@ export function useTerminalTestRunner(
     ],
   );
 
+  const activeJsTestRelativePath = useCallback((): string | null => {
+    const requestedRoot = workspaceRoot;
+    const requestedDescriptor = workspaceDescriptor;
+    const requestedDocument = activeDocumentRef.current;
+
+    if (
+      !requestedRoot ||
+      !requestedDescriptor?.javaScriptTypeScript ||
+      !requestedDocument
+    ) {
+      return null;
+    }
+
+    const relativePath = workspaceRelativePath(
+      requestedRoot,
+      requestedDocument.path,
+    );
+
+    if (!relativePath || !isJsTestRelativePath(relativePath)) {
+      return null;
+    }
+
+    return relativePath;
+  }, [activeDocumentRef, workspaceDescriptor, workspaceRoot]);
+
+  const runJsTestCommand = useCallback(
+    async (
+      input: Omit<JsTestRunCommandInput, "runner">,
+    ): Promise<PhpTestRunOutcome> => {
+      const requestedRoot = workspaceRoot;
+      const requestedDescriptor = workspaceDescriptor;
+      const isRequestedRootActive = () =>
+        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+
+      if (!requestedRoot || !requestedDescriptor?.javaScriptTypeScript) {
+        return "dropped";
+      }
+
+      const runner = await detectJsTestRunner(
+        requestedRoot,
+        readTestFileIfExists,
+      );
+
+      if (!isRequestedRootActive()) {
+        return "dropped";
+      }
+
+      if (!runner) {
+        setMessage(
+          "Run test: no vitest or jest setup detected in this workspace.",
+        );
+        return "dropped";
+      }
+
+      const command = jsTestRunCommand({ ...input, runner });
+
+      if (!command) {
+        return "rejected";
+      }
+
+      runInActiveTerminal(command);
+      return "ran";
+    },
+    [
+      readTestFileIfExists,
+      runInActiveTerminal,
+      setMessage,
+      workspaceDescriptor,
+      workspaceRoot,
+    ],
+  );
+
+  const runJsTestAt = useCallback(
+    async (target: PhpTestGutterTarget, relativePath: string) => {
+      const outcome = await runJsTestCommand({
+        filePath: relativePath,
+        filter: target.filter,
+      });
+
+      if (outcome !== "rejected") {
+        return;
+      }
+
+      setMessage(runTestRejectionNotice(target));
+    },
+    [runJsTestCommand, setMessage],
+  );
+
   const runTestAt = useCallback(
     async (target: PhpTestGutterTarget) => {
+      const jsTestRelativePath = activeJsTestRelativePath();
+
+      if (jsTestRelativePath !== null) {
+        await runJsTestAt(target, jsTestRelativePath);
+        return;
+      }
+
       const outcome = await runPhpTestCommand({
         filter: target.filter,
         match: target.match,
@@ -321,8 +428,50 @@ export function useTerminalTestRunner(
 
       setMessage(runTestRejectionNotice(target));
     },
-    [runPhpTestCommand, setMessage],
+    [activeJsTestRelativePath, runJsTestAt, runPhpTestCommand, setMessage],
   );
+
+  const runJsTestForActiveDocument = useCallback(async () => {
+    const requestedRoot = workspaceRoot;
+    const requestedDocument = activeDocumentRef.current;
+    const relativePath = activeJsTestRelativePath();
+
+    if (!requestedRoot || !requestedDocument || relativePath === null) {
+      return;
+    }
+
+    const targets = jsGutterTargetsCoordinator.resolveTest(
+      requestedRoot,
+      requestedDocument.path,
+      requestedDocument.content,
+    );
+    const cursorLine = activeEditorPositionRef.current?.lineNumber ?? 1;
+    const target = testTargetForCursorLine(targets, cursorLine);
+
+    if (!target) {
+      setMessage("Run test: no test found at the cursor.");
+      return;
+    }
+
+    await runJsTestAt(target, relativePath);
+  }, [
+    activeDocumentRef,
+    activeEditorPositionRef,
+    activeJsTestRelativePath,
+    runJsTestAt,
+    setMessage,
+    workspaceRoot,
+  ]);
+
+  const runAllJsTestsForActiveDocument = useCallback(async () => {
+    const relativePath = activeJsTestRelativePath();
+
+    if (relativePath === null) {
+      return;
+    }
+
+    await runJsTestCommand({ filePath: relativePath });
+  }, [activeJsTestRelativePath, runJsTestCommand]);
 
   // Keymap entry point for "Run Test Under Cursor": parses the active PHP test
   // file, selects the test that owns the cursor line (the nearest test target at
@@ -438,8 +587,11 @@ export function useTerminalTestRunner(
   return {
     hideBottomPanel,
     registerActiveTerminalSession,
+    runAllJsTestsForActiveDocument,
     runAllTestsForActiveDocument,
     runInActiveTerminal,
+    runJsTestCommand,
+    runJsTestForActiveDocument,
     runPhpTestCommand,
     runTestAt,
     runTestForActiveDocument,

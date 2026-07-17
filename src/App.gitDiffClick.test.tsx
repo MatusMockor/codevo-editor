@@ -404,6 +404,7 @@ function createWorkbench(overrides: Record<string, unknown>) {
       workspaceSymbolsOpen: false,
       workspaceTabs: ["/workspace"],
       workspaceTodos: [],
+      jsTestRunRequestVersion: 0,
       phpTestRunRequestVersion: 0,
       workspaceTrust: { trusted: true },
       ...overrides,

@@ -246,6 +246,9 @@ import type { BottomPanelView } from "../domain/bottomPanel";
 import type { ArtisanControllerAction } from "../domain/artisanRoutes";
 import type { PhpTestCase } from "../domain/phpTestResults";
 import { phpTestCaseNavigationTarget } from "../domain/phpTestResults";
+import { isJsTestRelativePath } from "../domain/jsTestFilePatterns";
+import type { TestCase } from "../domain/testResults";
+import { testCaseNavigationTarget } from "../domain/testResults";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
   languageServerDiagnosticNoticeGroup,
@@ -847,6 +850,7 @@ export function useWorkbenchController(
     useState<BottomPanelView>("problems");
   const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
   const [phpTestRunRequestVersion, setPhpTestRunRequestVersion] = useState(0);
+  const [jsTestRunRequestVersion, setJsTestRunRequestVersion] = useState(0);
   const [phpTree, setPhpTree] = useState<PhpTree>(emptyPhpTree);
   const [phpTreeLoading, setPhpTreeLoading] = useState(false);
   const [phpTreeExpandedNodeIds, setPhpTreeExpandedNodeIds] = useState<
@@ -1626,6 +1630,27 @@ export function useWorkbenchController(
     }
 
     return isPhpTestRelativePath(relativePath, psr4Roots);
+  }, [activeDocument, workspaceDescriptor, workspaceRoot]);
+  const isActiveDocumentJsTest = useMemo(() => {
+    if (!activeDocument || !workspaceRoot) {
+      return false;
+    }
+
+    if (!isJavaScriptTypeScriptLanguageServerDocument(activeDocument)) {
+      return false;
+    }
+
+    if (!workspaceDescriptor?.javaScriptTypeScript) {
+      return false;
+    }
+
+    const relativePath = workspaceRelativePath(workspaceRoot, activeDocument.path);
+
+    if (!relativePath) {
+      return false;
+    }
+
+    return isJsTestRelativePath(relativePath);
   }, [activeDocument, workspaceDescriptor, workspaceRoot]);
   const openDocumentPaths = useMemo(
     () => editorGroupsUniquePaths(editorGroups),
@@ -6748,8 +6773,10 @@ export function useWorkbenchController(
   const {
     hideBottomPanel,
     registerActiveTerminalSession,
+    runAllJsTestsForActiveDocument,
     runAllTestsForActiveDocument,
     runInActiveTerminal,
+    runJsTestForActiveDocument,
     runTestAt,
     runTestForActiveDocument,
     showBottomPanelView,
@@ -6822,6 +6849,35 @@ export function useWorkbenchController(
     setBottomPanelVisible(true);
     setPhpTestRunRequestVersion((current) => current + 1);
   }, []);
+
+  const openJsTestResultsPanel = useCallback(() => {
+    setBottomPanelView("testResults" as BottomPanelView);
+    setBottomPanelVisible(true);
+    setJsTestRunRequestVersion((current) => current + 1);
+  }, []);
+
+  const openJsTestCase = useCallback(
+    (testCase: TestCase) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+
+      if (!requestedRoot) {
+        return Promise.resolve(false);
+      }
+
+      const target = testCaseNavigationTarget(requestedRoot, testCase);
+
+      if (!target) {
+        return Promise.resolve(false);
+      }
+
+      return openNavigationTarget(
+        target.path,
+        target.position,
+        testCase.name ?? target.path,
+      );
+    },
+    [openNavigationTarget],
+  );
 
   const openPhpTestCase = useCallback(
     (testCase: PhpTestCase) => {
@@ -8928,6 +8984,7 @@ export function useWorkbenchController(
     installingManagedPhpactor,
     installManagedPhpactor,
     intelligenceMode,
+    isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
     isLanguageServerActiveForWorkspace,
     isNavigationCommandScopeCurrent,
@@ -8951,6 +9008,7 @@ export function useWorkbenchController(
     openGitBranchPanel,
     openGitStashPanel,
     openLocalHistory,
+    openJsTestResultsPanel,
     openMarkdownPreview,
     openPhpTestResultsPanel,
     openRecentFilesSwitcher,
@@ -8975,9 +9033,11 @@ export function useWorkbenchController(
     resetEditorFontSize,
     revertSelectedGitCommit,
     rewordSelectedGitCommit,
+    runAllJsTestsForActiveDocument,
     runAllTestsForActiveDocument,
     runEslintAnalysis,
     runInActiveTerminal,
+    runJsTestForActiveDocument,
     runPhpstanAnalysis,
     runTestForActiveDocument,
     saveActiveDocument,
@@ -9807,6 +9867,7 @@ export function useWorkbenchController(
     goToSuperMethod,
     goToNextProblem,
     goToPreviousProblem,
+    isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
     registerActiveTerminalSession,
     runTestAt,
@@ -9878,7 +9939,9 @@ export function useWorkbenchController(
     openClassSearchResult,
     openWorkspaceSymbolResult,
     openArtisanController,
+    openJsTestCase,
     openPhpTestCase,
+    jsTestRunRequestVersion,
     phpTestRunRequestVersion,
     openWorkspaceSymbols,
     openPinnedFile,

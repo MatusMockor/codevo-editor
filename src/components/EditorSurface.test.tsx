@@ -4536,6 +4536,188 @@ class InvoiceServiceTest extends TestCase
     );
   });
 
+  it("renders a run-test gutter glyph for a JS test file and runs the test on a Right-lane click", async () => {
+    const activeDocument: EditorDocument = {
+      content: `describe("sum", () => {
+  it("adds numbers", () => {});
+});
+`,
+      language: "typescript",
+      name: "sum.test.ts",
+      path: "/workspace/src/sum.test.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onRunTestAt = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          isActiveDocumentJsTest
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onRunTestAt={onRunTestAt}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await flushGutterDebounce();
+
+    const testDecorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
+        ),
+    );
+    expect(testDecorationCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            glyphMargin: {
+              position: monaco.editor.GlyphMarginLane.Right,
+            },
+            glyphMarginClassName: "test-run-gutter-glyph",
+          }),
+        }),
+      ]),
+    );
+
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          preventDefault,
+          stopPropagation,
+        },
+        target: {
+          detail: {
+            glyphMarginLane: monaco.editor.GlyphMarginLane.Right,
+          },
+          position: {
+            column: 1,
+            lineNumber: 2,
+          },
+          type: monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN,
+        },
+      });
+    });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(onRunTestAt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: "adds numbers",
+        kind: "method",
+        match: "description",
+      }),
+    );
+  });
+
+  it("renders no run-test gutter glyph for a JS test file when the JS test gate is off", async () => {
+    const activeDocument: EditorDocument = {
+      content: `it("adds numbers", () => {});
+`,
+      language: "typescript",
+      name: "sum.test.ts",
+      path: "/workspace/src/sum.test.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: {
+        fsPath: activeDocument.path,
+        path: activeDocument.path,
+      },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        <EditorSurface
+          activeDocument={activeDocument}
+          changeHunks={[]}
+          editorRevealTarget={null}
+          flushPendingLanguageServerDocument={vi.fn(async () => undefined)}
+          languageServerDiagnosticsByPath={{}}
+          languageServerFeaturesGateway={languageServerFeaturesGateway()}
+          languageServerRuntimeStatus={null}
+          keymap={defaultKeymapSettings()}
+          monacoTheme="calm-dark"
+          onChange={vi.fn()}
+          onCloseActiveTab={vi.fn()}
+          onCursorPositionChange={vi.fn()}
+          onGoBack={vi.fn()}
+          onGoForward={vi.fn()}
+          onGoToDefinition={vi.fn()}
+          onGoToImplementationAt={vi.fn()}
+          onGoToSuperMethod={vi.fn()}
+          onRunTestAt={vi.fn()}
+          onEditorFocused={vi.fn()}
+          onLanguageServerError={vi.fn()}
+          onOpenClass={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenFileStructure={vi.fn()}
+          onRevealTargetHandled={vi.fn()}
+          onRevertChangeHunk={vi.fn()}
+          phpSyntaxDiagnosticsGateway={{ validate: vi.fn(async () => []) }}
+          providePhpMethodCompletions={vi.fn(async () => [])}
+          providePhpMethodSignature={vi.fn(async () => null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    await flushGutterDebounce();
+
+    const testDecorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.glyphMarginClassName === "test-run-gutter-glyph",
+        ),
+    );
+    expect(testDecorationCall).toBeUndefined();
+  });
+
   it("renders a bookmark gutter marker for bookmarked lines and toggles on a lines-decoration click", async () => {
     const activeDocument: EditorDocument = {
       content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
