@@ -47,6 +47,46 @@ describe("workbenchScriptCommands", () => {
     expect(runInActiveTerminal).toHaveBeenNthCalledWith(2, "npm run dev");
   });
 
+  it("labels and runs npm scripts through the detected package manager", () => {
+    const runInActiveTerminal = vi.fn();
+    const commands = workbenchScriptCommands({
+      composerScripts: [],
+      npmScripts: [{ name: "dev", command: "vite" }],
+      npmPackageManager: "pnpm",
+      runInActiveTerminal,
+    });
+
+    expect(
+      commands.map(({ id, title, category }) => ({ id, title, category })),
+    ).toEqual([
+      { id: "script.npm.dev", title: "pnpm: dev", category: "Scripts" },
+    ]);
+
+    commands[0].run();
+
+    expect(runInActiveTerminal).toHaveBeenCalledWith("pnpm run dev");
+  });
+
+  it("keeps composer commands unaffected by the node package manager", () => {
+    const runInActiveTerminal = vi.fn();
+    const commands = workbenchScriptCommands({
+      composerScripts: [{ name: "test", command: "phpunit" }],
+      npmScripts: [],
+      npmPackageManager: "bun",
+      runInActiveTerminal,
+    });
+
+    expect(commands.map((command) => command.title)).toEqual([
+      "composer: test",
+    ]);
+
+    commands[0].run();
+
+    expect(runInActiveTerminal).toHaveBeenCalledWith(
+      "composer run-script test",
+    );
+  });
+
   it("defensively excludes invalid names", () => {
     const commands = workbenchScriptCommands({
       composerScripts: [
