@@ -139,6 +139,8 @@ pub trait DebugAdapter: Send {
 
 /// `emit` must not synchronously call back into `DebugSessionRegistry`: it can
 /// run while the (non-reentrant) per-session adapter mutex is held.
+/// `emit` must also be non-blocking: adapters invoke it from their protocol IO
+/// threads, where a blocked sink stalls request/response handling.
 pub trait DebugEventSink: Send + Sync {
     fn emit(&self, event: DebugEvent);
 }
