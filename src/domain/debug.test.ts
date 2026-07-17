@@ -23,16 +23,16 @@ describe("DebuggerState", () => {
   it("models every lifecycle phase as a discriminated union", () => {
     const states: DebuggerState[] = [
       { kind: "inactive" },
-      { kind: "starting", sessionId: "s1" },
-      { kind: "running", sessionId: "s1" },
+      { kind: "starting", sessionId: 1 },
+      { kind: "running", sessionId: 1 },
       {
         kind: "stopped",
-        sessionId: "s1",
+        sessionId: 1,
         reason: "breakpoint",
         frames: [frame()],
         topFrame: frame(),
       },
-      { kind: "terminated", sessionId: "s1", exitCode: 0 },
+      { kind: "terminated", sessionId: 1, exitCode: 0 },
     ];
 
     expect(states.map((state) => state.kind)).toEqual([
@@ -53,7 +53,7 @@ describe("DebuggerState", () => {
   it("allows a terminated session without an exit code", () => {
     const state: DebuggerState = {
       kind: "terminated",
-      sessionId: "s1",
+      sessionId: 1,
       exitCode: null,
     };
 
@@ -68,20 +68,20 @@ describe("debuggerSessionId", () => {
 
   it("returns the session id for every session-bound state", () => {
     const states: DebuggerState[] = [
-      { kind: "starting", sessionId: "s1" },
-      { kind: "running", sessionId: "s1" },
+      { kind: "starting", sessionId: 1 },
+      { kind: "running", sessionId: 1 },
       {
         kind: "stopped",
-        sessionId: "s1",
+        sessionId: 1,
         reason: "step",
         frames: [],
         topFrame: null,
       },
-      { kind: "terminated", sessionId: "s1", exitCode: null },
+      { kind: "terminated", sessionId: 1, exitCode: null },
     ];
 
     for (const state of states) {
-      expect(debuggerSessionId(state)).toBe("s1");
+      expect(debuggerSessionId(state)).toBe(1);
     }
   });
 });
@@ -94,7 +94,7 @@ describe("DebugGateway", () => {
     const gateway: DebugGateway = {
       start: async (): Promise<DebugRuntimeStatus> => ({
         kind: "ok",
-        sessionId: "s1",
+        sessionId: 1,
       }),
       stop: async () => {},
       setBreakpoints: async (_sessionId, _filePath, breakpoints) => [
@@ -125,12 +125,12 @@ describe("DebugGateway", () => {
       [],
     );
 
-    expect(status).toEqual({ kind: "ok", sessionId: "s1" });
+    expect(status).toEqual({ kind: "ok", sessionId: 1 });
 
     const unsubscribe = gateway.subscribe((event) => received.push(event));
     const event: DebugEvent = {
       rootPath: "/root",
-      sessionId: "s1",
+      sessionId: 1,
       seq: 1,
       payload: { kind: "output", stream: "stdout", text: "hello" },
     };

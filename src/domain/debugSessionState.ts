@@ -10,7 +10,7 @@ export function initialDebuggerSnapshot(): DebuggerSessionSnapshot {
 }
 
 export function startingDebuggerSnapshot(
-  sessionId: string,
+  sessionId: number,
 ): DebuggerSessionSnapshot {
   return { state: { kind: "starting", sessionId }, lastSeq: 0 };
 }

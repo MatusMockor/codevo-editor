@@ -39,23 +39,23 @@ export type StepKind = "continue" | "stepOver" | "stepInto" | "stepOut";
 
 export type DebuggerState =
   | { kind: "inactive" }
-  | { kind: "starting"; sessionId: string }
-  | { kind: "running"; sessionId: string }
+  | { kind: "starting"; sessionId: number }
+  | { kind: "running"; sessionId: number }
   | {
       kind: "stopped";
-      sessionId: string;
+      sessionId: number;
       reason: DebugStopReason;
       frames: StackFrame[];
       topFrame: StackFrame | null;
     }
-  | { kind: "terminated"; sessionId: string; exitCode: number | null };
+  | { kind: "terminated"; sessionId: number; exitCode: number | null };
 
 export type DebugLaunchTarget =
   | { kind: "node-script"; scriptPath: string }
   | { kind: "js-test-file"; runner: "vitest" | "jest"; filePath: string };
 
 export type DebugEventPayload =
-  | { kind: "started"; sessionId: string }
+  | { kind: "started"; sessionId: number }
   | { kind: "stopped"; reason: DebugStopReason; frames: StackFrame[] }
   | { kind: "resumed" }
   | { kind: "output"; stream: "stdout" | "stderr"; text: string }
@@ -64,13 +64,13 @@ export type DebugEventPayload =
 
 export interface DebugEvent {
   rootPath: string;
-  sessionId: string;
+  sessionId: number;
   seq: number;
   payload: DebugEventPayload;
 }
 
 export type DebugRuntimeStatus =
-  | { kind: "ok"; sessionId: string }
+  | { kind: "ok"; sessionId: number }
   | { kind: "unavailable"; message: string }
   | { kind: "error"; message: string };
 
@@ -80,29 +80,29 @@ export interface DebugGateway {
     launch: DebugLaunchTarget,
     breakpoints: readonly Breakpoint[],
   ): Promise<DebugRuntimeStatus>;
-  stop(sessionId: string): Promise<void>;
+  stop(sessionId: number): Promise<void>;
   setBreakpoints(
-    sessionId: string,
+    sessionId: number,
     filePath: string,
     breakpoints: readonly Breakpoint[],
   ): Promise<Breakpoint[]>;
-  step(sessionId: string, kind: StepKind): Promise<void>;
-  pause(sessionId: string): Promise<void>;
-  stackTrace(sessionId: string): Promise<StackFrame[]>;
-  scopes(sessionId: string, frameId: number): Promise<DebugScope[]>;
+  step(sessionId: number, kind: StepKind): Promise<void>;
+  pause(sessionId: number): Promise<void>;
+  stackTrace(sessionId: number): Promise<StackFrame[]>;
+  scopes(sessionId: number, frameId: number): Promise<DebugScope[]>;
   variables(
-    sessionId: string,
+    sessionId: number,
     variablesReference: number,
   ): Promise<DebugVariable[]>;
   evaluate(
-    sessionId: string,
+    sessionId: number,
     frameId: number,
     expression: string,
   ): Promise<DebugVariable | null>;
   subscribe(handler: (event: DebugEvent) => void): () => void;
 }
 
-export function debuggerSessionId(state: DebuggerState): string | null {
+export function debuggerSessionId(state: DebuggerState): number | null {
   if (state.kind === "inactive") {
     return null;
   }

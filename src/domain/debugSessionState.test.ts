@@ -21,15 +21,15 @@ function frame(overrides: Partial<StackFrame> = {}): StackFrame {
 function event(
   seq: number,
   payload: DebugEventPayload,
-  sessionId = "s1",
+  sessionId = 1,
 ): DebugEvent {
   return { rootPath: "/root", sessionId, seq, payload };
 }
 
 function runningSnapshot(lastSeq = 1): DebuggerSessionSnapshot {
   return reduceDebuggerSnapshot(
-    startingDebuggerSnapshot("s1"),
-    event(lastSeq, { kind: "started", sessionId: "s1" }),
+    startingDebuggerSnapshot(1),
+    event(lastSeq, { kind: "started", sessionId: 1 }),
   );
 }
 
@@ -44,8 +44,8 @@ describe("initialDebuggerSnapshot", () => {
 
 describe("startingDebuggerSnapshot", () => {
   it("binds the pending session id with no processed events", () => {
-    expect(startingDebuggerSnapshot("s1")).toEqual({
-      state: { kind: "starting", sessionId: "s1" },
+    expect(startingDebuggerSnapshot(1)).toEqual({
+      state: { kind: "starting", sessionId: 1 },
       lastSeq: 0,
     });
   });
@@ -55,7 +55,7 @@ describe("reduceDebuggerSnapshot", () => {
   it("ignores every event while inactive", () => {
     const snapshot = initialDebuggerSnapshot();
     const payloads: DebugEventPayload[] = [
-      { kind: "started", sessionId: "s1" },
+      { kind: "started", sessionId: 1 },
       { kind: "stopped", reason: "breakpoint", frames: [] },
       { kind: "resumed" },
       { kind: "terminated", exitCode: 0 },
@@ -71,30 +71,30 @@ describe("reduceDebuggerSnapshot", () => {
 
   it("transitions starting to running on the started event", () => {
     const next = reduceDebuggerSnapshot(
-      startingDebuggerSnapshot("s1"),
-      event(1, { kind: "started", sessionId: "s1" }),
+      startingDebuggerSnapshot(1),
+      event(1, { kind: "started", sessionId: 1 }),
     );
 
     expect(next).toEqual({
-      state: { kind: "running", sessionId: "s1" },
+      state: { kind: "running", sessionId: 1 },
       lastSeq: 1,
     });
   });
 
   it("adopts the started event session id while starting", () => {
     const next = reduceDebuggerSnapshot(
-      startingDebuggerSnapshot("pending"),
-      event(1, { kind: "started", sessionId: "real" }, "real"),
+      startingDebuggerSnapshot(99),
+      event(1, { kind: "started", sessionId: 2 }, 2),
     );
 
     expect(next).toEqual({
-      state: { kind: "running", sessionId: "real" },
+      state: { kind: "running", sessionId: 2 },
       lastSeq: 1,
     });
   });
 
   it("ignores stopped and resumed events while still starting", () => {
-    const snapshot = startingDebuggerSnapshot("s1");
+    const snapshot = startingDebuggerSnapshot(1);
 
     const afterStopped = reduceDebuggerSnapshot(
       snapshot,
@@ -105,21 +105,21 @@ describe("reduceDebuggerSnapshot", () => {
       event(1, { kind: "resumed" }),
     );
 
-    expect(afterStopped.state).toEqual({ kind: "starting", sessionId: "s1" });
+    expect(afterStopped.state).toEqual({ kind: "starting", sessionId: 1 });
     expect(afterStopped.lastSeq).toBe(1);
-    expect(afterResumed.state).toEqual({ kind: "starting", sessionId: "s1" });
+    expect(afterResumed.state).toEqual({ kind: "starting", sessionId: 1 });
     expect(afterResumed.lastSeq).toBe(1);
   });
 
   it("terminates a session that dies while starting", () => {
     const next = reduceDebuggerSnapshot(
-      startingDebuggerSnapshot("s1"),
+      startingDebuggerSnapshot(1),
       event(1, { kind: "terminated", exitCode: 1 }),
     );
 
     expect(next.state).toEqual({
       kind: "terminated",
-      sessionId: "s1",
+      sessionId: 1,
       exitCode: 1,
     });
   });
@@ -137,7 +137,7 @@ describe("reduceDebuggerSnapshot", () => {
 
     expect(next.state).toEqual({
       kind: "stopped",
-      sessionId: "s1",
+      sessionId: 1,
       reason: "breakpoint",
       frames: [top, frame({ frameId: 8 })],
       topFrame: top,
@@ -153,7 +153,7 @@ describe("reduceDebuggerSnapshot", () => {
 
     expect(next.state).toEqual({
       kind: "stopped",
-      sessionId: "s1",
+      sessionId: 1,
       reason: "pause",
       frames: [],
       topFrame: null,
@@ -168,7 +168,7 @@ describe("reduceDebuggerSnapshot", () => {
     const next = reduceDebuggerSnapshot(stopped, event(3, { kind: "resumed" }));
 
     expect(next).toEqual({
-      state: { kind: "running", sessionId: "s1" },
+      state: { kind: "running", sessionId: 1 },
       lastSeq: 3,
     });
   });
@@ -189,7 +189,7 @@ describe("reduceDebuggerSnapshot", () => {
 
     expect(next.state).toEqual({
       kind: "stopped",
-      sessionId: "s1",
+      sessionId: 1,
       reason: "step",
       frames: [frame({ lineNumber: 11 })],
       topFrame: frame({ lineNumber: 11 }),
@@ -204,7 +204,7 @@ describe("reduceDebuggerSnapshot", () => {
 
     expect(next.state).toEqual({
       kind: "terminated",
-      sessionId: "s1",
+      sessionId: 1,
       exitCode: null,
     });
   });
@@ -215,7 +215,7 @@ describe("reduceDebuggerSnapshot", () => {
       event(2, { kind: "terminated", exitCode: 0 }),
     );
     const payloads: DebugEventPayload[] = [
-      { kind: "started", sessionId: "s1" },
+      { kind: "started", sessionId: 1 },
       { kind: "stopped", reason: "breakpoint", frames: [] },
       { kind: "resumed" },
       { kind: "output", stream: "stderr", text: "late" },
@@ -233,7 +233,7 @@ describe("reduceDebuggerSnapshot", () => {
     const foreign = event(
       2,
       { kind: "stopped", reason: "breakpoint", frames: [] },
-      "other",
+      2,
     );
 
     expect(reduceDebuggerSnapshot(snapshot, foreign)).toBe(snapshot);
@@ -289,7 +289,7 @@ describe("reduceDebuggerSnapshot", () => {
     const snapshot = runningSnapshot();
     const next = reduceDebuggerSnapshot(
       snapshot,
-      event(2, { kind: "started", sessionId: "s1" }),
+      event(2, { kind: "started", sessionId: 1 }),
     );
 
     expect(next.state).toBe(snapshot.state);
