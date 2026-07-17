@@ -6,6 +6,11 @@ import {
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
 import {
+  phpNamedArgumentCompletionContextAt,
+  phpNamedArgumentCompletions,
+  type PhpNamedArgumentCompletionContext,
+} from "../domain/phpNamedArgumentCompletions";
+import {
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
 } from "../domain/phpFrameworkProviders";
@@ -158,6 +163,108 @@ export function usePhpMethodCompletionProvider({
     ],
   );
 
+  const resolvePhpTraitThisContext = useCallback(
+    async (
+      source: string,
+      position: EditorPosition,
+      receiverExpression: string,
+    ): Promise<ReturnType<typeof phpTraitThisCompletionContextAt>> => {
+      const sameSourceTraitThisContext = phpTraitThisCompletionContextAt(
+        source,
+        position,
+      );
+      const traitDeclarationContext = phpNormalizedReceiverExpressionIsThis(
+        receiverExpression,
+      )
+        ? phpTraitDeclarationCompletionContextAt(source, position)
+        : null;
+      const traitHostClassNames = traitDeclarationContext
+        ? await resolvePhpTraitHostClassNames(
+            traitDeclarationContext.declaringClassName,
+          )
+        : [];
+      const crossFileTraitHostClassNames = sameSourceTraitThisContext
+        ? traitHostClassNames.filter(
+            (className) =>
+              className.toLowerCase() !==
+              sameSourceTraitThisContext.declaringClassName.toLowerCase(),
+          )
+        : traitHostClassNames;
+
+      if (sameSourceTraitThisContext) {
+        return {
+          ...sameSourceTraitThisContext,
+          hostClassNames: crossFileTraitHostClassNames,
+        };
+      }
+
+      if (traitDeclarationContext) {
+        return {
+          contextualThisClassName: null,
+          declaringClassName: traitDeclarationContext.declaringClassName,
+          hostClassNames: crossFileTraitHostClassNames,
+          memberSource: traitDeclarationContext.memberSource,
+        };
+      }
+
+      return null;
+    },
+    [resolvePhpTraitHostClassNames],
+  );
+
+  const resolveNamedArgumentCallableMembers = useCallback(
+    async (
+      namedArgumentContext: PhpNamedArgumentCompletionContext,
+      source: string,
+      position: EditorPosition,
+      isRequestStillCurrent: () => boolean,
+    ): Promise<PhpMethodCompletion[]> => {
+      const callTarget = namedArgumentContext.callTarget;
+
+      if (callTarget.kind === "constructor") {
+        const resolvedClassName = resolvePhpClassReference(
+          source,
+          callTarget.className,
+        );
+
+        if (!resolvedClassName) {
+          return [];
+        }
+
+        return collectPhpMethodsForClass(resolvedClassName);
+      }
+
+      if (callTarget.kind === "static-method") {
+        return resolvePhpStaticMethodCompletions(source, callTarget.className);
+      }
+
+      const traitThisContext = await resolvePhpTraitThisContext(
+        source,
+        position,
+        callTarget.receiverExpression,
+      );
+
+      if (!isRequestStillCurrent()) {
+        return [];
+      }
+
+      return resolvePhpReceiverMethodCompletions(
+        source,
+        position,
+        callTarget.receiverExpression,
+        traitThisContext,
+        isRequestStillCurrent,
+      );
+    },
+    [
+      collectPhpMethodsForClass,
+      resolvePhpClassReference,
+      resolvePhpReceiverMethodCompletions,
+      resolvePhpStaticMethodCompletions,
+      resolvePhpTraitThisContext,
+    ],
+  );
+
   const providePhpMethodCompletions = useCallback(
     async (
       source: string,
@@ -285,6 +392,35 @@ export function usePhpMethodCompletionProvider({
         return relationCompletions;
       }
 
+      const namedArgumentContext = phpNamedArgumentCompletionContextAt(
+        source,
+        position,
+      );
+
+      if (namedArgumentContext) {
+        const callableMembers = await resolveNamedArgumentCallableMembers(
+          namedArgumentContext,
+          source,
+          position,
+          isRequestedRootActive,
+        );
+
+        if (!isRequestedRootActive()) {
+          return [];
+        }
+
+        const namedArgumentCompletions = phpNamedArgumentCompletions(
+          namedArgumentContext,
+          callableMembers,
+        );
+
+        if (namedArgumentCompletions.length > 0) {
+          return phpMethodCompletionsWithStableMetadata(
+            namedArgumentCompletions.slice(0, 80),
+          );
+        }
+      }
+
       const accessContext = phpMemberAccessCompletionContextAt(source, position);
       const staticAccessContext = phpStaticAccessCompletionContextAt(
         source,
@@ -297,44 +433,17 @@ export function usePhpMethodCompletionProvider({
         staticAccessContext,
       });
 
-      const sameSourceTraitThisContext = accessContext
-        ? phpTraitThisCompletionContextAt(source, position)
-        : null;
-      const traitDeclarationContext =
-        accessContext &&
-        phpNormalizedReceiverExpressionIsThis(accessContext.receiverExpression)
-          ? phpTraitDeclarationCompletionContextAt(source, position)
-          : null;
-      const traitHostClassNames = traitDeclarationContext
-        ? await resolvePhpTraitHostClassNames(
-            traitDeclarationContext.declaringClassName,
+      const traitThisContext = accessContext
+        ? await resolvePhpTraitThisContext(
+            source,
+            position,
+            accessContext.receiverExpression,
           )
-        : [];
+        : null;
 
       if (!isRequestedRootActive()) {
         return [];
       }
-
-      const crossFileTraitHostClassNames = sameSourceTraitThisContext
-        ? traitHostClassNames.filter(
-            (className) =>
-              className.toLowerCase() !==
-              sameSourceTraitThisContext.declaringClassName.toLowerCase(),
-          )
-        : traitHostClassNames;
-      const traitThisContext = sameSourceTraitThisContext
-        ? {
-            ...sameSourceTraitThisContext,
-            hostClassNames: crossFileTraitHostClassNames,
-          }
-        : traitDeclarationContext
-          ? {
-              contextualThisClassName: null,
-              declaringClassName: traitDeclarationContext.declaringClassName,
-              hostClassNames: crossFileTraitHostClassNames,
-              memberSource: traitDeclarationContext.memberSource,
-            }
-          : null;
 
       const methods = staticAccessContext
         ? await resolvePhpStaticMethodCompletions(
@@ -342,13 +451,15 @@ export function usePhpMethodCompletionProvider({
             staticAccessContext.className,
           )
         : accessContext
-          ? await resolvePhpReceiverMethodCompletions(
-              source,
-              position,
-              accessContext.receiverExpression,
-              traitThisContext,
-              isRequestedRootActive,
-            )
+          ? (
+              await resolvePhpReceiverMethodCompletions(
+                source,
+                position,
+                accessContext.receiverExpression,
+                traitThisContext,
+                isRequestedRootActive,
+              )
+            ).filter((method) => !method.isEnumCase)
           : [];
 
       if (!isRequestedRootActive()) {
@@ -397,9 +508,10 @@ export function usePhpMethodCompletionProvider({
       frameworkRuntime,
       frameworkProviders,
       methodCompletionAdapter,
+      resolveNamedArgumentCallableMembers,
       resolvePhpReceiverMethodCompletions,
       resolvePhpStaticMethodCompletions,
-      resolvePhpTraitHostClassNames,
+      resolvePhpTraitThisContext,
       workspaceRoot,
     ],
   );

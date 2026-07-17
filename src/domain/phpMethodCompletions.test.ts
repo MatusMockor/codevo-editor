@@ -4929,3 +4929,156 @@ class UserAccount extends AdminModel
     expect(phpTraitClassNames(userAccountModel)).toContain("HasTenancy");
   });
 });
+
+describe("phpMethodCompletionsFromSource enum cases", () => {
+  const backedEnumSource = `<?php
+
+namespace App\\Enums;
+
+enum Status: string implements HasLabel
+{
+    case Active = 'active';
+    case Archived = 'archived';
+
+    public const DEFAULT_LABEL = 'unknown';
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::Active => 'Active',
+            self::Archived => 'Archived',
+        };
+    }
+
+    public static function fromRequest(string $value): self
+    {
+        switch ($value) {
+            case 'active':
+                return self::Active;
+            default:
+                return self::Archived;
+        }
+    }
+}
+`;
+
+  it("offers backed enum cases with their value in the detail", () => {
+    const members = phpMethodCompletionsFromSource(
+      backedEnumSource,
+      "App\\Enums\\Status",
+    );
+    const active = members.find((member) => member.name === "Active");
+    const archived = members.find((member) => member.name === "Archived");
+
+    expect(active).toMatchObject({
+      declaringClassName: "App\\Enums\\Status",
+      detail: "Status::Active = 'active'",
+      isEnumCase: true,
+      isStatic: true,
+      kind: "property",
+      name: "Active",
+      parameters: "",
+      returnType: "Status",
+      visibility: "public",
+    });
+    expect(archived).toMatchObject({
+      detail: "Status::Archived = 'archived'",
+      isEnumCase: true,
+      name: "Archived",
+    });
+  });
+
+  it("keeps enum methods alongside enum cases", () => {
+    const names = phpMethodCompletionsFromSource(
+      backedEnumSource,
+      "App\\Enums\\Status",
+    ).map((member) => member.name);
+
+    expect(names).toEqual(
+      expect.arrayContaining(["Active", "Archived", "label", "fromRequest"]),
+    );
+  });
+
+  it("does not offer switch statement cases inside enum methods as enum cases", () => {
+    const members = phpMethodCompletionsFromSource(
+      backedEnumSource,
+      "App\\Enums\\Status",
+    );
+
+    expect(members.filter((member) => member.isEnumCase)).toHaveLength(2);
+  });
+
+  it("offers pure enum cases without a value detail", () => {
+    const source = `<?php
+
+enum Suit
+{
+    case Hearts;
+    case Spades;
+}
+`;
+    const members = phpMethodCompletionsFromSource(source, "Suit");
+    const hearts = members.find((member) => member.name === "Hearts");
+
+    expect(hearts).toMatchObject({
+      detail: "Suit::Hearts",
+      isEnumCase: true,
+      name: "Hearts",
+      returnType: "Suit",
+    });
+    expect(members.filter((member) => member.isEnumCase)).toHaveLength(2);
+  });
+
+  it("does not offer enum cases from a differently named enum in the same file", () => {
+    const source = `<?php
+
+class Report
+{
+    public function run(): void {}
+}
+
+enum ReportState: int
+{
+    case Draft = 1;
+}
+`;
+    const members = phpMethodCompletionsFromSource(source, "App\\Report");
+
+    expect(members.some((member) => member.isEnumCase)).toBe(false);
+  });
+
+  it("does not offer switch cases from plain classes as enum cases", () => {
+    const source = `<?php
+
+class Dispatcher
+{
+    public function dispatch(string $kind): void
+    {
+        switch ($kind) {
+            case 'sync':
+                return;
+        }
+    }
+}
+`;
+    const members = phpMethodCompletionsFromSource(source, "Dispatcher");
+
+    expect(members.some((member) => member.isEnumCase)).toBe(false);
+  });
+
+  it("ignores case keywords inside enum strings and comments", () => {
+    const source = `<?php
+
+enum Kind: string
+{
+    // case Commented = 'nope';
+    case Real = 'case Fake = 1;';
+}
+`;
+    const members = phpMethodCompletionsFromSource(source, "Kind");
+    const cases = members.filter((member) => member.isEnumCase);
+
+    expect(cases.map((member) => member.name)).toEqual(["Real"]);
+    expect(cases[0]?.detail).toBe("Kind::Real = 'case Fake = 1;'");
+  });
+});

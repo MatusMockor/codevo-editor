@@ -35,6 +35,7 @@ export interface PhpMethodCompletion {
   declaringClassDepth?: number;
   documentation?: string;
   insertText?: string;
+  isEnumCase?: boolean;
   isStatic?: boolean;
   kind?:
     | "config"
@@ -229,8 +230,204 @@ export function phpMethodCompletionsFromSource(
   members.push(
     ...phpPropertyCompletionsFromSource(source, declaringClassName, options),
   );
+  members.push(
+    ...phpEnumCaseCompletionsFromSource(source, masked, declaringClassName),
+  );
 
   return dedupePhpMembers(members);
+}
+
+function phpEnumCaseCompletionsFromSource(
+  source: string,
+  masked: string,
+  declaringClassName: string,
+): PhpMethodCompletion[] {
+  const enumShortName =
+    declaringClassName.split("\\").pop() ?? declaringClassName;
+
+  if (!enumShortName) {
+    return [];
+  }
+
+  const members: PhpMethodCompletion[] = [];
+  const declarationPattern =
+    /(?<![A-Za-z0-9_$\\])enum\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+
+  for (const match of masked.matchAll(declarationPattern)) {
+    const enumName = match[1];
+
+    if (
+      !enumName ||
+      enumName.toLowerCase() !== enumShortName.toLowerCase()
+    ) {
+      continue;
+    }
+
+    const bodyStart = masked.indexOf("{", (match.index ?? 0) + match[0].length);
+
+    if (bodyStart < 0) {
+      continue;
+    }
+
+    const bodyEnd =
+      matchingPairOffset(masked, bodyStart, "{", "}") ?? masked.length;
+
+    members.push(
+      ...phpEnumCaseMembersInBody(
+        source,
+        masked,
+        declaringClassName,
+        enumName,
+        bodyStart,
+        bodyEnd,
+      ),
+    );
+  }
+
+  return members;
+}
+
+function phpEnumCaseMembersInBody(
+  source: string,
+  masked: string,
+  declaringClassName: string,
+  enumName: string,
+  bodyStart: number,
+  bodyEnd: number,
+): PhpMethodCompletion[] {
+  const members: PhpMethodCompletion[] = [];
+  let depth = 1;
+
+  for (let index = bodyStart + 1; index < bodyEnd; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === "}") {
+      depth -= 1;
+      continue;
+    }
+
+    if (depth !== 1 || !phpEnumCaseKeywordAt(masked, index)) {
+      continue;
+    }
+
+    const parsedCase = parsePhpEnumCaseAt(source, masked, index, bodyEnd);
+
+    if (!parsedCase) {
+      continue;
+    }
+
+    const signature = parsedCase.value
+      ? `${enumName}::${parsedCase.name} = ${parsedCase.value}`
+      : `${enumName}::${parsedCase.name}`;
+
+    members.push({
+      declaringClassName,
+      detail: signature,
+      documentation: `Enum case\n\n${signature}`,
+      isEnumCase: true,
+      isStatic: true,
+      kind: "property",
+      name: parsedCase.name,
+      parameters: "",
+      returnType: enumName,
+      visibility: "public",
+    });
+    index = parsedCase.endOffset;
+  }
+
+  return members;
+}
+
+function phpEnumCaseKeywordAt(masked: string, index: number): boolean {
+  if (masked.slice(index, index + 4) !== "case") {
+    return false;
+  }
+
+  const before = masked[index - 1] || "";
+
+  if (/[A-Za-z0-9_$]/.test(before)) {
+    return false;
+  }
+
+  return /\s/.test(masked[index + 4] || "");
+}
+
+function parsePhpEnumCaseAt(
+  source: string,
+  masked: string,
+  caseOffset: number,
+  bodyEnd: number,
+): { endOffset: number; name: string; value: string | null } | null {
+  const headMatch = /^case\s+([A-Za-z_][A-Za-z0-9_]*)\s*/.exec(
+    masked.slice(caseOffset, bodyEnd),
+  );
+  const name = headMatch?.[1];
+
+  if (!headMatch || !name) {
+    return null;
+  }
+
+  const afterHead = caseOffset + headMatch[0].length;
+  const terminator = masked[afterHead] || "";
+
+  if (terminator === ";") {
+    return { endOffset: afterHead, name, value: null };
+  }
+
+  if (terminator !== "=") {
+    return null;
+  }
+
+  const semicolonOffset = phpTopLevelSemicolonOffset(
+    masked,
+    afterHead + 1,
+    bodyEnd,
+  );
+
+  if (semicolonOffset === null) {
+    return null;
+  }
+
+  const value = source.slice(afterHead + 1, semicolonOffset).trim();
+
+  if (!value) {
+    return null;
+  }
+
+  return { endOffset: semicolonOffset, name, value };
+}
+
+function phpTopLevelSemicolonOffset(
+  masked: string,
+  start: number,
+  end: number,
+): number | null {
+  let depth = 0;
+
+  for (let index = start; index < end; index += 1) {
+    const character = masked[index] || "";
+
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (character === ")" || character === "]" || character === "}") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if (character === ";" && depth === 0) {
+      return index;
+    }
+  }
+
+  return null;
 }
 
 // PhpStorm-like member grouping rank for `$receiver->`/`Class::` completion

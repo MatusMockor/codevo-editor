@@ -550,4 +550,243 @@ Comment::with('par')->first();
 
     harness.unmount();
   });
+
+  it("keeps enum case completions for static access", async () => {
+    const source = "<?php\nStatus::";
+    const deps = makeDeps({
+      resolvePhpStaticMethodCompletions: vi.fn(async () => [
+        method("Active", {
+          isEnumCase: true,
+          isStatic: true,
+          kind: "property",
+          returnType: "Status",
+        }),
+        method("label"),
+      ]),
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "Status::"));
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "Active",
+      "label",
+    ]);
+
+    harness.unmount();
+  });
+
+  it("drops enum case completions for instance member access", async () => {
+    const source = "<?php\n$status->";
+    const deps = makeDeps({
+      resolvePhpReceiverMethodCompletions: vi.fn(async () => [
+        method("Active", {
+          isEnumCase: true,
+          isStatic: true,
+          kind: "property",
+          returnType: "Status",
+        }),
+        method("label"),
+      ]),
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "$status->"));
+
+    expect(completions.map((completion) => completion.name)).toEqual(["label"]);
+
+    harness.unmount();
+  });
+
+  it("offers constructor named argument completions for project classes", async () => {
+    const source = "<?php\n$user = new User(";
+    const collectPhpMethodsForClass = vi.fn(async () => [
+      method("__construct", {
+        parameters: "string $name, int $age, ?string $email = null",
+      }),
+      method("save"),
+    ]);
+    const resolvePhpClassReference = vi.fn(
+      (_source: string, className: string) => `App\\Models\\${className}`,
+    );
+    const deps = makeDeps({
+      collectPhpMethodsForClass,
+      resolvePhpClassReference,
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "new User("));
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "name:",
+      "age:",
+      "email:",
+    ]);
+    expect(completions[0]).toEqual(
+      completion({
+        insertText: "name: ",
+        kind: "property",
+        returnType: "string",
+      }),
+    );
+    expect(resolvePhpClassReference).toHaveBeenCalledWith(source, "User");
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
+      "App\\Models\\User",
+    );
+
+    harness.unmount();
+  });
+
+  it("skips used named arguments and consumed positional parameters", async () => {
+    const source = "<?php\n$user = new User('Ada', email: 'a@b.c', ";
+    const deps = makeDeps({
+      collectPhpMethodsForClass: vi.fn(async () => [
+        method("__construct", {
+          parameters: "string $name, int $age, ?string $email = null",
+        }),
+      ]),
+      resolvePhpClassReference: vi.fn(
+        (_source: string, className: string) => `App\\Models\\${className}`,
+      ),
+    });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(
+        source,
+        positionAfter(source, "email: 'a@b.c', "),
+      );
+
+    expect(completions.map((completion) => completion.name)).toEqual(["age:"]);
+
+    harness.unmount();
+  });
+
+  it("offers named arguments for static method calls", async () => {
+    const source = "<?php\nUser::create(";
+    const resolvePhpStaticMethodCompletions = vi.fn(async () => [
+      method("create", { parameters: "array $attributes = []" }),
+    ]);
+    const deps = makeDeps({ resolvePhpStaticMethodCompletions });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "create("));
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "attributes:",
+    ]);
+    expect(resolvePhpStaticMethodCompletions).toHaveBeenCalledWith(
+      source,
+      "User",
+    );
+
+    harness.unmount();
+  });
+
+  it("offers named arguments for resolvable receiver method calls", async () => {
+    const source = "<?php\n$this->send($to, su";
+    const resolvePhpReceiverMethodCompletions = vi.fn(async () => [
+      method("send", {
+        parameters: "string $to, string $subject, string $body = ''",
+      }),
+    ]);
+    const deps = makeDeps({ resolvePhpReceiverMethodCompletions });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "su"));
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "subject:",
+    ]);
+    expect(resolvePhpReceiverMethodCompletions).toHaveBeenCalledWith(
+      source,
+      positionAfter(source, "su"),
+      "$this",
+      null,
+      expect.any(Function),
+    );
+
+    harness.unmount();
+  });
+
+  it("offers named arguments for $this method calls inside traits", async () => {
+    const source = `<?php
+
+trait DispatchesMail
+{
+    public function boot(): void
+    {
+        $this->dispatch($to, su
+    }
+
+    public function dispatch(string $to, string $subject): void
+    {
+    }
+}
+`;
+    const resolvePhpReceiverMethodCompletions = vi.fn(
+      async (
+        _source: string,
+        _position: unknown,
+        _receiverExpression: string,
+        traitThisContext?: unknown,
+      ) =>
+        traitThisContext
+          ? [
+              method("dispatch", {
+                declaringClassName: "DispatchesMail",
+                parameters: "string $to, string $subject",
+              }),
+            ]
+          : [],
+    );
+    const deps = makeDeps({ resolvePhpReceiverMethodCompletions });
+    const harness = renderHook(deps);
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "($to, su"));
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "subject:",
+    ]);
+    expect(resolvePhpReceiverMethodCompletions).toHaveBeenCalledWith(
+      source,
+      positionAfter(source, "($to, su"),
+      "$this",
+      expect.objectContaining({ declaringClassName: "DispatchesMail" }),
+      expect.any(Function),
+    );
+
+    harness.unmount();
+  });
+
+  it("does not offer named arguments inside declarations", async () => {
+    const source = "<?php\nclass A { public function handle(";
+    const deps = makeDeps({
+      collectPhpMethodsForClass: vi.fn(async () => [
+        method("handle", { parameters: "string $signal" }),
+      ]),
+    });
+    const harness = renderHook(deps);
+
+    await expect(
+      harness
+        .api()
+        .providePhpMethodCompletions(source, positionAfter(source, "handle(")),
+    ).resolves.toEqual([]);
+
+    harness.unmount();
+  });
 });
