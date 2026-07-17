@@ -395,6 +395,10 @@ import {
 } from "../domain/settings";
 import type { TerminalGateway } from "../domain/terminal";
 import {
+  detectNodePackageManager,
+  type NodePackageManager,
+} from "../domain/packageManagerDetection";
+import {
   parseComposerScripts,
   parsePackageJsonScripts,
   type PackageScript,
@@ -767,6 +771,7 @@ export function useWorkbenchController(
       {
         composerScripts: PackageScript[];
         hasArtisan: boolean;
+        npmPackageManager: NodePackageManager;
         npmScripts: PackageScript[];
       }
     >
@@ -3349,6 +3354,12 @@ export function useWorkbenchController(
             ? parseComposerScripts(composerJson)
             : [],
           hasArtisan,
+          npmPackageManager: detectNodePackageManager({
+            rootFileNames: entries
+              .filter((entry) => entry.kind === "file")
+              .map((entry) => entry.name),
+            packageJsonText: packageJson,
+          }),
           npmScripts: packageJson ? parsePackageJsonScripts(packageJson) : [],
         },
       }));
@@ -3859,7 +3870,12 @@ export function useWorkbenchController(
       setWorkspaceRoot(path);
       setPackageScriptsByRoot((current) => ({
         ...current,
-        [path]: { composerScripts: [], hasArtisan: false, npmScripts: [] },
+        [path]: {
+          composerScripts: [],
+          hasArtisan: false,
+          npmPackageManager: "npm",
+          npmScripts: [],
+        },
       }));
       setWorkspaceIdentityDescriptor(identityDescriptor);
       const admittedRuntimeOwner = workspaceRuntimeOwnerFor(

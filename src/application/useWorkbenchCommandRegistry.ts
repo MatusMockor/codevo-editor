@@ -8,6 +8,7 @@ import {
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { isMarkdownDocument, type MarkdownPreviewTab } from "../domain/markdownPreview";
 import type { NavigationHistory } from "../domain/navigation";
+import type { NodePackageManager } from "../domain/packageManagerDetection";
 import type { PackageScript } from "../domain/packageScripts";
 import {
   shortcutForCommand,
@@ -63,6 +64,7 @@ import { workbenchEslintCommands } from "./workbenchEslintCommands";
 interface ActivePackageScripts {
   composerScripts: PackageScript[];
   hasArtisan: boolean;
+  npmPackageManager: NodePackageManager;
   npmScripts: PackageScript[];
 }
 
@@ -450,6 +452,7 @@ export function useWorkbenchCommandRegistry(
 
     workbenchScriptCommands({
       composerScripts: activePackageScripts?.composerScripts ?? [],
+      npmPackageManager: activePackageScripts?.npmPackageManager ?? "npm",
       npmScripts: activePackageScripts?.npmScripts ?? [],
       runInActiveTerminal,
     }).forEach((command) => registry.register(command));

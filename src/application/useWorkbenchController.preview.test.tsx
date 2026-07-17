@@ -68934,6 +68934,47 @@ interface GreeterContract
     ).toBe(false);
   });
 
+  it("labels npm script palette commands with the detected package manager", async () => {
+    const readTextFile = vi.fn(async (path: string) => {
+      if (path === "/workspace/package.json") {
+        return '{"scripts":{"dev":"vite"}}';
+      }
+
+      throw new Error(`missing: ${path}`);
+    });
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readDirectory: vi.fn(async () => [
+        fileEntry("/workspace/package.json", "package.json"),
+        fileEntry("/workspace/pnpm-lock.yaml", "pnpm-lock.yaml"),
+      ]),
+      readTextFile,
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        getWorkbench().commands.find(
+          (command) => command.id === "script.npm.dev",
+        )?.title,
+      ).toBe("pnpm: dev");
+    });
+
+    act(() => {
+      getWorkbench().registerActiveTerminalSession(41);
+    });
+    await act(async () => {
+      await runCommand(getWorkbench(), "script.npm.dev");
+    });
+
+    expect(dependencies.terminalGateway.writeInput).toHaveBeenCalledWith(
+      41,
+      "pnpm run dev\r",
+    );
+  });
+
   it("keeps package script palette commands isolated across workspaces", async () => {
     const readTextFile = vi.fn(async (path: string) => {
       if (path === "/workspace-a/composer.json") {
