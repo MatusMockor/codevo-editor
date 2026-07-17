@@ -1564,6 +1564,20 @@ describe("netteComponentUsagesInLatte", () => {
     expect(netteComponentUsagesInLatte(source, "contactForm")).toEqual([]);
   });
 
+  it("does not report a PascalCase spelling as a usage of a lower-camel component", () => {
+    // Container::createComponent guards with `$ucname !== $name`, so
+    // {control ContactForm} never invokes createComponentContactForm at
+    // runtime - it is a "component does not exist" error, not an alternate
+    // spelling of contactForm.
+    const source = [
+      "{control ContactForm}",
+      "<form n:name=\"ContactForm\"></form>",
+      "{if $this['ContactForm']}yes{/if}",
+    ].join("\n");
+
+    expect(netteComponentUsagesInLatte(source, "contactForm")).toEqual([]);
+  });
+
   it("ignores callable-looking form macro usages", () => {
     const source = "{form contactForm()}{/form}";
 

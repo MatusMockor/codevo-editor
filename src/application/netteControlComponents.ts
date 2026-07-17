@@ -813,11 +813,7 @@ async function resolveControlFactoryRenderMethod(
 }
 
 function netteControlRenderMethodName(part: string): string | null {
-  const normalized = part
-    .split(/[_\-\s]+/)
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join("");
+  const normalized = part.charAt(0).toUpperCase() + part.slice(1);
 
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalized)) {
     return null;

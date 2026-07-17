@@ -93,7 +93,7 @@ function safePresenterClassTarget(
       !canProveNettePresenterMethodAbsenceLocally(
         source,
         typeDeclaration,
-        { barePresenterParentPolicy: "accept" },
+        { barePresenterParentPolicy: "resolve-import" },
       )
     ) {
       continue;

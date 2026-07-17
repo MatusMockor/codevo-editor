@@ -121,6 +121,25 @@ class OtherPresenter extends Presenter
     expect(actions).toEqual([]);
   });
 
+  it("returns no actions when a bare Presenter parent is imported from a project base class", () => {
+    const source = `<?php
+
+use App\\UI\\Presenter;
+
+final class ProductPresenter extends Presenter
+{
+}
+`;
+
+    expect(
+      nettePresenterMethodCodeActionsFromDiagnosticData({
+        candidateMethodNames: ["actionShow", "renderShow"],
+        presenterPath,
+        presenterSource: source,
+      }),
+    ).toEqual([]);
+  });
+
   it("returns no actions for an unsafe presenter", () => {
     const source = `<?php
 

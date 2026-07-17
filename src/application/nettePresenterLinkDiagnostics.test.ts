@@ -225,6 +225,44 @@ class ProductPresenter extends \\Nette\\Application\\UI\\Presenter
     expect(diagnostics).toHaveLength(1);
   });
 
+  it("suppresses diagnostics when a bare Presenter parent is imported from a project base class", async () => {
+    const diagnostics = await runDiagnostics(
+      `<a n:href="Product:show">Detail</a>`,
+      {
+        "app/UI/Product/ProductPresenter.php": `<?php
+namespace App\\UI\\Product;
+
+use App\\UI\\Presenter;
+
+final class ProductPresenter extends Presenter
+{
+}
+`,
+      },
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("keeps warning when a bare Presenter parent resolves to the Nette import", async () => {
+    const diagnostics = await runDiagnostics(
+      `{link Product:show}`,
+      {
+        "app/UI/Product/ProductPresenter.php": `<?php
+namespace App\\UI\\Product;
+
+use Nette\\Application\\UI\\Presenter;
+
+final class ProductPresenter extends Presenter
+{
+}
+`,
+      },
+    );
+
+    expect(diagnostics).toHaveLength(1);
+  });
+
   it("requires handle methods for signal links", async () => {
     const diagnostics = await runDiagnostics(
       `{link Product:delete!}`,

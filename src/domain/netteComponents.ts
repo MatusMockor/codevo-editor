@@ -660,11 +660,14 @@ export function detectNetteCreateComponentAt(
  * `{form name}`, `<... n:name="name">`, and `$this['name']` - with the name span
  * of each.
  * Usages inside `{* comment *}` / `{syntax off}` regions are skipped. Matching
- * is exact and CASE-SENSITIVE by design: Nette resolves `createComponent<Name>`
- * by an exact PascalCase suffix, so `{control ContactForm}` names a DIFFERENT
- * component than `contactForm` - collapsing the two on a case-insensitive
- * match would produce a false-positive usage link. A case mismatch is
- * therefore a deliberate false-negative (no usage reported), not a bug.
+ * is exact and CASE-SENSITIVE by design: Nette's Container::createComponent
+ * invokes `'createComponent' . ucfirst($name)` only when `ucfirst($name) !==
+ * $name` (the name must start lowercase) and only when the method's reflected
+ * name matches that string exactly, so `{control ContactForm}` never reaches
+ * `createComponentContactForm` - it fails at runtime as a missing component,
+ * and collapsing the two on a case-insensitive match would produce a
+ * false-positive usage link. A case mismatch is therefore a deliberate
+ * false-negative (no usage reported), not a bug.
  */
 export function netteComponentUsagesInLatte(
   source: string,

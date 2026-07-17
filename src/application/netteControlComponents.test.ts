@@ -1394,6 +1394,27 @@ describe("resolveNetteControlDefinition", () => {
     expect(openTarget).not.toHaveBeenCalled();
   });
 
+  it("keeps underscores in render part method names", async () => {
+    const openPhpMethodTarget = vi.fn(async () => true);
+    const openTarget = vi.fn(async () => true);
+
+    await expect(
+      resolveNetteControlDefinition(
+        { ...deps, openPhpMethodTarget, openTarget },
+        ROOT,
+        () => true,
+        { name: "productList", part: "export_csv" },
+        "app/UI/Home/default.latte",
+      ),
+    ).resolves.toBe(true);
+
+    expect(openPhpMethodTarget).toHaveBeenCalledWith(
+      "ProductListControl",
+      "renderExport_csv",
+    );
+    expect(openTarget).not.toHaveBeenCalled();
+  });
+
   it("opens form macro component factories", async () => {
     const openTarget = vi.fn(async () => true);
     const source = "{form productList}{/form}";
