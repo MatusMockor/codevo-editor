@@ -646,7 +646,6 @@ export function phpTraitHostPropertyDiagnosticContext(
       )}\b(?!\s*\()|(?:self|static|parent)\s*::\s*\$${escapeRegExp(
         propertyName,
       )}\b)`,
-      "i",
     ).test(line)
   ) {
     return null;
@@ -960,8 +959,7 @@ export function phpTraitHostPropertyDiagnosticKey(
 ): string {
   return `${traitName.trim().replace(/^\\+/, "").toLowerCase()}#$${propertyName
     .trim()
-    .replace(/^\$+/, "")
-    .toLowerCase()}`;
+    .replace(/^\$+/, "")}`;
 }
 
 export function phpTraitHostConstantDiagnosticKey(
@@ -997,8 +995,7 @@ export function phpMemberPropertyDiagnosticKey(
 ): string {
   return `${phpNormalizeReceiverExpression(receiverExpression).toLowerCase()}#$${propertyName
     .trim()
-    .replace(/^\$+/, "")
-    .toLowerCase()}`;
+    .replace(/^\$+/, "")}`;
 }
 
 function isDependencyPath(path: string | null | undefined): boolean {

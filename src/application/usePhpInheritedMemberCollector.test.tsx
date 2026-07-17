@@ -157,6 +157,305 @@ interface BaseContract
     harness.unmount();
   });
 
+  it("counts trait-provided methods as satisfying inherited abstract members", async () => {
+    const childSource = `<?php
+
+namespace App\\Models;
+
+use App\\Contracts\\Authenticatable;
+use App\\Traits\\AuthTrait;
+
+class User implements Authenticatable
+{
+    use AuthTrait;
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\Authenticatable": `<?php
+
+namespace App\\Contracts;
+
+interface Authenticatable
+{
+    public function getAuthIdentifier();
+}
+`,
+      "App\\Traits\\AuthTrait": `<?php
+
+namespace App\\Traits;
+
+trait AuthTrait
+{
+    public function getAuthIdentifier()
+    {
+        return $this->id;
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("getauthidentifier")).toBe(true);
+    expect(options.readNavigationFileContent).toHaveBeenCalledWith(
+      classPath("App\\Traits\\AuthTrait"),
+    );
+
+    harness.unmount();
+  });
+
+  it("keeps abstract methods declared in used traits as members to implement", async () => {
+    const childSource = `<?php
+
+namespace App\\Reports;
+
+use App\\Contracts\\Renderable;
+use App\\Traits\\BuildsReports;
+
+class ReportGenerator implements Renderable
+{
+    use BuildsReports;
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\Renderable": `<?php
+
+namespace App\\Contracts;
+
+interface Renderable
+{
+    public function render(): string;
+}
+`,
+      "App\\Traits\\BuildsReports": `<?php
+
+namespace App\\Traits;
+
+trait BuildsReports
+{
+    abstract public function buildRows(): array;
+
+    public function render(): string
+    {
+        return '';
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.abstractMembers.has("buildrows")).toBe(true);
+    expect(collected?.satisfiedNames.has("buildrows")).toBe(false);
+    expect(collected?.satisfiedNames.has("render")).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("collects trait abstract members for a class without super types", async () => {
+    const childSource = `<?php
+
+namespace App\\Reports;
+
+use App\\Traits\\BuildsReports;
+
+class ReportGenerator
+{
+    use BuildsReports;
+}
+`;
+    const options = makeOptions({
+      "App\\Traits\\BuildsReports": `<?php
+
+namespace App\\Traits;
+
+trait BuildsReports
+{
+    abstract public function buildRows(): array;
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected?.abstractMembers.has("buildrows")).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("inherits parent trait methods except private ones", async () => {
+    const childSource = `<?php
+
+namespace App\\Services;
+
+use App\\Contracts\\ReportContract;
+
+class Child extends Base implements ReportContract
+{
+}
+`;
+    const options = makeOptions({
+      "App\\Contracts\\ReportContract": `<?php
+
+namespace App\\Contracts;
+
+interface ReportContract
+{
+    public function fromParentTrait(): void;
+
+    public function fromDeepTrait(): void;
+
+    public function hiddenHelper(): void;
+}
+`,
+      "App\\Services\\Base": `<?php
+
+namespace App\\Services;
+
+use App\\Traits\\ParentTrait;
+
+abstract class Base
+{
+    use ParentTrait;
+}
+`,
+      "App\\Traits\\DeepTrait": `<?php
+
+namespace App\\Traits;
+
+trait DeepTrait
+{
+    public function fromDeepTrait(): void
+    {
+    }
+}
+`,
+      "App\\Traits\\ParentTrait": `<?php
+
+namespace App\\Traits;
+
+trait ParentTrait
+{
+    use DeepTrait;
+
+    public function fromParentTrait(): void
+    {
+    }
+
+    private function hiddenHelper(): void
+    {
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected).not.toBeNull();
+    expect(collected?.satisfiedNames.has("fromparenttrait")).toBe(true);
+    expect(collected?.satisfiedNames.has("fromdeeptrait")).toBe(true);
+    expect(collected?.satisfiedNames.has("hiddenhelper")).toBe(false);
+
+    harness.unmount();
+  });
+
+  it("counts private methods of directly used traits as satisfied", async () => {
+    const childSource = `<?php
+
+namespace App\\Services;
+
+use App\\Traits\\OwnTrait;
+
+class Owner extends Base
+{
+    use OwnTrait;
+}
+`;
+    const options = makeOptions({
+      "App\\Services\\Base": `<?php
+
+namespace App\\Services;
+
+abstract class Base
+{
+    abstract protected function required(): void;
+}
+`,
+      "App\\Traits\\OwnTrait": `<?php
+
+namespace App\\Traits;
+
+trait OwnTrait
+{
+    private function helper(): void
+    {
+    }
+}
+`,
+    });
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => true);
+
+    expect(collected?.satisfiedNames.has("helper")).toBe(true);
+    expect(collected?.abstractMembers.has("required")).toBe(true);
+
+    harness.unmount();
+  });
+
+  it("cancels collection when the requested root changes during a trait read", async () => {
+    const childSource = `<?php
+
+namespace App\\Models;
+
+use App\\Traits\\AuthTrait;
+
+class User
+{
+    use AuthTrait;
+}
+`;
+    let active = true;
+    const options = makeOptions(
+      {},
+      {
+        readNavigationFileContent: vi.fn(async (path: string) => {
+          active = false;
+          return `<?php\n// ${path}\n`;
+        }),
+        resolvePhpClassSourcePaths: vi.fn(async (className: string) => [
+          `/workspace/${className.split("\\").join("/")}.php`,
+        ]),
+      },
+    );
+    const harness = renderHook(options);
+
+    const collected = await harness
+      .api()
+      .collectPhpAbstractMembersToImplement(childSource, () => active);
+
+    expect(collected).toBeNull();
+    expect(options.readNavigationFileContent).toHaveBeenCalledTimes(1);
+
+    harness.unmount();
+  });
+
   it("preserves conflicts between inherited declarations with the same method name", async () => {
     const childSource = `<?php
 namespace App;

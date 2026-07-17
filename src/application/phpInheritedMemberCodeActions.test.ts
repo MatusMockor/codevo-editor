@@ -691,6 +691,33 @@ class ChildHandler extends ParentHandler
   });
 });
 
+describe("phpImplementMethodsCodeAction trait-only classes", () => {
+  it("offers trait abstract members when the class has no super types", async () => {
+    const traitSource = `<?php
+trait BuildsReports
+{
+    abstract public function buildRows(): array;
+}
+`;
+    const contract = inheritedContract(traitSource, "BuildsReports");
+    const action = await phpImplementMethodsCodeAction(
+      `<?php
+class ReportGenerator
+{
+    use BuildsReports;
+}
+`,
+      new Set(),
+      async () => collection(contract),
+      () => true,
+    );
+
+    expect(action?.edits[0]?.text).toContain(
+      "public function buildRows(): array",
+    );
+  });
+});
+
 describe("phpImplementMethodsCodeAction conflicts", () => {
   it.each([
     ["A then B", ["string", "int"]],

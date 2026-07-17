@@ -826,6 +826,29 @@ $comment->missing();
     ).toBeNull();
   });
 
+  it("keeps member property diagnostics whose property differs only by case", () => {
+    const source = `<?php
+
+$comment->Name;
+`;
+    const misspelled = diagnostic({
+      character: 11,
+      line: 2,
+      message: 'Property "$Name" does not exist on class "App\\Models\\Comment"',
+    });
+
+    expect(
+      phpMemberPropertyDiagnosticKey("$comment", "Name"),
+    ).not.toBe(phpMemberPropertyDiagnosticKey("$comment", "name"));
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [misspelled], {
+        contextualMemberProperties: new Set([
+          phpMemberPropertyDiagnosticKey("$comment", "name"),
+        ]),
+      }),
+    ).toEqual([misspelled]);
+  });
+
   it("suppresses confirmed unresolved nullsafe member property diagnostics", () => {
     const source = `<?php
 
@@ -1786,6 +1809,50 @@ trait UsesConnection
         path: "/workspace/app/Support/UsesConnection.php",
       }),
     ).toEqual([]);
+  });
+
+  it("keeps trait host-property diagnostics whose property differs only by case", () => {
+    const source = `<?php
+namespace App\\Support;
+
+trait UsesConnection
+{
+    public function connectionName(): string
+    {
+        return $this->connectionName;
+    }
+}
+`;
+    const misspelled = diagnostic({
+      character: 22,
+      line: 7,
+      message:
+        'Property "$ConnectionName" does not exist on trait "App\\Support\\UsesConnection"',
+    });
+
+    expect(
+      phpTraitHostPropertyDiagnosticKey(
+        "App\\Support\\UsesConnection",
+        "ConnectionName",
+      ),
+    ).not.toBe(
+      phpTraitHostPropertyDiagnosticKey(
+        "App\\Support\\UsesConnection",
+        "connectionName",
+      ),
+    );
+    expect(phpTraitHostPropertyDiagnosticContext(source, misspelled)).toBeNull();
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [misspelled], {
+        contextualTraitHostProperties: new Set([
+          phpTraitHostPropertyDiagnosticKey(
+            "App\\Support\\UsesConnection",
+            "connectionName",
+          ),
+        ]),
+        path: "/workspace/app/Support/UsesConnection.php",
+      }),
+    ).toEqual([misspelled]);
   });
 
   it("recognizes alternate PHPactor trait host-property diagnostic wording", () => {

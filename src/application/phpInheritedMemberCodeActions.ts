@@ -87,7 +87,10 @@ export async function phpImplementMethodsCodeAction(
   collect: PhpAbstractMembersCollector,
   isRequestedRootActive: () => boolean,
 ): Promise<PhpCodeActionDescriptor | null> {
-  if (phpSuperTypeReferences(source).length === 0) {
+  if (
+    phpSuperTypeReferences(source).length === 0 &&
+    phpTraitClassNames(source).length === 0
+  ) {
     return null;
   }
 

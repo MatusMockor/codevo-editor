@@ -383,14 +383,12 @@ export function usePhpClassHierarchyPredicates({
             return false;
           }
 
-          const propertyLookup = normalizedPropertyName.toLowerCase();
-
           if (
             phpClassSourceHasDeclaredProperty(content, normalizedPropertyName) ||
             members.some(
               (member) =>
                 member.kind === "property" &&
-                member.name.toLowerCase() === propertyLookup,
+                member.name === normalizedPropertyName,
             )
           ) {
             return true;
@@ -649,11 +647,9 @@ function phpClassSourceHasDeclaredProperty(
   const escapedPropertyName = escapeRegExp(normalizedPropertyName);
   const docPropertyPattern = new RegExp(
     String.raw`@(?:(?:phpstan|psalm)-)?property(?:-read|-write)?\s+[^\r\n*]+?\s+\$${escapedPropertyName}\b`,
-    "i",
   );
   const declaredPropertyPattern = new RegExp(
     String.raw`(?:^|\n)\s*(?:(?:public|protected|private|readonly|static|var)\s+)*(?:\??[\\A-Za-z_][\\A-Za-z0-9_]*(?:\|[\\A-Za-z_][\\A-Za-z0-9_]*)?\s+)?\$${escapedPropertyName}\b`,
-    "i",
   );
 
   return (

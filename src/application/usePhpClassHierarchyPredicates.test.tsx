@@ -171,6 +171,59 @@ class User
     harness.unmount();
   });
 
+  it("treats property names as case-sensitive", async () => {
+    const harness = renderHook(
+      makeOptions({
+        "App\\Models\\Comment": {
+          members: [methodMember("name", { kind: "property" })],
+          source: `<?php
+namespace App\\Models;
+
+class Comment
+{
+    private string $name;
+}
+`,
+        },
+      }),
+    );
+
+    await expect(
+      harness.api().phpClassHierarchyHasProperty("App\\Models\\Comment", "name"),
+    ).resolves.toBe(true);
+    await expect(
+      harness.api().phpClassHierarchyHasProperty("App\\Models\\Comment", "Name"),
+    ).resolves.toBe(false);
+
+    harness.unmount();
+  });
+
+  it("keeps method lookups case-insensitive", async () => {
+    const harness = renderHook(
+      makeOptions({
+        "App\\Models\\Comment": {
+          members: [methodMember("approveNow")],
+          source: `<?php
+namespace App\\Models;
+
+class Comment
+{
+    public function approveNow(): void {}
+}
+`,
+        },
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .phpClassHierarchyHasMethod("App\\Models\\Comment", "approvenow"),
+    ).resolves.toBe(true);
+
+    harness.unmount();
+  });
+
   it("traverses parent classes, implemented interfaces, and used traits", async () => {
     const harness = renderHook(
       makeOptions({

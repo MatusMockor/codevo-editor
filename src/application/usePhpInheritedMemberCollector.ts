@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { parsePhpClassStructure } from "../domain/phpClassStructure";
 import { phpMethodSignatureKey } from "../domain/phpCodeGen";
+import { phpTraitClassNames } from "../domain/phpMethodCompletions";
 import {
   phpExtendsClassName,
   phpSuperTypeReferences,
@@ -46,6 +47,7 @@ export function usePhpInheritedMemberCollector({
       const collectSuperType = async (
         ownerSource: string,
         reference: string,
+        includePrivateSatisfied: boolean,
       ): Promise<boolean> => {
         const resolvedClassName = resolvePhpClassName(ownerSource, reference);
 
@@ -113,11 +115,35 @@ export function usePhpInheritedMemberCollector({
                 continue;
               }
 
+              if (
+                !includePrivateSatisfied &&
+                method.visibility === "private"
+              ) {
+                continue;
+              }
+
               satisfiedNames.add(memberKey);
             }
 
+            const traitSatisfiedFlag =
+              structure.kind === "trait" ? includePrivateSatisfied : false;
+
+            for (const traitReference of phpTraitClassNames(content)) {
+              if (
+                !(await collectSuperType(
+                  content,
+                  traitReference,
+                  traitSatisfiedFlag,
+                ))
+              ) {
+                return false;
+              }
+            }
+
             for (const superTypeReference of phpSuperTypeReferences(content)) {
-              if (!(await collectSuperType(content, superTypeReference))) {
+              if (
+                !(await collectSuperType(content, superTypeReference, true))
+              ) {
                 return false;
               }
             }
@@ -135,8 +161,14 @@ export function usePhpInheritedMemberCollector({
         return true;
       };
 
+      for (const traitReference of phpTraitClassNames(source)) {
+        if (!(await collectSuperType(source, traitReference, true))) {
+          return null;
+        }
+      }
+
       for (const reference of phpSuperTypeReferences(source)) {
-        if (!(await collectSuperType(source, reference))) {
+        if (!(await collectSuperType(source, reference, true))) {
           return null;
         }
       }
