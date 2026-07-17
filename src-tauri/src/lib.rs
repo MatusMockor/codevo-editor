@@ -25,6 +25,7 @@ pub mod php_file_outline;
 pub mod php_parser;
 pub mod php_symbols;
 mod php_test_run;
+mod test_run_support;
 pub mod php_tree;
 mod phpstan;
 mod pint;

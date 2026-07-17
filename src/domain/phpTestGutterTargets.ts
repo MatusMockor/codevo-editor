@@ -1,5 +1,9 @@
-import type { EditorPosition } from "./languageServerFeatures";
 import type { PhpTestFilterMatch } from "./phpTestCommand";
+import { computeLineStartOffsets, lineColumnAt } from "./sourceLineOffsets";
+import type {
+  TestGutterTarget,
+  TestGutterTargetKind,
+} from "./testGutterTargets";
 
 /**
  * Pure parser that locates the "run test" gutter glyph anchors in a PHP test
@@ -28,15 +32,9 @@ import type { PhpTestFilterMatch } from "./phpTestCommand";
  * anything (and the search continues to the next, concrete `*Test` class).
  */
 
-export type PhpTestGutterTargetKind = "class" | "method";
+export type PhpTestGutterTargetKind = TestGutterTargetKind;
 
-export interface PhpTestGutterTarget {
-  filter: string;
-  kind: PhpTestGutterTargetKind;
-  label: string;
-  match: PhpTestFilterMatch;
-  position: EditorPosition;
-}
+export type PhpTestGutterTarget = TestGutterTarget;
 
 const classDeclarationPattern =
   /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\{/g;
@@ -289,46 +287,5 @@ function target(
     label: `Run ${filter}`,
     match,
     position: lineColumnAt(lineStartOffsets, offset),
-  };
-}
-
-// Precompute the byte offset at which each line starts, once per source, so
-// converting an offset to a line/column is an O(log lines) binary search
-// instead of an O(offset) rescan. Mirrors `phpImplementationGutterTargets`.
-function computeLineStartOffsets(source: string): number[] {
-  const lineStartOffsets = [0];
-
-  for (let index = 0; index < source.length; index += 1) {
-    if (source[index] !== "\n") {
-      continue;
-    }
-
-    lineStartOffsets.push(index + 1);
-  }
-
-  return lineStartOffsets;
-}
-
-function lineColumnAt(
-  lineStartOffsets: number[],
-  offset: number,
-): EditorPosition {
-  let low = 0;
-  let high = lineStartOffsets.length - 1;
-
-  while (low < high) {
-    const mid = (low + high + 1) >> 1;
-
-    if (lineStartOffsets[mid] <= offset) {
-      low = mid;
-      continue;
-    }
-
-    high = mid - 1;
-  }
-
-  return {
-    column: offset - lineStartOffsets[low] + 1,
-    lineNumber: low + 1,
   };
 }

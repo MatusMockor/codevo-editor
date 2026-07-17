@@ -1,15 +1,15 @@
+use crate::test_run_support::{is_executable_file, prepare_result_path, ResultFileGuard};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_CASES: usize = 5_000;
 const ERROR_TAIL_BYTES: usize = 4_000;
-static RESULT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const RESULT_SUBDIRECTORY: &str = "php-test-results";
+const RESULT_LABEL: &str = "PHP test result";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,14 +73,6 @@ pub enum PhpTestRunResponse {
 enum TestRunner {
     Artisan,
     PhpUnit(PathBuf),
-}
-
-struct ResultFileGuard(PathBuf);
-
-impl Drop for ResultFileGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
 }
 
 struct SuiteBuilder {
@@ -152,7 +144,7 @@ where
         }
         Err(message) => return PhpTestRunResponse::Error { message },
     };
-    let result_path = match prepare_result_path(app_data_base) {
+    let result_path = match prepare_result_path(app_data_base, RESULT_SUBDIRECTORY, RESULT_LABEL) {
         Ok(path) => path,
         Err(message) => return PhpTestRunResponse::Error { message },
     };
@@ -265,54 +257,6 @@ fn detect_runner(root: &Path) -> Result<Option<TestRunner>, String> {
         .map(TestRunner::PhpUnit)
         .map(Some)
         .map_err(|error| format!("Failed to resolve PHPUnit binary: {error}"))
-}
-
-#[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    path.metadata()
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
-}
-
-fn prepare_result_path(app_data_base: &Path) -> Result<PathBuf, String> {
-    let directory = app_data_base.join("php-test-results");
-    ensure_private_directory(&directory)?;
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("Failed to create JUnit result filename: {error}"))?
-        .as_nanos();
-    let sequence = RESULT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    Ok(directory.join(format!("{}-{timestamp}-{sequence}.xml", std::process::id())))
-}
-
-fn ensure_private_directory(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path)
-        .map_err(|error| format!("Failed to create PHP test result directory: {error}"))?;
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("Failed to inspect PHP test result directory: {error}"))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("PHP test result path is not a private directory.".to_string());
-    }
-    set_private_permissions(path)?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private_permissions(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("Failed to secure PHP test result directory: {error}"))
-}
-
-#[cfg(not(unix))]
-fn set_private_permissions(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 fn parse_junit(xml: &[u8]) -> Result<PhpTestRunResponse, String> {

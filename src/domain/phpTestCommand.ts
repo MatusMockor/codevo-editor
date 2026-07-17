@@ -30,9 +30,14 @@
  * A `null` filter runs the whole suite/class (no `--filter`).
  */
 
+import { shellQuoteFilter } from "./shellQuote";
+import type { TestFilterMatch } from "./testGutterTargets";
+
 export type PhpTestRunner = "artisan" | "phpunit";
 
-export type PhpTestFilterMatch = "identifier" | "description";
+export type PhpTestFilterMatch = TestFilterMatch;
+
+export { shellQuoteFilter as shellQuotePhpTestFilter } from "./shellQuote";
 
 export interface PhpTestRunCommandInput {
   filter: string | null;
@@ -41,11 +46,6 @@ export interface PhpTestRunCommandInput {
 }
 
 const FILTER_PATTERN = /^[A-Za-z0-9_]+$/;
-
-// Any C0 control character (\x00-\x1f), plus DEL (\x7f). This covers newline
-// (\x0a), carriage return (\x0d) and tab (\x09). A description containing any of
-// these is rejected rather than quoted.
-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 
 const RUNNER_PREFIX: Record<PhpTestRunner, string> = {
   artisan: "php artisan test",
@@ -61,24 +61,6 @@ export function sanitizePhpTestFilter(filter: string): string | null {
   }
 
   return filter;
-}
-
-// Wraps a free-form Pest description in POSIX single quotes, escaping embedded
-// single quotes with the `'\''` idiom. Returns `null` when the description is
-// empty or contains a control character (newline / CR / tab / etc.), which
-// cannot be made safe by quoting and must never reach the terminal.
-export function shellQuotePhpTestFilter(filter: string): string | null {
-  if (filter.length === 0) {
-    return null;
-  }
-
-  if (CONTROL_CHARACTER_PATTERN.test(filter)) {
-    return null;
-  }
-
-  const escaped = filter.replace(/'/g, "'\\''");
-
-  return `'${escaped}'`;
 }
 
 export function phpTestRunCommand(input: PhpTestRunCommandInput): string | null {
@@ -102,7 +84,7 @@ function encodeFilter(
   match: PhpTestFilterMatch,
 ): string | null {
   if (match === "description") {
-    return shellQuotePhpTestFilter(filter);
+    return shellQuoteFilter(filter);
   }
 
   return sanitizePhpTestFilter(filter);
