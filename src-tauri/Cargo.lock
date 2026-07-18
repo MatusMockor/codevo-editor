@@ -505,6 +505,7 @@ dependencies = [
 name = "codevo-editor"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "fontdb",
  "ignore",
  "libc",

@@ -77,6 +77,10 @@ pub enum DebugLaunchTarget {
     NodeScript { script_path: String },
     #[serde(rename = "js-test-file", rename_all = "camelCase")]
     JsTestFile { runner: String, file_path: String },
+    #[serde(rename = "php-script", rename_all = "camelCase")]
+    PhpScript { script_path: String },
+    #[serde(rename = "php-listen", rename_all = "camelCase")]
+    PhpListen { port: Option<u16> },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -921,6 +925,45 @@ mod tests {
         )
         .expect("deserialize node target");
         assert_eq!(parsed, node);
+    }
+
+    #[test]
+    fn php_launch_targets_serialize_with_kebab_case_kinds() {
+        let script = DebugLaunchTarget::PhpScript {
+            script_path: "/workspace/one/public/index.php".to_string(),
+        };
+        let listen_with_port = DebugLaunchTarget::PhpListen { port: Some(9010) };
+        let listen_default = DebugLaunchTarget::PhpListen { port: None };
+
+        assert_eq!(
+            serde_json::to_value(&script).expect("serialize php script target"),
+            serde_json::json!({
+                "kind": "php-script",
+                "scriptPath": "/workspace/one/public/index.php"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&listen_with_port).expect("serialize php listen target"),
+            serde_json::json!({"kind": "php-listen", "port": 9010})
+        );
+        assert_eq!(
+            serde_json::to_value(&listen_default).expect("serialize default listen target"),
+            serde_json::json!({"kind": "php-listen", "port": null})
+        );
+        let parsed_script: DebugLaunchTarget = serde_json::from_value(serde_json::json!({
+            "kind": "php-script",
+            "scriptPath": "/workspace/one/public/index.php"
+        }))
+        .expect("deserialize php script target");
+        assert_eq!(parsed_script, script);
+        let parsed_listen: DebugLaunchTarget =
+            serde_json::from_value(serde_json::json!({"kind": "php-listen", "port": 9010}))
+                .expect("deserialize php listen target");
+        assert_eq!(parsed_listen, listen_with_port);
+        let parsed_default: DebugLaunchTarget =
+            serde_json::from_value(serde_json::json!({"kind": "php-listen"}))
+                .expect("deserialize listen target without port");
+        assert_eq!(parsed_default, listen_default);
     }
 
     #[test]

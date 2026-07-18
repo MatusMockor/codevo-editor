@@ -5,6 +5,10 @@ use crate::debug_adapter::{
     DebugOutputStream, DebugScopeInfo, DebugStackFrame, DebugStopReason, DebugVariableInfo,
     StepKind,
 };
+use crate::debug_support::{
+    file_url_from_path, group_breakpoints_by_file, path_from_file_url, validate_workspace_file,
+    DebugProcessHandle,
+};
 use crate::managed_javascript_typescript::node_executable_path;
 use regex::Regex;
 use serde_json::{json, Value};
@@ -12,7 +16,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -25,7 +29,6 @@ use tungstenite::{Error as WsError, Message, WebSocket};
 const WS_URL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 const CDP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(25);
-const PROCESS_KILL_ESCALATION_DELAY: Duration = Duration::from_millis(500);
 const INSPECT_FLAG: &str = "--inspect-brk=127.0.0.1:0";
 const VITEST_ENTRY: &[&str] = &["node_modules", "vitest", "vitest.mjs"];
 const JEST_ENTRY: &[&str] = &["node_modules", "jest", "bin", "jest.js"];
@@ -150,6 +153,7 @@ fn build_launch_arguments(
                 file,
             ])
         }
+        _ => Err("Unsupported launch target for the Node.js debugger.".to_string()),
     }
 }
 
@@ -171,32 +175,6 @@ fn test_runner_entry(root: &Path, runner: &str) -> Result<String, String> {
         ));
     }
     Ok(entry.to_string_lossy().to_string())
-}
-
-fn validate_workspace_file(root: &Path, path: &str) -> Result<String, String> {
-    let root = root
-        .canonicalize()
-        .map_err(|error| format!("Unable to resolve the workspace root: {error}"))?;
-    let candidate = PathBuf::from(path);
-    let candidate = if candidate.is_absolute() {
-        candidate
-    } else {
-        root.join(candidate)
-    };
-    let metadata =
-        fs::metadata(&candidate).map_err(|_| format!("Debug target `{path}` was not found."))?;
-    if !metadata.is_file() {
-        return Err(format!("Debug target `{path}` is not a file."));
-    }
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|error| format!("Unable to resolve debug target `{path}`: {error}"))?;
-    if !canonical.starts_with(&root) {
-        return Err(format!(
-            "Debug target `{path}` is outside the workspace root."
-        ));
-    }
-    Ok(canonical.to_string_lossy().to_string())
 }
 
 fn spawn_output_pump<R: Read + Send + 'static>(
@@ -250,43 +228,6 @@ fn mask_ws_url(text: &str) -> String {
         .to_string()
 }
 
-fn file_url_from_path(path: &str) -> String {
-    let mut encoded = String::with_capacity(path.len());
-    for character in path.chars() {
-        match character {
-            ' ' => encoded.push_str("%20"),
-            '%' => encoded.push_str("%25"),
-            '#' => encoded.push_str("%23"),
-            '?' => encoded.push_str("%3F"),
-            _ => encoded.push(character),
-        }
-    }
-    format!("file://{encoded}")
-}
-
-fn path_from_file_url(url: &str) -> Option<String> {
-    let path = url.strip_prefix("file://")?;
-    Some(percent_decode(path))
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&input[index + 1..index + 3], 16) {
-                decoded.push(byte);
-                index += 3;
-                continue;
-            }
-        }
-        decoded.push(bytes[index]);
-        index += 1;
-    }
-    String::from_utf8_lossy(&decoded).to_string()
-}
-
 fn map_stop_reason(reason: &str) -> DebugStopReason {
     match reason {
         "step" => DebugStopReason::Step,
@@ -302,40 +243,6 @@ fn scope_display_name(scope_type: &str) -> String {
         None => "Scope".to_string(),
     }
 }
-
-#[derive(Clone, Copy)]
-struct DebugProcessHandle {
-    process_group_id: Option<i32>,
-}
-
-impl DebugProcessHandle {
-    fn from_process_id(process_id: u32) -> Self {
-        Self {
-            process_group_id: i32::try_from(process_id).ok(),
-        }
-    }
-
-    fn terminate(&self) {
-        let Some(process_group_id) = self.process_group_id else {
-            return;
-        };
-        signal_process_group(process_group_id, libc::SIGTERM);
-        thread::spawn(move || {
-            thread::sleep(PROCESS_KILL_ESCALATION_DELAY);
-            signal_process_group(process_group_id, libc::SIGKILL);
-        });
-    }
-}
-
-#[cfg(unix)]
-fn signal_process_group(process_group_id: i32, signal: i32) {
-    unsafe {
-        libc::kill(-process_group_id, signal);
-    }
-}
-
-#[cfg(not(unix))]
-fn signal_process_group(_process_group_id: i32, _signal: i32) {}
 
 #[derive(Default)]
 struct PauseInventory {
@@ -842,23 +749,6 @@ impl NodeCdpAdapter {
     }
 }
 
-fn group_breakpoints_by_file(
-    breakpoints: &[DebugBreakpoint],
-) -> Vec<(String, Vec<DebugBreakpoint>)> {
-    let mut grouped: Vec<(String, Vec<DebugBreakpoint>)> = Vec::new();
-    for breakpoint in breakpoints {
-        if let Some((_, entries)) = grouped
-            .iter_mut()
-            .find(|(file_path, _)| file_path == &breakpoint.file_path)
-        {
-            entries.push(breakpoint.clone());
-            continue;
-        }
-        grouped.push((breakpoint.file_path.clone(), vec![breakpoint.clone()]));
-    }
-    grouped
-}
-
 impl DebugAdapter for NodeCdpAdapter {
     fn set_breakpoints(
         &mut self,
@@ -1070,6 +960,7 @@ mod tests {
     use super::*;
     use crate::debug_adapter::{DebugEvent, DebugEventSink, DebugSessionRegistry};
     use std::net::TcpListener;
+    use std::path::PathBuf;
     use std::sync::atomic::AtomicU32;
     use std::time::Instant;
 
