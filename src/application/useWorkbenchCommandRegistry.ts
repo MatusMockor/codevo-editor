@@ -29,8 +29,14 @@ import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfac
 import type { EditorGroupsState, EditorSplitDirection } from "../domain/editorGroups";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
+import type { StepKind } from "../domain/debug";
+import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import { CommandRegistry, type Command } from "./commandRegistry";
 import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
+import {
+  isDebuggableNodeScriptPath,
+  workbenchDebugCommands,
+} from "./workbenchDebugCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
 import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
@@ -94,8 +100,15 @@ interface UseWorkbenchCommandRegistryOptions {
   createDirectory: CommandRun;
   createFile: CommandRun;
   createGitBranch: CommandRun;
+  debugSnapshot: DebuggerSessionSnapshot;
   deleteActiveDocument: CommandRun;
   disableEslintRuleAtCursor: CommandRun;
+  openDebugPanel: CommandRun;
+  pauseDebug: CommandRun;
+  startOrContinueDebug: CommandRun;
+  stepDebug(kind: StepKind): void | Promise<void>;
+  stopDebug: CommandRun;
+  toggleDebugBreakpointAtCursor: CommandRun;
   editorGroups: EditorGroupsState;
   editorMenuCommandRunner?: EditorMenuCommandRunner | null;
   editorSurfaceCommandRunner?: EditorSurfaceCommandRunner | null;
@@ -243,8 +256,15 @@ export function useWorkbenchCommandRegistry(
     createDirectory,
     createFile,
     createGitBranch,
+    debugSnapshot,
     deleteActiveDocument,
     disableEslintRuleAtCursor,
+    openDebugPanel,
+    pauseDebug,
+    startOrContinueDebug,
+    stepDebug,
+    stopDebug,
+    toggleDebugBreakpointAtCursor,
     editorGroups,
     editorMenuCommandRunner,
     editorSurfaceCommandRunner,
@@ -431,6 +451,22 @@ export function useWorkbenchCommandRegistry(
       runTestForActiveDocument: runJsTestForActiveDocument,
       runAllTestsForActiveDocument: runAllJsTestsForActiveDocument,
       openTestResultsPanel: openJsTestResultsPanel,
+    }).forEach((command) => registry.register(command));
+
+    workbenchDebugCommands({
+      shortcut,
+      hasJsWorkspace: Boolean(workspaceDescriptor?.javaScriptTypeScript),
+      isActiveDocumentDebuggable:
+        isActiveDocumentJsTest ||
+        isDebuggableNodeScriptPath(activeDocument?.path ?? ""),
+      isWorkspaceTrusted: workspaceTrust?.trusted === true,
+      snapshot: debugSnapshot,
+      openDebugPanel,
+      pauseDebug,
+      startOrContinueDebug,
+      stepDebug,
+      stopDebug,
+      toggleBreakpointAtCursor: toggleDebugBreakpointAtCursor,
     }).forEach((command) => registry.register(command));
 
     workbenchPhpstanCommands({
@@ -701,6 +737,13 @@ export function useWorkbenchCommandRegistry(
     closeActiveEditorGroup,
     closeActiveEditorGroupSurface,
     closeDocument,
+    debugSnapshot,
+    openDebugPanel,
+    pauseDebug,
+    startOrContinueDebug,
+    stepDebug,
+    stopDebug,
+    toggleDebugBreakpointAtCursor,
     editorGroups,
     focusAdjacentEditorGroup,
     moveActiveTabToAdjacentGroup,

@@ -28,6 +28,9 @@ import {
   type EditorSurfaceEslintDisableRunner,
 } from "./workbenchEslintDisableCommand";
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
+import { useDebugSession } from "./useDebugSession";
+import { detectJsTestRunner } from "./jsTestRunnerDetection";
+import { isDebuggableNodeScriptPath } from "./workbenchDebugCommands";
 import {
   executeCommandAndReport,
   type CommandExecutionRunner,
@@ -300,8 +303,15 @@ import { isBenignError } from "../infrastructure/globalErrorSafetyNet";
 import { TauriPhpSyntaxDiagnosticsGateway } from "../infrastructure/tauriPhpSyntaxDiagnosticsGateway";
 import { TauriEslintDiagnosticsGateway } from "../infrastructure/tauriEslintDiagnosticsGateway";
 import { TauriPhpstanDiagnosticsGateway } from "../infrastructure/tauriPhpstanDiagnosticsGateway";
+import { TauriDebugGateway } from "../infrastructure/tauriDebugGateway";
 import { TauriPintGateway } from "../infrastructure/tauriPintGateway";
 import { TauriPrettierGateway } from "../infrastructure/tauriPrettierGateway";
+import type { DebugGateway } from "../domain/debug";
+import {
+  loadPersistedBreakpoints,
+  savePersistedBreakpoints,
+  type BreakpointStorage,
+} from "../domain/debugBreakpointPersistence";
 import type { PrettierFormattingGateway } from "../domain/prettierFormatting";
 import {
   replaceEslintDiagnosticsForRoot,
@@ -491,6 +501,8 @@ export interface WorkbenchControllerOptions {
   dirtyCloseDecisionPort?: DirtyCloseDecisionPort;
   onDidCloseEditorPaths?: (paths: readonly string[]) => void;
   prettierFormattingGateway?: PrettierFormattingGateway;
+  debugGateway?: DebugGateway;
+  debugBreakpointStorage?: BreakpointStorage;
 }
 
 interface OpenWorkspacePathOptions {
@@ -557,6 +569,7 @@ function restoreRuntimeStatusCacheEntry(
 }
 
 const phpLocalSyntaxDiagnosticsGateway = new TauriPhpSyntaxDiagnosticsGateway();
+const defaultDebugGateway = new TauriDebugGateway();
 const eslintDiagnosticsGateway = new TauriEslintDiagnosticsGateway();
 const phpstanDiagnosticsGateway = new TauriPhpstanDiagnosticsGateway();
 const pintGateway = new TauriPintGateway();
@@ -6795,6 +6808,158 @@ export function useWorkbenchController(
     workspaceRoot,
   });
 
+  const debugSession = useDebugSession({
+    gateway: options.debugGateway ?? defaultDebugGateway,
+    workspaceRoot,
+  });
+
+  const debugSessionState = debugSession.snapshot.state;
+  const debugStoppedFilePath =
+    debugSessionState.kind === "stopped"
+      ? debugSessionState.topFrame?.filePath ?? null
+      : null;
+  const debugStoppedLineNumber =
+    debugSessionState.kind === "stopped" && debugSessionState.topFrame
+      ? debugSessionState.topFrame.lineNumber
+      : null;
+  const debugStoppedLocation = useMemo(() => {
+    if (debugStoppedFilePath === null || debugStoppedLineNumber === null) {
+      return null;
+    }
+
+    return {
+      filePath: debugStoppedFilePath,
+      lineNumber: debugStoppedLineNumber,
+    };
+  }, [debugStoppedFilePath, debugStoppedLineNumber]);
+
+  const openDebugPanel = useCallback(() => {
+    setBottomPanelView("debug");
+    setBottomPanelVisible(true);
+  }, []);
+
+  const openDebugLocation = useCallback(
+    (filePath: string, lineNumber: number) =>
+      openNavigationTarget(filePath, { column: 1, lineNumber }, filePath),
+    [openNavigationTarget],
+  );
+
+  const toggleDebugBreakpointAtCursor = useCallback(() => {
+    const document = activeDocumentRef.current;
+    const lineNumber = activeEditorPositionRef.current?.lineNumber;
+
+    if (!document || document.readOnly || !lineNumber) {
+      return;
+    }
+
+    return debugSession.toggleBreakpoint(document.path, lineNumber);
+  }, [
+    activeDocumentRef,
+    activeEditorPositionRef,
+    debugSession.toggleBreakpoint,
+  ]);
+
+  const startOrContinueDebug = useCallback(async () => {
+    const state = debugSession.snapshot.state;
+
+    if (state.kind === "stopped") {
+      await debugSession.stepDebug("continue");
+      return;
+    }
+
+    if (state.kind === "starting" || state.kind === "running") {
+      return;
+    }
+
+    const requestedRoot = currentWorkspaceRootRef.current;
+    const document = activeDocumentRef.current;
+
+    if (!requestedRoot || !document) {
+      return;
+    }
+
+    if (isActiveDocumentJsTest) {
+      const runner = await detectJsTestRunner(
+        requestedRoot,
+        readTestFileIfExists,
+      );
+
+      if (
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+      ) {
+        return;
+      }
+
+      if (activeDocumentRef.current?.path !== document.path) {
+        return;
+      }
+
+      if (!runner) {
+        setMessage(
+          "Debug: no vitest or jest setup detected in this workspace.",
+        );
+        return;
+      }
+
+      openDebugPanel();
+      await debugSession.startDebug({
+        kind: "js-test-file",
+        runner,
+        filePath: document.path,
+      });
+      return;
+    }
+
+    if (!isDebuggableNodeScriptPath(document.path)) {
+      return;
+    }
+
+    openDebugPanel();
+    await debugSession.startDebug({
+      kind: "node-script",
+      scriptPath: document.path,
+    });
+  }, [
+    activeDocumentRef,
+    currentWorkspaceRootRef,
+    debugSession.snapshot,
+    debugSession.startDebug,
+    debugSession.stepDebug,
+    isActiveDocumentJsTest,
+    openDebugPanel,
+    readTestFileIfExists,
+    setMessage,
+  ]);
+
+  const restoredDebugBreakpointRootsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    const storage = options.debugBreakpointStorage ?? window.localStorage;
+    const rootKey = normalizedWorkspaceRootKey(workspaceRoot);
+
+    if (!restoredDebugBreakpointRootsRef.current.has(rootKey)) {
+      restoredDebugBreakpointRootsRef.current.add(rootKey);
+      const persisted = loadPersistedBreakpoints(storage, workspaceRoot);
+
+      if (persisted.length > 0) {
+        void debugSession.restoreBreakpoints(persisted);
+      }
+
+      return;
+    }
+
+    savePersistedBreakpoints(storage, workspaceRoot, debugSession.breakpoints);
+  }, [
+    debugSession.breakpoints,
+    debugSession.restoreBreakpoints,
+    options.debugBreakpointStorage,
+    workspaceRoot,
+  ]);
+
   const revealEntry = useCallback(
     (entry: FileEntry) => {
       const requestedRoot = currentWorkspaceRootRef.current;
@@ -8954,8 +9119,15 @@ export function useWorkbenchController(
     createDirectory,
     createFile,
     createGitBranch,
+    debugSnapshot: debugSession.snapshot,
     deleteActiveDocument,
     disableEslintRuleAtCursor,
+    openDebugPanel,
+    pauseDebug: debugSession.pauseDebug,
+    startOrContinueDebug,
+    stepDebug: debugSession.stepDebug,
+    stopDebug: debugSession.stopDebug,
+    toggleDebugBreakpointAtCursor,
     editorGroups,
     editorSurfaceCommandRunner: options.editorSurfaceCommandRunner,
     editorMenuCommandRunner: options.editorMenuCommandRunner,
@@ -9869,6 +10041,11 @@ export function useWorkbenchController(
     goToPreviousProblem,
     isActiveDocumentJsTest,
     isActiveDocumentPhpTest,
+    debugSession,
+    debugStoppedLocation,
+    openDebugLocation,
+    openDebugPanel,
+    startOrContinueDebug,
     registerActiveTerminalSession,
     runTestAt,
     clearEditorRevealTarget,

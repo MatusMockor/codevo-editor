@@ -56,6 +56,7 @@ export interface UseDebugSessionResult {
   setBreakpointEnabled(id: string, enabled: boolean): Promise<void>;
   setBreakpointCondition(id: string, condition: string | null): Promise<void>;
   removeBreakpoint(id: string): Promise<void>;
+  restoreBreakpoints(list: Breakpoint[]): Promise<void>;
   selectFrame(frameId: number): Promise<void>;
   loadVariables(variablesReference: number): Promise<void>;
   evaluate(expression: string): Promise<DebugVariable | null>;
@@ -410,14 +411,41 @@ export function useDebugSession({
       mutateBreakpoints(
         () => filePath,
         (list) =>
-          toggleBreakpointInList(
-            list,
-            filePath,
-            lineNumber,
-            createBreakpointId,
-          ),
+          toggleBreakpointInList(list, filePath, lineNumber, () => {
+            let id = createBreakpointId();
+
+            while (list.some((entry) => entry.id === id)) {
+              id = createBreakpointId();
+            }
+
+            return id;
+          }),
       ),
     [createBreakpointId, mutateBreakpoints],
+  );
+
+  const restoreBreakpoints = useCallback(
+    async (list: Breakpoint[]) => {
+      const root = currentRootRef.current;
+
+      if (!root) {
+        return;
+      }
+
+      const key = normalizedWorkspaceRootKey(root);
+      commitBreakpoints(key, list);
+
+      if (activeSessionId() === null) {
+        return;
+      }
+
+      const filePaths = [...new Set(list.map((entry) => entry.filePath))];
+
+      for (const filePath of filePaths) {
+        await syncBreakpointsForFile(key, filePath, list);
+      }
+    },
+    [activeSessionId, commitBreakpoints, syncBreakpointsForFile],
   );
 
   const filePathOfBreakpoint = useCallback(
@@ -573,6 +601,7 @@ export function useDebugSession({
     setBreakpointEnabled,
     setBreakpointCondition,
     removeBreakpoint,
+    restoreBreakpoints,
     selectFrame,
     loadVariables,
     evaluate,

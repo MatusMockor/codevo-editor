@@ -5,6 +5,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { DebugEvent, DebugGateway } from "../domain/debug";
+import { debugBreakpointStorageKey } from "../domain/debugBreakpointPersistence";
+import {
+  deserializeBreakpoints,
+  serializeBreakpoints,
+} from "../domain/debugBreakpoints";
 import {
   emptyGitStatus,
   gitChangeKey,
@@ -75000,6 +75006,8 @@ MissingClass::class;
 
   function renderController({
     appSettings = defaultAppSettings(),
+    debugBreakpointStorage,
+    debugGateway,
     editorGroupFocusRunner,
     gitGateway,
     localHistoryGateway,
@@ -75040,6 +75048,8 @@ MissingClass::class;
     workspaceTrustGateway,
   }: {
     appSettings?: ReturnType<typeof defaultAppSettings>;
+    debugBreakpointStorage?: WorkbenchControllerOptions["debugBreakpointStorage"];
+    debugGateway?: WorkbenchControllerOptions["debugGateway"];
     editorGroupFocusRunner?: WorkbenchControllerOptions["editorGroupFocusRunner"];
     gitGateway?: GitGateway;
     localHistoryGateway?: LocalHistoryGateway;
@@ -75143,6 +75153,9 @@ MissingClass::class;
     dependencies.controllerOptions.editorGroupFocusRunner = editorGroupFocusRunner;
     dependencies.controllerOptions.prettierFormattingGateway =
       prettierFormattingGateway;
+    dependencies.controllerOptions.debugBreakpointStorage =
+      debugBreakpointStorage;
+    dependencies.controllerOptions.debugGateway = debugGateway;
     const getWorkbench = () => {
       if (!workbench) {
         throw new Error("Workbench controller was not rendered.");
@@ -75388,6 +75401,317 @@ MissingClass::class;
       expect(getWorkbench().message).not.toBe(
         "Stopping PHPactor + index for laravel-app",
       );
+    });
+  });
+
+  describe("debugger wiring", () => {
+    it("starts a vitest debug session for the active JS test file via debug.start", async () => {
+      const testPath = "/workspace/src/sum.test.ts";
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === testPath) {
+          return `it("adds numbers", () => {});\n`;
+        }
+
+        if (path === "/workspace/vitest.config.ts") {
+          return "export default {};";
+        }
+
+        throw new Error(`missing: ${path}`);
+      });
+      const debugGateway = createDebugGatewayHarness();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugGateway: debugGateway.gateway,
+        readTextFile,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(testPath, "sum.test.ts"));
+      });
+      expect(getWorkbench().isActiveDocumentJsTest).toBe(true);
+
+      await act(async () => {
+        await runCommand(getWorkbench(), "debug.start");
+        await flushAsyncTurns();
+      });
+
+      expect(debugGateway.start).toHaveBeenCalledWith(
+        "/workspace",
+        { kind: "js-test-file", runner: "vitest", filePath: testPath },
+        [],
+      );
+      expect(String(getWorkbench().bottomPanelView)).toBe("debug");
+      expect(getWorkbench().bottomPanelVisible).toBe(true);
+      expect(getWorkbench().debugSession.snapshot.state).toEqual({
+        kind: "running",
+        sessionId: 7,
+      });
+
+      act(() => {
+        debugGateway.emit({
+          rootPath: "/workspace",
+          sessionId: 7,
+          seq: 1,
+          payload: { kind: "started", sessionId: 7 },
+        });
+        debugGateway.emit({
+          rootPath: "/workspace",
+          sessionId: 7,
+          seq: 2,
+          payload: {
+            kind: "stopped",
+            reason: "breakpoint",
+            frames: [
+              {
+                frameId: 1,
+                name: "adds numbers",
+                filePath: testPath,
+                lineNumber: 1,
+                column: 1,
+              },
+            ],
+          },
+        });
+      });
+
+      expect(getWorkbench().debugStoppedLocation).toEqual({
+        filePath: testPath,
+        lineNumber: 1,
+      });
+    });
+
+    it("starts a node-script debug session for a plain JS file via debug.start", async () => {
+      const scriptPath = "/workspace/tools/build.js";
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === scriptPath) {
+          return "console.log('build');\n";
+        }
+
+        throw new Error(`missing: ${path}`);
+      });
+      const debugGateway = createDebugGatewayHarness();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugGateway: debugGateway.gateway,
+        readTextFile,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(scriptPath, "build.js"));
+      });
+
+      await act(async () => {
+        await runCommand(getWorkbench(), "debug.start");
+        await flushAsyncTurns();
+      });
+
+      expect(debugGateway.start).toHaveBeenCalledWith(
+        "/workspace",
+        { kind: "node-script", scriptPath },
+        [],
+      );
+    });
+
+    it("toggles a breakpoint at the cursor via command and persists it", async () => {
+      const testPath = "/workspace/src/sum.test.ts";
+      const readTextFile = vi.fn(
+        async () => `it("adds", () => {});\nit("subs", () => {});\n`,
+      );
+      const storage = inMemoryBreakpointStorage();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugBreakpointStorage: storage,
+        debugGateway: createDebugGatewayHarness().gateway,
+        readTextFile,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(testPath, "sum.test.ts"));
+      });
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 2 });
+      });
+
+      await act(async () => {
+        await runCommand(getWorkbench(), "debug.toggleBreakpoint");
+        await flushAsyncTurns();
+      });
+
+      expect(getWorkbench().debugSession.breakpoints).toEqual([
+        expect.objectContaining({
+          filePath: testPath,
+          lineNumber: 2,
+          enabled: true,
+        }),
+      ]);
+
+      const raw = storage.getItem(debugBreakpointStorageKey("/workspace"));
+      expect(raw).not.toBeNull();
+      expect(deserializeBreakpoints(raw as string)).toEqual([
+        expect.objectContaining({ filePath: testPath, lineNumber: 2 }),
+      ]);
+    });
+
+    it("ignores debug.toggleBreakpoint on a read-only document", async () => {
+      const storage = inMemoryBreakpointStorage();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugBreakpointStorage: storage,
+        debugGateway: createDebugGatewayHarness().gateway,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      act(() => {
+        getWorkbench().openReadOnlyDocument(
+          {
+            content: `it("adds", () => {});\n`,
+            language: "typescript",
+            name: "sum.test.ts",
+            path: "/workspace/src/sum.test.ts",
+            readOnly: true,
+            savedContent: `it("adds", () => {});\n`,
+          },
+          { pin: true },
+        );
+      });
+      act(() => {
+        getWorkbench().updateActiveEditorPosition({ column: 1, lineNumber: 1 });
+      });
+
+      await act(async () => {
+        await runCommand(getWorkbench(), "debug.toggleBreakpoint");
+        await flushAsyncTurns();
+      });
+
+      expect(getWorkbench().debugSession.breakpoints).toEqual([]);
+      expect(
+        storage.getItem(debugBreakpointStorageKey("/workspace")),
+      ).toBeNull();
+    });
+
+    it("drops a debug.start whose runner detection resolves after the active document changed", async () => {
+      const testPath = "/workspace/src/sum.test.ts";
+      const otherPath = "/workspace/src/other.js";
+      const vitestConfig = createDeferred<string>();
+      const readTextFile = vi.fn(async (path: string) => {
+        if (path === testPath) {
+          return `it("adds numbers", () => {});\n`;
+        }
+
+        if (path === otherPath) {
+          return "console.log('other');\n";
+        }
+
+        if (path === "/workspace/vitest.config.ts") {
+          return vitestConfig.promise;
+        }
+
+        throw new Error(`missing: ${path}`);
+      });
+      const debugGateway = createDebugGatewayHarness();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugGateway: debugGateway.gateway,
+        readTextFile,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(testPath, "sum.test.ts"));
+      });
+
+      let pendingStart: Promise<void> = Promise.resolve();
+      act(() => {
+        pendingStart = runCommand(getWorkbench(), "debug.start");
+      });
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(otherPath, "other.js"));
+      });
+
+      await act(async () => {
+        vitestConfig.resolve("export default {};");
+        await pendingStart;
+        await flushAsyncTurns();
+      });
+
+      expect(debugGateway.start).not.toHaveBeenCalled();
+    });
+
+    it("restores persisted breakpoints when the workspace opens", async () => {
+      const persisted = [
+        {
+          id: "bp-42",
+          filePath: "/workspace/src/sum.test.ts",
+          lineNumber: 3,
+          enabled: true,
+        },
+      ];
+      const storage = inMemoryBreakpointStorage({
+        [debugBreakpointStorageKey("/workspace")]:
+          serializeBreakpoints(persisted),
+      });
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugBreakpointStorage: storage,
+        debugGateway: createDebugGatewayHarness().gateway,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().workspaceRoot).toBe("/workspace");
+      expect(getWorkbench().debugSession.breakpoints).toEqual(persisted);
+    });
+
+    it("navigates to a debug frame location through the workbench navigation path", async () => {
+      const filePath = "/workspace/src/service.ts";
+      const readTextFile = vi.fn(
+        async () => "line one\nline two\nline three\nline four\nline five\n",
+      );
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugGateway: createDebugGatewayHarness().gateway,
+        readTextFile,
+        workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openDebugLocation(filePath, 5);
+      });
+      await flushAsyncTurns();
+
+      expect(getWorkbench().activePath).toBe(filePath);
+      expect(getWorkbench().editorRevealTarget?.position.lineNumber).toBe(5);
     });
   });
 });
@@ -76216,6 +76540,65 @@ function phpProjectDescriptor(
       },
     ],
     ...overrides,
+  };
+}
+
+interface DebugGatewayHarness {
+  gateway: DebugGateway;
+  emit(event: DebugEvent): void;
+  start: ReturnType<typeof vi.fn<DebugGateway["start"]>>;
+  setBreakpoints: ReturnType<typeof vi.fn<DebugGateway["setBreakpoints"]>>;
+  step: ReturnType<typeof vi.fn<DebugGateway["step"]>>;
+}
+
+function createDebugGatewayHarness(): DebugGatewayHarness {
+  const handlers = new Set<(event: DebugEvent) => void>();
+  const start = vi
+    .fn<DebugGateway["start"]>()
+    .mockResolvedValue({ kind: "ok", sessionId: 7 });
+  const setBreakpoints = vi
+    .fn<DebugGateway["setBreakpoints"]>()
+    .mockResolvedValue([]);
+  const step = vi.fn<DebugGateway["step"]>().mockResolvedValue(undefined);
+
+  return {
+    gateway: {
+      start,
+      stop: vi.fn(async () => undefined),
+      setBreakpoints,
+      step,
+      pause: vi.fn(async () => undefined),
+      stackTrace: vi.fn(async () => []),
+      scopes: vi.fn(async () => []),
+      variables: vi.fn(async () => []),
+      evaluate: vi.fn(async () => null),
+      subscribe(handler) {
+        handlers.add(handler);
+        return () => handlers.delete(handler);
+      },
+    },
+    emit(event) {
+      for (const handler of handlers) {
+        handler(event);
+      }
+    },
+    start,
+    setBreakpoints,
+    step,
+  };
+}
+
+function inMemoryBreakpointStorage(seed: Record<string, string> = {}) {
+  const values = new Map(Object.entries(seed));
+
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
   };
 }
 

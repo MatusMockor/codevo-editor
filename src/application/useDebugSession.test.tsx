@@ -632,6 +632,138 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it("restores persisted breakpoints for the active root without regenerating ids", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    const persisted: Breakpoint[] = [
+      {
+        id: "bp-7",
+        filePath: "/workspace/one/index.js",
+        lineNumber: 3,
+        enabled: true,
+      },
+      {
+        id: "bp-9",
+        filePath: "/workspace/one/lib.js",
+        lineNumber: 8,
+        enabled: false,
+        condition: "x > 1",
+      },
+    ];
+
+    await act(async () => {
+      await ui.hook().restoreBreakpoints(persisted);
+    });
+
+    expect(ui.hook().breakpoints).toEqual(persisted);
+    expect(harness.setBreakpoints).not.toHaveBeenCalled();
+
+    ui.set({ workspaceRoot: "/workspace/two" });
+    expect(ui.hook().breakpoints).toEqual([]);
+
+    ui.set({ workspaceRoot: "/workspace/one" });
+    expect(ui.hook().breakpoints).toEqual(persisted);
+    ui.unmount();
+  });
+
+  it("ignores a restore when no workspace root is active", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, null);
+
+    await act(async () => {
+      await ui.hook().restoreBreakpoints([
+        {
+          id: "bp-1",
+          filePath: "/workspace/one/index.js",
+          lineNumber: 3,
+          enabled: true,
+        },
+      ]);
+    });
+
+    expect(ui.hook().breakpoints).toEqual([]);
+    ui.unmount();
+  });
+
+  it("does not reuse a restored breakpoint id for a newly toggled breakpoint", async () => {
+    const harness = createGateway();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().restoreBreakpoints([
+        {
+          id: "bp-1",
+          filePath: "/workspace/one/index.js",
+          lineNumber: 3,
+          enabled: true,
+        },
+      ]);
+    });
+    await act(async () => {
+      await ui.hook().toggleBreakpoint("/workspace/one/index.js", 9);
+    });
+
+    const ids = ui.hook().breakpoints.map((entry) => entry.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    ui.unmount();
+  });
+
+  it("syncs restored breakpoints per affected file into an active session", async () => {
+    const harness = createGateway();
+    harness.setBreakpoints.mockImplementation(
+      async (_sessionId, _filePath, breakpoints) =>
+        breakpoints.map((entry) => ({ ...entry, verified: true })),
+    );
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+    });
+
+    await act(async () => {
+      await ui.hook().restoreBreakpoints([
+        {
+          id: "bp-1",
+          filePath: "/workspace/one/index.js",
+          lineNumber: 3,
+          enabled: true,
+        },
+        {
+          id: "bp-2",
+          filePath: "/workspace/one/lib.js",
+          lineNumber: 8,
+          enabled: true,
+        },
+      ]);
+    });
+
+    expect(harness.setBreakpoints).toHaveBeenCalledTimes(2);
+    expect(harness.setBreakpoints).toHaveBeenCalledWith(
+      4,
+      "/workspace/one/index.js",
+      [expect.objectContaining({ id: "bp-1", lineNumber: 3 })],
+    );
+    expect(harness.setBreakpoints).toHaveBeenCalledWith(
+      4,
+      "/workspace/one/lib.js",
+      [expect.objectContaining({ id: "bp-2", lineNumber: 8 })],
+    );
+    expect(ui.hook().breakpoints).toEqual([
+      expect.objectContaining({ id: "bp-1", verified: true }),
+      expect.objectContaining({ id: "bp-2", verified: true }),
+    ]);
+    ui.unmount();
+  });
+
   it("unsubscribes from debugger events on unmount", async () => {
     const handlers = new Set<(event: DebugEvent) => void>();
     const harness = createGateway();

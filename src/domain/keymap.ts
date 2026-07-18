@@ -615,6 +615,30 @@ export const keymapCommands = [
     label: "Previous Bookmark",
   },
   {
+    category: "Debug",
+    defaultShortcut: "F5",
+    id: "debug.start",
+    label: "Debug: Start or Continue",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "Shift+F5",
+    id: "debug.stop",
+    label: "Debug: Stop",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "F9",
+    id: "debug.toggleBreakpoint",
+    label: "Debug: Toggle Breakpoint",
+  },
+  {
+    category: "Debug",
+    defaultShortcut: "F10",
+    id: "debug.stepOver",
+    label: "Debug: Step Over",
+  },
+  {
     category: "Terminal",
     defaultShortcut: "Ctrl+`",
     id: "terminal.show",

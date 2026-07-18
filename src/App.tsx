@@ -33,6 +33,7 @@ import { BottomPanel } from "./components/BottomPanel";
 import { CallHierarchy } from "./components/CallHierarchy";
 import { ClassOpen } from "./components/ClassOpen";
 import { CommandPalette } from "./components/CommandPalette";
+import type { DebugPanelProps } from "./components/DebugPanel";
 import { DirtyCloseDecisionDialogHost } from "./components/DirtyCloseDecisionDialogHost";
 import { ScopedEditorSurface } from "./components/ScopedEditorSurface";
 import { EditorArea } from "./components/EditorArea";
@@ -149,6 +150,7 @@ import { TauriWorkspaceIdentityGateway } from "./infrastructure/tauriWorkspaceId
 import { TauriWorkspaceRuntimeLifecycleGateway } from "./infrastructure/tauriWorkspaceRuntimeLifecycleGateway";
 import { TauriWorkspaceTrustGateway } from "./infrastructure/tauriWorkspaceTrustGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
+import { TauriDebugGateway } from "./infrastructure/tauriDebugGateway";
 import { TauriJsTestGateway } from "./infrastructure/tauriJsTestGateway";
 import { TauriPhpTestGateway } from "./infrastructure/tauriPhpTestGateway";
 import { createAppHighlighter } from "./infrastructure/shikiHighlighter";
@@ -160,6 +162,7 @@ const projectSymbolSearchGateway = new TauriProjectSymbolSearchGateway();
 const artisanRoutesGateway = new TauriArtisanRoutesGateway();
 const phpTestGateway = new TauriPhpTestGateway();
 const jsTestGateway = new TauriJsTestGateway();
+const debugGateway = new TauriDebugGateway();
 const workspaceFileChangeGateway = new TauriWorkspaceFileChangeGateway();
 const workspaceGateways = {
   detection: workspaceGateway,
@@ -322,6 +325,7 @@ function App() {
       editorGroupFocusRunner,
       dirtyCloseDecisionPort: dirtyCloseDecisionCoordinator,
       onDidCloseEditorPaths: handleClosedEditorPaths,
+      debugGateway,
     },
   );
   const artisanRoutes = useArtisanRoutes({
@@ -350,6 +354,70 @@ function App() {
     runRequestVersion: workbench.jsTestRunRequestVersion,
     workspaceTrusted: workbench.workspaceTrust?.trusted === true,
   });
+  const debugPanelProps = useMemo<DebugPanelProps>(
+    () => ({
+      breakpoints: workbench.debugSession.breakpoints,
+      lastStartError: workbench.debugSession.lastStartError,
+      onLoadVariables: (variablesReference) => {
+        void workbench.debugSession.loadVariables(variablesReference);
+      },
+      onNavigateToBreakpoint: (breakpoint) => {
+        void workbench.openDebugLocation(
+          breakpoint.filePath,
+          breakpoint.lineNumber,
+        );
+      },
+      onNavigateToFrame: (filePath, lineNumber) => {
+        void workbench.openDebugLocation(filePath, lineNumber);
+      },
+      onPause: () => {
+        void workbench.debugSession.pauseDebug();
+      },
+      onRemoveBreakpoint: (id) => {
+        void workbench.debugSession.removeBreakpoint(id);
+      },
+      onSelectFrame: (frameId) => {
+        void workbench.debugSession.selectFrame(frameId);
+      },
+      onSetBreakpointCondition: (id, condition) => {
+        void workbench.debugSession.setBreakpointCondition(id, condition);
+      },
+      onSetBreakpointEnabled: (id, enabled) => {
+        void workbench.debugSession.setBreakpointEnabled(id, enabled);
+      },
+      onStep: (kind) => {
+        void workbench.debugSession.stepDebug(kind);
+      },
+      onStop: () => {
+        void workbench.debugSession.stopDebug();
+      },
+      output: workbench.debugSession.output,
+      rootPath: workbench.workspaceRoot,
+      scopes: workbench.debugSession.scopes,
+      selectedFrameId: workbench.debugSession.selectedFrameId,
+      snapshot: workbench.debugSession.snapshot,
+      variablesByReference: workbench.debugSession.variablesByReference,
+    }),
+    [
+      workbench.debugSession.breakpoints,
+      workbench.debugSession.lastStartError,
+      workbench.debugSession.loadVariables,
+      workbench.debugSession.output,
+      workbench.debugSession.pauseDebug,
+      workbench.debugSession.removeBreakpoint,
+      workbench.debugSession.scopes,
+      workbench.debugSession.selectFrame,
+      workbench.debugSession.selectedFrameId,
+      workbench.debugSession.setBreakpointCondition,
+      workbench.debugSession.setBreakpointEnabled,
+      workbench.debugSession.snapshot,
+      workbench.debugSession.stepDebug,
+      workbench.debugSession.stopDebug,
+      workbench.debugSession.variablesByReference,
+      workbench.openDebugLocation,
+      workbench.workspaceRoot,
+    ],
+  );
   const gitHistoryDiffDocuments = useGitHistoryDiffDocuments({
     gateway: gitHistoryGateway,
     onOpenDocument: workbench.openReadOnlyDocument,
@@ -992,6 +1060,9 @@ function App() {
             workbench.clearLanguageServerDiagnosticsForPath
           }
           bookmarkedLineNumbers={groupIsActive ? activeBookmarkedLineNumbers : []}
+          breakpoints={workbench.debugSession.breakpoints}
+          onToggleBreakpoint={workbench.debugSession.toggleBreakpoint}
+          debugStoppedLocation={workbench.debugStoppedLocation}
           changeHunks={groupIsActive ? activeEditorChangeHunks : []}
           editorRevealTarget={groupIsActive ? workbench.editorRevealTarget : null}
           flushPendingLanguageServerDocument={
@@ -1529,6 +1600,7 @@ function App() {
             artisanRoutesQuery={artisanRoutes.query}
             artisanRoutesTotal={artisanRoutes.total}
             artisanRoutesUnavailable={artisanRoutes.unavailable}
+            debug={debugPanelProps}
             hasArtisan={workbench.hasArtisan}
             hasJsWorkspace={Boolean(
               workbench.workspaceDescriptor?.javaScriptTypeScript,
