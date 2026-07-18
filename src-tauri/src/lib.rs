@@ -54,6 +54,7 @@ use debug_adapter::{
     DebugSessionRegistry, DebugStackFrame, DebugStartResponse, DebugVariableInfo, StepKind,
 };
 use debug_cdp::create_node_cdp_adapter;
+use debug_dbgp::create_php_dbgp_adapter;
 use git::{
     load_commit_details, load_commit_diff, load_commit_files, load_commit_log, load_git_branches,
     safe_stash_index, CommandGitRepositoryGateway, CommitDiffPayload, CommitFileChange,
@@ -1071,15 +1072,17 @@ fn start_debug_session_blocking(
     let finish_registry = Arc::clone(registry);
     let started = registry.start_session(&root_key, sink, move |emitter| {
         let session_id = emitter.session_id();
-        create_node_cdp_adapter(
-            &root,
-            launch,
-            breakpoints,
-            emitter,
-            Box::new(move |exit_code| {
-                finish_registry.finish_session(session_id, exit_code);
-            }),
-        )
+        let finish = Box::new(move |exit_code| {
+            finish_registry.finish_session(session_id, exit_code);
+        });
+        match launch {
+            DebugLaunchTarget::NodeScript { .. } | DebugLaunchTarget::JsTestFile { .. } => {
+                create_node_cdp_adapter(&root, launch, breakpoints, emitter, finish)
+            }
+            DebugLaunchTarget::PhpScript { .. } | DebugLaunchTarget::PhpListen { .. } => {
+                create_php_dbgp_adapter(&root, launch, breakpoints, emitter, finish)
+            }
+        }
     });
 
     match started {
@@ -10084,6 +10087,111 @@ mod tests {
 
         assert!(matches!(response, DebugStartResponse::Error { .. }));
         assert!(sink.events().is_empty());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn debug_start_untrusted_workspace_blocks_php_script_dispatch() {
+        let root = temp_workspace("debug-php-untrusted");
+        let script = root.join("index.php");
+        fs::write(&script, "<?php echo 'hi';").expect("write debug script");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingDebugSink::default());
+
+        let response = tauri::async_runtime::block_on(debug_start_with_trust(
+            path_string(&root),
+            DebugLaunchTarget::PhpScript {
+                script_path: path_string(&script),
+            },
+            Vec::new(),
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            Arc::clone(&registry),
+            &trust,
+        ))
+        .expect("debug start response");
+
+        assert_eq!(
+            response,
+            DebugStartResponse::Unavailable {
+                message: "Trust this workspace to run the debugger.".to_string(),
+            }
+        );
+        assert!(sink.events().is_empty());
+        assert_eq!(registry.session_id_for_root(&path_string(&root)), None);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn debug_start_trusted_missing_root_returns_error_status_for_php_listen() {
+        let root = temp_workspace("debug-php-missing-root");
+        let missing = root.join("gone");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&missing), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingDebugSink::default());
+
+        let response = tauri::async_runtime::block_on(debug_start_with_trust(
+            path_string(&missing),
+            DebugLaunchTarget::PhpListen { port: Some(0) },
+            Vec::new(),
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            Arc::clone(&registry),
+            &trust,
+        ))
+        .expect("debug start response");
+
+        assert!(matches!(response, DebugStartResponse::Error { .. }));
+        assert!(sink.events().is_empty());
+        assert_eq!(registry.session_id_for_root(&path_string(&missing)), None);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn debug_start_trusted_php_listen_creates_session_and_stop_cleans_up() {
+        let root = temp_workspace("debug-php-listen");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingDebugSink::default());
+
+        let response = tauri::async_runtime::block_on(debug_start_with_trust(
+            path_string(&root),
+            DebugLaunchTarget::PhpListen { port: Some(0) },
+            Vec::new(),
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            Arc::clone(&registry),
+            &trust,
+        ))
+        .expect("debug start response");
+
+        assert!(
+            matches!(response, DebugStartResponse::Ok { .. }),
+            "expected Ok debug start, got {response:?}"
+        );
+        let session_id = registry.session_id_for_root(&path_string(&root));
+        assert!(session_id.is_some());
+        if let DebugStartResponse::Ok {
+            session_id: started_id,
+        } = response
+        {
+            assert_eq!(session_id, Some(started_id));
+        }
+
+        let stopped =
+            stop_debug_session_blocking(&registry, session_id.expect("php listen session id"));
+        assert_eq!(stopped, Ok(()));
+        assert_eq!(registry.session_id_for_root(&path_string(&root)), None);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
