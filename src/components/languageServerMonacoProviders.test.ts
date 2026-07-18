@@ -13397,6 +13397,7 @@ function createRegisteredProviders() {
   const bladeCompletionDispose = vi.fn();
   const latteDefinitionDispose = vi.fn();
   const latteCompletionDispose = vi.fn();
+  const latteDocumentFormattingDispose = vi.fn();
   const neonDefinitionDispose = vi.fn();
   const neonCompletionDispose = vi.fn();
   const bladeCodeActionDispose = vi.fn();
@@ -13439,6 +13440,9 @@ function createRegisteredProviders() {
     latteCompletionDispose: ReturnType<typeof vi.fn>;
     latteCompletionLanguage: string | null;
     latteCompletionProvider: any;
+    latteDocumentFormattingDispose: ReturnType<typeof vi.fn>;
+    latteDocumentFormattingLanguage: string | null;
+    latteDocumentFormattingProvider: any;
     latteCodeActionDispose: ReturnType<typeof vi.fn>;
     latteCodeActionLanguage: string | null;
     latteCodeActionMetadata: any;
@@ -13547,6 +13551,9 @@ function createRegisteredProviders() {
     latteCompletionDispose,
     latteCompletionLanguage: null,
     latteCompletionProvider: null,
+    latteDocumentFormattingDispose,
+    latteDocumentFormattingLanguage: null,
+    latteDocumentFormattingProvider: null,
     latteCodeActionDispose: vi.fn(),
     latteCodeActionLanguage: null,
     latteCodeActionMetadata: null,
@@ -13817,6 +13824,12 @@ function createRegisteredProviders() {
         return { dispose: documentHighlightDispose };
       }),
       registerDocumentFormattingEditProvider: vi.fn((language, provider) => {
+        if (language === "latte") {
+          registered.latteDocumentFormattingLanguage = language;
+          registered.latteDocumentFormattingProvider = provider;
+          return { dispose: latteDocumentFormattingDispose };
+        }
+
         registered.documentFormattingLanguage = language;
         registered.documentFormattingProvider = provider;
         return { dispose: documentFormattingDispose };
