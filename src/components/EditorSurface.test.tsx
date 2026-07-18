@@ -21,6 +21,7 @@ import {
 import { defaultKeymapSettings } from "../domain/keymap";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
 import type { EditorChangeHunk } from "../domain/editorChangeMarkers";
+import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { EditorDocument } from "../domain/workspace";
@@ -123,6 +124,7 @@ interface FakeEditor {
   onKeyDown: ReturnType<typeof vi.fn>;
   onMouseDown: ReturnType<typeof vi.fn>;
   onMouseMove: ReturnType<typeof vi.fn>;
+  revealLineInCenter: ReturnType<typeof vi.fn>;
   revealPositionInCenter: ReturnType<typeof vi.fn>;
   setPosition: ReturnType<typeof vi.fn>;
   setScrollTop: ReturnType<typeof vi.fn>;
@@ -4816,6 +4818,362 @@ class InvoiceServiceTest extends TestCase
 
     expect(preventDefault).toHaveBeenCalled();
     expect(onToggleBookmarkAtLine).toHaveBeenCalledWith(3);
+  });
+
+  it("renders no breakpoint or stopped-line decorations without debugger props", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(createElement(EditorSurface, memoGuardProps(activeDocument)));
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          position: { column: 1, lineNumber: 2 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+        },
+      });
+    });
+
+    expect(debugDecorationCalls(editor)).toHaveLength(0);
+    expect(editor.revealLineInCenter).not.toHaveBeenCalled();
+  });
+
+  it("renders breakpoint glyphs on the Left glyph lane per breakpoint state", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\nconst four = 4;\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const breakpoints: Breakpoint[] = [
+      {
+        enabled: true,
+        filePath: activeDocument.path,
+        id: "bp-1",
+        lineNumber: 2,
+        verified: true,
+      },
+      {
+        enabled: true,
+        filePath: activeDocument.path,
+        id: "bp-2",
+        lineNumber: 3,
+        verified: false,
+      },
+      {
+        enabled: false,
+        filePath: activeDocument.path,
+        id: "bp-3",
+        lineNumber: 4,
+      },
+      {
+        enabled: true,
+        filePath: "/workspace/src/other.ts",
+        id: "bp-4",
+        lineNumber: 1,
+        verified: true,
+      },
+    ];
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          breakpoints,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    const decorationCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some((decoration: any) =>
+          decoration.options?.glyphMarginClassName?.includes(
+            "breakpoint-glyph",
+          ),
+        ),
+    );
+    expect(decorationCall?.[1]).toHaveLength(3);
+    expect(decorationCall?.[1]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({
+            glyphMargin: expect.objectContaining({
+              position: monaco.editor.GlyphMarginLane.Left,
+            }),
+            glyphMarginClassName: "breakpoint-glyph breakpoint-glyph-verified",
+            zIndex: 30,
+          }),
+          range: expect.objectContaining({ startLineNumber: 2 }),
+        }),
+        expect.objectContaining({
+          options: expect.objectContaining({
+            glyphMarginClassName:
+              "breakpoint-glyph breakpoint-glyph-unverified",
+          }),
+          range: expect.objectContaining({ startLineNumber: 3 }),
+        }),
+        expect.objectContaining({
+          options: expect.objectContaining({
+            glyphMarginClassName: "breakpoint-glyph breakpoint-glyph-disabled",
+          }),
+          range: expect.objectContaining({ startLineNumber: 4 }),
+        }),
+      ]),
+    );
+  });
+
+  it("toggles a breakpoint on a plain line-numbers gutter click", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    const onToggleBreakpoint = vi.fn();
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          onToggleBreakpoint,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          position: { column: 1, lineNumber: 3 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+        },
+      });
+    });
+
+    expect(onToggleBreakpoint).toHaveBeenCalledWith(
+      "/workspace/src/main.ts",
+      3,
+    );
+
+    onToggleBreakpoint.mockClear();
+    act(() => {
+      editor.mouseDownHandler?.({
+        event: {
+          leftButton: true,
+          metaKey: true,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        },
+        target: {
+          position: { column: 1, lineNumber: 3 },
+          type: monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS,
+        },
+      });
+    });
+
+    expect(onToggleBreakpoint).not.toHaveBeenCalled();
+  });
+
+  it("clears breakpoint glyphs when the active document switches", async () => {
+    const documentA: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "a.ts",
+      path: "/workspace/src/a.ts",
+      savedContent: "",
+    };
+    const documentB: EditorDocument = {
+      content: "const three = 3;\n",
+      language: "typescript",
+      name: "b.ts",
+      path: "/workspace/src/b.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: documentA.path, path: documentA.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const breakpoints: Breakpoint[] = [
+      {
+        enabled: true,
+        filePath: documentA.path,
+        id: "bp-1",
+        lineNumber: 2,
+        verified: true,
+      },
+    ];
+
+    const renderWith = async (activeDocument: EditorDocument) => {
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(activeDocument),
+            breakpoints,
+          }),
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith(documentA);
+    expect(breakpointDecorationCalls(editor).length).toBeGreaterThan(0);
+
+    editor.deltaDecorations.mockClear();
+    model.uri = { fsPath: documentB.path, path: documentB.path };
+    await renderWith(documentB);
+
+    expect(breakpointDecorationCalls(editor)).toHaveLength(0);
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(
+      expect.any(Array),
+      [],
+    );
+  });
+
+  it("highlights and reveals the debugger stopped line for the active document", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    const renderWith = async (
+      debugStoppedLocation: {
+        filePath: string;
+        lineNumber: number;
+      } | null,
+    ) => {
+      await act(async () => {
+        root.render(
+          createElement(EditorSurface, {
+            ...memoGuardProps(activeDocument),
+            debugStoppedLocation,
+          }),
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderWith({ filePath: activeDocument.path, lineNumber: 3 });
+
+    const stoppedCall = editor.deltaDecorations.mock.calls.find(
+      ([, decorations]) =>
+        decorations.some(
+          (decoration: any) =>
+            decoration.options?.className === "debug-stopped-line",
+        ),
+    );
+    expect(stoppedCall?.[1]).toEqual([
+      expect.objectContaining({
+        options: expect.objectContaining({
+          className: "debug-stopped-line",
+          isWholeLine: true,
+        }),
+        range: expect.objectContaining({ startLineNumber: 3 }),
+      }),
+    ]);
+    expect(editor.revealLineInCenter).toHaveBeenCalledWith(3);
+    expect(editor.revealLineInCenter).toHaveBeenCalledTimes(1);
+
+    await renderWith({ filePath: activeDocument.path, lineNumber: 3 });
+
+    expect(editor.revealLineInCenter).toHaveBeenCalledTimes(1);
+
+    editor.deltaDecorations.mockClear();
+    await renderWith(null);
+
+    expect(stoppedLineDecorationCalls(editor)).toHaveLength(0);
+    expect(editor.deltaDecorations).toHaveBeenCalledWith(
+      expect.any(Array),
+      [],
+    );
+  });
+
+  it("ignores a debugger stopped location for a different file", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          debugStoppedLocation: {
+            filePath: "/workspace/src/other.ts",
+            lineNumber: 5,
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(stoppedLineDecorationCalls(editor)).toHaveLength(0);
+    expect(editor.revealLineInCenter).not.toHaveBeenCalled();
   });
 
   it("routes a Cmd+click on code text through go-to-definition on macOS", async () => {
@@ -15923,6 +16281,30 @@ describe("EditorSurface .editorconfig application", () => {
   });
 });
 
+function breakpointDecorationCalls(editor: FakeEditor) {
+  return editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+    decorations.some((decoration: any) =>
+      decoration.options?.glyphMarginClassName?.includes("breakpoint-glyph"),
+    ),
+  );
+}
+
+function stoppedLineDecorationCalls(editor: FakeEditor) {
+  return editor.deltaDecorations.mock.calls.filter(([, decorations]) =>
+    decorations.some(
+      (decoration: any) =>
+        decoration.options?.className === "debug-stopped-line",
+    ),
+  );
+}
+
+function debugDecorationCalls(editor: FakeEditor) {
+  return [
+    ...breakpointDecorationCalls(editor),
+    ...stoppedLineDecorationCalls(editor),
+  ];
+}
+
 function memoGuardProps(
   activeDocument: EditorDocument,
   overrides: Partial<{
@@ -16364,6 +16746,7 @@ function createEditor(model: FakeModel): FakeEditor {
 
       return { dispose: vi.fn() };
     }),
+    revealLineInCenter: vi.fn(),
     revealPositionInCenter: vi.fn(),
     setPosition: vi.fn((nextPosition: EditorPosition) => {
       position = nextPosition;
@@ -16416,6 +16799,7 @@ function createMonaco(model: FakeModel) {
         CONTENT_TEXT: 6,
         GUTTER_GLYPH_MARGIN: 4,
         GUTTER_LINE_DECORATIONS: 3,
+        GUTTER_LINE_NUMBERS: 2,
       },
       OverviewRulerLane: { Left: 1, Right: 4 },
       setModelMarkers: vi.fn(),

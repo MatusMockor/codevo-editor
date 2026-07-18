@@ -2428,6 +2428,45 @@ button {
   background: #ffc266;
 }
 
+.monaco-editor .breakpoint-glyph {
+  position: relative;
+  width: 18px !important;
+  height: 20px;
+  cursor: pointer;
+}
+
+.monaco-editor .breakpoint-glyph::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.monaco-editor .breakpoint-glyph-verified::before {
+  background: var(--color-error);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-error) 35%, transparent);
+}
+
+.monaco-editor .breakpoint-glyph-unverified::before {
+  border: 1.5px solid var(--color-text-muted);
+  background: transparent;
+}
+
+.monaco-editor .breakpoint-glyph-disabled::before {
+  width: 7px;
+  height: 7px;
+  background: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+.monaco-editor .debug-stopped-line {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+}
+
 /* Git blame annotation: inline author + relative date rendered as injected
    `before` text at the start of each line, dimmed so it reads as metadata
    beside the code (the closest Monaco equivalent to PhpStorm's annotate

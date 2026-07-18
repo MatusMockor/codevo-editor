@@ -102,6 +102,7 @@ import {
   phpMoveStatement,
   type MoveStatementDirection,
 } from "../domain/phpMoveStatement";
+import type { Breakpoint } from "../domain/debug";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import {
   gitBlameAnnotation,
@@ -262,7 +263,9 @@ export interface EditorSurfaceProps {
   ): Promise<WorkspaceEditApplicationDecision>;
   clearLanguageServerDiagnosticsForPath?(path: string): void;
   bookmarkedLineNumbers?: readonly number[];
+  breakpoints?: readonly Breakpoint[];
   changeHunks: EditorChangeHunk[];
+  debugStoppedLocation?: { filePath: string; lineNumber: number } | null;
   editorRevealTarget: EditorRevealTarget | null;
   flushPendingJavaScriptTypeScriptLanguageServerDocument?(
     path: string,
@@ -338,6 +341,7 @@ export interface EditorSurfaceProps {
   onCloseFloatingSurface?(): boolean;
   onRunTestAt?(target: PhpTestGutterTarget): void;
   onToggleBookmarkAtLine?(lineNumber: number): void;
+  onToggleBreakpoint?(filePath: string, lineNumber: number): void;
   onToggleGitBlame?(): void;
   onRevealGitBlameCommit?(path: string, sha: string): void;
   provideGitBlame?(path: string): Promise<GitBlameLine[]>;
@@ -469,7 +473,9 @@ function EditorSurfaceComponent({
   applyPhpLanguageServerWorkspaceEdit = async () => ({ kind: "accepted" }),
   clearLanguageServerDiagnosticsForPath = () => undefined,
   bookmarkedLineNumbers = EMPTY_BOOKMARK_LINES,
+  breakpoints = EMPTY_BREAKPOINTS,
   changeHunks,
+  debugStoppedLocation = null,
   editorRevealTarget,
   flushPendingJavaScriptTypeScriptLanguageServerDocument = async () => undefined,
   flushPendingLanguageServerDocument,
@@ -523,6 +529,7 @@ function EditorSurfaceComponent({
   onCloseFloatingSurface,
   onRunTestAt,
   onToggleBookmarkAtLine,
+  onToggleBreakpoint,
   onToggleGitBlame,
   onRevealGitBlameCommit,
   provideGitBlame,
@@ -744,6 +751,8 @@ function EditorSurfaceComponent({
   // Right=test-run) so they never collide with those glyphs or their click
   // handlers, and work on every language (not just PHP).
   const bookmarkDecorationIdsRef = useRef<string[]>([]);
+  const breakpointDecorationIdsRef = useRef<string[]>([]);
+  const debugStoppedDecorationIdsRef = useRef<string[]>([]);
   // Git blame annotations. Rendered as inline `before` injected text at the start
   // of each line (the content area), so they occupy NONE of the four gutter lanes
   // (glyph margin Left=git, Center=impl, Right=test-run; lines-decorations=
@@ -2722,6 +2731,24 @@ function EditorSurfaceComponent({
         return;
       }
 
+      if (targetType === monacoApi.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
+        const lineNumber = event.target.position?.lineNumber;
+        const path = activeDocumentRef.current?.path;
+        const isPlainLeftClick =
+          event.event.leftButton === true &&
+          event.event.ctrlKey !== true &&
+          event.event.metaKey !== true &&
+          event.event.shiftKey !== true &&
+          event.event.altKey !== true;
+
+        if (!onToggleBreakpoint || !isPlainLeftClick || !lineNumber || !path) {
+          return;
+        }
+
+        onToggleBreakpoint(path, lineNumber);
+        return;
+      }
+
       const isGlyphMargin =
         targetType === monacoApi.editor.MouseTargetType.GUTTER_GLYPH_MARGIN;
       const isLineDecorations =
@@ -2802,6 +2829,7 @@ function EditorSurfaceComponent({
     onRevealGitBlameCommit,
     onRunTestAt,
     onToggleBookmarkAtLine,
+    onToggleBreakpoint,
   ]);
 
   // Monaco ships a built-in "go to definition on Cmd/Ctrl" gesture
@@ -2916,6 +2944,95 @@ function EditorSurfaceComponent({
   }, [
     activeDocument?.path,
     bookmarkedLineNumbers,
+    editorApi,
+    monacoApi,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (!activeDocument || !editorApi || !monacoApi) {
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      return;
+    }
+
+    breakpointDecorationIdsRef.current = editorApi.deltaDecorations(
+      breakpointDecorationIdsRef.current,
+      breakpoints
+        .filter((breakpoint) => breakpoint.filePath === activeDocument.path)
+        .map((breakpoint) => toBreakpointDecoration(monacoApi, breakpoint)),
+    );
+
+    return () => {
+      breakpointDecorationIdsRef.current = editorApi.deltaDecorations(
+        breakpointDecorationIdsRef.current,
+        [],
+      );
+    };
+  }, [activeDocument?.path, breakpoints, editorApi, monacoApi, workspaceRoot]);
+
+  useEffect(() => {
+    if (!editorApi || !monacoApi) {
+      return;
+    }
+
+    const clearStoppedLineDecoration = () => {
+      debugStoppedDecorationIdsRef.current = editorApi.deltaDecorations(
+        debugStoppedDecorationIdsRef.current,
+        [],
+      );
+    };
+
+    if (
+      !activeDocument ||
+      !debugStoppedLocation ||
+      debugStoppedLocation.filePath !== activeDocument.path
+    ) {
+      clearStoppedLineDecoration();
+      return;
+    }
+
+    const model = editorApi.getModel();
+
+    if (!model || !modelMatchesProject(model, workspaceRoot, activeDocument.path)) {
+      return;
+    }
+
+    debugStoppedDecorationIdsRef.current = editorApi.deltaDecorations(
+      debugStoppedDecorationIdsRef.current,
+      [
+        {
+          options: {
+            className: "debug-stopped-line",
+            isWholeLine: true,
+            overviewRuler: {
+              color: "#e7c66c",
+              position: monacoApi.editor.OverviewRulerLane.Left,
+            },
+            stickiness:
+              monacoApi.editor.TrackedRangeStickiness
+                .NeverGrowsWhenTypingAtEdges,
+          },
+          range: new monacoApi.Range(
+            debugStoppedLocation.lineNumber,
+            1,
+            debugStoppedLocation.lineNumber,
+            1,
+          ),
+        },
+      ],
+    );
+    editorApi.revealLineInCenter(debugStoppedLocation.lineNumber);
+
+    return clearStoppedLineDecoration;
+  }, [
+    activeDocument?.path,
+    debugStoppedLocation?.filePath,
+    debugStoppedLocation?.lineNumber,
     editorApi,
     monacoApi,
     workspaceRoot,
@@ -5402,6 +5519,7 @@ function currentEditorTextRange(
 // caller actually changes the path set.
 const EMPTY_PATHS: readonly string[] = Object.freeze([]);
 const EMPTY_BOOKMARK_LINES: readonly number[] = Object.freeze([]);
+const EMPTY_BREAKPOINTS: readonly Breakpoint[] = Object.freeze([]);
 const EMPTY_USER_SNIPPETS: readonly UserSnippet[] = Object.freeze([]);
 const noopLocalPhpDiagnosticsChange = () => undefined;
 // Stable empty identities so an absent breadcrumb symbol set / path does not
@@ -5720,6 +5838,42 @@ function toBookmarkDecoration(
       zIndex: 10,
     },
     range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+  };
+}
+
+function breakpointGlyphStateClassName(breakpoint: Breakpoint): string {
+  if (!breakpoint.enabled) {
+    return "breakpoint-glyph-disabled";
+  }
+
+  if (breakpoint.verified === false) {
+    return "breakpoint-glyph-unverified";
+  }
+
+  return "breakpoint-glyph-verified";
+}
+
+function toBreakpointDecoration(
+  monaco: typeof Monaco,
+  breakpoint: Breakpoint,
+): Monaco.editor.IModelDeltaDecoration {
+  return {
+    options: {
+      glyphMargin: {
+        position: monaco.editor.GlyphMarginLane.Left,
+      },
+      glyphMarginClassName: `breakpoint-glyph ${breakpointGlyphStateClassName(breakpoint)}`,
+      isWholeLine: false,
+      stickiness:
+        monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+      zIndex: 30,
+    },
+    range: new monaco.Range(
+      breakpoint.lineNumber,
+      1,
+      breakpoint.lineNumber,
+      1,
+    ),
   };
 }
 
