@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EslintFix } from "../domain/eslintDiagnostics";
+import type {
+  EslintAnalysisResult,
+  EslintFix,
+} from "../domain/eslintDiagnostics";
 import { defaultWorkspaceSettings } from "../domain/settings";
 import type { WorkspaceSettings } from "../domain/settings";
 import type { EditorDocument } from "../domain/workspace";
 import {
   createEslintFixOnSaveParticipant,
+  ESLINT_FIX_ON_SAVE_TIMEOUT_MS,
   eslintFixOnSaveParticipantId,
   orderedDocumentSaveParticipants,
   runDocumentSaveParticipants,
@@ -54,6 +58,24 @@ function participant(
     appliesTo: () => true,
     run: async (content) => content,
     ...overrides,
+  };
+}
+
+function eslintAnalysis(fixes: readonly EslintFix[]): EslintAnalysisResult {
+  return {
+    status: "ok",
+    diagnostics: fixes.map((fix) => ({
+      filePath: "src/main.ts",
+      line: 1,
+      column: 1,
+      endLine: 1,
+      endColumn: 2,
+      message: "Fixable",
+      identifier: "test-rule",
+      severity: 2,
+      fix,
+    })),
+    totals: { errorCount: fixes.length, warningCount: 0, fileCount: 1 },
   };
 }
 
@@ -230,11 +252,20 @@ describe("createEslintFixOnSaveParticipant", () => {
   const fixedContent = "const value = 1;\n";
   const semicolonFix: EslintFix = { range: [16, 17], text: "" };
 
-  it("applies stored ESLint fixes to a clean JS/TS document", async () => {
-    const fixes = [semicolonFix];
+  it("finishes before the generic save-participant timeout", () => {
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: (rootPath, path) =>
-        rootPath === ROOT && path === PATH ? fixes : [],
+      analyseDocument: async () => eslintAnalysis([]),
+    });
+
+    expect(eslintParticipant.timeoutMs).toBe(ESLINT_FIX_ON_SAVE_TIMEOUT_MS);
+    expect(ESLINT_FIX_ON_SAVE_TIMEOUT_MS).toBeLessThan(2_000);
+  });
+
+  it("analyses and fixes the current JS/TS document content", async () => {
+    const fixes = [semicolonFix];
+    const analyseDocument = vi.fn(async () => eslintAnalysis(fixes));
+    const eslintParticipant = createEslintFixOnSaveParticipant({
+      analyseDocument,
     });
     const document = tsDocument(fixableContent);
 
@@ -247,11 +278,17 @@ describe("createEslintFixOnSaveParticipant", () => {
     await expect(
       eslintParticipant.run(fixableContent, context({ document })),
     ).resolves.toBe(fixedContent);
+    expect(analyseDocument).toHaveBeenCalledWith(
+      ROOT,
+      PATH,
+      fixableContent,
+      null,
+    );
   });
 
   it("does not apply when the setting is off or the language is not JS/TS", () => {
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => [semicolonFix],
+      analyseDocument: async () => eslintAnalysis([semicolonFix]),
     });
 
     expect(
@@ -268,20 +305,27 @@ describe("createEslintFixOnSaveParticipant", () => {
     ).toBe(false);
   });
 
-  it("keeps a dirty buffer untouched", async () => {
+  it("fixes a dirty buffer from a fresh analysis of that exact content", async () => {
+    const analyseDocument = vi.fn(async () => eslintAnalysis([semicolonFix]));
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => [semicolonFix],
+      analyseDocument,
     });
     const document = tsDocument(fixableContent, "different saved content");
 
     await expect(
       eslintParticipant.run(fixableContent, context({ document })),
-    ).resolves.toBe(fixableContent);
+    ).resolves.toBe(fixedContent);
+    expect(analyseDocument).toHaveBeenCalledWith(
+      ROOT,
+      PATH,
+      fixableContent,
+      null,
+    );
   });
 
   it("keeps content untouched without workspace trust", async () => {
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => [semicolonFix],
+      analyseDocument: async () => eslintAnalysis([semicolonFix]),
       isWorkspaceTrusted: () => false,
     });
     const document = tsDocument(fixableContent);
@@ -291,9 +335,27 @@ describe("createEslintFixOnSaveParticipant", () => {
     ).resolves.toBe(fixableContent);
   });
 
+  it("drops fixes when workspace trust is revoked during analysis", async () => {
+    let trusted = true;
+    const eslintParticipant = createEslintFixOnSaveParticipant({
+      analyseDocument: async () => {
+        trusted = false;
+        return eslintAnalysis([semicolonFix]);
+      },
+      isWorkspaceTrusted: () => trusted,
+    });
+
+    await expect(
+      eslintParticipant.run(
+        fixableContent,
+        context({ document: tsDocument(fixableContent) }),
+      ),
+    ).resolves.toBe(fixableContent);
+  });
+
   it("keeps content untouched when no fixes are stored", async () => {
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => [],
+      analyseDocument: async () => eslintAnalysis([]),
     });
     const document = tsDocument(fixableContent);
 
@@ -304,7 +366,7 @@ describe("createEslintFixOnSaveParticipant", () => {
 
   it("re-applies the same fixes when a discarded save repeats the same content", async () => {
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => [semicolonFix],
+      analyseDocument: async () => eslintAnalysis([semicolonFix]),
     });
     const document = tsDocument(fixableContent);
 
@@ -316,9 +378,10 @@ describe("createEslintFixOnSaveParticipant", () => {
     ).resolves.toBe(fixedContent);
   });
 
-  it("never re-applies the same analysis result twice", async () => {
+  it("uses fresh offsets for already fixed content", async () => {
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => [{ ...semicolonFix }],
+      analyseDocument: async (_root, _path, content) =>
+        eslintAnalysis(content === fixableContent ? [{ ...semicolonFix }] : []),
     });
     const document = tsDocument(fixableContent);
 
@@ -338,7 +401,7 @@ describe("createEslintFixOnSaveParticipant", () => {
   it("applies a fresh analysis result after a previous apply", async () => {
     let fixes: EslintFix[] = [semicolonFix];
     const eslintParticipant = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => fixes,
+      analyseDocument: async () => eslintAnalysis(fixes),
     });
 
     await expect(
@@ -355,5 +418,22 @@ describe("createEslintFixOnSaveParticipant", () => {
         context({ document: tsDocument(fixedContent) }),
       ),
     ).resolves.toBe("const count = 1;\n");
+  });
+
+  it("drops an analysis result when the save request goes stale", async () => {
+    let stale = false;
+    const eslintParticipant = createEslintFixOnSaveParticipant({
+      analyseDocument: async () => {
+        stale = true;
+        return eslintAnalysis([semicolonFix]);
+      },
+    });
+
+    await expect(
+      eslintParticipant.run(
+        fixableContent,
+        context({ document: tsDocument(fixableContent), isStale: () => stale }),
+      ),
+    ).resolves.toBe(fixableContent);
   });
 });

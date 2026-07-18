@@ -24,6 +24,8 @@
     "qa:projects": "node ./scripts/qa-project-scenarios.mjs --all",
     "qa:projects:manual": "node ./scripts/qa-project-scenarios.mjs --all --manual",
     "qa:projects:preflight": "node ./scripts/qa-project-scenarios.mjs --all --preflight",
+    "schemas:update:typescript": "node ./scripts/update-typescript-config-schemas.mjs",
+    "schemas:check:typescript": "node ./scripts/update-typescript-config-schemas.mjs --check",
     "test": "vitest run"
   },
   "dependencies": {

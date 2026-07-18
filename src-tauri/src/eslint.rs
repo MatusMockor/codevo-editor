@@ -1,15 +1,122 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 const MAX_DIAGNOSTICS: usize = 2_000;
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 const ESLINT_CACHE_DIR: &str = "eslint-cache";
+const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
+const DOCUMENT_ANALYSIS_TIMEOUT: Duration = Duration::from_millis(1_500);
+const WORKSPACE_ANALYSIS_TIMEOUT: Duration = Duration::from_secs(60);
+const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+#[derive(Default)]
+pub struct EslintProcessRegistry {
+    next_id: AtomicU64,
+    processes: Mutex<HashMap<String, HashMap<u64, ActiveEslintProcess>>>,
+}
+
+#[derive(Clone)]
+struct ActiveEslintProcess {
+    process_id: u32,
+    canceled: Arc<AtomicBool>,
+}
+
+impl EslintProcessRegistry {
+    pub fn stop_root(&self, root_path: &Path) {
+        self.stop_key(&workspace_key(root_path));
+    }
+
+    pub fn stop_all(&self) {
+        let active = self
+            .processes
+            .lock()
+            .map(|mut processes| processes.drain().flat_map(|(_, entries)| entries).collect())
+            .unwrap_or_default();
+        stop_active_processes(active);
+    }
+
+    fn stop_key(&self, root_key: &str) {
+        let active = self
+            .processes
+            .lock()
+            .ok()
+            .and_then(|mut processes| processes.remove(root_key))
+            .map(HashMap::into_iter)
+            .map(Iterator::collect)
+            .unwrap_or_default();
+        stop_active_processes(active);
+    }
+
+    fn register(self: &Arc<Self>, root: &Path, process_id: u32) -> EslintProcessRegistration {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let root_key = workspace_key(root);
+        let canceled = Arc::new(AtomicBool::new(false));
+        if let Ok(mut processes) = self.processes.lock() {
+            processes.entry(root_key.clone()).or_default().insert(
+                id,
+                ActiveEslintProcess {
+                    process_id,
+                    canceled: Arc::clone(&canceled),
+                },
+            );
+        }
+        EslintProcessRegistration {
+            registry: Arc::clone(self),
+            root_key,
+            id,
+            canceled,
+        }
+    }
+
+    #[cfg(test)]
+    fn active_count(&self) -> usize {
+        self.processes
+            .lock()
+            .map(|processes| processes.values().map(HashMap::len).sum())
+            .unwrap_or_default()
+    }
+}
+
+struct EslintProcessRegistration {
+    registry: Arc<EslintProcessRegistry>,
+    root_key: String,
+    id: u64,
+    canceled: Arc<AtomicBool>,
+}
+
+impl Drop for EslintProcessRegistration {
+    fn drop(&mut self) {
+        let Ok(mut processes) = self.registry.processes.lock() else {
+            return;
+        };
+        let Some(entries) = processes.get_mut(&self.root_key) else {
+            return;
+        };
+        entries.remove(&self.id);
+        if entries.is_empty() {
+            processes.remove(&self.root_key);
+        }
+    }
+}
+
+fn stop_active_processes(active: Vec<(u64, ActiveEslintProcess)>) {
+    for (_, process) in active {
+        process.canceled.store(true, Ordering::Release);
+        terminate_process_group(process.process_id);
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,19 +167,103 @@ pub enum EslintAnalysisResponse {
 pub async fn run_eslint_analysis(
     root_path: String,
     binary_path: Option<String>,
+    registry: Arc<EslintProcessRegistry>,
 ) -> Result<EslintAnalysisResponse, String> {
     crate::run_blocking_command(move || {
         Ok(run_eslint_analysis_blocking(
             &root_path,
             binary_path.as_deref(),
+            &registry,
+            WORKSPACE_ANALYSIS_TIMEOUT,
         ))
     })
     .await
 }
 
+pub async fn run_eslint_document_analysis(
+    root_path: String,
+    file_path: String,
+    content: String,
+    binary_path: Option<String>,
+    registry: Arc<EslintProcessRegistry>,
+) -> Result<EslintAnalysisResponse, String> {
+    crate::run_blocking_command(move || {
+        Ok(run_eslint_document_analysis_blocking(
+            &root_path,
+            &file_path,
+            &content,
+            binary_path.as_deref(),
+            &registry,
+            DOCUMENT_ANALYSIS_TIMEOUT,
+        ))
+    })
+    .await
+}
+
+fn run_eslint_document_analysis_blocking(
+    root_path: &str,
+    file_path: &str,
+    content: &str,
+    binary_path: Option<&str>,
+    registry: &Arc<EslintProcessRegistry>,
+    timeout: Duration,
+) -> EslintAnalysisResponse {
+    if content.len() > MAX_DOCUMENT_BYTES {
+        return EslintAnalysisResponse::Error {
+            message: format!(
+                "ESLint fix-on-save skipped a document larger than {} MiB.",
+                MAX_DOCUMENT_BYTES / 1024 / 1024
+            ),
+        };
+    }
+
+    let root = match fs::canonicalize(root_path) {
+        Ok(root) => root,
+        Err(error) => {
+            return EslintAnalysisResponse::Error {
+                message: format!("Failed to resolve workspace root: {error}"),
+            };
+        }
+    };
+    let file = match resolve_workspace_file(&root, file_path) {
+        Ok(file) => file,
+        Err(message) => return EslintAnalysisResponse::Error { message },
+    };
+    let binary = match resolve_binary(&root, binary_path) {
+        Ok(Some(binary)) => binary,
+        Ok(None) => return EslintAnalysisResponse::Unavailable { message: None },
+        Err(message) => return EslintAnalysisResponse::Error { message },
+    };
+    let mut command = Command::new(binary);
+    command
+        .args(eslint_document_args(&file))
+        .env("LC_ALL", "C")
+        .current_dir(&root)
+        .stdin(Stdio::piped());
+    configure_process_group(&mut command);
+    let output = match run_managed_eslint(command, &root, Some(content), registry, timeout) {
+        Ok(output) => output,
+        Err(message) => return EslintAnalysisResponse::Error { message },
+    };
+    if matches!(output.status.code(), Some(0 | 1)) {
+        return match parse_eslint_output(&root, &output.stdout) {
+            Ok(response) => response,
+            Err(_) => EslintAnalysisResponse::Error {
+                message: stderr_tail(&output.stderr),
+            },
+        };
+    }
+
+    EslintAnalysisResponse::Error {
+        message: stderr_tail(&output.stderr),
+    }
+}
+
 fn run_eslint_analysis_blocking(
     root_path: &str,
     binary_path: Option<&str>,
+    registry: &Arc<EslintProcessRegistry>,
+    timeout: Duration,
 ) -> EslintAnalysisResponse {
     let root = match fs::canonicalize(root_path) {
         Ok(root) => root,
@@ -90,18 +281,16 @@ fn run_eslint_analysis_blocking(
     let cache_base = std::env::temp_dir()
         .join("mockor-editor")
         .join(ESLINT_CACHE_DIR);
-    let output = match Command::new(binary)
+    let mut command = Command::new(binary);
+    command
         .args(eslint_args(&root, &cache_base))
         .env("LC_ALL", "C")
         .current_dir(&root)
-        .output()
-    {
+        .stdin(Stdio::null());
+    configure_process_group(&mut command);
+    let output = match run_managed_eslint(command, &root, None, registry, timeout) {
         Ok(output) => output,
-        Err(error) => {
-            return EslintAnalysisResponse::Error {
-                message: format!("Failed to run ESLint: {error}"),
-            };
-        }
+        Err(message) => return EslintAnalysisResponse::Error { message },
     };
 
     if matches!(output.status.code(), Some(0 | 1)) {
@@ -116,6 +305,136 @@ fn run_eslint_analysis_blocking(
     EslintAnalysisResponse::Error {
         message: stderr_tail(&output.stderr),
     }
+}
+
+struct ManagedEslintOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn run_managed_eslint(
+    mut command: Command,
+    root: &Path,
+    input: Option<&str>,
+    registry: &Arc<EslintProcessRegistry>,
+    timeout: Duration,
+) -> Result<ManagedEslintOutput, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Failed to run ESLint: {error}"))?;
+    let registration = registry.register(root, child.id());
+    let stdin = child.stdin.take();
+    let stdout_reader = spawn_pipe_reader(child.stdout.take());
+    let stderr_reader = spawn_pipe_reader(child.stderr.take());
+    let input = input.map(str::as_bytes).map(ToOwned::to_owned);
+    let writer = std::thread::spawn(move || {
+        let (Some(mut stdin), Some(input)) = (stdin, input) else {
+            return Ok(());
+        };
+        stdin.write_all(&input).map_err(|error| error.to_string())
+    });
+    let deadline = Instant::now() + timeout;
+
+    let status = loop {
+        if registration.canceled.load(Ordering::Acquire) {
+            terminate_and_reap(&mut child);
+            join_managed_threads(writer, stdout_reader, stderr_reader);
+            return Err("ESLint analysis was canceled because its workspace closed.".to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                terminate_process_group(child.id());
+                terminate_and_reap(&mut child);
+                join_managed_threads(writer, stdout_reader, stderr_reader);
+                return Err(format!(
+                    "ESLint timed out after {} ms.",
+                    timeout.as_millis()
+                ));
+            }
+            Ok(None) => std::thread::sleep(WAIT_POLL_INTERVAL),
+            Err(error) => {
+                terminate_process_group(child.id());
+                terminate_and_reap(&mut child);
+                join_managed_threads(writer, stdout_reader, stderr_reader);
+                return Err(format!("Failed to wait for ESLint: {error}"));
+            }
+        }
+    };
+
+    let write_result = writer
+        .join()
+        .map_err(|_| "ESLint stdin writer panicked.".to_string())?;
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    write_result
+        .map_err(|message| format!("Failed to send the current document to ESLint: {message}"))?;
+    drop(registration);
+    Ok(ManagedEslintOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn spawn_pipe_reader<R>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let Some(mut pipe) = pipe else {
+            return Vec::new();
+        };
+        let mut output = Vec::new();
+        let _ = pipe.read_to_end(&mut output);
+        output
+    })
+}
+
+fn join_managed_threads(
+    writer: std::thread::JoinHandle<Result<(), String>>,
+    stdout_reader: std::thread::JoinHandle<Vec<u8>>,
+    stderr_reader: std::thread::JoinHandle<Vec<u8>>,
+) {
+    let _ = writer.join();
+    let _ = stdout_reader.join();
+    let _ = stderr_reader.join();
+}
+
+fn terminate_and_reap(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(unix)]
+fn configure_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_process_group(process_id: u32) {
+    let Ok(process_group_id) = i32::try_from(process_id) else {
+        return;
+    };
+    unsafe {
+        libc::kill(-process_group_id, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_process_group(_process_id: u32) {}
+
+fn workspace_key(root: &Path) -> String {
+    root.to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 #[derive(Deserialize)]
@@ -221,6 +540,48 @@ fn eslint_args(root: &Path, cache_base: &Path) -> Vec<String> {
     args
 }
 
+fn eslint_document_args(file: &Path) -> Vec<String> {
+    vec![
+        "--stdin".to_string(),
+        "--stdin-filename".to_string(),
+        file.to_string_lossy().into_owned(),
+        "--format".to_string(),
+        "json".to_string(),
+        "--no-color".to_string(),
+        "--no-cache".to_string(),
+    ]
+}
+
+fn resolve_workspace_file(root: &Path, file_path: &str) -> Result<PathBuf, String> {
+    let requested = PathBuf::from(file_path);
+    let candidate = if requested.is_absolute() {
+        requested
+    } else {
+        root.join(requested)
+    };
+    let resolved = if candidate.exists() {
+        candidate
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve ESLint document: {error}"))?
+    } else {
+        let parent = candidate
+            .parent()
+            .ok_or_else(|| "ESLint document has no parent directory.".to_string())?
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve ESLint document parent: {error}"))?;
+        let name = candidate
+            .file_name()
+            .ok_or_else(|| "ESLint document has no file name.".to_string())?;
+        parent.join(name)
+    };
+
+    if resolved.strip_prefix(root).is_err() {
+        return Err("ESLint document must stay inside the workspace root.".to_string());
+    }
+
+    Ok(resolved)
+}
+
 fn workspace_cache_dir(cache_base: &Path, root: &Path) -> PathBuf {
     let normalized_root = root.to_string_lossy().replace('\\', "/");
     cache_base.join(format!("{:016x}", stable_hash(&normalized_root)))
@@ -293,14 +654,16 @@ fn stderr_tail(stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        eslint_args, parse_eslint_output, run_eslint_analysis_blocking, workspace_cache_dir,
-        EslintAnalysisResponse, MAX_DIAGNOSTICS,
+        eslint_args, eslint_document_args, parse_eslint_output, run_eslint_analysis_blocking,
+        run_eslint_document_analysis_blocking, workspace_cache_dir, EslintAnalysisResponse,
+        EslintProcessRegistry, MAX_DIAGNOSTICS,
     };
     use serde_json::json;
     use std::{
         fs,
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
+        sync::Arc,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
     #[cfg(unix)]
     use std::{io::Write, os::unix::fs::PermissionsExt};
@@ -414,7 +777,12 @@ mod tests {
     #[test]
     fn returns_unavailable_without_explicit_or_workspace_binary() {
         let root = temp_workspace("eslint-unavailable");
-        let response = run_eslint_analysis_blocking(root.to_str().expect("root"), None);
+        let response = run_eslint_analysis_blocking(
+            root.to_str().expect("root"),
+            None,
+            &test_registry(),
+            Duration::from_secs(2),
+        );
         assert_eq!(
             response,
             EslintAnalysisResponse::Unavailable { message: None }
@@ -429,6 +797,8 @@ mod tests {
         let response = run_eslint_analysis_blocking(
             root.to_str().expect("root"),
             Some(configured.to_str().expect("binary")),
+            &test_registry(),
+            Duration::from_secs(2),
         );
 
         match response {
@@ -465,12 +835,16 @@ mod tests {
         let ok = run_eslint_analysis_blocking(
             root.to_str().expect("root"),
             Some(exit_one.to_str().expect("binary")),
+            &test_registry(),
+            Duration::from_secs(2),
         );
         assert_eq!(ok_parts(ok).0.len(), 1);
         assert_eq!(
             run_eslint_analysis_blocking(
                 root.to_str().expect("root"),
                 Some(exit_two.to_str().expect("binary")),
+                &test_registry(),
+                Duration::from_secs(2),
             ),
             EslintAnalysisResponse::Error {
                 message: "Could not find config file.\n".to_string(),
@@ -480,6 +854,8 @@ mod tests {
             run_eslint_analysis_blocking(
                 root.to_str().expect("root"),
                 Some(bad_json.to_str().expect("binary")),
+                &test_registry(),
+                Duration::from_secs(2),
             ),
             EslintAnalysisResponse::Error {
                 message: "bad JSON context\n".to_string(),
@@ -525,6 +901,139 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[test]
+    fn builds_current_document_argv_without_a_stale_cache() {
+        assert_eq!(
+            eslint_document_args(Path::new("/workspace/src/current.ts")),
+            vec![
+                "--stdin",
+                "--stdin-filename",
+                "/workspace/src/current.ts",
+                "--format",
+                "json",
+                "--no-color",
+                "--no-cache",
+            ]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn analyses_the_current_buffer_via_stdin_and_rejects_cross_root_paths() {
+        let root = temp_workspace("eslint-current-buffer");
+        let source_dir = root.join("src");
+        fs::create_dir_all(&source_dir).expect("source directory");
+        let file = source_dir.join("current.ts");
+        fs::write(&file, "saved content").expect("saved fixture");
+        let script = executable_script(
+            &root,
+            "stdin-eslint",
+            &format!(
+                "#!/bin/sh\ncontent=$(cat)\n[ \"$content\" = \"dirty current content\" ] || exit 2\nprintf '[{{\"filePath\":\"{}\",\"messages\":[{{\"ruleId\":\"semi\",\"severity\":2,\"message\":\"Fix current buffer\",\"line\":1,\"column\":1,\"fix\":{{\"range\":[0,5],\"text\":\"fixed\"}}}}],\"errorCount\":1,\"warningCount\":0}}]'\n",
+                file.display()
+            ),
+        );
+
+        let response = run_eslint_document_analysis_blocking(
+            root.to_str().expect("root"),
+            file.to_str().expect("file"),
+            "dirty current content",
+            Some(script.to_str().expect("binary")),
+            &test_registry(),
+            Duration::from_secs(2),
+        );
+        let (diagnostics, _) = ok_parts(response);
+        assert_eq!(
+            diagnostics[0].fix.as_ref().map(|fix| fix.text.as_str()),
+            Some("fixed")
+        );
+
+        let outside = root.parent().expect("parent").join("outside.ts");
+        assert!(matches!(
+            run_eslint_document_analysis_blocking(
+                root.to_str().expect("root"),
+                outside.to_str().expect("outside"),
+                "content",
+                Some(script.to_str().expect("binary")),
+                &test_registry(),
+                Duration::from_secs(2),
+            ),
+            EslintAnalysisResponse::Error { message } if message.contains("workspace root")
+        ));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_timeout_kills_and_unregisters_the_process() {
+        let root = temp_workspace("eslint-timeout");
+        let source = root.join("current.ts");
+        fs::write(&source, "const value = 1").expect("source fixture");
+        let script = executable_script(
+            &root,
+            "hanging-eslint",
+            "#!/bin/sh\ncat >/dev/null\nsleep 30\n",
+        );
+        let registry = test_registry();
+
+        let response = run_eslint_document_analysis_blocking(
+            root.to_str().expect("root"),
+            source.to_str().expect("source"),
+            "const value = 2",
+            Some(script.to_str().expect("binary")),
+            &registry,
+            Duration::from_millis(150),
+        );
+
+        assert!(matches!(
+            response,
+            EslintAnalysisResponse::Error { message } if message.contains("timed out")
+        ));
+        assert_eq!(registry.active_count(), 0);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn workspace_close_cancels_only_that_roots_eslint_processes() {
+        let root_a = temp_workspace("eslint-close-a");
+        let root_b = temp_workspace("eslint-close-b");
+        let registry = test_registry();
+        let thread_a = spawn_hanging_document_analysis(&root_a, Arc::clone(&registry));
+        let thread_b = spawn_hanging_document_analysis(&root_b, Arc::clone(&registry));
+        wait_until(Duration::from_secs(2), || registry.active_count() == 2);
+        wait_until(Duration::from_secs(2), || {
+            root_a.join("descendant.pid").exists()
+        });
+        let descendant_pid: i32 = fs::read_to_string(root_a.join("descendant.pid"))
+            .expect("descendant pid")
+            .trim()
+            .parse()
+            .expect("numeric pid");
+
+        registry.stop_root(&root_a);
+        let response_a = thread_a.join().expect("root A analysis thread");
+        assert!(matches!(
+            response_a,
+            EslintAnalysisResponse::Error { message } if message.contains("workspace closed")
+        ));
+        assert_eq!(registry.active_count(), 1);
+        assert!(
+            unsafe { libc::kill(descendant_pid, 0) } != 0,
+            "ESLint descendant {descendant_pid} survived workspace cleanup",
+        );
+
+        registry.stop_all();
+        let response_b = thread_b.join().expect("root B analysis thread");
+        assert!(matches!(
+            response_b,
+            EslintAnalysisResponse::Error { message } if message.contains("workspace closed")
+        ));
+        assert_eq!(registry.active_count(), 0);
+        fs::remove_dir_all(root_a).expect("cleanup root A");
+        fs::remove_dir_all(root_b).expect("cleanup root B");
+    }
+
     fn eslint_file(
         path: &Path,
         error_count: usize,
@@ -563,6 +1072,46 @@ mod tests {
         let path = std::env::temp_dir().join(format!("{label}-{nanos}"));
         fs::create_dir_all(&path).expect("temp workspace");
         path.canonicalize().expect("canonical workspace")
+    }
+
+    fn test_registry() -> Arc<EslintProcessRegistry> {
+        Arc::new(EslintProcessRegistry::default())
+    }
+
+    #[cfg(unix)]
+    fn spawn_hanging_document_analysis(
+        root: &Path,
+        registry: Arc<EslintProcessRegistry>,
+    ) -> std::thread::JoinHandle<EslintAnalysisResponse> {
+        let source = root.join("current.ts");
+        fs::write(&source, "const value = 1").expect("source fixture");
+        let script = executable_script(
+            root,
+            "hanging-eslint",
+            &format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\ncat >/dev/null\nwait\n",
+                root.join("descendant.pid").display()
+            ),
+        );
+        let root = root.to_path_buf();
+        std::thread::spawn(move || {
+            run_eslint_document_analysis_blocking(
+                root.to_str().expect("root"),
+                source.to_str().expect("source"),
+                "const value = 2",
+                Some(script.to_str().expect("binary")),
+                &registry,
+                Duration::from_secs(10),
+            )
+        })
+    }
+
+    fn wait_until(timeout: Duration, predicate: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + timeout;
+        while !predicate() {
+            assert!(std::time::Instant::now() < deadline, "condition timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[cfg(unix)]

@@ -38,4 +38,32 @@ describe("TauriEslintDiagnosticsGateway", () => {
 
     await expect(gateway.analyse("/workspace", null)).resolves.toEqual(result);
   });
+
+  it("analyses the current unsaved document through the document command", async () => {
+    const result = {
+      status: "ok" as const,
+      diagnostics: [],
+      totals: { errorCount: 0, warningCount: 0, fileCount: 0 },
+    };
+    const invokeCommand = vi.fn(async () => result);
+    const gateway = new TauriEslintDiagnosticsGateway(invokeCommand);
+
+    await expect(
+      gateway.analyseDocument(
+        "/workspace-a",
+        "/workspace-a/src/current.ts",
+        "const dirty = true",
+        "/workspace-a/tools/eslint",
+      ),
+    ).resolves.toBe(result);
+    expect(invokeCommand).toHaveBeenCalledWith(
+      "run_eslint_document_analysis",
+      {
+        rootPath: "/workspace-a",
+        filePath: "/workspace-a/src/current.ts",
+        content: "const dirty = true",
+        binaryPath: "/workspace-a/tools/eslint",
+      },
+    );
+  });
 });

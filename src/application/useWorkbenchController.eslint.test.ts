@@ -22,7 +22,10 @@ function options(
     binaryPath: "/tools/eslint",
     currentWorkspaceRootRef: { current: "/workspace" },
     inFlightRef: { current: false },
-    gateway: { analyse: vi.fn(() => resultPromise) },
+    gateway: {
+      analyse: vi.fn(() => resultPromise),
+      analyseDocument: vi.fn(() => resultPromise),
+    },
     replaceEslintDiagnostics: vi.fn(),
     replaceEslintFixes: vi.fn(),
     replaceEslintRetainedDiagnostics: vi.fn(),

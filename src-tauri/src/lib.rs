@@ -400,6 +400,10 @@ fn shutdown_runtime_processes(app: &AppHandle) {
     if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
         supervisor.stop_all();
     }
+
+    if let Some(registry) = app.try_state::<Arc<eslint::EslintProcessRegistry>>() {
+        registry.stop_all();
+    }
 }
 
 #[derive(Serialize)]
@@ -723,6 +727,7 @@ fn dispose_workspace_root(
     debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
     smart_mode_service: State<'_, Mutex<SmartModeService>>,
     terminal_sessions: State<'_, TerminalSupervisor>,
+    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
 ) -> Result<(), String> {
     let root = workspace_root_for_disposal(&root_path);
     let root_key = root.to_string_lossy().into_owned();
@@ -735,6 +740,7 @@ fn dispose_workspace_root(
             workspace_file_change_watch_registry: &*workspace_file_change_watch_registry,
             php_language_servers: &*php_language_servers,
             debug_sessions: &**debug_sessions,
+            eslint_processes: &**eslint_processes,
             terminal_sessions: &*terminal_sessions,
         },
     );
@@ -779,14 +785,19 @@ async fn run_eslint_analysis(
     root_path: String,
     binary_path: Option<String>,
     trust: State<'_, Mutex<WorkspaceTrustService>>,
+    processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
 ) -> Result<eslint::EslintAnalysisResponse, String> {
-    run_eslint_analysis_with_trust(root_path, binary_path, &trust).await
+    run_eslint_analysis_with_trust(root_path, binary_path, &trust, processes.inner().clone()).await
 }
 
-async fn run_eslint_analysis_with_trust(
+#[tauri::command]
+async fn run_eslint_document_analysis(
     root_path: String,
+    file_path: String,
+    content: String,
     binary_path: Option<String>,
-    trust: &Mutex<WorkspaceTrustService>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+    processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
 ) -> Result<eslint::EslintAnalysisResponse, String> {
     let trusted = trust
         .lock()
@@ -800,7 +811,35 @@ async fn run_eslint_analysis_with_trust(
         });
     }
 
-    eslint::run_eslint_analysis(root_path, binary_path).await
+    eslint::run_eslint_document_analysis(
+        root_path,
+        file_path,
+        content,
+        binary_path,
+        processes.inner().clone(),
+    )
+    .await
+}
+
+async fn run_eslint_analysis_with_trust(
+    root_path: String,
+    binary_path: Option<String>,
+    trust: &Mutex<WorkspaceTrustService>,
+    processes: Arc<eslint::EslintProcessRegistry>,
+) -> Result<eslint::EslintAnalysisResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(eslint::EslintAnalysisResponse::Unavailable {
+            message: Some("Trust this workspace to run ESLint.".to_string()),
+        });
+    }
+
+    eslint::run_eslint_analysis(root_path, binary_path, processes).await
 }
 
 #[tauri::command]
@@ -3430,11 +3469,17 @@ fn set_workspace_trust(
     root_path: String,
     trusted: bool,
     service: State<'_, Mutex<WorkspaceTrustService>>,
+    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
 ) -> Result<WorkspaceTrustState, String> {
     let mut service = service.lock().map_err(|error| error.to_string())?;
-    service
+    let state = service
         .set(&root_path, trusted)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    drop(service);
+    if !trusted {
+        eslint_processes.stop_root(&workspace_root_for_disposal(&root_path));
+    }
+    Ok(state)
 }
 
 #[tauri::command]
@@ -9659,6 +9704,7 @@ mod tests {
             path_string(&root),
             None,
             &trust,
+            Arc::new(super::eslint::EslintProcessRegistry::default()),
         ))
         .expect("eslint response");
 
@@ -9796,6 +9842,7 @@ mod tests {
             path_string(&root),
             None,
             &trust,
+            Arc::new(super::eslint::EslintProcessRegistry::default()),
         ))
         .expect("eslint response");
 
@@ -10450,6 +10497,7 @@ pub fn run() {
         .manage(WorkspaceFileChangeWatchRegistry::new())
         .manage(WorkspaceIndexLifecycle::new())
         .manage(Arc::new(DebugSessionRegistry::new()))
+        .manage(Arc::new(eslint::EslintProcessRegistry::default()))
         .manage(TerminalSupervisor::new())
         .manage(WorkspaceRegistry::new())
         .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
@@ -10561,6 +10609,7 @@ pub fn run() {
             resize_terminal_session,
             revert_git_files,
             run_eslint_analysis,
+            run_eslint_document_analysis,
             run_phpstan_analysis,
             run_pint_format,
             run_prettier_format,

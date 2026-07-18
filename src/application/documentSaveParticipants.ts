@@ -1,6 +1,6 @@
 import {
   applyEslintFixes,
-  type EslintFix,
+  type EslintAnalysisResult,
 } from "../domain/eslintDiagnostics";
 import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { WorkspaceSettings } from "../domain/settings";
@@ -150,23 +150,26 @@ export function orderedDocumentSaveParticipants(
 }
 
 export const eslintFixOnSaveParticipantId = "eslint.fixAll";
+export const ESLINT_FIX_ON_SAVE_TIMEOUT_MS = 1_800;
 
 export interface EslintFixOnSaveParticipantDependencies {
-  eslintFixesForFile(rootPath: string, path: string): readonly EslintFix[];
+  analyseDocument(
+    rootPath: string,
+    path: string,
+    content: string,
+    binaryPath: string | null,
+  ): Promise<EslintAnalysisResult>;
   isWorkspaceTrusted?(): boolean;
 }
 
 export function createEslintFixOnSaveParticipant(
   dependencies: EslintFixOnSaveParticipantDependencies,
 ): DocumentSaveParticipant {
-  const { eslintFixesForFile, isWorkspaceTrusted = () => true } = dependencies;
-  const appliedFixApplications = new Map<
-    string,
-    { signature: string; appliedToContent: string }
-  >();
+  const { analyseDocument, isWorkspaceTrusted = () => true } = dependencies;
 
   return {
     id: eslintFixOnSaveParticipantId,
+    timeoutMs: ESLINT_FIX_ON_SAVE_TIMEOUT_MS,
     appliesTo: (document, settings) =>
       settings.eslintFixOnSave &&
       isJavaScriptTypeScriptLanguageServerDocument(document),
@@ -174,39 +177,30 @@ export function createEslintFixOnSaveParticipant(
       if (!isWorkspaceTrusted()) {
         return content;
       }
-      if (content !== context.document.savedContent) {
+      if (context.isStale()) {
         return content;
       }
 
-      const fixes = eslintFixesForFile(
+      const result = await analyseDocument(
         context.requestedRoot,
         context.document.path,
+        content,
+        context.settings.eslintPath,
       );
-      if (fixes.length === 0) {
-        return content;
-      }
-
-      const fileKey = `${context.requestedRoot}\n${context.document.path}`;
-      const signature = JSON.stringify(fixes);
-      const previous = appliedFixApplications.get(fileKey);
       if (
-        previous &&
-        previous.signature === signature &&
-        previous.appliedToContent !== content
+        context.isStale() ||
+        !isWorkspaceTrusted() ||
+        result.status !== "ok"
       ) {
         return content;
       }
 
-      const applied = applyEslintFixes(content, fixes);
-      if (applied.appliedCount === 0) {
-        return content;
-      }
+      const fixes = result.diagnostics.flatMap((diagnostic) =>
+        diagnostic.fix ? [diagnostic.fix] : [],
+      );
 
-      appliedFixApplications.set(fileKey, {
-        signature,
-        appliedToContent: content,
-      });
-      return applied.content;
+      const applied = applyEslintFixes(content, fixes);
+      return applied.appliedCount > 0 ? applied.content : content;
     },
   };
 }

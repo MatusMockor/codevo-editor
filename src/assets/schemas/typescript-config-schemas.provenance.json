@@ -1,0 +1,22 @@
+{
+  "formatVersion": 1,
+  "license": {
+    "spdx": "Apache-2.0",
+    "source": "LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  "repository": "https://github.com/SchemaStore/schemastore",
+  "revision": "629566321ad1975fe8e490fb91e708b6c7c5b844",
+  "schemas": [
+    {
+      "source": "src/schemas/json/tsconfig.json",
+      "target": "tsconfig.schema.json",
+      "sha256": "428fda18db7955815d93b9b5266798baaa638c9fac5959d00efc6fceeaabc5bf"
+    },
+    {
+      "source": "src/schemas/json/jsconfig.json",
+      "target": "jsconfig.schema.json",
+      "sha256": "586309622e0a5651303183e893f3bcee46192f27f0817ad78d0b2ae6e04c0e38"
+    }
+  ]
+}

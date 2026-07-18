@@ -1065,8 +1065,21 @@ describe("useDocumentSaveLifecycle", () => {
     const content = "const value = 1;;\n";
     const clean = { ...document(content, content), language: "typescript" };
     const eslintFixOnSave = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: (rootPath, path) =>
-        rootPath === ROOT && path === PATH ? [{ range: [16, 17], text: "" }] : [],
+      analyseDocument: async () => ({
+        status: "ok",
+        diagnostics: [{
+          filePath: "src/file.ts",
+          line: 1,
+          column: 1,
+          endLine: 1,
+          endColumn: 2,
+          message: "Fixable",
+          identifier: "test-rule",
+          severity: 2,
+          fix: { range: [16, 17], text: "" },
+        }],
+        totals: { errorCount: 1, warningCount: 0, fileCount: 1 },
+      }),
     });
     const harness = renderLifecycle({
       activeDocument: clean,
@@ -1108,7 +1121,11 @@ describe("useDocumentSaveLifecycle", () => {
     const content = "const value = 1;;\n";
     const clean = { ...document(content, content), language: "typescript" };
     const eslintFixOnSave = createEslintFixOnSaveParticipant({
-      eslintFixesForFile: () => [{ range: [16, 17], text: "" }],
+      analyseDocument: async () => ({
+        status: "ok",
+        diagnostics: [],
+        totals: { errorCount: 0, warningCount: 0, fileCount: 0 },
+      }),
     });
     const harness = renderLifecycle({
       activeDocument: clean,

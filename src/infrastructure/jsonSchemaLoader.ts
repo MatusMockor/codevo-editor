@@ -59,9 +59,15 @@ export const BUNDLED_JSON_SCHEMAS: BundledJsonSchema[] = [
   },
   {
     uri: "editor://schemas/tsconfig.json",
-    fileMatch: ["tsconfig.json", "tsconfig.*.json", "jsconfig.json"],
+    fileMatch: ["tsconfig.json", "tsconfig.*.json"],
     load: async () =>
       (await import("../assets/schemas/tsconfig.schema.json")).default,
+  },
+  {
+    uri: "editor://schemas/jsconfig.json",
+    fileMatch: ["jsconfig.json", "jsconfig.*.json"],
+    load: async () =>
+      (await import("../assets/schemas/jsconfig.schema.json")).default,
   },
 ];
 

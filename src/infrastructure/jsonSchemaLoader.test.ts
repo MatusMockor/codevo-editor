@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -50,7 +51,8 @@ describe("loadJsonSchemaForDocument", () => {
     ["/project/apps/site/package.json", "editor://schemas/package.json"],
     ["/project/tsconfig.json", "editor://schemas/tsconfig.json"],
     ["/project/tsconfig.build.json", "editor://schemas/tsconfig.json"],
-    ["/project/packages/lib/jsconfig.json", "editor://schemas/tsconfig.json"],
+    ["/project/packages/lib/jsconfig.json", "editor://schemas/jsconfig.json"],
+    ["/project/packages/lib/jsconfig.test.json", "editor://schemas/jsconfig.json"],
   ])("registers the bundled schema matching %s", async (path, uri) => {
     const jsonDefaults = fakeJsonDefaults();
     const schema = { type: "object", properties: { name: { type: "string" } } };
@@ -178,6 +180,7 @@ describe("loadJsonSchemaForDocument", () => {
       "/workspace-e/tsconfig.json",
       "/workspace-f/tsconfig.node.json",
       "/workspace-g/jsconfig.json",
+      "/workspace-h/jsconfig.test.json",
     ]) {
       await loadJsonSchemaForDocument(
         monaco,
@@ -194,10 +197,38 @@ describe("loadJsonSchemaForDocument", () => {
       "editor://schemas/package.json",
       "editor://schemas/composer.json",
       "editor://schemas/tsconfig.json",
+      "editor://schemas/jsconfig.json",
     ]);
     expect(loads.get("editor://schemas/package.json")).toHaveBeenCalledTimes(1);
     expect(loads.get("editor://schemas/composer.json")).toHaveBeenCalledTimes(1);
     expect(loads.get("editor://schemas/tsconfig.json")).toHaveBeenCalledTimes(1);
+    expect(loads.get("editor://schemas/jsconfig.json")).toHaveBeenCalledTimes(1);
+  });
+
+  it("bundles the complete pinned SchemaStore TypeScript and JavaScript schemas", () => {
+    const tsconfigPath = fileURLToPath(
+      new URL("../assets/schemas/tsconfig.schema.json", import.meta.url),
+    );
+    const jsconfigPath = fileURLToPath(
+      new URL("../assets/schemas/jsconfig.schema.json", import.meta.url),
+    );
+    const tsconfigContent = readFileSync(tsconfigPath, "utf8");
+    const jsconfigContent = readFileSync(jsconfigPath, "utf8");
+    const tsconfig = JSON.parse(tsconfigContent);
+    const jsconfig = JSON.parse(jsconfigContent);
+
+    expect(tsconfigContent.length).toBeGreaterThan(400_000);
+    expect(jsconfigContent.length).toBeGreaterThan(90_000);
+    expect(tsconfig.definitions.compilerOptionsDefinition).toBeDefined();
+    expect(
+      tsconfig.definitions.compilerOptionsDefinition.properties.compilerOptions
+        .properties.rewriteRelativeImportExtensions,
+    ).toBeDefined();
+    expect(jsconfig.$id).toBe("https://json.schemastore.org/jsconfig.json");
+    expect(
+      jsconfig.definitions.compilerOptionsDefinition.properties.compilerOptions
+        .anyOf[0].properties.checkJs,
+    ).toBeDefined();
   });
 
   it("reads the local $schema file and registers it inline so Monaco never hits the request service", async () => {
@@ -376,10 +407,36 @@ describe("loadJsonSchemaForDocument", () => {
 });
 
 describe("bundled JSON schema assets", () => {
+  it("matches pinned SchemaStore provenance and records its license", () => {
+    const provenance = readBundledSchemaAsset(
+      "typescript-config-schemas.provenance.json",
+    ) as {
+      formatVersion: number;
+      revision: string;
+      license: { spdx: string; source: string; sha256: string };
+      schemas: Array<{ target: string; sha256: string }>;
+    };
+
+    expect(provenance.formatVersion).toBe(1);
+    expect(provenance.revision).toMatch(/^[0-9a-f]{40}$/);
+    expect(provenance.license).toEqual({
+      spdx: "Apache-2.0",
+      source: "LICENSE",
+      sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    for (const schema of provenance.schemas) {
+      const content = readBundledSchemaBuffer(schema.target);
+      expect(createHash("sha256").update(content).digest("hex")).toBe(
+        schema.sha256,
+      );
+    }
+  });
+
   it.each([
     "composer.schema.json",
     "package.schema.json",
     "tsconfig.schema.json",
+    "jsconfig.schema.json",
   ])("%s contains no remote $ref", (fileName) => {
     const schema = readBundledSchemaAsset(fileName);
     const remoteRefs: string[] = [];
@@ -391,8 +448,14 @@ describe("bundled JSON schema assets", () => {
 
   it("tsconfig.schema.json exposes the top-level tsconfig sections", () => {
     const schema = readBundledSchemaAsset("tsconfig.schema.json");
+    const definitionKeys = Object.values(
+      schema.definitions as Record<
+        string,
+        { properties?: Record<string, unknown> }
+      >,
+    ).flatMap((definition) => Object.keys(definition.properties ?? {}));
 
-    expect(Object.keys(schema.properties as Record<string, unknown>)).toEqual(
+    expect(definitionKeys).toEqual(
       expect.arrayContaining([
         "compilerOptions",
         "include",
@@ -408,11 +471,25 @@ describe("bundled JSON schema assets", () => {
   it("tsconfig.schema.json describes the most-used compilerOptions with enums", () => {
     const schema = readBundledSchemaAsset("tsconfig.schema.json");
     const compilerOptions = (
-      schema.properties as Record<
+      schema.definitions as Record<
         string,
-        { properties: Record<string, { enum?: string[]; description?: string }> }
+        {
+          properties?: Record<
+            string,
+            {
+              properties?: Record<
+                string,
+                {
+                  enum?: string[];
+                  anyOf?: Array<{ enum?: string[] }>;
+                  description?: string;
+                }
+              >;
+            }
+          >;
+        }
       >
-    ).compilerOptions.properties;
+    ).compilerOptionsDefinition.properties?.compilerOptions.properties ?? {};
 
     for (const option of [
       "target",
@@ -462,30 +539,43 @@ describe("bundled JSON schema assets", () => {
       ).toBeTruthy();
     }
 
-    expect(compilerOptions.target.enum).toEqual(
+    const enumValues = (option: {
+      enum?: string[];
+      anyOf?: Array<{ enum?: string[] }>;
+    }): string[] => [
+      ...(option.enum ?? []),
+      ...(option.anyOf ?? []).flatMap((candidate) => candidate.enum ?? []),
+    ];
+
+    expect(enumValues(compilerOptions.target)).toEqual(
       expect.arrayContaining(["es5", "es2022", "esnext"]),
     );
-    expect(compilerOptions.module.enum).toEqual(
+    expect(enumValues(compilerOptions.module)).toEqual(
       expect.arrayContaining(["commonjs", "esnext", "node16", "nodenext", "preserve"]),
     );
-    expect(compilerOptions.moduleResolution.enum).toEqual(
+    expect(enumValues(compilerOptions.moduleResolution)).toEqual(
       expect.arrayContaining(["node16", "nodenext", "bundler"]),
     );
-    expect(compilerOptions.jsx.enum).toEqual(
+    expect(enumValues(compilerOptions.jsx)).toEqual(
       expect.arrayContaining(["preserve", "react-jsx", "react-jsxdev"]),
     );
-    expect(compilerOptions.moduleDetection.enum).toEqual(
+    expect(enumValues(compilerOptions.moduleDetection)).toEqual(
       expect.arrayContaining(["auto", "legacy", "force"]),
     );
   });
 });
 
 function readBundledSchemaAsset(fileName: string): Record<string, unknown> {
-  const path = fileURLToPath(
-    new URL(`../assets/schemas/${fileName}`, import.meta.url),
-  );
+  return JSON.parse(readBundledSchemaBuffer(fileName).toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+}
 
-  return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+function readBundledSchemaBuffer(fileName: string): Buffer {
+  return readFileSync(
+    fileURLToPath(new URL(`../assets/schemas/${fileName}`, import.meta.url)),
+  );
 }
 
 function collectRemoteRefs(value: unknown, remoteRefs: string[]): void {

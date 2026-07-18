@@ -5791,8 +5791,6 @@ export function useWorkbenchController(
     [editorSessionOwnerKeyForRoot, setEditorRevealTarget],
   );
 
-  const eslintFixesByRootRef = useRef(eslintFixesByRoot);
-  eslintFixesByRootRef.current = eslintFixesByRoot;
   const workspaceTrustedRef = useRef(workspaceTrust?.trusted === true);
   workspaceTrustedRef.current = workspaceTrust?.trusted === true;
   const prettierFormattingGateway =
@@ -5801,8 +5799,13 @@ export function useWorkbenchController(
     () =>
       orderedDocumentSaveParticipants({
         eslintFixOnSave: createEslintFixOnSaveParticipant({
-          eslintFixesForFile: (rootPath, path) =>
-            eslintFixesByRootRef.current[rootPath]?.[path] ?? [],
+          analyseDocument: (rootPath, path, content, binaryPath) =>
+            eslintDiagnosticsGateway.analyseDocument(
+              rootPath,
+              path,
+              content,
+              binaryPath,
+            ),
           isWorkspaceTrusted: () => workspaceTrustedRef.current,
         }),
         prettierFormatOnSave: createPrettierSaveParticipant({

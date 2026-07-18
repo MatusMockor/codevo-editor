@@ -47,6 +47,12 @@ export interface EslintDiagnosticsGateway {
     rootPath: string,
     binaryPath: string | null,
   ): Promise<EslintAnalysisResult>;
+  analyseDocument(
+    rootPath: string,
+    filePath: string,
+    content: string,
+    binaryPath: string | null,
+  ): Promise<EslintAnalysisResult>;
 }
 
 export function applyEslintFixes(
