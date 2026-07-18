@@ -4,6 +4,7 @@ import { act, useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vitest";
 import type { Bookmark } from "../domain/bookmarks";
+import type { Breakpoint } from "../domain/debug";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import {
   createInitialEditorGroupsState,
@@ -31,6 +32,7 @@ import {
 import {
   useWorkspaceStateCache,
   workspaceIdentityStateCacheKey,
+  type CachedWorkspaceWorkbenchState,
   type WorkspaceStateCache,
 } from "./useWorkspaceStateCache";
 
@@ -115,6 +117,7 @@ const MARKDOWN_PREVIEW_B: MarkdownPreviewTab = {
 interface HarnessStateView {
   bookmarks: Bookmark[];
   bottomPanelVisible: boolean;
+  debugBreakpoints: Breakpoint[];
   expandedDirectories: Set<string>;
   indexProgress: IndexProgressState;
   sidebarView: SidebarView;
@@ -124,6 +127,7 @@ interface HarnessStateView {
 interface HarnessSetters {
   setBookmarks: (bookmarks: Bookmark[]) => void;
   setBottomPanelVisible: (visible: boolean) => void;
+  setDebugBreakpoints: (breakpoints: Breakpoint[]) => void;
   setExpandedDirectories: (directories: Set<string>) => void;
   setIndexProgress: (progress: IndexProgressState) => void;
   setSidebarView: (view: SidebarView) => void;
@@ -145,6 +149,11 @@ function renderWorkspaceStateCacheHarness() {
   function Harness() {
     const editorSession = useEditorSessionState();
     const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+    const [debugBreakpoints, setDebugBreakpoints] = useState<Breakpoint[]>([]);
+    const restoreBreakpoints = useCallback(
+      (breakpoints: Breakpoint[]) => setDebugBreakpoints(breakpoints),
+      [],
+    );
     const [bottomPanelView, setBottomPanelView] =
       useState<BottomPanelView>("problems");
     const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
@@ -185,6 +194,7 @@ function renderWorkspaceStateCacheHarness() {
       bookmarks,
       bottomPanelView,
       bottomPanelVisible,
+      breakpoints: debugBreakpoints,
       entriesByDirectory,
       expandedDirectories,
       indexHealthLogs,
@@ -193,6 +203,7 @@ function renderWorkspaceStateCacheHarness() {
       navigationHistory,
       recentFiles,
       recentLocations,
+      restoreBreakpoints,
       restoreCachedIndexState,
       restoreEditorSurface: editorSession.restoreEditorSurface,
       restoreHistory,
@@ -214,6 +225,7 @@ function renderWorkspaceStateCacheHarness() {
     captured.setters = {
       setBookmarks,
       setBottomPanelVisible,
+      setDebugBreakpoints,
       setExpandedDirectories,
       setIndexProgress,
       setSidebarView,
@@ -222,6 +234,7 @@ function renderWorkspaceStateCacheHarness() {
     captured.state = {
       bookmarks,
       bottomPanelVisible,
+      debugBreakpoints,
       expandedDirectories,
       indexProgress,
       sidebarView,
@@ -314,6 +327,41 @@ function seedWorkspaceB(
 }
 
 describe("useWorkspaceStateCache", () => {
+  it("captures and restores debug breakpoints with the workspace state", () => {
+    const harness = renderWorkspaceStateCacheHarness();
+    const breakpoint: Breakpoint = {
+      id: "bp-1",
+      filePath: `${ROOT_A}/src/a.ts`,
+      lineNumber: 5,
+      enabled: true,
+    };
+
+    seedWorkspaceA(harness);
+    act(() => {
+      harness.setters().setDebugBreakpoints([breakpoint]);
+    });
+    harness.api().cacheCurrentWorkspaceState(ROOT_A);
+    act(() => {
+      harness.setters().setDebugBreakpoints([]);
+    });
+
+    const cached = harness.api().resolveCachedWorkspaceState(ROOT_A);
+    expect(cached).not.toBeNull();
+    expect(cached?.breakpoints).toEqual([breakpoint]);
+
+    act(() => {
+      harness
+        .api()
+        .restoreCachedWorkspaceState(
+          ROOT_A,
+          cached as CachedWorkspaceWorkbenchState,
+        );
+    });
+
+    expect(harness.state().debugBreakpoints).toEqual([breakpoint]);
+    harness.unmount();
+  });
+
   it("captures identity-backed state under its stable workspace id key", () => {
     const harness = renderWorkspaceStateCacheHarness();
     const identity = workspaceIdentity(

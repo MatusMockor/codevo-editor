@@ -1,5 +1,4 @@
 import type {
-  WorkspaceSessionBottomPanelView,
   WorkspaceSessionSidebarView,
   WorkspaceSessionState,
   WorkspaceSessionViewState,
@@ -17,6 +16,7 @@ import {
   isPersistableEditorDocumentPath,
   restoredActivePath,
 } from "../domain/workspaceSessionSnapshot";
+import type { BottomPanelView } from "../domain/bottomPanel";
 
 export { isPersistableEditorDocumentPath, restoredActivePath };
 
@@ -121,7 +121,7 @@ export function currentWorkspaceSession(
   openPaths: string[],
   activePath: string | null,
   sidebarView: WorkspaceSessionSidebarView,
-  bottomPanelView: WorkspaceSessionBottomPanelView,
+  bottomPanelView: BottomPanelView,
   previewPath: string | null = null,
   viewStates: Record<string, WorkspaceSessionViewState> = {},
 ): WorkspaceSessionState {
@@ -141,7 +141,7 @@ export function currentWorkspaceSessionForEditorGroups(
   rootPath: string,
   editor: EditorGroupsState,
   sidebarView: WorkspaceSessionSidebarView,
-  bottomPanelView: WorkspaceSessionBottomPanelView,
+  bottomPanelView: BottomPanelView,
   viewStates: Record<string, Record<string, WorkspaceSessionViewState>> = {},
   restorablePaths?: ReadonlySet<string>,
 ): WorkspaceSessionState {
@@ -277,9 +277,13 @@ export function restoredBottomPanelView(
 }
 
 export function persistedBottomPanelView(
-  view: WorkspaceSessionState["bottomPanelView"],
+  view: BottomPanelView,
 ): WorkspaceSessionState["bottomPanelView"] {
   if (view === "terminal") {
+    return "problems";
+  }
+
+  if (view === "debug") {
     return "problems";
   }
 

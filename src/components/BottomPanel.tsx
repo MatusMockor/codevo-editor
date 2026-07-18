@@ -28,9 +28,11 @@ import type { PhpTestCase, PhpTestRunOk } from "../domain/phpTestResults";
 import type { TestCase, TestRunOk } from "../domain/testResults";
 import { PhpTestResultsPanel } from "./PhpTestResultsPanel";
 import { JsTestResultsPanel } from "./JsTestResultsPanel";
+import { DebugPanel, type DebugPanelProps } from "./DebugPanel";
 
 interface BottomPanelProps {
   activeView: WorkbenchBottomPanelView;
+  debug?: DebugPanelProps;
   artisanRoutes?: ArtisanRoute[];
   artisanRoutesError?: string | null;
   artisanRoutesLoading?: boolean;
@@ -96,6 +98,7 @@ const bottomPanelViews: WorkbenchBottomPanelView[] = [
   "runtime",
   "history",
   "terminal",
+  "debug",
 ];
 const LazyTerminalPanel = lazy(() =>
   import("./TerminalPanel").then((module) => ({
@@ -105,6 +108,7 @@ const LazyTerminalPanel = lazy(() =>
 
 export function BottomPanel({
   activeView,
+  debug,
   artisanRoutes = [],
   artisanRoutesError = null,
   artisanRoutesLoading = false,
@@ -222,6 +226,7 @@ export function BottomPanel({
 
   const activePanel = renderActivePanel({
     activeView,
+    debug,
     artisanRoutes,
     artisanRoutesError,
     artisanRoutesLoading,
@@ -433,6 +438,7 @@ export function BottomPanel({
 
 interface RenderActivePanelOptions {
   activeView: WorkbenchBottomPanelView;
+  debug?: DebugPanelProps;
   artisanRoutes: ArtisanRoute[];
   artisanRoutesError: string | null;
   artisanRoutesLoading: boolean;
@@ -497,6 +503,7 @@ const splitTestResultsStyles = {
 
 function renderActivePanel({
   activeView,
+  debug,
   artisanRoutes,
   artisanRoutesError,
   artisanRoutesLoading,
@@ -539,6 +546,14 @@ function renderActivePanel({
   getLatencySnapshot,
   workspaceRoot,
 }: RenderActivePanelOptions) {
+  if (activeView === "debug") {
+    if (!debug) {
+      return null;
+    }
+
+    return <DebugPanel {...debug} />;
+  }
+
   if (activeView === "testResults") {
     const phpPanel = (
       <PhpTestResultsPanel

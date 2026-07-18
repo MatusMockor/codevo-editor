@@ -5,6 +5,7 @@ import {
   documentSessionPathTransitionForOpenedPath,
   isPersistableEditorDocumentPath,
   isSessionPathInWorkspace,
+  persistedBottomPanelView,
   pinDocumentSessionPath,
   replaceableDocumentSessionPreview,
   restoredActivePath,
@@ -316,6 +317,12 @@ describe("documentSessionState", () => {
   it("restores terminal bottom panel sessions as problems", () => {
     expect(restoredBottomPanelView("terminal")).toBe("problems");
     expect(restoredBottomPanelView("runtime")).toBe("runtime");
+  });
+
+  it("persists transient bottom panel views as problems", () => {
+    expect(persistedBottomPanelView("terminal")).toBe("problems");
+    expect(persistedBottomPanelView("debug")).toBe("problems");
+    expect(persistedBottomPanelView("runtime")).toBe("runtime");
   });
 
   it("compares workspace sessions by active path, views, and ordered paths", () => {

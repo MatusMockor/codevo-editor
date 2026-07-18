@@ -8,6 +8,7 @@ describe("bottomPanelLabel", () => {
     ["history", "History"],
     ["terminal", "Terminal"],
     ["runtime", "Runtime"],
+    ["debug", "Debug"],
   ])("labels the %s view", (view, label) => {
     expect(bottomPanelLabel(view)).toBe(label);
   });

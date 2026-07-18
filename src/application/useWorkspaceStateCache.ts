@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { Bookmark } from "../domain/bookmarks";
 import type { BottomPanelView } from "../domain/bottomPanel";
+import type { Breakpoint } from "../domain/debug";
 import type {
   IndexHealthLogEntry,
   IndexProgressState,
@@ -25,6 +26,7 @@ export interface CachedWorkspaceWorkbenchState {
   bookmarks: Bookmark[];
   bottomPanelView: BottomPanelView;
   bottomPanelVisible: boolean;
+  breakpoints?: Breakpoint[];
   editorSurface: EditorSurfaceSnapshot;
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
@@ -42,6 +44,7 @@ export interface WorkspaceStateCacheDependencies {
   bookmarks: Bookmark[];
   bottomPanelView: BottomPanelView;
   bottomPanelVisible: boolean;
+  breakpoints?: Breakpoint[];
   entriesByDirectory: Record<string, FileEntry[]>;
   expandedDirectories: Set<string>;
   indexHealthLogs: IndexHealthLogEntry[];
@@ -50,6 +53,7 @@ export interface WorkspaceStateCacheDependencies {
   navigationHistory: NavigationHistory;
   recentFiles: RecentFileEntry[];
   recentLocations: RecentLocation[];
+  restoreBreakpoints?: (breakpoints: Breakpoint[]) => void;
   restoreCachedIndexState: (
     indexProgress: IndexProgressState,
     indexHealthLogs: IndexHealthLogEntry[],
@@ -107,6 +111,7 @@ export function useWorkspaceStateCache(
     bookmarks,
     bottomPanelView,
     bottomPanelVisible,
+    breakpoints,
     entriesByDirectory,
     expandedDirectories,
     indexHealthLogs,
@@ -115,6 +120,7 @@ export function useWorkspaceStateCache(
     navigationHistory,
     recentFiles,
     recentLocations,
+    restoreBreakpoints,
     restoreCachedIndexState,
     restoreEditorSurface,
     restoreHistory,
@@ -229,6 +235,7 @@ export function useWorkspaceStateCache(
         bookmarks,
         bottomPanelView,
         bottomPanelVisible,
+        breakpoints,
         editorSurface: snapshotEditorSurface(rootPath),
         entriesByDirectory,
         expandedDirectories: new Set(expandedDirectories),
@@ -246,6 +253,7 @@ export function useWorkspaceStateCache(
       bookmarks,
       bottomPanelView,
       bottomPanelVisible,
+      breakpoints,
       coalesceWorkspaceStateCache,
       entriesByDirectory,
       manuallyCollapsedDirectories,
@@ -273,6 +281,7 @@ export function useWorkspaceStateCache(
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
       setBookmarks(cached.bookmarks);
+      restoreBreakpoints?.(cached.breakpoints ?? []);
       setWorkspaceIdentityDescriptor(cached.workspaceIdentityDescriptor);
       restoreHistory(cached.navigationHistory);
       setSidebarView(cached.sidebarView);
@@ -280,6 +289,7 @@ export function useWorkspaceStateCache(
       setBottomPanelVisible(cached.bottomPanelVisible);
     },
     [
+      restoreBreakpoints,
       restoreCachedIndexState,
       restoreEditorSurface,
       restoreHistory,

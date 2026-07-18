@@ -267,6 +267,86 @@ describe("BottomPanel terminal links", () => {
     ).toBeNull();
   });
 
+  it("always shows the Debug tab", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      { hasArtisan: false, hasJsWorkspace: false, hasPhpWorkspace: false },
+    );
+    const labels = Array.from(
+      host.querySelectorAll<HTMLButtonElement>("[role='tab']"),
+      (button) => button.textContent,
+    );
+
+    expect(labels).toContain("Debug");
+  });
+
+  it("renders the debug panel with pass-through props for the debug view", async () => {
+    const onStep = vi.fn();
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      {
+        activeView: "debug",
+        debug: {
+          breakpoints: [],
+          lastStartError: null,
+          onLoadVariables: vi.fn(),
+          onNavigateToBreakpoint: vi.fn(),
+          onNavigateToFrame: vi.fn(),
+          onPause: vi.fn(),
+          onRemoveBreakpoint: vi.fn(),
+          onSelectFrame: vi.fn(),
+          onSetBreakpointCondition: vi.fn(),
+          onSetBreakpointEnabled: vi.fn(),
+          onStep,
+          onStop: vi.fn(),
+          output: [],
+          rootPath: "/workspace",
+          scopes: [],
+          selectedFrameId: null,
+          snapshot: {
+            state: {
+              kind: "stopped",
+              sessionId: 1,
+              reason: "breakpoint",
+              frames: [],
+              topFrame: null,
+            },
+            lastSeq: 1,
+          },
+          variablesByReference: {},
+        },
+      },
+    );
+
+    expect(host.querySelector('[aria-label="Debug"]')).not.toBeNull();
+
+    act(() => {
+      (
+        host.querySelector('[aria-label="Continue"]') as HTMLButtonElement
+      ).click();
+    });
+
+    expect(onStep).toHaveBeenCalledWith("continue");
+  });
+
+  it("renders no debug panel when debug props are not wired", async () => {
+    await renderPanel(
+      root,
+      "/workspace",
+      vi.fn(async () => true),
+      undefined,
+      { activeView: "debug" },
+    );
+
+    expect(host.querySelector('[aria-label="Debug"]')).toBeNull();
+  });
+
   it("runs JavaScript tests from the JS results block", async () => {
     const onRunJsTests = vi.fn();
     await renderPanel(
