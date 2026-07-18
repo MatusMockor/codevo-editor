@@ -4,6 +4,7 @@ import { initialDebuggerSnapshot } from "../domain/debugSessionState";
 import type { CommandContext } from "./commandRegistry";
 import {
   isDebuggableNodeScriptPath,
+  isDebuggablePhpScriptPath,
   workbenchDebugCommands,
 } from "./workbenchDebugCommands";
 
@@ -39,12 +40,14 @@ function commandsWith(
   return workbenchDebugCommands({
     shortcut: () => "",
     hasJsWorkspace: true,
+    hasPhpWorkspace: false,
     isActiveDocumentDebuggable: true,
     isWorkspaceTrusted: true,
     snapshot: initialDebuggerSnapshot(),
     openDebugPanel: vi.fn(),
     pauseDebug: vi.fn(),
     startOrContinueDebug: vi.fn(),
+    startPhpListenDebug: vi.fn(),
     stepDebug: vi.fn(),
     stopDebug: vi.fn(),
     toggleBreakpointAtCursor: vi.fn(),
@@ -77,6 +80,66 @@ describe("workbenchDebugCommands", () => {
       command(
         commandsWith({ isActiveDocumentDebuggable: false }),
         "debug.start",
+      ).isEnabled(context),
+    ).toBe(false);
+  });
+
+  it("enables start for a trusted PHP workspace without JS", () => {
+    expect(
+      command(
+        commandsWith({ hasJsWorkspace: false, hasPhpWorkspace: true }),
+        "debug.start",
+      ).isEnabled(context),
+    ).toBe(true);
+  });
+
+  it("disables start without any debuggable workspace", () => {
+    expect(
+      command(commandsWith({ hasJsWorkspace: false }), "debug.start").isEnabled(
+        context,
+      ),
+    ).toBe(false);
+  });
+
+  it("enables PHP listen for a trusted PHP workspace without a session", () => {
+    const startPhpListenDebug = vi.fn();
+    const commands = commandsWith({
+      hasJsWorkspace: false,
+      hasPhpWorkspace: true,
+      startPhpListenDebug,
+    });
+
+    expect(command(commands, "debug.listenPhp").isEnabled(context)).toBe(true);
+    void command(commands, "debug.listenPhp").run(context);
+    expect(startPhpListenDebug).toHaveBeenCalled();
+  });
+
+  it("disables PHP listen without a PHP workspace", () => {
+    expect(command(commandsWith(), "debug.listenPhp").isEnabled(context)).toBe(
+      false,
+    );
+  });
+
+  it("disables PHP listen in an untrusted workspace", () => {
+    expect(
+      command(
+        commandsWith({ hasPhpWorkspace: true, isWorkspaceTrusted: false }),
+        "debug.listenPhp",
+      ).isEnabled(context),
+    ).toBe(false);
+  });
+
+  it("disables PHP listen while a session is active", () => {
+    expect(
+      command(
+        commandsWith({ hasPhpWorkspace: true, snapshot: runningSnapshot() }),
+        "debug.listenPhp",
+      ).isEnabled(context),
+    ).toBe(false);
+    expect(
+      command(
+        commandsWith({ hasPhpWorkspace: true, snapshot: stoppedSnapshot() }),
+        "debug.listenPhp",
       ).isEnabled(context),
     ).toBe(false);
   });
@@ -152,12 +215,14 @@ describe("workbenchDebugCommands", () => {
     const commands = workbenchDebugCommands({
       shortcut: (commandId) => `key:${commandId}`,
       hasJsWorkspace: true,
+      hasPhpWorkspace: true,
       isActiveDocumentDebuggable: true,
       isWorkspaceTrusted: true,
       snapshot: initialDebuggerSnapshot(),
       openDebugPanel: vi.fn(),
       pauseDebug: vi.fn(),
       startOrContinueDebug: vi.fn(),
+      startPhpListenDebug: vi.fn(),
       stepDebug: vi.fn(),
       stopDebug: vi.fn(),
       toggleBreakpointAtCursor: vi.fn(),
@@ -173,6 +238,7 @@ describe("workbenchDebugCommands", () => {
     );
     expect(command(commands, "debug.stepInto").shortcut).toBeUndefined();
     expect(command(commands, "debug.stepOut").shortcut).toBeUndefined();
+    expect(command(commands, "debug.listenPhp").shortcut).toBeUndefined();
   });
 });
 
@@ -184,5 +250,15 @@ describe("isDebuggableNodeScriptPath", () => {
     expect(isDebuggableNodeScriptPath("/workspace/app.ts")).toBe(false);
     expect(isDebuggableNodeScriptPath("/workspace/app.jsx")).toBe(false);
     expect(isDebuggableNodeScriptPath("/workspace/readme.md")).toBe(false);
+  });
+});
+
+describe("isDebuggablePhpScriptPath", () => {
+  it("accepts PHP scripts and rejects everything else", () => {
+    expect(isDebuggablePhpScriptPath("/workspace/public/index.php")).toBe(true);
+    expect(isDebuggablePhpScriptPath("/workspace/artisan.php")).toBe(true);
+    expect(isDebuggablePhpScriptPath("/workspace/view.phtml")).toBe(false);
+    expect(isDebuggablePhpScriptPath("/workspace/index.js")).toBe(false);
+    expect(isDebuggablePhpScriptPath("/workspace/php")).toBe(false);
   });
 });

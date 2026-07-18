@@ -52,7 +52,9 @@ export type DebuggerState =
 
 export type DebugLaunchTarget =
   | { kind: "node-script"; scriptPath: string }
-  | { kind: "js-test-file"; runner: "vitest" | "jest"; filePath: string };
+  | { kind: "js-test-file"; runner: "vitest" | "jest"; filePath: string }
+  | { kind: "php-script"; scriptPath: string }
+  | { kind: "php-listen"; port?: number };
 
 export type DebugEventPayload =
   | { kind: "started"; sessionId: number }

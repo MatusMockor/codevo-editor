@@ -35,6 +35,7 @@ import { CommandRegistry, type Command } from "./commandRegistry";
 import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
 import {
   isDebuggableNodeScriptPath,
+  isDebuggablePhpScriptPath,
   workbenchDebugCommands,
 } from "./workbenchDebugCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
@@ -106,6 +107,7 @@ interface UseWorkbenchCommandRegistryOptions {
   openDebugPanel: CommandRun;
   pauseDebug: CommandRun;
   startOrContinueDebug: CommandRun;
+  startPhpListenDebug: CommandRun;
   stepDebug(kind: StepKind): void | Promise<void>;
   stopDebug: CommandRun;
   toggleDebugBreakpointAtCursor: CommandRun;
@@ -262,6 +264,7 @@ export function useWorkbenchCommandRegistry(
     openDebugPanel,
     pauseDebug,
     startOrContinueDebug,
+    startPhpListenDebug,
     stepDebug,
     stopDebug,
     toggleDebugBreakpointAtCursor,
@@ -456,14 +459,19 @@ export function useWorkbenchCommandRegistry(
     workbenchDebugCommands({
       shortcut,
       hasJsWorkspace: Boolean(workspaceDescriptor?.javaScriptTypeScript),
+      hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
       isActiveDocumentDebuggable:
-        isActiveDocumentJsTest ||
-        isDebuggableNodeScriptPath(activeDocument?.path ?? ""),
+        (Boolean(workspaceDescriptor?.javaScriptTypeScript) &&
+          (isActiveDocumentJsTest ||
+            isDebuggableNodeScriptPath(activeDocument?.path ?? ""))) ||
+        (Boolean(workspaceDescriptor?.php) &&
+          isDebuggablePhpScriptPath(activeDocument?.path ?? "")),
       isWorkspaceTrusted: workspaceTrust?.trusted === true,
       snapshot: debugSnapshot,
       openDebugPanel,
       pauseDebug,
       startOrContinueDebug,
+      startPhpListenDebug,
       stepDebug,
       stopDebug,
       toggleBreakpointAtCursor: toggleDebugBreakpointAtCursor,
@@ -741,6 +749,7 @@ export function useWorkbenchCommandRegistry(
     openDebugPanel,
     pauseDebug,
     startOrContinueDebug,
+    startPhpListenDebug,
     stepDebug,
     stopDebug,
     toggleDebugBreakpointAtCursor,

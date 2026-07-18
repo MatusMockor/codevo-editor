@@ -6,12 +6,14 @@ import type { Command } from "./commandRegistry";
 interface WorkbenchDebugCommandsOptions {
   shortcut(commandId: KeymapCommandId): string;
   hasJsWorkspace: boolean;
+  hasPhpWorkspace: boolean;
   isActiveDocumentDebuggable: boolean;
   isWorkspaceTrusted: boolean;
   snapshot: DebuggerSessionSnapshot;
   openDebugPanel: Command["run"];
   pauseDebug: Command["run"];
   startOrContinueDebug: Command["run"];
+  startPhpListenDebug: Command["run"];
   stepDebug(kind: StepKind): void | Promise<void>;
   stopDebug: Command["run"];
   toggleBreakpointAtCursor: Command["run"];
@@ -21,15 +23,21 @@ export function isDebuggableNodeScriptPath(path: string): boolean {
   return /\.(js|mjs|cjs)$/.test(path);
 }
 
+export function isDebuggablePhpScriptPath(path: string): boolean {
+  return /\.php$/.test(path);
+}
+
 export function workbenchDebugCommands({
   shortcut,
   hasJsWorkspace,
+  hasPhpWorkspace,
   isActiveDocumentDebuggable,
   isWorkspaceTrusted,
   snapshot,
   openDebugPanel,
   pauseDebug,
   startOrContinueDebug,
+  startPhpListenDebug,
   stepDebug,
   stopDebug,
   toggleBreakpointAtCursor,
@@ -41,7 +49,9 @@ export function workbenchDebugCommands({
     sessionKind === "stopped";
   const sessionStopped = sessionKind === "stopped";
   const canStart =
-    hasJsWorkspace && isWorkspaceTrusted && isActiveDocumentDebuggable;
+    (hasJsWorkspace || hasPhpWorkspace) &&
+    isWorkspaceTrusted &&
+    isActiveDocumentDebuggable;
 
   return [
     {
@@ -56,6 +66,14 @@ export function workbenchDebugCommands({
           canStart &&
           !sessionActive),
       run: startOrContinueDebug,
+    },
+    {
+      id: "debug.listenPhp",
+      title: "Debug: Listen for PHP (Xdebug)",
+      category: "Debug",
+      isEnabled: () =>
+        hasPhpWorkspace && isWorkspaceTrusted && !sessionActive,
+      run: startPhpListenDebug,
     },
     {
       id: "debug.continue",

@@ -141,7 +141,7 @@ describe("DebugGateway", () => {
     expect(handlers).toHaveLength(0);
   });
 
-  it("accepts both launch target kinds", async () => {
+  it("accepts every launch target kind", async () => {
     const seen: string[] = [];
 
     const gateway: Pick<DebugGateway, "start"> = {
@@ -158,7 +158,20 @@ describe("DebugGateway", () => {
       { kind: "js-test-file", runner: "vitest", filePath: "/a.test.ts" },
       [],
     );
+    await gateway.start(
+      "/root",
+      { kind: "php-script", scriptPath: "/a.php" },
+      [],
+    );
+    await gateway.start("/root", { kind: "php-listen" }, []);
+    await gateway.start("/root", { kind: "php-listen", port: 9003 }, []);
 
-    expect(seen).toEqual(["node-script", "js-test-file"]);
+    expect(seen).toEqual([
+      "node-script",
+      "js-test-file",
+      "php-script",
+      "php-listen",
+      "php-listen",
+    ]);
   });
 });

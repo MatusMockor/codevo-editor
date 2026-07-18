@@ -30,7 +30,10 @@ import {
 import { useWorkbenchCommandRegistry } from "./useWorkbenchCommandRegistry";
 import { useDebugSession } from "./useDebugSession";
 import { detectJsTestRunner } from "./jsTestRunnerDetection";
-import { isDebuggableNodeScriptPath } from "./workbenchDebugCommands";
+import {
+  isDebuggableNodeScriptPath,
+  isDebuggablePhpScriptPath,
+} from "./workbenchDebugCommands";
 import {
   executeCommandAndReport,
   type CommandExecutionRunner,
@@ -6910,6 +6913,15 @@ export function useWorkbenchController(
       return;
     }
 
+    if (isDebuggablePhpScriptPath(document.path)) {
+      openDebugPanel();
+      await debugSession.startDebug({
+        kind: "php-script",
+        scriptPath: document.path,
+      });
+      return;
+    }
+
     if (!isDebuggableNodeScriptPath(document.path)) {
       return;
     }
@@ -6930,6 +6942,11 @@ export function useWorkbenchController(
     readTestFileIfExists,
     setMessage,
   ]);
+
+  const startPhpListenDebug = useCallback(async () => {
+    openDebugPanel();
+    await debugSession.startDebug({ kind: "php-listen" });
+  }, [debugSession.startDebug, openDebugPanel]);
 
   const restoredDebugBreakpointRootsRef = useRef(new Set<string>());
 
@@ -9125,6 +9142,7 @@ export function useWorkbenchController(
     openDebugPanel,
     pauseDebug: debugSession.pauseDebug,
     startOrContinueDebug,
+    startPhpListenDebug,
     stepDebug: debugSession.stepDebug,
     stopDebug: debugSession.stopDebug,
     toggleDebugBreakpointAtCursor,
@@ -10046,6 +10064,7 @@ export function useWorkbenchController(
     openDebugLocation,
     openDebugPanel,
     startOrContinueDebug,
+    startPhpListenDebug,
     registerActiveTerminalSession,
     runTestAt,
     clearEditorRevealTarget,

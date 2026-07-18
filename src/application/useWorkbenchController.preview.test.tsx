@@ -75522,6 +75522,63 @@ MissingClass::class;
       );
     });
 
+    it("starts a php-script debug session for the active PHP file via debug.start", async () => {
+      const scriptPath = "/workspace/public/index.php";
+      const debugGateway = createDebugGatewayHarness();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugGateway: debugGateway.gateway,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(scriptPath, "index.php"));
+      });
+
+      await act(async () => {
+        await runCommand(getWorkbench(), "debug.start");
+        await flushAsyncTurns();
+      });
+
+      expect(debugGateway.start).toHaveBeenCalledWith(
+        "/workspace",
+        { kind: "php-script", scriptPath },
+        [],
+      );
+      expect(String(getWorkbench().bottomPanelView)).toBe("debug");
+      expect(getWorkbench().bottomPanelVisible).toBe(true);
+    });
+
+    it("starts a php listen session via debug.listenPhp", async () => {
+      const debugGateway = createDebugGatewayHarness();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugGateway: debugGateway.gateway,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await runCommand(getWorkbench(), "debug.listenPhp");
+        await flushAsyncTurns();
+      });
+
+      expect(debugGateway.start).toHaveBeenCalledWith(
+        "/workspace",
+        { kind: "php-listen" },
+        [],
+      );
+      expect(String(getWorkbench().bottomPanelView)).toBe("debug");
+      expect(getWorkbench().bottomPanelVisible).toBe(true);
+    });
+
     it("toggles a breakpoint at the cursor via command and persists it", async () => {
       const testPath = "/workspace/src/sum.test.ts";
       const readTextFile = vi.fn(
