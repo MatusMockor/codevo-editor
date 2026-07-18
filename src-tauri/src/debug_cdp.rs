@@ -79,7 +79,12 @@ pub(crate) fn create_node_cdp_adapter(
     };
     spawn_output_pump(stdout, DebugOutputStream::Stdout, emitter.clone(), None);
     let (url_tx, url_rx) = mpsc::channel();
-    spawn_output_pump(stderr, DebugOutputStream::Stderr, emitter.clone(), Some(url_tx));
+    spawn_output_pump(
+        stderr,
+        DebugOutputStream::Stderr,
+        emitter.clone(),
+        Some(url_tx),
+    );
     let ws_url = match url_rx.recv_timeout(WS_URL_DISCOVERY_TIMEOUT) {
         Ok(url) => url,
         Err(RecvTimeoutError::Timeout) => {
@@ -178,8 +183,8 @@ fn validate_workspace_file(root: &Path, path: &str) -> Result<String, String> {
     } else {
         root.join(candidate)
     };
-    let metadata = fs::metadata(&candidate)
-        .map_err(|_| format!("Debug target `{path}` was not found."))?;
+    let metadata =
+        fs::metadata(&candidate).map_err(|_| format!("Debug target `{path}` was not found."))?;
     if !metadata.is_file() {
         return Err(format!("Debug target `{path}` is not a file."));
     }
@@ -236,8 +241,7 @@ fn parse_debugger_ws_url(line: &str) -> Option<String> {
 
 fn ws_url_token_regex() -> &'static Regex {
     static WS_URL_TOKEN: OnceLock<Regex> = OnceLock::new();
-    WS_URL_TOKEN
-        .get_or_init(|| Regex::new(r"(ws://[^/\s]+)/\S+").expect("ws token regex"))
+    WS_URL_TOKEN.get_or_init(|| Regex::new(r"(ws://[^/\s]+)/\S+").expect("ws token regex"))
 }
 
 fn mask_ws_url(text: &str) -> String {
@@ -561,7 +565,10 @@ fn dispatch_response(id: u64, message: &Value, pending: &PendingCdpRequests) {
 }
 
 fn handle_paused(params: &Value, context: &SocketLoopContext) -> Option<String> {
-    let reason_text = params.get("reason").and_then(Value::as_str).unwrap_or("other");
+    let reason_text = params
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("other");
     let hit_user_breakpoint = params
         .get("hitBreakpoints")
         .and_then(Value::as_array)
@@ -637,10 +644,12 @@ fn handle_breakpoint_resolved(params: &Value, context: &SocketLoopContext) {
     let Some((file_path, breakpoints)) = resolved else {
         return;
     };
-    context.emitter.emit(DebugEventPayload::BreakpointsVerified {
-        file_path,
-        breakpoints,
-    });
+    context
+        .emitter
+        .emit(DebugEventPayload::BreakpointsVerified {
+            file_path,
+            breakpoints,
+        });
 }
 
 /// A resolution for a not-yet-registered CDP breakpoint id is buffered in
@@ -718,7 +727,9 @@ fn build_pause_inventory(params: &Value, state: &mut CdpShared) -> PauseInventor
             };
             let scope_type = scope.get("type").and_then(Value::as_str).unwrap_or("scope");
             let reference = state.allocate_id();
-            inventory.object_ids.insert(reference, object_id.to_string());
+            inventory
+                .object_ids
+                .insert(reference, object_id.to_string());
             scopes.push(DebugScopeInfo {
                 name: scope_display_name(scope_type),
                 variables_reference: reference,
@@ -804,7 +815,12 @@ impl NodeCdpAdapter {
                 .map_err(|error| format!("Unable to configure the inspector socket: {error}"))?;
         }
         let shared = Arc::new(Mutex::new(CdpShared::new()));
-        let client = CdpClient::start(socket, Arc::clone(&shared), emitter.clone(), request_timeout);
+        let client = CdpClient::start(
+            socket,
+            Arc::clone(&shared),
+            emitter.clone(),
+            request_timeout,
+        );
         let mut adapter = Self {
             client,
             process,
@@ -1289,35 +1305,31 @@ mod tests {
         let url = server_url.to_string();
         registry
             .start_session(WORKSPACE_KEY, sink.clone(), move |emitter| {
-                NodeCdpAdapter::connect(
-                    &url,
-                    emitter,
-                    &initial_breakpoints,
-                    request_timeout,
-                    None,
-                )
-                .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
+                NodeCdpAdapter::connect(&url, emitter, &initial_breakpoints, request_timeout, None)
+                    .map(|adapter| Box::new(adapter) as Box<dyn DebugAdapter>)
             })
             .expect("start mock session");
         (registry, sink)
     }
 
-    fn wait_for<T>(
-        predicate: impl Fn() -> Option<T>,
-        timeout: Duration,
-        description: &str,
-    ) -> T {
+    fn wait_for<T>(predicate: impl Fn() -> Option<T>, timeout: Duration, description: &str) -> T {
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(value) = predicate() {
                 return value;
             }
-            assert!(Instant::now() < deadline, "timed out waiting for {description}");
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {description}"
+            );
             thread::sleep(Duration::from_millis(10));
         }
     }
 
-    fn wait_for_stopped(sink: &CollectingSink, index: usize) -> (DebugStopReason, Vec<DebugStackFrame>) {
+    fn wait_for_stopped(
+        sink: &CollectingSink,
+        index: usize,
+    ) -> (DebugStopReason, Vec<DebugStackFrame>) {
         wait_for(
             || {
                 sink.payloads()
@@ -1640,7 +1652,10 @@ mod tests {
         let server = MockCdpServer::start(Box::new(move |id, method, params| match method {
             "Debugger.setBreakpointByUrl" => {
                 let next = responder_counter.fetch_add(1, Ordering::SeqCst);
-                let line = params.get("lineNumber").and_then(Value::as_u64).unwrap_or(0);
+                let line = params
+                    .get("lineNumber")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
                 vec![result(
                     id,
                     json!({
@@ -1659,7 +1674,10 @@ mod tests {
 
         let updated = registry
             .with_session(WORKSPACE_KEY, |adapter| {
-                adapter.set_breakpoints(&file_path, &[breakpoint(&file_path, "bp-2", 30, None, true)])
+                adapter.set_breakpoints(
+                    &file_path,
+                    &[breakpoint(&file_path, "bp-2", 30, None, true)],
+                )
             })
             .expect("session")
             .expect("set breakpoints");
@@ -1815,7 +1833,10 @@ mod tests {
 
         let updated = registry
             .with_session(WORKSPACE_KEY, |adapter| {
-                adapter.set_breakpoints(missing_file, &[breakpoint(missing_file, "bp-1", 5, None, true)])
+                adapter.set_breakpoints(
+                    missing_file,
+                    &[breakpoint(missing_file, "bp-1", 5, None, true)],
+                )
             })
             .expect("session")
             .expect("set breakpoints");
@@ -2014,12 +2035,12 @@ mod tests {
         let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
             "Runtime.runIfWaitingForDebugger" => vec![
                 ok(id),
-                event("Debugger.paused", json!({"reason": "Break on start", "callFrames": []})),
+                event(
+                    "Debugger.paused",
+                    json!({"reason": "Break on start", "callFrames": []}),
+                ),
             ],
-            "Debugger.resume" => vec![
-                ok(id),
-                event("Debugger.paused", breakpoint_paused_params()),
-            ],
+            "Debugger.resume" => vec![ok(id), event("Debugger.paused", breakpoint_paused_params())],
             "Debugger.evaluateOnCallFrame" => vec![result(
                 id,
                 json!({

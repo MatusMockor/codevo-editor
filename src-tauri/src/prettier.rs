@@ -202,10 +202,7 @@ fn wait_with_timeout(
                     join_pipe_threads(writer, stdout_reader, stderr_reader);
                     return Err(PrettierFormatResponse::Error {
                         kind: PrettierErrorKind::Timeout,
-                        message: format!(
-                            "Prettier timed out after {} ms.",
-                            timeout.as_millis()
-                        ),
+                        message: format!("Prettier timed out after {} ms.", timeout.as_millis()),
                     });
                 }
                 std::thread::sleep(WAIT_POLL_INTERVAL);
@@ -378,7 +375,10 @@ mod tests {
             PRETTIER_TIMEOUT,
         );
 
-        assert_eq!(response, PrettierFormatResponse::Unavailable { message: None });
+        assert_eq!(
+            response,
+            PrettierFormatResponse::Unavailable { message: None }
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

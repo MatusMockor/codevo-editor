@@ -47,6 +47,11 @@ pub mod workspace_file_watcher;
 mod workspace_registry;
 mod workspace_runtime;
 
+use debug_adapter::{
+    DebugAdapter, DebugBreakpoint, DebugEvent, DebugEventSink, DebugLaunchTarget, DebugScopeInfo,
+    DebugSessionRegistry, DebugStackFrame, DebugStartResponse, DebugVariableInfo, StepKind,
+};
+use debug_cdp::create_node_cdp_adapter;
 use git::{
     load_commit_details, load_commit_diff, load_commit_files, load_commit_log, load_git_branches,
     safe_stash_index, CommandGitRepositoryGateway, CommitDiffPayload, CommitFileChange,
@@ -385,6 +390,10 @@ fn shutdown_runtime_processes(app: &AppHandle) {
         let _ = registry.stop_all();
     }
 
+    if let Some(registry) = app.try_state::<Arc<DebugSessionRegistry>>() {
+        registry.stop_all();
+    }
+
     if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
         supervisor.stop_all();
     }
@@ -708,6 +717,7 @@ fn dispose_workspace_root(
     javascript_typescript_watch_registry: State<'_, JavaScriptTypeScriptWorkspaceWatchRegistry>,
     workspace_file_change_watch_registry: State<'_, WorkspaceFileChangeWatchRegistry>,
     php_language_servers: State<'_, PhpLanguageServerRegistry>,
+    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
     smart_mode_service: State<'_, Mutex<SmartModeService>>,
     terminal_sessions: State<'_, TerminalSupervisor>,
 ) -> Result<(), String> {
@@ -721,6 +731,7 @@ fn dispose_workspace_root(
             javascript_typescript_watch_registry: &*javascript_typescript_watch_registry,
             workspace_file_change_watch_registry: &*workspace_file_change_watch_registry,
             php_language_servers: &*php_language_servers,
+            debug_sessions: &**debug_sessions,
             terminal_sessions: &*terminal_sessions,
         },
     );
@@ -975,6 +986,229 @@ async fn run_js_tests_json_with_trust(
     }
 
     js_test_run::run_js_tests(root_path, app_data_base, filter).await
+}
+
+const DEBUG_EVENT: &str = "debug://event";
+
+struct AppHandleDebugEventSink {
+    app: AppHandle,
+}
+
+/// Satisfies the non-blocking `DebugEventSink` contract: Tauri `emit` serializes
+/// the payload and queues delivery to webviews without waiting on the frontend.
+impl DebugEventSink for AppHandleDebugEventSink {
+    fn emit(&self, event: DebugEvent) {
+        let _ = self.app.emit(DEBUG_EVENT, event);
+    }
+}
+
+#[tauri::command]
+async fn debug_start(
+    root_path: String,
+    launch: DebugLaunchTarget,
+    breakpoints: Vec<DebugBreakpoint>,
+    app: AppHandle,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
+) -> Result<DebugStartResponse, String> {
+    debug_start_with_trust(
+        root_path,
+        launch,
+        breakpoints,
+        Arc::new(AppHandleDebugEventSink { app }),
+        Arc::clone(registry.inner()),
+        &trust,
+    )
+    .await
+}
+
+async fn debug_start_with_trust(
+    root_path: String,
+    launch: DebugLaunchTarget,
+    breakpoints: Vec<DebugBreakpoint>,
+    sink: Arc<dyn DebugEventSink>,
+    registry: Arc<DebugSessionRegistry>,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<DebugStartResponse, String> {
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_path)
+        .trusted;
+
+    if !trusted {
+        return Ok(DebugStartResponse::Unavailable {
+            message: "Trust this workspace to run the debugger.".to_string(),
+        });
+    }
+
+    run_blocking_command(move || {
+        Ok(start_debug_session_blocking(
+            &root_path,
+            &launch,
+            &breakpoints,
+            sink,
+            &registry,
+        ))
+    })
+    .await
+}
+
+fn start_debug_session_blocking(
+    root_path: &str,
+    launch: &DebugLaunchTarget,
+    breakpoints: &[DebugBreakpoint],
+    sink: Arc<dyn DebugEventSink>,
+    registry: &Arc<DebugSessionRegistry>,
+) -> DebugStartResponse {
+    let root = match canonicalize_workspace_root(root_path) {
+        Ok(root) => root,
+        Err(message) => return DebugStartResponse::Error { message },
+    };
+    let root_key = root.to_string_lossy().to_string();
+    let finish_registry = Arc::clone(registry);
+    let started = registry.start_session(&root_key, sink, move |emitter| {
+        let session_id = emitter.session_id();
+        create_node_cdp_adapter(
+            &root,
+            launch,
+            breakpoints,
+            emitter,
+            Box::new(move |exit_code| {
+                finish_registry.finish_session(session_id, exit_code);
+            }),
+        )
+    });
+
+    match started {
+        Ok(session_id) => DebugStartResponse::Ok { session_id },
+        Err(message) => DebugStartResponse::Error { message },
+    }
+}
+
+#[tauri::command]
+async fn debug_stop(
+    session_id: u64,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<(), String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || stop_debug_session_blocking(&registry, session_id)).await
+}
+
+fn stop_debug_session_blocking(
+    registry: &DebugSessionRegistry,
+    session_id: u64,
+) -> Result<(), String> {
+    if !registry.stop_by_id(session_id) {
+        return Err(format!("No debug session with id {session_id}."));
+    }
+
+    Ok(())
+}
+
+fn with_debug_session<R>(
+    registry: &DebugSessionRegistry,
+    session_id: u64,
+    operation: impl FnOnce(&mut dyn DebugAdapter) -> Result<R, String>,
+) -> Result<R, String> {
+    registry.with_session_by_id(session_id, operation)?
+}
+
+#[tauri::command]
+async fn debug_set_breakpoints(
+    session_id: u64,
+    file_path: String,
+    breakpoints: Vec<DebugBreakpoint>,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<Vec<DebugBreakpoint>, String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || {
+        with_debug_session(&registry, session_id, |adapter| {
+            adapter.set_breakpoints(&file_path, &breakpoints)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn debug_step(
+    session_id: u64,
+    kind: StepKind,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<(), String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || {
+        with_debug_session(&registry, session_id, |adapter| adapter.step(kind))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn debug_pause(
+    session_id: u64,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<(), String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || {
+        with_debug_session(&registry, session_id, |adapter| adapter.pause())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn debug_stack_trace(
+    session_id: u64,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<Vec<DebugStackFrame>, String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || {
+        with_debug_session(&registry, session_id, |adapter| adapter.stack_trace())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn debug_scopes(
+    session_id: u64,
+    frame_id: u64,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<Vec<DebugScopeInfo>, String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || {
+        with_debug_session(&registry, session_id, |adapter| adapter.scopes(frame_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn debug_variables(
+    session_id: u64,
+    variables_reference: u64,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<Vec<DebugVariableInfo>, String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || {
+        with_debug_session(&registry, session_id, |adapter| {
+            adapter.variables(variables_reference)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn debug_evaluate(
+    session_id: u64,
+    frame_id: u64,
+    expression: String,
+    registry: State<'_, Arc<DebugSessionRegistry>>,
+) -> Result<DebugVariableInfo, String> {
+    let registry = Arc::clone(registry.inner());
+    run_blocking_command(move || {
+        with_debug_session(&registry, session_id, |adapter| {
+            adapter.evaluate(frame_id, &expression)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -6481,8 +6715,8 @@ mod tests {
     use super::{
         amend_git_commit, apply_descriptor_workspace_edit, apply_workspace_edit,
         build_javascript_typescript_language_server_plan, cached_monospace_font_families,
-        create_git_branch, delete_git_branch, ensure_local_history_relative_path,
-        ensure_lsp_call_hierarchy_item_in_workspace,
+        create_git_branch, debug_start_with_trust, delete_git_branch,
+        ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
         ensure_lsp_completion_item_payload_in_workspace,
@@ -6509,10 +6743,15 @@ mod tests {
         run_php_tests_junit_with_trust, run_phpstan_analysis_with_trust,
         run_pint_format_with_trust, run_prettier_format_with_trust, save_git_stash, search_files,
         stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
-        switch_git_branch, unstage_git_hunk, workspace_root_for_disposal,
-        workspace_text_edits_from_language_server, LegacyLocalHistoryWorkspaceAuthorizer,
+        stop_debug_session_blocking, switch_git_branch, unstage_git_hunk, with_debug_session,
+        workspace_root_for_disposal, workspace_text_edits_from_language_server,
+        LegacyLocalHistoryWorkspaceAuthorizer,
     };
     use crate::artisan::ArtisanRoutesResponse;
+    use crate::debug_adapter::{
+        DebugEvent, DebugEventSink, DebugLaunchTarget, DebugSessionRegistry, DebugStartResponse,
+        StepKind,
+    };
     use crate::eslint::EslintAnalysisResponse;
     use crate::local_history::LocalHistoryStore;
     use crate::lsp::file_uri;
@@ -6540,7 +6779,7 @@ mod tests {
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -9765,6 +10004,102 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
+    #[derive(Default)]
+    struct CollectingDebugSink {
+        events: Mutex<Vec<DebugEvent>>,
+    }
+
+    impl CollectingDebugSink {
+        fn events(&self) -> Vec<DebugEvent> {
+            self.events.lock().expect("debug events").clone()
+        }
+    }
+
+    impl DebugEventSink for CollectingDebugSink {
+        fn emit(&self, event: DebugEvent) {
+            self.events.lock().expect("debug events").push(event);
+        }
+    }
+
+    #[test]
+    fn debug_start_untrusted_workspace_blocks_dispatch() {
+        let root = temp_workspace("debug-untrusted");
+        let script = root.join("index.js");
+        fs::write(&script, "console.log('hi');").expect("write debug script");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingDebugSink::default());
+
+        let response = tauri::async_runtime::block_on(debug_start_with_trust(
+            path_string(&root),
+            DebugLaunchTarget::NodeScript {
+                script_path: path_string(&script),
+            },
+            Vec::new(),
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            Arc::clone(&registry),
+            &trust,
+        ))
+        .expect("debug start response");
+
+        assert_eq!(
+            response,
+            DebugStartResponse::Unavailable {
+                message: "Trust this workspace to run the debugger.".to_string(),
+            }
+        );
+        assert!(sink.events().is_empty());
+        assert_eq!(registry.session_id_for_root(&path_string(&root)), None);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn debug_start_trusted_missing_root_returns_error_status() {
+        let root = temp_workspace("debug-missing-root");
+        let missing = root.join("gone");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&missing), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingDebugSink::default());
+
+        let response = tauri::async_runtime::block_on(debug_start_with_trust(
+            path_string(&missing),
+            DebugLaunchTarget::NodeScript {
+                script_path: "index.js".to_string(),
+            },
+            Vec::new(),
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            Arc::clone(&registry),
+            &trust,
+        ))
+        .expect("debug start response");
+
+        assert!(matches!(response, DebugStartResponse::Error { .. }));
+        assert!(sink.events().is_empty());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn debug_commands_with_unknown_session_id_return_err() {
+        let registry = DebugSessionRegistry::new();
+
+        let stop = stop_debug_session_blocking(&registry, 41);
+        let step = with_debug_session(&registry, 42, |adapter| adapter.step(StepKind::Continue));
+        let frames = with_debug_session(&registry, 43, |adapter| adapter.stack_trace());
+        let evaluated = with_debug_session(&registry, 44, |adapter| adapter.evaluate(1, "user"));
+
+        assert_eq!(stop, Err("No debug session with id 41.".to_string()));
+        assert_eq!(step, Err("No debug session with id 42.".to_string()));
+        assert_eq!(frames, Err("No debug session with id 43.".to_string()));
+        assert_eq!(evaluated, Err("No debug session with id 44.".to_string()));
+    }
+
     #[test]
     fn trusted_workspace_dispatches_phpstan_analysis() {
         let root = temp_workspace("phpstan-trusted");
@@ -10004,6 +10339,7 @@ pub fn run() {
         .manage(JavaScriptTypeScriptWorkspaceWatchRegistry::new())
         .manage(WorkspaceFileChangeWatchRegistry::new())
         .manage(WorkspaceIndexLifecycle::new())
+        .manage(Arc::new(DebugSessionRegistry::new()))
         .manage(TerminalSupervisor::new())
         .manage(WorkspaceRegistry::new())
         .manage(LegacyLocalHistoryWorkspaceAuthorizer::default())
@@ -10039,6 +10375,15 @@ pub fn run() {
             workspace_create_directory,
             workspace_delete_path,
             workspace_rename_path,
+            debug_evaluate,
+            debug_pause,
+            debug_scopes,
+            debug_set_breakpoints,
+            debug_stack_trace,
+            debug_start,
+            debug_step,
+            debug_stop,
+            debug_variables,
             detect_git_repositories,
             detect_php_tools,
             detect_workspace,

@@ -83,7 +83,9 @@ pub enum DebugLaunchTarget {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DebugEventPayload {
     #[serde(rename_all = "camelCase")]
-    Started { session_id: u64 },
+    Started {
+        session_id: u64,
+    },
     #[serde(rename_all = "camelCase")]
     Stopped {
         reason: DebugStopReason,
@@ -96,7 +98,9 @@ pub enum DebugEventPayload {
         text: String,
     },
     #[serde(rename_all = "camelCase")]
-    Terminated { exit_code: Option<i32> },
+    Terminated {
+        exit_code: Option<i32>,
+    },
     #[serde(rename_all = "camelCase")]
     BreakpointsVerified {
         file_path: String,
@@ -117,9 +121,15 @@ pub struct DebugEvent {
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum DebugStartResponse {
     #[serde(rename_all = "camelCase")]
-    Ok { session_id: u64 },
-    Unavailable { message: String },
-    Error { message: String },
+    Ok {
+        session_id: u64,
+    },
+    Unavailable {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 pub trait DebugAdapter: Send {
@@ -434,7 +444,8 @@ mod tests {
             frame_id: u64,
             expression: &str,
         ) -> Result<DebugVariableInfo, String> {
-            self.state.record(format!("evaluate:{frame_id}:{expression}"));
+            self.state
+                .record(format!("evaluate:{frame_id}:{expression}"));
             Ok(DebugVariableInfo {
                 name: expression.to_string(),
                 value: "42".to_string(),
@@ -977,10 +988,9 @@ mod tests {
             verified: false,
         };
         assert_eq!(parsed, expected);
-        let round_tripped: DebugBreakpoint = serde_json::from_value(
-            serde_json::to_value(&expected).expect("serialize breakpoint"),
-        )
-        .expect("round-trip breakpoint");
+        let round_tripped: DebugBreakpoint =
+            serde_json::from_value(serde_json::to_value(&expected).expect("serialize breakpoint"))
+                .expect("round-trip breakpoint");
         assert_eq!(round_tripped, expected);
     }
 
