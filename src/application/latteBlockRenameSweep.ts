@@ -5,6 +5,7 @@ import {
   resolveLatteTemplateCandidatePaths,
 } from "../domain/nettePathResolution";
 import {
+  hasLatteBlockDeclaration,
   latteBlockSymbolOccurrences,
   type LatteBlockSymbolOccurrence,
 } from "./latteBlockSymbols";
@@ -63,6 +64,7 @@ export async function sweepLatteBlockRename(
   ports: LatteBlockRenameSweepPorts,
   anchorRelativePath: string,
   name: string,
+  newName?: string,
 ): Promise<LatteBlockRenameSweepResult> {
   let listed: readonly string[] | null;
 
@@ -118,11 +120,18 @@ export async function sweepLatteBlockRename(
     occurrencesByPath,
     anchorRelativePath,
   );
-  const guard = sweepGuardRejection(
-    name,
+  const relatedComponent = relatedComponentPaths(
     scannedPaths,
     chains,
     component,
+  );
+  const guard = sweepGuardRejection(
+    name,
+    newName,
+    scannedPaths,
+    chains,
+    component,
+    relatedComponent,
     sources,
     relationsByPath,
     occurrencesByPath,
@@ -193,11 +202,11 @@ async function readSweepSources(
     }
 
     if (source === null) {
-      if (relativePath === anchorRelativePath) {
-        return rejected(`Template ${relativePath} could not be read.`);
-      }
-
-      continue;
+      return rejected(
+        relativePath === anchorRelativePath
+          ? `Template ${relativePath} could not be read.`
+          : `Template ${relativePath} changed while scanning the workspace.`,
+      );
     }
 
     if (source.length > LATTE_RENAME_SWEEP_MAX_FILE_LENGTH) {
@@ -356,13 +365,36 @@ function renameComponentPaths(
 
 function sweepGuardRejection(
   name: string,
+  newName: string | undefined,
   scannedPaths: string[],
   chains: Set<string>[],
   component: Set<string>,
+  relatedComponent: Set<string>,
   sources: Map<string, string>,
   relationsByPath: Map<string, TemplateRelationSummary>,
   occurrencesByPath: Map<string, LatteBlockSymbolOccurrence[]>,
 ): { kind: "rejected"; reason: string } | null {
+  if (newName && newName !== name) {
+    for (const path of scannedPaths) {
+      if (
+        relationsByPath.get(path)?.hasDynamicRelation &&
+        hasLatteBlockDeclaration(sources.get(path) ?? "", newName)
+      ) {
+        return rejected(
+          `Template ${path} declares block "${newName}" behind a dynamic template relation; the rename cannot be verified.`,
+        );
+      }
+    }
+
+    for (const path of relatedComponent) {
+      if (hasLatteBlockDeclaration(sources.get(path) ?? "", newName)) {
+        return rejected(
+          `Block "${newName}" is already declared in the related template component (${path}).`,
+        );
+      }
+    }
+  }
+
   for (const path of scannedPaths) {
     const hasOccurrence = (occurrencesByPath.get(path)?.length ?? 0) > 0;
 
@@ -411,6 +443,20 @@ function sweepGuardRejection(
   }
 
   return null;
+}
+
+function relatedComponentPaths(
+  scannedPaths: string[],
+  chains: Set<string>[],
+  component: Set<string>,
+): Set<string> {
+  return new Set(
+    scannedPaths.filter((_, index) => {
+      const chain = chains[index];
+
+      return Boolean(chain && [...chain].some((path) => component.has(path)));
+    }),
+  );
 }
 
 function orderedComponentFiles(

@@ -7,6 +7,7 @@ import type {
   LanguageServerWorkspaceEditGateway,
 } from "../domain/languageServerFeatures";
 import type { NavigationRequest } from "../application/navigationRequest";
+import type { PhpCodeActionWorkspaceEditApplier } from "../application/phpCodeActionTypes";
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import type { LargeSmartDocumentPolicy } from "../domain/largeDocumentPolicy";
 import type { PhpParameterNameInlayHint } from "../domain/phpInlayHints";
@@ -105,6 +106,12 @@ export interface EditorSurfaceLanguageProviderRegistrationRefs {
       range: PhpCodeActionRange,
     ) => Promise<PhpCodeActionDescriptor[]>
   >;
+  openPhpChangeSignatureRef?: CallbackRef<
+    (
+      request: NonNullable<PhpCodeActionDescriptor["interaction"]>,
+      applyWorkspaceEdit: PhpCodeActionWorkspaceEditApplier,
+    ) => void
+  >;
   phpFrameworkDefinitionRef: CallbackRef<OffsetProvider<boolean>>;
   phpFrameworkStringCompletionContextRef: CallbackRef<
     (source: string, position: EditorPosition) => boolean
@@ -170,6 +177,7 @@ export function createEditorSurfaceLanguageProviderOptions({
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
     phpCodeActionsRef,
+    openPhpChangeSignatureRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
     phpInlayHintsEnabledRef,
@@ -256,8 +264,15 @@ export function createEditorSurfaceLanguageProviderOptions({
       phpFrameworkStringCompletionContextRef.current(source, position),
     providePhpCodeActions: (source, range) =>
       phpCodeActionsRef.current(source, range),
+    openPhpChangeSignature: (request, applyWorkspaceEdit) =>
+      openPhpChangeSignatureRef?.current(request, applyWorkspaceEdit),
     providePhpFrameworkDefinition: (source, offset, request) =>
-      callOffsetProvider(phpFrameworkDefinitionRef.current, source, offset, request),
+      callOffsetProvider(
+        phpFrameworkDefinitionRef.current,
+        source,
+        offset,
+        request,
+      ),
     providePhpMethodCompletions: (source, position) =>
       phpMethodCompletionsRef.current(source, position),
     providePhpMethodSignature: (source, position) =>

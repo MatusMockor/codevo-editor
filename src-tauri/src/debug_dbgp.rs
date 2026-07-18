@@ -54,6 +54,11 @@ pub(crate) type DebugSessionFinish = Box<dyn FnOnce(Option<i32>) + Send>;
 
 type FinishSlot = Arc<Mutex<Option<DebugSessionFinish>>>;
 
+struct ConnectionFinish {
+    callback: FinishSlot,
+    listener_shutdown: Arc<AtomicBool>,
+}
+
 /// PHP binary resolution reuses `tools::php_executable_path`: the
 /// `CODEVO_EDITOR_PHP_PATH` override first, then the first `php` on `PATH`.
 /// The adapter always plays the DBGp IDE role as a TCP server bound
@@ -68,6 +73,9 @@ pub(crate) fn create_php_dbgp_adapter(
     match launch_target {
         DebugLaunchTarget::PhpScript { script_path } => {
             create_script_session(root, script_path, initial_breakpoints, emitter, finish)
+        }
+        DebugLaunchTarget::PhpTestFile { file_path } => {
+            create_test_session(root, file_path, initial_breakpoints, emitter, finish)
         }
         DebugLaunchTarget::PhpListen { port } => create_listen_session(
             port.unwrap_or(DEFAULT_LISTEN_PORT),
@@ -87,6 +95,43 @@ fn create_script_session(
     finish: DebugSessionFinish,
 ) -> Result<Box<dyn DebugAdapter>, String> {
     let script = validate_workspace_file(root, script_path)?;
+    create_process_session(
+        root,
+        move |port| build_php_launch_arguments(port, &script),
+        initial_breakpoints,
+        emitter,
+        finish,
+    )
+}
+
+fn create_test_session(
+    root: &Path,
+    file_path: &str,
+    initial_breakpoints: &[DebugBreakpoint],
+    emitter: DebugEventEmitter,
+    finish: DebugSessionFinish,
+) -> Result<Box<dyn DebugAdapter>, String> {
+    let file = validate_workspace_file(root, file_path)?;
+    let runner = resolve_php_test_runner(root)?;
+    create_process_session(
+        root,
+        move |port| build_php_test_launch_arguments(port, &runner, &file),
+        initial_breakpoints,
+        emitter,
+        finish,
+    )
+}
+
+fn create_process_session<F>(
+    root: &Path,
+    build_arguments: F,
+    initial_breakpoints: &[DebugBreakpoint],
+    emitter: DebugEventEmitter,
+    finish: DebugSessionFinish,
+) -> Result<Box<dyn DebugAdapter>, String>
+where
+    F: FnOnce(u16) -> Vec<String>,
+{
     let php = php_executable_path().ok_or_else(|| PHP_MISSING_ERROR.to_string())?;
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .map_err(|error| format!("Unable to open a local port for Xdebug: {error}"))?;
@@ -96,7 +141,7 @@ fn create_script_session(
         .port();
     let mut command = Command::new(&php);
     command
-        .args(build_php_launch_arguments(port, &script))
+        .args(build_arguments(port))
         .current_dir(root)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
@@ -201,8 +246,14 @@ fn run_accept_loop(
                 }
                 connected = true;
                 let _ = stream.set_nonblocking(false);
-                let _ =
-                    attach_connection(Arc::clone(&inner), stream, Some(Arc::clone(&finish_slot)));
+                let _ = attach_connection(
+                    Arc::clone(&inner),
+                    stream,
+                    Some(ConnectionFinish {
+                        callback: Arc::clone(&finish_slot),
+                        listener_shutdown: Arc::clone(&shutdown),
+                    }),
+                );
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(ACCEPT_POLL_INTERVAL);
@@ -220,6 +271,34 @@ fn build_php_launch_arguments(port: u16, script: &str) -> Vec<String> {
         format!("-dxdebug.client_port={port}"),
         script.to_string(),
     ]
+}
+
+fn build_php_test_launch_arguments(port: u16, runner: &str, file: &str) -> Vec<String> {
+    let mut arguments = build_php_launch_arguments(port, runner);
+    arguments.push(file.to_string());
+    arguments
+}
+
+fn resolve_php_test_runner(root: &Path) -> Result<String, String> {
+    for name in ["pest", "phpunit"] {
+        let candidate = root.join("vendor").join("bin").join(name);
+
+        if !candidate.is_file() {
+            continue;
+        }
+
+        let resolved = candidate
+            .canonicalize()
+            .map_err(|error| format!("Unable to resolve the PHP test runner: {error}"))?;
+
+        if !resolved.starts_with(root) {
+            return Err("The PHP test runner resolves outside the workspace.".to_string());
+        }
+
+        return Ok(resolved.to_string_lossy().into_owned());
+    }
+
+    Err("No local Pest or PHPUnit runner is available in vendor/bin.".to_string())
 }
 
 fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> Result<TcpStream, String> {
@@ -287,6 +366,7 @@ enum VariableSlot {
 
 #[derive(Default)]
 struct PauseInventory {
+    frame_depths: HashMap<u64, u32>,
     frames: Vec<DebugStackFrame>,
     scopes: HashMap<u64, Vec<DebugScopeInfo>>,
     slots: HashMap<u64, VariableSlot>,
@@ -464,7 +544,7 @@ enum DriverMessage {
 fn attach_connection(
     inner: Arc<DbgpAdapterInner>,
     stream: TcpStream,
-    finish: Option<FinishSlot>,
+    finish: Option<ConnectionFinish>,
 ) -> Result<(), String> {
     let writer = stream
         .try_clone()
@@ -591,7 +671,7 @@ fn run_driver(
     inner: Arc<DbgpAdapterInner>,
     connection: Arc<DbgpConnection>,
     receiver: mpsc::Receiver<DriverMessage>,
-    finish: Option<FinishSlot>,
+    finish: Option<ConnectionFinish>,
 ) {
     while let Ok(message) = receiver.recv() {
         match message {
@@ -614,7 +694,8 @@ fn run_driver(
     let Some(finish) = finish else {
         return;
     };
-    let callback = finish.lock().ok().and_then(|mut slot| slot.take());
+    finish.listener_shutdown.store(true, Ordering::SeqCst);
+    let callback = finish.callback.lock().ok().and_then(|mut slot| slot.take());
     if let Some(callback) = callback {
         callback(None);
     }
@@ -715,6 +796,7 @@ fn handle_break(
         let mut inventory = PauseInventory::default();
         for entry in &stack_response.stack {
             let frame_id = shared.allocate_reference();
+            inventory.frame_depths.insert(frame_id, entry.level);
             inventory.frames.push(DebugStackFrame {
                 frame_id,
                 name: entry.where_name.clone(),
@@ -903,6 +985,29 @@ struct PhpDbgpAdapter {
 }
 
 impl PhpDbgpAdapter {
+    fn shutdown(&mut self) {
+        if let Some(shutdown) = self.listener_shutdown.take() {
+            shutdown.store(true, Ordering::SeqCst);
+        }
+        let connection = self
+            .inner
+            .connection
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(connection) = connection {
+            connection.fire_and_forget("stop");
+            connection.close();
+        }
+        if let Some(process) = self.process.take() {
+            process.terminate();
+        }
+        if let Ok(mut shared) = self.inner.shared.lock() {
+            shared.status = DbgpStatus::Stopped;
+            shared.pause = None;
+        }
+    }
+
     fn build_variables(
         &self,
         properties: &[DbgpProperty],
@@ -1173,19 +1278,24 @@ impl DebugAdapter for PhpDbgpAdapter {
         }
     }
 
-    fn evaluate(&mut self, _frame_id: u64, expression: &str) -> Result<DebugVariableInfo, String> {
+    fn evaluate(&mut self, frame_id: u64, expression: &str) -> Result<DebugVariableInfo, String> {
         let connection = self.inner.active_connection()?;
-        {
+        let depth = {
             let shared = self
                 .inner
                 .shared
                 .lock()
                 .map_err(|error| error.to_string())?;
-            if shared.pause.is_none() {
-                return Err(NOT_PAUSED_ERROR.to_string());
-            }
-        }
-        let response = connection.request("eval", "", Some(expression))?;
+            let pause = shared
+                .pause
+                .as_ref()
+                .ok_or_else(|| NOT_PAUSED_ERROR.to_string())?;
+            *pause
+                .frame_depths
+                .get(&frame_id)
+                .ok_or_else(|| format!("Unknown debug frame {frame_id}."))?
+        };
+        let response = connection.request("eval", &format!(" -d {depth}"), Some(expression))?;
         if let Some(error) = &response.error {
             return Err(dbgp_error_message(error, "eval"));
         }
@@ -1207,26 +1317,13 @@ impl DebugAdapter for PhpDbgpAdapter {
     }
 
     fn terminate(&mut self) {
-        if let Some(shutdown) = self.listener_shutdown.take() {
-            shutdown.store(true, Ordering::SeqCst);
-        }
-        let connection = self
-            .inner
-            .connection
-            .lock()
-            .ok()
-            .and_then(|mut slot| slot.take());
-        if let Some(connection) = connection {
-            connection.fire_and_forget("stop");
-            connection.close();
-        }
-        if let Some(process) = self.process.take() {
-            process.terminate();
-        }
-        if let Ok(mut shared) = self.inner.shared.lock() {
-            shared.status = DbgpStatus::Stopped;
-            shared.pause = None;
-        }
+        self.shutdown();
+    }
+}
+
+impl Drop for PhpDbgpAdapter {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -2300,6 +2397,79 @@ mod tests {
             .recv_timeout(EVENT_WAIT_TIMEOUT)
             .expect("finish callback");
         assert_eq!(exit_code, None);
+        let rebound = wait_for(
+            || TcpListener::bind(("127.0.0.1", session.port)).ok(),
+            EVENT_WAIT_TIMEOUT,
+            "released Xdebug listener port",
+        );
+        drop(rebound);
+    }
+
+    #[test]
+    fn dropping_listen_adapter_stops_accept_loop_and_releases_port() {
+        let root = temp_root("drop-listener");
+        let sink = Arc::new(CollectingSink::default());
+        let registry = DebugSessionRegistry::new();
+        registry
+            .start_session(WORKSPACE_KEY, sink.clone(), move |emitter| {
+                create_php_dbgp_adapter(
+                    &root,
+                    &DebugLaunchTarget::PhpListen { port: Some(0) },
+                    &[],
+                    emitter,
+                    Box::new(|_| {}),
+                )
+            })
+            .expect("listen adapter");
+        let port = wait_for(
+            || listen_port_from_events(&sink),
+            EVENT_WAIT_TIMEOUT,
+            "listener port",
+        );
+
+        drop(registry);
+
+        let rebound = wait_for(
+            || TcpListener::bind(("127.0.0.1", port)).ok(),
+            EVENT_WAIT_TIMEOUT,
+            "drop-released listener port",
+        );
+        drop(rebound);
+    }
+
+    #[test]
+    fn evaluate_uses_selected_frame_depth_and_rejects_unknown_frames() {
+        let root = temp_root("eval-depth");
+        let session = start_listen_session(&root, Vec::new());
+        let client = MockXdebugClient::connect(session.port, default_responder());
+        let (_, frames) = wait_for_stopped(&session.sink, 0);
+
+        session
+            .registry
+            .with_session(WORKSPACE_KEY, |adapter| {
+                adapter.evaluate(frames[1].frame_id, "$invoice")
+            })
+            .expect("session")
+            .expect("evaluate parent frame");
+        let command = wait_for_command(&client, "eval");
+        assert_eq!(command.arguments.get("d").map(String::as_str), Some("1"));
+
+        let error = session
+            .registry
+            .with_session(WORKSPACE_KEY, |adapter| {
+                adapter.evaluate(999_999, "$invoice")
+            })
+            .expect("session")
+            .expect_err("unknown frame");
+        assert_eq!(error, "Unknown debug frame 999999.");
+        assert_eq!(
+            client
+                .commands()
+                .into_iter()
+                .filter(|command| command.name == "eval")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -2425,6 +2595,60 @@ mod tests {
                 "/workspace/php/bin/run.php".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn builds_php_test_launch_arguments_without_a_shell() {
+        let arguments = build_php_test_launch_arguments(
+            9007,
+            "/workspace/vendor/bin/pest",
+            "/workspace/tests/Feature/InvoiceTest.php",
+        );
+
+        assert_eq!(
+            arguments,
+            vec![
+                "-dxdebug.mode=debug".to_string(),
+                "-dxdebug.start_with_request=yes".to_string(),
+                "-dxdebug.client_host=127.0.0.1".to_string(),
+                "-dxdebug.client_port=9007".to_string(),
+                "/workspace/vendor/bin/pest".to_string(),
+                "/workspace/tests/Feature/InvoiceTest.php".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_php_test_runner_and_file_as_single_arguments() {
+        let runner = "/workspace with spaces/vendor/bin/pest";
+        let file = "/workspace with spaces/tests/Feature/Invoice; touch owned Test.php";
+        let arguments = build_php_test_launch_arguments(9007, runner, file);
+
+        assert_eq!(arguments.get(4).map(String::as_str), Some(runner));
+        assert_eq!(arguments.get(5).map(String::as_str), Some(file));
+        assert_eq!(arguments.len(), 6);
+    }
+
+    #[test]
+    fn resolves_local_pest_before_phpunit_and_rejects_missing_runners() {
+        let root = temp_root("test-runner");
+        let vendor_bin = root.join("vendor").join("bin");
+        fs::create_dir_all(&vendor_bin).expect("create vendor bin");
+        fs::write(vendor_bin.join("phpunit"), "phpunit").expect("write phpunit");
+
+        assert!(resolve_php_test_runner(&root)
+            .expect("resolve phpunit")
+            .ends_with("vendor/bin/phpunit"));
+
+        fs::write(vendor_bin.join("pest"), "pest").expect("write pest");
+        assert!(resolve_php_test_runner(&root)
+            .expect("resolve pest")
+            .ends_with("vendor/bin/pest"));
+
+        let empty = temp_root("missing-test-runner");
+        assert!(resolve_php_test_runner(&empty)
+            .expect_err("missing runner")
+            .contains("No local Pest or PHPUnit"));
     }
 
     #[test]

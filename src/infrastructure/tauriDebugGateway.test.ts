@@ -50,7 +50,9 @@ describe("TauriDebugGateway", () => {
     await expect(gateway.stackTrace(1)).resolves.toEqual([]);
     await expect(gateway.scopes(1, 11)).resolves.toEqual([]);
     await expect(gateway.variables(1, 21)).resolves.toEqual([]);
-    await expect(gateway.evaluate(1, 11, "count")).resolves.toBeNull();
+    await expect(
+      gateway.evaluate("/workspace/one", 1, 11, "count"),
+    ).resolves.toBeNull();
 
     const unsubscribe = gateway.subscribe(vi.fn());
     unsubscribe();
@@ -112,7 +114,9 @@ describe("TauriDebugGateway", () => {
     await expect(gateway.stackTrace(4)).resolves.toEqual([frame]);
     await expect(gateway.scopes(4, 11)).resolves.toEqual([scope]);
     await expect(gateway.variables(4, 21)).resolves.toEqual([variable]);
-    await expect(gateway.evaluate(4, 11, "count")).resolves.toEqual(variable);
+    await expect(
+      gateway.evaluate("/workspace/one", 4, 11, "count"),
+    ).resolves.toEqual(variable);
 
     expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
       rootPath: "/workspace/one",
@@ -142,6 +146,7 @@ describe("TauriDebugGateway", () => {
       variablesReference: 21,
     });
     expect(invokeCommand).toHaveBeenCalledWith("debug_evaluate", {
+      rootPath: "/workspace/one",
       sessionId: 4,
       frameId: 11,
       expression: "count",

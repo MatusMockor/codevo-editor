@@ -22,6 +22,7 @@ import type {
   WorkspaceMutationResult,
   WorkspaceImageFile,
   WorkspaceTextFileSnapshot,
+  WorkspaceEditTransaction,
 } from "../domain/workspace";
 import type {
   WorkspaceIdentityDescriptorResolver,
@@ -81,6 +82,71 @@ export class TauriWorkspaceGateway
       rootPath,
       skippedPaths,
     });
+  }
+
+  async applyWorkspaceEditTransaction(
+    rootPath: string,
+    edit: LanguageServerWorkspaceEdit,
+    skippedPaths: string[],
+    expectedStates: Readonly<Record<string, string | null>> = {},
+  ): Promise<WorkspaceEditTransaction> {
+    const target = this.trustedTarget(rootPath);
+    const relativeEdit = relativeWorkspaceEdit(
+      edit,
+      (path) =>
+        this.optionalTrustedTarget(path, target.workspaceId)?.relativePath ?? null,
+    );
+    const relativeSkippedPaths = skippedPaths.flatMap((path) => {
+      const relativePath = this.optionalTrustedTarget(
+        path,
+        target.workspaceId,
+      )?.relativePath;
+      return relativePath === undefined ? [] : [relativePath];
+    });
+    const relativeExpectedStates = Object.fromEntries(
+      Object.entries(expectedStates).map(([path, hash]) => {
+        const relativePath = this.optionalTrustedTarget(
+          path,
+          target.workspaceId,
+        )?.relativePath;
+        if (relativePath === undefined) {
+          throw new Error(
+            "A workspace edit precondition is outside the captured workspace.",
+          );
+        }
+        return [relativePath, hash];
+      }),
+    );
+    const result = await invoke<TransactionalWorkspaceEditResult>(
+      "workspace_apply_workspace_edit_transaction",
+      {
+        workspaceId: target.workspaceId,
+        edit: relativeEdit,
+        skippedPaths: relativeSkippedPaths,
+        expectedStates: relativeExpectedStates,
+        fileModes: {},
+      },
+    );
+    let rolledBack = false;
+    return {
+      appliedCount: result.appliedCount,
+      rollback: async () => {
+        if (rolledBack || result.appliedCount === 0) {
+          return;
+        }
+        await invoke<TransactionalWorkspaceEditResult>(
+          "workspace_apply_workspace_edit_transaction",
+          {
+            workspaceId: target.workspaceId,
+            edit: result.rollbackEdit,
+            skippedPaths: [],
+            expectedStates: result.rollbackExpectedStates,
+            fileModes: result.rollbackFileModes,
+          },
+        );
+        rolledBack = true;
+      },
+    };
   }
 
   createDirectory(path: string): Promise<void> {
@@ -355,6 +421,12 @@ type WorkspaceEditResult = {
   appliedTextFiles: number;
   failedPath?: string;
   message?: string;
+};
+type TransactionalWorkspaceEditResult = {
+  appliedCount: number;
+  rollbackEdit: LanguageServerWorkspaceEdit;
+  rollbackExpectedStates: Record<string, string | null>;
+  rollbackFileModes: Record<string, number>;
 };
 
 function workspaceEditCount(result: WorkspaceEditResult): number {

@@ -46,8 +46,10 @@ function stoppedSnapshot(): DebuggerSessionSnapshot {
 function defaultProps(): DebugPanelProps {
   return {
     breakpoints: [],
+    evaluationHistory: [],
     lastStartError: null,
     onLoadVariables: vi.fn(),
+    onEvaluate: vi.fn().mockResolvedValue(null),
     onNavigateToBreakpoint: vi.fn(),
     onNavigateToFrame: vi.fn(),
     onPause: vi.fn(),
@@ -63,6 +65,7 @@ function defaultProps(): DebugPanelProps {
     selectedFrameId: null,
     snapshot: { state: { kind: "inactive" }, lastSeq: 0 },
     variablesByReference: {},
+    workspaceTrusted: true,
   };
 }
 
@@ -113,9 +116,9 @@ describe("DebugPanel", () => {
     ]) {
       expect(button(label).disabled).toBe(true);
     }
-    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe(
-      "Inactive",
-    );
+    expect(
+      host.querySelector('[data-testid="debug-status"]')?.textContent,
+    ).toBe("Inactive");
   });
 
   it("enables pause and stop while running", () => {
@@ -127,9 +130,9 @@ describe("DebugPanel", () => {
     expect(button("Stop debugging").disabled).toBe(false);
     expect(button("Continue").disabled).toBe(true);
     expect(button("Step over").disabled).toBe(true);
-    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe(
-      "Running",
-    );
+    expect(
+      host.querySelector('[data-testid="debug-status"]')?.textContent,
+    ).toBe("Running");
   });
 
   it("enables stepping while stopped and reports the pause reason", () => {
@@ -151,9 +154,9 @@ describe("DebugPanel", () => {
 
     act(() => button("Stop debugging").click());
     expect(props.onStop).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe(
-      "Paused (breakpoint)",
-    );
+    expect(
+      host.querySelector('[data-testid="debug-status"]')?.textContent,
+    ).toBe("Paused (breakpoint)");
   });
 
   it("allows stopping while the session is starting", () => {
@@ -164,9 +167,9 @@ describe("DebugPanel", () => {
     expect(button("Stop debugging").disabled).toBe(false);
     expect(button("Continue").disabled).toBe(true);
     expect(button("Pause").disabled).toBe(true);
-    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe(
-      "Starting",
-    );
+    expect(
+      host.querySelector('[data-testid="debug-status"]')?.textContent,
+    ).toBe("Starting");
 
     act(() => button("Stop debugging").click());
     expect(props.onStop).toHaveBeenCalledTimes(1);
@@ -191,9 +194,9 @@ describe("DebugPanel", () => {
       },
     });
 
-    expect(host.querySelector('[data-testid="debug-status"]')?.textContent).toBe(
-      "Terminated (exit code 2)",
-    );
+    expect(
+      host.querySelector('[data-testid="debug-status"]')?.textContent,
+    ).toBe("Terminated (exit code 2)");
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
       "node not found",
     );
@@ -340,9 +343,7 @@ describe("DebugPanel", () => {
       act(() => button(`Expand v${level}`).click());
     }
 
-    expect(
-      host.querySelector('button[aria-label="Expand v10"]'),
-    ).toBeNull();
+    expect(host.querySelector('button[aria-label="Expand v10"]')).toBeNull();
   });
 
   it("manages breakpoints from the list", () => {
@@ -360,7 +361,9 @@ describe("DebugPanel", () => {
 
     act(() => {
       row
-        ?.querySelector<HTMLButtonElement>('[data-testid="debug-breakpoint-location"]')
+        ?.querySelector<HTMLButtonElement>(
+          '[data-testid="debug-breakpoint-location"]',
+        )
         ?.click();
     });
     expect(props.onNavigateToBreakpoint).toHaveBeenCalledWith(BREAKPOINT);
@@ -451,6 +454,115 @@ describe("DebugPanel", () => {
     ).toBe("No output");
   });
 
+  it("evaluates expressions while paused and keeps history isolated by session", async () => {
+    const onEvaluate = vi.fn().mockResolvedValue({
+      name: "count + 1",
+      value: "42",
+      type: "number",
+      variablesReference: 0,
+    });
+    render({ onEvaluate, snapshot: stoppedSnapshot() });
+    const input = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Debug expression"]',
+    );
+    expect(input?.disabled).toBe(false);
+
+    await act(async () => {
+      setInputValue(input, "count + 1");
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onEvaluate).toHaveBeenCalledWith("count + 1");
+    expect(
+      host.querySelector('[data-testid="debug-evaluation"]')?.textContent,
+    ).toContain("42 (number)");
+
+    render({
+      evaluationHistory: ["count + 1"],
+      onEvaluate,
+      snapshot: stoppedSnapshot(),
+    });
+    act(() => {
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
+      );
+    });
+    expect(input?.value).toBe("count + 1");
+
+    render({
+      evaluationHistory: [],
+      onEvaluate,
+      snapshot: {
+        lastSeq: 4,
+        state: {
+          kind: "stopped",
+          sessionId: 8,
+          reason: "breakpoint",
+          frames: [FRAME_A, FRAME_B],
+          topFrame: FRAME_A,
+        },
+      },
+    });
+    expect(input?.value).toBe("");
+    act(() => {
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }),
+      );
+    });
+    expect(input?.value).toBe("");
+  });
+
+  it("disables expression evaluation unless paused in a trusted workspace", () => {
+    render({
+      snapshot: { state: { kind: "running", sessionId: 7 }, lastSeq: 1 },
+    });
+    expect(
+      host.querySelector<HTMLInputElement>(
+        'input[aria-label="Debug expression"]',
+      )?.disabled,
+    ).toBe(true);
+
+    render({ snapshot: stoppedSnapshot(), workspaceTrusted: false });
+    expect(
+      host.querySelector<HTMLInputElement>(
+        'input[aria-label="Debug expression"]',
+      )?.disabled,
+    ).toBe(true);
+  });
+
+  it("renders evaluation errors and Escape clears the pending expression", async () => {
+    const onEvaluate = vi.fn().mockRejectedValue(new Error("Invalid expression"));
+    render({ onEvaluate, snapshot: stoppedSnapshot() });
+    const input = host.querySelector<HTMLInputElement>(
+      'input[aria-label="Debug expression"]',
+    );
+
+    await act(async () => {
+      setInputValue(input, "broken(");
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(onEvaluate).toHaveBeenCalledWith("broken(");
+    expect(
+      host.querySelector('[data-testid="debug-evaluation"]')?.textContent,
+    ).toContain("Invalid expression");
+
+    act(() => {
+      setInputValue(input, "temporary");
+      input?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+    });
+    expect(input?.value).toBe("");
+    expect(onEvaluate).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the console pinned to the bottom while the reader stays there", () => {
     render({ output: [{ stream: "stdout", text: "one" }] });
 
@@ -524,4 +636,17 @@ function mockScrollMetrics(
       top = value;
     },
   });
+}
+
+function setInputValue(input: HTMLInputElement | null, value: string) {
+  if (!input) {
+    return;
+  }
+
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }

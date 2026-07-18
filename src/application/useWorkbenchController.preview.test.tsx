@@ -18139,6 +18139,90 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(true);
   });
 
+  it("keeps an open import document unchanged when transactional rename edits fail", async () => {
+    const oldPath = "/workspace/src/User.ts";
+    const consumerPath = "/workspace/src/Consumer.ts";
+    const consumerContent = 'import { User } from "./User";\n';
+    const edit = {
+      changes: {
+        [fileUriFromPath(consumerPath)]: [
+          {
+            newText: "Account",
+            range: {
+              end: { character: 13, line: 0 },
+              start: { character: 9, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const javaScriptTypeScriptLanguageServerFeaturesGateway = featuresGateway();
+    vi.mocked(
+      javaScriptTypeScriptLanguageServerFeaturesGateway.willRenameFiles,
+    ).mockResolvedValue(edit);
+    const applyWorkspaceEditTransaction = vi.fn(async () => {
+      throw new Error("injected second-file failure");
+    });
+    const runningStatus: LanguageServerRuntimeStatus = {
+      capabilities: {
+        ...emptyLanguageServerCapabilities(),
+        didRenameFiles: true,
+        willRenameFiles: true,
+      },
+      kind: "running",
+      sessionId: 25,
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptInitialRuntimeStatus: runningStatus,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptRuntimeStatus: runningStatus,
+      readTextFile: vi.fn(async (path: string) => {
+        if (path === oldPath) {
+          return "export class User {}\n";
+        }
+        if (path === consumerPath) {
+          return consumerContent;
+        }
+        return `// ${path}\n`;
+      }),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceFiles: { applyWorkspaceEditTransaction },
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(oldPath, "User.ts"));
+      await getWorkbench().openPinnedFile(
+        fileEntry(consumerPath, "Consumer.ts"),
+      );
+    });
+    vi.mocked(dependencies.prompter.prompt).mockReturnValueOnce("Account.ts");
+
+    const command = getWorkbench().commands.find(
+      (candidate) => candidate.id === "file.rename",
+    );
+    await act(async () => {
+      await command?.run();
+    });
+
+    expect(applyWorkspaceEditTransaction).toHaveBeenCalledWith(
+      "/workspace",
+      edit,
+      expect.arrayContaining([oldPath, consumerPath]),
+    );
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.workspaceGateways.files.renamePath,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().activeDocument?.path).toBe(consumerPath);
+    expect(getWorkbench().activeDocument?.content).toBe(consumerContent);
+  });
+
   it("notifies the JavaScript TypeScript service after rename when only did-rename is supported", async () => {
     const oldPath = "/workspace/src/User.ts";
     const newPath = "/workspace/src/Account.ts";
@@ -19444,6 +19528,80 @@ describe("useWorkbenchController preview tabs", () => {
     expect(
       dependencies.workspaceGateways.files.applyWorkspaceEdit,
     ).not.toHaveBeenCalled();
+  });
+
+  it("rolls back transactional closed-file edits when the open Monaco commit is rejected", async () => {
+    const openPath = "/workspace/src/Open.php";
+    const closedPath = "/workspace/src/Closed.php";
+    const rollback = vi.fn(async () => undefined);
+    const applyWorkspaceEditTransaction = vi.fn(async () => ({
+      appliedCount: 1,
+      rollback,
+    }));
+    const edit = {
+      changes: {
+        [fileUriFromPath(openPath)]: [
+          {
+            newText: "final ",
+            range: {
+              end: { character: 0, line: 1 },
+              start: { character: 0, line: 1 },
+            },
+          },
+        ],
+        [fileUriFromPath(closedPath)]: [
+          {
+            newText: "closed",
+            range: {
+              end: { character: 0, line: 0 },
+              start: { character: 0, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      readTextFile: vi.fn(async () => "<?php\nclass Open {}\n"),
+      workspaceFiles: { applyWorkspaceEditTransaction },
+    });
+    await flushAsyncTurns(24);
+    await act(async () => {
+      await getWorkbench().openPinnedFile(fileEntry(openPath, "Open.php"));
+    });
+
+    let decision;
+    await act(async () => {
+      decision = await getWorkbench().applyPhpLanguageServerWorkspaceEdit(edit, {
+        applyOpenModels: () => ({
+          kind: "rejected",
+          path: openPath,
+          reason: "invalidOpenModelEdits",
+        }),
+        openPaths: [openPath],
+        rootPath: "/workspace",
+      });
+    });
+
+    expect(decision).toEqual({
+      kind: "rejected",
+      path: openPath,
+      reason: "invalidOpenModelEdits",
+    });
+    expect(applyWorkspaceEditTransaction).toHaveBeenCalledWith(
+      "/workspace",
+      edit,
+      [openPath],
+      undefined,
+    );
+    expect(rollback).toHaveBeenCalledOnce();
+    expect(
+      dependencies.workspaceGateways.files.applyWorkspaceEdit,
+    ).not.toHaveBeenCalled();
+    expect(getWorkbench().activeDocument?.content).toBe("<?php\nclass Open {}\n");
   });
 
   it.each([
@@ -75551,6 +75709,37 @@ MissingClass::class;
       );
       expect(String(getWorkbench().bottomPanelView)).toBe("debug");
       expect(getWorkbench().bottomPanelVisible).toBe(true);
+    });
+
+    it("starts a dedicated php-test-file debug session for PHPUnit and Pest files", async () => {
+      const testPath = "/workspace/tests/Feature/InvoiceTest.php";
+      const debugGateway = createDebugGatewayHarness();
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        debugGateway: debugGateway.gateway,
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+      });
+      await flushAsyncTurns();
+
+      await act(async () => {
+        await getWorkbench().openPinnedFile(fileEntry(testPath, "InvoiceTest.php"));
+      });
+      expect(getWorkbench().isActiveDocumentPhpTest).toBe(true);
+
+      await act(async () => {
+        await runCommand(getWorkbench(), "debug.start");
+        await flushAsyncTurns();
+      });
+
+      expect(debugGateway.start).toHaveBeenCalledWith(
+        "/workspace",
+        { kind: "php-test-file", filePath: testPath },
+        [],
+      );
+      expect(String(getWorkbench().bottomPanelView)).toBe("debug");
     });
 
     it("starts a php listen session via debug.listenPhp", async () => {

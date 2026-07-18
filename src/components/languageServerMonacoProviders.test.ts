@@ -8418,6 +8418,90 @@ function store($request): void
     ).not.toContain("Create method 'helper' in 'Base'");
   });
 
+  it("passes Change Signature a Monaco-aware atomic workspace-edit applier", async () => {
+    const registered = createRegisteredProviders();
+    const request = {
+      kind: "change-signature" as const,
+      offset: 18,
+      path: "/project/src/User.php",
+      rootPath: "/project",
+    };
+    const providePhpCodeActions = vi.fn(async () => [
+      {
+        edits: [],
+        interaction: request,
+        kind: "refactor.rewrite",
+        title: "Change signature…",
+      },
+    ]);
+    const openPhpChangeSignature = vi.fn();
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: LanguageServerWorkspaceEdit,
+        context: PhpWorkspaceEditApplicationContext,
+      ) => {
+        const commit = context.applyOpenModels?.();
+        return commit?.kind === "rejected"
+          ? commit
+          : { kind: "accepted" as const };
+      },
+    );
+    const openModel = {
+      ...model({ content: "<?php\nfunction save(int $id): void {}\n" }),
+      pushEditOperations: vi.fn(),
+    };
+    vi.mocked(registered.monaco.editor.getModels).mockReturnValue([openModel]);
+    const context = providerContext({
+      applyWorkspaceEdit,
+      openPhpChangeSignature,
+      providePhpCodeActions,
+    });
+    registerLanguageServerMonacoProviders(registered.monaco, context);
+
+    const actions = await registered.codeActionProvider.provideCodeActions(
+      openModel,
+      new registered.monaco.Range(2, 10, 2, 10),
+      {
+        markers: [],
+        only: "refactor.rewrite",
+        trigger: registered.monaco.languages.CodeActionTriggerType.Invoke,
+      },
+    );
+    const action = actions.actions.find(
+      (candidate: { title: string }) => candidate.title === "Change signature…",
+    );
+    const run = registered.commandRunsById["codevo.php.openChangeSignature"];
+    expect(run).toBeDefined();
+    await run(null, action?.command?.arguments?.[0]);
+
+    expect(openPhpChangeSignature).toHaveBeenCalledWith(
+      request,
+      expect.any(Function),
+    );
+    const changeSignatureApplier = openPhpChangeSignature.mock.calls[0]?.[1];
+    const edit = workspaceEdit("file:///project/src/User.php", "final ");
+    await expect(
+      changeSignatureApplier(
+        edit,
+        "/project",
+        ["/project/src/User.php"],
+        { "/project/src/Closed.php": "sha256" },
+      ),
+    ).resolves.toEqual({ kind: "accepted" });
+    expect(applyWorkspaceEdit).toHaveBeenCalledWith(
+      edit,
+      expect.objectContaining({
+        applyOpenModels: expect.any(Function),
+        expectedClosedFileHashes: {
+          "/project/src/Closed.php": "sha256",
+        },
+        openPaths: ["/project/src/User.php"],
+        rootPath: "/project",
+      }),
+    );
+    expect(openModel.pushEditOperations).toHaveBeenCalledTimes(1);
+  });
+
   it("drops a PHP workspaceEdit code action when no workspace root is active", async () => {
     const registered = createRegisteredProviders();
     const sourceModel = {
@@ -14021,6 +14105,9 @@ function providerContext(
     providePhpCodeActions: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpCodeActions"]
     >;
+    openPhpChangeSignature: NonNullable<
+      Parameters<typeof registerLanguageServerMonacoProviders>[1]["openPhpChangeSignature"]
+    >;
     providePhpFrameworkDefinition: NonNullable<
       Parameters<typeof registerLanguageServerMonacoProviders>[1]["providePhpFrameworkDefinition"]
     >;
@@ -14100,6 +14187,7 @@ function providerContext(
           phpLaravelFrameworkProvider,
         ])),
     providePhpCodeActions: overrides.providePhpCodeActions,
+    openPhpChangeSignature: overrides.openPhpChangeSignature,
     providePhpFrameworkDefinition: overrides.providePhpFrameworkDefinition,
     providePhpMethodCompletions: overrides.providePhpMethodCompletions,
     providePhpMethodSignature: overrides.providePhpMethodSignature,

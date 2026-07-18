@@ -24,7 +24,14 @@ const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 #[derive(Default)]
 pub struct EslintProcessRegistry {
     next_id: AtomicU64,
-    processes: Mutex<HashMap<String, HashMap<u64, ActiveEslintProcess>>>,
+    roots: Mutex<HashMap<String, EslintRootLifecycle>>,
+}
+
+#[derive(Default)]
+struct EslintRootLifecycle {
+    generation: u64,
+    closed: bool,
+    processes: HashMap<u64, ActiveEslintProcess>,
 }
 
 #[derive(Clone)]
@@ -33,60 +40,123 @@ struct ActiveEslintProcess {
     canceled: Arc<AtomicBool>,
 }
 
+#[derive(Clone)]
+struct EslintLifecyclePermit {
+    root_key: String,
+    generation: u64,
+}
+
 impl EslintProcessRegistry {
+    pub fn activate_root(&self, root_path: &Path) {
+        let root_key = workspace_key(root_path);
+        let Ok(mut roots) = self.roots.lock() else {
+            return;
+        };
+        let lifecycle = roots.entry(root_key).or_default();
+        if !lifecycle.closed {
+            return;
+        }
+        lifecycle.generation = lifecycle.generation.wrapping_add(1);
+        lifecycle.closed = false;
+    }
+
     pub fn stop_root(&self, root_path: &Path) {
         self.stop_key(&workspace_key(root_path));
     }
 
     pub fn stop_all(&self) {
-        let active = self
-            .processes
-            .lock()
-            .map(|mut processes| processes.drain().flat_map(|(_, entries)| entries).collect())
-            .unwrap_or_default();
+        let active = self.roots.lock().map(close_all_roots).unwrap_or_default();
         stop_active_processes(active);
     }
 
     fn stop_key(&self, root_key: &str) {
         let active = self
-            .processes
+            .roots
             .lock()
             .ok()
-            .and_then(|mut processes| processes.remove(root_key))
-            .map(HashMap::into_iter)
-            .map(Iterator::collect)
+            .map(|mut roots| close_root(&mut roots, root_key))
             .unwrap_or_default();
         stop_active_processes(active);
     }
 
-    fn register(self: &Arc<Self>, root: &Path, process_id: u32) -> EslintProcessRegistration {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+    fn begin_run(&self, root: &Path) -> Result<EslintLifecyclePermit, String> {
         let root_key = workspace_key(root);
-        let canceled = Arc::new(AtomicBool::new(false));
-        if let Ok(mut processes) = self.processes.lock() {
-            processes.entry(root_key.clone()).or_default().insert(
-                id,
-                ActiveEslintProcess {
-                    process_id,
-                    canceled: Arc::clone(&canceled),
-                },
-            );
+        let mut roots = self
+            .roots
+            .lock()
+            .map_err(|_| "ESLint lifecycle registry is unavailable.".to_string())?;
+        let lifecycle = roots.entry(root_key.clone()).or_default();
+        if lifecycle.closed {
+            return Err("ESLint analysis was canceled because its workspace closed.".to_string());
         }
-        EslintProcessRegistration {
-            registry: Arc::clone(self),
+        Ok(EslintLifecyclePermit {
             root_key,
+            generation: lifecycle.generation,
+        })
+    }
+
+    fn register(
+        self: &Arc<Self>,
+        permit: &EslintLifecyclePermit,
+        process_id: u32,
+    ) -> Result<EslintProcessRegistration, String> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let canceled = Arc::new(AtomicBool::new(false));
+        let mut roots = self
+            .roots
+            .lock()
+            .map_err(|_| "ESLint lifecycle registry is unavailable.".to_string())?;
+        let Some(lifecycle) = roots.get_mut(&permit.root_key) else {
+            return Err("ESLint analysis was canceled because its workspace closed.".to_string());
+        };
+        if lifecycle.closed || lifecycle.generation != permit.generation {
+            return Err("ESLint analysis was canceled because its workspace closed.".to_string());
+        }
+        lifecycle.processes.insert(
+            id,
+            ActiveEslintProcess {
+                process_id,
+                canceled: Arc::clone(&canceled),
+            },
+        );
+        Ok(EslintProcessRegistration {
+            registry: Arc::clone(self),
+            root_key: permit.root_key.clone(),
             id,
             canceled,
-        }
+        })
     }
 
     #[cfg(test)]
     fn active_count(&self) -> usize {
-        self.processes
+        self.roots
             .lock()
-            .map(|processes| processes.values().map(HashMap::len).sum())
+            .map(|roots| roots.values().map(|root| root.processes.len()).sum())
             .unwrap_or_default()
     }
+}
+
+fn close_root(
+    roots: &mut HashMap<String, EslintRootLifecycle>,
+    root_key: &str,
+) -> Vec<(u64, ActiveEslintProcess)> {
+    let lifecycle = roots.entry(root_key.to_string()).or_default();
+    lifecycle.generation = lifecycle.generation.wrapping_add(1);
+    lifecycle.closed = true;
+    lifecycle.processes.drain().collect()
+}
+
+fn close_all_roots(
+    mut roots: std::sync::MutexGuard<'_, HashMap<String, EslintRootLifecycle>>,
+) -> Vec<(u64, ActiveEslintProcess)> {
+    roots
+        .values_mut()
+        .flat_map(|lifecycle| {
+            lifecycle.generation = lifecycle.generation.wrapping_add(1);
+            lifecycle.closed = true;
+            lifecycle.processes.drain()
+        })
+        .collect()
 }
 
 struct EslintProcessRegistration {
@@ -98,16 +168,13 @@ struct EslintProcessRegistration {
 
 impl Drop for EslintProcessRegistration {
     fn drop(&mut self) {
-        let Ok(mut processes) = self.registry.processes.lock() else {
+        let Ok(mut roots) = self.registry.roots.lock() else {
             return;
         };
-        let Some(entries) = processes.get_mut(&self.root_key) else {
+        let Some(lifecycle) = roots.get_mut(&self.root_key) else {
             return;
         };
-        entries.remove(&self.id);
-        if entries.is_empty() {
-            processes.remove(&self.root_key);
-        }
+        lifecycle.processes.remove(&self.id);
     }
 }
 
@@ -320,11 +387,12 @@ fn run_managed_eslint(
     registry: &Arc<EslintProcessRegistry>,
     timeout: Duration,
 ) -> Result<ManagedEslintOutput, String> {
+    let permit = registry.begin_run(root)?;
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to run ESLint: {error}"))?;
-    let registration = registry.register(root, child.id());
+    let registration = register_spawned_process(registry, &permit, &mut child)?;
     let stdin = child.stdin.take();
     let stdout_reader = spawn_pipe_reader(child.stdout.take());
     let stderr_reader = spawn_pipe_reader(child.stderr.take());
@@ -377,6 +445,21 @@ fn run_managed_eslint(
         stdout,
         stderr,
     })
+}
+
+fn register_spawned_process(
+    registry: &Arc<EslintProcessRegistry>,
+    permit: &EslintLifecyclePermit,
+    child: &mut Child,
+) -> Result<EslintProcessRegistration, String> {
+    match registry.register(permit, child.id()) {
+        Ok(registration) => Ok(registration),
+        Err(message) => {
+            terminate_process_group(child.id());
+            terminate_and_reap(child);
+            Err(message)
+        }
+    }
 }
 
 fn spawn_pipe_reader<R>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>>
@@ -654,7 +737,8 @@ fn stderr_tail(stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        eslint_args, eslint_document_args, parse_eslint_output, run_eslint_analysis_blocking,
+        configure_process_group, eslint_args, eslint_document_args, parse_eslint_output,
+        register_spawned_process, run_eslint_analysis_blocking,
         run_eslint_document_analysis_blocking, workspace_cache_dir, EslintAnalysisResponse,
         EslintProcessRegistry, MAX_DIAGNOSTICS,
     };
@@ -662,6 +746,7 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        process::Command,
         sync::Arc,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
@@ -1032,6 +1117,67 @@ mod tests {
         assert_eq!(registry.active_count(), 0);
         fs::remove_dir_all(root_a).expect("cleanup root A");
         fs::remove_dir_all(root_b).expect("cleanup root B");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn workspace_close_during_startup_rejects_and_reaps_late_process_registration() {
+        let root = temp_workspace("eslint-close-startup");
+        let registry = test_registry();
+        let permit = registry.begin_run(&root).expect("startup permit");
+        let descendant_file = root.join("descendant.pid");
+        let script = executable_script(
+            &root,
+            "late-eslint",
+            &format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\nwait\n",
+                descendant_file.display()
+            ),
+        );
+        let mut command = Command::new(script);
+        configure_process_group(&mut command);
+        let mut child = command.spawn().expect("spawn late ESLint");
+        wait_until(Duration::from_secs(2), || descendant_file.exists());
+        let descendant_pid: i32 = fs::read_to_string(&descendant_file)
+            .expect("descendant pid")
+            .trim()
+            .parse()
+            .expect("numeric descendant pid");
+
+        registry.stop_root(&root);
+        let result = register_spawned_process(&registry, &permit, &mut child);
+
+        assert!(matches!(result, Err(message) if message.contains("workspace closed")));
+        assert!(child.try_wait().expect("child status").is_some());
+        assert_eq!(registry.active_count(), 0);
+        assert!(
+            unsafe { libc::kill(descendant_pid, 0) } != 0,
+            "late ESLint descendant {descendant_pid} survived workspace close",
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn trust_revoke_during_startup_blocks_late_registration_until_reactivated() {
+        let root = temp_workspace("eslint-revoke-startup");
+        let registry = test_registry();
+        let stale_permit = registry.begin_run(&root).expect("startup permit");
+        let script = executable_script(&root, "late-eslint", "#!/bin/sh\nsleep 30\n");
+        let mut command = Command::new(&script);
+        configure_process_group(&mut command);
+        let mut child = command.spawn().expect("spawn late ESLint");
+
+        registry.stop_root(&root);
+        let result = register_spawned_process(&registry, &stale_permit, &mut child);
+
+        assert!(matches!(result, Err(message) if message.contains("workspace closed")));
+        assert!(child.try_wait().expect("child status").is_some());
+        assert!(registry.begin_run(&root).is_err());
+        registry.activate_root(&root);
+        assert!(registry.begin_run(&root).is_ok());
+        assert_eq!(registry.active_count(), 0);
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     fn eslint_file(

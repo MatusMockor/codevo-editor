@@ -1,5 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import {
+  hasLatteBlockDeclaration,
+  isProvablyLocalLatteBlockSymbol,
   isValidLatteBlockSymbolName,
   latteBlockSymbolOccurrenceAt,
   latteBlockSymbolOccurrences,
@@ -56,8 +58,7 @@ type MonacoModel = Monaco.editor.ITextModel;
 type MonacoPosition = Monaco.Position;
 type Disposable = Monaco.IDisposable;
 
-export interface LatteCrossFileBlockMonacoContext
-  extends TemplateLanguageMonacoProviderContext {
+export interface LatteCrossFileBlockMonacoContext extends TemplateLanguageMonacoProviderContext {
   applyWorkspaceEdit?(
     edit: LanguageServerWorkspaceEdit,
     applicationContext: WorkspaceEditApplicationContext,
@@ -94,19 +95,13 @@ export function registerLatteTemplateMonacoProviders<
   const rename = monaco.languages.registerRenameProvider
     ? monaco.languages.registerRenameProvider("latte", {
         provideRenameEdits: (model, position, newName) =>
-          provideLatteRenameEdits(
-            monaco,
-            context,
-            model,
-            position,
-            newName,
-          ),
+          provideLatteRenameEdits(monaco, context, model, position, newName),
         resolveRenameLocation: (model, position) =>
           resolveLatteRenameLocation(monaco, context, model, position),
       })
     : { dispose: () => undefined };
   const completion = monaco.languages.registerCompletionItemProvider("latte", {
-    triggerCharacters: ["{", "$", "-", ">", "|", "'", "\"", ".", "/", ":"],
+    triggerCharacters: ["{", "$", "-", ">", "|", "'", '"', ".", "/", ":"],
     provideCompletionItems: (model, position) =>
       provideLatteCompletionItems(monaco, context, model, position),
   });
@@ -150,7 +145,11 @@ function provideLatteDocumentFormattingEdits(
   model: MonacoModel,
   options: Monaco.languages.FormattingOptions,
 ): Monaco.languages.TextEdit[] {
-  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+  const documentContext = activeTemplateDocumentContext(
+    context,
+    model,
+    "latte",
+  );
 
   if (!documentContext) {
     return [];
@@ -234,7 +233,11 @@ async function provideLatteDefinition(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.Location[] | null> {
-  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+  const documentContext = activeTemplateDocumentContext(
+    context,
+    model,
+    "latte",
+  );
 
   if (!documentContext) {
     return null;
@@ -264,7 +267,12 @@ async function provideLatteDefinition(
 
       return [
         ancestor ??
-          latteSymbolLocation(monaco, model, source, occurrence.declarationSpan),
+          latteSymbolLocation(
+            monaco,
+            model,
+            source,
+            occurrence.declarationSpan,
+          ),
       ];
     }
 
@@ -326,7 +334,9 @@ async function provideLatteReferences(
     referenceContext.includeDeclaration || candidate.kind !== "declaration";
   const sameFileLocations = latteBlockSymbolOccurrences(source, occurrence.name)
     .filter(matchesReferenceContext)
-    .map((candidate) => latteSymbolLocation(monaco, model, source, candidate.span));
+    .map((candidate) =>
+      latteSymbolLocation(monaco, model, source, candidate.span),
+    );
   const documents = await latteTemplateGraphDocuments(
     monaco,
     context,
@@ -387,6 +397,26 @@ async function provideLatteRenameEdits(
   }
 
   const { documentContext, occurrence, source } = symbolContext;
+
+  if (
+    newName !== occurrence.name &&
+    hasLatteBlockDeclaration(source, newName)
+  ) {
+    return latteRenameRejection(
+      `Block "${newName}" is already declared in this template.`,
+    );
+  }
+
+  if (isProvablyLocalLatteBlockSymbol(source, occurrence.name)) {
+    return sameFileLatteRenameEdits(
+      monaco,
+      model,
+      source,
+      occurrence.name,
+      newName,
+    );
+  }
+
   const crossFile = await latteCrossFileRenameEdits(
     monaco,
     context,
@@ -401,7 +431,13 @@ async function provideLatteRenameEdits(
     return crossFile;
   }
 
-  return sameFileLatteRenameEdits(monaco, model, source, occurrence.name, newName);
+  return sameFileLatteRenameEdits(
+    monaco,
+    model,
+    source,
+    occurrence.name,
+    newName,
+  );
 }
 
 function sameFileLatteRenameEdits(
@@ -439,20 +475,26 @@ async function latteCrossFileRenameEdits(
   source: string,
   name: string,
   newName: string,
-): Promise<(Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection) | null> {
+): Promise<
+  (Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection) | null
+> {
   const crossFileContext = context as LatteCrossFileBlockMonacoContext;
   const { listWorkspaceTemplateFiles, readTemplateFileContent } =
     crossFileContext;
 
   if (!listWorkspaceTemplateFiles || !readTemplateFileContent) {
-    return null;
+    return latteRenameRejection(
+      "Workspace template enumeration is unavailable; this block may have cross-file references.",
+    );
   }
 
   const { path, rootPath } = documentContext;
   const currentRelativePath = latteWorkspaceRelativePath(rootPath, path);
 
   if (!currentRelativePath) {
-    return null;
+    return latteRenameRejection(
+      "The active template is outside the current workspace.",
+    );
   }
 
   const sweep = await sweepLatteBlockRename(
@@ -473,10 +515,13 @@ async function latteCrossFileRenameEdits(
     },
     currentRelativePath,
     name,
+    newName,
   );
 
   if (sweep.kind === "unavailable") {
-    return null;
+    return latteRenameRejection(
+      "Workspace template enumeration is unavailable; this block may have cross-file references.",
+    );
   }
 
   if (sweep.kind === "rejected") {
@@ -541,7 +586,9 @@ async function latteCrossFileRenameEdits(
 
   if (plan.every((entry) => entry.model !== null)) {
     return {
-      edits: plan.flatMap((entry) => latteModelRenameEdits(monaco, entry, newName)),
+      edits: plan.flatMap((entry) =>
+        latteModelRenameEdits(monaco, entry, newName),
+      ),
     };
   }
 
@@ -579,7 +626,7 @@ async function applyLatteRenameThroughWorkspaceEdit(
   }
 
   const staged = plan.filter((entry) => entry.model !== null);
-  let commit: WorkspaceEditOpenModelCommitResult | undefined;
+  let commit: LatteRenameOpenModelCommitResult | undefined;
   const applyOpenModels = () => {
     if (commit) {
       return commit;
@@ -594,30 +641,31 @@ async function applyLatteRenameThroughWorkspaceEdit(
     {
       applyOpenModels,
       openPaths: staged.map((entry) => entry.absolutePath),
+      requiresAtomicFinalization: plan.some((entry) => entry.model === null),
       rootPath,
     },
   );
 
   if (!decision || decision.kind === "rejected") {
+    if (commit?.kind === "applied") {
+      commit.rollback?.();
+    }
+
     return latteRenameRejection(
       "The Latte block rename could not be applied safely.",
     );
   }
 
-  const finalCommit = applyOpenModels();
-
-  if (finalCommit.kind === "rejected") {
-    return latteRenameRejection(LATTE_RENAME_CHANGED_REASON);
-  }
-
   return { edits: [] };
 }
+
+type LatteRenameOpenModelCommitResult = WorkspaceEditOpenModelCommitResult;
 
 function commitLatteRenameToOpenModels(
   monaco: MonacoApi,
   staged: LatteRenamePlanEntry[],
   newName: string,
-): WorkspaceEditOpenModelCommitResult {
+): LatteRenameOpenModelCommitResult {
   for (const entry of staged) {
     if (!entry.model) {
       continue;
@@ -638,25 +686,142 @@ function commitLatteRenameToOpenModels(
     }
   }
 
-  for (const entry of staged) {
-    entry.model?.pushEditOperations?.(
-      [],
-      entry.file.occurrences.map((occurrence) => ({
+  const applied: Array<{
+    appliedContent: string;
+    appliedVersionId: number;
+    entry: LatteRenamePlanEntry;
+    inverseEdits: Monaco.editor.IIdentifiedSingleEditOperation[];
+    renameEdits: Monaco.editor.IIdentifiedSingleEditOperation[];
+  }> = [];
+  let state: "finalized" | "pending" | "rolledBack" = "pending";
+  const rollback = () => {
+    if (state !== "pending") {
+      return;
+    }
+
+    state = "rolledBack";
+
+    for (const { appliedContent, appliedVersionId, entry, inverseEdits } of [
+      ...applied,
+    ].reverse()) {
+      const model = entry.model;
+      const current = model ? latteModelValueAndVersion(model) : null;
+
+      if (
+        !model ||
+        !current ||
+        current.value !== appliedContent ||
+        current.versionId !== appliedVersionId
+      ) {
+        continue;
+      }
+
+      model.applyEdits(inverseEdits);
+    }
+  };
+  try {
+    for (const entry of staged) {
+      const model = entry.model;
+
+      if (!model) {
+        continue;
+      }
+
+      const renameEdits = entry.file.occurrences.map((occurrence) => ({
         range: latteSourceRange(monaco, entry.file.source, occurrence.span),
         text: newName,
-      })),
-      () => null,
-    );
+      }));
+      const inverseEdits = model.applyEdits(renameEdits, true);
+      const current = latteModelValueAndVersion(model);
+
+      if (!current || current.versionId === null) {
+        throw new Error(LATTE_RENAME_CHANGED_REASON);
+      }
+
+      applied.push({
+        appliedContent: current.value,
+        appliedVersionId: current.versionId,
+        entry,
+        inverseEdits,
+        renameEdits,
+      });
+    }
+  } catch (error) {
+    rollback();
+    throw error;
   }
 
-  return {
+  const documents = staged.map((entry) => ({
+    content: entry.model?.getValue() ?? entry.file.source,
+    path: entry.absolutePath,
+    versionId: entry.model?.getVersionId?.() ?? 0,
+  }));
+  const rejected = (path: string): WorkspaceEditOpenModelCommitResult => ({
+    kind: "rejected",
+    path,
+    reason: "invalidOpenModelEdits",
+  });
+  const finalize = (): WorkspaceEditOpenModelCommitResult => {
+    if (state === "finalized") {
+      return { documents, kind: "applied", rollback };
+    }
+
+    if (state !== "pending") {
+      return rejected(applied[0]?.entry.absolutePath ?? "");
+    }
+
+    for (const item of applied) {
+      const model = item.entry.model;
+      const current = model ? latteModelValueAndVersion(model) : null;
+
+      if (
+        !current ||
+        current.value !== item.appliedContent ||
+        current.versionId !== item.appliedVersionId
+      ) {
+        rollback();
+        return rejected(item.entry.absolutePath);
+      }
+    }
+
+    for (const item of [...applied].reverse()) {
+      item.entry.model?.applyEdits(item.inverseEdits);
+    }
+
+    for (const item of applied) {
+      const model = item.entry.model;
+
+      if (!model) {
+        continue;
+      }
+
+      model.pushStackElement?.();
+      model.pushEditOperations([], item.renameEdits, () => null);
+      model.pushStackElement?.();
+    }
+
+    state = "finalized";
+    return {
+      documents: staged.map((entry) => ({
+        content: entry.model?.getValue() ?? entry.file.source,
+        path: entry.absolutePath,
+        versionId: entry.model?.getVersionId?.() ?? 0,
+      })),
+      kind: "applied",
+      rollback,
+    };
+  };
+  const result: LatteRenameOpenModelCommitResult = {
     documents: staged.map((entry) => ({
       content: entry.model?.getValue() ?? entry.file.source,
       path: entry.absolutePath,
       versionId: entry.model?.getVersionId?.() ?? 0,
     })),
+    finalize,
     kind: "applied",
   };
+  Object.defineProperty(result, "rollback", { value: rollback });
+  return result;
 }
 
 function latteModelRenameEdits(
@@ -690,7 +855,10 @@ function languageServerLatteRenameEdits(
       newText: newName,
       range: {
         end: languageServerPositionAtOffset(file.source, occurrence.span.end),
-        start: languageServerPositionAtOffset(file.source, occurrence.span.start),
+        start: languageServerPositionAtOffset(
+          file.source,
+          occurrence.span.start,
+        ),
       },
     }));
 }
@@ -792,7 +960,11 @@ function activeLatteSymbolContext(
   model: MonacoModel,
   position: MonacoPosition,
 ) {
-  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+  const documentContext = activeTemplateDocumentContext(
+    context,
+    model,
+    "latte",
+  );
 
   if (!documentContext) {
     return null;
@@ -840,7 +1012,8 @@ async function latteTemplateGraphDocuments(
 
   const documents = await collectLatteTemplateGraphDocuments(
     {
-      isRequestedRootActive: () => isStoredWorkspaceRootActive(context, rootPath),
+      isRequestedRootActive: () =>
+        isStoredWorkspaceRootActive(context, rootPath),
       readTemplateFile: async (relative) => {
         const absolutePath = joinLatteWorkspacePath(rootPath, relative);
         const openSource = openLatteModelValue(monaco, rootPath, absolutePath);
@@ -975,7 +1148,10 @@ function lattePositionAtOffset(
   const before = source.slice(0, clamped);
   const lineStart = before.lastIndexOf("\n") + 1;
 
-  return { column: clamped - lineStart + 1, lineNumber: before.split("\n").length };
+  return {
+    column: clamped - lineStart + 1,
+    lineNumber: before.split("\n").length,
+  };
 }
 
 function latteSymbolLocation(
@@ -996,7 +1172,11 @@ async function provideLatteCompletionItems(
   model: MonacoModel,
   position: MonacoPosition,
 ): Promise<Monaco.languages.CompletionList> {
-  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+  const documentContext = activeTemplateDocumentContext(
+    context,
+    model,
+    "latte",
+  );
 
   if (!documentContext) {
     return { suggestions: [] };
@@ -1055,7 +1235,11 @@ async function provideLatteCodeActions<
     return emptyLatteCodeActions();
   }
 
-  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+  const documentContext = activeTemplateDocumentContext(
+    context,
+    model,
+    "latte",
+  );
 
   if (!documentContext) {
     return emptyLatteCodeActions();
@@ -1070,7 +1254,11 @@ async function provideLatteCodeActions<
   try {
     const provider = context.getTemplateLanguageProviders().latte;
     const descriptors = diagnosticContext
-      ? await provider.provideCodeActions(source, offsetRange, diagnosticContext)
+      ? await provider.provideCodeActions(
+          source,
+          offsetRange,
+          diagnosticContext,
+        )
       : await provider.provideCodeActions(source, offsetRange);
 
     if (!isStoredWorkspaceRootActive(context, documentContext.rootPath)) {

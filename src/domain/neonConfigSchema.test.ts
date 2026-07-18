@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  compatibleNeonConfigKeySpecsForScope,
+  netteComposerPackageVersionsFromLock,
+  neonConfigKeyScopeRequiresComposerVersion,
+  NETTE_NEON_SCHEMA_PROVENANCE,
   NEON_SECTION_KEYS,
   NEON_SERVICE_ITEM_KEYS,
   NEON_TOP_LEVEL_SECTIONS,
@@ -61,12 +65,103 @@ describe("neon config schema data", () => {
 
     expect(byName.get("factory")?.valueKind).toBe("string");
     expect(byName.get("setup")?.valueKind).toBe("array");
-    expect(byName.get("autowired")?.valueKind).toBe("boolean");
+    expect(byName.get("autowired")?.valueKind).toBe("scalar");
     expect(byName.get("tags")?.valueKind).toBe("array");
     expect(byName.get("reset")?.valueKind).toBe("array");
     expect(byName.get("alteration")?.valueKind).toBe("boolean");
     expect(byName.get("factory")?.description).toContain("alias of create");
     expect(byName.get("class")?.description).toContain("deprecated");
+  });
+
+  it("records pinned upstream provenance for the bundled offline snapshot", () => {
+    expect(NETTE_NEON_SCHEMA_PROVENANCE.schemaVersion).toBe(2);
+    expect(NETTE_NEON_SCHEMA_PROVENANCE.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          package: "nette/di",
+          revision: "481ca2553e792daffa7fcf0ed43f705d80603fa4",
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          version: "3.2.6",
+        }),
+      ]),
+    );
+  });
+
+  it("gates individual generated keys without hiding older keys in the same scope", () => {
+    const current = new Map([["nette/di", "v3.2.6"]]);
+    const older = new Map([["nette/di", "3.1.9"]]);
+
+    expect(
+      compatibleNeonConfigKeySpecsForScope(
+        { kind: "service-item" },
+        current,
+      ).map((spec) => spec.name),
+    ).toContain("lazy");
+    const olderNames = compatibleNeonConfigKeySpecsForScope(
+      { kind: "service-item" },
+      older,
+    ).map((spec) => spec.name);
+    const unknownNames = compatibleNeonConfigKeySpecsForScope(
+      { kind: "service-item" },
+      new Map(),
+    ).map((spec) => spec.name);
+
+    expect(olderNames).toContain("factory");
+    expect(olderNames).not.toContain("lazy");
+    expect(unknownNames).toContain("factory");
+    expect(unknownNames).not.toContain("lazy");
+  });
+
+  it("keeps stable handwritten scopes available without Composer metadata", () => {
+    expect(
+      compatibleNeonConfigKeySpecsForScope(
+        { kind: "section", section: "application" },
+        new Map(),
+      ).map((spec) => spec.name),
+    ).toContain("errorPresenter");
+    expect(
+      neonConfigKeyScopeRequiresComposerVersion({
+        kind: "section",
+        section: "application",
+      }),
+    ).toBe(false);
+    expect(
+      neonConfigKeyScopeRequiresComposerVersion({ kind: "service-item" }),
+    ).toBe(true);
+  });
+
+  it("parses normalized package versions from production and dev lock entries", () => {
+    const versions = netteComposerPackageVersionsFromLock(
+      JSON.stringify({
+        packages: [{ name: "nette/di", version: "v3.2.6" }],
+        "packages-dev": [{ name: "nette/tester", version: "v2.5.4" }],
+      }),
+    );
+
+    expect(versions.get("nette/di")).toBe("v3.2.6");
+    expect(versions.get("nette/tester")).toBe("v2.5.4");
+    expect(netteComposerPackageVersionsFromLock("not json").size).toBe(0);
+  });
+
+  it("provides nested keys from the pinned extension schemas", () => {
+    expect(
+      neonConfigKeySpecsForScope({
+        kind: "section",
+        section: "database.*",
+      }).map((spec) => spec.name),
+    ).toContain("dsn");
+    expect(
+      neonConfigKeySpecsForScope({
+        kind: "section",
+        section: "security.authentication",
+      }).map((spec) => spec.name),
+    ).toContain("persistIdentity");
+    expect(
+      neonConfigKeySpecsForScope({
+        kind: "section",
+        section: "search.*.exclude",
+      }).map((spec) => spec.name),
+    ).toContain("implements");
   });
 
   it("provides nested keys for common sections", () => {
@@ -191,10 +286,38 @@ describe("neonConfigKeyCompletionContextAt", () => {
     expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
   });
 
-  it("returns null below known nesting depths", () => {
+  it("returns null below unsupported service nesting depths", () => {
     const source = "services:\n\tfoo:\n\t\tsetup:\n\t\t\tab";
 
     expect(neonConfigKeyCompletionContextAt(source, source.length)).toBeNull();
+  });
+
+  it("detects a named database connection scope", () => {
+    const source = "database:\n\tprimary:\n\t\tds";
+    const context = neonConfigKeyCompletionContextAt(source, source.length);
+
+    expect(context?.scope).toEqual({ kind: "section", section: "database.*" });
+    expect(context?.prefix).toBe("ds");
+  });
+
+  it("detects a nested static security scope", () => {
+    const source = "security:\n\tauthentication:\n\t\tper";
+    const context = neonConfigKeyCompletionContextAt(source, source.length);
+
+    expect(context?.scope).toEqual({
+      kind: "section",
+      section: "security.authentication",
+    });
+  });
+
+  it("detects nested wildcard search exclusion scopes", () => {
+    const source = "search:\n\tapp:\n\t\texclude:\n\t\t\tcla";
+    const context = neonConfigKeyCompletionContextAt(source, source.length);
+
+    expect(context?.scope).toEqual({
+      kind: "section",
+      section: "search.*.exclude",
+    });
   });
 });
 

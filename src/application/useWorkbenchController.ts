@@ -218,6 +218,7 @@ export type {
 } from "./usePhpCodeActions";
 import { usePhpCodeActionProvider } from "./usePhpCodeActionProvider";
 import { usePhpCodeActionNewFileApplication } from "./usePhpCodeActionNewFileApplication";
+import { usePhpChangeSignatureWorkflow } from "./usePhpChangeSignatureWorkflow";
 import {
   capDiagnosticNotices,
   capWorkbenchNotices,
@@ -5090,6 +5091,105 @@ export function useWorkbenchController(
     reportError,
   });
 
+  const phpChangeSignaturePorts = useMemo(
+    () => ({
+      applyWorkspaceEdit: (
+        edit: Parameters<typeof applyPhpLanguageServerWorkspaceEdit>[0],
+        rootPath: string,
+        openPaths: string[],
+        expectedClosedFileHashes: Readonly<Record<string, string>>,
+      ) =>
+        applyPhpLanguageServerWorkspaceEdit(edit, {
+          expectedClosedFileHashes,
+          openPaths,
+          rootPath,
+        }),
+      currentRootPath: () => currentWorkspaceRootRef.current,
+      flushDocument: flushPendingDocumentChange,
+      getOpenDocument: (path: string) => {
+        const document = documentsRef.current[path];
+        const rootPath = currentWorkspaceRootRef.current;
+        if (!document || !rootPath) return null;
+        return {
+          content: document.content,
+          path: document.path,
+          version: getPhpDocumentSyncVersion(rootPath, path),
+        };
+      },
+      isWorkspaceTrusted: () => workspaceTrust?.trusted === true,
+      isReferenceIndexComplete: (rootPath: string) =>
+        indexProgress.status === "completed" &&
+        indexProgress.erroredEntries === 0 &&
+        workspaceRootKeysEqual(indexProgress.rootPath, rootPath),
+      languageServer: languageServerFeaturesGateway,
+      notifyClosedDocumentsChanged: async (
+        rootPath: string,
+        paths: string[],
+      ) => {
+        if (paths.length === 0) return;
+        if (
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) ||
+          workspaceTrust?.trusted !== true
+        ) {
+          return;
+        }
+        await languageServerFeaturesGateway.didChangeWatchedFiles(
+          rootPath,
+          paths.map((path) => ({ changeType: "changed" as const, path })),
+        );
+      },
+      readClosedDocument: async (path: string) => {
+        if (!workspaceFiles.readTextFileSnapshot) return null;
+        const snapshot = await workspaceFiles.readTextFileSnapshot(path);
+        if (!snapshot.revision) return null;
+        return {
+          content: snapshot.content,
+          contentHash: snapshot.revision.contentHash,
+          path,
+          version: null,
+        };
+      },
+      searchReferencePaths: async (rootPath: string, callableName: string) => {
+        const limit = 20_001;
+        const results = await textSearch.searchText(
+          rootPath,
+          callableName,
+          limit,
+          {
+            caseSensitive: false,
+            fileMask: "*.php",
+            isRegex: false,
+            preserveCase: false,
+            wholeWord: true,
+          },
+        );
+        return {
+          complete: results.length < limit,
+          paths: [...new Set(results.map((result) => result.path))],
+        };
+      },
+      subscribeChangedDocuments,
+    }),
+    [
+      applyPhpLanguageServerWorkspaceEdit,
+      currentWorkspaceRootRef,
+      documentsRef,
+      flushPendingDocumentChange,
+      getPhpDocumentSyncVersion,
+      languageServerFeaturesGateway,
+      indexProgress.erroredEntries,
+      indexProgress.rootPath,
+      indexProgress.status,
+      subscribeChangedDocuments,
+      textSearch,
+      workspaceFiles,
+      workspaceTrust?.trusted,
+    ],
+  );
+  const phpChangeSignature = usePhpChangeSignatureWorkflow(
+    phpChangeSignaturePorts,
+  );
+
   // Reads and caches one `.editorconfig`. UI requests remain scoped to the
   // active root; owner-save requests use their captured owner and root.
   const loadEditorConfigFile = useCallback(
@@ -6816,6 +6916,7 @@ export function useWorkbenchController(
 
   const debugSession = useDebugSession({
     gateway: options.debugGateway ?? defaultDebugGateway,
+    isWorkspaceTrusted: () => workspaceTrustedRef.current,
     workspaceRoot,
   });
 
@@ -6916,6 +7017,15 @@ export function useWorkbenchController(
       return;
     }
 
+    if (isActiveDocumentPhpTest) {
+      openDebugPanel();
+      await debugSession.startDebug({
+        kind: "php-test-file",
+        filePath: document.path,
+      });
+      return;
+    }
+
     if (isDebuggablePhpScriptPath(document.path)) {
       openDebugPanel();
       await debugSession.startDebug({
@@ -6940,6 +7050,7 @@ export function useWorkbenchController(
     debugSession.snapshot,
     debugSession.startDebug,
     debugSession.stepDebug,
+    isActiveDocumentPhpTest,
     isActiveDocumentJsTest,
     openDebugPanel,
     readTestFileIfExists,
@@ -7965,6 +8076,7 @@ export function useWorkbenchController(
     ensurePhpFrameworkSourceCollectionsLoaded,
     frameworkRuntime: phpFrameworkRuntimeContext,
     joinWorkspacePath,
+    projectSymbolSearch,
     readNavigationFileContent,
     relativeWorkspacePath,
     resolvePhpClassReference,
@@ -9987,6 +10099,7 @@ export function useWorkbenchController(
     appSettings,
     applyJavaScriptTypeScriptLanguageServerWorkspaceEdit,
     applyPhpLanguageServerWorkspaceEdit,
+    phpChangeSignature,
     activateWorkspaceTab,
     callHierarchyView,
     typeHierarchyView,

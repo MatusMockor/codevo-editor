@@ -125,13 +125,17 @@ function makeDeps(
     frameworkRuntime: LARAVEL_RUNTIME,
     joinWorkspacePath: (rootPath, relativePath) =>
       `${rootPath}/${relativePath}`,
+    projectSymbolSearch: {
+      searchProjectSymbols: vi.fn(async () => []),
+    },
     readNavigationFileContent: vi.fn(async () => ""),
     relativeWorkspacePath: (workspaceRoot, path) =>
       path.startsWith(`${workspaceRoot}/`)
         ? path.slice(workspaceRoot.length + 1)
         : path,
     resolvePhpClassReference: vi.fn(
-      (_source: string, className: string) => `App\\Http\\Controllers\\${className}`,
+      (_source: string, className: string) =>
+        `App\\Http\\Controllers\\${className}`,
     ),
     resolvePhpFrameworkBuilderModelType: vi.fn(async () => null),
     resolvePhpExpressionType: vi.fn(async () => null),
@@ -280,7 +284,10 @@ $comment->loa`;
     const harness = renderHook(deps);
     const completionRequest = harness
       .api()
-      .providePhpMethodCompletions(source, positionAfter(source, "$comment->loa"));
+      .providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$comment->loa"),
+      );
 
     currentWorkspaceRootRef.current = OTHER_ROOT;
     pendingCompletions.resolve([method("load")]);
@@ -298,18 +305,21 @@ $comment->lo`;
     );
     const deps = makeDeps({
       ensurePhpFrameworkSourceCollectionsLoaded,
-      resolvePhpReceiverMethodCompletions: vi.fn(async () => [
-        method("load"),
-      ]),
+      resolvePhpReceiverMethodCompletions: vi.fn(async () => [method("load")]),
     });
     const harness = renderHook(deps);
 
     const completions = await harness
       .api()
-      .providePhpMethodCompletions(source, positionAfter(source, "$comment->lo"));
+      .providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$comment->lo"),
+      );
 
     expect(completions.map((completion) => completion.name)).toEqual(["load"]);
-    expect(ensurePhpFrameworkSourceCollectionsLoaded).toHaveBeenCalledWith(ROOT);
+    expect(ensurePhpFrameworkSourceCollectionsLoaded).toHaveBeenCalledWith(
+      ROOT,
+    );
 
     harness.unmount();
   });
@@ -323,15 +333,16 @@ $comment->lo`;
     const deps = makeDeps({
       ensurePhpFrameworkSourceCollectionsLoaded,
       frameworkRuntime: GENERIC_RUNTIME,
-      resolvePhpReceiverMethodCompletions: vi.fn(async () => [
-        method("load"),
-      ]),
+      resolvePhpReceiverMethodCompletions: vi.fn(async () => [method("load")]),
     });
     const harness = renderHook(deps);
 
     const completions = await harness
       .api()
-      .providePhpMethodCompletions(source, positionAfter(source, "$comment->lo"));
+      .providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$comment->lo"),
+      );
 
     expect(completions.map((completion) => completion.name)).toEqual(["load"]);
     expect(ensurePhpFrameworkSourceCollectionsLoaded).not.toHaveBeenCalled();
@@ -426,11 +437,9 @@ Comment::with('par')->first();
   it("provides Nette redrawControl snippet completions from colocated templates", async () => {
     const source = "<?php\n$this->redrawControl('mail');";
     const readNavigationFileContent = vi.fn(async () =>
-      [
-        "{snippet mailLogslisting}",
-        "{/snippet}",
-        "{snippet sidebar}",
-      ].join("\n"),
+      ["{snippet mailLogslisting}", "{/snippet}", "{snippet sidebar}"].join(
+        "\n",
+      ),
     );
     const deps = makeDeps({
       activeDocument: {
@@ -636,9 +645,7 @@ Comment::with('par')->first();
       }),
     );
     expect(resolvePhpClassReference).toHaveBeenCalledWith(source, "User");
-    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
-      "App\\Models\\User",
-    );
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith("App\\Models\\User");
 
     harness.unmount();
   });
@@ -692,6 +699,31 @@ Comment::with('par')->first();
     harness.unmount();
   });
 
+  it("drops named argument results when the active project changes", async () => {
+    const source = "<?php\nUser::create(";
+    const pendingMembers = deferred<PhpMethodCompletion[]>();
+    const currentWorkspaceRootRef = { current: ROOT };
+    const harness = renderHook(
+      makeDeps({
+        currentWorkspaceRootRef,
+        resolvePhpStaticMethodCompletions: vi.fn(
+          async () => pendingMembers.promise,
+        ),
+      }),
+    );
+
+    const completionRequest = harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "create("));
+    currentWorkspaceRootRef.current = OTHER_ROOT;
+    pendingMembers.resolve([
+      method("create", { parameters: "array $attributes = []" }),
+    ]);
+
+    await expect(completionRequest).resolves.toEqual([]);
+    harness.unmount();
+  });
+
   it("offers named arguments for resolvable receiver method calls", async () => {
     const source = "<?php\n$this->send($to, su";
     const resolvePhpReceiverMethodCompletions = vi.fn(async () => [
@@ -717,6 +749,192 @@ Comment::with('par')->first();
       expect.any(Function),
     );
 
+    harness.unmount();
+  });
+
+  it("offers named arguments for a same-file function", async () => {
+    const source = [
+      "<?php",
+      "function render(string $view, array $data = []): string { return ''; }",
+      "render(da",
+    ].join("\n");
+    const harness = renderHook(makeDeps());
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "render(da"));
+
+    expect(completions.map((completion) => completion.name)).toEqual(["data:"]);
+    harness.unmount();
+  });
+
+  it("offers named arguments for a statically assigned local callable", async () => {
+    const source = [
+      "<?php",
+      "$format = fn(string $value, int $precision = 2) => $value;",
+      "$format(pre",
+    ].join("\n");
+    const harness = renderHook(makeDeps());
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(
+        source,
+        positionAfter(source, "$format(pre"),
+      );
+
+    expect(completions.map((completion) => completion.name)).toEqual([
+      "precision:",
+    ]);
+    harness.unmount();
+  });
+
+  it("resolves named arguments for an imported cross-file function alias", async () => {
+    const source = [
+      "<?php",
+      "namespace App\\Reports;",
+      "use function Vendor\\Formatting\\render_report as output;",
+      "output(da",
+    ].join("\n");
+    const targetPath = `${ROOT}/vendor/formatting/functions.php`;
+    const searchProjectSymbols = vi.fn(async () => [
+      {
+        column: 1,
+        containerName: null,
+        fullyQualifiedName: "Vendor\\Formatting\\render_report",
+        kind: "function" as const,
+        lineNumber: 3,
+        name: "render_report",
+        path: targetPath,
+        relativePath: "vendor/formatting/functions.php",
+      },
+    ]);
+    const readNavigationFileContent = vi.fn(async () =>
+      [
+        "<?php",
+        "namespace Vendor\\Formatting;",
+        "function render_report(string $view, array $data = []): string { return ''; }",
+      ].join("\n"),
+    );
+    const harness = renderHook(
+      makeDeps({
+        projectSymbolSearch: { searchProjectSymbols },
+        readNavigationFileContent,
+      }),
+    );
+
+    const completions = await harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "output(da"));
+
+    expect(completions.map((completion) => completion.name)).toEqual(["data:"]);
+    expect(searchProjectSymbols).toHaveBeenCalledWith(
+      ROOT,
+      "render_report",
+      50,
+    );
+    expect(readNavigationFileContent).toHaveBeenCalledWith(targetPath);
+    harness.unmount();
+  });
+
+  it("drops cross-file function results when the project changes during symbol search", async () => {
+    const source = "<?php\nuse function Vendor\\render;\nrender(vi";
+    const pendingSymbols =
+      deferred<
+        Awaited<
+          ReturnType<
+            PhpMethodCompletionProviderDependencies["projectSymbolSearch"]["searchProjectSymbols"]
+          >
+        >
+      >();
+    const currentWorkspaceRootRef = { current: ROOT };
+    const readNavigationFileContent = vi.fn(
+      async () => "<?php function render(string $view): void {}",
+    );
+    const harness = renderHook(
+      makeDeps({
+        currentWorkspaceRootRef,
+        projectSymbolSearch: {
+          searchProjectSymbols: vi.fn(() => pendingSymbols.promise),
+        },
+        readNavigationFileContent,
+      }),
+    );
+
+    const request = harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "render(vi"));
+    currentWorkspaceRootRef.current = OTHER_ROOT;
+    pendingSymbols.resolve([
+      {
+        column: 1,
+        containerName: null,
+        fullyQualifiedName: "Vendor\\render",
+        kind: "function",
+        lineNumber: 1,
+        name: "render",
+        path: `${ROOT}/vendor/functions.php`,
+        relativePath: "vendor/functions.php",
+      },
+    ]);
+
+    await expect(request).resolves.toEqual([]);
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("drops cross-file function results when the project changes during file read", async () => {
+    const source = "<?php\nuse function Vendor\\render;\nrender(vi";
+    const pendingSource = deferred<string>();
+    const currentWorkspaceRootRef = { current: ROOT };
+    const harness = renderHook(
+      makeDeps({
+        currentWorkspaceRootRef,
+        projectSymbolSearch: {
+          searchProjectSymbols: vi.fn(async () => [
+            {
+              column: 1,
+              containerName: null,
+              fullyQualifiedName: "Vendor\\render",
+              kind: "function" as const,
+              lineNumber: 1,
+              name: "render",
+              path: `${ROOT}/vendor/functions.php`,
+              relativePath: "vendor/functions.php",
+            },
+          ]),
+        },
+        readNavigationFileContent: vi.fn(() => pendingSource.promise),
+      }),
+    );
+
+    const request = harness
+      .api()
+      .providePhpMethodCompletions(source, positionAfter(source, "render(vi"));
+    await Promise.resolve();
+    currentWorkspaceRootRef.current = OTHER_ROOT;
+    pendingSource.resolve(
+      "<?php namespace Vendor; function render(string $view): void {}",
+    );
+
+    await expect(request).resolves.toEqual([]);
+    harness.unmount();
+  });
+
+  it("does not offer named arguments when the project supports PHP 7", async () => {
+    const source =
+      "<?php\nfunction render(string $view): string { return ''; }\nrender(";
+    const harness = renderHook(
+      makeDeps({
+        phpVersionConstraint: "^7.4 || ^8.2",
+      }),
+    );
+
+    await expect(
+      harness
+        .api()
+        .providePhpMethodCompletions(source, positionAfter(source, "render(")),
+    ).resolves.toEqual([]);
     harness.unmount();
   });
 

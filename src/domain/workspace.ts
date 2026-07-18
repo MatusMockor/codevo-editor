@@ -252,6 +252,12 @@ export interface WorkspaceImageFile {
 export type IntelligenceMode = "basic" | "lightSmart" | "fullSmart";
 
 export interface WorkspaceFileGateway {
+  applyWorkspaceEditTransaction?(
+    rootPath: string,
+    edit: LanguageServerWorkspaceEdit,
+    skippedPaths: string[],
+    expectedStates?: Readonly<Record<string, string | null>>,
+  ): Promise<WorkspaceEditTransaction>;
   applyWorkspaceEdit(
     rootPath: string,
     edit: LanguageServerWorkspaceEdit,
@@ -270,6 +276,11 @@ export interface WorkspaceFileGateway {
     content: string,
     expectedRevision?: WorkspaceFileRevision,
   ): Promise<WorkspaceWriteResult | void>;
+}
+
+export interface WorkspaceEditTransaction {
+  appliedCount: number;
+  rollback(): Promise<void>;
 }
 
 /** Writes through one admitted native workspace instead of path-based routing. */

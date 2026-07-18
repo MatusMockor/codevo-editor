@@ -25,6 +25,7 @@ import type {
   CommandExecutionRunner,
 } from "../application/commandRegistry";
 import type { NavigationRequest } from "../application/navigationRequest";
+import type { PhpCodeActionWorkspaceEditApplier } from "../application/phpCodeActionTypes";
 import {
   nextEditorSelectionExpansionRange,
   type EditorSelectionTextRange,
@@ -365,6 +366,10 @@ export interface EditorSurfaceProps {
   onOpenFileStructure(): void;
   onChange(content: string): void;
   onLanguageServerError(error: unknown): void;
+  onOpenPhpChangeSignature?(
+    request: NonNullable<PhpCodeActionDescriptor["interaction"]>,
+    applyWorkspaceEdit: PhpCodeActionWorkspaceEditApplier,
+  ): void;
   /**
    * Records the latency (ms) of a PHP language-server completion round-trip for
    * the runtime latency panel. Optional: when omitted the completion provider
@@ -542,6 +547,7 @@ function EditorSurfaceComponent({
   onOpenFileStructure,
   onChange,
   onLanguageServerError,
+  onOpenPhpChangeSignature = () => undefined,
   onRecordCompletionLatency,
   onLocalPhpDiagnosticsChange = noopLocalPhpDiagnosticsChange,
   onRevealTargetHandled,
@@ -780,6 +786,7 @@ function EditorSurfaceComponent({
     path: string;
   } | null>(null);
   const phpCodeActionsRef = useRef(providePhpCodeActions);
+  const openPhpChangeSignatureRef = useRef(onOpenPhpChangeSignature);
   const applyPhpCodeActionNewFileRef = useRef(applyPhpCodeActionNewFile);
   const clearLanguageServerDiagnosticsForPathRef = useRef(
     clearLanguageServerDiagnosticsForPath,
@@ -973,6 +980,10 @@ function EditorSurfaceComponent({
   useEffect(() => {
     phpCodeActionsRef.current = providePhpCodeActions;
   }, [providePhpCodeActions]);
+
+  useEffect(() => {
+    openPhpChangeSignatureRef.current = onOpenPhpChangeSignature;
+  }, [onOpenPhpChangeSignature]);
 
   useEffect(() => {
     applyPhpCodeActionNewFileRef.current = applyPhpCodeActionNewFile;
@@ -1380,6 +1391,7 @@ function EditorSurfaceComponent({
     isLanguageServerDocumentSyncedRef,
     largeSmartDocumentPolicyRef,
     phpCodeActionsRef,
+    openPhpChangeSignatureRef,
     phpFrameworkDefinitionRef,
     phpFrameworkStringCompletionContextRef,
     phpInlayHintsEnabledRef,

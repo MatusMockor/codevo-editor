@@ -8,12 +8,10 @@ import type {
   DebugEvent,
   DebugGateway,
   DebugRuntimeStatus,
+  DebugVariable,
   StackFrame,
 } from "../domain/debug";
-import {
-  useDebugSession,
-  type UseDebugSessionResult,
-} from "./useDebugSession";
+import { useDebugSession, type UseDebugSessionResult } from "./useDebugSession";
 
 const launch = {
   kind: "node-script",
@@ -86,11 +84,15 @@ function createGateway(
   };
 }
 
-function renderHook(gateway: DebugGateway, workspaceRoot: string | null) {
+function renderHook(
+  gateway: DebugGateway,
+  workspaceRoot: string | null,
+  isWorkspaceTrusted: () => boolean = () => true,
+) {
   const host = document.createElement("div");
   const root = createRoot(host);
   const captured: { value: UseDebugSessionResult | null } = { value: null };
-  let props = { workspaceRoot };
+  let props = { isWorkspaceTrusted, workspaceRoot };
 
   function Harness() {
     captured.value = useDebugSession({ gateway, ...props });
@@ -204,6 +206,64 @@ describe("useDebugSession", () => {
     ui.unmount();
   });
 
+  it.each([
+    {
+      name: "stopped",
+      event: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame] },
+      } satisfies DebugEvent,
+      expected: {
+        kind: "stopped",
+        sessionId: 4,
+        reason: "breakpoint",
+        frames: [frame],
+        topFrame: frame,
+      },
+    },
+    {
+      name: "terminated",
+      event: {
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "terminated", exitCode: 0 },
+      } satisfies DebugEvent,
+      expected: { kind: "terminated", sessionId: 4, exitCode: 0 },
+    },
+  ])(
+    "does not overwrite an earlier $name event when debug_start resolves",
+    async ({ event, expected }) => {
+      const harness = createGateway();
+      const startResult = deferred<DebugRuntimeStatus>();
+      harness.start.mockReturnValue(startResult.promise);
+      const ui = renderHook(harness.gateway, "/workspace/one");
+      let pending: Promise<void> | null = null;
+
+      act(() => {
+        pending = ui.hook().startDebug(launch);
+      });
+      act(() => {
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 4,
+          seq: 1,
+          payload: { kind: "started", sessionId: 4 },
+        });
+        harness.emit(event);
+      });
+      await act(async () => {
+        startResult.resolve({ kind: "ok", sessionId: 4 });
+        await pending;
+      });
+
+      expect(ui.hook().snapshot.state).toEqual(expected);
+      ui.unmount();
+    },
+  );
+
   it("stores the start failure message without activating a session", async () => {
     const harness = createGateway({
       kind: "unavailable",
@@ -269,7 +329,11 @@ describe("useDebugSession", () => {
     act(() => {
       harness.emit({} as unknown as DebugEvent);
       harness.emit(null as unknown as DebugEvent);
-      harness.emit({ rootPath: "/workspace/one", sessionId: 4, seq: 1 } as unknown as DebugEvent);
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+      } as unknown as DebugEvent);
     });
 
     expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
@@ -496,7 +560,11 @@ describe("useDebugSession", () => {
     });
 
     expect(ui.hook().breakpoints).toEqual([
-      expect.objectContaining({ id: created.id, lineNumber: 6, verified: true }),
+      expect.objectContaining({
+        id: created.id,
+        lineNumber: 6,
+        verified: true,
+      }),
     ]);
     ui.unmount();
   });
@@ -582,8 +650,19 @@ describe("useDebugSession", () => {
     await act(async () => {
       evaluated = await ui.hook().evaluate("count");
     });
-    expect(harness.evaluate).toHaveBeenCalledWith(4, 11, "count");
+    expect(harness.evaluate).toHaveBeenCalledWith(
+      "/workspace/one",
+      4,
+      11,
+      "count",
+    );
     expect(evaluated).toEqual(variable);
+    expect(ui.hook().evaluationHistory).toEqual(["count"]);
+
+    ui.set({ workspaceRoot: "/workspace/two" });
+    expect(ui.hook().evaluationHistory).toEqual([]);
+    ui.set({ workspaceRoot: "/workspace/one" });
+    expect(ui.hook().evaluationHistory).toEqual(["count"]);
 
     act(() => {
       harness.emit({
@@ -603,6 +682,90 @@ describe("useDebugSession", () => {
     });
     expect(harness.scopes).toHaveBeenCalledTimes(1);
     expect(harness.variables).toHaveBeenCalledTimes(1);
+    ui.unmount();
+  });
+
+  it("drops evaluation results after a workspace switch or trust revocation", async () => {
+    const harness = createGateway();
+    const first = deferred<DebugVariable | null>();
+    const second = deferred<DebugVariable | null>();
+    let trusted = true;
+    harness.evaluate
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one", () => trusted);
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame] },
+      });
+    });
+
+    const pending = ui.hook().evaluate("count");
+    ui.set({ workspaceRoot: "/workspace/two" });
+    first.resolve({ name: "count", value: "3", variablesReference: 0 });
+    await expect(pending).resolves.toBeNull();
+
+    ui.set({ workspaceRoot: "/workspace/one" });
+    const revokedWhilePending = ui.hook().evaluate("total");
+    trusted = false;
+    second.resolve({ name: "total", value: "9", variablesReference: 0 });
+    await expect(revokedWhilePending).resolves.toBeNull();
+    await expect(ui.hook().evaluate("count")).resolves.toBeNull();
+    expect(harness.evaluate).toHaveBeenCalledTimes(2);
+    ui.unmount();
+  });
+
+  it("drops an evaluation result after the session is replaced", async () => {
+    const harness = createGateway();
+    const pendingResult = deferred<DebugVariable | null>();
+    harness.start
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 4 })
+      .mockResolvedValueOnce({ kind: "ok", sessionId: 5 });
+    harness.evaluate.mockReturnValueOnce(pendingResult.promise);
+    const ui = renderHook(harness.gateway, "/workspace/one");
+
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 1,
+        payload: { kind: "started", sessionId: 4 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 4,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame] },
+      });
+    });
+
+    const pending = ui.hook().evaluate("count");
+    await act(async () => {
+      await ui.hook().startDebug(launch);
+    });
+    pendingResult.resolve({ name: "count", value: "3", variablesReference: 0 });
+
+    await expect(pending).resolves.toBeNull();
+    expect(ui.hook().snapshot.state).toMatchObject({
+      kind: "running",
+      sessionId: 5,
+    });
     ui.unmount();
   });
 
@@ -781,3 +944,11 @@ describe("useDebugSession", () => {
     expect(handlers.size).toBe(0);
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
+}

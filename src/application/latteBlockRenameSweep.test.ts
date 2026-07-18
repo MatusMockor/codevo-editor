@@ -167,6 +167,77 @@ describe("sweepLatteBlockRename", () => {
     expect(rejectionReason(result)).toContain("from");
   });
 
+  it("rejects a target name already declared in the related component", async () => {
+    const ports = sweepPorts({
+      [HOME]:
+        "{extends '../@layout.latte'}\n{block content}Home{/block}\n{block sidebar}Side{/block}",
+      [LAYOUT]: LAYOUT_SOURCE,
+    });
+
+    const result = await sweepLatteBlockRename(
+      ports,
+      HOME,
+      "content",
+      "sidebar",
+    );
+
+    expect(result.kind).toBe("rejected");
+    expect(rejectionReason(result)).toContain("already declared");
+  });
+
+  it("rejects a target declaration in a sibling sharing the renamed layout", async () => {
+    const ports = sweepPorts({
+      [ABOUT]: "{extends '../@layout.latte'}\n{block sidebar}Side{/block}",
+      [HOME]: HOME_SOURCE,
+      [LAYOUT]: LAYOUT_SOURCE,
+    });
+
+    const result = await sweepLatteBlockRename(
+      ports,
+      LAYOUT,
+      "content",
+      "sidebar",
+    );
+
+    expect(result.kind).toBe("rejected");
+    expect(rejectionReason(result)).toContain(ABOUT);
+  });
+
+  it("rejects a target declaration whose dynamic parent may join the component", async () => {
+    const ports = sweepPorts({
+      [ABOUT]: "{extends $layout}\n{block sidebar}Side{/block}",
+      [HOME]: HOME_SOURCE,
+      [LAYOUT]: LAYOUT_SOURCE,
+    });
+
+    const result = await sweepLatteBlockRename(
+      ports,
+      LAYOUT,
+      "content",
+      "sidebar",
+    );
+
+    expect(result.kind).toBe("rejected");
+    expect(rejectionReason(result)).toContain("dynamic");
+    expect(rejectionReason(result)).toContain(ABOUT);
+  });
+
+  it("ignores a target declaration outside the related component", async () => {
+    const ports = sweepPorts({
+      [ABOUT]: "{block sidebar}Unrelated{/block}",
+      [HOME]: "{block content}Home{/block}",
+    });
+
+    const result = await sweepLatteBlockRename(
+      ports,
+      HOME,
+      "content",
+      "sidebar",
+    );
+
+    expect(result.kind).toBe("swept");
+  });
+
   it("rejects when the workspace lists more templates than the sweep limit", async () => {
     const files: Record<string, string> = { [LAYOUT]: LAYOUT_SOURCE };
 
@@ -266,7 +337,7 @@ describe("sweepLatteBlockRename", () => {
     expect(result.kind).toBe("rejected");
   });
 
-  it("skips deleted non-anchor templates instead of rejecting", async () => {
+  it("rejects when a listed non-anchor template disappears mid-scan", async () => {
     const ports = sweepPorts(
       {
         [ABOUT]: ABOUT_SOURCE,
@@ -283,8 +354,8 @@ describe("sweepLatteBlockRename", () => {
 
     const result = await sweepLatteBlockRename(ports, LAYOUT, "content");
 
-    expect(result.kind).toBe("swept");
-    expect(sweptPaths(result).sort()).toEqual([LAYOUT, HOME].sort());
+    expect(result.kind).toBe("rejected");
+    expect(rejectionReason(result)).toContain("changed");
   });
 });
 

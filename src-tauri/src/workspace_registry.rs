@@ -184,6 +184,7 @@ impl WorkspaceRegistry {
         // Revokes future registry operations. Files already returned or root FDs already cloned
         // by an in-flight open intentionally retain their normal OS-handle lifetime.
         {
+            let _operation = self.lock_operations()?;
             let removed = self
                 .workspaces
                 .lock()
@@ -213,6 +214,7 @@ impl WorkspaceRegistry {
     pub fn clear(&self) {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
+            let _operation = self.operations.lock().ok();
             let drained = if let Ok(mut workspaces) = self.workspaces.lock() {
                 workspaces.drain().map(|(_, workspace)| workspace).collect()
             } else {

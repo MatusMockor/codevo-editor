@@ -7,9 +7,12 @@ import {
 } from "../domain/phpMethodCompletions";
 import {
   phpNamedArgumentCompletionContextAt,
+  phpNamedArgumentCallableMembersFromSource,
   phpNamedArgumentCompletions,
+  phpNamedArgumentFunctionIdentity,
   type PhpNamedArgumentCompletionContext,
 } from "../domain/phpNamedArgumentCompletions";
+import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import {
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
@@ -37,10 +40,8 @@ import {
 } from "./phpTraitThisCompletionContext";
 
 export interface PhpMethodCompletionProviderDependencies
-  extends Omit<
-      PhpFrameworkLiteralCompletionDependencies,
-      "isRequestStillCurrent"
-    >,
+  extends
+    Omit<PhpFrameworkLiteralCompletionDependencies, "isRequestStillCurrent">,
     Omit<PhpFrameworkScopedCompletionDependencies, "isRequestStillCurrent">,
     PhpFrameworkMethodCompletionProviderDependencyAdapterHookDependencies {
   activeDocument: EditorDocument | null;
@@ -50,6 +51,8 @@ export interface PhpMethodCompletionProviderDependencies
   collectPhpMethodsForClass(className: string): Promise<PhpMethodCompletion[]>;
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
   frameworkRuntime: PhpFrameworkRuntimeContext;
+  phpVersionConstraint?: string | null;
+  projectSymbolSearch: ProjectSymbolSearchGateway;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpFrameworkBuilderModelType(
     source: string,
@@ -112,6 +115,8 @@ export function usePhpMethodCompletionProvider({
   ensurePhpFrameworkSourceCollectionsLoaded,
   frameworkRuntime,
   joinWorkspacePath,
+  phpVersionConstraint = null,
+  projectSymbolSearch,
   readNavigationFileContent,
   relativeWorkspacePath,
   resolvePhpClassReference,
@@ -221,6 +226,72 @@ export function usePhpMethodCompletionProvider({
     ): Promise<PhpMethodCompletion[]> => {
       const callTarget = namedArgumentContext.callTarget;
 
+      if (callTarget.kind === "local-callable") {
+        return phpNamedArgumentCallableMembersFromSource(
+          source,
+          namedArgumentContext,
+          position,
+        );
+      }
+
+      if (callTarget.kind === "function") {
+        const localMembers = phpNamedArgumentCallableMembersFromSource(
+          source,
+          namedArgumentContext,
+          position,
+        );
+        if (localMembers.length > 0) {
+          return localMembers;
+        }
+
+        const identity = phpNamedArgumentFunctionIdentity(
+          source,
+          namedArgumentContext,
+          position,
+        );
+        if (!workspaceRoot || !identity) {
+          return [];
+        }
+
+        const shortName = identity.split("\\").pop();
+        if (!shortName) {
+          return [];
+        }
+
+        const symbols = await projectSymbolSearch.searchProjectSymbols(
+          workspaceRoot,
+          shortName,
+          50,
+        );
+        if (!isRequestStillCurrent()) {
+          return [];
+        }
+
+        const normalizedIdentity = identity.replace(/^\\+/, "").toLowerCase();
+        const target = symbols.find(
+          (symbol) =>
+            symbol.kind === "function" &&
+            symbol.fullyQualifiedName.replace(/^\\+/, "").toLowerCase() ===
+              normalizedIdentity,
+        );
+        if (!target) {
+          return [];
+        }
+
+        const targetSource = await readNavigationFileContent(target.path);
+        if (!isRequestStillCurrent()) {
+          return [];
+        }
+
+        return phpNamedArgumentCallableMembersFromSource(targetSource, {
+          ...namedArgumentContext,
+          callTarget: {
+            functionName: `\\${identity.replace(/^\\+/, "")}`,
+            kind: "function",
+          },
+        });
+      }
+
       if (callTarget.kind === "constructor") {
         const resolvedClassName = resolvePhpClassReference(
           source,
@@ -258,10 +329,13 @@ export function usePhpMethodCompletionProvider({
     },
     [
       collectPhpMethodsForClass,
+      projectSymbolSearch,
+      readNavigationFileContent,
       resolvePhpClassReference,
       resolvePhpReceiverMethodCompletions,
       resolvePhpStaticMethodCompletions,
       resolvePhpTraitThisContext,
+      workspaceRoot,
     ],
   );
 
@@ -395,6 +469,7 @@ export function usePhpMethodCompletionProvider({
       const namedArgumentContext = phpNamedArgumentCompletionContextAt(
         source,
         position,
+        phpVersionConstraint,
       );
 
       if (namedArgumentContext) {
@@ -421,7 +496,10 @@ export function usePhpMethodCompletionProvider({
         }
       }
 
-      const accessContext = phpMemberAccessCompletionContextAt(source, position);
+      const accessContext = phpMemberAccessCompletionContextAt(
+        source,
+        position,
+      );
       const staticAccessContext = phpStaticAccessCompletionContextAt(
         source,
         position,

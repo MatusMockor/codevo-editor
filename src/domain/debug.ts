@@ -29,11 +29,7 @@ export interface DebugVariable {
 }
 
 export type DebugStopReason =
-  | "breakpoint"
-  | "step"
-  | "pause"
-  | "entry"
-  | "exception";
+  "breakpoint" | "step" | "pause" | "entry" | "exception";
 
 export type StepKind = "continue" | "stepOver" | "stepInto" | "stepOut";
 
@@ -54,6 +50,7 @@ export type DebugLaunchTarget =
   | { kind: "node-script"; scriptPath: string }
   | { kind: "js-test-file"; runner: "vitest" | "jest"; filePath: string }
   | { kind: "php-script"; scriptPath: string }
+  | { kind: "php-test-file"; filePath: string }
   | { kind: "php-listen"; port?: number };
 
 export type DebugEventPayload =
@@ -62,7 +59,11 @@ export type DebugEventPayload =
   | { kind: "resumed" }
   | { kind: "output"; stream: "stdout" | "stderr"; text: string }
   | { kind: "terminated"; exitCode: number | null }
-  | { kind: "breakpointsVerified"; filePath: string; breakpoints: Breakpoint[] };
+  | {
+      kind: "breakpointsVerified";
+      filePath: string;
+      breakpoints: Breakpoint[];
+    };
 
 export interface DebugEvent {
   rootPath: string;
@@ -97,6 +98,7 @@ export interface DebugGateway {
     variablesReference: number,
   ): Promise<DebugVariable[]>;
   evaluate(
+    rootPath: string,
     sessionId: number,
     frameId: number,
     expression: string,

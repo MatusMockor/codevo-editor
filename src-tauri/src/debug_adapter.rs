@@ -79,6 +79,8 @@ pub enum DebugLaunchTarget {
     JsTestFile { runner: String, file_path: String },
     #[serde(rename = "php-script", rename_all = "camelCase")]
     PhpScript { script_path: String },
+    #[serde(rename = "php-test-file", rename_all = "camelCase")]
+    PhpTestFile { file_path: String },
     #[serde(rename = "php-listen", rename_all = "camelCase")]
     PhpListen { port: Option<u16> },
 }
@@ -191,6 +193,26 @@ struct RunningDebugSession {
     session_id: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DebugStartupPermit {
+    // A workspace lifecycle epoch, not a per-start sequence. Concurrent starts
+    // in one active epoch may race; registration atomically keeps one session.
+    generation: u64,
+    root_key: String,
+}
+
+#[derive(Default)]
+struct DebugRootLifecycle {
+    active: bool,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct DebugRegistryState {
+    lifecycles: HashMap<String, DebugRootLifecycle>,
+    sessions: HashMap<String, RunningDebugSession>,
+}
+
 impl RunningDebugSession {
     fn terminate(self) {
         if let Ok(mut adapter) = self.adapter.lock() {
@@ -203,15 +225,70 @@ impl RunningDebugSession {
 
 pub struct DebugSessionRegistry {
     next_session_id: AtomicU64,
-    sessions: Mutex<HashMap<String, RunningDebugSession>>,
+    state: Mutex<DebugRegistryState>,
 }
 
 impl DebugSessionRegistry {
     pub fn new() -> Self {
         Self {
             next_session_id: AtomicU64::new(1),
-            sessions: Mutex::new(HashMap::new()),
+            state: Mutex::new(DebugRegistryState::default()),
         }
+    }
+
+    pub fn activate_root(&self, root_key: &str) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+        let lifecycle = state.lifecycles.entry(root_key.to_string()).or_default();
+        if lifecycle.active {
+            return;
+        }
+        lifecycle.generation = lifecycle.generation.wrapping_add(1);
+        lifecycle.active = true;
+    }
+
+    pub fn begin_start(&self, root_key: &str) -> Result<DebugStartupPermit, String> {
+        let previous = {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let lifecycle = state
+                .lifecycles
+                .entry(root_key.to_string())
+                .or_insert_with(|| DebugRootLifecycle {
+                    active: true,
+                    generation: 0,
+                });
+            if !lifecycle.active {
+                return Err("The workspace debugger lifecycle is closed.".to_string());
+            }
+            let permit = DebugStartupPermit {
+                generation: lifecycle.generation,
+                root_key: root_key.to_string(),
+            };
+            let previous = state.sessions.remove(root_key);
+            (permit, previous)
+        };
+        if let Some(session) = previous.1 {
+            session.terminate();
+        }
+        Ok(previous.0)
+    }
+
+    pub fn deactivate_root(&self, root_key: &str) -> bool {
+        let removed = {
+            let Ok(mut state) = self.state.lock() else {
+                return false;
+            };
+            let lifecycle = state.lifecycles.entry(root_key.to_string()).or_default();
+            lifecycle.generation = lifecycle.generation.wrapping_add(1);
+            lifecycle.active = false;
+            state.sessions.remove(root_key)
+        };
+        let Some(session) = removed else {
+            return false;
+        };
+        session.terminate();
+        true
     }
 
     pub fn start_session<F>(
@@ -223,34 +300,62 @@ impl DebugSessionRegistry {
     where
         F: FnOnce(DebugEventEmitter) -> Result<Box<dyn DebugAdapter>, String>,
     {
-        self.stop(root_key);
+        let permit = self.begin_start(root_key)?;
+        self.start_session_with_permit(permit, sink, session_factory)
+    }
+
+    pub fn start_session_with_permit<F>(
+        &self,
+        permit: DebugStartupPermit,
+        sink: Arc<dyn DebugEventSink>,
+        session_factory: F,
+    ) -> Result<u64, String>
+    where
+        F: FnOnce(DebugEventEmitter) -> Result<Box<dyn DebugAdapter>, String>,
+    {
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         let emitter = DebugEventEmitter {
-            root_path: root_key.to_string(),
+            root_path: permit.root_key.clone(),
             seq: Arc::new(AtomicU64::new(0)),
             session_id,
             sink,
         };
-        let adapter = session_factory(emitter.clone())?;
+        let adapter = Arc::new(Mutex::new(session_factory(emitter.clone())?));
         let session = RunningDebugSession {
-            adapter: Arc::new(Mutex::new(adapter)),
+            adapter: Arc::clone(&adapter),
             emitter: emitter.clone(),
             session_id,
         };
-        let previous = {
-            let mut sessions = self.sessions.lock().map_err(|error| error.to_string())?;
-            sessions.insert(root_key.to_string(), session)
+        let registration = {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let lifecycle = state.lifecycles.get(&permit.root_key);
+            let current = lifecycle.is_some_and(|lifecycle| {
+                lifecycle.active && lifecycle.generation == permit.generation
+            });
+            current.then(|| {
+                let previous = state.sessions.insert(permit.root_key.clone(), session);
+                emitter.emit(DebugEventPayload::Started { session_id });
+                previous
+            })
+        };
+        let Some(previous) = registration else {
+            if let Ok(mut adapter) = adapter.lock() {
+                adapter.terminate();
+            }
+            return Err("The workspace debugger lifecycle changed during startup.".to_string());
         };
         if let Some(previous) = previous {
             previous.terminate();
         }
-        emitter.emit(DebugEventPayload::Started { session_id });
         Ok(session_id)
     }
 
     pub fn session_id_for_root(&self, root_key: &str) -> Option<u64> {
-        let sessions = self.sessions.lock().ok()?;
-        sessions.get(root_key).map(|session| session.session_id)
+        let state = self.state.lock().ok()?;
+        state
+            .sessions
+            .get(root_key)
+            .map(|session| session.session_id)
     }
 
     pub fn with_session<R>(
@@ -259,8 +364,9 @@ impl DebugSessionRegistry {
         f: impl FnOnce(&mut dyn DebugAdapter) -> R,
     ) -> Result<R, String> {
         let adapter = {
-            let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
-            let session = sessions
+            let state = self.state.lock().map_err(|error| error.to_string())?;
+            let session = state
+                .sessions
                 .get(root_key)
                 .ok_or_else(|| format!("No debug session for workspace {root_key}."))?;
             Arc::clone(&session.adapter)
@@ -274,8 +380,9 @@ impl DebugSessionRegistry {
         f: impl FnOnce(&mut dyn DebugAdapter) -> R,
     ) -> Result<R, String> {
         let adapter = {
-            let sessions = self.sessions.lock().map_err(|error| error.to_string())?;
-            let session = sessions
+            let state = self.state.lock().map_err(|error| error.to_string())?;
+            let session = state
+                .sessions
                 .values()
                 .find(|session| session.session_id == session_id)
                 .ok_or_else(|| format!("No debug session with id {session_id}."))?;
@@ -298,8 +405,8 @@ impl DebugSessionRegistry {
     }
 
     pub fn stop(&self, root_key: &str) -> bool {
-        let removed = match self.sessions.lock() {
-            Ok(mut sessions) => sessions.remove(root_key),
+        let removed = match self.state.lock() {
+            Ok(mut state) => state.sessions.remove(root_key),
             Err(_) => None,
         };
         let Some(session) = removed else {
@@ -318,8 +425,14 @@ impl DebugSessionRegistry {
     }
 
     pub fn stop_all(&self) {
-        let removed: Vec<RunningDebugSession> = match self.sessions.lock() {
-            Ok(mut sessions) => sessions.drain().map(|(_, session)| session).collect(),
+        let removed: Vec<RunningDebugSession> = match self.state.lock() {
+            Ok(mut state) => {
+                for lifecycle in state.lifecycles.values_mut() {
+                    lifecycle.generation = lifecycle.generation.wrapping_add(1);
+                    lifecycle.active = false;
+                }
+                state.sessions.drain().map(|(_, session)| session).collect()
+            }
             Err(_) => Vec::new(),
         };
         for session in removed {
@@ -328,12 +441,13 @@ impl DebugSessionRegistry {
     }
 
     fn remove_by_id(&self, session_id: u64) -> Option<RunningDebugSession> {
-        let mut sessions = self.sessions.lock().ok()?;
-        let root_key = sessions
+        let mut state = self.state.lock().ok()?;
+        let root_key = state
+            .sessions
             .iter()
             .find(|(_, session)| session.session_id == session_id)
             .map(|(root_key, _)| root_key.clone())?;
-        sessions.remove(&root_key)
+        state.sessions.remove(&root_key)
     }
 }
 
@@ -361,6 +475,7 @@ fn run_with_adapter<R>(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc;
     use std::thread;
 
     #[derive(Clone, Default)]
@@ -571,6 +686,64 @@ mod tests {
         assert_eq!(result, Err("Node inspector unavailable.".to_string()));
         assert_eq!(registry.session_id_for_root("/workspace/one"), None);
         assert!(sink.events().is_empty());
+    }
+
+    #[test]
+    fn late_start_is_rejected_and_terminated_after_root_deactivation() {
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingSink::default());
+        let adapter_state = FakeAdapterState::default();
+        registry.activate_root("/workspace/one");
+        let permit = registry
+            .begin_start("/workspace/one")
+            .expect("startup permit");
+        let (factory_started_tx, factory_started_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let worker_registry = Arc::clone(&registry);
+        let worker_sink = Arc::clone(&sink);
+        let worker_state = adapter_state.clone();
+        let worker = thread::spawn(move || {
+            worker_registry.start_session_with_permit(permit, worker_sink, move |_emitter| {
+                factory_started_tx.send(()).expect("factory started");
+                continue_rx.recv().expect("continue startup");
+                Ok(Box::new(FakeAdapter::new(worker_state)))
+            })
+        });
+
+        factory_started_rx.recv().expect("factory start signal");
+        registry.deactivate_root("/workspace/one");
+        continue_tx.send(()).expect("release factory");
+        let result = worker.join().expect("startup worker");
+
+        assert_eq!(
+            result,
+            Err("The workspace debugger lifecycle changed during startup.".to_string())
+        );
+        assert!(adapter_state.is_terminated());
+        assert_eq!(registry.session_id_for_root("/workspace/one"), None);
+        assert!(sink.events().is_empty());
+    }
+
+    #[test]
+    fn deactivated_root_rejects_starts_until_reactivated() {
+        let registry = DebugSessionRegistry::new();
+        let sink = Arc::new(CollectingSink::default());
+        registry.activate_root("/workspace/one");
+        registry.deactivate_root("/workspace/one");
+
+        let rejected = registry.start_session("/workspace/one", sink.clone(), |_emitter| {
+            Ok(Box::new(FakeAdapter::new(FakeAdapterState::default())))
+        });
+        assert_eq!(
+            rejected,
+            Err("The workspace debugger lifecycle is closed.".to_string())
+        );
+
+        registry.activate_root("/workspace/one");
+        let started = registry.start_session("/workspace/one", sink, |_emitter| {
+            Ok(Box::new(FakeAdapter::new(FakeAdapterState::default())))
+        });
+        assert!(started.is_ok());
     }
 
     #[test]
@@ -896,6 +1069,51 @@ mod tests {
         let terminated_seen = terminated_events(&sink);
         assert_eq!(terminated_seen.len(), 1);
         assert_eq!(terminated_seen[0].session_id, terminated[0].0);
+
+        for (session_id, _) in &results {
+            let session_events: Vec<_> = sink
+                .events()
+                .into_iter()
+                .filter(|event| event.session_id == *session_id)
+                .collect();
+            assert!(matches!(
+                session_events.first().map(|event| &event.payload),
+                Some(DebugEventPayload::Started { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn deactivation_invalidates_all_concurrent_start_permits_from_the_previous_epoch() {
+        let registry = DebugSessionRegistry::new();
+        let sink = Arc::new(CollectingSink::default());
+        registry.activate_root("/workspace/one");
+        let first_permit = registry
+            .begin_start("/workspace/one")
+            .expect("first startup permit");
+        let second_permit = registry
+            .begin_start("/workspace/one")
+            .expect("second startup permit");
+
+        registry.deactivate_root("/workspace/one");
+
+        for permit in [first_permit, second_permit] {
+            let adapter_state = FakeAdapterState::default();
+            let factory_state = adapter_state.clone();
+            let result = registry.start_session_with_permit(
+                permit,
+                Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+                move |_emitter| Ok(Box::new(FakeAdapter::new(factory_state))),
+            );
+            assert_eq!(
+                result,
+                Err("The workspace debugger lifecycle changed during startup.".to_string())
+            );
+            assert!(adapter_state.is_terminated());
+        }
+
+        assert_eq!(registry.session_id_for_root("/workspace/one"), None);
+        assert!(sink.events().is_empty());
     }
 
     #[test]
@@ -932,6 +1150,9 @@ mod tests {
         let script = DebugLaunchTarget::PhpScript {
             script_path: "/workspace/one/public/index.php".to_string(),
         };
+        let test_file = DebugLaunchTarget::PhpTestFile {
+            file_path: "/workspace/one/tests/Feature/InvoiceTest.php".to_string(),
+        };
         let listen_with_port = DebugLaunchTarget::PhpListen { port: Some(9010) };
         let listen_default = DebugLaunchTarget::PhpListen { port: None };
 
@@ -940,6 +1161,13 @@ mod tests {
             serde_json::json!({
                 "kind": "php-script",
                 "scriptPath": "/workspace/one/public/index.php"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&test_file).expect("serialize php test target"),
+            serde_json::json!({
+                "kind": "php-test-file",
+                "filePath": "/workspace/one/tests/Feature/InvoiceTest.php"
             })
         );
         assert_eq!(
@@ -956,6 +1184,12 @@ mod tests {
         }))
         .expect("deserialize php script target");
         assert_eq!(parsed_script, script);
+        let parsed_test: DebugLaunchTarget = serde_json::from_value(serde_json::json!({
+            "kind": "php-test-file",
+            "filePath": "/workspace/one/tests/Feature/InvoiceTest.php"
+        }))
+        .expect("deserialize php test target");
+        assert_eq!(parsed_test, test_file);
         let parsed_listen: DebugLaunchTarget =
             serde_json::from_value(serde_json::json!({"kind": "php-listen", "port": 9010}))
                 .expect("deserialize php listen target");

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type * as Monaco from "monaco-editor";
+import type { WorkspaceEditApplicationContext } from "../application/workspaceEditApplication";
 import {
   registerLatteTemplateMonacoProviders,
   type LatteCrossFileBlockMonacoContext,
@@ -26,13 +27,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
       { insertText: "include", kind: "tag" as const, label: "include" },
     ]);
     const context = templateContext({ provideCompletions });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const result = await registered.completionProvider?.provideCompletionItems(
       textModel(NORMAL_LATTE_SOURCE),
@@ -53,9 +50,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     registerLatteTemplateMonacoProviders(
       registered.monaco,
       templateContext({}),
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
+      {
+        toCodeAction: vi.fn(),
+      } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>,
     );
 
     expect(registered.completionProvider?.triggerCharacters).toEqual([
@@ -65,7 +62,7 @@ describe("registerLatteTemplateMonacoProviders", () => {
       ">",
       "|",
       "'",
-      "\"",
+      '"',
       ".",
       "/",
       ":",
@@ -88,13 +85,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
       },
     ]);
     const context = templateContext({ provideCompletions });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const result = await registered.completionProvider?.provideCompletionItems(
       textModel(NORMAL_LATTE_SOURCE),
@@ -121,13 +114,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
       content: LARGE_LATTE_SOURCE,
       provideCompletions,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const result = await registered.completionProvider?.provideCompletionItems(
       textModel(LARGE_LATTE_SOURCE),
@@ -144,13 +133,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     const registered = registerProviders();
     const provideDefinition = vi.fn(async () => true);
     const context = templateContext({ provideDefinition });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     await registered.definitionProvider?.provideDefinition(
       textModel(NORMAL_LATTE_SOURCE),
@@ -172,13 +157,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
       content: LARGE_LATTE_SOURCE,
       provideDefinition,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const result = await registered.definitionProvider?.provideDefinition(
       textModel(LARGE_LATTE_SOURCE),
@@ -198,13 +179,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     const registered = registerProviders();
     const provideDefinition = vi.fn(async () => true);
     const context = templateContext({ content: source, provideDefinition });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(source);
     const includeOffset = source.lastIndexOf("emptyState") + 2;
 
@@ -225,13 +202,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     ].join("\n");
     const registered = registerProviders();
     const context = templateContext({ content: source });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(source);
     const firstOpening = source.indexOf("card");
     const firstClosing = source.indexOf("card", firstOpening + 1);
@@ -267,16 +240,19 @@ describe("registerLatteTemplateMonacoProviders", () => {
       "{include #emptyState}",
     ].join("\n");
     const registered = registerProviders();
-    const context = templateContext({ content: source });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    const context = templateContext({
+      content: source,
+      listWorkspaceTemplateFiles: async () => ["/ws/app/UI/Home/default.latte"],
+      readTemplateFileContent: async () => null,
+    });
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(source);
-    const tableRowPosition = positionAtOffset(source, source.indexOf("tableRow") + 2);
+    const tableRowPosition = positionAtOffset(
+      source,
+      source.indexOf("tableRow") + 2,
+    );
 
     const references = await registered.referenceProvider?.provideReferences(
       model,
@@ -292,7 +268,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     );
 
     expect(references).toHaveLength(3);
-    expect(references?.every((location) => location.uri === model.uri)).toBe(true);
+    expect(references?.every((location) => location.uri === model.uri)).toBe(
+      true,
+    );
     expect(rename?.rejectReason).toBeUndefined();
     expect(rename?.edits).toHaveLength(3);
     expect(
@@ -315,13 +293,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     const source = `{block #emptyState}{/block emptyState}\n${"x\n".repeat(501)}`;
     const registered = registerProviders();
     const context = templateContext({ content: source });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(source);
     const position = positionAtOffset(source, source.indexOf("emptyState") + 1);
 
@@ -357,9 +331,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     const disposable = registerLatteTemplateMonacoProviders(
       registered.monaco,
       context,
-      { toCodeAction } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
+      {
+        toCodeAction,
+      } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>,
     );
     const model = textModel("{include 'partials/card'}");
 
@@ -371,15 +345,21 @@ describe("registerLatteTemplateMonacoProviders", () => {
         startColumn: 12,
         startLineNumber: 1,
       } as Monaco.Range,
-      { markers: [], trigger: "manual" } as unknown as Monaco.languages.CodeActionContext,
+      {
+        markers: [],
+        trigger: "manual",
+      } as unknown as Monaco.languages.CodeActionContext,
       {} as never,
     );
 
     expect(result?.actions).toEqual([{ title: descriptor.title }]);
-    expect(provideCodeActions).toHaveBeenCalledWith("{include 'partials/card'}", {
-      end: 17,
-      start: 11,
-    });
+    expect(provideCodeActions).toHaveBeenCalledWith(
+      "{include 'partials/card'}",
+      {
+        end: 17,
+        start: 11,
+      },
+    );
     expect(toCodeAction).toHaveBeenCalledWith(
       registered.monaco,
       context,
@@ -405,9 +385,9 @@ describe("registerLatteTemplateMonacoProviders", () => {
     const disposable = registerLatteTemplateMonacoProviders(
       registered.monaco,
       context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
+      {
+        toCodeAction: vi.fn(),
+      } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>,
     );
     const markerData = {
       candidateMethodNames: ["renderDetail"],
@@ -475,19 +455,19 @@ describe("Latte document formatting provider", () => {
   it("returns one full-document edit with the reindented source", async () => {
     const registered = registerProviders();
     const context = templateContext({ content: UNFORMATTED_LATTE_SOURCE });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
-    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
-      textModel(UNFORMATTED_LATTE_SOURCE),
-      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
-      {} as never,
-    );
+    const edits =
+      await registered.formattingProvider?.provideDocumentFormattingEdits(
+        textModel(UNFORMATTED_LATTE_SOURCE),
+        {
+          insertSpaces: true,
+          tabSize: 2,
+        } as Monaco.languages.FormattingOptions,
+        {} as never,
+      );
 
     expect(edits).toEqual([
       {
@@ -505,19 +485,19 @@ describe("Latte document formatting provider", () => {
   it("formats with tabs when the editor does not insert spaces", async () => {
     const registered = registerProviders();
     const context = templateContext({ content: UNFORMATTED_LATTE_SOURCE });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
-    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
-      textModel(UNFORMATTED_LATTE_SOURCE),
-      { insertSpaces: false, tabSize: 4 } as Monaco.languages.FormattingOptions,
-      {} as never,
-    );
+    const edits =
+      await registered.formattingProvider?.provideDocumentFormattingEdits(
+        textModel(UNFORMATTED_LATTE_SOURCE),
+        {
+          insertSpaces: false,
+          tabSize: 4,
+        } as Monaco.languages.FormattingOptions,
+        {} as never,
+      );
 
     expect(edits?.[0]?.text).toBe("{if $ok}\n\t<p>yes</p>\n{/if}");
   });
@@ -526,19 +506,19 @@ describe("Latte document formatting provider", () => {
     const registered = registerProviders();
     const formatted = "{if $ok}\n  <p>yes</p>\n{/if}";
     const context = templateContext({ content: formatted });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
-    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
-      textModel(formatted),
-      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
-      {} as never,
-    );
+    const edits =
+      await registered.formattingProvider?.provideDocumentFormattingEdits(
+        textModel(formatted),
+        {
+          insertSpaces: true,
+          tabSize: 2,
+        } as Monaco.languages.FormattingOptions,
+        {} as never,
+      );
 
     expect(edits).toEqual([]);
   });
@@ -546,19 +526,19 @@ describe("Latte document formatting provider", () => {
   it("returns no edits for a large document", async () => {
     const registered = registerProviders();
     const context = templateContext({ content: LARGE_LATTE_SOURCE });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
-    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
-      textModel(LARGE_LATTE_SOURCE),
-      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
-      {} as never,
-    );
+    const edits =
+      await registered.formattingProvider?.provideDocumentFormattingEdits(
+        textModel(LARGE_LATTE_SOURCE),
+        {
+          insertSpaces: true,
+          tabSize: 2,
+        } as Monaco.languages.FormattingOptions,
+        {} as never,
+      );
 
     expect(edits).toEqual([]);
   });
@@ -566,19 +546,21 @@ describe("Latte document formatting provider", () => {
   it("returns no edits when the model is not the active Latte document", async () => {
     const registered = registerProviders();
     const context = templateContext({ content: UNFORMATTED_LATTE_SOURCE });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
-    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
-      textModel(UNFORMATTED_LATTE_SOURCE, { path: "/ws/app/UI/Other/list.latte" }),
-      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
-      {} as never,
-    );
+    const edits =
+      await registered.formattingProvider?.provideDocumentFormattingEdits(
+        textModel(UNFORMATTED_LATTE_SOURCE, {
+          path: "/ws/app/UI/Other/list.latte",
+        }),
+        {
+          insertSpaces: true,
+          tabSize: 2,
+        } as Monaco.languages.FormattingOptions,
+        {} as never,
+      );
 
     expect(edits).toEqual([]);
   });
@@ -601,13 +583,9 @@ describe("cross-file Latte block navigation", () => {
       content: CHILD_INCLUDE_SOURCE,
       readTemplateFileContent,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(CHILD_INCLUDE_SOURCE);
 
     const result = await registered.definitionProvider?.provideDefinition(
@@ -638,13 +616,9 @@ describe("cross-file Latte block navigation", () => {
       readTemplateFileContent: async (path) =>
         path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(CHILD_OVERRIDE_SOURCE);
 
     const result = await registered.definitionProvider?.provideDefinition(
@@ -670,13 +644,9 @@ describe("cross-file Latte block navigation", () => {
       readTemplateFileContent: async (path) =>
         path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(source);
 
     const result = await registered.definitionProvider?.provideDefinition(
@@ -696,13 +666,9 @@ describe("cross-file Latte block navigation", () => {
       readTemplateFileContent: async (path) =>
         path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(CHILD_OVERRIDE_SOURCE);
 
     const references = await registered.referenceProvider?.provideReferences(
@@ -725,7 +691,7 @@ describe("cross-file Latte block navigation", () => {
     );
   });
 
-  it("keeps rename same-file only even when the template read port is wired", async () => {
+  it("rejects a potentially cross-file rename without workspace enumeration", async () => {
     const registered = registerProviders();
     const readTemplateFileContent = vi.fn(async (path: string) =>
       path === LAYOUT_PATH ? LAYOUT_SOURCE : null,
@@ -734,13 +700,9 @@ describe("cross-file Latte block navigation", () => {
       content: CHILD_OVERRIDE_SOURCE,
       readTemplateFileContent,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(CHILD_OVERRIDE_SOURCE);
 
     const rename = await registered.renameProvider?.provideRenameEdits(
@@ -754,24 +716,36 @@ describe("cross-file Latte block navigation", () => {
     );
 
     expect(readTemplateFileContent).not.toHaveBeenCalled();
+    expect(rename?.rejectReason).toContain("enumeration is unavailable");
+    expect(rename?.edits).toEqual([]);
+  });
+
+  it("keeps a provably local block rename in the active template", async () => {
+    const registered = registerProviders();
+    const source = "{block local helper}x{/block helper}";
+    const context = templateContext({ content: source });
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
+    const model = textModel(source);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(source, source.indexOf("helper") + 1),
+      "localHelper",
+      {} as never,
+    );
+
     expect(rename?.rejectReason).toBeUndefined();
-    expect(rename?.edits).toHaveLength(1);
-    expect(rename?.edits[0]).toMatchObject({
-      resource: model.uri,
-      versionId: 1,
-    });
+    expect(rename?.edits).toHaveLength(2);
   });
 
   it("keeps same-file behavior when no template read port is wired", async () => {
     const registered = registerProviders();
     const context = templateContext({ content: CHILD_INCLUDE_SOURCE });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const result = await registered.definitionProvider?.provideDefinition(
       textModel(CHILD_INCLUDE_SOURCE),
@@ -796,13 +770,9 @@ describe("cross-file Latte block navigation", () => {
         return path === LAYOUT_PATH ? LAYOUT_SOURCE : null;
       },
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(CHILD_OVERRIDE_SOURCE);
 
     const references = await registered.referenceProvider?.provideReferences(
@@ -838,9 +808,26 @@ describe("cross-file Latte block rename", () => {
 
   it("applies a rename from a page to the layout and every sibling page", async () => {
     const registered = registerProviders();
-    const applyWorkspaceEdit = vi.fn(async () => ({
-      kind: "accepted" as const,
-    }));
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: unknown,
+        applicationContext: WorkspaceEditApplicationContext,
+      ) => {
+        const commit = applicationContext.applyOpenModels?.();
+
+        if (commit?.kind === "rejected") {
+          return commit;
+        }
+
+        const finalized = commit?.finalize?.() ?? commit;
+
+        if (finalized?.kind === "rejected") {
+          return finalized;
+        }
+
+        return { kind: "accepted" as const };
+      },
+    );
     const pushedEdits: { range: unknown; text: string }[][] = [];
     const context = templateContext({
       applyWorkspaceEdit,
@@ -848,13 +835,9 @@ describe("cross-file Latte block rename", () => {
       listWorkspaceTemplateFiles: listAll,
       readTemplateFileContent: readDisk,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(HOME_SOURCE, {
       pushEditOperations: (_selections, edits) => {
         pushedEdits.push(edits);
@@ -900,6 +883,176 @@ describe("cross-file Latte block rename", () => {
     ]);
   });
 
+  it("removes a rejected rename from undo history so Cmd+Z reaches the prior user edit", async () => {
+    const registered = registerProviders();
+    let content = HOME_SOURCE;
+    let versionId = 1;
+    const priorContent = HOME_SOURCE.replace("Home", "Draft");
+    const undoOperations: Array<() => void> = [
+      () => {
+        content = priorContent;
+        versionId += 1;
+      },
+    ];
+    const setValue = vi.fn((nextValue: string) => {
+      content = nextValue;
+      undoOperations.length = 0;
+    });
+    const pushStackElement = vi.fn();
+    const pushEditOperations = vi.fn();
+    const applyEdits = vi.fn(
+      (
+        edits: { range: Monaco.Range; text: string }[],
+        computeUndoEdits?: boolean,
+      ) => {
+        const inverseEdits = testInverseEdits(content, edits);
+        content = applyTestModelEdits(content, edits);
+        versionId += 1;
+        return computeUndoEdits ? inverseEdits : undefined;
+      },
+    );
+    const model = textModel(HOME_SOURCE, {
+      applyEdits,
+      getValue: () => content,
+      getVersionId: () => versionId,
+      pushEditOperations,
+      pushStackElement,
+      setValue,
+    });
+    const applyWorkspaceEdit = vi.fn(async (_edit, applicationContext) => {
+      const commit = applicationContext.applyOpenModels?.();
+
+      expect(commit?.kind).toBe("applied");
+      if (commit?.kind === "applied") {
+        commit.rollback?.();
+      }
+
+      return {
+        kind: "rejected" as const,
+        reason: "staleDocumentVersion" as const,
+      };
+    });
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("could not be applied");
+    expect(content).toBe(HOME_SOURCE);
+    expect(setValue).not.toHaveBeenCalled();
+    expect(applyEdits).toHaveBeenCalledTimes(2);
+    expect(pushEditOperations).not.toHaveBeenCalled();
+    expect(pushStackElement).not.toHaveBeenCalled();
+    expect(undoOperations).toHaveLength(1);
+
+    undoOperations.pop()?.();
+
+    expect(content).toBe(priorContent);
+    expect(content).not.toContain("mainContent");
+  });
+
+  it("does not roll back an ABA edit with matching content and a newer version", async () => {
+    const registered = registerProviders();
+    let content = HOME_SOURCE;
+    let versionId = 1;
+    const setValue = vi.fn((nextValue: string) => {
+      content = nextValue;
+    });
+    const applyEdits = vi.fn(
+      (
+        edits: { range: Monaco.Range; text: string }[],
+        computeUndoEdits?: boolean,
+      ) => {
+        const inverseEdits = testInverseEdits(content, edits);
+        content = applyTestModelEdits(content, edits);
+        versionId += 1;
+        return computeUndoEdits ? inverseEdits : undefined;
+      },
+    );
+    const model = textModel(HOME_SOURCE, {
+      applyEdits,
+      getValue: () => content,
+      getVersionId: () => versionId,
+      setValue,
+    });
+    const applyWorkspaceEdit = vi.fn(async (_edit, applicationContext) => {
+      const commit = applicationContext.applyOpenModels?.();
+
+      expect(commit?.kind).toBe("applied");
+      const appliedContent = content;
+      const end = positionAtOffset(content, content.length);
+      applyEdits([
+        {
+          range: new registered.monaco.Range(
+            end.lineNumber,
+            end.column,
+            end.lineNumber,
+            end.column,
+          ),
+          text: "\n{* transient user edit *}",
+        },
+      ]);
+      const transientStart = positionAtOffset(content, appliedContent.length);
+      const transientEnd = positionAtOffset(content, content.length);
+      applyEdits([
+        {
+          range: new registered.monaco.Range(
+            transientStart.lineNumber,
+            transientStart.column,
+            transientEnd.lineNumber,
+            transientEnd.column,
+          ),
+          text: "",
+        },
+      ]);
+      expect(content).toBe(appliedContent);
+      if (commit?.kind === "applied") {
+        commit.rollback?.();
+      }
+
+      return {
+        kind: "rejected" as const,
+        reason: "staleDocumentVersion" as const,
+      };
+    });
+    const context = templateContext({
+      applyWorkspaceEdit,
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      model,
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("could not be applied");
+    expect(content).toBe(
+      "{extends '../@layout.latte'}\n{block mainContent}Home{/block}",
+    );
+    expect(versionId).toBe(4);
+    expect(setValue).not.toHaveBeenCalled();
+    expect(applyEdits).toHaveBeenCalledTimes(3);
+  });
+
   it("applies a rename initiated from the layout declaration", async () => {
     const registered = registerProviders();
     const applyWorkspaceEdit = vi.fn(async () => ({
@@ -911,15 +1064,11 @@ describe("cross-file Latte block rename", () => {
       listWorkspaceTemplateFiles: listAll,
       path: LAYOUT_PATH,
       readTemplateFileContent: async (path) =>
-        path === HOME_PATH ? HOME_SOURCE : DISK_SOURCES[path] ?? null,
+        path === HOME_PATH ? HOME_SOURCE : (DISK_SOURCES[path] ?? null),
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(LAYOUT_SOURCE, { path: LAYOUT_PATH });
 
     const rename = await registered.renameProvider?.provideRenameEdits(
@@ -951,15 +1100,11 @@ describe("cross-file Latte block rename", () => {
       readTemplateFileContent: async (path) =>
         path === ABOUT_PATH
           ? "{extends $layout}\n{block content}About{/block}"
-          : DISK_SOURCES[path] ?? null,
+          : (DISK_SOURCES[path] ?? null),
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const rename = await registered.renameProvider?.provideRenameEdits(
       textModel(HOME_SOURCE),
@@ -973,6 +1118,77 @@ describe("cross-file Latte block rename", () => {
     expect(applyWorkspaceEdit).not.toHaveBeenCalled();
   });
 
+  it("rejects when workspace template enumeration returns unavailable", async () => {
+    const registered = registerProviders();
+    const context = templateContext({
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: async () => null,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "mainContent",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("enumeration is unavailable");
+    expect(rename?.edits).toEqual([]);
+  });
+
+  it("rejects a target block already declared across the related component", async () => {
+    const registered = registerProviders();
+    const context = templateContext({
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: async (path) =>
+        path === ABOUT_PATH
+          ? "{extends '../@layout.latte'}\n{block sidebar}Side{/block}"
+          : (DISK_SOURCES[path] ?? null),
+    });
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "sidebar",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("already declared");
+    expect(rename?.edits).toEqual([]);
+  });
+
+  it("uses dirty open models while checking target-name collisions", async () => {
+    const registered = registerProviders();
+    const dirtyLayout = `${LAYOUT_SOURCE}\n{block sidebar}Dirty{/block}`;
+    const context = templateContext({
+      content: HOME_SOURCE,
+      listWorkspaceTemplateFiles: listAll,
+      readTemplateFileContent: readDisk,
+    });
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
+    registerOpenModel(registered.openModels, LAYOUT_PATH, dirtyLayout, 7);
+
+    const rename = await registered.renameProvider?.provideRenameEdits(
+      textModel(HOME_SOURCE),
+      positionAtOffset(HOME_SOURCE, HOME_SOURCE.indexOf("content") + 1),
+      "sidebar",
+      {} as never,
+    );
+
+    expect(rename?.rejectReason).toContain("already declared");
+    expect(rename?.edits).toEqual([]);
+  });
+
   it("rejects the rename when closed templates need edits without workspace edit support", async () => {
     const registered = registerProviders();
     const context = templateContext({
@@ -980,13 +1196,9 @@ describe("cross-file Latte block rename", () => {
       listWorkspaceTemplateFiles: listAll,
       readTemplateFileContent: readDisk,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const rename = await registered.renameProvider?.provideRenameEdits(
       textModel(HOME_SOURCE),
@@ -1006,13 +1218,9 @@ describe("cross-file Latte block rename", () => {
       listWorkspaceTemplateFiles: listAll,
       readTemplateFileContent: async () => null,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     registerOpenModel(registered.openModels, LAYOUT_PATH, LAYOUT_SOURCE, 7);
     registerOpenModel(registered.openModels, ABOUT_PATH, ABOUT_SOURCE, 9);
     const model = textModel(HOME_SOURCE);
@@ -1049,13 +1257,9 @@ describe("cross-file Latte block rename", () => {
       listWorkspaceTemplateFiles: listAll,
       readTemplateFileContent: readDisk,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     let layoutReads = 0;
     const layoutUri = workspaceModelUri("/ws", LAYOUT_PATH);
     expect(layoutUri).not.toBeNull();
@@ -1094,13 +1298,9 @@ describe("cross-file Latte block rename", () => {
       listWorkspaceTemplateFiles: listAll,
       readTemplateFileContent: readDisk,
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const rename = await registered.renameProvider?.provideRenameEdits(
       textModel(HOME_SOURCE),
@@ -1125,13 +1325,9 @@ describe("cross-file Latte block rename", () => {
         return DISK_SOURCES[path] ?? null;
       },
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     const rename = await registered.renameProvider?.provideRenameEdits(
       textModel(HOME_SOURCE),
@@ -1156,15 +1352,11 @@ describe("cross-file Latte block rename", () => {
       content: localSource,
       listWorkspaceTemplateFiles: listAll,
       readTemplateFileContent: async (path) =>
-        path === HOME_PATH ? localSource : DISK_SOURCES[path] ?? null,
+        path === HOME_PATH ? localSource : (DISK_SOURCES[path] ?? null),
     });
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
     const model = textModel(localSource);
 
     const rename = await registered.renameProvider?.provideRenameEdits(
@@ -1216,16 +1408,11 @@ function registerOpenModel(
 function registerProviders() {
   const disposed: string[] = [];
   const openModels = new Map<string, Monaco.editor.ITextModel>();
-  let codeActionProvider:
-    | Monaco.languages.CodeActionProvider
-    | undefined;
-  let completionProvider:
-    | Monaco.languages.CompletionItemProvider
-    | undefined;
+  let codeActionProvider: Monaco.languages.CodeActionProvider | undefined;
+  let completionProvider: Monaco.languages.CompletionItemProvider | undefined;
   let definitionProvider: Monaco.languages.DefinitionProvider | undefined;
   let formattingProvider:
-    | Monaco.languages.DocumentFormattingEditProvider
-    | undefined;
+    Monaco.languages.DocumentFormattingEditProvider | undefined;
   let referenceProvider: Monaco.languages.ReferenceProvider | undefined;
   let renameProvider: Monaco.languages.RenameProvider | undefined;
   const monaco = {
@@ -1353,7 +1540,7 @@ function definitionLocation(
     return null;
   }
 
-  return Array.isArray(definition) ? definition[0] ?? null : definition;
+  return Array.isArray(definition) ? (definition[0] ?? null) : definition;
 }
 
 function templateContext({
@@ -1417,23 +1604,32 @@ function templateContext({
 function textModel(
   value: string,
   options: {
+    applyEdits?: (
+      edits: { range: Monaco.Range; text: string }[],
+      computeUndoEdits?: boolean,
+    ) => unknown;
     getValue?: () => string;
     getVersionId?: () => number;
     path?: string;
     pushEditOperations?: (
       selections: unknown[],
-      edits: { range: unknown; text: string }[],
+      edits: { range: Monaco.Range; text: string }[],
       cursorState: () => null,
     ) => void;
+    pushStackElement?: () => void;
+    setValue?: (value: string) => void;
   } = {},
 ): Monaco.editor.ITextModel {
   const path = options.path ?? "/ws/app/UI/Home/default.latte";
 
   return {
+    applyEdits: options.applyEdits ?? (() => []),
     getVersionId: options.getVersionId ?? (() => 1),
     getValue: options.getValue ?? (() => value),
     getWordUntilPosition: () => ({ endColumn: 1, startColumn: 1, word: "" }),
-    pushEditOperations: options.pushEditOperations,
+    pushEditOperations: options.pushEditOperations ?? (() => undefined),
+    pushStackElement: options.pushStackElement,
+    setValue: options.setValue,
     uri: {
       fsPath: path,
       path,
@@ -1441,4 +1637,83 @@ function textModel(
       toString: () => `file://${path}`,
     },
   } as unknown as Monaco.editor.ITextModel;
+}
+
+function testInverseEdits(
+  source: string,
+  edits: readonly { range: Monaco.Range; text: string }[],
+): { range: Monaco.Range; text: string }[] {
+  let offsetDelta = 0;
+
+  return [...edits]
+    .map((edit) => {
+      const originalStart = testModelOffset(
+        source,
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+      );
+      const originalEnd = testModelOffset(
+        source,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      );
+      const appliedStart = originalStart + offsetDelta;
+      const appliedEnd = appliedStart + edit.text.length;
+      const appliedSource = applyTestModelEdits(source, edits);
+      const start = positionAtOffset(appliedSource, appliedStart);
+      const end = positionAtOffset(appliedSource, appliedEnd);
+      offsetDelta += edit.text.length - (originalEnd - originalStart);
+
+      return {
+        range: {
+          endColumn: end.column,
+          endLineNumber: end.lineNumber,
+          startColumn: start.column,
+          startLineNumber: start.lineNumber,
+        } as Monaco.Range,
+        text: source.slice(originalStart, originalEnd),
+      };
+    })
+    .reverse();
+}
+
+function applyTestModelEdits(
+  source: string,
+  edits: readonly { range: Monaco.Range; text: string }[],
+): string {
+  return [...edits]
+    .map((edit) => ({
+      end: testModelOffset(
+        source,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      ),
+      start: testModelOffset(
+        source,
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+      ),
+      text: edit.text,
+    }))
+    .sort((left, right) => right.start - left.start)
+    .reduce(
+      (content, edit) =>
+        `${content.slice(0, edit.start)}${edit.text}${content.slice(edit.end)}`,
+      source,
+    );
+}
+
+function testModelOffset(
+  source: string,
+  lineNumber: number,
+  column: number,
+): number {
+  const lines = source.split("\n");
+  let offset = 0;
+
+  for (let index = 0; index < lineNumber - 1; index += 1) {
+    offset += (lines[index]?.length ?? 0) + 1;
+  }
+
+  return offset + column - 1;
 }

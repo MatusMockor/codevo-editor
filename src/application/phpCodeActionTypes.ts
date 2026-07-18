@@ -1,4 +1,12 @@
 import type { LanguageServerWorkspaceEdit } from "../domain/languageServerFeatures";
+import type { WorkspaceEditApplicationDecision } from "./workspaceEditApplication";
+
+export type PhpCodeActionWorkspaceEditApplier = (
+  edit: LanguageServerWorkspaceEdit,
+  rootPath: string,
+  openPaths: string[],
+  expectedClosedFileHashes: Readonly<Record<string, string>>,
+) => Promise<WorkspaceEditApplicationDecision>;
 
 /**
  * Shared shape for synthesized PHP code actions. Kept application-level because
@@ -38,6 +46,12 @@ export interface PhpCodeActionDescriptor {
    */
   isPreferred?: boolean;
   kind?: string;
+  interaction?: {
+    kind: "change-signature";
+    offset: number;
+    path: string;
+    rootPath: string;
+  };
   newFile?: PhpCodeActionNewFile;
   title: string;
   workspaceEdit?: LanguageServerWorkspaceEdit;

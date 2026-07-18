@@ -152,6 +152,7 @@ export class TauriDebugGateway implements DebugGateway {
   }
 
   evaluate(
+    rootPath: string,
     sessionId: number,
     frameId: number,
     expression: string,
@@ -161,6 +162,7 @@ export class TauriDebugGateway implements DebugGateway {
     }
 
     return this.invokeCommand("debug_evaluate", {
+      rootPath,
       sessionId,
       frameId,
       expression,
@@ -188,9 +190,7 @@ export class TauriDebugGateway implements DebugGateway {
       }
 
       disposed = true;
-      unlistenPromise
-        .then((unlisten) => unlisten())
-        .catch(() => undefined);
+      unlistenPromise.then((unlisten) => unlisten()).catch(() => undefined);
     };
   }
 }

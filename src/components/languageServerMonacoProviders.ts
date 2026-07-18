@@ -74,6 +74,7 @@ import type {
   PhpCodeActionNewFile,
   PhpCodeActionRange,
   PhpCodeActionTextEdit,
+  PhpCodeActionWorkspaceEditApplier,
 } from "../application/phpCodeActionTypes";
 import type {
   WorkspaceEditApplicationContext,
@@ -227,6 +228,10 @@ interface ApplyPhpCodeActionWorkspaceEditPayload {
   rootPath: string;
 }
 
+type OpenPhpChangeSignaturePayload = NonNullable<
+  PhpCodeActionDescriptor["interaction"]
+>;
+
 const EXECUTE_PHP_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.php.executeLanguageServerCommand";
 const RESOLVE_AND_APPLY_PHP_CODE_ACTION_ID =
@@ -241,6 +246,7 @@ const APPLY_PHP_CODE_ACTION_NEW_FILE_COMMAND_ID =
   "mockor.php.applyCodeActionNewFile";
 const APPLY_PHP_CODE_ACTION_WORKSPACE_EDIT_COMMAND_ID =
   "mockor.php.applyCodeActionWorkspaceEdit";
+const OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID = "codevo.php.openChangeSignature";
 /**
  * Upper bound (ms) for an interactive hover / navigation request before the
  * provider gives up and resolves to "no result". A cold phpactor (mid-index or
@@ -324,6 +330,10 @@ export interface LanguageServerMonacoProviderContext
    */
   applyPhpCodeActionNewFile?(newFile: PhpCodeActionNewFile): Promise<boolean>;
   applyWorkspaceEdit?: PhpWorkspaceEditApplier;
+  openPhpChangeSignature?(
+    request: OpenPhpChangeSignaturePayload,
+    applyWorkspaceEdit: PhpCodeActionWorkspaceEditApplier,
+  ): void;
   clearLanguageServerDiagnosticsForPath?(path: string): void;
   coordinatePhpDocumentSymbols?(
     request: {
@@ -733,6 +743,23 @@ export function registerLanguageServerMonacoProviders(
       }
     },
   });
+  const openPhpChangeSignatureCommand = monaco.editor.addCommand({
+    id: OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID,
+    run: (_accessor, payload: OpenPhpChangeSignaturePayload | undefined) => {
+      if (!payload || payload.kind !== "change-signature") return;
+      if (
+        !workspaceRootKeysEqual(
+          context.getWorkspaceRoot?.() ?? null,
+          payload.rootPath,
+        )
+      )
+        return;
+      context.openPhpChangeSignature?.(
+        payload,
+        createOpenModelWorkspaceEditApplier(monaco, context),
+      );
+    },
+  });
   const hover = monaco.languages.registerHoverProvider("php", {
     provideHover: (model, position, token) =>
       provideHover(monaco, context, model, position, token),
@@ -951,6 +978,7 @@ export function registerLanguageServerMonacoProviders(
       resolveAndApplyCodeActionCommand.dispose();
       applyNewFileCommand.dispose();
       applyCodeActionWorkspaceEditCommand.dispose();
+      openPhpChangeSignatureCommand.dispose();
       hover.dispose();
       completion.dispose();
       signature.dispose();
@@ -2284,6 +2312,19 @@ function toPhpCodeAction(
   model: MonacoModel,
   descriptor: PhpCodeActionDescriptor,
 ): Monaco.languages.CodeAction {
+  if (descriptor.interaction?.kind === "change-signature") {
+    return {
+      command: {
+        arguments: [descriptor.interaction],
+        id: OPEN_PHP_CHANGE_SIGNATURE_COMMAND_ID,
+        title: descriptor.title,
+      },
+      edit: { edits: [] },
+      isPreferred: descriptor.isPreferred,
+      kind: descriptor.kind ?? "refactor.rewrite",
+      title: descriptor.title,
+    };
+  }
   if (descriptor.workspaceEdit && context.applyWorkspaceEdit) {
     const rootPath = descriptor.workspaceRoot ?? context.getWorkspaceRoot?.() ?? null;
 
@@ -3810,18 +3851,38 @@ function applyStagedOpenModelEdits(
     };
   }
 
-  for (const stagedEdit of stagedEdits) {
-    stagedEdit.model.pushEditOperations(
-      [],
-      stagedEdit.edits.map((textEdit) => ({
-        range: toMonacoRange(monaco, textEdit.range),
-        text: textEdit.newText,
-      })),
-      () => null,
-    );
+  const applied: Array<{
+    appliedContent: string;
+    stagedEdit: StagedOpenModelEdit;
+  }> = [];
+  const rollback = () => {
+    for (const { appliedContent, stagedEdit } of [...applied].reverse()) {
+      if (stagedEdit.model.getValue() === appliedContent) {
+        stagedEdit.model.setValue(stagedEdit.content);
+      }
+    }
+  };
+  try {
+    for (const stagedEdit of stagedEdits) {
+      stagedEdit.model.pushEditOperations(
+        [],
+        stagedEdit.edits.map((textEdit) => ({
+          range: toMonacoRange(monaco, textEdit.range),
+          text: textEdit.newText,
+        })),
+        () => null,
+      );
+      applied.push({
+        appliedContent: stagedEdit.model.getValue(),
+        stagedEdit,
+      });
+    }
+  } catch (error) {
+    rollback();
+    throw error;
   }
 
-  return {
+  const result: WorkspaceEditOpenModelCommitResult = {
     documents: stagedEdits.map(({ model, path }) => ({
       content: model.getValue(),
       path,
@@ -3829,6 +3890,8 @@ function applyStagedOpenModelEdits(
     })),
     kind: "applied",
   };
+  Object.defineProperty(result, "rollback", { value: rollback });
+  return result;
 }
 
 async function applyWorkspaceEditWithOpenModels(
@@ -3836,9 +3899,23 @@ async function applyWorkspaceEditWithOpenModels(
   context: LanguageServerMonacoProviderContext,
   edit: LanguageServerWorkspaceEdit,
   rootPath: string,
-): Promise<void> {
+  options: {
+    expectedClosedFileHashes?: Readonly<Record<string, string>>;
+    expectedOpenPaths?: readonly string[];
+    requireWorkspaceApplier?: boolean;
+  } = {},
+): Promise<WorkspaceEditApplicationDecision> {
   const scopedEdit = workspaceEditForRoot(edit, rootPath);
   const stagedEdits = stageWorkspaceEditForOpenModels(monaco, scopedEdit, rootPath);
+  if (
+    options.expectedOpenPaths &&
+    stagedEdits.some(({ path }) => !options.expectedOpenPaths?.includes(path))
+  ) {
+    return { kind: "rejected", reason: "staleDocumentVersion" };
+  }
+  if (options.requireWorkspaceApplier && !context.applyWorkspaceEdit) {
+    return { kind: "rejected", reason: "atomicWorkspaceEditUnavailable" };
+  }
   let commitResult: WorkspaceEditOpenModelCommitResult | undefined;
   const applyOpenModels = () => {
     if (commitResult) {
@@ -3851,15 +3928,29 @@ async function applyWorkspaceEditWithOpenModels(
 
   const decision = await context.applyWorkspaceEdit?.(scopedEdit, {
     applyOpenModels,
+    expectedClosedFileHashes: options.expectedClosedFileHashes,
     openPaths: stagedEdits.map(({ path }) => path),
     rootPath,
   });
 
   if (decision?.kind === "rejected") {
-    return;
+    return decision;
   }
 
   applyOpenModels();
+  return { kind: "accepted" };
+}
+
+function createOpenModelWorkspaceEditApplier(
+  monaco: MonacoApi,
+  context: LanguageServerMonacoProviderContext,
+): PhpCodeActionWorkspaceEditApplier {
+  return (edit, rootPath, openPaths, expectedClosedFileHashes) =>
+    applyWorkspaceEditWithOpenModels(monaco, context, edit, rootPath, {
+      expectedClosedFileHashes,
+      expectedOpenPaths: openPaths,
+      requireWorkspaceApplier: true,
+    });
 }
 
 async function applyWorkspaceEditEvent(

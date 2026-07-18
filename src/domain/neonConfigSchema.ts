@@ -1,17 +1,19 @@
 import type { NeonSpan } from "./neonConfig";
+import netteNeonSchemaSnapshot from "../assets/schemas/nette-neon-schema.json";
 
 export type NeonConfigValueKind =
-  | "array"
-  | "boolean"
-  | "number"
-  | "scalar"
-  | "section"
-  | "string";
+  "array" | "boolean" | "number" | "scalar" | "section" | "string";
 
 export interface NeonConfigKeySpec {
+  readonly compatibility?: NeonConfigKeyCompatibility;
   readonly description: string;
   readonly name: string;
   readonly valueKind: NeonConfigValueKind;
+}
+
+export interface NeonConfigKeyCompatibility {
+  readonly minVersion: string;
+  readonly package: string;
 }
 
 export type NeonConfigKeyScope =
@@ -25,6 +27,8 @@ export interface NeonConfigKeyCompletionContext {
   scope: NeonConfigKeyScope;
   span: NeonSpan;
 }
+
+export type NeonComposerPackageVersions = ReadonlyMap<string, string>;
 
 export const NEON_TOP_LEVEL_SECTIONS: readonly NeonConfigKeySpec[] = [
   {
@@ -129,89 +133,23 @@ export const NEON_TOP_LEVEL_SECTIONS: readonly NeonConfigKeySpec[] = [
   },
 ];
 
-export const NEON_SERVICE_ITEM_KEYS: readonly NeonConfigKeySpec[] = [
-  {
-    description: "Marks the definition as an alteration of an existing service",
-    name: "alteration",
-    valueKind: "boolean",
-  },
-  {
-    description: "Constructor arguments",
-    name: "arguments",
-    valueKind: "array",
-  },
-  {
-    description: "Autowiring on/off or a list of allowed types",
-    name: "autowired",
-    valueKind: "boolean",
-  },
-  {
-    description: "Service class (deprecated, use create or type)",
-    name: "class",
-    valueKind: "string",
-  },
-  {
-    description: "Class name or factory callable creating the service",
-    name: "create",
-    valueKind: "string",
-  },
-  {
-    description: "Class name or factory callable creating the service (alias of create)",
-    name: "factory",
-    valueKind: "string",
-  },
-  {
-    description: "Interface of a generated factory, accessor or locator",
-    name: "implement",
-    valueKind: "string",
-  },
-  {
-    description: "Service is inserted into the container at runtime",
-    name: "imported",
-    valueKind: "boolean",
-  },
-  {
-    description: "Enable inject attributes and inject* methods",
-    name: "inject",
-    valueKind: "boolean",
-  },
-  {
-    description: "Create the service lazily",
-    name: "lazy",
-    valueKind: "boolean",
-  },
-  {
-    description: "Service references of a generated locator",
-    name: "references",
-    valueKind: "array",
-  },
-  {
-    description:
-      "Inherited definition parts to drop when altering (arguments/setup/tags/all)",
-    name: "reset",
-    valueKind: "array",
-  },
-  {
-    description: "Method calls and property sets after creation",
-    name: "setup",
-    valueKind: "array",
-  },
-  {
-    description: "Tag collecting services into a generated locator",
-    name: "tagged",
-    valueKind: "string",
-  },
-  {
-    description: "Service tags",
-    name: "tags",
-    valueKind: "array",
-  },
-  {
-    description: "Declared service type (class or interface)",
-    name: "type",
-    valueKind: "string",
-  },
-];
+export const NEON_SERVICE_ITEM_KEYS: readonly NeonConfigKeySpec[] =
+  netteNeonSchemaSnapshot.serviceItemKeys.map(neonSnapshotKeySpec);
+
+export const NETTE_NEON_SCHEMA_PROVENANCE = Object.freeze({
+  generatedAt: netteNeonSchemaSnapshot.generatedAt,
+  schemaVersion: netteNeonSchemaSnapshot.schemaVersion,
+  sources: netteNeonSchemaSnapshot.sources,
+});
+
+const NEON_NESTED_SECTION_KEYS: Readonly<
+  Record<string, readonly NeonConfigKeySpec[]>
+> = Object.fromEntries(
+  Object.entries(netteNeonSchemaSnapshot.nestedSectionKeys).map(
+    ([sectionPath, specs]) => [sectionPath, specs.map(neonSnapshotKeySpec)],
+  ),
+);
+const NEON_NESTED_SECTION_PATHS = Object.keys(NEON_NESTED_SECTION_KEYS);
 
 export const NEON_SECTION_KEYS: Readonly<
   Record<string, readonly NeonConfigKeySpec[]>
@@ -671,7 +609,160 @@ export function neonConfigKeySpecsForScope(
     return NEON_SERVICE_ITEM_KEYS;
   }
 
-  return NEON_SECTION_KEYS[scope.section] ?? [];
+  return (
+    NEON_NESTED_SECTION_KEYS[scope.section] ??
+    NEON_SECTION_KEYS[scope.section] ??
+    []
+  );
+}
+
+export function compatibleNeonConfigKeySpecsForScope(
+  scope: NeonConfigKeyScope,
+  packageVersions: NeonComposerPackageVersions,
+): readonly NeonConfigKeySpec[] {
+  const specs = neonConfigKeySpecsForScope(scope);
+
+  return specs.filter((spec) =>
+    isNeonConfigKeyCompatible(spec, packageVersions),
+  );
+}
+
+export function neonConfigKeyScopeRequiresComposerVersion(
+  scope: NeonConfigKeyScope,
+): boolean {
+  return neonConfigKeySpecsForScope(scope).some(
+    (spec) => spec.compatibility !== undefined,
+  );
+}
+
+export function netteComposerPackageVersionsFromLock(
+  composerLockSource: string,
+): NeonComposerPackageVersions {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(composerLockSource);
+  } catch {
+    return new Map();
+  }
+
+  if (!isRecord(parsed)) {
+    return new Map();
+  }
+
+  const packages = [parsed.packages, parsed["packages-dev"]]
+    .filter(Array.isArray)
+    .flat();
+  const versions = new Map<string, string>();
+
+  for (const candidate of packages) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+
+    if (typeof candidate.name !== "string") {
+      continue;
+    }
+
+    if (typeof candidate.version !== "string") {
+      continue;
+    }
+
+    versions.set(candidate.name.toLowerCase(), candidate.version);
+  }
+
+  return versions;
+}
+
+function isNeonConfigKeyCompatible(
+  spec: NeonConfigKeySpec,
+  packageVersions: NeonComposerPackageVersions,
+): boolean {
+  if (!spec.compatibility) {
+    return true;
+  }
+
+  const installedVersion = packageVersions.get(spec.compatibility.package);
+
+  if (!installedVersion) {
+    return false;
+  }
+
+  return isVersionAtLeast(installedVersion, spec.compatibility.minVersion);
+}
+
+function isVersionAtLeast(installed: string, required: string): boolean {
+  const installedParts = stableVersionParts(installed);
+  const requiredParts = stableVersionParts(required);
+
+  if (!installedParts || !requiredParts) {
+    return false;
+  }
+
+  for (let index = 0; index < 3; index += 1) {
+    const difference = installedParts[index] - requiredParts[index];
+
+    if (difference > 0) {
+      return true;
+    }
+
+    if (difference < 0) {
+      return false;
+    }
+  }
+
+  return !installedParts.prerelease || requiredParts.prerelease;
+}
+
+interface StableVersionParts extends Array<number> {
+  prerelease: boolean;
+}
+
+function stableVersionParts(version: string): StableVersionParts | null {
+  const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(.*)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const parts = [
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  ] as StableVersionParts;
+  parts.prerelease = Boolean(match[4]);
+  return parts;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function neonSnapshotKeySpec(spec: {
+  readonly compatibility?: {
+    readonly minVersion: string;
+    readonly package: string;
+  };
+  readonly description: string;
+  readonly name: string;
+  readonly valueKind: string;
+}): NeonConfigKeySpec {
+  if (!isNeonConfigValueKind(spec.valueKind)) {
+    throw new Error(`Unsupported bundled NEON value kind: ${spec.valueKind}`);
+  }
+
+  return {
+    ...(spec.compatibility ? { compatibility: spec.compatibility } : {}),
+    description: spec.description,
+    name: spec.name,
+    valueKind: spec.valueKind,
+  };
+}
+
+function isNeonConfigValueKind(value: string): value is NeonConfigValueKind {
+  return ["array", "boolean", "number", "scalar", "section", "string"].includes(
+    value,
+  );
 }
 
 interface SchemaLine {
@@ -945,7 +1036,11 @@ function scopeForIndent(
 
   const topAncestor = ancestors[ancestors.length - 1];
 
-  if (!topAncestor || topAncestor.indent !== 0 || topAncestor.keyName === null) {
+  if (
+    !topAncestor ||
+    topAncestor.indent !== 0 ||
+    topAncestor.keyName === null
+  ) {
     return null;
   }
 
@@ -959,19 +1054,68 @@ function scopeForIndent(
     return { kind: "section", section };
   }
 
-  if (ancestors.length !== 2 || section !== SERVICES_SECTION) {
+  if (section === SERVICES_SECTION) {
+    const serviceEntry = ancestors[0];
+
+    if (
+      ancestors.length === 2 &&
+      serviceEntry &&
+      (serviceEntry.isListItem || serviceEntry.keyName !== null)
+    ) {
+      return { kind: "service-item" };
+    }
+
     return null;
   }
 
-  const serviceEntry = ancestors[0];
+  const path = nestedSchemaPath(section, ancestors.slice(0, -1).reverse());
+  return path && NEON_NESTED_SECTION_KEYS[path]
+    ? { kind: "section", section: path }
+    : null;
+}
 
-  if (!serviceEntry) {
+function nestedSchemaPath(
+  section: string,
+  descendants: readonly SchemaLine[],
+): string | null {
+  const path = [section];
+
+  for (const descendant of descendants) {
+    if (descendant.isListItem) {
+      path.push("*");
+      continue;
+    }
+
+    if (!descendant.keyName) {
+      return null;
+    }
+
+    const staticPath = [...path, descendant.keyName].join(".");
+    const wildcardPath = [...path, "*"].join(".");
+
+    if (
+      NEON_NESTED_SECTION_PATHS.some(
+        (candidate) =>
+          candidate === staticPath || candidate.startsWith(`${staticPath}.`),
+      )
+    ) {
+      path.push(descendant.keyName);
+      continue;
+    }
+
+    if (
+      NEON_NESTED_SECTION_PATHS.some(
+        (candidate) =>
+          candidate === wildcardPath ||
+          candidate.startsWith(`${wildcardPath}.`),
+      )
+    ) {
+      path.push("*");
+      continue;
+    }
+
     return null;
   }
 
-  if (serviceEntry.isListItem || serviceEntry.keyName !== null) {
-    return { kind: "service-item" };
-  }
-
-  return null;
+  return path.join(".");
 }

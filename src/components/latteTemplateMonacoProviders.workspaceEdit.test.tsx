@@ -31,8 +31,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const ROOT = "/ws";
 const HOME_PATH = "/ws/app/UI/Home/default.latte";
 const LAYOUT_PATH = "/ws/app/UI/@layout.latte";
-const HOME_SOURCE =
-  "{extends '../@layout.latte'}\n{block content}Home{/block}";
+const HOME_SOURCE = "{extends '../@layout.latte'}\n{block content}Home{/block}";
 const LAYOUT_SOURCE = "{block content}Layout{/block content}";
 const LARGE_DOCUMENT_POLICY = { characterLimit: 16 * 1024, lineLimit: 500 };
 
@@ -44,13 +43,9 @@ describe("cross-file Latte block rename through the real workspace edit applier"
     const model = latteTextModel(HOME_SOURCE, pushedEdits);
     const registered = latteMonacoHarness();
     const context = latteRenameContext(harness.api);
-    registerLatteTemplateMonacoProviders(
-      registered.monaco,
-      context,
-      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
-        TemplateLanguageMonacoProviderContext
-      >,
-    );
+    registerLatteTemplateMonacoProviders(registered.monaco, context, {
+      toCodeAction: vi.fn(),
+    } as TemplateLanguageMonacoProviderHandlers<TemplateLanguageMonacoProviderContext>);
 
     let rename:
       | (Monaco.languages.WorkspaceEdit & Monaco.languages.Rejection)
@@ -97,6 +92,134 @@ describe("cross-file Latte block rename through the real workspace edit applier"
     expect(pushedEdits[0]).toEqual([
       { range: expect.anything(), text: "mainContent" },
     ]);
+
+    harness.unmount();
+  });
+
+  it("rolls back closed files when open-model finalization detects a race", async () => {
+    const applyWorkspaceEditSpy = vi.fn(async () => 1);
+    const rollbackClosedFiles = vi.fn(async () => undefined);
+    const rollbackOpenModel = vi.fn();
+    const harness = renderWorkspaceEditFileOperations(applyWorkspaceEditSpy, {
+      rollbackClosedFiles,
+    });
+    const edit: LanguageServerWorkspaceEdit = {
+      changes: {
+        [`file://${LAYOUT_PATH}`]: [
+          {
+            newText: "mainContent",
+            range: {
+              end: { character: 14, line: 0 },
+              start: { character: 7, line: 0 },
+            },
+          },
+        ],
+      },
+    };
+
+    const decision = await harness
+      .api()
+      .applyPhpLanguageServerWorkspaceEdit(edit, {
+        applyOpenModels: () => ({
+          documents: [],
+          finalize: () => ({
+            kind: "rejected",
+            path: HOME_PATH,
+            reason: "invalidOpenModelEdits",
+          }),
+          kind: "applied",
+          rollback: rollbackOpenModel,
+        }),
+        openPaths: [HOME_PATH],
+        requiresAtomicFinalization: true,
+        rootPath: ROOT,
+      });
+
+    expect(decision).toEqual({
+      kind: "rejected",
+      path: HOME_PATH,
+      reason: "invalidOpenModelEdits",
+    });
+    expect(applyWorkspaceEditSpy).toHaveBeenCalledOnce();
+    expect(rollbackOpenModel).toHaveBeenCalledOnce();
+    expect(rollbackClosedFiles).toHaveBeenCalledOnce();
+
+    harness.unmount();
+  });
+
+  it("rejects a mixed finalizable rename when native transactions are unavailable", async () => {
+    const applyWorkspaceEditSpy = vi.fn(async () => 1);
+    const harness = renderWorkspaceEditFileOperations(applyWorkspaceEditSpy, {
+      transactional: false,
+    });
+
+    const decision = await harness.api().applyPhpLanguageServerWorkspaceEdit(
+      { changes: {} },
+      {
+        applyOpenModels: () => ({ documents: [], kind: "applied" }),
+        openPaths: [HOME_PATH],
+        requiresAtomicFinalization: true,
+        rootPath: ROOT,
+      },
+    );
+
+    expect(decision).toEqual({
+      kind: "rejected",
+      reason: "atomicWorkspaceEditUnavailable",
+    });
+    expect(applyWorkspaceEditSpy).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("rolls back controller documents and closed files when finalization throws", async () => {
+    const applyWorkspaceEditSpy = vi.fn(async () => 1);
+    const rollbackClosedFiles = vi.fn(async () => undefined);
+    const rollbackOpenModel = vi.fn();
+    const harness = renderWorkspaceEditFileOperations(applyWorkspaceEditSpy, {
+      rollbackClosedFiles,
+    });
+    const contentOffset = HOME_SOURCE.indexOf("content");
+    const start = positionAtOffset(HOME_SOURCE, contentOffset);
+    const end = positionAtOffset(HOME_SOURCE, contentOffset + "content".length);
+
+    await expect(
+      harness.api().applyPhpLanguageServerWorkspaceEdit(
+        {
+          changes: {
+            [`file://${HOME_PATH}`]: [
+              {
+                newText: "mainContent",
+                range: {
+                  end: { character: end.column - 1, line: end.lineNumber - 1 },
+                  start: {
+                    character: start.column - 1,
+                    line: start.lineNumber - 1,
+                  },
+                },
+              },
+            ],
+          },
+        },
+        {
+          applyOpenModels: () => ({
+            documents: [],
+            finalize: () => {
+              throw new Error("finalization failed");
+            },
+            kind: "applied",
+            rollback: rollbackOpenModel,
+          }),
+          openPaths: [],
+          requiresAtomicFinalization: true,
+          rootPath: ROOT,
+        },
+      ),
+    ).rejects.toThrow("finalization failed");
+
+    expect(harness.documentContent(HOME_PATH)).toBe(HOME_SOURCE);
+    expect(rollbackOpenModel).toHaveBeenCalledOnce();
+    expect(rollbackClosedFiles).toHaveBeenCalledOnce();
 
     harness.unmount();
   });
@@ -150,6 +273,10 @@ function renderWorkspaceEditFileOperations(
     edit: LanguageServerWorkspaceEdit,
     skippedPaths: string[],
   ) => Promise<number>,
+  options: {
+    rollbackClosedFiles?: () => Promise<void>;
+    transactional?: boolean;
+  } = {},
 ) {
   let documents: Record<string, EditorDocument> = {
     [HOME_PATH]: homeDocument(),
@@ -172,6 +299,18 @@ function renderWorkspaceEditFileOperations(
     renamePath: vi.fn(async () => undefined),
     writeTextFile: vi.fn(async () => undefined),
   };
+  const rollbackClosedFiles = options.rollbackClosedFiles ?? vi.fn();
+
+  if (options.transactional !== false) {
+    workspaceFiles.applyWorkspaceEditTransaction = async (
+      rootPath,
+      edit,
+      skippedPaths,
+    ) => ({
+      appliedCount: await applyWorkspaceEditSpy(rootPath, edit, skippedPaths),
+      rollback: rollbackClosedFiles,
+    });
+  }
   const dependencies: WorkspaceEditFileOperationsDependencies = {
     currentWorkspaceRootRef: { current: ROOT },
     documentsRef,
@@ -198,8 +337,7 @@ function renderWorkspaceEditFileOperations(
     reportError: vi.fn(),
     setActivePath: vi.fn(),
     setDocuments: (updater) => {
-      documents =
-        typeof updater === "function" ? updater(documents) : updater;
+      documents = typeof updater === "function" ? updater(documents) : updater;
     },
     setMessage: vi.fn(),
     setOpenPaths: vi.fn(),
@@ -231,6 +369,7 @@ function renderWorkspaceEditFileOperations(
 
   return {
     api,
+    documentContent: (path: string) => documents[path]?.content,
     unmount: () => {
       act(() => {
         root.unmount();
@@ -284,19 +423,40 @@ function latteMonacoHarness() {
 }
 
 function latteTextModel(
-  value: string,
+  initialValue: string,
   pushedEdits: { range: unknown; text: string }[][],
 ): Monaco.editor.ITextModel {
+  let value = initialValue;
+  let versionId = 1;
+  const undoStack: { range: Monaco.Range; text: string }[][] = [];
+
+  const applyEdits = (
+    edits: { range: Monaco.Range; text: string }[],
+    computeUndoEdits = false,
+  ) => {
+    const inverseEdits = inverseModelEdits(value, edits);
+    value = applyModelEdits(value, edits);
+    versionId += 1;
+
+    return computeUndoEdits ? inverseEdits : undefined;
+  };
+
   return {
     getValue: () => value,
-    getVersionId: () => 1,
+    getVersionId: () => versionId,
     getWordUntilPosition: () => ({ endColumn: 1, startColumn: 1, word: "" }),
+    applyEdits,
     pushEditOperations: (
       _selections: unknown[],
-      edits: { range: unknown; text: string }[],
+      edits: { range: Monaco.Range; text: string }[],
     ) => {
       pushedEdits.push(edits);
+      const inverseEdits = inverseModelEdits(value, edits);
+      value = applyModelEdits(value, edits);
+      versionId += 1;
+      undoStack.push(inverseEdits);
     },
+    pushStackElement: () => undefined,
     uri: {
       fsPath: HOME_PATH,
       path: HOME_PATH,
@@ -304,6 +464,96 @@ function latteTextModel(
       toString: () => `file://${HOME_PATH}`,
     },
   } as unknown as Monaco.editor.ITextModel;
+}
+
+function applyModelEdits(
+  source: string,
+  edits: readonly { range: Monaco.Range; text: string }[],
+): string {
+  return [...edits]
+    .map((edit) => ({
+      end: modelOffsetAt(
+        source,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      ),
+      start: modelOffsetAt(
+        source,
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+      ),
+      text: edit.text,
+    }))
+    .sort((left, right) => right.start - left.start)
+    .reduce(
+      (content, edit) =>
+        `${content.slice(0, edit.start)}${edit.text}${content.slice(edit.end)}`,
+      source,
+    );
+}
+
+function inverseModelEdits(
+  source: string,
+  edits: readonly { range: Monaco.Range; text: string }[],
+): { range: Monaco.Range; text: string }[] {
+  const appliedSource = applyModelEdits(source, edits);
+  let offsetDelta = 0;
+
+  return [...edits]
+    .map((edit) => {
+      const start = modelOffsetAt(
+        source,
+        edit.range.startLineNumber,
+        edit.range.startColumn,
+      );
+      const end = modelOffsetAt(
+        source,
+        edit.range.endLineNumber,
+        edit.range.endColumn,
+      );
+
+      return { edit, end, start };
+    })
+    .sort((left, right) => left.start - right.start)
+    .map(({ edit, end, start }) => {
+      const updatedStart = start + offsetDelta;
+      const updatedEnd = updatedStart + edit.text.length;
+      const replacedText = source.slice(start, end);
+      offsetDelta += edit.text.length - (end - start);
+
+      return {
+        range: modelRangeFromOffsets(appliedSource, updatedStart, updatedEnd),
+        text: replacedText,
+      };
+    })
+    .reverse();
+}
+
+function modelOffsetAt(source: string, lineNumber: number, column: number) {
+  const lines = source.split("\n");
+  let offset = 0;
+
+  for (let line = 1; line < lineNumber; line += 1) {
+    offset += (lines[line - 1]?.length ?? 0) + 1;
+  }
+
+  return offset + column - 1;
+}
+
+function modelRangeFromOffsets(
+  source: string,
+  start: number,
+  end: number,
+): Monaco.Range {
+  const startPosition = positionAtOffset(source, start);
+  const endPosition = positionAtOffset(source, end);
+
+  return {
+    endColumn: endPosition.column,
+    endLineNumber: endPosition.lineNumber,
+    startColumn: startPosition.column,
+    startLineNumber: startPosition.lineNumber,
+  } as Monaco.Range;
 }
 
 function positionAtOffset(source: string, offset: number): Monaco.Position {

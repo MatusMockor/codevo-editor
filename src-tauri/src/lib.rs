@@ -51,7 +51,8 @@ mod workspace_runtime;
 
 use debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugEvent, DebugEventSink, DebugLaunchTarget, DebugScopeInfo,
-    DebugSessionRegistry, DebugStackFrame, DebugStartResponse, DebugVariableInfo, StepKind,
+    DebugSessionRegistry, DebugStackFrame, DebugStartResponse, DebugStartupPermit,
+    DebugVariableInfo, StepKind,
 };
 use debug_cdp::create_node_cdp_adapter;
 use debug_dbgp::create_php_dbgp_adapter;
@@ -141,6 +142,8 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     ffi::OsString,
     fs,
+    io::{self, Write},
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
@@ -479,6 +482,8 @@ async fn open_workspace_from_picker(
     app: AppHandle,
     registry: State<'_, WorkspaceRegistry>,
     local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
+    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
+    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
 ) -> Result<NativeWorkspaceOpenResult, String> {
     let Some(selected_root) = app.dialog().file().blocking_pick_folder() else {
         return Ok(NativeWorkspaceOpenResult::Cancelled);
@@ -489,6 +494,8 @@ async fn open_workspace_from_picker(
     let descriptor = registry
         .register(selected_root)
         .map_err(|error| error.to_string())?;
+    eslint_processes.activate_root(&descriptor.canonical_root_path);
+    debug_sessions.activate_root(&descriptor.canonical_root_path.to_string_lossy());
     local_history_authorizer.admit(&descriptor);
     Ok(NativeWorkspaceOpenResult::Opened { descriptor })
 }
@@ -510,9 +517,13 @@ fn register_workspace_path_in_registry(
 fn register_workspace_path(
     registry: State<'_, WorkspaceRegistry>,
     local_history_authorizer: State<'_, LegacyLocalHistoryWorkspaceAuthorizer>,
+    eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
+    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
     root_path: String,
 ) -> Result<ManagedWorkspaceDescriptor, String> {
     let descriptor = register_workspace_path_in_registry(&registry, &root_path)?;
+    eslint_processes.activate_root(&descriptor.canonical_root_path);
+    debug_sessions.activate_root(&descriptor.canonical_root_path.to_string_lossy());
     local_history_authorizer.admit(&descriptor);
     Ok(descriptor)
 }
@@ -731,6 +742,7 @@ fn dispose_workspace_root(
 ) -> Result<(), String> {
     let root = workspace_root_for_disposal(&root_path);
     let root_key = root.to_string_lossy().into_owned();
+    debug_sessions.deactivate_root(&root_key);
     let disposal_result = dispose_workspace_runtime_root(
         &root,
         WorkspaceRuntimeDisposal {
@@ -1072,10 +1084,15 @@ async fn debug_start_with_trust(
     registry: Arc<DebugSessionRegistry>,
     trust: &Mutex<WorkspaceTrustService>,
 ) -> Result<DebugStartResponse, String> {
+    let root = match canonicalize_workspace_root(&root_path) {
+        Ok(root) => root,
+        Err(message) => return Ok(DebugStartResponse::Error { message }),
+    };
+    let root_key = root.to_string_lossy().into_owned();
     let trusted = trust
         .lock()
         .map_err(|error| error.to_string())?
-        .get(&root_path)
+        .get(&root_key)
         .trusted;
 
     if !trusted {
@@ -1084,9 +1101,15 @@ async fn debug_start_with_trust(
         });
     }
 
+    let permit = match registry.begin_start(&root_key) {
+        Ok(permit) => permit,
+        Err(message) => return Ok(DebugStartResponse::Error { message }),
+    };
+
     run_blocking_command(move || {
         Ok(start_debug_session_blocking(
-            &root_path,
+            &root,
+            permit,
             &launch,
             &breakpoints,
             sink,
@@ -1097,29 +1120,27 @@ async fn debug_start_with_trust(
 }
 
 fn start_debug_session_blocking(
-    root_path: &str,
+    root: &Path,
+    permit: DebugStartupPermit,
     launch: &DebugLaunchTarget,
     breakpoints: &[DebugBreakpoint],
     sink: Arc<dyn DebugEventSink>,
     registry: &Arc<DebugSessionRegistry>,
 ) -> DebugStartResponse {
-    let root = match canonicalize_workspace_root(root_path) {
-        Ok(root) => root,
-        Err(message) => return DebugStartResponse::Error { message },
-    };
-    let root_key = root.to_string_lossy().to_string();
     let finish_registry = Arc::clone(registry);
-    let started = registry.start_session(&root_key, sink, move |emitter| {
+    let started = registry.start_session_with_permit(permit, sink, move |emitter| {
         let session_id = emitter.session_id();
         let finish = Box::new(move |exit_code| {
             finish_registry.finish_session(session_id, exit_code);
         });
         match launch {
             DebugLaunchTarget::NodeScript { .. } | DebugLaunchTarget::JsTestFile { .. } => {
-                create_node_cdp_adapter(&root, launch, breakpoints, emitter, finish)
+                create_node_cdp_adapter(root, launch, breakpoints, emitter, finish)
             }
-            DebugLaunchTarget::PhpScript { .. } | DebugLaunchTarget::PhpListen { .. } => {
-                create_php_dbgp_adapter(&root, launch, breakpoints, emitter, finish)
+            DebugLaunchTarget::PhpScript { .. }
+            | DebugLaunchTarget::PhpTestFile { .. }
+            | DebugLaunchTarget::PhpListen { .. } => {
+                create_php_dbgp_adapter(root, launch, breakpoints, emitter, finish)
             }
         }
     });
@@ -1241,12 +1262,48 @@ async fn debug_variables(
 
 #[tauri::command]
 async fn debug_evaluate(
+    root_path: String,
     session_id: u64,
     frame_id: u64,
     expression: String,
     registry: State<'_, Arc<DebugSessionRegistry>>,
+    trust: State<'_, Mutex<WorkspaceTrustService>>,
 ) -> Result<DebugVariableInfo, String> {
-    let registry = Arc::clone(registry.inner());
+    debug_evaluate_with_trust(
+        root_path,
+        session_id,
+        frame_id,
+        expression,
+        Arc::clone(registry.inner()),
+        &trust,
+    )
+    .await
+}
+
+async fn debug_evaluate_with_trust(
+    root_path: String,
+    session_id: u64,
+    frame_id: u64,
+    expression: String,
+    registry: Arc<DebugSessionRegistry>,
+    trust: &Mutex<WorkspaceTrustService>,
+) -> Result<DebugVariableInfo, String> {
+    let root = canonicalize_workspace_root(&root_path)?;
+    let root_key = root.to_string_lossy().to_string();
+    let trusted = trust
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&root_key)
+        .trusted;
+
+    if !trusted {
+        return Err("Trust this workspace to evaluate debug expressions.".to_string());
+    }
+
+    if registry.session_id_for_root(&root_key) != Some(session_id) {
+        return Err("The debug session no longer belongs to this workspace.".to_string());
+    }
+
     run_blocking_command(move || {
         with_debug_session(&registry, session_id, |adapter| {
             adapter.evaluate(frame_id, &expression)
@@ -3470,16 +3527,31 @@ fn set_workspace_trust(
     trusted: bool,
     service: State<'_, Mutex<WorkspaceTrustService>>,
     eslint_processes: State<'_, Arc<eslint::EslintProcessRegistry>>,
+    debug_sessions: State<'_, Arc<DebugSessionRegistry>>,
 ) -> Result<WorkspaceTrustState, String> {
     let mut service = service.lock().map_err(|error| error.to_string())?;
     let state = service
         .set(&root_path, trusted)
         .map_err(|error| error.to_string())?;
     drop(service);
-    if !trusted {
-        eslint_processes.stop_root(&workspace_root_for_disposal(&root_path));
+    if trusted {
+        let root = workspace_root_for_disposal(&root_path);
+        eslint_processes.activate_root(&root);
+        debug_sessions.activate_root(&root.to_string_lossy());
+        return Ok(state);
     }
+    revoke_workspace_runtime_trust(&root_path, &eslint_processes, &debug_sessions);
     Ok(state)
+}
+
+fn revoke_workspace_runtime_trust(
+    root_path: &str,
+    eslint_processes: &eslint::EslintProcessRegistry,
+    debug_sessions: &DebugSessionRegistry,
+) {
+    let root = workspace_root_for_disposal(root_path);
+    eslint_processes.stop_root(&root);
+    debug_sessions.deactivate_root(&root.to_string_lossy());
 }
 
 #[tauri::command]
@@ -6265,6 +6337,807 @@ async fn workspace_apply_workspace_edit(
     .await
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransactionalWorkspaceEditResult {
+    applied_count: usize,
+    rollback_edit: LanguageServerWorkspaceEdit,
+    rollback_expected_states: BTreeMap<String, Option<String>>,
+    rollback_file_modes: BTreeMap<String, u32>,
+}
+
+#[derive(Clone)]
+struct TransactionFileSnapshot {
+    content: Option<Vec<u8>>,
+    mode: Option<u32>,
+    fingerprint: Option<TransactionFileFingerprint>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct TransactionFileFingerprint {
+    device: u64,
+    inode: u64,
+    modified_nanoseconds: i128,
+    size: u64,
+}
+
+struct StagedTransactionFile {
+    path: PathBuf,
+    temporary_path: PathBuf,
+}
+
+struct CommittedTransactionPath {
+    backup_path: Option<PathBuf>,
+    backup_snapshot: Option<TransactionFileSnapshot>,
+    committed_snapshot: TransactionFileSnapshot,
+    path: PathBuf,
+}
+
+#[tauri::command]
+async fn workspace_apply_workspace_edit_transaction(
+    app: AppHandle,
+    workspace_id: WorkspaceId,
+    edit: LanguageServerWorkspaceEdit,
+    skipped_paths: Vec<String>,
+    expected_states: BTreeMap<String, Option<String>>,
+    file_modes: BTreeMap<String, u32>,
+) -> Result<TransactionalWorkspaceEditResult, String> {
+    run_blocking_command(move || {
+        let registry = app.state::<WorkspaceRegistry>();
+        let descriptor = registry
+            .descriptor(&workspace_id)
+            .map_err(|error| error.to_string())?;
+        let trust = app.state::<Mutex<WorkspaceTrustService>>();
+        let trust_guard = trust.lock().map_err(|error| error.to_string())?;
+        let root_key = descriptor.canonical_root_path.to_string_lossy();
+        if !trust_guard.get(&root_key).trusted {
+            return Err("Trust this workspace before applying a workspace edit.".into());
+        }
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &workspace_id,
+            edit,
+            &skipped_paths,
+            &expected_states,
+            &file_modes,
+            |_, _| {},
+        );
+        drop(trust_guard);
+        result
+    })
+    .await
+}
+
+fn apply_transactional_descriptor_workspace_edit(
+    registry: &WorkspaceRegistry,
+    workspace_id: &WorkspaceId,
+    edit: LanguageServerWorkspaceEdit,
+    skipped_paths: &[String],
+    expected_states: &BTreeMap<String, Option<String>>,
+    file_modes: &BTreeMap<String, u32>,
+    mut before_commit: impl FnMut(&Path, usize),
+) -> Result<TransactionalWorkspaceEditResult, String> {
+    let _operation = registry
+        .lock_operations()
+        .map_err(|error| error.to_string())?;
+    let descriptor = registry
+        .descriptor(workspace_id)
+        .map_err(|error| error.to_string())?;
+    let root = descriptor.canonical_root_path;
+    let skipped = skipped_paths.iter().cloned().collect::<BTreeSet<_>>();
+    let affected_paths = transaction_affected_paths(&edit, &skipped)?;
+    let mut original = BTreeMap::new();
+
+    for relative_path in &affected_paths {
+        let path = validate_transaction_path(&root, relative_path)?;
+        original.insert(relative_path.clone(), transaction_file_snapshot(&path)?);
+    }
+    validate_transaction_expected_states(&original, expected_states)?;
+
+    let mut final_state = original
+        .iter()
+        .map(|(path, snapshot)| (path.clone(), snapshot.content.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut final_modes = original
+        .iter()
+        .map(|(path, snapshot)| (path.clone(), snapshot.mode))
+        .collect::<BTreeMap<_, _>>();
+    apply_transaction_file_operations(&mut final_state, &mut final_modes, &edit.file_operations)?;
+    apply_transaction_text_changes(&mut final_state, &edit, &skipped)?;
+
+    let changed_paths = final_state
+        .iter()
+        .filter_map(|(path, content)| {
+            (original
+                .get(path)
+                .and_then(|snapshot| snapshot.content.as_ref())
+                != content.as_ref())
+            .then_some(path.clone())
+        })
+        .collect::<Vec<_>>();
+    let rollback_edit = rollback_workspace_edit(&original, &final_state, &changed_paths)?;
+    let rollback_file_modes = changed_paths
+        .iter()
+        .filter_map(|path| original[path].mode.map(|mode| (path.clone(), mode)))
+        .collect();
+    let rollback_expected_states = changed_paths
+        .iter()
+        .map(|path| {
+            (
+                path.clone(),
+                final_state
+                    .get(path)
+                    .and_then(Option::as_ref)
+                    .map(|content| transaction_content_hash(content)),
+            )
+        })
+        .collect();
+    let mut staged = stage_transaction_files(
+        &root,
+        &final_state,
+        &final_modes,
+        file_modes,
+        &changed_paths,
+    )?;
+    let mut committed = Vec::new();
+
+    for (index, relative_path) in changed_paths.iter().enumerate() {
+        before_commit(Path::new(relative_path), index);
+        let path = match validate_transaction_path(&root, relative_path) {
+            Ok(path) => path,
+            Err(error) => {
+                cleanup_staged_transaction_files(&staged);
+                rollback_committed_transaction_paths(&committed)?;
+                return Err(error);
+            }
+        };
+        if let Err(error) = revalidate_transaction_snapshot(&path, &original[relative_path]) {
+            cleanup_staged_transaction_files(&staged);
+            rollback_committed_transaction_paths(&committed)?;
+            return Err(error);
+        }
+        let desired = final_state.get(relative_path).cloned().flatten();
+        let stage_index = staged.iter().position(|entry| entry.path == path);
+        let staged_snapshot = match stage_index {
+            Some(stage_index) => Some(transaction_file_snapshot(
+                &staged[stage_index].temporary_path,
+            )?),
+            None => None,
+        };
+        let backup_path = match transaction_backup_path(&path, index) {
+            Ok(backup_path) => backup_path,
+            Err(error) => {
+                return Err(abort_transaction_commit(&staged, &committed, error));
+            }
+        };
+        let had_original = original[relative_path].content.is_some();
+
+        if had_original {
+            fs::rename(&path, &backup_path).map_err(|error| {
+                cleanup_staged_transaction_files(&staged);
+                let _ = rollback_committed_transaction_paths(&committed);
+                format!("{}: {error}", relative_path)
+            })?;
+        }
+
+        let mut committed_snapshot = TransactionFileSnapshot {
+            content: None,
+            mode: None,
+            fingerprint: None,
+        };
+        if desired.is_some() {
+            let stage_index = match stage_index {
+                Some(stage_index) => stage_index,
+                None => {
+                    rollback_committed_transaction_paths(&committed)?;
+                    if had_original {
+                        let _ = fs::rename(&backup_path, &path);
+                    }
+                    cleanup_staged_transaction_files(&staged);
+                    return Err(format!("{relative_path}: staged content is unavailable"));
+                }
+            };
+            let staged_file = staged.swap_remove(stage_index);
+            committed_snapshot = match staged_snapshot {
+                Some(snapshot) => snapshot,
+                None => {
+                    rollback_committed_transaction_paths(&committed)?;
+                    if had_original {
+                        let _ = fs::rename(&backup_path, &path);
+                    }
+                    cleanup_staged_transaction_files(&staged);
+                    return Err(format!("{relative_path}: staged snapshot is unavailable"));
+                }
+            };
+            if let Err(error) = fs::rename(&staged_file.temporary_path, &path) {
+                if had_original {
+                    let _ = fs::rename(&backup_path, &path);
+                }
+                rollback_committed_transaction_paths(&committed)?;
+                cleanup_staged_transaction_files(&staged);
+                return Err(format!("{relative_path}: {error}"));
+            }
+        }
+
+        committed.push(CommittedTransactionPath {
+            backup_path: had_original.then_some(backup_path),
+            backup_snapshot: had_original.then(|| original[relative_path].clone()),
+            committed_snapshot,
+            path,
+        });
+    }
+
+    cleanup_staged_transaction_files(&staged);
+    for entry in &committed {
+        if let Some(backup_path) = &entry.backup_path {
+            if let Err(error) = fs::remove_file(backup_path) {
+                eprintln!("Workspace edit backup cleanup failed: {error}");
+            }
+        }
+    }
+
+    Ok(TransactionalWorkspaceEditResult {
+        applied_count: changed_paths.len(),
+        rollback_edit,
+        rollback_expected_states,
+        rollback_file_modes,
+    })
+}
+
+fn validate_transaction_expected_states(
+    actual: &BTreeMap<String, TransactionFileSnapshot>,
+    expected: &BTreeMap<String, Option<String>>,
+) -> Result<(), String> {
+    for (path, expected_hash) in expected {
+        let Some(snapshot) = actual.get(path) else {
+            return Err(format!(
+                "{path}: rollback precondition path was not validated"
+            ));
+        };
+        let actual_hash = snapshot
+            .content
+            .as_ref()
+            .map(|content| transaction_content_hash(content));
+        if &actual_hash != expected_hash {
+            return Err(format!("{path}: file changed after workspace edit commit"));
+        }
+    }
+    Ok(())
+}
+
+fn transaction_content_hash(content: &[u8]) -> String {
+    let hash = content.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    hash.to_string()
+}
+
+fn transaction_affected_paths(
+    edit: &LanguageServerWorkspaceEdit,
+    skipped: &BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
+    let mut paths = edit
+        .changes
+        .keys()
+        .filter(|path| !skipped.contains(*path))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for operation in &edit.file_operations {
+        match operation {
+            LanguageServerWorkspaceFileOperation::Create { uri, .. }
+            | LanguageServerWorkspaceFileOperation::Delete { uri, .. } => {
+                paths.insert(uri.clone());
+            }
+            LanguageServerWorkspaceFileOperation::Rename {
+                old_uri, new_uri, ..
+            } => {
+                paths.insert(old_uri.clone());
+                paths.insert(new_uri.clone());
+            }
+        }
+    }
+    for path in &paths {
+        validate_transaction_relative_path(path)?;
+    }
+    Ok(paths)
+}
+
+fn validate_transaction_relative_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty() || path.is_absolute() {
+        return Err(format!(
+            "{}: workspace edit path must be relative",
+            path.display()
+        ));
+    }
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("{}: workspace edit path is unsafe", path.display()));
+    }
+    Ok(())
+}
+
+fn validate_transaction_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    validate_transaction_relative_path(relative_path)?;
+    let mut current = root.to_path_buf();
+    let components = Path::new(relative_path).components().collect::<Vec<_>>();
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return Err(format!("{relative_path}: workspace edit path is unsafe"));
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(format!("{relative_path}: symbolic links are not allowed"));
+                }
+                if index + 1 < components.len() && !metadata.is_dir() {
+                    return Err(format!("{relative_path}: parent path is not a directory"));
+                }
+                if index + 1 == components.len() && metadata.is_dir() {
+                    return Err(format!(
+                        "{relative_path}: directory edits are not transactional"
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if index + 1 < components.len() {
+                    return Err(format!("{relative_path}: parent directory does not exist"));
+                }
+            }
+            Err(error) => return Err(format!("{relative_path}: {error}")),
+        }
+    }
+    Ok(current)
+}
+
+fn transaction_file_snapshot(path: &Path) -> Result<TransactionFileSnapshot, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "{}: only regular files are supported",
+                    path.display()
+                ));
+            }
+            let content = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+            Ok(TransactionFileSnapshot {
+                content: Some(content),
+                mode: Some(metadata.permissions().mode()),
+                fingerprint: Some(transaction_fingerprint(&metadata)),
+            })
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(TransactionFileSnapshot {
+            content: None,
+            mode: None,
+            fingerprint: None,
+        }),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
+}
+
+fn transaction_fingerprint(metadata: &fs::Metadata) -> TransactionFileFingerprint {
+    TransactionFileFingerprint {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        modified_nanoseconds: i128::from(metadata.mtime()) * 1_000_000_000
+            + i128::from(metadata.mtime_nsec()),
+        size: metadata.len(),
+    }
+}
+
+fn revalidate_transaction_snapshot(
+    path: &Path,
+    snapshot: &TransactionFileSnapshot,
+) -> Result<(), String> {
+    let current = transaction_file_snapshot(path)?;
+    if current.fingerprint != snapshot.fingerprint || current.content != snapshot.content {
+        return Err(format!(
+            "{}: file changed before transaction commit",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn apply_transaction_file_operations(
+    state: &mut BTreeMap<String, Option<Vec<u8>>>,
+    modes: &mut BTreeMap<String, Option<u32>>,
+    operations: &[LanguageServerWorkspaceFileOperation],
+) -> Result<(), String> {
+    for operation in operations {
+        match operation {
+            LanguageServerWorkspaceFileOperation::Create { uri, options } => {
+                if state.get(uri).and_then(Option::as_ref).is_some() {
+                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_exists) {
+                        continue;
+                    }
+                    if !workspace_file_option(options.as_ref(), |value| value.overwrite) {
+                        return Err(format!("{uri}: target already exists"));
+                    }
+                }
+                state.insert(uri.clone(), Some(Vec::new()));
+                modes.entry(uri.clone()).or_insert(None);
+            }
+            LanguageServerWorkspaceFileOperation::Rename {
+                old_uri,
+                new_uri,
+                options,
+            } => {
+                if old_uri == new_uri {
+                    continue;
+                }
+                let source = state.get(old_uri).cloned().flatten();
+                let Some(source) = source else {
+                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists) {
+                        continue;
+                    }
+                    return Err(format!("{old_uri}: rename source does not exist"));
+                };
+                let source_mode = modes.get(old_uri).copied().flatten();
+                if state.get(new_uri).and_then(Option::as_ref).is_some() {
+                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_exists) {
+                        continue;
+                    }
+                    if !workspace_file_option(options.as_ref(), |value| value.overwrite) {
+                        return Err(format!("{new_uri}: rename target already exists"));
+                    }
+                }
+                state.insert(old_uri.clone(), None);
+                state.insert(new_uri.clone(), Some(source));
+                modes.insert(old_uri.clone(), None);
+                modes.insert(new_uri.clone(), source_mode);
+            }
+            LanguageServerWorkspaceFileOperation::Delete { uri, options } => {
+                if state.get(uri).and_then(Option::as_ref).is_none() {
+                    if workspace_file_option(options.as_ref(), |value| value.ignore_if_not_exists) {
+                        continue;
+                    }
+                    return Err(format!("{uri}: delete target does not exist"));
+                }
+                state.insert(uri.clone(), None);
+                modes.insert(uri.clone(), None);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_transaction_text_changes(
+    state: &mut BTreeMap<String, Option<Vec<u8>>>,
+    edit: &LanguageServerWorkspaceEdit,
+    skipped: &BTreeSet<String>,
+) -> Result<(), String> {
+    for (path, edits) in &edit.changes {
+        if skipped.contains(path) {
+            continue;
+        }
+        let Some(Some(bytes)) = state.get(path) else {
+            return Err(format!("{path}: text edit target does not exist"));
+        };
+        let content = String::from_utf8(bytes.clone())
+            .map_err(|_| format!("{path}: text edit target is not UTF-8"))?;
+        let workspace_edits = edits
+            .iter()
+            .map(|text_edit| WorkspaceTextEdit {
+                path: path.clone(),
+                range: WorkspaceTextRange {
+                    start: WorkspaceTextPosition {
+                        line: text_edit.range.start.line,
+                        character: text_edit.range.start.character,
+                    },
+                    end: WorkspaceTextPosition {
+                        line: text_edit.range.end.line,
+                        character: text_edit.range.end.character,
+                    },
+                },
+                new_text: text_edit.new_text.clone(),
+            })
+            .collect::<Vec<_>>();
+        let updated = apply_text_edits_to_content(&content, &workspace_edits)
+            .map_err(|error| format!("{path}: {error}"))?;
+        state.insert(path.clone(), Some(updated.into_bytes()));
+    }
+    Ok(())
+}
+
+fn stage_transaction_files(
+    root: &Path,
+    final_state: &BTreeMap<String, Option<Vec<u8>>>,
+    final_modes: &BTreeMap<String, Option<u32>>,
+    file_modes: &BTreeMap<String, u32>,
+    changed_paths: &[String],
+) -> Result<Vec<StagedTransactionFile>, String> {
+    let mut staged = Vec::new();
+    for (index, relative_path) in changed_paths.iter().enumerate() {
+        let Some(Some(content)) = final_state.get(relative_path) else {
+            continue;
+        };
+        let path = validate_transaction_path(root, relative_path)?;
+        let temporary_path = transaction_temporary_path(&path, "stage", index)?;
+        let write_result = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary_path)
+            .and_then(|mut file| {
+                file.write_all(content)?;
+                file.sync_all()
+            });
+        if let Err(error) = write_result {
+            cleanup_staged_transaction_files(&staged);
+            return Err(format!("{relative_path}: {error}"));
+        }
+        if let Some(mode) = file_modes
+            .get(relative_path)
+            .copied()
+            .or(final_modes.get(relative_path).copied().flatten())
+        {
+            if let Err(error) =
+                fs::set_permissions(&temporary_path, fs::Permissions::from_mode(mode))
+            {
+                let _ = fs::remove_file(&temporary_path);
+                cleanup_staged_transaction_files(&staged);
+                return Err(format!("{relative_path}: {error}"));
+            }
+        }
+        staged.push(StagedTransactionFile {
+            path,
+            temporary_path,
+        });
+    }
+    Ok(staged)
+}
+
+fn transaction_temporary_path(path: &Path, label: &str, index: usize) -> Result<PathBuf, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{}: missing parent", path.display()))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("{}: missing file name", path.display()))?;
+    for attempt in 0..1000 {
+        let candidate = parent.join(format!(
+            ".{}.codevo-{label}-{}-{index}-{attempt}",
+            name.to_string_lossy(),
+            std::process::id(),
+        ));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "{}: could not reserve transaction path",
+        path.display()
+    ))
+}
+
+fn transaction_backup_path(path: &Path, index: usize) -> Result<PathBuf, String> {
+    transaction_temporary_path(path, "backup", index)
+}
+
+fn cleanup_staged_transaction_files(staged: &[StagedTransactionFile]) {
+    for entry in staged {
+        let _ = fs::remove_file(&entry.temporary_path);
+    }
+}
+
+fn abort_transaction_commit(
+    staged: &[StagedTransactionFile],
+    committed: &[CommittedTransactionPath],
+    error: String,
+) -> String {
+    cleanup_staged_transaction_files(staged);
+    match rollback_committed_transaction_paths(committed) {
+        Ok(()) => error,
+        Err(rollback_error) => {
+            format!("{error}; {rollback_error}")
+        }
+    }
+}
+
+fn rollback_committed_transaction_paths(
+    committed: &[CommittedTransactionPath],
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for (index, entry) in committed.iter().rev().enumerate() {
+        if let Err(error) = rollback_committed_transaction_path(entry, index) {
+            failures.push(error);
+        }
+    }
+    if failures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "workspace edit rollback failed: {}",
+        failures.join("; ")
+    ))
+}
+
+fn rollback_committed_transaction_path(
+    entry: &CommittedTransactionPath,
+    index: usize,
+) -> Result<(), String> {
+    if entry.committed_snapshot.content.is_none() {
+        return rollback_committed_deletion(entry);
+    }
+
+    let rollback_path = transaction_temporary_path(&entry.path, "rollback", index)?;
+    fs::rename(&entry.path, &rollback_path).map_err(|error| {
+        format!(
+            "{}: transaction output changed before rollback; preserved newer data: {error}",
+            entry.path.display()
+        )
+    })?;
+    let current = match transaction_file_snapshot(&rollback_path) {
+        Ok(current) => current,
+        Err(error) => {
+            let recovery = restore_conflicting_transaction_file(
+                &rollback_path,
+                &entry.path,
+                "transaction output could not be validated during rollback",
+            );
+            return Err(format!("{error}; {recovery}"));
+        }
+    };
+    if current.fingerprint != entry.committed_snapshot.fingerprint
+        || current.content != entry.committed_snapshot.content
+    {
+        return Err(restore_conflicting_transaction_file(
+            &rollback_path,
+            &entry.path,
+            "transaction output changed before rollback",
+        ));
+    }
+
+    if entry.backup_path.is_some() {
+        if let Err(error) = restore_transaction_backup(entry) {
+            let recovery = restore_conflicting_transaction_file(
+                &rollback_path,
+                &entry.path,
+                "rollback target changed while restoring the original file",
+            );
+            return Err(format!(
+                "{}: original backup was not restored; {error}; {recovery}",
+                entry.path.display(),
+            ));
+        }
+    }
+
+    fs::remove_file(&rollback_path).map_err(|error| {
+        format!(
+            "{}: rollback cleanup failed: {error}",
+            rollback_path.display()
+        )
+    })
+}
+
+fn rollback_committed_deletion(entry: &CommittedTransactionPath) -> Result<(), String> {
+    let current = transaction_file_snapshot(&entry.path)?;
+    if current.content.is_some() {
+        let recovery = entry
+            .backup_path
+            .as_ref()
+            .map(|path| format!("; original retained at {}", path.display()))
+            .unwrap_or_default();
+        return Err(format!(
+            "{}: transaction output changed before rollback; preserved newer data{recovery}",
+            entry.path.display()
+        ));
+    }
+    match &entry.backup_path {
+        Some(_) => restore_transaction_backup(entry),
+        None => return Ok(()),
+    }
+}
+
+fn restore_transaction_backup(entry: &CommittedTransactionPath) -> Result<(), String> {
+    let backup_path = entry
+        .backup_path
+        .as_ref()
+        .ok_or_else(|| format!("{}: backup path is unavailable", entry.path.display()))?;
+    let expected = entry.backup_snapshot.as_ref().ok_or_else(|| {
+        format!(
+            "{}: backup fingerprint is unavailable",
+            entry.path.display()
+        )
+    })?;
+    let current = transaction_file_snapshot(backup_path)?;
+    if current.fingerprint != expected.fingerprint || current.content != expected.content {
+        return Err(format!(
+            "{}: backup changed before rollback; retained at {}",
+            entry.path.display(),
+            backup_path.display()
+        ));
+    }
+    restore_transaction_file_without_overwrite(backup_path, &entry.path).map_err(|error| {
+        format!(
+            "{}: original retained at {}; {error}",
+            entry.path.display(),
+            backup_path.display()
+        )
+    })
+}
+
+fn restore_transaction_file_without_overwrite(source: &Path, target: &Path) -> io::Result<()> {
+    fs::hard_link(source, target)?;
+    fs::remove_file(source)
+}
+
+fn restore_conflicting_transaction_file(source: &Path, target: &Path, reason: &str) -> String {
+    match restore_transaction_file_without_overwrite(source, target) {
+        Ok(()) => format!("{}: {reason}; preserved newer data", target.display()),
+        Err(error) => format!(
+            "{}: {reason}; newer data retained at {}: {error}",
+            target.display(),
+            source.display()
+        ),
+    }
+}
+
+fn rollback_workspace_edit(
+    original: &BTreeMap<String, TransactionFileSnapshot>,
+    final_state: &BTreeMap<String, Option<Vec<u8>>>,
+    changed_paths: &[String],
+) -> Result<LanguageServerWorkspaceEdit, String> {
+    let mut changes = BTreeMap::new();
+    let mut file_operations = Vec::new();
+    for path in changed_paths {
+        let before = original[path].content.as_ref();
+        let after = final_state.get(path).and_then(Option::as_ref);
+        match (before, after) {
+            (None, Some(_)) => file_operations.push(LanguageServerWorkspaceFileOperation::Delete {
+                uri: path.clone(),
+                options: None,
+            }),
+            (Some(content), None) => {
+                file_operations.push(LanguageServerWorkspaceFileOperation::Create {
+                    uri: path.clone(),
+                    options: None,
+                });
+                changes.insert(path.clone(), vec![full_file_text_edit(&[], content)?]);
+            }
+            (Some(content), Some(current)) => {
+                changes.insert(path.clone(), vec![full_file_text_edit(current, content)?]);
+            }
+            (None, None) => {}
+        }
+    }
+    Ok(LanguageServerWorkspaceEdit {
+        changes,
+        document_versions: BTreeMap::new(),
+        file_operations,
+    })
+}
+
+fn full_file_text_edit(
+    current: &[u8],
+    replacement: &[u8],
+) -> Result<LanguageServerTextEdit, String> {
+    let current = std::str::from_utf8(current).map_err(|_| "transaction content is not UTF-8")?;
+    let replacement =
+        std::str::from_utf8(replacement).map_err(|_| "transaction content is not UTF-8")?;
+    let (line, character) = current
+        .chars()
+        .fold((0_u32, 0_u32), |(line, character), value| {
+            if value == '\n' {
+                return (line + 1, 0);
+            }
+            (line, character + value.len_utf16() as u32)
+        });
+    Ok(LanguageServerTextEdit {
+        range: LanguageServerRange {
+            start: LanguageServerPosition {
+                line: 0,
+                character: 0,
+            },
+            end: LanguageServerPosition { line, character },
+        },
+        new_text: replacement.to_string(),
+    })
+}
+
 fn apply_descriptor_workspace_edit(
     registry: &WorkspaceRegistry,
     workspace_id: &WorkspaceId,
@@ -6763,9 +7636,10 @@ fn hex_value(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        amend_git_commit, apply_descriptor_workspace_edit, apply_workspace_edit,
+        amend_git_commit, apply_descriptor_workspace_edit,
+        apply_transactional_descriptor_workspace_edit, apply_workspace_edit,
         build_javascript_typescript_language_server_plan, cached_monospace_font_families,
-        create_git_branch, debug_start_with_trust, delete_git_branch,
+        create_git_branch, debug_evaluate_with_trust, debug_start_with_trust, delete_git_branch,
         ensure_local_history_relative_path, ensure_lsp_call_hierarchy_item_in_workspace,
         ensure_lsp_code_action_context_payloads_in_workspace,
         ensure_lsp_code_action_payload_in_workspace, ensure_lsp_code_lens_payload_in_workspace,
@@ -6788,11 +7662,12 @@ mod tests {
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
         register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
-        revert_git_hunk, reword_git_commit, run_artisan_route_list_with_trust,
-        run_eslint_analysis_with_trust, run_js_tests_json_with_trust,
-        run_php_tests_junit_with_trust, run_phpstan_analysis_with_trust,
-        run_pint_format_with_trust, run_prettier_format_with_trust, save_git_stash, search_files,
-        stage_git_files, stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
+        revert_git_hunk, revoke_workspace_runtime_trust, reword_git_commit,
+        run_artisan_route_list_with_trust, run_eslint_analysis_with_trust,
+        run_js_tests_json_with_trust, run_php_tests_junit_with_trust,
+        run_phpstan_analysis_with_trust, run_pint_format_with_trust,
+        run_prettier_format_with_trust, save_git_stash, search_files, stage_git_files,
+        stage_git_hunk, stash_apply_git, stash_drop_git, stash_pop_git,
         stop_debug_session_blocking, switch_git_branch, unstage_git_hunk, with_debug_session,
         workspace_root_for_disposal, workspace_text_edits_from_language_server,
         LegacyLocalHistoryWorkspaceAuthorizer,
@@ -6802,7 +7677,7 @@ mod tests {
         DebugEvent, DebugEventSink, DebugLaunchTarget, DebugSessionRegistry, DebugStartResponse,
         StepKind,
     };
-    use crate::eslint::EslintAnalysisResponse;
+    use crate::eslint::{EslintAnalysisResponse, EslintProcessRegistry};
     use crate::local_history::LocalHistoryStore;
     use crate::lsp::file_uri;
     use crate::lsp_document::{TextDocumentContent, TextDocumentPath};
@@ -8032,6 +8907,396 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(root.join("a.ts")).unwrap(), "Aa");
         assert_eq!(fs::read_to_string(root.join("b.ts")).unwrap(), "external");
+    }
+
+    #[test]
+    fn transactional_workspace_edit_rolls_back_first_file_when_second_file_changes() {
+        let root = temp_workspace("transactional-workspace-edit-conflict");
+        fs::write(root.join("a.ts"), "a").unwrap();
+        fs::write(root.join("b.ts"), "b").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("a.ts", "A", vec![]);
+        edit.changes
+            .extend(relative_workspace_edit("b.ts", "B", vec![]).changes);
+
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |path, committed| {
+                if committed == 1 && path == Path::new("b.ts") {
+                    fs::write(root.join("b.ts"), "external").unwrap();
+                }
+            },
+        );
+
+        assert!(result
+            .expect_err("second-file conflict must reject the transaction")
+            .contains("changed before transaction commit"));
+        assert_eq!(fs::read_to_string(root.join("a.ts")).unwrap(), "a");
+        assert_eq!(fs::read_to_string(root.join("b.ts")).unwrap(), "external");
+        assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("codevo-")));
+    }
+
+    #[test]
+    fn transactional_workspace_edit_preserves_external_update_during_rollback() {
+        let root = temp_workspace("transactional-workspace-edit-update-race");
+        fs::write(root.join("a.ts"), "a").unwrap();
+        fs::write(root.join("b.ts"), "b").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("a.ts", "A", vec![]);
+        edit.changes
+            .extend(relative_workspace_edit("b.ts", "B", vec![]).changes);
+
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |path, committed| {
+                if committed != 1 || path != Path::new("b.ts") {
+                    return;
+                }
+                fs::write(root.join("a.ts"), "external-a").unwrap();
+                fs::write(root.join("b.ts"), "external-b").unwrap();
+            },
+        );
+
+        let error = result.expect_err("the second-file conflict must reject the transaction");
+        assert!(error.contains("preserved newer data"));
+        assert_eq!(fs::read_to_string(root.join("a.ts")).unwrap(), "external-a");
+        assert_eq!(fs::read_to_string(root.join("b.ts")).unwrap(), "external-b");
+        assert!(fs::read_dir(&root).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains("codevo-backup")
+                && fs::read_to_string(entry.path()).unwrap() == "a"
+        }));
+    }
+
+    #[test]
+    fn transactional_workspace_edit_preserves_external_replacement_of_created_file() {
+        let root = temp_workspace("transactional-workspace-edit-create-race");
+        fs::write(root.join("b.ts"), "b").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("b.ts", "B", vec![]);
+        edit.file_operations
+            .push(LanguageServerWorkspaceFileOperation::Create {
+                uri: "a-created.ts".into(),
+                options: None,
+            });
+        edit.changes.insert(
+            "a-created.ts".into(),
+            relative_workspace_edit("a-created.ts", "created", vec![])
+                .changes
+                .remove("a-created.ts")
+                .unwrap(),
+        );
+
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |path, committed| {
+                if committed != 1 || path != Path::new("b.ts") {
+                    return;
+                }
+                fs::write(root.join("a-created.ts"), "external-created").unwrap();
+                fs::write(root.join("b.ts"), "external-b").unwrap();
+            },
+        );
+
+        let error = result.expect_err("the second-file conflict must reject the transaction");
+        assert!(error.contains("preserved newer data"));
+        assert_eq!(
+            fs::read_to_string(root.join("a-created.ts")).unwrap(),
+            "external-created"
+        );
+        assert_eq!(fs::read_to_string(root.join("b.ts")).unwrap(), "external-b");
+    }
+
+    #[test]
+    fn transactional_workspace_edit_preserves_external_recreation_after_delete() {
+        let root = temp_workspace("transactional-workspace-edit-delete-race");
+        fs::write(root.join("a-delete.ts"), "original-a").unwrap();
+        fs::write(root.join("b.ts"), "b").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("b.ts", "B", vec![]);
+        edit.file_operations
+            .push(LanguageServerWorkspaceFileOperation::Delete {
+                uri: "a-delete.ts".into(),
+                options: None,
+            });
+
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |path, committed| {
+                if committed != 1 || path != Path::new("b.ts") {
+                    return;
+                }
+                fs::write(root.join("a-delete.ts"), "external-a").unwrap();
+                fs::write(root.join("b.ts"), "external-b").unwrap();
+            },
+        );
+
+        let error = result.expect_err("the second-file conflict must reject the transaction");
+        assert!(error.contains("preserved newer data"));
+        assert_eq!(
+            fs::read_to_string(root.join("a-delete.ts")).unwrap(),
+            "external-a"
+        );
+        assert!(fs::read_dir(&root).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains("codevo-backup")
+                && fs::read_to_string(entry.path()).unwrap() == "original-a"
+        }));
+    }
+
+    #[test]
+    fn transactional_workspace_edit_preserves_external_rename_target_during_rollback() {
+        let root = temp_workspace("transactional-workspace-edit-rename-race");
+        fs::write(root.join("a-source.ts"), "source").unwrap();
+        fs::write(root.join("z-conflict.ts"), "z").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("z-conflict.ts", "Z", vec![]);
+        edit.file_operations
+            .push(LanguageServerWorkspaceFileOperation::Rename {
+                old_uri: "a-source.ts".into(),
+                new_uri: "b-moved.ts".into(),
+                options: None,
+            });
+
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |path, committed| {
+                if committed != 2 || path != Path::new("z-conflict.ts") {
+                    return;
+                }
+                fs::write(root.join("b-moved.ts"), "external-target").unwrap();
+                fs::write(root.join("z-conflict.ts"), "external-z").unwrap();
+            },
+        );
+
+        let error = result.expect_err("the final-file conflict must reject the transaction");
+        assert!(error.contains("preserved newer data"));
+        assert_eq!(
+            fs::read_to_string(root.join("a-source.ts")).unwrap(),
+            "source"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("b-moved.ts")).unwrap(),
+            "external-target"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("z-conflict.ts")).unwrap(),
+            "external-z"
+        );
+    }
+
+    #[test]
+    fn transactional_workspace_edit_rejects_a_stale_closed_file_hash_before_mutation() {
+        let root = temp_workspace("transactional-workspace-edit-stale-hash");
+        fs::write(root.join("a.php"), "before").unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let edit = relative_workspace_edit("a.php", "changed-", vec![]);
+        let expected = BTreeMap::from([("a.php".into(), Some("0".into()))]);
+
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &expected,
+            &BTreeMap::new(),
+            |_, _| {},
+        );
+
+        assert!(result
+            .expect_err("a stale hash must reject before staging")
+            .contains("file changed after workspace edit commit"));
+        assert_eq!(fs::read_to_string(root.join("a.php")).unwrap(), "before");
+    }
+
+    #[test]
+    fn transactional_workspace_edit_returns_a_reversible_closed_file_edit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_workspace("transactional-workspace-edit-rollback");
+        fs::write(root.join("existing.ts"), "before").unwrap();
+        fs::set_permissions(root.join("existing.ts"), fs::Permissions::from_mode(0o751)).unwrap();
+        fs::write(root.join("script.sh"), "#!/bin/sh\n").unwrap();
+        fs::set_permissions(root.join("script.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("existing.ts", "after-", vec![]);
+        edit.file_operations
+            .push(LanguageServerWorkspaceFileOperation::Create {
+                uri: "created.ts".into(),
+                options: None,
+            });
+        edit.file_operations
+            .push(LanguageServerWorkspaceFileOperation::Rename {
+                old_uri: "script.sh".into(),
+                new_uri: "moved.sh".into(),
+                options: None,
+            });
+        edit.changes.insert(
+            "created.ts".into(),
+            relative_workspace_edit("created.ts", "created", vec![])
+                .changes
+                .remove("created.ts")
+                .unwrap(),
+        );
+
+        let applied = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(applied.applied_count, 4);
+        assert_eq!(
+            fs::read_to_string(root.join("existing.ts")).unwrap(),
+            "after-before"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("created.ts")).unwrap(),
+            "created"
+        );
+        assert_eq!(
+            fs::metadata(root.join("moved.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+        );
+
+        fs::write(root.join("existing.ts"), "external").unwrap();
+        let guarded_rollback = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            applied.rollback_edit.clone(),
+            &[],
+            &applied.rollback_expected_states,
+            &applied.rollback_file_modes,
+            |_, _| {},
+        );
+        assert!(guarded_rollback
+            .expect_err("rollback must not overwrite a later external edit")
+            .contains("changed after workspace edit commit"));
+        assert_eq!(
+            fs::read_to_string(root.join("existing.ts")).unwrap(),
+            "external"
+        );
+        assert!(root.join("created.ts").exists());
+        assert!(root.join("moved.sh").exists());
+        fs::write(root.join("existing.ts"), "after-before").unwrap();
+
+        apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            applied.rollback_edit,
+            &[],
+            &applied.rollback_expected_states,
+            &applied.rollback_file_modes,
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join("existing.ts")).unwrap(),
+            "before"
+        );
+        assert_eq!(
+            fs::metadata(root.join("existing.ts"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o751,
+        );
+        assert!(!root.join("created.ts").exists());
+        assert!(!root.join("moved.sh").exists());
+        assert_eq!(
+            fs::metadata(root.join("script.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755,
+        );
+    }
+
+    #[test]
+    fn transactional_workspace_edit_rejects_symlink_escape_before_mutation() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_workspace("transactional-workspace-edit-symlink");
+        let outside = temp_workspace("transactional-workspace-edit-outside");
+        fs::write(root.join("safe.ts"), "safe").unwrap();
+        fs::write(outside.join("value.ts"), "outside").unwrap();
+        symlink(&outside, root.join("link")).unwrap();
+        let registry = WorkspaceRegistry::new();
+        let id = registry.register(&root).unwrap().workspace_id;
+        let mut edit = relative_workspace_edit("safe.ts", "changed-", vec![]);
+        edit.changes
+            .extend(relative_workspace_edit("link/value.ts", "changed-", vec![]).changes);
+
+        let result = apply_transactional_descriptor_workspace_edit(
+            &registry,
+            &id,
+            edit,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            |_, _| {},
+        );
+
+        assert!(result
+            .expect_err("symlink must reject transaction")
+            .contains("symbolic links"));
+        assert_eq!(fs::read_to_string(root.join("safe.ts")).unwrap(), "safe");
+        assert_eq!(
+            fs::read_to_string(outside.join("value.ts")).unwrap(),
+            "outside"
+        );
     }
 
     #[test]
@@ -9704,7 +10969,7 @@ mod tests {
             path_string(&root),
             None,
             &trust,
-            Arc::new(super::eslint::EslintProcessRegistry::default()),
+            Arc::new(crate::eslint::EslintProcessRegistry::default()),
         ))
         .expect("eslint response");
 
@@ -9842,7 +11107,7 @@ mod tests {
             path_string(&root),
             None,
             &trust,
-            Arc::new(super::eslint::EslintProcessRegistry::default()),
+            Arc::new(crate::eslint::EslintProcessRegistry::default()),
         ))
         .expect("eslint response");
 
@@ -10243,6 +11508,45 @@ mod tests {
     }
 
     #[test]
+    fn revoking_workspace_trust_stops_its_debug_session() {
+        let root = temp_workspace("debug-trust-revoked");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+        let registry = Arc::new(DebugSessionRegistry::new());
+        let sink = Arc::new(CollectingDebugSink::default());
+
+        let response = tauri::async_runtime::block_on(debug_start_with_trust(
+            path_string(&root),
+            DebugLaunchTarget::PhpListen { port: Some(0) },
+            Vec::new(),
+            Arc::clone(&sink) as Arc<dyn DebugEventSink>,
+            Arc::clone(&registry),
+            &trust,
+        ))
+        .expect("debug start response");
+
+        assert!(matches!(response, DebugStartResponse::Ok { .. }));
+        assert!(registry.session_id_for_root(&path_string(&root)).is_some());
+
+        revoke_workspace_runtime_trust(
+            &path_string(&root),
+            &EslintProcessRegistry::default(),
+            &registry,
+        );
+
+        assert_eq!(registry.session_id_for_root(&path_string(&root)), None);
+        assert!(sink.events().iter().any(|event| matches!(
+            event.payload,
+            crate::debug_adapter::DebugEventPayload::Terminated { .. }
+        )));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn debug_commands_with_unknown_session_id_return_err() {
         let registry = DebugSessionRegistry::new();
 
@@ -10255,6 +11559,51 @@ mod tests {
         assert_eq!(step, Err("No debug session with id 42.".to_string()));
         assert_eq!(frames, Err("No debug session with id 43.".to_string()));
         assert_eq!(evaluated, Err("No debug session with id 44.".to_string()));
+    }
+
+    #[test]
+    fn debug_evaluate_rechecks_workspace_trust() {
+        let root = temp_workspace("debug-evaluate-untrusted");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service"),
+        );
+
+        let error = tauri::async_runtime::block_on(debug_evaluate_with_trust(
+            path_string(&root),
+            1,
+            1,
+            "$value".to_string(),
+            Arc::new(DebugSessionRegistry::new()),
+            &trust,
+        ))
+        .expect_err("untrusted evaluation must fail");
+
+        assert!(error.contains("Trust this workspace"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn debug_evaluate_rejects_a_session_from_another_workspace() {
+        let root = temp_workspace("debug-evaluate-session-root");
+        let mut service =
+            WorkspaceTrustService::load(root.join("trust.json")).expect("load trust service");
+        service
+            .set(&path_string(&root), true)
+            .expect("trust workspace");
+        let trust = Mutex::new(service);
+
+        let error = tauri::async_runtime::block_on(debug_evaluate_with_trust(
+            path_string(&root),
+            99,
+            1,
+            "$value".to_string(),
+            Arc::new(DebugSessionRegistry::new()),
+            &trust,
+        ))
+        .expect_err("foreign session must fail");
+
+        assert!(error.contains("no longer belongs"));
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
@@ -10528,6 +11877,7 @@ pub fn run() {
             workspace_search_text,
             workspace_replace_in_path,
             workspace_apply_workspace_edit,
+            workspace_apply_workspace_edit_transaction,
             workspace_save_text_file,
             workspace_create_text_file,
             workspace_create_directory,

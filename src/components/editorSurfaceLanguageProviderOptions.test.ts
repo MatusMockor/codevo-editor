@@ -65,6 +65,15 @@ describe("editor surface language provider options", () => {
       openPaths: ["/workspace/app/Example.php"],
       rootPath: "/workspace",
     };
+    const changeSignatureRequest = {
+      kind: "change-signature" as const,
+      offset: 12,
+      path: "/workspace/app/Example.php",
+      rootPath: "/workspace",
+    };
+    const changeSignatureApplier = vi.fn(async () => ({
+      kind: "accepted" as const,
+    }));
     const newFile = {
       content: "<?php\n",
       path: "/workspace/app/NewFile.php",
@@ -89,6 +98,10 @@ describe("editor surface language provider options", () => {
     await expect(
       options.applyWorkspaceEdit?.(workspaceEdit, workspaceEditContext),
     ).resolves.toEqual({ kind: "accepted" });
+    options.openPhpChangeSignature?.(
+      changeSignatureRequest,
+      changeSignatureApplier,
+    );
     options.clearLanguageServerDiagnosticsForPath?.(
       "/workspace/app/Example.php",
     );
@@ -159,6 +172,10 @@ describe("editor surface language provider options", () => {
     expect(refs.applyPhpWorkspaceEditRef.current).toHaveBeenCalledWith(
       workspaceEdit,
       workspaceEditContext,
+    );
+    expect(refs.openPhpChangeSignatureRef?.current).toHaveBeenCalledWith(
+      changeSignatureRequest,
+      changeSignatureApplier,
     );
     expect(
       refs.clearLanguageServerDiagnosticsForPathRef.current,
@@ -579,6 +596,7 @@ function registrationRefs({
     flushPendingRef: ref(vi.fn(async () => undefined)),
     isLanguageServerDocumentSyncedRef: ref(undefined),
     largeSmartDocumentPolicyRef: ref(largeSmartDocumentPolicy),
+    openPhpChangeSignatureRef: ref(vi.fn()),
     phpCodeActionsRef: ref(vi.fn(async () => codeActions)),
     phpFrameworkDefinitionRef: ref(vi.fn(async () => true)),
     phpFrameworkStringCompletionContextRef: ref(vi.fn(() => true)),

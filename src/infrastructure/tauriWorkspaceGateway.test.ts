@@ -39,6 +39,88 @@ describe("TauriWorkspaceGateway trusted file operations", () => {
     });
   });
 
+  it("applies and rolls back a trusted transactional workspace edit", async () => {
+    const edit = {
+      changes: {
+        "file:///selected/project/src/App.ts": [
+          {
+            range: {
+              start: { line: 0, character: 0 },
+              end: { line: 0, character: 0 },
+            },
+            newText: "next",
+          },
+        ],
+      },
+    };
+    const rollbackEdit = {
+      changes: {
+        "src/App.ts": [
+          {
+            range: {
+              start: { line: 0, character: 0 },
+              end: { line: 0, character: 4 },
+            },
+            newText: "old",
+          },
+        ],
+      },
+      documentVersions: {},
+      fileOperations: [],
+    };
+    invoke
+      .mockResolvedValueOnce({
+        appliedCount: 1,
+        rollbackEdit,
+        rollbackExpectedStates: { "src/App.ts": "abc" },
+        rollbackFileModes: { "src/App.ts": 0o644 },
+      })
+      .mockResolvedValueOnce({
+        appliedCount: 1,
+        rollbackEdit: { changes: {} },
+        rollbackExpectedStates: {},
+        rollbackFileModes: {},
+      });
+
+    const transaction = await trustedGateway().applyWorkspaceEditTransaction(
+      "/selected/project",
+      edit,
+      ["/selected/project/src/Open.ts"],
+      { "/selected/project/src/App.ts": "123" },
+    );
+    expect(transaction.appliedCount).toBe(1);
+    expect(invoke).toHaveBeenNthCalledWith(
+      1,
+      "workspace_apply_workspace_edit_transaction",
+      {
+        workspaceId: "ws-1",
+        edit: {
+          changes: {
+            "src/App.ts": edit.changes["file:///selected/project/src/App.ts"],
+          },
+        },
+        skippedPaths: ["src/Open.ts"],
+        expectedStates: { "src/App.ts": "123" },
+        fileModes: {},
+      },
+    );
+
+    await transaction.rollback();
+    await transaction.rollback();
+    expect(invoke).toHaveBeenNthCalledWith(
+      2,
+      "workspace_apply_workspace_edit_transaction",
+      {
+        workspaceId: "ws-1",
+        edit: rollbackEdit,
+        skippedPaths: [],
+        expectedStates: { "src/App.ts": "abc" },
+        fileModes: { "src/App.ts": 0o644 },
+      },
+    );
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps descriptorless workspace edits on the legacy command", async () => {
     invoke.mockResolvedValue(3);
     const gateway = new TauriWorkspaceGateway({ descriptorForPath: () => null });

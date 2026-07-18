@@ -54,6 +54,29 @@ export function latteBlockSymbolOccurrences(
   );
 }
 
+export function isProvablyLocalLatteBlockSymbol(
+  source: string,
+  name: string,
+): boolean {
+  const declarations = latteBlockSymbolOccurrences(source, name).filter(
+    (occurrence) => occurrence.kind === "declaration",
+  );
+
+  return (
+    declarations.length > 0 &&
+    declarations.every((occurrence) => occurrence.declarationKind === "local")
+  );
+}
+
+export function hasLatteBlockDeclaration(
+  source: string,
+  name: string,
+): boolean {
+  return latteBlockSymbolOccurrences(source, name).some(
+    (occurrence) => occurrence.kind === "declaration",
+  );
+}
+
 export function latteBlockIncludeCompletionAt(
   source: string,
   offset: number,

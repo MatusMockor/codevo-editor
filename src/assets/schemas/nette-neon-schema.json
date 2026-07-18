@@ -1,0 +1,306 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-15",
+  "sources": [
+    {
+      "package": "nette/di",
+      "version": "3.2.6",
+      "revision": "481ca2553e792daffa7fcf0ed43f705d80603fa4",
+      "path": "src/DI/Extensions/DefinitionSchema.php",
+      "sha256": "dd249e00635e2c2722fcb1f02aaeead32183273b91abe29d059afdf5887b2215"
+    },
+    {
+      "package": "nette/di",
+      "version": "3.2.6",
+      "revision": "481ca2553e792daffa7fcf0ed43f705d80603fa4",
+      "path": "src/DI/Extensions/SearchExtension.php",
+      "sha256": "c8fc8621f5a583656c5a17e415dc9070468fd8827262f682461c580793c3846f"
+    },
+    {
+      "package": "nette/database",
+      "version": "3.2.9",
+      "revision": "6fe51398fcfc7719f64b7063f99886b438527755",
+      "path": "src/Bridges/DatabaseDI/DatabaseExtension.php",
+      "sha256": "72f6a760b839c09e319e6a0ce883de9e4383c92cd8a9b490874fa1b3686b05c1"
+    },
+    {
+      "package": "nette/mail",
+      "version": "4.0.4",
+      "revision": "5f16f76ed14a32f34580811d1a07ac357352bbc4",
+      "path": "src/Bridges/MailDI/MailExtension.php",
+      "sha256": "42a1b8380f120aae8329dd4ac873a51dfd84520fc68c5a45aa8899c1cd6af595"
+    },
+    {
+      "package": "nette/security",
+      "version": "3.2.5",
+      "revision": "50ce3c4b8edd27cb134237cac3af514a84331524",
+      "path": "src/Bridges/SecurityDI/SecurityExtension.php",
+      "sha256": "b5f53da6f6b0ec3a123a0e856db3c20e633eb7479d473a70af3cb36d9cf5b15b"
+    }
+  ],
+  "serviceItemKeys": [
+    {
+      "name": "alteration",
+      "valueKind": "boolean",
+      "description": "Marks the definition as an alteration of an existing service"
+    },
+    {
+      "name": "arguments",
+      "valueKind": "array",
+      "description": "Constructor arguments"
+    },
+    {
+      "name": "autowired",
+      "valueKind": "scalar",
+      "description": "Autowiring on/off or a list of allowed types"
+    },
+    {
+      "name": "class",
+      "valueKind": "string",
+      "description": "deprecated legacy service class alias"
+    },
+    {
+      "name": "create",
+      "valueKind": "string",
+      "description": "Class name or callable creating the service"
+    },
+    {
+      "name": "factory",
+      "valueKind": "string",
+      "description": "Legacy alias of create"
+    },
+    {
+      "name": "implement",
+      "valueKind": "string",
+      "description": "Generated factory, accessor or locator interface"
+    },
+    {
+      "name": "imported",
+      "valueKind": "boolean",
+      "description": "Service supplied to the container at runtime"
+    },
+    {
+      "name": "inject",
+      "valueKind": "boolean",
+      "description": "Enable inject attributes and inject methods"
+    },
+    {
+      "name": "lazy",
+      "valueKind": "boolean",
+      "description": "Create the service lazily",
+      "compatibility": {
+        "package": "nette/di",
+        "minVersion": "3.2.6"
+      }
+    },
+    {
+      "name": "references",
+      "valueKind": "array",
+      "description": "Generated locator service references"
+    },
+    {
+      "name": "reset",
+      "valueKind": "array",
+      "description": "Inherited definition parts to reset"
+    },
+    {
+      "name": "setup",
+      "valueKind": "array",
+      "description": "Calls and property assignments after creation"
+    },
+    {
+      "name": "tagged",
+      "valueKind": "string",
+      "description": "Tag collected by a generated locator"
+    },
+    {
+      "name": "tags",
+      "valueKind": "array",
+      "description": "Service tags"
+    },
+    {
+      "name": "type",
+      "valueKind": "string",
+      "description": "Declared service class or interface"
+    }
+  ],
+  "nestedSectionKeys": {
+    "database.*": [
+      {
+        "name": "dsn",
+        "valueKind": "string",
+        "description": "Database data source name"
+      },
+      {
+        "name": "user",
+        "valueKind": "string",
+        "description": "Database user"
+      },
+      {
+        "name": "password",
+        "valueKind": "string",
+        "description": "Database password"
+      },
+      {
+        "name": "options",
+        "valueKind": "array",
+        "description": "PDO connection options"
+      },
+      {
+        "name": "debugger",
+        "valueKind": "boolean",
+        "description": "Enable the Tracy database panel"
+      },
+      {
+        "name": "explain",
+        "valueKind": "boolean",
+        "description": "Show query EXPLAIN output"
+      },
+      {
+        "name": "reflection",
+        "valueKind": "string",
+        "description": "Legacy database reflection class"
+      },
+      {
+        "name": "conventions",
+        "valueKind": "string",
+        "description": "Database conventions class"
+      },
+      {
+        "name": "autowired",
+        "valueKind": "boolean",
+        "description": "Enable connection autowiring"
+      }
+    ],
+    "mail.dkim": [
+      {
+        "name": "domain",
+        "valueKind": "string",
+        "description": "DKIM signing domain"
+      },
+      {
+        "name": "selector",
+        "valueKind": "string",
+        "description": "DKIM selector"
+      },
+      {
+        "name": "privateKey",
+        "valueKind": "string",
+        "description": "DKIM private key path"
+      },
+      {
+        "name": "passPhrase",
+        "valueKind": "string",
+        "description": "DKIM private key pass phrase"
+      }
+    ],
+    "search.*": [
+      {
+        "name": "in",
+        "valueKind": "string",
+        "description": "Directory to scan"
+      },
+      {
+        "name": "files",
+        "valueKind": "array",
+        "description": "Accepted file masks"
+      },
+      {
+        "name": "classes",
+        "valueKind": "array",
+        "description": "Accepted class masks"
+      },
+      {
+        "name": "extends",
+        "valueKind": "array",
+        "description": "Required parent classes"
+      },
+      {
+        "name": "implements",
+        "valueKind": "array",
+        "description": "Required interfaces"
+      },
+      {
+        "name": "exclude",
+        "valueKind": "section",
+        "description": "Excluded files and class constraints"
+      },
+      {
+        "name": "tags",
+        "valueKind": "array",
+        "description": "Tags assigned to discovered services"
+      }
+    ],
+    "search.*.exclude": [
+      {
+        "name": "files",
+        "valueKind": "array",
+        "description": "Excluded file masks"
+      },
+      {
+        "name": "classes",
+        "valueKind": "array",
+        "description": "Excluded class masks"
+      },
+      {
+        "name": "extends",
+        "valueKind": "array",
+        "description": "Excluded parent classes"
+      },
+      {
+        "name": "implements",
+        "valueKind": "array",
+        "description": "Excluded interfaces"
+      }
+    ],
+    "security.authentication": [
+      {
+        "name": "storage",
+        "valueKind": "string",
+        "description": "Identity storage: session or cookie"
+      },
+      {
+        "name": "expiration",
+        "valueKind": "string",
+        "description": "Authentication expiration"
+      },
+      {
+        "name": "persistIdentity",
+        "valueKind": "boolean",
+        "description": "Persist identity between requests"
+      },
+      {
+        "name": "cookieName",
+        "valueKind": "string",
+        "description": "Authentication cookie name"
+      },
+      {
+        "name": "cookieDomain",
+        "valueKind": "string",
+        "description": "Authentication cookie domain"
+      },
+      {
+        "name": "cookieSamesite",
+        "valueKind": "string",
+        "description": "Authentication cookie SameSite policy"
+      }
+    ],
+    "security.users.*": [
+      {
+        "name": "password",
+        "valueKind": "string",
+        "description": "User password"
+      },
+      {
+        "name": "roles",
+        "valueKind": "array",
+        "description": "Assigned roles"
+      },
+      {
+        "name": "data",
+        "valueKind": "array",
+        "description": "Additional identity data"
+      }
+    ]
+  }
+}

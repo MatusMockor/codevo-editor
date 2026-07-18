@@ -4797,6 +4797,104 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(modelB.pushEditOperations).not.toHaveBeenCalled();
   });
 
+  it("rolls back model A when applying model B throws", async () => {
+    const monaco = createMonaco();
+    const modelA = stagedTextModel("/project/src/a.ts", "abc", 7);
+    const modelB = stagedTextModel("/project/src/b.ts", "abc", 7);
+    modelA.pushEditOperations.mockImplementation(() => {
+      modelA.setSnapshot("Abc", 8);
+    });
+    Object.assign(modelA, {
+      setValue: vi.fn((content: string) => modelA.setSnapshot(content, 9)),
+    });
+    modelB.pushEditOperations.mockImplementation(() => {
+      throw new Error("injected second-model failure");
+    });
+    Object.assign(modelB, {
+      setValue: vi.fn((content: string) => modelB.setSnapshot(content, 9)),
+    });
+    const edit = {
+      changes: {
+        "file:///project/src/a.ts": [textEditAt("A", 0, 0, 0, 1)],
+        "file:///project/src/b.ts": [textEditAt("B", 0, 0, 0, 1)],
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: unknown,
+        context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+      ) => {
+        context.applyOpenModels?.();
+        return { kind: "accepted" as const };
+      },
+    );
+    monaco.editor.getModels.mockReturnValue([modelA, modelB]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: featuresGateway({ executeCommandEdit: edit }),
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(
+      null,
+      workspaceEditCommandPayload("/project/src/a.ts"),
+    );
+    expect(modelA.getValue()).toBe("abc");
+    expect(modelB.getValue()).toBe("abc");
+    expect((modelA as any).setValue).toHaveBeenCalledWith("abc");
+  });
+
+  it("does not overwrite a user edit made after a workspace edit commit", async () => {
+    const monaco = createMonaco();
+    const model = stagedTextModel("/project/src/a.ts", "abc", 7);
+    model.pushEditOperations.mockImplementation(() => {
+      model.setSnapshot("Abc", 8);
+    });
+    Object.assign(model, {
+      setValue: vi.fn((content: string) => model.setSnapshot(content, 9)),
+    });
+    const edit = {
+      changes: {
+        "file:///project/src/a.ts": [textEditAt("A", 0, 0, 0, 1)],
+      },
+    };
+    const applyWorkspaceEdit = vi.fn(
+      async (
+        _edit: unknown,
+        context: JavaScriptTypeScriptWorkspaceEditApplicationContext,
+      ) => {
+        const commit = context.applyOpenModels?.();
+
+        if (commit?.kind === "applied") {
+          model.setSnapshot("user edit", 9);
+          commit.rollback?.();
+        }
+
+        return { kind: "accepted" as const };
+      },
+    );
+    monaco.editor.getModels.mockReturnValue([model]);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({
+        applyWorkspaceEdit,
+        featuresGateway: featuresGateway({ executeCommandEdit: edit }),
+      }),
+    );
+    const commandDescriptor = (monaco.editor.addCommand as any).mock.calls[0][0];
+
+    await commandDescriptor.run(
+      null,
+      workspaceEditCommandPayload("/project/src/a.ts"),
+    );
+
+    expect(model.getValue()).toBe("user edit");
+    expect((model as any).setValue).not.toHaveBeenCalled();
+  });
+
   it("does not mutate TypeScript models when the authoritative LSP version rejects an edit", async () => {
     const monaco = createMonaco();
     const model = textModel();

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
 import {
+  phpNamedArgumentCallableMembersFromSource,
   phpNamedArgumentCompletionContextAt,
   phpNamedArgumentCompletions,
+  phpVersionSupportsNamedArguments,
 } from "./phpNamedArgumentCompletions";
 
 function positionAfter(source: string, needle: string) {
@@ -137,11 +139,31 @@ describe("phpNamedArgumentCompletionContextAt", () => {
     });
   });
 
-  it("returns null for plain function calls", () => {
+  it("detects ordinary function calls", () => {
     const source = "<?php\nfoo($a, ";
     expect(
-      phpNamedArgumentCompletionContextAt(source, positionAfter(source, "$a, ")),
-    ).toBeNull();
+      phpNamedArgumentCompletionContextAt(
+        source,
+        positionAfter(source, "$a, "),
+      ),
+    ).toMatchObject({
+      callTarget: { functionName: "foo", kind: "function" },
+      positionalArgumentCount: 1,
+    });
+  });
+
+  it("detects local callable variables", () => {
+    const source =
+      "<?php\n$format = fn(string $value, int $precision = 2) => '';\n$format(pr";
+    expect(
+      phpNamedArgumentCompletionContextAt(
+        source,
+        positionAfter(source, "$format(pr"),
+      ),
+    ).toMatchObject({
+      callTarget: { kind: "local-callable", variableName: "format" },
+      prefix: "pr",
+    });
   });
 
   it("returns null for function declarations", () => {
@@ -199,6 +221,35 @@ describe("phpNamedArgumentCompletionContextAt", () => {
     ).toBeNull();
   });
 
+  it("returns null after argument unpacking", () => {
+    const source = "<?php\nfoo(...$arguments, na";
+    expect(
+      phpNamedArgumentCompletionContextAt(source, positionAfter(source, "na")),
+    ).toBeNull();
+  });
+
+  it("returns null for first-class callable syntax", () => {
+    const source = "<?php\nfoo(...";
+    expect(
+      phpNamedArgumentCompletionContextAt(source, positionAfter(source, "...")),
+    ).toBeNull();
+  });
+
+  it("respects PHP version constraints", () => {
+    const source = "<?php\nfoo(na";
+    const position = positionAfter(source, "na");
+
+    expect(
+      phpNamedArgumentCompletionContextAt(source, position, "^7.4"),
+    ).toBeNull();
+    expect(
+      phpNamedArgumentCompletionContextAt(source, position, "^8.1"),
+    ).not.toBeNull();
+    expect(
+      phpNamedArgumentCompletionContextAt(source, position, "^7.4 || ^8.2"),
+    ).toBeNull();
+  });
+
   it("returns null for static calls on dynamic class expressions", () => {
     const source = "<?php\n$class::create(";
     expect(
@@ -233,17 +284,37 @@ describe("phpNamedArgumentCompletionContextAt", () => {
     ).toBeNull();
   });
 
+  it("returns null inside heredoc and nowdoc bodies", () => {
+    for (const source of [
+      "<?php\n$text = <<<TEXT\nfoo(na\nTEXT;",
+      "<?php\n$text = <<<'TEXT'\nfoo(na\nTEXT;",
+    ]) {
+      expect(
+        phpNamedArgumentCompletionContextAt(
+          source,
+          positionAfter(source, "foo(na"),
+        ),
+      ).toBeNull();
+    }
+  });
+
   it("returns null when the current argument is not a bare identifier", () => {
     const source = "<?php\n$this->send($use";
     expect(
-      phpNamedArgumentCompletionContextAt(source, positionAfter(source, "$use")),
+      phpNamedArgumentCompletionContextAt(
+        source,
+        positionAfter(source, "$use"),
+      ),
     ).toBeNull();
   });
 
   it("returns null when no call is open at the cursor", () => {
     const source = "<?php\n$this->send($a);\n$x = ";
     expect(
-      phpNamedArgumentCompletionContextAt(source, positionAfter(source, "$x = ")),
+      phpNamedArgumentCompletionContextAt(
+        source,
+        positionAfter(source, "$x = "),
+      ),
     ).toBeNull();
   });
 
@@ -273,7 +344,10 @@ describe("phpNamedArgumentCompletions", () => {
       usedArgumentNames: [],
     };
 
-    const completions = phpNamedArgumentCompletions(context, constructorMembers);
+    const completions = phpNamedArgumentCompletions(
+      context,
+      constructorMembers,
+    );
 
     expect(completions.map((completion) => completion.name)).toEqual([
       "name:",
@@ -281,7 +355,10 @@ describe("phpNamedArgumentCompletions", () => {
       "email:",
     ]);
     expect(completions[0]).toMatchObject({
-      completionBehavior: { insertTextMode: "plain", triggerParameterHints: false },
+      completionBehavior: {
+        insertTextMode: "plain",
+        triggerParameterHints: false,
+      },
       declaringClassName: "App\\Models\\User",
       insertText: "name: ",
       kind: "property",
@@ -384,7 +461,9 @@ describe("phpNamedArgumentCompletions", () => {
       usedArgumentNames: [],
     };
 
-    expect(phpNamedArgumentCompletions(context, constructorMembers)).toEqual([]);
+    expect(phpNamedArgumentCompletions(context, constructorMembers)).toEqual(
+      [],
+    );
   });
 
   it("returns nothing for property kind members with a matching name", () => {
@@ -404,5 +483,274 @@ describe("phpNamedArgumentCompletions", () => {
         member("items", "", { kind: "property" }),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("phpNamedArgumentCallableMembersFromSource", () => {
+  it("reads a local named function signature without guessing", () => {
+    const source =
+      "<?php\nfunction render(string $view, array $data = []): string { return ''; }\nrender(da";
+    const context = phpNamedArgumentCompletionContextAt(
+      source,
+      positionAfter(source, "render(da"),
+    );
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCompletions(
+        context!,
+        phpNamedArgumentCallableMembersFromSource(source, context!),
+      ).map((completion) => completion.name),
+    ).toEqual(["data:"]);
+  });
+
+  it("reads the latest statically assigned closure signature", () => {
+    const source = [
+      "<?php",
+      "$format = static function (string $value, int $precision = 2): string { return ''; };",
+      "$format(pre",
+    ].join("\n");
+    const context = phpNamedArgumentCompletionContextAt(
+      source,
+      positionAfter(source, "$format(pre"),
+    );
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCompletions(
+        context!,
+        phpNamedArgumentCallableMembersFromSource(source, context!),
+      ).map((completion) => completion.name),
+    ).toEqual(["precision:"]);
+  });
+
+  it("does not invent a signature for an unresolved callable", () => {
+    const source = "<?php\n$callback(na";
+    const context = phpNamedArgumentCompletionContextAt(
+      source,
+      positionAfter(source, "na"),
+    );
+
+    expect(context).not.toBeNull();
+    expect(phpNamedArgumentCallableMembersFromSource(source, context!)).toEqual(
+      [],
+    );
+  });
+
+  it("does not confuse a class method with an ordinary function", () => {
+    const source =
+      "<?php\nclass Service { public function render(string $view): void {} }\nrender(vi";
+    const position = positionAfter(source, "render(vi");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+
+  it("does not resolve a differently namespaced function by short name", () => {
+    const source = [
+      "<?php namespace App;",
+      "function render(string $view): void {}",
+      "Other\\render(vi",
+    ].join("\n");
+    const position = positionAfter(source, "Other\\render(vi");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+
+  it("resolves the function from the namespace active at the call site", () => {
+    const source = [
+      "<?php",
+      "namespace First { function render(string $wrong): void {} }",
+      "namespace Second { function render(string $right): void {} render(ri",
+      "}",
+    ].join("\n");
+    const position = positionAfter(source, "render(ri");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCompletions(
+        context!,
+        phpNamedArgumentCallableMembersFromSource(source, context!, position),
+      ).map((completion) => completion.name),
+    ).toEqual(["right:"]);
+  });
+
+  it("resolves a safely imported local function alias", () => {
+    const source = [
+      "<?php",
+      "namespace Library { function render(string $view): void {} }",
+      "namespace App { use function Library\\render as output; output(vi",
+      "}",
+    ].join("\n");
+    const position = positionAfter(source, "output(vi");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCompletions(
+        context!,
+        phpNamedArgumentCallableMembersFromSource(source, context!, position),
+      ).map((completion) => completion.name),
+    ).toEqual(["view:"]);
+  });
+
+  it("does not use a function declaration after the call site", () => {
+    const source = "<?php\nrender(vi);\nfunction render(string $view): void {}";
+    const position = positionAfter(source, "render(vi");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+
+  it("ignores fake function and callable declarations inside heredoc", () => {
+    const source = [
+      "<?php",
+      "$text = <<<TEXT",
+      "function render(string $fake): void {}",
+      "$format = fn(string $fake) => '';",
+      "TEXT;",
+      "render(fa);",
+      "$format(fa",
+    ].join("\n");
+    const position = positionAfter(source, "$format(fa");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+
+  it("does not treat heredoc-like text inside a string as a heredoc opener", () => {
+    const source = [
+      "<?php",
+      "function render(string $view): void {}",
+      '$text = "<<<TEXT\\nnot a heredoc";',
+      "render(vi",
+    ].join("\n");
+    const position = positionAfter(source, "render(vi");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCompletions(
+        context!,
+        phpNamedArgumentCallableMembersFromSource(source, context!, position),
+      ).map((completion) => completion.name),
+    ).toEqual(["view:"]);
+  });
+
+  it("ignores a callable assignment that occurs after the call", () => {
+    const source = "$format(pre\n$format = fn(int $precision) => '';";
+    const position = positionAfter(source, "$format(pre");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+
+  it("invalidates a closure signature after a later dynamic reassignment", () => {
+    const source = [
+      "$format = fn(int $precision) => '';",
+      "$format = $runtimeCallable;",
+      "$format(pre",
+    ].join("\n");
+    const position = positionAfter(source, "$format(pre");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+
+  it("does not leak callable assignments between methods with the same variable name", () => {
+    const source = [
+      "<?php",
+      "class Formatter {",
+      "  public function first(): void {",
+      "    $format = fn(string $wrong) => '';",
+      "  }",
+      "  public function second(): void {",
+      "    $format = fn(int $right) => '';",
+      "    $format(ri",
+      "  }",
+      "}",
+    ].join("\n");
+    const position = positionAfter(source, "$format(ri");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCompletions(
+        context!,
+        phpNamedArgumentCallableMembersFromSource(source, context!, position),
+      ).map((completion) => completion.name),
+    ).toEqual(["right:"]);
+  });
+
+  it("does not use a callable assigned in another method", () => {
+    const source = [
+      "<?php",
+      "class Formatter {",
+      "  public function first(): void {",
+      "    $format = fn(string $wrong) => '';",
+      "  }",
+      "  public function second(): void {",
+      "    $format(wr",
+      "  }",
+      "}",
+    ].join("\n");
+    const position = positionAfter(source, "$format(wr");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+
+  it("does not leak a callable from a method into top-level code", () => {
+    const source = [
+      "<?php",
+      "class Formatter {",
+      "  public function configure(): void {",
+      "    $format = fn(string $wrong) => '';",
+      "  }",
+      "}",
+      "$format(wr",
+    ].join("\n");
+    const position = positionAfter(source, "$format(wr");
+    const context = phpNamedArgumentCompletionContextAt(source, position);
+
+    expect(context).not.toBeNull();
+    expect(
+      phpNamedArgumentCallableMembersFromSource(source, context!, position),
+    ).toEqual([]);
+  });
+});
+
+describe("phpVersionSupportsNamedArguments", () => {
+  it.each([
+    [null, true],
+    ["^8.0", true],
+    [">=8.1 <9.0", true],
+    ["^7.4", false],
+    ["^7.4 || ^8.2", false],
+  ])("evaluates %s conservatively", (constraint, expected) => {
+    expect(phpVersionSupportsNamedArguments(constraint)).toBe(expected);
   });
 });

@@ -1,10 +1,10 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
+import { neonServiceClassCompletionContextAt } from "../domain/neonConfig";
 import {
-  neonServiceClassCompletionContextAt,
-} from "../domain/neonConfig";
-import {
+  compatibleNeonConfigKeySpecsForScope,
+  netteComposerPackageVersionsFromLock,
   neonConfigKeyCompletionContextAt,
-  neonConfigKeySpecsForScope,
+  neonConfigKeyScopeRequiresComposerVersion,
   neonExtensionNamesFromSource,
   neonIndentUnitFromSource,
   type NeonConfigKeyCompletionContext,
@@ -81,7 +81,17 @@ export async function provideNeonCompletions(
   const keyCompletion = neonConfigKeyCompletionContextAt(source, offset);
 
   if (keyCompletion) {
-    return neonConfigKeyCompletions(source, keyCompletion);
+    const packageVersions = neonConfigKeyScopeRequiresComposerVersion(
+      keyCompletion.scope,
+    )
+      ? await loadNettePackageVersions(context)
+      : new Map();
+
+    if (!isRequestedRootActive()) {
+      return [];
+    }
+
+    return neonConfigKeyCompletions(source, keyCompletion, packageVersions);
   }
 
   const classContext = neonServiceClassCompletionContextAt(source, offset);
@@ -113,16 +123,17 @@ export async function provideNeonCompletions(
 function neonConfigKeyCompletions(
   source: string,
   completion: NeonConfigKeyCompletionContext,
+  packageVersions: ReturnType<typeof netteComposerPackageVersionsFromLock>,
 ): NeonCompletionItem[] {
   const normalizedPrefix = completion.prefix.toLowerCase();
   const indentUnit = neonIndentUnitFromSource(source);
 
-  return neonConfigKeySpecs(source, completion)
+  return neonConfigKeySpecs(source, completion, packageVersions)
     .filter((spec) => spec.name.toLowerCase().startsWith(normalizedPrefix))
     .slice(0, NEON_MAX_COMPLETIONS)
     .map((spec) => ({
       detail: spec.description,
-      insertText: neonConfigKeyInsertText(spec, completion, indentUnit),
+      insertText: neonConfigKeyInsertText(spec, completion, source, indentUnit),
       kind: "parameter" as const,
       label: spec.name,
       replaceEnd: completion.span.end,
@@ -133,8 +144,11 @@ function neonConfigKeyCompletions(
 function neonConfigKeySpecs(
   source: string,
   completion: NeonConfigKeyCompletionContext,
+  packageVersions: ReturnType<typeof netteComposerPackageVersionsFromLock>,
 ): NeonConfigKeySpec[] {
-  const specs = [...neonConfigKeySpecsForScope(completion.scope)];
+  const specs = [
+    ...compatibleNeonConfigKeySpecsForScope(completion.scope, packageVersions),
+  ];
 
   if (completion.scope.kind !== "top-level") {
     return specs;
@@ -158,17 +172,85 @@ function neonConfigKeySpecs(
   return specs;
 }
 
+const NETTE_PACKAGE_VERSION_CACHE_TTL_MS = 5_000;
+const packageVersionCaches = new WeakMap<
+  object,
+  Map<
+    string,
+    {
+      expiresAt: number;
+      versions: ReturnType<typeof netteComposerPackageVersionsFromLock>;
+    }
+  >
+>();
+
+async function loadNettePackageVersions(
+  context: NeonRequestContext<NeonCompletionDependencies>,
+): Promise<ReturnType<typeof netteComposerPackageVersionsFromLock>> {
+  const cacheOwner = context.configCache;
+  const cache = packageVersionCaches.get(cacheOwner) ?? new Map();
+  packageVersionCaches.set(cacheOwner, cache);
+
+  for (const cachedRoot of cache.keys()) {
+    if (cachedRoot === context.requestedRoot) {
+      continue;
+    }
+
+    cache.delete(cachedRoot);
+  }
+
+  const cached = cache.get(context.requestedRoot);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.versions;
+  }
+
+  let source = "";
+
+  try {
+    source = await context.deps.readFileContent(
+      context.deps.joinPath(context.requestedRoot, "composer.lock"),
+    );
+  } catch {
+    const versions = new Map<string, string>();
+
+    if (context.isRequestedRootActive()) {
+      cache.set(context.requestedRoot, {
+        expiresAt: Date.now() + NETTE_PACKAGE_VERSION_CACHE_TTL_MS,
+        versions,
+      });
+    }
+
+    return versions;
+  }
+
+  if (!context.isRequestedRootActive()) {
+    return new Map();
+  }
+
+  const versions = netteComposerPackageVersionsFromLock(source);
+  cache.set(context.requestedRoot, {
+    expiresAt: Date.now() + NETTE_PACKAGE_VERSION_CACHE_TTL_MS,
+    versions,
+  });
+  return versions;
+}
+
 function neonConfigKeyInsertText(
   spec: NeonConfigKeySpec,
   completion: NeonConfigKeyCompletionContext,
+  source: string,
   indentUnit: string,
 ): string {
   if (completion.followedByColon) {
     return spec.name;
   }
 
-  if (completion.scope.kind === "top-level" && spec.valueKind === "section") {
-    return `${spec.name}:\n${indentUnit}`;
+  if (spec.valueKind === "section") {
+    const lineStart = source.lastIndexOf("\n", completion.span.start - 1) + 1;
+    const currentIndent =
+      source.slice(lineStart, completion.span.start).match(/^\s*/)?.[0] ?? "";
+    return `${spec.name}:\n${currentIndent}${indentUnit}`;
   }
 
   return `${spec.name}: `;

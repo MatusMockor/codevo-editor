@@ -7,6 +7,7 @@ import {
   type WorkspaceDescriptor,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { phpChangeSignatureCodeAction } from "./phpChangeSignatureCodeAction";
 import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeAction";
 import { buildPhpCreateMemberWorkspaceCodeAction } from "./phpCreateParentMemberWorkspaceCodeAction";
 import {
@@ -138,24 +139,29 @@ export function usePhpCodeActions({
           ? collectPhpClassScopedCodeActions(source, range, structure)
           : []),
       ];
-      const workspaceActions = await collectPhpWorkspaceCodeActions(
-        {
-          activeDocumentPath,
-          collectPhpAbstractMembersToImplement,
-          collectPhpOverridableParentMethods,
-          frameworkCodeActionContributions,
-          intelligenceMode,
-          isRequestedRootActive,
-          phpCreateClassCodeAction,
-          phpCreateMemberCodeAction,
-          projectSymbolSearch,
-          range,
-          readTestFileIfExists,
-          requestedRoot,
-          source,
-          structure,
-        },
-      );
+      const changeSignatureAction = phpChangeSignatureCodeAction({
+        offset: range.start,
+        path: activeDocumentPath,
+        rootPath: requestedRoot,
+        source,
+      });
+      if (changeSignatureAction) actions.push(changeSignatureAction);
+      const workspaceActions = await collectPhpWorkspaceCodeActions({
+        activeDocumentPath,
+        collectPhpAbstractMembersToImplement,
+        collectPhpOverridableParentMethods,
+        frameworkCodeActionContributions,
+        intelligenceMode,
+        isRequestedRootActive,
+        phpCreateClassCodeAction,
+        phpCreateMemberCodeAction,
+        projectSymbolSearch,
+        range,
+        readTestFileIfExists,
+        requestedRoot,
+        source,
+        structure,
+      });
 
       if (!workspaceActions) {
         return [];

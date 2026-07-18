@@ -294,8 +294,10 @@ describe("BottomPanel terminal links", () => {
         activeView: "debug",
         debug: {
           breakpoints: [],
+          evaluationHistory: [],
           lastStartError: null,
           onLoadVariables: vi.fn(),
+          onEvaluate: vi.fn().mockResolvedValue(null),
           onNavigateToBreakpoint: vi.fn(),
           onNavigateToFrame: vi.fn(),
           onPause: vi.fn(),
@@ -320,6 +322,7 @@ describe("BottomPanel terminal links", () => {
             lastSeq: 1,
           },
           variablesByReference: {},
+          workspaceTrusted: true,
         },
       },
     );

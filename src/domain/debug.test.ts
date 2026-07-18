@@ -152,7 +152,11 @@ describe("DebugGateway", () => {
       },
     };
 
-    await gateway.start("/root", { kind: "node-script", scriptPath: "/a.js" }, []);
+    await gateway.start(
+      "/root",
+      { kind: "node-script", scriptPath: "/a.js" },
+      [],
+    );
     await gateway.start(
       "/root",
       { kind: "js-test-file", runner: "vitest", filePath: "/a.test.ts" },
@@ -163,6 +167,11 @@ describe("DebugGateway", () => {
       { kind: "php-script", scriptPath: "/a.php" },
       [],
     );
+    await gateway.start(
+      "/root",
+      { kind: "php-test-file", filePath: "/tests/A.test.php" },
+      [],
+    );
     await gateway.start("/root", { kind: "php-listen" }, []);
     await gateway.start("/root", { kind: "php-listen", port: 9003 }, []);
 
@@ -170,6 +179,7 @@ describe("DebugGateway", () => {
       "node-script",
       "js-test-file",
       "php-script",
+      "php-test-file",
       "php-listen",
       "php-listen",
     ]);

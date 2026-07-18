@@ -56,6 +56,7 @@ import { ImplementationChooser } from "./components/ImplementationChooser";
 import { LanguageServerSetup } from "./components/LanguageServerSetup";
 import { NoticeToastHost } from "./components/NoticeToastHost";
 import { PhpTreePanel } from "./components/PhpTreePanel";
+import { PhpChangeSignatureDialog } from "./components/PhpChangeSignatureDialog";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { QuickOpen } from "./components/QuickOpen";
 import { RecentFilesSwitcher } from "./components/RecentFilesSwitcher";
@@ -235,6 +236,23 @@ const systemFontGateway = new TauriSystemFontGateway();
 const workbenchPrompter = new BrowserWorkbenchPrompter();
 const dirtyCloseDecisionCoordinator = new DirtyCloseDecisionCoordinator();
 const EMPTY_FILE_STATUSES_BY_PATH: Record<string, GitChangeStatus> = {};
+const CLOSED_PHP_CHANGE_SIGNATURE = {
+  addRow: () => undefined,
+  apply: async () => undefined,
+  close: () => undefined,
+  open: async () => undefined,
+  state: {
+    affectedFiles: [],
+    error: null,
+    isApplying: false,
+    isLoading: false,
+    isOpen: false,
+    invalidRowId: null,
+    preview: null,
+    rows: [],
+  },
+  updateRows: () => undefined,
+};
 
 // Warm the Shiki highlighter in the background as soon as the app boots so the
 // first opened file gets correct syntax colors immediately instead of showing
@@ -328,6 +346,12 @@ function App() {
       debugGateway,
     },
   );
+  const phpChangeSignature = {
+    ...CLOSED_PHP_CHANGE_SIGNATURE,
+    ...(workbench.phpChangeSignature ?? {}),
+    state:
+      workbench.phpChangeSignature?.state ?? CLOSED_PHP_CHANGE_SIGNATURE.state,
+  };
   const artisanRoutes = useArtisanRoutes({
     gateway: artisanRoutesGateway,
     isOpen:
@@ -357,10 +381,12 @@ function App() {
   const debugPanelProps = useMemo<DebugPanelProps>(
     () => ({
       breakpoints: workbench.debugSession.breakpoints,
+      evaluationHistory: workbench.debugSession.evaluationHistory,
       lastStartError: workbench.debugSession.lastStartError,
       onLoadVariables: (variablesReference) => {
         void workbench.debugSession.loadVariables(variablesReference);
       },
+      onEvaluate: (expression) => workbench.debugSession.evaluate(expression),
       onNavigateToBreakpoint: (breakpoint) => {
         void workbench.openDebugLocation(
           breakpoint.filePath,
@@ -397,9 +423,12 @@ function App() {
       selectedFrameId: workbench.debugSession.selectedFrameId,
       snapshot: workbench.debugSession.snapshot,
       variablesByReference: workbench.debugSession.variablesByReference,
+      workspaceTrusted: workbench.workspaceTrust?.trusted === true,
     }),
     [
       workbench.debugSession.breakpoints,
+      workbench.debugSession.evaluationHistory,
+      workbench.debugSession.evaluate,
       workbench.debugSession.lastStartError,
       workbench.debugSession.loadVariables,
       workbench.debugSession.output,
@@ -416,6 +445,7 @@ function App() {
       workbench.debugSession.variablesByReference,
       workbench.openDebugLocation,
       workbench.workspaceRoot,
+      workbench.workspaceTrust?.trusted,
     ],
   );
   const gitHistoryDiffDocuments = useGitHistoryDiffDocuments({
@@ -1171,6 +1201,7 @@ function App() {
           onOpenFileStructure={workbench.openFileStructure}
           onChange={workbench.updateActiveDocument}
           onLanguageServerError={workbench.reportLanguageServerError}
+          onOpenPhpChangeSignature={phpChangeSignature.open}
           onRecordCompletionLatency={workbench.recordCompletionLatency}
           onLocalPhpDiagnosticsChange={workbench.updateLocalPhpDiagnostics}
           onRevealTargetHandled={workbench.clearEditorRevealTarget}
@@ -1709,6 +1740,13 @@ function App() {
 
       <DirtyCloseDecisionDialogHost
         coordinator={dirtyCloseDecisionCoordinator}
+      />
+      <PhpChangeSignatureDialog
+        onAdd={phpChangeSignature.addRow}
+        onApply={phpChangeSignature.apply}
+        onClose={phpChangeSignature.close}
+        onRowsChange={phpChangeSignature.updateRows}
+        state={phpChangeSignature.state}
       />
 
       <CommandPalette

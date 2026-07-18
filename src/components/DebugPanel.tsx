@@ -28,8 +28,10 @@ import { workspaceRelativePath } from "../domain/pathDerivation";
 
 export interface DebugPanelProps {
   breakpoints: Breakpoint[];
+  evaluationHistory: string[];
   lastStartError: string | null;
   onLoadVariables(variablesReference: number): void;
+  onEvaluate(expression: string): Promise<DebugVariable | null>;
   onNavigateToBreakpoint(breakpoint: Breakpoint): void;
   onNavigateToFrame(filePath: string, lineNumber: number): void;
   onPause(): void;
@@ -45,6 +47,13 @@ export interface DebugPanelProps {
   selectedFrameId: number | null;
   snapshot: DebuggerSessionSnapshot;
   variablesByReference: Record<number, DebugVariable[]>;
+  workspaceTrusted: boolean;
+}
+
+interface DebugConsoleEvaluation {
+  expression: string;
+  result: DebugVariable | null;
+  error: string | null;
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -101,6 +110,18 @@ const styles: Record<string, CSSProperties> = {
     overflow: "auto",
     padding: "4px 8px",
   },
+  consoleInput: {
+    background: "transparent",
+    border: 0,
+    borderTop: "1px solid var(--border-subtle)",
+    boxSizing: "border-box",
+    color: "inherit",
+    fontFamily: "var(--font-mono, monospace)",
+    fontSize: 12,
+    outline: "none",
+    padding: "5px 8px",
+    width: "100%",
+  },
   frame: {
     background: "transparent",
     border: 0,
@@ -154,8 +175,10 @@ const styles: Record<string, CSSProperties> = {
 
 export function DebugPanel({
   breakpoints,
+  evaluationHistory,
   lastStartError,
   onLoadVariables,
+  onEvaluate,
   onNavigateToBreakpoint,
   onNavigateToFrame,
   onPause,
@@ -171,6 +194,7 @@ export function DebugPanel({
   selectedFrameId,
   snapshot,
   variablesByReference,
+  workspaceTrusted,
 }: DebugPanelProps) {
   const state = snapshot.state;
   const stopped = state.kind === "stopped";
@@ -263,7 +287,14 @@ export function DebugPanel({
       </div>
       <section aria-label="Debug console" style={styles.console}>
         <strong style={styles.columnTitle}>Console</strong>
-        <ConsoleOutput output={output} />
+        <DebugConsole
+          enabled={stopped && workspaceTrusted}
+          history={evaluationHistory}
+          onEvaluate={onEvaluate}
+          output={output}
+          rootPath={rootPath}
+          sessionId={state.kind === "inactive" ? null : state.sessionId}
+        />
       </section>
     </div>
   );
@@ -347,14 +378,15 @@ function CallStack({
     return <div style={styles.message}>Not paused</div>;
   }
 
-  const highlightedFrameId =
-    selectedFrameId ?? state.topFrame?.frameId ?? null;
+  const highlightedFrameId = selectedFrameId ?? state.topFrame?.frameId ?? null;
 
   return (
     <div>
       {state.frames.map((frame) => (
         <button
-          aria-current={frame.frameId === highlightedFrameId ? "true" : undefined}
+          aria-current={
+            frame.frameId === highlightedFrameId ? "true" : undefined
+          }
           data-testid="debug-frame"
           key={frame.frameId}
           onClick={() => activateFrame(frame, onSelectFrame, onNavigateToFrame)}
@@ -411,7 +443,9 @@ function Variables({
   }
 
   if (scopes.length === 0) {
-    return <div style={styles.message}>Select a frame to inspect variables</div>;
+    return (
+      <div style={styles.message}>Select a frame to inspect variables</div>
+    );
   }
 
   const toggleReference = (variablesReference: number) => {
@@ -650,7 +684,140 @@ function BreakpointConditionInput({
 
 const SCROLL_BOTTOM_TOLERANCE = 4;
 
-function ConsoleOutput({ output }: { output: DebugOutputLine[] }) {
+function DebugConsole({
+  enabled,
+  history,
+  onEvaluate,
+  output,
+  rootPath,
+  sessionId,
+}: {
+  enabled: boolean;
+  history: string[];
+  onEvaluate(expression: string): Promise<DebugVariable | null>;
+  output: DebugOutputLine[];
+  rootPath: string | null;
+  sessionId: number | null;
+}) {
+  const sessionKey = `${rootPath ?? ""}\0${sessionId ?? "inactive"}`;
+  const evaluationsRef = useRef(new Map<string, DebugConsoleEvaluation[]>());
+  const [expression, setExpression] = useState("");
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [, setRevision] = useState(0);
+  const evaluations = evaluationsRef.current.get(sessionKey) ?? [];
+
+  useEffect(() => {
+    setExpression("");
+    setHistoryIndex(null);
+  }, [sessionKey]);
+
+  const submit = async () => {
+    const candidate = expression.trim();
+
+    if (!enabled || candidate === "") {
+      return;
+    }
+
+    const submittedKey = sessionKey;
+    setExpression("");
+    setHistoryIndex(null);
+
+    let evaluation: DebugConsoleEvaluation;
+
+    try {
+      const result = await onEvaluate(candidate);
+
+      if (!result) {
+        return;
+      }
+
+      evaluation = { error: null, expression: candidate, result };
+    } catch (error) {
+      evaluation = {
+        error: error instanceof Error ? error.message : String(error),
+        expression: candidate,
+        result: null,
+      };
+    }
+
+    const current = evaluationsRef.current.get(submittedKey) ?? [];
+    evaluationsRef.current.set(
+      submittedKey,
+      [...current, evaluation].slice(-500),
+    );
+    setRevision((value) => value + 1);
+  };
+
+  const navigateHistory = (direction: -1 | 1) => {
+    if (history.length === 0) {
+      return;
+    }
+
+    if (direction === -1 && (historyIndex === null || historyIndex === 0)) {
+      setHistoryIndex(null);
+      setExpression("");
+      return;
+    }
+
+    const nextIndex = Math.max(
+      0,
+      Math.min(history.length - 1, (historyIndex ?? -1) + direction),
+    );
+    setHistoryIndex(nextIndex);
+    setExpression(history[nextIndex] ?? "");
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submit();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setExpression("");
+      setHistoryIndex(null);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      navigateHistory(1);
+      return;
+    }
+
+    if (event.key !== "ArrowDown") {
+      return;
+    }
+
+    event.preventDefault();
+    navigateHistory(-1);
+  };
+
+  return (
+    <>
+      <ConsoleOutput evaluations={evaluations} output={output} />
+      <input
+        aria-label="Debug expression"
+        disabled={!enabled}
+        onChange={(event) => setExpression(event.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={enabled ? "Evaluate expression" : "Pause to evaluate"}
+        style={styles.consoleInput}
+        value={expression}
+      />
+    </>
+  );
+}
+
+function ConsoleOutput({
+  evaluations,
+  output,
+}: {
+  evaluations: DebugConsoleEvaluation[];
+  output: DebugOutputLine[];
+}) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
 
@@ -666,7 +833,7 @@ function ConsoleOutput({ output }: { output: DebugOutputLine[] }) {
     }
 
     body.scrollTop = body.scrollHeight;
-  }, [output]);
+  }, [evaluations, output]);
 
   const handleScroll = () => {
     const body = bodyRef.current;
@@ -680,7 +847,7 @@ function ConsoleOutput({ output }: { output: DebugOutputLine[] }) {
       body.scrollHeight - SCROLL_BOTTOM_TOLERANCE;
   };
 
-  if (output.length === 0) {
+  if (output.length === 0 && evaluations.length === 0) {
     return (
       <div
         data-testid="debug-console-body"
@@ -716,6 +883,25 @@ function ConsoleOutput({ output }: { output: DebugOutputLine[] }) {
           {line.text}
         </div>
       ))}
+      {evaluations.map((evaluation, index) => (
+        <div
+          data-testid="debug-evaluation"
+          key={`${evaluation.expression}:${index}`}
+        >
+          <div style={styles.outputLine}>{`> ${evaluation.expression}`}</div>
+          <div style={evaluation.error ? styles.stderr : styles.outputLine}>
+            {evaluation.error ?? formatEvaluationResult(evaluation.result)}
+          </div>
+        </div>
+      ))}
     </div>
   );
+}
+
+function formatEvaluationResult(result: DebugVariable | null): string {
+  if (!result) {
+    return "No result";
+  }
+
+  return result.type ? `${result.value} (${result.type})` : result.value;
 }

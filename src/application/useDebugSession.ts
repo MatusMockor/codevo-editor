@@ -20,6 +20,7 @@ import {
 import {
   initialDebuggerSnapshot,
   reduceDebuggerSnapshot,
+  startingDebuggerSnapshot,
   type DebuggerSessionSnapshot,
 } from "../domain/debugSessionState";
 import {
@@ -37,12 +38,14 @@ export interface DebugOutputLine {
 
 export interface UseDebugSessionOptions {
   gateway: DebugGateway;
+  isWorkspaceTrusted?: () => boolean;
   workspaceRoot: string | null;
 }
 
 export interface UseDebugSessionResult {
   snapshot: DebuggerSessionSnapshot;
   breakpoints: Breakpoint[];
+  evaluationHistory: string[];
   output: DebugOutputLine[];
   lastStartError: string | null;
   selectedFrameId: number | null;
@@ -69,12 +72,14 @@ interface FrameSelection {
 
 const inactiveSnapshot = initialDebuggerSnapshot();
 const emptyBreakpoints: Breakpoint[] = [];
+const emptyEvaluationHistory: string[] = [];
 const emptyOutput: DebugOutputLine[] = [];
 const emptyVariables: Record<number, DebugVariable[]> = {};
 const emptyScopes: DebugScope[] = [];
 
 export function useDebugSession({
   gateway,
+  isWorkspaceTrusted = () => true,
   workspaceRoot,
 }: UseDebugSessionOptions): UseDebugSessionResult {
   const [snapshots, setSnapshots] = useState<
@@ -85,6 +90,9 @@ export function useDebugSession({
   >({});
   const [outputBySession, setOutputBySession] = useState<
     Record<number, DebugOutputLine[]>
+  >({});
+  const [evaluationHistoryBySession, setEvaluationHistoryBySession] = useState<
+    Record<string, string[]>
   >({});
   const [startErrors, setStartErrors] = useState<Record<string, string>>({});
   const [frameSelectionByRoot, setFrameSelectionByRoot] = useState<
@@ -115,16 +123,13 @@ export function useDebugSession({
     };
   }, []);
 
-  const commitBreakpoints = useCallback(
-    (key: string, list: Breakpoint[]) => {
-      breakpointsByRootRef.current = {
-        ...breakpointsByRootRef.current,
-        [key]: list,
-      };
-      setBreakpointsByRoot(breakpointsByRootRef.current);
-    },
-    [],
-  );
+  const commitBreakpoints = useCallback((key: string, list: Breakpoint[]) => {
+    breakpointsByRootRef.current = {
+      ...breakpointsByRootRef.current,
+      [key]: list,
+    };
+    setBreakpointsByRoot(breakpointsByRootRef.current);
+  }, []);
 
   const activeSessionId = useCallback((): number | null => {
     const root = currentRootRef.current;
@@ -153,7 +158,13 @@ export function useDebugSession({
       const key = normalizedWorkspaceRootKey(event.rootPath);
       setSnapshots((current) => {
         const existing = current[key] ?? inactiveSnapshot;
-        const next = reduceDebuggerSnapshot(existing, event);
+        const seed =
+          existing.state.kind === "inactive" &&
+          pendingStartKeysRef.current.has(key) &&
+          event.payload.kind === "started"
+            ? startingDebuggerSnapshot(event.sessionId)
+            : existing;
+        const next = reduceDebuggerSnapshot(seed, event);
 
         if (next === existing) {
           return current;
@@ -288,6 +299,16 @@ export function useDebugSession({
         setFrameSelectionByRoot((current) => ({ ...current, [key]: null }));
         setVariablesByRoot((current) => ({ ...current, [key]: {} }));
         setSnapshots((current) => {
+          const currentSnapshot = current[key] ?? inactiveSnapshot;
+          const currentSessionId = debuggerSessionId(currentSnapshot.state);
+
+          if (
+            currentSessionId === status.sessionId &&
+            currentSnapshot.lastSeq > 0
+          ) {
+            return current;
+          }
+
           const updated: Record<string, DebuggerSessionSnapshot> = {
             ...current,
             [key]: {
@@ -489,7 +510,9 @@ export function useDebugSession({
 
       const key = normalizedWorkspaceRootKey(root);
 
-      if ((snapshotsRef.current[key] ?? inactiveSnapshot).state.kind !== "stopped") {
+      if (
+        (snapshotsRef.current[key] ?? inactiveSnapshot).state.kind !== "stopped"
+      ) {
         return;
       }
 
@@ -526,7 +549,9 @@ export function useDebugSession({
 
       const key = normalizedWorkspaceRootKey(root);
 
-      if ((snapshotsRef.current[key] ?? inactiveSnapshot).state.kind !== "stopped") {
+      if (
+        (snapshotsRef.current[key] ?? inactiveSnapshot).state.kind !== "stopped"
+      ) {
         return;
       }
 
@@ -554,10 +579,16 @@ export function useDebugSession({
 
   const evaluate = useCallback(
     async (expression: string): Promise<DebugVariable | null> => {
+      const normalizedExpression = expression.trim();
       const root = currentRootRef.current;
       const sessionId = activeSessionId();
 
-      if (!root || sessionId === null) {
+      if (
+        !root ||
+        sessionId === null ||
+        normalizedExpression === "" ||
+        !isWorkspaceTrusted()
+      ) {
         return null;
       }
 
@@ -565,16 +596,60 @@ export function useDebugSession({
       const selection = frameSelectionByRootRef.current[key];
       const state = (snapshotsRef.current[key] ?? inactiveSnapshot).state;
       const fallbackFrameId =
-        state.kind === "stopped" ? state.topFrame?.frameId ?? null : null;
+        state.kind === "stopped" ? (state.topFrame?.frameId ?? null) : null;
       const frameId = selection?.frameId ?? fallbackFrameId;
 
-      if (frameId === null) {
+      if (state.kind !== "stopped" || frameId === null) {
         return null;
       }
 
-      return gateway.evaluate(sessionId, frameId, expression);
+      setEvaluationHistoryBySession((current) => ({
+        ...current,
+        [`${key}\0${sessionId}`]: [
+          normalizedExpression,
+          ...(current[`${key}\0${sessionId}`] ?? []).filter(
+            (candidate) => candidate !== normalizedExpression,
+          ),
+        ].slice(0, 100),
+      }));
+
+      const evaluationIsCurrent = () => {
+        if (!mountedRef.current || !isWorkspaceTrusted()) {
+          return false;
+        }
+
+        if (!workspaceRootKeysEqual(root, currentRootRef.current)) {
+          return false;
+        }
+
+        if (activeSessionId() !== sessionId) {
+          return false;
+        }
+
+        const currentState = (
+          snapshotsRef.current[normalizedWorkspaceRootKey(root)] ??
+          inactiveSnapshot
+        ).state;
+        return currentState.kind === "stopped";
+      };
+
+      try {
+        const result = await gateway.evaluate(
+          root,
+          sessionId,
+          frameId,
+          normalizedExpression,
+        );
+        return evaluationIsCurrent() ? result : null;
+      } catch (error) {
+        if (!evaluationIsCurrent()) {
+          return null;
+        }
+
+        throw error;
+      }
     },
-    [activeSessionId, gateway],
+    [activeSessionId, gateway, isWorkspaceTrusted],
   );
 
   const activeKey = normalizedWorkspaceRootKey(workspaceRoot);
@@ -585,10 +660,15 @@ export function useDebugSession({
   return {
     snapshot,
     breakpoints: breakpointsByRoot[activeKey] ?? emptyBreakpoints,
+    evaluationHistory:
+      sessionId === null
+        ? emptyEvaluationHistory
+        : (evaluationHistoryBySession[`${activeKey}\0${sessionId}`] ??
+          emptyEvaluationHistory),
     output:
       sessionId === null
         ? emptyOutput
-        : outputBySession[sessionId] ?? emptyOutput,
+        : (outputBySession[sessionId] ?? emptyOutput),
     lastStartError: startErrors[activeKey] ?? null,
     selectedFrameId: selection?.frameId ?? null,
     scopes: selection?.scopes ?? emptyScopes,

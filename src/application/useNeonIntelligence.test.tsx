@@ -31,6 +31,14 @@ const STALE_NETTE_PROFILE_WITHOUT_PROVIDER = createPhpFrameworkIntelligence({
   profile: "nette",
   providers: [],
 });
+const CURRENT_COMPOSER_LOCK = JSON.stringify({
+  packages: [
+    { name: "nette/database", version: "v3.2.9" },
+    { name: "nette/di", version: "v3.2.6" },
+    { name: "nette/mail", version: "v4.0.4" },
+    { name: "nette/security", version: "v3.2.5" },
+  ],
+});
 function makeDeps(
   overrides: Partial<NeonIntelligenceDependencies> = {},
 ): NeonIntelligenceDependencies {
@@ -46,7 +54,11 @@ function makeDeps(
     openClassTarget: vi.fn(async () => true),
     openDirectPhpMethodTarget: vi.fn(async () => true),
     openTarget: vi.fn(async () => true),
-    readFileContent: vi.fn(async () => {
+    readFileContent: vi.fn(async (path: string) => {
+      if (path.endsWith("/composer.lock")) {
+        return CURRENT_COMPOSER_LOCK;
+      }
+
       throw new Error("missing");
     }),
     resolvePhpReceiverCompletions: vi.fn(async () => []),

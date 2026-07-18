@@ -3690,18 +3690,38 @@ function applyStagedOpenModelEdits(
     };
   }
 
-  for (const stagedEdit of stagedEdits) {
-    stagedEdit.model.pushEditOperations(
-      [],
-      stagedEdit.edits.map((textEdit) => ({
-        range: toMonacoRange(monaco, textEdit.range),
-        text: textEdit.newText,
-      })),
-      () => null,
-    );
+  const applied: Array<{
+    appliedContent: string;
+    stagedEdit: StagedOpenModelEdit;
+  }> = [];
+  const rollback = () => {
+    for (const { appliedContent, stagedEdit } of [...applied].reverse()) {
+      if (stagedEdit.model.getValue() === appliedContent) {
+        stagedEdit.model.setValue(stagedEdit.content);
+      }
+    }
+  };
+  try {
+    for (const stagedEdit of stagedEdits) {
+      stagedEdit.model.pushEditOperations(
+        [],
+        stagedEdit.edits.map((textEdit) => ({
+          range: toMonacoRange(monaco, textEdit.range),
+          text: textEdit.newText,
+        })),
+        () => null,
+      );
+      applied.push({
+        appliedContent: stagedEdit.model.getValue(),
+        stagedEdit,
+      });
+    }
+  } catch (error) {
+    rollback();
+    throw error;
   }
 
-  return {
+  const result: WorkspaceEditOpenModelCommitResult = {
     documents: stagedEdits.map(({ model, path }) => ({
       content: model.getValue(),
       path,
@@ -3709,6 +3729,8 @@ function applyStagedOpenModelEdits(
     })),
     kind: "applied",
   };
+  Object.defineProperty(result, "rollback", { value: rollback });
+  return result;
 }
 
 async function applyWorkspaceEditWithOpenModels(
