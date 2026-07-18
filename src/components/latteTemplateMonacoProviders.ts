@@ -22,6 +22,7 @@ import type {
   WorkspaceEditOpenModelCommitResult,
 } from "../application/workspaceEditApplication";
 import type { LatteBlockSourceSpan } from "../domain/latteBlockSyntax";
+import { formatLatteSource } from "../domain/latteFormatting";
 import type {
   LanguageServerTextEdit,
   LanguageServerWorkspaceEdit,
@@ -124,6 +125,12 @@ export function registerLatteTemplateMonacoProviders<
     },
     { providedCodeActionKinds: ["quickfix"] },
   );
+  const formatting = monaco.languages.registerDocumentFormattingEditProvider
+    ? monaco.languages.registerDocumentFormattingEditProvider("latte", {
+        provideDocumentFormattingEdits: (model, options) =>
+          provideLatteDocumentFormattingEdits(monaco, context, model, options),
+      })
+    : { dispose: () => undefined };
 
   return {
     dispose: () => {
@@ -132,8 +139,53 @@ export function registerLatteTemplateMonacoProviders<
       rename.dispose();
       completion.dispose();
       codeActions.dispose();
+      formatting.dispose();
     },
   };
+}
+
+function provideLatteDocumentFormattingEdits(
+  monaco: MonacoApi,
+  context: TemplateLanguageMonacoProviderContext,
+  model: MonacoModel,
+  options: Monaco.languages.FormattingOptions,
+): Monaco.languages.TextEdit[] {
+  const documentContext = activeTemplateDocumentContext(context, model, "latte");
+
+  if (!documentContext) {
+    return [];
+  }
+
+  const source = modelSource(model, documentContext.activeDocument.content);
+
+  if (isLargeTemplateSmartDocument(context, source)) {
+    return [];
+  }
+
+  const formatted = formatLatteSource(source, {
+    indentUnit: latteIndentUnit(options),
+  });
+
+  if (formatted === source) {
+    return [];
+  }
+
+  return [{ range: latteFullSourceRange(monaco, source), text: formatted }];
+}
+
+function latteIndentUnit(options: Monaco.languages.FormattingOptions): string {
+  if (!options.insertSpaces) {
+    return "\t";
+  }
+
+  return " ".repeat(Math.max(1, options.tabSize));
+}
+
+function latteFullSourceRange(monaco: MonacoApi, source: string): Monaco.Range {
+  const lines = source.split("\n");
+  const lastLine = lines[lines.length - 1] ?? "";
+
+  return new monaco.Range(1, 1, lines.length, lastLine.length + 1);
 }
 
 export function toMonacoLatteCompletion(

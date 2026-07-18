@@ -394,6 +394,7 @@ describe("registerLatteTemplateMonacoProviders", () => {
       "rename",
       "completion",
       "actions",
+      "formatting",
     ]);
   });
 
@@ -465,6 +466,121 @@ describe("registerLatteTemplateMonacoProviders", () => {
     );
 
     disposable.dispose();
+  });
+});
+
+describe("Latte document formatting provider", () => {
+  const UNFORMATTED_LATTE_SOURCE = "{if $ok}\n<p>yes</p>\n{/if}";
+
+  it("returns one full-document edit with the reindented source", async () => {
+    const registered = registerProviders();
+    const context = templateContext({ content: UNFORMATTED_LATTE_SOURCE });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
+      textModel(UNFORMATTED_LATTE_SOURCE),
+      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
+      {} as never,
+    );
+
+    expect(edits).toEqual([
+      {
+        range: {
+          endColumn: 6,
+          endLineNumber: 3,
+          startColumn: 1,
+          startLineNumber: 1,
+        },
+        text: "{if $ok}\n  <p>yes</p>\n{/if}",
+      },
+    ]);
+  });
+
+  it("formats with tabs when the editor does not insert spaces", async () => {
+    const registered = registerProviders();
+    const context = templateContext({ content: UNFORMATTED_LATTE_SOURCE });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
+      textModel(UNFORMATTED_LATTE_SOURCE),
+      { insertSpaces: false, tabSize: 4 } as Monaco.languages.FormattingOptions,
+      {} as never,
+    );
+
+    expect(edits?.[0]?.text).toBe("{if $ok}\n\t<p>yes</p>\n{/if}");
+  });
+
+  it("returns no edits when the document is already formatted", async () => {
+    const registered = registerProviders();
+    const formatted = "{if $ok}\n  <p>yes</p>\n{/if}";
+    const context = templateContext({ content: formatted });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
+      textModel(formatted),
+      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
+      {} as never,
+    );
+
+    expect(edits).toEqual([]);
+  });
+
+  it("returns no edits for a large document", async () => {
+    const registered = registerProviders();
+    const context = templateContext({ content: LARGE_LATTE_SOURCE });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
+      textModel(LARGE_LATTE_SOURCE),
+      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
+      {} as never,
+    );
+
+    expect(edits).toEqual([]);
+  });
+
+  it("returns no edits when the model is not the active Latte document", async () => {
+    const registered = registerProviders();
+    const context = templateContext({ content: UNFORMATTED_LATTE_SOURCE });
+    registerLatteTemplateMonacoProviders(
+      registered.monaco,
+      context,
+      { toCodeAction: vi.fn() } as TemplateLanguageMonacoProviderHandlers<
+        TemplateLanguageMonacoProviderContext
+      >,
+    );
+
+    const edits = await registered.formattingProvider?.provideDocumentFormattingEdits(
+      textModel(UNFORMATTED_LATTE_SOURCE, { path: "/ws/app/UI/Other/list.latte" }),
+      { insertSpaces: true, tabSize: 2 } as Monaco.languages.FormattingOptions,
+      {} as never,
+    );
+
+    expect(edits).toEqual([]);
   });
 });
 
@@ -1107,6 +1223,9 @@ function registerProviders() {
     | Monaco.languages.CompletionItemProvider
     | undefined;
   let definitionProvider: Monaco.languages.DefinitionProvider | undefined;
+  let formattingProvider:
+    | Monaco.languages.DocumentFormattingEditProvider
+    | undefined;
   let referenceProvider: Monaco.languages.ReferenceProvider | undefined;
   let renameProvider: Monaco.languages.RenameProvider | undefined;
   const monaco = {
@@ -1161,6 +1280,16 @@ function registerProviders() {
           return { dispose: () => disposed.push("definition") };
         },
       ),
+      registerDocumentFormattingEditProvider: vi.fn(
+        (
+          _language: string,
+          provider: Monaco.languages.DocumentFormattingEditProvider,
+        ) => {
+          formattingProvider = provider;
+
+          return { dispose: () => disposed.push("formatting") };
+        },
+      ),
       registerReferenceProvider: vi.fn(
         (_language: string, provider: Monaco.languages.ReferenceProvider) => {
           referenceProvider = provider;
@@ -1189,6 +1318,9 @@ function registerProviders() {
     },
     get definitionProvider() {
       return definitionProvider;
+    },
+    get formattingProvider() {
+      return formattingProvider;
     },
     get referenceProvider() {
       return referenceProvider;
