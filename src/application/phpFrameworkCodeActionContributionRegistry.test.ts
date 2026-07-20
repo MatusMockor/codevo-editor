@@ -1,9 +1,10 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it, vi } from "vitest";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+
 import { activePhpFrameworkCodeActions } from "./phpFrameworkCodeActionContributionRegistry";
+import { createPhpFrameworkCodeActionContributionCatalog } from "./phpFrameworkCodeActionContributionCatalog";
+import type { PhpFrameworkCodeActionContributionAdapter } from "./phpFrameworkCodeActionContributions";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
   createPhpFrameworkRuntimeContext,
@@ -39,12 +40,21 @@ const CUSTOM_RUNTIME: PhpFrameworkRuntimeContext = {
   supports: (capability) => capability === "codeActions",
 };
 
-function selectActions(frameworkRuntime: PhpFrameworkRuntimeContext) {
+function selectActions(
+  frameworkRuntime: PhpFrameworkRuntimeContext,
+  contributionAdapters?: readonly PhpFrameworkCodeActionContributionAdapter[],
+) {
+  const adapters =
+    contributionAdapters ??
+    createPhpFrameworkCodeActionContributionCatalog({
+      collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
+      readTestFileIfExists: vi.fn(async () => null),
+      workspaceRoot: ROOT,
+    });
+
   return activePhpFrameworkCodeActions({
-    collectViewTargets: vi.fn(async () => [{ name: "dashboard" }]),
+    contributionAdapters: adapters,
     frameworkRuntime,
-    readTestFileIfExists: vi.fn(async () => null),
-    workspaceRoot: ROOT,
   });
 }
 
@@ -117,28 +127,129 @@ class ProductPresenter extends Presenter
     expect(selectActions(runtime).contributions).toEqual([]);
   });
 
-  it("preserves the missing Blade view creation descriptor", async () => {
-    const { createMissingBladeViewCodeAction } = selectActions(LARAVEL_RUNTIME);
-    const source = "@include('orders.show')";
-    const start = source.indexOf("orders.show");
+  it("routes missing-template actions through a neutral contribution", async () => {
+    const [missingTemplateContribution] =
+      selectActions(LARAVEL_RUNTIME).contributions;
+    const source = "<?php\n\nreturn view('orders.show');\n";
+    const cursor = source.indexOf("orders.show") + "orders.sh".length;
 
     await expect(
-      createMissingBladeViewCodeAction(
+      missingTemplateContribution?.(
         source,
-        { end: start + "orders.show".length, start: start + 1 },
-        "blade",
+        { end: cursor, start: cursor },
         () => true,
       ),
-    ).resolves.toEqual({
-      edits: [],
-      isPreferred: true,
-      kind: "quickfix",
-      newFile: {
-        content: "",
-        path: `${ROOT}/resources/views/orders/show.blade.php`,
-        title: "Create Blade View",
+    ).resolves.toEqual([
+      {
+        edits: [],
+        isPreferred: true,
+        kind: "quickfix",
+        newFile: {
+          content: "",
+          path: `${ROOT}/resources/views/orders/show.blade.php`,
+          title: "Create Blade View",
+        },
+        title: "Create Blade view orders.show",
       },
-      title: "Create Blade view orders.show",
+    ]);
+  });
+
+  it("runs framework-neutral adapters in stable priority order", async () => {
+    const adapter = (
+      id: string,
+      priority: number,
+    ): PhpFrameworkCodeActionContributionAdapter => ({
+      contributionsFor: () => [
+        {
+          id,
+          providePhpCodeAction: async () => [
+            {
+              edits: [],
+              kind: "quickfix",
+              title: id,
+            },
+          ],
+        },
+      ],
+      id,
+      priority,
     });
+    const { contributions } = selectActions(CUSTOM_RUNTIME, [
+      adapter("last", 10),
+      adapter("first", 20),
+    ]);
+
+    await expect(
+      Promise.all(
+        contributions.map((contribution) =>
+          contribution("<?php", { end: 0, start: 0 }, () => true),
+        ),
+      ),
+    ).resolves.toEqual([
+      [expect.objectContaining({ title: "first" })],
+      [expect.objectContaining({ title: "last" })],
+    ]);
+  });
+
+  it("rejects duplicate contribution adapter ids", () => {
+    const duplicate: PhpFrameworkCodeActionContributionAdapter = {
+      contributionsFor: () => [],
+      id: "duplicate",
+    };
+
+    expect(() => selectActions(CUSTOM_RUNTIME, [duplicate, duplicate])).toThrow(
+      /Duplicate PHP framework registration id "duplicate"/,
+    );
+  });
+
+  it("orders active contributions globally across providers", async () => {
+    const multiProviderRuntime: PhpFrameworkRuntimeContext = {
+      ...CUSTOM_RUNTIME,
+      providers: [{ id: "first-provider" }, { id: "second-provider" }],
+    };
+    const adapter: PhpFrameworkCodeActionContributionAdapter = {
+      contributionsFor: (provider) => [
+        {
+          id: provider.id,
+          priority: provider.id === "second-provider" ? 200 : 10,
+          providePhpCodeAction: async () => [
+            { edits: [], kind: "quickfix", title: provider.id },
+          ],
+        },
+      ],
+      id: "multi-provider",
+    };
+    const { contributions } = selectActions(multiProviderRuntime, [adapter]);
+
+    await expect(
+      Promise.all(
+        contributions.map((contribution) =>
+          contribution("<?php", { end: 0, start: 0 }, () => true),
+        ),
+      ),
+    ).resolves.toEqual([
+      [expect.objectContaining({ title: "second-provider" })],
+      [expect.objectContaining({ title: "first-provider" })],
+    ]);
+  });
+
+  it("rejects duplicate active contribution identities", () => {
+    const multiProviderRuntime: PhpFrameworkRuntimeContext = {
+      ...CUSTOM_RUNTIME,
+      providers: [{ id: "first-provider" }, { id: "second-provider" }],
+    };
+    const adapter: PhpFrameworkCodeActionContributionAdapter = {
+      contributionsFor: () => [
+        {
+          id: "duplicate-action",
+          providePhpCodeAction: async () => null,
+        },
+      ],
+      id: "multi-provider",
+    };
+
+    expect(() => selectActions(multiProviderRuntime, [adapter])).toThrow(
+      /Duplicate PHP framework registration id "duplicate-action" in active PHP framework code-action contributions/,
+    );
   });
 });

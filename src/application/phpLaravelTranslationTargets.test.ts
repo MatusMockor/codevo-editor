@@ -1,5 +1,6 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import type { PhpLaravelTranslationTarget } from "../domain/phpLaravelTranslations";
 import type { FileEntry } from "../domain/workspace";
 import {

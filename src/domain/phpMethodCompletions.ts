@@ -13,7 +13,6 @@ import {
   phpStatementPrefixBeforeOffset,
 } from "./phpReceiverExpressions";
 import {
-  defaultPhpFrameworkProviders,
   phpFrameworkMemberCompletionsFromSource,
   type PhpFrameworkProvider,
   type PhpFrameworkSourceContext,
@@ -100,7 +99,7 @@ interface PhpMethodSignatureCallContext {
 }
 
 export interface PhpMethodCompletionOptions {
-  frameworkProviders?: readonly PhpFrameworkProvider[];
+  frameworkProviders: readonly PhpFrameworkProvider[];
   frameworkSourceContext?: PhpFrameworkSourceContext;
   includeNonPublicMembers?: boolean;
 }
@@ -174,7 +173,7 @@ export function phpMethodSignatureContextAt(
 export function phpMethodCompletionsFromSource(
   source: string,
   declaringClassName: string,
-  options: PhpMethodCompletionOptions = {},
+  options: PhpMethodCompletionOptions,
 ): PhpMethodCompletion[] {
   const members: PhpMethodCompletion[] = [];
   const masked = maskPhpStringsAndComments(source);
@@ -189,7 +188,8 @@ export function phpMethodCompletionsFromSource(
       continue;
     }
 
-    const functionOffset = (match.index ?? 0) + match[0].lastIndexOf("function");
+    const functionOffset =
+      (match.index ?? 0) + match[0].lastIndexOf("function");
     const attributes = phpAttributeNamesBefore(source, functionOffset);
     const isScopeAttribute = phpHasAttributeName(attributes, "Scope");
 
@@ -226,7 +226,9 @@ export function phpMethodCompletionsFromSource(
     });
   }
 
-  members.push(...phpDocMethodCompletionsFromSource(source, declaringClassName));
+  members.push(
+    ...phpDocMethodCompletionsFromSource(source, declaringClassName),
+  );
   members.push(
     ...phpPropertyCompletionsFromSource(source, declaringClassName, options),
   );
@@ -256,10 +258,7 @@ function phpEnumCaseCompletionsFromSource(
   for (const match of masked.matchAll(declarationPattern)) {
     const enumName = match[1];
 
-    if (
-      !enumName ||
-      enumName.toLowerCase() !== enumShortName.toLowerCase()
-    ) {
+    if (!enumName || enumName.toLowerCase() !== enumShortName.toLowerCase()) {
       continue;
     }
 
@@ -501,9 +500,10 @@ function phpDocMethodCompletionsFromSource(
       : prefixParts;
     const isStatic = partsWithoutVisibility[0]?.toLowerCase() === "static";
     const returnType = normalizeReturnType(
-      (isStatic ? partsWithoutVisibility.slice(1) : partsWithoutVisibility).join(
-        " ",
-      ),
+      (isStatic
+        ? partsWithoutVisibility.slice(1)
+        : partsWithoutVisibility
+      ).join(" "),
     );
 
     members.push({
@@ -529,7 +529,9 @@ function phpPropertyCompletionsFromSource(
   for (const match of source.matchAll(
     /@(?:(?:phpstan|psalm)-)?property(?:-read|-write)?\s+([^\r\n*]+?)\s+\$([A-Za-z_][A-Za-z0-9_]*)\b/g,
   )) {
-    const returnType = normalizeReturnType(firstPhpDocTypeToken(match[1] ?? null));
+    const returnType = normalizeReturnType(
+      firstPhpDocTypeToken(match[1] ?? null),
+    );
     const name = match[2];
 
     if (!name) {
@@ -584,7 +586,7 @@ function phpPropertyCompletionsFromSource(
     ...phpFrameworkMemberCompletionsFromSource(
       source,
       declaringClassName,
-      options.frameworkProviders ?? defaultPhpFrameworkProviders,
+      options.frameworkProviders,
       options.frameworkSourceContext,
     ),
   );
@@ -611,7 +613,9 @@ function phpFunctionParametersAt(
   return source.slice(openOffset + 1, closeOffset);
 }
 
-function dedupePhpMembers(members: PhpMethodCompletion[]): PhpMethodCompletion[] {
+function dedupePhpMembers(
+  members: PhpMethodCompletion[],
+): PhpMethodCompletion[] {
   const seen = new Set<string>();
   const unique: PhpMethodCompletion[] = [];
 
@@ -719,7 +723,8 @@ export function phpTraitUseInfo(source: string): PhpTraitUseInfo {
     return { aliases: [], traitNames: [] };
   }
 
-  const bodyEnd = matchingPairOffset(source, bodyStart, "{", "}") ?? source.length;
+  const bodyEnd =
+    matchingPairOffset(source, bodyStart, "{", "}") ?? source.length;
   const body = source.slice(bodyStart + 1, bodyEnd);
   const traits: string[] = [];
   const aliases: PhpTraitMethodAlias[] = [];
@@ -783,7 +788,12 @@ function phpTraitAdaptationAliases(block: string): PhpTraitMethodAlias[] {
     const visibility = phpMemberVisibilityFromToken(firstToken);
 
     if (visibility && secondToken) {
-      aliases.push({ aliasName: secondToken, methodName, traitName, visibility });
+      aliases.push({
+        aliasName: secondToken,
+        methodName,
+        traitName,
+        visibility,
+      });
       continue;
     }
 
@@ -796,7 +806,12 @@ function phpTraitAdaptationAliases(block: string): PhpTraitMethodAlias[] {
       continue;
     }
 
-    aliases.push({ aliasName: firstToken, methodName, traitName, visibility: null });
+    aliases.push({
+      aliasName: firstToken,
+      methodName,
+      traitName,
+      visibility: null,
+    });
   }
 
   return aliases;
@@ -829,7 +844,10 @@ function phpAttributeNamesBefore(
 ): string[] {
   const beforeFunction = source
     .slice(0, functionOffset)
-    .replace(/\s*(?:(?:abstract|final|private|protected|public|static)\s+)*$/, "");
+    .replace(
+      /\s*(?:(?:abstract|final|private|protected|public|static)\s+)*$/,
+      "",
+    );
   const attributesSource = phpStackedAttributeBlockBefore(beforeFunction);
   const attributeNames: string[] = [];
 
@@ -983,7 +1001,7 @@ function maskPhpStringsForAttributeScan(source: string): string {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       output += " ";
       quote = character;
       continue;
@@ -1011,7 +1029,10 @@ function phpHasAttributeName(
   });
 }
 
-function phpDocBlockBefore(source: string, functionOffset: number): string | null {
+function phpDocBlockBefore(
+  source: string,
+  functionOffset: number,
+): string | null {
   const beforeFunction = source.slice(0, functionOffset);
   const docStart = beforeFunction.lastIndexOf("/**");
   const docEnd = beforeFunction.lastIndexOf("*/");
@@ -1115,7 +1136,7 @@ function phpArgumentIndex(argumentsSource: string): number {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1175,7 +1196,7 @@ function phpCurrentArgumentSegmentStart(argumentsSource: string): number {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1218,7 +1239,7 @@ function phpTopLevelNamedArgumentColonOffset(argumentSegment: string): number {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1251,8 +1272,10 @@ function phpTopLevelNamedArgumentColonOffset(argumentSegment: string): number {
 function phpActiveMethodSignatureCallContext(
   statementUntilCursor: string,
 ): PhpMethodSignatureCallContext | null {
-  const memberContext = lastOpenMemberSignatureCallContext(statementUntilCursor);
-  const staticContext = lastOpenStaticSignatureCallContext(statementUntilCursor);
+  const memberContext =
+    lastOpenMemberSignatureCallContext(statementUntilCursor);
+  const staticContext =
+    lastOpenStaticSignatureCallContext(statementUntilCursor);
 
   if (!memberContext) {
     return staticContext;
@@ -1284,8 +1307,7 @@ function lastOpenMemberSignatureCallContext(
       continue;
     }
 
-    const openParenOffset =
-      (match.index ?? 0) + match[0].lastIndexOf("(");
+    const openParenOffset = (match.index ?? 0) + match[0].lastIndexOf("(");
 
     if (!phpCallIsOpenAtCursor(statementUntilCursor, openParenOffset)) {
       continue;
@@ -1323,8 +1345,7 @@ function lastOpenStaticSignatureCallContext(
       continue;
     }
 
-    const openParenOffset =
-      (match.index ?? 0) + match[0].lastIndexOf("(");
+    const openParenOffset = (match.index ?? 0) + match[0].lastIndexOf("(");
 
     if (!phpCallIsOpenAtCursor(statementUntilCursor, openParenOffset)) {
       continue;
@@ -1366,7 +1387,7 @@ function phpCallIsOpenAtCursor(
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1388,7 +1409,10 @@ function phpCallIsOpenAtCursor(
 
 function normalizeParameterType(beforeName: string): string | null {
   const normalized = normalizeWhitespace(
-    beforeName.replace(/\b(?:public|protected|private|readonly|static)\b/g, " "),
+    beforeName.replace(
+      /\b(?:public|protected|private|readonly|static)\b/g,
+      " ",
+    ),
   );
 
   return normalized || null;
@@ -1414,7 +1438,7 @@ function topLevelEqualsIndex(source: string): number {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1490,7 +1514,7 @@ function splitPhpParameterList(parameters: string): string[] {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1585,7 +1609,7 @@ function maskPhpStringsAndComments(source: string): string {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       output += " ";
       quote = character;
       continue;
@@ -1622,7 +1646,7 @@ function matchingPairOffset(
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }

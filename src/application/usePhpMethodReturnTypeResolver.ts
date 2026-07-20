@@ -12,6 +12,7 @@ import {
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
+import { createPhpFrameworkSemanticTypeExtensions } from "./phpFrameworkSemanticTypeExtensions";
 import { phpMethodReturnExpressions } from "../domain/phpTypeAnalysis";
 import {
   phpFrameworkContainerExpressionClassName,
@@ -21,7 +22,6 @@ import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { createPhpFrameworkMethodReturnTypeStrategyAdapters } from "./phpFrameworkMethodReturnTypeStrategyAdapters";
-import { createPhpNetteDatabaseTypeResolver } from "./phpNetteDatabaseTypeResolver";
 
 export interface PhpClassMemberReadResult {
   content: string;
@@ -44,7 +44,10 @@ export interface UsePhpMethodReturnTypeResolverOptions {
     path: string,
     className: string,
   ) => Promise<PhpClassMemberReadResult>;
-  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassReference: (
+    source: string,
+    className: string,
+  ) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   resolvePhpEloquentBuilderModelTypeRef: MutableRefObject<
     (
@@ -81,131 +84,6 @@ export interface UsePhpMethodReturnTypeResolverOptions {
   workspaceRoot: string | null;
 }
 
-type PhpNetteRelationMethod = "ref" | "related";
-
-function phpNetteRelationMethod(
-  methodName: string,
-): PhpNetteRelationMethod | null {
-  const normalizedMethodName = methodName.toLowerCase();
-
-  if (normalizedMethodName === "ref" || normalizedMethodName === "related") {
-    return normalizedMethodName;
-  }
-
-  return null;
-}
-
-function isGeneratedPhpNetteRelationReturnType(
-  returnType: string | null,
-  relationMethod: PhpNetteRelationMethod,
-  carrierClassName: string,
-  resolveMappedType: (mappedType: string) => string | null,
-): boolean {
-  const normalizedReturnType = returnType?.trim() ?? "";
-  const normalizedCarrierClassName = carrierClassName
-    .trim()
-    .replace(/^\\+/, "");
-  const activeRowMarker = "\\ActiveRow\\";
-  const activeRowMarkerIndex = normalizedCarrierClassName
-    .toLowerCase()
-    .indexOf(activeRowMarker.toLowerCase());
-
-  if (
-    !normalizedReturnType.startsWith("(") ||
-    !/\$[A-Za-z_][A-Za-z0-9_]*\s+is\s+/i.test(normalizedReturnType) ||
-    activeRowMarkerIndex < 0 ||
-    !/ActiveRow$/i.test(normalizedCarrierClassName)
-  ) {
-    return false;
-  }
-
-  const familyPrefix = normalizedCarrierClassName.slice(
-    0,
-    activeRowMarkerIndex,
-  );
-  const familyMarker =
-    relationMethod === "ref" ? "\\ActiveRow\\" : "\\Selection\\";
-  const familySuffix = relationMethod === "ref" ? "ActiveRow" : "Selection";
-  const mappedTypes = [
-    ...normalizedReturnType.matchAll(
-      /\?\s*(\\?[A-Za-z_][A-Za-z0-9_]*(?:\\[A-Za-z_][A-Za-z0-9_]*)*)(?:\|null)?\s*:/g,
-    ),
-  ].flatMap((match) => (match[1] ? [match[1].replace(/^\\+/, "")] : []));
-
-  if (mappedTypes.length === 0) {
-    return false;
-  }
-
-  const expectedFamilyPrefix = `${familyPrefix}${familyMarker}`.toLowerCase();
-  const hasOnlyGeneratedFamilyMappings = mappedTypes.every((mappedType) => {
-    const resolvedMappedType = resolveMappedType(mappedType)?.replace(
-      /^\\+/,
-      "",
-    );
-
-    if (!resolvedMappedType?.includes("\\")) {
-      return false;
-    }
-
-    return (
-      resolvedMappedType.toLowerCase().startsWith(expectedFamilyPrefix) &&
-      resolvedMappedType.toLowerCase().endsWith(familySuffix.toLowerCase())
-    );
-  });
-
-  if (!hasOnlyGeneratedFamilyMappings) {
-    return false;
-  }
-
-  if (relationMethod === "ref") {
-    return /:\s*\\?Nette\\Database\\Table\\ActiveRow(?:\|null)?\s*\)+(?:\|null)?$/i.test(
-      normalizedReturnType,
-    );
-  }
-
-  return /:\s*\\?Nette\\Database\\Table\\Selection\s*\)+(?:\|null)?$/i.test(
-    normalizedReturnType,
-  );
-}
-
-function isGenericPhpNetteRelationReturnType(
-  returnType: string | null,
-  relationMethod: PhpNetteRelationMethod,
-  resolveDeclaredType: (declaredType: string) => string | null,
-): boolean {
-  const normalizedReturnType = (returnType ?? "").replace(/\s+/g, "");
-  const expandedReturnType = normalizedReturnType.startsWith("?")
-    ? `${normalizedReturnType.slice(1)}|null`
-    : normalizedReturnType;
-  const declaredTypes = expandedReturnType
-    .split("|")
-    .filter((typeName) => typeName.toLowerCase() !== "null");
-
-  if (declaredTypes.length !== 1 || !declaredTypes[0]) {
-    return false;
-  }
-
-  const resolvedDeclaredType = resolveDeclaredType(declaredTypes[0])
-    ?.replace(/^\\+/, "")
-    .toLowerCase();
-  const expectedDeclaredType =
-    relationMethod === "ref"
-      ? "nette\\database\\table\\activerow"
-      : "nette\\database\\table\\selection";
-
-  return resolvedDeclaredType === expectedDeclaredType;
-}
-
-function genericPhpNetteRelationReturnType(
-  relationMethod: PhpNetteRelationMethod,
-): string {
-  if (relationMethod === "ref") {
-    return "Nette\\Database\\Table\\ActiveRow";
-  }
-
-  return "Nette\\Database\\Table\\Selection";
-}
-
 export function usePhpMethodReturnTypeResolver({
   currentWorkspaceRootRef,
   frameworkRuntime,
@@ -223,29 +101,25 @@ export function usePhpMethodReturnTypeResolver({
   workspaceRoot,
 }: UsePhpMethodReturnTypeResolverOptions) {
   const frameworkProviders = frameworkRuntime.providers;
-  const netteDatabaseTypeResolver = useMemo(
+  const typeExtensions = useMemo(
     () =>
-      createPhpNetteDatabaseTypeResolver({
-        isActive: () =>
-          frameworkRuntime.hasProvider("nette") &&
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot),
-        readClassSource: async (path, className) =>
-          (await readPhpClassMembersFromPath(path, className)).content,
-        resolveClassSourcePaths: resolvePhpClassSourcePaths,
+      createPhpFrameworkSemanticTypeExtensions({
+        providers: frameworkProviders,
       }),
-    [
-      currentWorkspaceRootRef,
-      frameworkRuntime,
-      readPhpClassMembersFromPath,
-      resolvePhpClassSourcePaths,
-      workspaceRoot,
-    ],
+    [frameworkProviders],
   );
   const returnTypeStrategy = useMemo(
     () =>
       createPhpFrameworkMethodReturnTypeStrategyAdapters({
         frameworkRuntime,
-        netteDatabaseTypeResolver,
+        isWorkspaceCurrent: () =>
+          workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            workspaceRoot,
+          ),
+        readPhpClassSource: async (path, className) =>
+          (await readPhpClassMembersFromPath(path, className)).content,
+        resolvePhpClassSourcePaths,
         resolvePhpFrameworkBuilderModelType: (source, position, expression) =>
           resolvePhpEloquentBuilderModelTypeRef.current(
             source,
@@ -256,10 +130,13 @@ export function usePhpMethodReturnTypeResolver({
           resolvePhpFrameworkProjectMorphMapModelType,
       }),
     [
+      currentWorkspaceRootRef,
       frameworkRuntime,
-      netteDatabaseTypeResolver,
+      readPhpClassMembersFromPath,
+      resolvePhpClassSourcePaths,
       resolvePhpEloquentBuilderModelTypeRef,
       resolvePhpFrameworkProjectMorphMapModelType,
+      workspaceRoot,
     ],
   );
 
@@ -286,12 +163,6 @@ export function usePhpMethodReturnTypeResolver({
       const normalizedLateStaticClassName = lateStaticClassName
         .trim()
         .replace(/^\\+/, "");
-      const netteRelationMethod = frameworkRuntime.supports(
-        "netteDatabaseSemantics",
-      )
-        ? phpNetteRelationMethod(methodName)
-        : null;
-
       if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
         return null;
       }
@@ -312,7 +183,9 @@ export function usePhpMethodReturnTypeResolver({
         );
       }
 
-      const resolveKnownFrameworkReturnType = async (): Promise<string | null> => {
+      const resolveKnownFrameworkReturnType = async (): Promise<
+        string | null
+      > => {
         const knownReturnType =
           await returnTypeStrategy.knownClassMethodReturnType({
             ...(callExpression ? { callExpression } : {}),
@@ -323,7 +196,9 @@ export function usePhpMethodReturnTypeResolver({
         return isRequestedRootActive() ? knownReturnType : null;
       };
 
-      const resolveBoundConcreteReturnType = async (): Promise<string | null> => {
+      const resolveBoundConcreteReturnType = async (): Promise<
+        string | null
+      > => {
         const boundConcreteClassName =
           await resolvePhpFrameworkBoundConcrete(normalizedClassName);
 
@@ -376,7 +251,7 @@ export function usePhpMethodReturnTypeResolver({
             ownerSource,
             { column: 1, lineNumber: 1 },
             methodCall.receiverExpression,
-            { frameworkProviders },
+            { typeExtensions },
           );
           const constructedReceiverType =
             directReceiverType ??
@@ -425,6 +300,9 @@ export function usePhpMethodReturnTypeResolver({
                 resolvedReceiverType,
                 methodCall.methodName,
                 visitedClassNames,
+                undefined,
+                undefined,
+                expression,
               )
             : null;
         }
@@ -458,7 +336,9 @@ export function usePhpMethodReturnTypeResolver({
         return null;
       };
 
-      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
+      for (const path of await resolvePhpClassSourcePaths(
+        normalizedClassName,
+      )) {
         if (!isRequestedRootActive()) {
           return null;
         }
@@ -490,74 +370,25 @@ export function usePhpMethodReturnTypeResolver({
             : null;
 
           if (returnType) {
-            const isInheritedDeclaration =
-              normalizedClassName.toLowerCase() !==
-              normalizedLateStaticClassName.toLowerCase();
-            const isConcreteNetteDeclaration =
-              frameworkRuntime.supports("netteDatabaseSemantics") &&
-              !isInheritedDeclaration;
-            const strategyReturnType = !isConcreteNetteDeclaration
-              ? await returnTypeStrategy.declaredReturnTypeOverride({
-                  lateStaticClassName:
-                    normalizedLateStaticClassName || normalizedClassName,
-                  methodName,
-                  methodReturnExpressions,
-                  returnType,
-                })
-              : null;
+            const strategyReturnType =
+              await returnTypeStrategy.resolveDeclaredMethodReturnType({
+                ...(callExpression ? { callExpression } : {}),
+                declaringClassName: normalizedClassName,
+                lateStaticClassName:
+                  normalizedLateStaticClassName || normalizedClassName,
+                methodName,
+                methodReturnExpressions,
+                rawReturnType: method?.returnType ?? null,
+                resolvedReturnType: returnType,
+                resolveTypeReference: (typeName) =>
+                  resolvePhpClassReference(content, typeName),
+              });
 
             if (!isRequestedRootActive()) {
               return null;
             }
 
-            if (strategyReturnType) {
-              return strategyReturnType;
-            }
-
-            const isConditionalNetteRelationDeclaration = Boolean(
-              netteRelationMethod &&
-                isGeneratedPhpNetteRelationReturnType(
-                  method?.returnType ?? null,
-                  netteRelationMethod,
-                  normalizedLateStaticClassName || normalizedClassName,
-                  (mappedType) =>
-                    resolvePhpClassReference(content, mappedType),
-                ),
-            );
-            const isGenericNetteRelationDeclaration = Boolean(
-              netteRelationMethod &&
-                isGenericPhpNetteRelationReturnType(
-                  method?.returnType ?? null,
-                  netteRelationMethod,
-                  (declaredType) =>
-                    resolvePhpClassReference(content, declaredType),
-                ),
-            );
-
-            if (
-              callExpression &&
-              (isConditionalNetteRelationDeclaration ||
-                isGenericNetteRelationDeclaration)
-            ) {
-              const knownReturnType = await resolveKnownFrameworkReturnType();
-
-              if (!isRequestedRootActive()) {
-                return null;
-              }
-
-              if (knownReturnType) {
-                return knownReturnType;
-              }
-            }
-
-            if (
-              isConditionalNetteRelationDeclaration &&
-              netteRelationMethod
-            ) {
-              return genericPhpNetteRelationReturnType(netteRelationMethod);
-            }
-
-            return returnType;
+            return strategyReturnType;
           }
 
           if (method) {
@@ -578,7 +409,10 @@ export function usePhpMethodReturnTypeResolver({
           }
 
           for (const traitName of phpTraitClassNames(content)) {
-            const resolvedTraitName = resolvePhpClassReference(content, traitName);
+            const resolvedTraitName = resolvePhpClassReference(
+              content,
+              traitName,
+            );
             const traitTemplateTypes = resolvedTraitName
               ? await resolvePhpGenericTemplateTypesForInheritedClass(
                   content,
@@ -612,7 +446,10 @@ export function usePhpMethodReturnTypeResolver({
           }
 
           for (const mixinName of phpMixinClassNames(content)) {
-            const resolvedMixinName = resolvePhpClassReference(content, mixinName);
+            const resolvedMixinName = resolvePhpClassReference(
+              content,
+              mixinName,
+            );
             const mixinTemplateTypes = resolvedMixinName
               ? await resolvePhpGenericTemplateTypesForMixinClass(
                   content,
@@ -683,7 +520,6 @@ export function usePhpMethodReturnTypeResolver({
               return superTypeReturnType;
             }
           }
-
         } catch {
           if (!isRequestedRootActive()) {
             return null;
@@ -713,6 +549,7 @@ export function usePhpMethodReturnTypeResolver({
       currentWorkspaceRootRef,
       frameworkRuntime,
       frameworkProviders,
+      typeExtensions,
       readPhpClassMembersFromPath,
       resolvePhpClassReference,
       resolvePhpClassSourcePaths,

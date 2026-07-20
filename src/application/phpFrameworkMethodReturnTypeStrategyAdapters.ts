@@ -2,33 +2,43 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { activePhpFrameworkSemanticAdapter } from "./phpFrameworkSemanticAdapterRegistry";
 import {
+  type PhpContextualMethodReturnTypeStrategy,
   genericPhpMethodReturnTypeStrategy,
-  type PhpMethodReturnTypeStrategy,
 } from "./phpMethodReturnTypeStrategy";
-import {
-  createPhpLaravelMethodReturnTypeStrategyAdapter,
-} from "./phpLaravelMethodReturnTypeStrategyAdapter";
+import { createPhpLaravelMethodReturnTypeStrategyAdapter } from "./phpLaravelMethodReturnTypeStrategyAdapter";
 import { createPhpNetteMethodReturnTypeStrategyAdapter } from "./phpNetteMethodReturnTypeStrategyAdapter";
-import type { PhpNetteDatabaseTypeResolver } from "./phpNetteDatabaseTypeResolver";
+import { createPhpNetteDatabaseTypeResolver } from "./phpNetteDatabaseTypeResolver";
 
 export interface PhpFrameworkMethodReturnTypeStrategyAdapterDependencies {
-  frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
+  frameworkRuntime: Pick<
+    PhpFrameworkRuntimeContext,
+    "hasProvider" | "supports"
+  >;
   resolvePhpFrameworkBuilderModelType(
     source: string,
     position: EditorPosition,
     expression: string,
   ): Promise<string | null>;
   resolvePhpFrameworkProjectMorphMapModelType(): Promise<string | null>;
-  netteDatabaseTypeResolver: PhpNetteDatabaseTypeResolver;
+  isWorkspaceCurrent(): boolean;
+  readPhpClassSource(path: string, className: string): Promise<string>;
+  resolvePhpClassSourcePaths(className: string): Promise<string[]>;
 }
 
 export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
   frameworkRuntime,
-  netteDatabaseTypeResolver,
+  isWorkspaceCurrent,
+  readPhpClassSource,
+  resolvePhpClassSourcePaths,
   resolvePhpFrameworkBuilderModelType,
   resolvePhpFrameworkProjectMorphMapModelType,
-}: PhpFrameworkMethodReturnTypeStrategyAdapterDependencies): PhpMethodReturnTypeStrategy {
-  return activePhpFrameworkSemanticAdapter(
+}: PhpFrameworkMethodReturnTypeStrategyAdapterDependencies): PhpContextualMethodReturnTypeStrategy {
+  const netteDatabaseTypeResolver = createPhpNetteDatabaseTypeResolver({
+    isActive: isWorkspaceCurrent,
+    readClassSource: readPhpClassSource,
+    resolveClassSourcePaths: resolvePhpClassSourcePaths,
+  });
+  const strategy = activePhpFrameworkSemanticAdapter(
     frameworkRuntime,
     [
       {
@@ -51,4 +61,25 @@ export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
     ],
     genericPhpMethodReturnTypeStrategy,
   );
+  const netteStrategy = frameworkRuntime.supports("netteDatabaseSemantics")
+    ? createPhpNetteMethodReturnTypeStrategyAdapter(netteDatabaseTypeResolver)
+    : null;
+
+  return {
+    ...strategy,
+    async resolveDeclaredMethodReturnType(context) {
+      if (netteStrategy) {
+        return netteStrategy.resolveDeclaredMethodReturnType(context);
+      }
+
+      const override = await strategy.declaredReturnTypeOverride({
+        lateStaticClassName: context.lateStaticClassName,
+        methodName: context.methodName,
+        methodReturnExpressions: context.methodReturnExpressions,
+        returnType: context.resolvedReturnType,
+      });
+
+      return override ?? context.resolvedReturnType;
+    },
+  };
 }

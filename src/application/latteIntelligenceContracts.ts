@@ -165,6 +165,7 @@ export interface LattePresenterLinkTarget {
 }
 
 export interface LatteFrameworkCapabilities {
+  supportsFactoryTemplateOwnerIntelligence(): boolean;
   detectLattePresenterLinkAt(
     source: string,
     offset: number,

@@ -1,3 +1,4 @@
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { readFile } from "node:fs/promises";
@@ -5,9 +6,13 @@ import path from "node:path";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { resolvePhpClassName, phpMethodPosition } from "../domain/phpNavigation";
-import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  resolvePhpClassName,
+  phpMethodPosition,
+} from "../domain/phpNavigation";
+
 import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
+import { createPhpFrameworkSemanticTypeExtensions } from "./phpFrameworkSemanticTypeExtensions";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createLatteIntelligence } from "./useLatteIntelligence";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
@@ -66,18 +71,14 @@ function workspaceDescriptor(): WorkspaceDescriptor {
 
 function renderSemanticHarness(
   userSource: string,
-  openNavigationTarget: PhpMethodTargetNavigationDependencies[
-    "openNavigationTarget"
-  ],
+  openNavigationTarget: PhpMethodTargetNavigationDependencies["openNavigationTarget"],
 ) {
   const container = document.createElement("div");
   const root = createRoot(container);
   const captured: { current: SemanticHarnessApi | null } = { current: null };
   const currentWorkspaceRootRef = { current: FIXTURE_ROOT };
   const resolvePhpClassSourcePaths = async (className: string) =>
-    className.trim().replace(/^\\+/, "") === NETTE_USER_TYPE
-      ? [USER_PATH]
-      : [];
+    className.trim().replace(/^\\+/, "") === NETTE_USER_TYPE ? [USER_PATH] : [];
 
   function Harness() {
     const members = usePhpClassMemberCollectors({
@@ -115,7 +116,11 @@ function renderSemanticHarness(
             source,
             position,
             receiverExpression,
-            { frameworkProviders: [phpNetteFrameworkProvider] },
+            {
+              typeExtensions: createPhpFrameworkSemanticTypeExtensions({
+                providers: [phpNetteFrameworkProvider],
+              }),
+            },
           ),
         ),
       resolvePhpFrameworkBuilderModelType: async () => null,
@@ -180,11 +185,9 @@ describe("portable ebox-shaped implicit Nette user semantic smoke", () => {
       joinPath: (rootPath, relativePath) => path.join(rootPath, relativePath),
       listDirectory: async () => [],
       openPhpMethodTarget: (className, methodName, request) =>
-        semantic.api().navigation.openDirectPhpMethodTarget(
-          className,
-          methodName,
-          request,
-        ),
+        semantic
+          .api()
+          .navigation.openDirectPhpMethodTarget(className, methodName, request),
       openPhpPropertyTarget: async () => false,
       openTarget: async () => false,
       readFileContent: (filePath) => readFile(filePath, "utf8"),
@@ -192,11 +195,13 @@ describe("portable ebox-shaped implicit Nette user semantic smoke", () => {
         typeHint ? resolvePhpClassName(source, typeHint) : null,
       resolveExpressionType: async () => null,
       resolvePhpReceiverCompletions: (source, position, receiverExpression) =>
-        semantic.api().completions.resolvePhpReceiverMethodCompletions(
-          source,
-          position,
-          receiverExpression,
-        ),
+        semantic
+          .api()
+          .completions.resolvePhpReceiverMethodCompletions(
+            source,
+            position,
+            receiverExpression,
+          ),
       searchText: async () => [],
       synthesizeTypedReceiverSource: (variableName, typeName) => ({
         position: { column: 1, lineNumber: 3 },
@@ -222,32 +227,35 @@ describe("portable ebox-shaped implicit Nette user semantic smoke", () => {
 /** @var \\App\\Security\\OtherUser $user */
 $user->`;
     await expect(
-      semantic.api().completions.resolvePhpReceiverMethodCompletions(
-        adversarialSource,
-        { column: 8, lineNumber: 3 },
-        "$user",
-      ),
+      semantic
+        .api()
+        .completions.resolvePhpReceiverMethodCompletions(
+          adversarialSource,
+          { column: 8, lineNumber: 3 },
+          "$user",
+        ),
     ).resolves.toEqual([]);
     await expect(
-      semantic.api().completions.resolvePhpReceiverMethodCompletions(
-        deps.synthesizeTypedReceiverSource("user", NETTE_USER_TYPE).source,
-        { column: 1, lineNumber: 1 },
-        "$user",
-      ),
+      semantic
+        .api()
+        .completions.resolvePhpReceiverMethodCompletions(
+          deps.synthesizeTypedReceiverSource("user", NETTE_USER_TYPE).source,
+          { column: 1, lineNumber: 1 },
+          "$user",
+        ),
     ).resolves.toEqual([]);
     await expect(
-      semantic.api().completions.resolvePhpReceiverMethodCompletions(
-        deps.synthesizeTypedReceiverSource("user", NETTE_USER_TYPE).source,
-        { column: 1, lineNumber: 3 },
-        "$other",
-      ),
+      semantic
+        .api()
+        .completions.resolvePhpReceiverMethodCompletions(
+          deps.synthesizeTypedReceiverSource("user", NETTE_USER_TYPE).source,
+          { column: 1, lineNumber: 3 },
+          "$other",
+        ),
     ).resolves.toEqual([]);
 
     await expect(
-      latte.provideLatteDefinition(
-        template,
-        template.indexOf("isAllowed") + 2,
-      ),
+      latte.provideLatteDefinition(template, template.indexOf("isAllowed") + 2),
     ).resolves.toBe(true);
     expect(openNavigationTarget).toHaveBeenCalledWith(
       USER_PATH,

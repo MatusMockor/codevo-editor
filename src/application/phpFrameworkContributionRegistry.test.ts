@@ -1,7 +1,7 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it } from "vitest";
 import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { collectActiveContributions } from "./phpFrameworkContributionRegistry";

@@ -21,6 +21,7 @@ import {
   phpReceiverExpressionTypeInSource,
   phpStaticCallExpression,
 } from "../domain/phpSemanticEngine";
+import { createPhpFrameworkSemanticTypeExtensions } from "./phpFrameworkSemanticTypeExtensions";
 import type { PhpFrameworkCollectionCallbackVariableExpressionTypeAdapter } from "./phpFrameworkCollectionCallbackVariableExpressionTypeAdapter";
 import type { PhpFrameworkDatabaseExpressionTypeAdapter } from "./phpFrameworkDatabaseExpressionTypeAdapter";
 import type { PhpFrameworkBuilderMagicExpressionTypeAdapter } from "./phpFrameworkBuilderMagicExpressionTypeAdapter";
@@ -64,7 +65,10 @@ export interface UsePhpExpressionTypeResolverOptions {
     propertyName: string,
     includeCollectionRelations?: boolean,
   ) => Promise<string | null>;
-  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassReference: (
+    source: string,
+    className: string,
+  ) => string | null;
   resolvePhpBuilderModelType: PhpFrameworkModelCarrierTypeResolver;
   resolvePhpFrameworkBoundConcrete: (
     className: string,
@@ -96,30 +100,34 @@ export function usePhpExpressionTypeResolver({
   resolvePhpSemanticTypeReference,
 }: UsePhpExpressionTypeResolverOptions) {
   const frameworkProviders = frameworkRuntime.providers;
-  const expressionTypeStrategy = useMemo(
-    () => {
-      const adapterBundle = createPhpExpressionTypeAdapterBundle({
-        frameworkRuntime,
-        phpClassHasDynamicBuilderFinder,
-        phpClassHasNamedBuilderScope,
-        resolvePropertyOrRelationType: resolvePhpClassPropertyOrRelationType,
-      });
-
-      return createPhpExpressionTypeStrategy({
-        ...adapterBundle,
-        resolvePhpBuilderModelType,
-        resolvePhpCollectionModelType,
-      });
-    },
-    [
+  const typeExtensions = useMemo(
+    () =>
+      createPhpFrameworkSemanticTypeExtensions({
+        providers: frameworkProviders,
+      }),
+    [frameworkProviders],
+  );
+  const expressionTypeStrategy = useMemo(() => {
+    const adapterBundle = createPhpExpressionTypeAdapterBundle({
       frameworkRuntime,
       phpClassHasDynamicBuilderFinder,
       phpClassHasNamedBuilderScope,
-      resolvePhpClassPropertyOrRelationType,
+      resolvePropertyOrRelationType: resolvePhpClassPropertyOrRelationType,
+    });
+
+    return createPhpExpressionTypeStrategy({
+      ...adapterBundle,
       resolvePhpBuilderModelType,
       resolvePhpCollectionModelType,
-    ],
-  );
+    });
+  }, [
+    frameworkRuntime,
+    phpClassHasDynamicBuilderFinder,
+    phpClassHasNamedBuilderScope,
+    resolvePhpClassPropertyOrRelationType,
+    resolvePhpBuilderModelType,
+    resolvePhpCollectionModelType,
+  ]);
 
   const phpClassMethodReturnsClassStringArgument = useCallback(
     async (className: string, methodName: string): Promise<boolean> => {
@@ -159,7 +167,7 @@ export function usePhpExpressionTypeResolver({
           source,
           position,
           methodCall.receiverExpression,
-          { frameworkProviders },
+          { typeExtensions },
         );
         const receiverType = directReceiverType
           ? resolvePhpClassReference(source, directReceiverType)
@@ -167,11 +175,6 @@ export function usePhpExpressionTypeResolver({
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
           : null;
-        const needsNetteCallExpression =
-          frameworkRuntime.supports("netteDatabaseSemantics") &&
-          ["fetchpairs", "ref", "related"].includes(
-            methodCall.methodName.toLowerCase(),
-          );
         if (
           !boundReceiverType ||
           boundReceiverType.toLowerCase() === receiverType?.toLowerCase()
@@ -179,20 +182,13 @@ export function usePhpExpressionTypeResolver({
           return null;
         }
 
-        if (needsNetteCallExpression) {
-          return resolvePhpMethodReturnType(
-            boundReceiverType,
-            methodCall.methodName,
-            undefined,
-            undefined,
-            undefined,
-            candidateExpression,
-          );
-        }
-
         return resolvePhpMethodReturnType(
           boundReceiverType,
           methodCall.methodName,
+          undefined,
+          undefined,
+          undefined,
+          candidateExpression,
         );
       };
 
@@ -225,7 +221,7 @@ export function usePhpExpressionTypeResolver({
             source,
             position,
             assignmentExpression,
-            { frameworkProviders },
+            { typeExtensions },
           ),
         );
 
@@ -249,7 +245,7 @@ export function usePhpExpressionTypeResolver({
         source,
         position,
         expression,
-        { frameworkProviders },
+        { typeExtensions },
       );
 
       if (directType) {
@@ -273,12 +269,7 @@ export function usePhpExpressionTypeResolver({
         frameworkProviders,
         position,
         resolveBuilderModelType: () =>
-          resolvePhpBuilderModelType(
-            source,
-            position,
-            expression,
-            depth + 1,
-          ),
+          resolvePhpBuilderModelType(source, position, expression, depth + 1),
         resolveCollectionElementType: (receiverExpression) =>
           resolvePhpCollectionModelType(
             source,
@@ -430,12 +421,6 @@ export function usePhpExpressionTypeResolver({
         }
 
         const receiverType = await resolveReceiverType();
-        const needsNetteCallExpression =
-          frameworkRuntime.supports("netteDatabaseSemantics") &&
-          ["fetchpairs", "ref", "related"].includes(
-            methodCall.methodName.toLowerCase(),
-          );
-
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
           : null;
@@ -445,19 +430,14 @@ export function usePhpExpressionTypeResolver({
           boundReceiverType &&
           boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()
         ) {
-          boundReceiverReturnType = needsNetteCallExpression
-            ? await resolvePhpMethodReturnType(
-                boundReceiverType,
-                methodCall.methodName,
-                undefined,
-                undefined,
-                undefined,
-                expression,
-              )
-            : await resolvePhpMethodReturnType(
-                boundReceiverType,
-                methodCall.methodName,
-              );
+          boundReceiverReturnType = await resolvePhpMethodReturnType(
+            boundReceiverType,
+            methodCall.methodName,
+            undefined,
+            undefined,
+            undefined,
+            expression,
+          );
         }
 
         if (boundReceiverReturnType) {
@@ -494,24 +474,23 @@ export function usePhpExpressionTypeResolver({
           return null;
         }
 
-        if (needsNetteCallExpression) {
-          return resolvePhpMethodReturnType(
-            receiverType,
-            methodCall.methodName,
-            undefined,
-            undefined,
-            undefined,
-            expression,
-          );
-        }
-
-        return resolvePhpMethodReturnType(receiverType, methodCall.methodName);
+        return resolvePhpMethodReturnType(
+          receiverType,
+          methodCall.methodName,
+          undefined,
+          undefined,
+          undefined,
+          expression,
+        );
       }
 
       const staticCall = phpStaticCallExpression(expression);
 
       if (staticCall) {
-        const className = resolvePhpClassReference(source, staticCall.className);
+        const className = resolvePhpClassReference(
+          source,
+          staticCall.className,
+        );
 
         const strategyReturnType = await expressionTypeStrategy.staticCallType({
           className,
@@ -533,6 +512,7 @@ export function usePhpExpressionTypeResolver({
       expressionTypeStrategy,
       frameworkRuntime,
       frameworkProviders,
+      typeExtensions,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
       phpClassMethodReturnsClassStringArgument,
@@ -643,12 +623,7 @@ function createPhpExpressionTypeStrategy({
               },
             ),
           resolveModelFactoryModelType: () =>
-            resolvePhpBuilderModelType(
-              source,
-              position,
-              expression,
-              depth + 1,
-            ),
+            resolvePhpBuilderModelType(source, position, expression, depth + 1),
           resolveBuilderTerminalModelType: () =>
             terminalModelRecoveryExpressionTypeAdapter.builderTerminalModelType(
               {

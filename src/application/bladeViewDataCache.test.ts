@@ -1,8 +1,8 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it, vi } from "vitest";
 import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
 import {
   createPhpFrameworkProviderCapabilityRegistry,
-  phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { TextSearchResult } from "../domain/workspace";
@@ -78,8 +78,6 @@ function frameworkRuntime(
     capabilities,
     providers,
     profile: "laravel",
-    isLaravel: providers.some((provider) => provider.id === "laravel"),
-    isNette: providers.some((provider) => provider.id === "nette"),
     hasProvider: (providerId) =>
       providers.some((provider) => provider.id === providerId),
     supports: (capability) => capabilities.supports(capability),

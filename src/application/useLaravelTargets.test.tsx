@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -10,7 +11,6 @@ import {
 } from "./useLaravelTargets";
 import {
   phpFrameworkRouteDefinitionsFromSource,
-  phpLaravelFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { phpLaravelGateAbilityDefinitions } from "../domain/phpLaravelAuthorization";
 import { phpLaravelMiddlewareAliasDefinitions } from "../domain/phpLaravelMiddleware";

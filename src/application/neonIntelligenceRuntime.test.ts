@@ -1,5 +1,6 @@
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it, vi } from "vitest";
-import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
   createNeonRequestContext,

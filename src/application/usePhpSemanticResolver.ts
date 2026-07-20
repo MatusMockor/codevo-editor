@@ -6,9 +6,7 @@ import {
   phpSuperTypeReferences,
   resolvePhpClassName,
 } from "../domain/phpNavigation";
-import {
-  phpCurrentClassName,
-} from "../domain/phpSemanticEngine";
+import { phpCurrentClassName } from "../domain/phpSemanticEngine";
 import { phpDeclaredTypeCandidate } from "../domain/phpTypeAnalysis";
 import {
   phpDeclaredFactoryMethod,
@@ -45,7 +43,10 @@ export interface UsePhpSemanticResolverOptions {
   phpClassSourcePathCacheRef: MutableRefObject<Record<string, string[]>>;
   phpFrameworkBindingCacheRef: MutableRefObject<Record<string, string | null>>;
   projectSymbolSearch: ProjectSymbolSearchGateway;
-  readNavigationFileContent: (path: string) => Promise<string>;
+  readNavigationFileContent: (
+    path: string,
+    signal?: AbortSignal,
+  ) => Promise<string>;
   textSearch: TextSearchGateway;
   workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceRoot: string | null;
@@ -55,8 +56,7 @@ type PhpFrameworkAutowireLookupResult =
   | { className: string; status: "resolved" }
   | { status: "inactive" | "miss" | "read-failed" };
 type PhpFrameworkAutowireMatchResult =
-  | { status: "matched" }
-  | { status: "inactive" | "miss" | "read-failed" };
+  { status: "matched" } | { status: "inactive" | "miss" | "read-failed" };
 
 const PHP_FRAMEWORK_AUTOWIRE_MAX_DEPTH = 12;
 const PHP_FRAMEWORK_AUTOWIRE_MAX_VISITED_TYPES = 64;
@@ -81,7 +81,7 @@ export function usePhpSemanticResolver({
   const phpFrameworkBindingSearchPathKeysRef = useRef<Set<string>>(new Set());
   const phpFrameworkBindingCacheGenerationRef = useRef(0);
   const resolvePhpClassSourcePathsRef = useRef<
-    (className: string) => Promise<string[]>
+    (className: string, signal?: AbortSignal) => Promise<string[]>
   >(async () => []);
   const providerSignature = phpFrameworkProviderSignature(
     activePhpFrameworkProviders,
@@ -159,7 +159,9 @@ export function usePhpSemanticResolver({
 
       if (normalizedClassName.toLowerCase() === "parent") {
         const parentClassName = phpExtendsClassName(source);
-        return parentClassName ? resolvePhpClassName(source, parentClassName) : null;
+        return parentClassName
+          ? resolvePhpClassName(source, parentClassName)
+          : null;
       }
 
       return resolvePhpClassName(source, classReference);
@@ -177,8 +179,8 @@ export function usePhpSemanticResolver({
 
       const namespaceRoots = [
         ...workspaceDescriptor.php.psr4Roots,
-        ...workspaceDescriptor.php.packages.flatMap((composerPackage) =>
-          composerPackage.psr4Roots,
+        ...workspaceDescriptor.php.packages.flatMap(
+          (composerPackage) => composerPackage.psr4Roots,
         ),
       ];
 
@@ -229,7 +231,10 @@ export function usePhpSemanticResolver({
       const isFullyQualified = rawTypeName.replace(/^\?/, "").startsWith("\\");
       const candidate = typeName ? phpDeclaredTypeCandidate(typeName) : null;
       return candidate
-        ? resolvePhpClassReference(source, isFullyQualified ? `\\${candidate}` : candidate)
+        ? resolvePhpClassReference(
+            source,
+            isFullyQualified ? `\\${candidate}` : candidate,
+          )
         : null;
     },
     [resolvePhpClassReference],
@@ -250,7 +255,7 @@ export function usePhpSemanticResolver({
         ? phpDeclaredTypeCandidate(typeName)
         : null;
       const templateType = templateCandidate
-        ? templateTypes.get(templateCandidate.toLowerCase()) ?? null
+        ? (templateTypes.get(templateCandidate.toLowerCase()) ?? null)
         : null;
 
       if (templateType) {
@@ -265,10 +270,12 @@ export function usePhpSemanticResolver({
   const resolvePhpFrameworkBoundConcrete = useCallback(
     async (className: string): Promise<string | null> => {
       const requestedRoot = workspaceRoot;
-      const requestedGeneration =
-        phpFrameworkBindingCacheGenerationRef.current;
+      const requestedGeneration = phpFrameworkBindingCacheGenerationRef.current;
       const isRequestedRootActive = () =>
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) &&
+        workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          requestedRoot,
+        ) &&
         phpFrameworkBindingCacheGenerationRef.current === requestedGeneration;
 
       if (
@@ -563,20 +570,18 @@ export function usePhpSemanticResolver({
             return { status: "inactive" };
           }
 
-          const match = await phpSourceClassTransitivelyImplements(
-            {
-              content,
-              concreteClassName,
-              depth: 0,
-              isRequestedRootActive,
-              resolvePhpClassReference,
-              resolvePhpClassSourcePaths: (className) =>
-                resolvePhpClassSourcePathsRef.current(className),
-              readNavigationFileContent,
-              requestedClassName,
-              visitedTypeNames: new Set<string>(),
-            },
-          );
+          const match = await phpSourceClassTransitivelyImplements({
+            content,
+            concreteClassName,
+            depth: 0,
+            isRequestedRootActive,
+            resolvePhpClassReference,
+            resolvePhpClassSourcePaths: (className) =>
+              resolvePhpClassSourcePathsRef.current(className),
+            readNavigationFileContent,
+            requestedClassName,
+            visitedTypeNames: new Set<string>(),
+          });
 
           if (match.status === "inactive" || match.status === "read-failed") {
             return match;
@@ -634,9 +639,7 @@ export function usePhpSemanticResolver({
         candidate.source,
         candidate.producedTypeSource.className,
       );
-      return className
-        ? { className, status: "resolved" }
-        : { status: "miss" };
+      return className ? { className, status: "resolved" } : { status: "miss" };
     }
 
     const { declaringClassName, methodName, staticOnly } =
@@ -684,9 +687,8 @@ export function usePhpSemanticResolver({
     }
 
     visitedClassNames.add(normalizedClassName);
-    const paths = await resolvePhpClassSourcePathsRef.current(
-      declaringClassName,
-    );
+    const paths =
+      await resolvePhpClassSourcePathsRef.current(declaringClassName);
 
     if (!isRequestedRootActive()) {
       return { status: "inactive" };
@@ -740,8 +742,10 @@ export function usePhpSemanticResolver({
 
     if (declaration) {
       const resolvedReturnClassName =
-        declaration.nativeReturnType?.replace(/^\?/, "").trim().toLowerCase() ===
-        "static"
+        declaration.nativeReturnType
+          ?.replace(/^\?/, "")
+          .trim()
+          .toLowerCase() === "static"
           ? invokedClassName
           : declaration.resolvedReturnClassName;
 
@@ -800,6 +804,7 @@ export function usePhpSemanticResolver({
       candidatePaths: string[],
       normalizedClassName: string,
       isRequestedRootActive: () => boolean,
+      signal?: AbortSignal,
     ): Promise<string[]> => {
       const normalizedLookup = normalizedClassName.toLowerCase();
       const verified: string[] = [];
@@ -817,7 +822,7 @@ export function usePhpSemanticResolver({
         visited.add(path);
 
         try {
-          const content = await readNavigationFileContent(path);
+          const content = await readNavigationFileContent(path, signal);
 
           if (!isRequestedRootActive()) {
             return [];
@@ -843,12 +848,17 @@ export function usePhpSemanticResolver({
   );
 
   const findPhpClassSourcePathsByFileName = useCallback(
-    async (className: string): Promise<string[]> => {
+    async (className: string, signal?: AbortSignal): Promise<string[]> => {
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
+        !signal?.aborted &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (!requestedRoot) {
+        return [];
+      }
+
+      if (!isRequestedRootActive()) {
         return [];
       }
 
@@ -873,7 +883,7 @@ export function usePhpSemanticResolver({
         }
 
         try {
-          const content = await readNavigationFileContent(result.path);
+          const content = await readNavigationFileContent(result.path, signal);
 
           if (!isRequestedRootActive()) {
             return [];
@@ -881,7 +891,9 @@ export function usePhpSemanticResolver({
 
           const sourceClassName = phpCurrentClassName(content);
 
-          if (sourceClassName?.toLowerCase() !== normalizedClassName.toLowerCase()) {
+          if (
+            sourceClassName?.toLowerCase() !== normalizedClassName.toLowerCase()
+          ) {
             continue;
           }
 
@@ -901,17 +913,27 @@ export function usePhpSemanticResolver({
 
       return paths;
     },
-    [currentWorkspaceRootRef, fileSearch, readNavigationFileContent, workspaceRoot],
+    [
+      currentWorkspaceRootRef,
+      fileSearch,
+      readNavigationFileContent,
+      workspaceRoot,
+    ],
   );
 
   const resolvePhpClassSourcePaths = useCallback(
-    async (className: string): Promise<string[]> => {
+    async (className: string, signal?: AbortSignal): Promise<string[]> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
+        !signal?.aborted &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
       if (!requestedRoot || !requestedDescriptor?.php) {
+        return [];
+      }
+
+      if (!isRequestedRootActive()) {
         return [];
       }
 
@@ -969,6 +991,7 @@ export function usePhpSemanticResolver({
           candidatePaths,
           normalizedClassName,
           isRequestedRootActive,
+          signal,
         );
 
         if (!isRequestedRootActive()) {
@@ -991,6 +1014,7 @@ export function usePhpSemanticResolver({
           cachedPaths ??
           (await findPhpClassSourcePathsByFileName(
             normalizedClassName,
+            signal,
           ));
 
         if (!isRequestedRootActive()) {
@@ -1045,14 +1069,18 @@ function phpFrameworkBoundConcreteFromSources(
   providers: readonly PhpFrameworkProvider[],
   resolveClassName: (source: string, className: string) => string | null,
 ): string | null {
-  const normalizedTarget = normalizePhpFrameworkBindingClassName(normalizedClassName);
+  const normalizedTarget =
+    normalizePhpFrameworkBindingClassName(normalizedClassName);
 
   for (const source of sources) {
     for (const binding of phpFrameworkContainerBindingsFromSource(
       source,
       providers,
     )) {
-      const abstractClassName = resolveClassName(source, binding.abstractClassName);
+      const abstractClassName = resolveClassName(
+        source,
+        binding.abstractClassName,
+      );
 
       if (
         !abstractClassName ||
@@ -1062,7 +1090,10 @@ function phpFrameworkBoundConcreteFromSources(
         continue;
       }
 
-      const concreteClassName = resolveClassName(source, binding.concreteClassName);
+      const concreteClassName = resolveClassName(
+        source,
+        binding.concreteClassName,
+      );
 
       if (concreteClassName) {
         return concreteClassName;
@@ -1085,7 +1116,10 @@ async function phpRequestedTypeMatchesAutowiredType({
   isRequestedRootActive: () => boolean;
   readNavigationFileContent: (path: string) => Promise<string>;
   requestedClassName: string;
-  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassReference: (
+    source: string,
+    className: string,
+  ) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
 }): Promise<PhpFrameworkAutowireMatchResult> {
   if (
@@ -1124,7 +1158,10 @@ async function phpSourceClassTransitivelyImplements({
   isRequestedRootActive: () => boolean;
   readNavigationFileContent: (path: string) => Promise<string>;
   requestedClassName: string;
-  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassReference: (
+    source: string,
+    className: string,
+  ) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   visitedTypeNames: Set<string>;
 }): Promise<PhpFrameworkAutowireMatchResult> {
@@ -1162,7 +1199,10 @@ async function phpSourceTransitivelyReferencesType({
   isRequestedRootActive: () => boolean;
   readNavigationFileContent: (path: string) => Promise<string>;
   requestedClassName: string;
-  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassReference: (
+    source: string,
+    className: string,
+  ) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   visitedTypeNames: Set<string>;
 }): Promise<PhpFrameworkAutowireMatchResult> {
@@ -1187,8 +1227,9 @@ async function phpSourceTransitivelyReferencesType({
       continue;
     }
 
-    const normalizedSuperTypeName =
-      normalizePhpFrameworkBindingClassName(resolvedSuperTypeName);
+    const normalizedSuperTypeName = normalizePhpFrameworkBindingClassName(
+      resolvedSuperTypeName,
+    );
 
     if (
       normalizedSuperTypeName ===
@@ -1237,7 +1278,10 @@ async function phpTypeTransitivelyReferencesType({
   isRequestedRootActive: () => boolean;
   readNavigationFileContent: (path: string) => Promise<string>;
   requestedClassName: string;
-  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassReference: (
+    source: string,
+    className: string,
+  ) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   visitedTypeNames: Set<string>;
 }): Promise<PhpFrameworkAutowireMatchResult> {
@@ -1308,9 +1352,7 @@ function phpFrameworkClassResolutionSignature(
   }
 
   const roots = [
-    ...php.psr4Roots.map(
-      (root) => `${root.namespace}:${root.paths.join(",")}`,
-    ),
+    ...php.psr4Roots.map((root) => `${root.namespace}:${root.paths.join(",")}`),
     ...php.packages.flatMap((composerPackage) =>
       composerPackage.psr4Roots.map(
         (root) =>

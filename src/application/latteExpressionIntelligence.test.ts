@@ -624,6 +624,7 @@ function options(
   return {
     caches,
     frameworkCapabilities: {
+      supportsFactoryTemplateOwnerIntelligence: () => true,
       detectLattePresenterLinkAt: () => null,
       isPresenterSourcePath: () => false,
       lattePresenterLinkCompletionContextAt: () => null,

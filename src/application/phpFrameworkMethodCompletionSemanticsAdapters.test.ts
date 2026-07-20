@@ -51,7 +51,6 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
         (providerId: string) => providerId === activeProviderId,
       ),
       supports: vi.fn(() => false),
-      isLaravel: true,
     };
     const adapter = createPhpFrameworkMethodCompletionSemanticsAdapters(
       makeDeps({

@@ -1,7 +1,7 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it, vi } from "vitest";
 import {
   phpFrameworkConfigKeysFromSource,
-  phpLaravelFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { PhpLaravelConfigTarget } from "../domain/phpLaravelConfig";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";

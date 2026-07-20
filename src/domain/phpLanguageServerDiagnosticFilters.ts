@@ -1,6 +1,5 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import {
-  defaultPhpFrameworkProviders,
   phpFrameworkMemberMethodMagicDiagnostic,
   phpFrameworkMemberPropertyMagicDiagnostic,
   phpFrameworkStaticMethodMagicDiagnostic,
@@ -55,13 +54,12 @@ const ignoredPhpactorDocblockDiagnosticCodes = new Set([
 ]);
 
 /**
- * Marker `source` stamped on a diagnostic that we classify as Laravel framework
- * "magic" (a known builder/macro/scope/static member the static analyser cannot
- * resolve but the framework provides at runtime). It is surfaced as a soft hint
- * rather than dropped, so the user can tell "probably framework magic" apart
- * from a real error without losing the marker entirely.
+ * Marker sources stamped on diagnostics classified as framework magic. Concrete
+ * adapters own their labels; the neutral fallback is used only when an adapter
+ * deliberately omits one.
  */
 export const LARAVEL_MAGIC_DIAGNOSTIC_SOURCE = "laravel-magic";
+export const FRAMEWORK_MAGIC_DIAGNOSTIC_SOURCE = "framework-magic";
 
 /**
  * Why a PHP diagnostic was reclassified away from its raw phpactor severity.
@@ -71,16 +69,14 @@ export const LARAVEL_MAGIC_DIAGNOSTIC_SOURCE = "laravel-magic";
  * - `contextual-existing`: the member/constant/property genuinely exists once the
  *   surrounding workspace context is resolved (semantic confirmation or trait
  *   host) — dropped as a confirmed false positive.
- * - `framework-magic`: a known Laravel builder/macro/scope/static member whose
- *   existence cannot be statically confirmed but is framework-provided — kept and
- *   downgraded to a soft hint instead of an error.
+ * - `framework-magic`: a known framework-provided member whose existence cannot
+ *   be statically confirmed — kept and downgraded to a soft hint instead of an
+ *   error.
  *
  * A diagnostic with no matching reason is a `real` error and is left untouched.
  */
 export type PhpDiagnosticClassificationReason =
-  | "parse-artifact"
-  | "contextual-existing"
-  | "framework-magic";
+  "parse-artifact" | "contextual-existing" | "framework-magic";
 
 interface PhpDiagnosticClassification {
   magicSource?: string;
@@ -95,7 +91,7 @@ export interface PhpLanguageServerDiagnosticFilterOptions {
   contextualTraitHostConstants?: ReadonlySet<string>;
   contextualTraitHostMethods?: ReadonlySet<string>;
   contextualTraitHostProperties?: ReadonlySet<string>;
-  frameworkProviders?: readonly PhpFrameworkProvider[];
+  frameworkProviders: readonly PhpFrameworkProvider[];
   frameworkSourceContext?: PhpFrameworkSourceContext;
   path?: string | null;
 }
@@ -130,7 +126,7 @@ const memberPropertyAccessPattern = new RegExp(
 export function filterPhpLanguageServerDiagnostics(
   source: string,
   diagnostics: LanguageServerDiagnostic[],
-  options: PhpLanguageServerDiagnosticFilterOptions = {},
+  options: PhpLanguageServerDiagnosticFilterOptions,
 ): LanguageServerDiagnostic[] {
   return diagnostics.flatMap((diagnostic) =>
     applyPhpDiagnosticClassification(
@@ -156,7 +152,7 @@ export function filterPhpLanguageServerDiagnostics(
 export function classifyPhpLanguageServerDiagnostic(
   source: string,
   diagnostic: LanguageServerDiagnostic,
-  options: PhpLanguageServerDiagnosticFilterOptions = {},
+  options: PhpLanguageServerDiagnosticFilterOptions,
 ): PhpDiagnosticClassificationReason | null {
   return (
     classifyPhpLanguageServerDiagnosticWithProvider(source, diagnostic, options)
@@ -167,7 +163,7 @@ export function classifyPhpLanguageServerDiagnostic(
 function classifyPhpLanguageServerDiagnosticWithProvider(
   source: string,
   diagnostic: LanguageServerDiagnostic,
-  options: PhpLanguageServerDiagnosticFilterOptions = {},
+  options: PhpLanguageServerDiagnosticFilterOptions,
 ): PhpDiagnosticClassification | null {
   if (isIgnoredPhpactorDocblockDiagnostic(diagnostic)) {
     return { reason: "parse-artifact" };
@@ -214,14 +210,14 @@ function classifyPhpLanguageServerDiagnosticWithProvider(
   const memberPropertyMagic = phpFrameworkMemberPropertyDiagnosticMatch(
     source,
     diagnostic,
-    options.frameworkProviders ?? defaultPhpFrameworkProviders,
+    options.frameworkProviders,
     options.frameworkSourceContext,
   );
 
   if (memberPropertyMagic) {
     return {
       magicSource:
-        memberPropertyMagic.source ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+        memberPropertyMagic.source ?? FRAMEWORK_MAGIC_DIAGNOSTIC_SOURCE,
       reason: "framework-magic",
     };
   }
@@ -229,13 +225,14 @@ function classifyPhpLanguageServerDiagnosticWithProvider(
   const memberMethodMagic = phpFrameworkMemberMethodDiagnosticMatch(
     source,
     diagnostic,
-    options.frameworkProviders ?? defaultPhpFrameworkProviders,
+    options.frameworkProviders,
     options.frameworkSourceContext,
   );
 
   if (memberMethodMagic) {
     return {
-      magicSource: memberMethodMagic.source ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+      magicSource:
+        memberMethodMagic.source ?? FRAMEWORK_MAGIC_DIAGNOSTIC_SOURCE,
       reason: "framework-magic",
     };
   }
@@ -275,13 +272,14 @@ function classifyPhpLanguageServerDiagnosticWithProvider(
   const staticMethodMagic = phpFrameworkStaticMethodDiagnosticMatch(
     source,
     diagnostic,
-    options.frameworkProviders ?? defaultPhpFrameworkProviders,
+    options.frameworkProviders,
     options.frameworkSourceContext,
   );
 
   if (staticMethodMagic) {
     return {
-      magicSource: staticMethodMagic.source ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+      magicSource:
+        staticMethodMagic.source ?? FRAMEWORK_MAGIC_DIAGNOSTIC_SOURCE,
       reason: "framework-magic",
     };
   }
@@ -309,7 +307,7 @@ function applyPhpDiagnosticClassification(
     return [
       downgradePhpDiagnosticToFrameworkMagicHint(
         diagnostic,
-        classification.magicSource ?? LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
+        classification.magicSource ?? FRAMEWORK_MAGIC_DIAGNOSTIC_SOURCE,
       ),
     ];
   }
@@ -350,7 +348,10 @@ function phpFrameworkStaticMethodDiagnosticMatch(
   frameworkProviders: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
 ): PhpFrameworkMagicDiagnosticMatch | null {
-  const context = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
+  const context = phpUnresolvedStaticMethodDiagnosticContext(
+    source,
+    diagnostic,
+  );
 
   if (!context) {
     return null;
@@ -371,7 +372,10 @@ function phpFrameworkMemberMethodDiagnosticMatch(
   frameworkProviders: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
 ): PhpFrameworkMagicDiagnosticMatch | null {
-  const context = phpUnresolvedMemberMethodDiagnosticContext(source, diagnostic);
+  const context = phpUnresolvedMemberMethodDiagnosticContext(
+    source,
+    diagnostic,
+  );
 
   if (!context) {
     return null;
@@ -421,14 +425,20 @@ function isContextualExistingMemberMethodDiagnostic(
     return false;
   }
 
-  const context = phpUnresolvedMemberMethodDiagnosticContext(source, diagnostic);
+  const context = phpUnresolvedMemberMethodDiagnosticContext(
+    source,
+    diagnostic,
+  );
 
   if (!context) {
     return false;
   }
 
   return contextualMemberMethods.has(
-    phpMemberMethodDiagnosticKey(context.receiverExpression, context.methodName),
+    phpMemberMethodDiagnosticKey(
+      context.receiverExpression,
+      context.methodName,
+    ),
   );
 }
 
@@ -467,7 +477,10 @@ function isContextualExistingMethodDiagnostic(
     return false;
   }
 
-  const context = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
+  const context = phpUnresolvedStaticMethodDiagnosticContext(
+    source,
+    diagnostic,
+  );
 
   if (!context) {
     return false;
@@ -486,7 +499,11 @@ function isPhpactorKeywordMethodDiagnostic(
     return false;
   }
 
-  if (!/\bmethod\b.*["']?return["']?.*\bdoes not exist\b/i.test(diagnostic.message)) {
+  if (
+    !/\bmethod\b.*["']?return["']?.*\bdoes not exist\b/i.test(
+      diagnostic.message,
+    )
+  ) {
     return false;
   }
 
@@ -512,9 +529,9 @@ function isPhpactorStaleReturnParseDiagnostic(
 
   return Boolean(
     line &&
-      /^\s*return\b/.test(line) &&
-      previousLine &&
-      /[;{}]\s*$/.test(previousLine),
+    /^\s*return\b/.test(line) &&
+    previousLine &&
+    /[;{}]\s*$/.test(previousLine),
   );
 }
 
@@ -874,9 +891,10 @@ export function phpUnresolvedMemberPropertyDiagnosticContext(
     ) {
       return {
         propertyName,
-        receiverClassName: phpUnresolvedMemberPropertyDiagnosticReceiverClassName(
-          diagnostic.message,
-        ),
+        receiverClassName:
+          phpUnresolvedMemberPropertyDiagnosticReceiverClassName(
+            diagnostic.message,
+          ),
         receiverExpression: phpNormalizeReceiverExpression(receiverExpression),
       };
     }
@@ -1065,9 +1083,15 @@ function statementContextForDiagnostic(
   };
 }
 
-function memberCallScanEndOffset(source: string, diagnosticOffset: number): number {
+function memberCallScanEndOffset(
+  source: string,
+  diagnosticOffset: number,
+): number {
   const memberNameEnd = identifierEndOffsetAt(source, diagnosticOffset);
-  const callArgumentsEnd = balancedCallArgumentsEndOffset(source, memberNameEnd);
+  const callArgumentsEnd = balancedCallArgumentsEndOffset(
+    source,
+    memberNameEnd,
+  );
 
   return callArgumentsEnd ?? memberNameEnd;
 }

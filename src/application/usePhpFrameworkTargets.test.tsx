@@ -1,3 +1,5 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -5,8 +7,6 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
   phpFrameworkRouteDefinitionsFromSource,
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";

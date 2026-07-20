@@ -12,6 +12,8 @@ export function createLatteFrameworkCapabilities(
     getProviders().find((provider) => provider.latte !== undefined)?.latte;
 
   return {
+    supportsFactoryTemplateOwnerIntelligence: () =>
+      activeLatte()?.supportsPresenterLinkIntelligence === true,
     detectLattePresenterLinkAt: (source, offset) =>
       activeLatte()?.presenterLinkAt?.({ offset, source }) ?? null,
     lattePresenterLinkCompletionContextAt: (source, offset) =>

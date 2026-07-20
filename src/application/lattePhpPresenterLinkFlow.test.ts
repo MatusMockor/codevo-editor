@@ -130,6 +130,7 @@ function factoryOptions(): LatteProviderFlowFactoryOptions {
 
 function frameworkCapabilities(): LatteFrameworkCapabilities {
   return {
+    supportsFactoryTemplateOwnerIntelligence: () => false,
     detectLattePresenterLinkAt: () => null,
     isPresenterSourcePath: () => false,
     lattePresenterLinkCompletionContextAt: () => null,

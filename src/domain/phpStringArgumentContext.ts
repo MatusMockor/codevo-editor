@@ -1,5 +1,7 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import { resolvePhpClassName } from "./phpClassNameResolution";
+import { isPhpCodeOffset } from "./phpLexicalContext";
+export { isPhpCodeOffset } from "./phpLexicalContext";
 
 export interface PhpStringArgumentContext {
   argumentIndex: number;
@@ -225,70 +227,6 @@ export function phpStringAttributeArgumentContextAt(
     attributeShortName: phpShortAttributeName(attributeName),
     resolvedAttributeName,
   };
-}
-
-export function isPhpCodeOffset(source: string, offset: number): boolean {
-  let quote: "'" | "\"" | null = null;
-  let lineComment = false;
-  let blockComment = false;
-
-  for (let index = 0; index < offset; index += 1) {
-    const character = source[index] ?? "";
-    const next = source[index + 1] ?? "";
-
-    if (lineComment) {
-      if (character === "\n") {
-        lineComment = false;
-      }
-
-      continue;
-    }
-
-    if (blockComment) {
-      if (character === "*" && next === "/") {
-        blockComment = false;
-        index += 1;
-      }
-
-      continue;
-    }
-
-    if (quote) {
-      if (character === "\\") {
-        index += 1;
-        continue;
-      }
-
-      if (character === quote) {
-        quote = null;
-      }
-
-      continue;
-    }
-
-    if (character === "/" && next === "/") {
-      lineComment = true;
-      index += 1;
-      continue;
-    }
-
-    if (character === "#" && next !== "[") {
-      lineComment = true;
-      continue;
-    }
-
-    if (character === "/" && next === "*") {
-      blockComment = true;
-      index += 1;
-      continue;
-    }
-
-    if (character === "'" || character === "\"") {
-      quote = character;
-    }
-  }
-
-  return !quote && !lineComment && !blockComment;
 }
 
 function phpAttributeConstructorNameAt(

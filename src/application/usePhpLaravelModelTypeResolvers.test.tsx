@@ -1,10 +1,11 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
@@ -30,7 +31,6 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
 );
 const STALE_LEGACY_LARAVEL_RUNTIME = {
   ...LARAVEL_RUNTIME,
-  isLaravel: true,
   providers: [],
   hasProvider: (providerId: string) => providerId === "laravel",
   supports: () => false,

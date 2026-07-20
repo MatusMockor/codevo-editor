@@ -1,8 +1,9 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import {
   useLaravelTargets,
   type LaravelTargets,
 } from "./useLaravelTargets";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type {
   PhpFrameworkTargetCollectorAdapter,

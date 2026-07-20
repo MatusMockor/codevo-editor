@@ -1,7 +1,8 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "../domain/workspace";
 import { phpMethodCompletionsFromSource } from "../domain/phpMethodCompletions";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import {
   isPhpLaravelProviderPath,
   loadPhpLaravelProviderSources,

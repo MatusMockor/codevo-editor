@@ -14,6 +14,24 @@ export interface PhpMethodReturnTypeStrategy {
   ): string | null;
 }
 
+export interface PhpContextualMethodReturnTypeStrategy
+  extends PhpMethodReturnTypeStrategy {
+  resolveDeclaredMethodReturnType(
+    context: PhpDeclaredMethodReturnTypeResolutionContext,
+  ): Promise<string>;
+}
+
+export interface PhpDeclaredMethodReturnTypeResolutionContext {
+  callExpression?: string;
+  declaringClassName: string;
+  lateStaticClassName: string;
+  methodName: string;
+  methodReturnExpressions: readonly string[];
+  rawReturnType: string | null;
+  resolvedReturnType: string;
+  resolveTypeReference(typeName: string): string | null;
+}
+
 export interface PhpDeclaredReturnTypeStrategyContext {
   lateStaticClassName?: string;
   methodName?: string;

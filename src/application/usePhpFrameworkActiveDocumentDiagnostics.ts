@@ -9,16 +9,14 @@ import {
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  activePhpFrameworkDocumentDiagnosticsProvider,
-  type PhpFrameworkActiveDocumentDiagnosticsDependencies,
-} from "./phpFrameworkActiveDocumentDiagnosticsRegistry";
+import type { PhpFrameworkActiveDocumentDiagnosticsContributionCatalog } from "./phpFrameworkActiveDocumentDiagnosticsContributionCatalog";
+import { activePhpFrameworkDocumentDiagnosticsProvider } from "./phpFrameworkActiveDocumentDiagnosticsRegistry";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
-export interface PhpFrameworkActiveDocumentDiagnosticsHookDependencies
-  extends PhpFrameworkActiveDocumentDiagnosticsDependencies {
+export interface PhpFrameworkActiveDocumentDiagnosticsHookDependencies {
   activeDocument: EditorDocument | null;
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
+  contributions: PhpFrameworkActiveDocumentDiagnosticsContributionCatalog;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   frameworkRuntime: PhpFrameworkRuntimeContext;
   setFrameworkDiagnosticsByPath: Dispatch<
@@ -34,11 +32,9 @@ export interface PhpFrameworkActiveDocumentDiagnosticsHook {
 export function usePhpFrameworkActiveDocumentDiagnostics({
   activeDocument,
   activeDocumentRef,
-  collectCompleteLatteTemplateRelativePaths,
-  collectViewTargets,
+  contributions,
   currentWorkspaceRootRef,
   frameworkRuntime,
-  provideLattePresenterLinkDiagnostics,
   setFrameworkDiagnosticsByPath,
   workspaceRoot,
 }: PhpFrameworkActiveDocumentDiagnosticsHookDependencies): PhpFrameworkActiveDocumentDiagnosticsHook {
@@ -58,11 +54,9 @@ export function usePhpFrameworkActiveDocumentDiagnostics({
     const provider =
       requestedRoot && document
         ? activePhpFrameworkDocumentDiagnosticsProvider({
-            collectCompleteLatteTemplateRelativePaths,
-            collectViewTargets,
+            contributions,
             document,
             frameworkRuntime,
-            provideLattePresenterLinkDiagnostics,
             workspaceRoot: requestedRoot,
           })
         : null;
@@ -107,11 +101,9 @@ export function usePhpFrameworkActiveDocumentDiagnostics({
     });
   }, [
     activeDocumentRef,
-    collectCompleteLatteTemplateRelativePaths,
-    collectViewTargets,
+    contributions,
     currentWorkspaceRootRef,
     frameworkRuntime,
-    provideLattePresenterLinkDiagnostics,
     setFrameworkDiagnosticsByPath,
     workspaceRoot,
   ]);

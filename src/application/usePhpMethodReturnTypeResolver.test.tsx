@@ -1,13 +1,12 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+
 import {
   phpMethodCompletionsFromSource,
   type PhpMethodCompletion,
@@ -123,7 +122,9 @@ function makeOptions(
     resolvePhpClassSourcePaths: vi.fn(async (className: string) => {
       const normalizedClassName = className.trim().replace(/^\\+/, "");
 
-      return classes[normalizedClassName] ? [classPath(normalizedClassName)] : [];
+      return classes[normalizedClassName]
+        ? [classPath(normalizedClassName)]
+        : [];
     }),
     resolvePhpEloquentBuilderModelTypeRef: {
       current: vi.fn(async () => null),
@@ -298,11 +299,7 @@ class Cache
         {
           "App\\Models\\Comment": {
             members: [
-              methodMember(
-                "App\\Models\\Comment",
-                "commentable",
-                "MorphTo",
-              ),
+              methodMember("App\\Models\\Comment", "commentable", "MorphTo"),
             ],
             source: `<?php
 namespace App\\Models;
@@ -331,7 +328,9 @@ class Comment
     ).resolves.toBe(
       "Illuminate\\Database\\Eloquent\\Relations\\MorphTo<App\\Models\\Post>",
     );
-    expect(resolvePhpFrameworkProjectMorphMapModelType).toHaveBeenCalledTimes(1);
+    expect(resolvePhpFrameworkProjectMorphMapModelType).toHaveBeenCalledTimes(
+      1,
+    );
 
     harness.unmount();
   });
@@ -502,12 +501,14 @@ final class ConsentCategoryRepository extends Repository
     public function insert(array $data): ActiveRow {}
 }`,
           },
-          "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\ConsentCategoriesActiveRow": {
-            source: "<?php abstract class ConsentCategoriesActiveRow {}",
-          },
-          "Efabrica\\Crm\\ActiveRowTypes\\Selection\\ConsentCategoriesSelection": {
-            source: "<?php abstract class ConsentCategoriesSelection {}",
-          },
+          "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\ConsentCategoriesActiveRow":
+            {
+              source: "<?php abstract class ConsentCategoriesActiveRow {}",
+            },
+          "Efabrica\\Crm\\ActiveRowTypes\\Selection\\ConsentCategoriesSelection":
+            {
+              source: "<?php abstract class ConsentCategoriesSelection {}",
+            },
         },
         { frameworkRuntime: NETTE_RUNTIME },
       ),
@@ -521,7 +522,8 @@ final class ConsentCategoryRepository extends Repository
   });
 
   it("keeps an ebox ProfileRepository custom nullable insert declaration", async () => {
-    const repository = "Efabrica\\Crm\\ProfileModule\\Repository\\ProfileRepository";
+    const repository =
+      "Efabrica\\Crm\\ProfileModule\\Repository\\ProfileRepository";
     const harness = renderHook(
       makeOptions(
         {
@@ -558,8 +560,7 @@ class ProfileRepository extends RecencyRepository
   });
 
   it("refines inherited Nette ActiveRow relations from the final literal call", async () => {
-    const usersRow =
-      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const usersRow = "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
     const usersSelection =
       "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
     const userStatusesRow =
@@ -618,42 +619,47 @@ class ActiveRow
     );
 
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "ref",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row->ref('user_statuses')",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "ref",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row->ref('user_statuses')",
+        ),
     ).resolves.toBe(userStatusesRow);
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "related",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row->ref('users')->related('orders')",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "related",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row->ref('users')->related('orders')",
+        ),
     ).resolves.toBe(ordersSelection);
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "related",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row->ref('users')->related($table)",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "related",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row->ref('users')->related($table)",
+        ),
     ).resolves.toBe("Selection");
 
     harness.unmount();
   });
 
   it("refines generated conditional Nette relation declarations and keeps safe dynamic fallbacks", async () => {
-    const usersRow =
-      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const usersRow = "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
     const usersSelection =
       "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
     const userStatusesRow =
@@ -671,7 +677,9 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       makeOptions(
         {
           [usersRow]: {
-            members: phpMethodCompletionsFromSource(usersSource, usersRow),
+            members: phpMethodCompletionsFromSource(usersSource, usersRow, {
+              frameworkProviders: [],
+            }),
             source: usersSource,
           },
           [usersSelection]: {
@@ -700,52 +708,59 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
     );
 
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "REF",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row?->\n    REF(\n        'user_statuses',\n    )",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "REF",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row?->\n    REF(\n        'user_statuses',\n    )",
+        ),
     ).resolves.toBe(userStatusesRow);
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "Related",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row?->REF('users')?->\n    RELATED('orders')",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "Related",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row?->REF('users')?->\n    RELATED('orders')",
+        ),
     ).resolves.toBe(ordersSelection);
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "ref",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row->ref($table)",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "ref",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row->ref($table)",
+        ),
     ).resolves.toBe("Nette\\Database\\Table\\ActiveRow");
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "related",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row->related($table)",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "related",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row->related($table)",
+        ),
     ).resolves.toBe("Nette\\Database\\Table\\Selection");
 
     harness.unmount();
   });
 
   it("preserves an explicit concrete Nette relation return declaration", async () => {
-    const usersRow =
-      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const usersRow = "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
     const usersSelection =
       "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
     const customRow = "App\\Database\\CustomUserActiveRow";
@@ -757,7 +772,9 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       makeOptions(
         {
           [usersRow]: {
-            members: phpMethodCompletionsFromSource(usersSource, usersRow),
+            members: phpMethodCompletionsFromSource(usersSource, usersRow, {
+              frameworkProviders: [],
+            }),
             source: usersSource,
           },
           [usersSelection]: {
@@ -776,14 +793,16 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
     );
 
     await expect(
-      harness.api().resolvePhpMethodReturnType(
-        usersRow,
-        "ref",
-        new Set(),
-        usersRow,
-        new Map(),
-        "$row->ref('user_statuses')",
-      ),
+      harness
+        .api()
+        .resolvePhpMethodReturnType(
+          usersRow,
+          "ref",
+          new Set(),
+          usersRow,
+          new Map(),
+          "$row->ref('user_statuses')",
+        ),
     ).resolves.toBe(customRow);
 
     harness.unmount();
@@ -807,7 +826,9 @@ namespace Efabrica\\Crm\\ActiveRowTypes\\ActiveRow;
 abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       const classes: Record<string, ClassSource> = {
         [usersRow]: {
-          members: phpMethodCompletionsFromSource(usersSource, usersRow),
+          members: phpMethodCompletionsFromSource(usersSource, usersRow, {
+            frameworkProviders: [],
+          }),
           source: usersSource,
         },
         [usersSelection]: {
@@ -833,14 +854,16 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       );
 
       await expect(
-        harness.api().resolvePhpMethodReturnType(
-          usersRow,
-          "ref",
-          new Set(),
-          usersRow,
-          new Map(),
-          "$row->ref('billing')",
-        ),
+        harness
+          .api()
+          .resolvePhpMethodReturnType(
+            usersRow,
+            "ref",
+            new Set(),
+            usersRow,
+            new Map(),
+            "$row->ref('billing')",
+          ),
       ).resolves.toBe(customRow);
 
       harness.unmount();
@@ -880,8 +903,7 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
         "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
       const usersSelection =
         "Efabrica\\Crm\\ActiveRowTypes\\Selection\\UsersSelection";
-      const conditionalReturnType =
-        `($key is '${literal}' ? ${alias} : ${fallbackType})`;
+      const conditionalReturnType = `($key is '${literal}' ? ${alias} : ${fallbackType})`;
       const customTypeParts = customType.split("\\");
       const customShortName =
         customTypeParts[customTypeParts.length - 1] ?? alias;
@@ -894,7 +916,9 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
         makeOptions(
           {
             [usersRow]: {
-              members: phpMethodCompletionsFromSource(usersSource, usersRow),
+              members: phpMethodCompletionsFromSource(usersSource, usersRow, {
+                frameworkProviders: [],
+              }),
               source: usersSource,
             },
             [usersSelection]: {
@@ -925,14 +949,16 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       );
 
       await expect(
-        harness.api().resolvePhpMethodReturnType(
-          usersRow,
-          methodName,
-          new Set(),
-          usersRow,
-          new Map(),
-          `$row->${methodName}('${literal}')`,
-        ),
+        harness
+          .api()
+          .resolvePhpMethodReturnType(
+            usersRow,
+            methodName,
+            new Set(),
+            usersRow,
+            new Map(),
+            `$row->${methodName}('${literal}')`,
+          ),
       ).resolves.toBe(customType);
 
       harness.unmount();
@@ -979,8 +1005,7 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
         "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
       declaredResolvedType: "Nette\\Database\\Table\\Selection",
       declaredType: "\\Nette\\Database\\Table\\Selection",
-      expectedType:
-        "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
+      expectedType: "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection",
       importSource: "",
       literal: "orders",
       methodName: "related",
@@ -1009,7 +1034,9 @@ ${importSource}
 abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       const classes: Record<string, ClassSource> = {
         [usersRow]: {
-          members: phpMethodCompletionsFromSource(usersSource, usersRow),
+          members: phpMethodCompletionsFromSource(usersSource, usersRow, {
+            frameworkProviders: [],
+          }),
           source: usersSource,
         },
         [usersSelection]: {
@@ -1044,14 +1071,16 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       );
 
       await expect(
-        harness.api().resolvePhpMethodReturnType(
-          usersRow,
-          methodName,
-          new Set(),
-          usersRow,
-          new Map(),
-          `$row->${methodName}('${literal}')`,
-        ),
+        harness
+          .api()
+          .resolvePhpMethodReturnType(
+            usersRow,
+            methodName,
+            new Set(),
+            usersRow,
+            new Map(),
+            `$row->${methodName}('${literal}')`,
+          ),
       ).resolves.toBe(expectedType);
 
       harness.unmount();

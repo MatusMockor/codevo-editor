@@ -37,7 +37,10 @@ import {
   phpLaravelModelPropertyClassTypeFromSource,
   phpLaravelRelationPropertyCompletionsFromSource,
 } from "./phpFrameworkLaravel";
-import type { PhpFrameworkProvider } from "./phpFrameworkProviders";
+import {
+  definePhpFrameworkActiveDocumentDiagnostics,
+  type PhpFrameworkProvider,
+} from "./phpFrameworkProviders";
 import {
   detectLaravelRouteModelBindingAt,
   explicitLaravelRouteModelBindingClassName,
@@ -98,11 +101,17 @@ import { phpLaravelQueryCallbackContextForVariable } from "./phpLaravelQueryCall
 
 interface PhpLaravelFrameworkProvider extends PhpFrameworkProvider {
   livewire?: {
-    resolveLiteralTarget?: (context: {
-      literal: string;
-    }) => object | null;
+    resolveLiteralTarget?: (context: { literal: string }) => object | null;
   };
 }
+
+const PHP_LARAVEL_ACTIVE_DOCUMENT_DIAGNOSTICS =
+  definePhpFrameworkActiveDocumentDiagnostics([
+    {
+      kind: "bladeViewReferences",
+      language: "blade",
+    },
+  ] as const);
 
 /**
  * Text-search anchors for Laravel named routes declared outside the active
@@ -112,7 +121,7 @@ interface PhpLaravelFrameworkProvider extends PhpFrameworkProvider {
 const laravelRouteSearchQueries: readonly string[] = [
   "->name(",
   "'as' =>",
-  "\"as\" =>",
+  '"as" =>',
   "Route::resource",
   "Route::apiResource",
   "Route::singleton",
@@ -200,17 +209,13 @@ export function isLaravelPhpProject(php: PhpProjectDescriptor): boolean {
   );
 }
 
-export function isLaravelInertiaPhpProject(
-  php: PhpProjectDescriptor,
-): boolean {
+export function isLaravelInertiaPhpProject(php: PhpProjectDescriptor): boolean {
   return php.packages.some(
     (composerPackage) => composerPackage.name === "inertiajs/inertia-laravel",
   );
 }
 
-const laravelInertiaCapability: NonNullable<
-  PhpFrameworkProvider["inertia"]
-> = {
+const laravelInertiaCapability: NonNullable<PhpFrameworkProvider["inertia"]> = {
   appliesTo: (php) => isLaravelInertiaPhpProject(php),
   referenceAt: ({ position, source }) =>
     phpLaravelInertiaReferenceContextAt(source, position),
@@ -280,6 +285,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
     ],
   },
   diagnostics: {
+    magicSource: "laravel-magic",
     isKnownMemberMethod: ({
       methodName,
       receiverClassName,
@@ -330,8 +336,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   routes: {
     completionInsertText: ({ name, prefix }) =>
       phpLaravelNamedRouteCompletionInsertText(name, prefix),
-    missingTargetMessage: ({ name }) =>
-      `No Laravel route named ${name} found.`,
+    missingTargetMessage: ({ name }) => `No Laravel route named ${name} found.`,
     definitionsFromSource: ({ source }) =>
       phpLaravelNamedRouteDefinitions(source),
     explicitModelBindingClassNameFromSource: ({ parameterName, source }) =>
@@ -346,10 +351,12 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       laravelExplicitRouteModelBindingSearchQueries,
   },
   dispatch: {
-    eventListenerMapFromSource: ({ source }) => phpLaravelEventListenerMap(source),
+    eventListenerMapFromSource: ({ source }) =>
+      phpLaravelEventListenerMap(source),
     eventServiceProviderClassNames: ({ php }) =>
       phpEventServiceProviderClassNames(php),
-    targetAt: ({ offset, source }) => phpLaravelDispatchTargetAt(source, offset),
+    targetAt: ({ offset, source }) =>
+      phpLaravelDispatchTargetAt(source, offset),
   },
   authorizationAbilities: {
     definitionsFromSource: ({ source }) =>
@@ -371,12 +378,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       searchQueries: laravelViewDataSearchQueries,
     },
   ],
-  activeDocumentDiagnostics: [
-    {
-      kind: "bladeViewReferences",
-      language: "blade",
-    },
-  ],
+  activeDocumentDiagnostics: PHP_LARAVEL_ACTIVE_DOCUMENT_DIAGNOSTICS,
   fileChangeInvalidations: [
     {
       kind: "bladeComponentNames",
@@ -388,8 +390,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   config: {
     completionInsertText: ({ key, prefix }) =>
       phpLaravelConfigCompletionInsertText(key, prefix),
-    missingTargetMessage: ({ key }) =>
-      `No Laravel config key ${key} found.`,
+    missingTargetMessage: ({ key }) => `No Laravel config key ${key} found.`,
     referenceAt: ({ position, source }) =>
       phpLaravelConfigReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelConfigTarget(literal),
@@ -400,8 +401,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   },
   env: {
     completionInsertText: ({ name }) => phpLaravelEnvCompletionInsertText(name),
-    missingTargetMessage: ({ name }) =>
-      `No Laravel env key ${name} found.`,
+    missingTargetMessage: ({ name }) => `No Laravel env key ${name} found.`,
     referenceAt: ({ position, source }) =>
       phpLaravelEnvReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelEnvTarget(literal),
@@ -431,8 +431,7 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
   templating: {
     completionInsertText: ({ name, prefix }) =>
       phpLaravelViewCompletionInsertText(name, prefix),
-    missingTargetMessage: ({ name }) =>
-      `No Laravel view named ${name} found.`,
+    missingTargetMessage: ({ name }) => `No Laravel view named ${name} found.`,
     referenceAt: ({ position, source }) =>
       phpLaravelViewReferenceContextAt(source, position),
     resolveLiteralTarget: ({ literal }) => resolveLaravelViewTarget(literal),
@@ -440,7 +439,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
       phpLaravelViewNameFromRelativePath(relativePath),
   },
   livewire: {
-    resolveLiteralTarget: ({ literal }) => resolveLaravelLivewireTarget(literal),
+    resolveLiteralTarget: ({ literal }) =>
+      resolveLaravelLivewireTarget(literal),
   },
   blade: {
     componentAttributeCompletionAt: ({ offset, source }) =>
@@ -452,7 +452,8 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
     directiveCompletionAt: ({ offset, source }) =>
       detectBladeDirectiveCompletionAt(source, offset),
     directiveNames: BLADE_DIRECTIVES,
-    isInsideComment: ({ offset, source }) => isInsideBladeComment(source, offset),
+    isInsideComment: ({ offset, source }) =>
+      isInsideBladeComment(source, offset),
     referenceAt: ({ offset, source }) => detectBladeReferenceAt(source, offset),
     referenceCandidateWorkspacePaths: ({ reference, workspaceRoot }) =>
       bladeReferenceCandidateWorkspacePaths(workspaceRoot, reference),

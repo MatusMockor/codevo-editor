@@ -1,12 +1,11 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+
 import type { TextSearchResult, WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
@@ -47,7 +46,6 @@ const STALE_LEGACY_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
   providers: [phpLaravelFrameworkProvider],
   profile: "laravel",
   hasProvider: (providerId) => providerId === "laravel",
-  isLaravel: true,
 };
 
 type HookApi = ReturnType<typeof usePhpFrameworkMorphMapResolver>;

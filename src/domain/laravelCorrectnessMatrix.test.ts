@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
 // PHP/Laravel IDE correctness matrix.
 //
 // Purpose: a checked-in regression MATRIX that pins exact, PhpStorm-parity
@@ -33,7 +34,6 @@ import {
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
   phpFrameworkMemberCompletionsFromSource,
-  phpLaravelFrameworkProvider,
 } from "./phpFrameworkProviders";
 import {
   isPhpLaravelLocalScopeSourceMethod,
@@ -48,13 +48,9 @@ import {
   phpReceiverExpressionTypeInSource,
   phpVariableTypeInSource,
 } from "./phpSemanticEngine";
-import {
-  phpIdentifierContextAtWithLaravel as phpIdentifierContextAt,
-} from "./phpLaravelIdentifierNavigation";
-import {
-  phpExtendsClassName,
-  phpMethodPositionOrNull,
-} from "./phpNavigation";
+import { createPhpFrameworkSemanticTypeExtensions } from "../application/phpFrameworkSemanticTypeExtensions";
+import { phpIdentifierContextAtWithLaravel as phpIdentifierContextAt } from "./phpLaravelIdentifierNavigation";
+import { phpExtendsClassName, phpMethodPositionOrNull } from "./phpNavigation";
 import {
   classifyPhpLanguageServerDiagnostic,
   filterPhpLanguageServerDiagnostics,
@@ -64,7 +60,9 @@ import {
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 
 const laravelOptions = {
-  frameworkProviders: [phpLaravelFrameworkProvider],
+  typeExtensions: createPhpFrameworkSemanticTypeExtensions({
+    providers: [phpLaravelFrameworkProvider],
+  }),
 };
 
 function positionAfter(source: string, needle: string) {
@@ -446,14 +444,16 @@ describe("Laravel/PHP IDE correctness matrix", () => {
       // the framework provider, scopes are derived separately from the raw
       // `scopeX()` source methods via `phpLaravelLocalScopeCompletionsFromMethods`,
       // then the final list is ordered PhpStorm-like.
-      const attributeAndRelationMembers = phpFrameworkMemberCompletionsFromSource(
-        PROJECT_MODEL,
-        "App\\Models\\Project",
-        [phpLaravelFrameworkProvider],
-      );
+      const attributeAndRelationMembers =
+        phpFrameworkMemberCompletionsFromSource(
+          PROJECT_MODEL,
+          "App\\Models\\Project",
+          [phpLaravelFrameworkProvider],
+        );
       const rawScopeSourceMembers = phpMethodCompletionsFromSource(
         PROJECT_MODEL,
         "App\\Models\\Project",
+        { frameworkProviders: [] },
       ).filter((member) => isPhpLaravelLocalScopeSourceMethod(member));
       const scopeMembers = phpLaravelLocalScopeCompletionsFromMethods(
         rawScopeSourceMembers,
@@ -543,7 +543,10 @@ class ProjectController
       // Gate is true for a Builder-returning receiver expression (`Model::query()`,
       // or a variable assigned from one) - production DOES merge them there.
       expect(
-        phpLaravelEloquentBuilderModelTypeFromExpression(source, "Project::query()"),
+        phpLaravelEloquentBuilderModelTypeFromExpression(
+          source,
+          "Project::query()",
+        ),
       ).toBe("App\\Models\\Project");
       expect(
         phpLaravelEloquentBuilderModelTypeFromExpression(source, "$query"),
@@ -633,6 +636,7 @@ class Request
       const members = phpMethodCompletionsFromSource(
         combinedSource,
         "App\\Http\\Requests\\StoreProjectRequest",
+        { frameworkProviders: [] },
       );
 
       // `declaringClassName` is not asserted here: a single combined source
@@ -688,7 +692,7 @@ class ProjectController
 `;
       const options = {
         ...laravelOptions,
-        frameworkSourceContext: { workspaceSources: PROJECT_WORKSPACE_SOURCES },
+        sourceContext: { workspaceSources: PROJECT_WORKSPACE_SOURCES },
       };
 
       expect(
@@ -811,10 +815,7 @@ class ProjectController
       expect(
         phpReceiverExpressionTypeInSource(
           source,
-          positionAfter(
-            source,
-            "ProjectResource::make($project)->response()",
-          ),
+          positionAfter(source, "ProjectResource::make($project)->response()"),
           "ProjectResource::make($project)->response()",
           options,
         ),
@@ -838,7 +839,7 @@ class ProjectController
 `;
       const options = {
         ...laravelOptions,
-        frameworkSourceContext: { workspaceSources: PROJECT_WORKSPACE_SOURCES },
+        sourceContext: { workspaceSources: PROJECT_WORKSPACE_SOURCES },
       };
 
       expect(
@@ -1018,7 +1019,7 @@ class QueryBuilderMacroServiceProvider extends ServiceProvider
 `;
       const options = {
         ...laravelOptions,
-        frameworkSourceContext: { workspaceSources: [providerSource] },
+        sourceContext: { workspaceSources: [providerSource] },
       };
       const resolvedReceiverType = phpReceiverExpressionTypeInSource(
         source,
@@ -1092,9 +1093,9 @@ class Project extends Model
       // `phpTraitClassNames(hostSource)` (real navigation flow) tells the
       // caller which trait file to search next; once there, the method
       // definition itself is found at the start of its name.
-      expect(phpMethodPositionOrNull(HAS_AUDIT_LOG_TRAIT, "touchAuditLog")).toEqual(
-        positionAt(HAS_AUDIT_LOG_TRAIT, "touchAuditLog"),
-      );
+      expect(
+        phpMethodPositionOrNull(HAS_AUDIT_LOG_TRAIT, "touchAuditLog"),
+      ).toEqual(positionAt(HAS_AUDIT_LOG_TRAIT, "touchAuditLog"));
     });
 
     it("classifies parent::method() as a static call to the resolved parent class (not a literal namespaced 'parent' type)", () => {
@@ -1148,7 +1149,11 @@ class ProjectRepository
 
       expect(
         phpIdentifierContextAt(source, positionAfter(source, "self::make")),
-      ).toEqual({ className: "self", kind: "staticMethodCall", methodName: "make" });
+      ).toEqual({
+        className: "self",
+        kind: "staticMethodCall",
+        methodName: "make",
+      });
       expect(
         phpIdentifierContextAt(source, positionAfter(source, "static::make")),
       ).toEqual({
@@ -1222,6 +1227,7 @@ class ProjectRepository
 
       expect(
         filterPhpLanguageServerDiagnostics(HAS_AUDIT_LOG_TRAIT, [unresolved], {
+          frameworkProviders: [],
           contextualTraitHostMethods: new Set([
             phpTraitHostMethodDiagnosticKey(
               "App\\Models\\Concerns\\HasAuditLog",
@@ -1287,8 +1293,12 @@ class ProjectController
       // `thisMethodDoesNotExistAnywhere` is not a fillable/cast/relation/scope
       // of `Project`, nor any Laravel builder method - so this diagnostic
       // must remain a real, unsuppressed error.
-      const options = {
+      const semanticOptions = {
         ...laravelOptions,
+        sourceContext: { workspaceSources: PROJECT_WORKSPACE_SOURCES },
+      };
+      const diagnosticOptions = {
+        frameworkProviders: [phpLaravelFrameworkProvider],
         frameworkSourceContext: { workspaceSources: PROJECT_WORKSPACE_SOURCES },
       };
       const resolvedReceiverType = phpReceiverExpressionTypeInSource(
@@ -1298,7 +1308,7 @@ class ProjectController
           "app()->make(ProjectRepositoryContract::class)->findOrFail(1)",
         ),
         "app()->make(ProjectRepositoryContract::class)->findOrFail(1)",
-        options,
+        semanticOptions,
       );
       expect(resolvedReceiverType).toBe("App\\Models\\Project");
       expect(
@@ -1316,7 +1326,7 @@ class ProjectController
       // framework-aware path stays a no-op for a genuine error instead of
       // trivially passing because no framework provider was ever consulted.
       expect(
-        filterPhpLanguageServerDiagnostics(source, [real], options),
+        filterPhpLanguageServerDiagnostics(source, [real], diagnosticOptions),
       ).toEqual([real]);
     });
   });

@@ -6,6 +6,7 @@ import {
 } from "../domain/phpMethodCompletions";
 import { phpObjectTypeCandidates } from "../domain/phpObjectTypeCandidates";
 import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
+import { createPhpFrameworkSemanticTypeExtensions } from "./phpFrameworkSemanticTypeExtensions";
 import { createPhpFrameworkMethodCompletionSemanticsAdapters } from "./phpFrameworkMethodCompletionSemanticsAdapters";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
@@ -78,6 +79,13 @@ export function usePhpMethodCompletionResolvers(
     resolvePhpExpressionType,
   } = dependencies;
   const frameworkProviders = frameworkRuntime.providers;
+  const typeExtensions = useMemo(
+    () =>
+      createPhpFrameworkSemanticTypeExtensions({
+        providers: frameworkProviders,
+      }),
+    [frameworkProviders],
+  );
   const frameworkSemantics = useMemo(
     () =>
       createPhpFrameworkMethodCompletionSemanticsAdapters({
@@ -107,9 +115,9 @@ export function usePhpMethodCompletionResolvers(
         const semanticOptions = traitThisContext.contextualThisClassName
           ? {
               contextualThisClassName: traitThisContext.contextualThisClassName,
-              frameworkProviders,
+              typeExtensions,
             }
-          : { frameworkProviders };
+          : { typeExtensions };
         const declaringClassName =
           phpReceiverExpressionTypeInSource(
             source,
@@ -190,14 +198,15 @@ export function usePhpMethodCompletionResolvers(
       const receiverMethods = receiverType
         ? await collectPhpMethodsForClass(receiverType)
         : [];
-      const completionGroups = await frameworkSemantics.receiverCompletionGroups({
-        collectPhpMethodsForClass,
-        position,
-        receiverExpression,
-        receiverMethods,
-        resolvedReceiverType: receiverType,
-        source,
-      });
+      const completionGroups =
+        await frameworkSemantics.receiverCompletionGroups({
+          collectPhpMethodsForClass,
+          position,
+          receiverExpression,
+          receiverMethods,
+          resolvedReceiverType: receiverType,
+          source,
+        });
 
       return mergePhpMethodCompletions(
         completionGroups.baseMethods,
@@ -209,6 +218,7 @@ export function usePhpMethodCompletionResolvers(
       collectPhpMethodsForClass,
       currentPhpFrameworkSourceContext,
       frameworkSemantics,
+      typeExtensions,
       frameworkProviders,
       phpNormalizedReceiverExpressionIsThis,
       resolvePhpExpressionType,
@@ -248,11 +258,7 @@ export function usePhpMethodCompletionResolvers(
         completionGroups.dynamicWhereMethods,
       );
     },
-    [
-      collectPhpMethodsForClass,
-      frameworkSemantics,
-      resolvePhpClassReference,
-    ],
+    [collectPhpMethodsForClass, frameworkSemantics, resolvePhpClassReference],
   );
 
   return {
@@ -293,7 +299,9 @@ export function mergePhpTraitAndHostMethodCompletions(
 
   const hostMaps = hostMethodGroups.map(
     (methods) =>
-      new Map(methods.map((method) => [phpMethodCompletionKey(method), method])),
+      new Map(
+        methods.map((method) => [phpMethodCompletionKey(method), method]),
+      ),
   );
   const candidateKeys = new Set([
     ...traitMap.keys(),
@@ -304,7 +312,9 @@ export function mergePhpTraitAndHostMethodCompletions(
   for (const key of candidateKeys) {
     const effectiveMethods = hostMaps
       .map((hostMethods) => hostMethods.get(key) ?? traitMap.get(key))
-      .filter((candidate): candidate is PhpMethodCompletion => Boolean(candidate));
+      .filter((candidate): candidate is PhpMethodCompletion =>
+        Boolean(candidate),
+      );
 
     if (effectiveMethods.length !== hostMaps.length) {
       continue;

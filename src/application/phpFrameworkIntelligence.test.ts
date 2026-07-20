@@ -1,8 +1,7 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it } from "vitest";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
 describe("createPhpFrameworkIntelligence", () => {
@@ -22,8 +21,6 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.capabilities.supports("views")).toBe(true);
     expect(intelligence.hasProvider("laravel")).toBe(true);
     expect(intelligence.hasProvider("nette")).toBe(false);
-    expect(intelligence.isLaravel).toBe(true);
-    expect(intelligence.isNette).toBe(false);
   });
 
   it("exposes Nette without activating Laravel branches", () => {
@@ -45,8 +42,6 @@ describe("createPhpFrameworkIntelligence", () => {
     );
     expect(intelligence.hasProvider("laravel")).toBe(false);
     expect(intelligence.hasProvider("nette")).toBe(true);
-    expect(intelligence.isLaravel).toBe(false);
-    expect(intelligence.isNette).toBe(true);
   });
 
   it("derives framework activation from providers instead of profile labels", () => {
@@ -56,8 +51,8 @@ describe("createPhpFrameworkIntelligence", () => {
       providers: [phpNetteFrameworkProvider],
     });
 
-    expect(intelligence.isLaravel).toBe(false);
-    expect(intelligence.isNette).toBe(true);
+    expect(intelligence.hasProvider("laravel")).toBe(false);
+    expect(intelligence.hasProvider("nette")).toBe(true);
   });
 
   it("keeps generic workspaces provider-empty", () => {
@@ -74,7 +69,5 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.capabilities.supports("routes")).toBe(false);
     expect(intelligence.hasProvider("laravel")).toBe(false);
     expect(intelligence.hasProvider("nette")).toBe(false);
-    expect(intelligence.isLaravel).toBe(false);
-    expect(intelligence.isNette).toBe(false);
   });
 });

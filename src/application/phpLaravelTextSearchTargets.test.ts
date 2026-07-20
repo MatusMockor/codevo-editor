@@ -1,9 +1,9 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it, vi } from "vitest";
 import {
   phpFrameworkAuthorizationAbilityDefinitionsFromSource,
   phpFrameworkMiddlewareAliasDefinitionsFromSource,
   phpFrameworkRouteDefinitionsFromSource,
-  phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";
@@ -37,7 +37,6 @@ const GENERIC_RUNTIME = createPhpFrameworkRuntimeContext(
 const ROUTE_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
   ...LARAVEL_RUNTIME,
   profile: "generic",
-  isLaravel: false,
   hasProvider: () => false,
   supports: (capability) => capability === "routes",
   supportsTargetCollection: (kind) => kind === "routes",
@@ -73,7 +72,6 @@ const CUSTOM_CAPABLE_NON_LARAVEL_RUNTIME: PhpFrameworkRuntimeContext = {
   ...LARAVEL_RUNTIME,
   providers: [CUSTOM_PROVIDER],
   profile: "generic",
-  isLaravel: false,
   hasProvider: (providerId) => providerId === "custom",
   supports: (capability) =>
     capability === "authorizationAbilities" ||

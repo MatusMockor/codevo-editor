@@ -1,3 +1,5 @@
+import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "./phpFrameworkNetteProvider";
 import { describe, expect, it } from "vitest";
 import {
   phpArrayOffsetExpression,
@@ -10,9 +12,6 @@ import {
   phpDocTemplateNames,
   phpDocRawTypeForVariableBefore,
   phpFunctionReturnsClassStringArgument,
-  phpLaravelContainerBindingsFromSource,
-  phpLaravelContainerExpressionClassName,
-  phpLaravelQueryCallbackContextForVariable,
   phpMethodCallExpression,
   phpNewExpressionClassName,
   phpPropertyAccessExpression,
@@ -22,22 +21,28 @@ import {
   phpVariableTypeInSource,
 } from "./phpSemanticEngine";
 import {
+  phpLaravelContainerBindingsFromSource,
+  phpLaravelContainerExpressionClassName,
+} from "./phpFrameworkLaravel";
+import { phpLaravelQueryCallbackContextForVariable } from "./phpLaravelQueryCallbackContext";
+import {
   phpDeclaredGenericTypeCandidates,
   phpDeclaredTypeCandidate,
   phpMethodReturnExpressions,
 } from "./phpTypeAnalysis";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-  type PhpFrameworkProvider,
-} from "./phpFrameworkProviders";
+import { type PhpFrameworkProvider } from "./phpFrameworkProviders";
+import { createPhpFrameworkSemanticTypeExtensions } from "../application/phpFrameworkSemanticTypeExtensions";
 
 const laravelOptions = {
-  frameworkProviders: [phpLaravelFrameworkProvider],
+  typeExtensions: createPhpFrameworkSemanticTypeExtensions({
+    providers: [phpLaravelFrameworkProvider],
+  }),
 };
 
 const netteOptions = {
-  frameworkProviders: [phpNetteFrameworkProvider],
+  typeExtensions: createPhpFrameworkSemanticTypeExtensions({
+    providers: [phpNetteFrameworkProvider],
+  }),
 };
 
 function positionAfter(source: string, needle: string) {
@@ -85,11 +90,64 @@ class CommentController
 }
 `;
 
+  it("keeps framework-free receiver inference inert without extensions", () => {
+    const source = `<?php
+class Controller
+{
+    public function run(): void
+    {
+        $service = container()->get(Service::class);
+        $service->send();
+    }
+}
+`;
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$service->send"),
+        "service",
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts arbitrary framework-neutral type extensions", () => {
+    const source = `<?php
+class Controller
+{
+    public function run(): void
+    {
+        $service = container()->get(Service::class);
+        $service->send();
+    }
+}
+`;
+    const typeExtensions = [
+      {
+        containerExpressionType: ({ expression }: { expression: string }) =>
+          expression === "container()->get(Service::class)"
+            ? "App\\Service"
+            : null,
+      },
+    ];
+
+    expect(
+      phpVariableTypeInSource(
+        source,
+        positionAfter(source, "$service->send"),
+        "service",
+        { typeExtensions },
+      ),
+    ).toBe("App\\Service");
+  });
+
   it("builds basic class and property symbols", () => {
     expect(phpCurrentClassName(source)).toBe(
       "App\\Http\\Controllers\\CommentController",
     );
-    expect(phpThisPropertyType(source, "commentService")).toBe("CommentService");
+    expect(phpThisPropertyType(source, "commentService")).toBe(
+      "CommentService",
+    );
     expect(phpThisPropertyType(source, "legacyRepository")).toBe(
       "CommentRepository",
     );
@@ -276,9 +334,7 @@ class PostController
 }
 `;
 
-    expect(phpThisPropertyType(source, "repo")).toBe(
-      "PostRepositoryInterface",
-    );
+    expect(phpThisPropertyType(source, "repo")).toBe("PostRepositoryInterface");
   });
 
   it("supports nullable, FQCN and unambiguous union constructor parameter assignment types", () => {
@@ -373,7 +429,9 @@ class PostController
     expect(phpThisPropertyType(source, "dynamicRepo")).toBeNull();
     expect(phpThisPropertyType(source, "assignedOutside")).toBeNull();
     expect(phpThisPropertyType(source, "assignedFromUntyped")).toBeNull();
-    expect(phpThisPropertyType(source, "assignedFromAmbiguousUnion")).toBeNull();
+    expect(
+      phpThisPropertyType(source, "assignedFromAmbiguousUnion"),
+    ).toBeNull();
     expect(phpThisPropertyType(source, "assignedTwice")).toBeNull();
     expect(phpThisPropertyType(source, "assignedDynamically")).toBeNull();
   });
@@ -500,7 +558,11 @@ ${" ".repeat(2000)}
 
   it("resolves receiver expressions from scope symbols", () => {
     expect(
-      phpReceiverExpressionTypeInSource(source, { column: 20, lineNumber: 22 }, "$this"),
+      phpReceiverExpressionTypeInSource(
+        source,
+        { column: 20, lineNumber: 22 },
+        "$this",
+      ),
     ).toBe("App\\Http\\Controllers\\CommentController");
     expect(
       phpReceiverExpressionTypeInSource(
@@ -510,7 +572,11 @@ ${" ".repeat(2000)}
       ),
     ).toBe("CommentService");
     expect(
-      phpVariableTypeInSource(source, { column: 20, lineNumber: 22 }, "repository"),
+      phpVariableTypeInSource(
+        source,
+        { column: 20, lineNumber: 22 },
+        "repository",
+      ),
     ).toBe("CommentRepository");
     expect(
       phpVariableTypeInSource(source, { column: 20, lineNumber: 22 }, "agent"),
@@ -604,7 +670,11 @@ class Comment extends Model
             : null,
       },
     };
-    const options = { frameworkProviders: [semanticProvider] };
+    const options = {
+      typeExtensions: createPhpFrameworkSemanticTypeExtensions({
+        providers: [semanticProvider],
+      }),
+    };
     const source = `<?php
 namespace App\\Http;
 
@@ -652,7 +722,11 @@ class Controller
             : null,
       },
     };
-    const options = { frameworkProviders: [semanticProvider] };
+    const options = {
+      typeExtensions: createPhpFrameworkSemanticTypeExtensions({
+        providers: [semanticProvider],
+      }),
+    };
     const source = `<?php
 namespace App\\Http;
 
@@ -1060,7 +1134,11 @@ class PostFactory
         source,
         positionAfter(source, "$post->tit"),
         "post",
-        { frameworkProviders: [semanticProvider] },
+        {
+          typeExtensions: createPhpFrameworkSemanticTypeExtensions({
+            providers: [semanticProvider],
+          }),
+        },
       ),
     ).toBe("ProviderPost");
   });
@@ -2041,7 +2119,9 @@ class Post extends Model
         "$posts->filter->author()",
         laravelOptions,
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\User>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Relations\\BelongsTo<App\\Models\\User>",
+    );
   });
 
   it("does not apply the higher-order proxy when the receiver is not a collection", () => {
@@ -2153,7 +2233,7 @@ $fromUnknownVariableChain->tit
         source,
         positionAfter(source, "$fromVariableChain->tit"),
         "fromVariableChain",
-        { frameworkProviders: [] },
+        { typeExtensions: [] },
       ),
     ).toBeNull();
   });
@@ -2193,7 +2273,7 @@ class AppServiceProvider extends ServiceProvider
 `;
     const options = {
       ...laravelOptions,
-      frameworkSourceContext: { workspaceSources: [providerSource] },
+      sourceContext: { workspaceSources: [providerSource] },
     };
 
     expect(
@@ -2259,7 +2339,9 @@ class Album extends Model
         "Album::query()->get()",
         laravelOptions,
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     expect(
       phpVariableTypeInSource(
         source,
@@ -3175,7 +3257,9 @@ class Tag extends Model
         "relationMethodFoundManyPosts",
         laravelOptions,
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Post>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Post>",
+    );
     expect(
       phpVariableTypeInSource(
         source,
@@ -3885,7 +3969,7 @@ class ReadAlbumRepository extends BaseRepository
     ).toBe("App\\Models\\Album");
   });
 
-  it("preserves default findOrFail suppression without explicit providers", () => {
+  it("lets an extension suppress same-source return fallback", () => {
     const source = `<?php
 namespace App\\Repositories;
 
@@ -3911,11 +3995,19 @@ class AlbumRepository
         source,
         positionAfter(source, "$album->tit"),
         "album",
+        {
+          typeExtensions: [
+            {
+              suppressSameSourceMethodReturnFallback: ({ methodName }) =>
+                methodName === "findOrFail",
+            },
+          ],
+        },
       ),
     ).toBeNull();
   });
 
-  it("infers same-source findOrFail return type with explicit empty providers", () => {
+  it("infers same-source findOrFail return type without extensions", () => {
     const source = `<?php
 namespace App\\Repositories;
 
@@ -3941,7 +4033,7 @@ class AlbumRepository
         source,
         positionAfter(source, "$album->tit"),
         "album",
-        { frameworkProviders: [] },
+        { typeExtensions: [] },
       ),
     ).toBe("Album");
   });
@@ -3972,6 +4064,7 @@ class AlbumFinder
         source,
         positionAfter(source, "$album->tit"),
         "album",
+        laravelOptions,
       ),
     ).toBeNull();
   });
@@ -4002,7 +4095,9 @@ class Controller
         { column: 16, lineNumber: 10 },
         "album",
       ),
-    ).toBe("Album::query()\n            ->whereNull('parent_id')\n            ->first()");
+    ).toBe(
+      "Album::query()\n            ->whereNull('parent_id')\n            ->first()",
+    );
     expect(phpNewExpressionClassName("new CommentService()")).toBe(
       "CommentService",
     );
@@ -4015,11 +4110,13 @@ class Controller
     expect(
       phpNewExpressionClassName("new UserAccountModel()->getConnection()"),
     ).toBeNull();
-    expect(phpLaravelContainerExpressionClassName("app(CommentRepository::class)")).toBe(
-      "CommentRepository",
-    );
     expect(
-      phpLaravelContainerExpressionClassName("resolve(CommentRepository::class)"),
+      phpLaravelContainerExpressionClassName("app(CommentRepository::class)"),
+    ).toBe("CommentRepository");
+    expect(
+      phpLaravelContainerExpressionClassName(
+        "resolve(CommentRepository::class)",
+      ),
     ).toBe("CommentRepository");
     expect(
       phpLaravelContainerExpressionClassName(
@@ -4181,7 +4278,7 @@ class Comment extends Model
 `;
     const options = {
       ...laravelOptions,
-      frameworkSourceContext: {
+      sourceContext: {
         workspaceSources: [providerSource, repositorySource, modelSource],
       },
     };
@@ -4297,7 +4394,7 @@ services:
 `;
     const options = {
       ...netteOptions,
-      frameworkSourceContext: { workspaceSources: [neonSource] },
+      sourceContext: { workspaceSources: [neonSource] },
     };
 
     expect(
@@ -4366,7 +4463,7 @@ final class DatabaseReportRepository implements ReportRepository
 `;
     const options = {
       ...netteOptions,
-      frameworkSourceContext: {
+      sourceContext: {
         workspaceSources: [neonSource, interfaceSource, concreteSource],
       },
     };
@@ -4429,7 +4526,7 @@ final class FileReportRepository implements ReportRepository
 `;
     const options = {
       ...netteOptions,
-      frameworkSourceContext: {
+      sourceContext: {
         workspaceSources: [neonSource, interfaceSource, concreteSource],
       },
     };
@@ -4514,12 +4611,12 @@ class UserController
       methodName: "getDatabaseConnection",
       receiverExpression: "$this->userAccount",
     });
-    expect(phpMethodCallExpression("new UserAccountModel()->getConnection()")).toEqual(
-      {
-        methodName: "getConnection",
-        receiverExpression: "new UserAccountModel()",
-      },
-    );
+    expect(
+      phpMethodCallExpression("new UserAccountModel()->getConnection()"),
+    ).toEqual({
+      methodName: "getConnection",
+      receiverExpression: "new UserAccountModel()",
+    });
     expect(
       phpMethodCallExpression("(new UserAccountModel())->getConnection()"),
     ).toEqual({
@@ -4527,7 +4624,9 @@ class UserController
       receiverExpression: "(new UserAccountModel())",
     });
     expect(
-      phpMethodCallExpression("Album::query()->whereNull('parent_id')->first()"),
+      phpMethodCallExpression(
+        "Album::query()->whereNull('parent_id')->first()",
+      ),
     ).toEqual({
       methodName: "first",
       receiverExpression: "Album::query()->whereNull('parent_id')",
@@ -4545,12 +4644,12 @@ class UserController
       methodName: "getName",
       receiverExpression: "$user?->profile",
     });
-    expect(phpMethodCallExpression("app(CommentService::class)->create()")).toEqual(
-      {
-        methodName: "create",
-        receiverExpression: "app(CommentService::class)",
-      },
-    );
+    expect(
+      phpMethodCallExpression("app(CommentService::class)->create()"),
+    ).toEqual({
+      methodName: "create",
+      receiverExpression: "app(CommentService::class)",
+    });
     expect(
       phpMethodCallExpression("App::make(CommentService::class)->create()"),
     ).toEqual({
@@ -4592,9 +4691,7 @@ class UserController
     expect(phpArrayOffsetExpression("$rows[/* ] ) } */ 0]")).toEqual({
       containerExpression: "$rows",
     });
-    expect(
-      phpArrayOffsetExpression("$rows[// ] ) }\n$keys[0]]"),
-    ).toEqual({
+    expect(phpArrayOffsetExpression("$rows[// ] ) }\n$keys[0]]")).toEqual({
       containerExpression: "$rows",
     });
     expect(phpArrayOffsetExpression("$rows[# ] ) }\n0]")).toEqual({
@@ -4620,7 +4717,9 @@ class UserController
         `iterable<int, ${paymentLog}>|array<string, App\\ArchivedPaymentLog>`,
       ),
     ).toBe(`${paymentLog}|App\\ArchivedPaymentLog`);
-    expect(phpArrayOffsetValueType(`${paymentLog}[][]`)).toBe(`${paymentLog}[]`);
+    expect(phpArrayOffsetValueType(`${paymentLog}[][]`)).toBe(
+      `${paymentLog}[]`,
+    );
     expect(phpArrayOffsetValueType("array")).toBeNull();
     expect(phpArrayOffsetValueType("mixed")).toBeNull();
     expect(phpArrayOffsetValueType(`${paymentLog}[]|null`)).toBeNull();
@@ -4628,7 +4727,9 @@ class UserController
 
   it("detects calls that pass class-string arguments", () => {
     expect(
-      phpClassStringCallExpression("$this->container->get(CommentService::class)"),
+      phpClassStringCallExpression(
+        "$this->container->get(CommentService::class)",
+      ),
     ).toEqual({
       argumentClassName: "CommentService",
       kind: "methodCall",
@@ -4636,20 +4737,22 @@ class UserController
       receiverExpression: "$this->container",
     });
     expect(
-      phpClassStringCallExpression("ServiceLocator::get(CommentService::class)"),
+      phpClassStringCallExpression(
+        "ServiceLocator::get(CommentService::class)",
+      ),
     ).toEqual({
       argumentClassName: "CommentService",
       className: "ServiceLocator",
       kind: "staticCall",
       methodName: "get",
     });
-    expect(phpClassStringCallExpression("service(CommentService::class)")).toEqual(
-      {
-        argumentClassName: "CommentService",
-        functionName: "service",
-        kind: "functionCall",
-      },
-    );
+    expect(
+      phpClassStringCallExpression("service(CommentService::class)"),
+    ).toEqual({
+      argumentClassName: "CommentService",
+      functionName: "service",
+      kind: "functionCall",
+    });
   });
 
   it("detects generic functions that return their class-string argument", () => {

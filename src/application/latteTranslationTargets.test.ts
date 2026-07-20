@@ -1,3 +1,4 @@
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it, vi } from "vitest";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import {
@@ -6,7 +7,6 @@ import {
   resolveLatteTranslationDefinition,
 } from "./latteTranslationTargets";
 import type { LatteProviderRequestContext } from "./latteProviderRequestContext";
-import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
 
 const ROOT = "/ws";
 const NETTE_FRAMEWORK = createPhpFrameworkIntelligence({

@@ -1,17 +1,16 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+import { type PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type {
   EditorDocument,
   TextSearchGateway,
+  TextSearchResult,
   WorkspaceDescriptor,
 } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
@@ -153,6 +152,12 @@ function makeDeps(
       findTranslationTarget: vi.fn(async () => null),
       findViewTarget: vi.fn(async () => null),
     },
+    frameworkActivation: {
+      generation: 1,
+      isCurrent: () => true,
+      ownerKey: "workspace-owner",
+      rootPath: ROOT,
+    },
     frameworkRuntime: LARAVEL_RUNTIME,
     openNavigationTarget: vi.fn(async () => true),
     openPhpClassTarget: vi.fn(async () => true),
@@ -196,6 +201,13 @@ function renderHook(deps: PhpFrameworkDefinitionNavigationDependencies) {
 
   return {
     api,
+    rerender: (
+      nextDependencies: PhpFrameworkDefinitionNavigationDependencies,
+    ) => {
+      act(() => {
+        root.render(<Harness dependencies={nextDependencies} />);
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -262,6 +274,7 @@ private function getElementDescendants(ActiveRow $element): array
     expect(openPhpClassTarget).toHaveBeenLastCalledWith(
       targetType,
       "ScenariosElementElementsSelection",
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
 
     harness.unmount();
@@ -286,23 +299,65 @@ private function getElementDescendants(ActiveRow $element): array
           ? [`${ROOT}/generated/OrdersSelection.php`]
           : [],
       ),
-      resolvePhpExpressionType: vi.fn(async () =>
-        "Generated\\ActiveRow\\UsersActiveRow"
+      resolvePhpExpressionType: vi.fn(
+        async () => "Generated\\ActiveRow\\UsersActiveRow",
       ),
     });
     const harness = renderHook(deps);
 
     await expect(
-      harness.api().providePhpFrameworkDefinition(
-        source,
-        source.indexOf("orders") + 2,
-      ),
+      harness
+        .api()
+        .providePhpFrameworkDefinition(source, source.indexOf("orders") + 2),
     ).resolves.toBe(true);
     expect(openPhpClassTarget).toHaveBeenCalledWith(
       "Generated\\Selection\\OrdersSelection",
       "OrdersSelection",
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
     expect(findViewTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("aborts an old Nette definition request when the same root is reopened", async () => {
+    let firstGenerationCurrent = true;
+    const expressionType = deferred<string | null>();
+    const openPhpClassTarget = vi.fn(async () => true);
+    const firstDependencies = makeDeps({
+      frameworkActivation: {
+        generation: 1,
+        isCurrent: () => firstGenerationCurrent,
+        ownerKey: "workspace-owner",
+        rootPath: ROOT,
+      },
+      frameworkRuntime: NETTE_RUNTIME,
+      openPhpClassTarget,
+      resolvePhpExpressionType: vi.fn(() => expressionType.promise),
+    });
+    const harness = renderHook(firstDependencies);
+    const source = "$user->related('orders.user_id')";
+    const pending = harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("orders") + 2);
+
+    firstGenerationCurrent = false;
+    harness.rerender(
+      makeDeps({
+        frameworkActivation: {
+          generation: 2,
+          isCurrent: () => true,
+          ownerKey: "workspace-owner",
+          rootPath: ROOT,
+        },
+        frameworkRuntime: NETTE_RUNTIME,
+        openPhpClassTarget,
+      }),
+    );
+    expressionType.resolve("Nette\\Database\\Table\\Selection");
+
+    await expect(pending).resolves.toBe(false);
+    expect(openPhpClassTarget).not.toHaveBeenCalled();
 
     harness.unmount();
   });
@@ -364,13 +419,105 @@ private function getElementDescendants(ActiveRow $element): array
     const source = `<?php\nuse App\\Jobs\\SyncOrder;\ndispatch(new SyncOrder());`;
 
     await expect(
-      harness.api().providePhpFrameworkDefinition(
-        source,
-        source.indexOf("SyncOrder());"),
-      ),
+      harness
+        .api()
+        .providePhpFrameworkDefinition(source, source.indexOf("SyncOrder());")),
     ).resolves.toBe(false);
     const options = openNavigationTarget.mock.calls[0]?.[3];
     expect(options?.shouldCommit?.()).toBe(false);
+
+    harness.unmount();
+  });
+
+  it("drops an awaited dispatch target when the same root reopens without a navigation request", async () => {
+    const classPaths = deferred<readonly string[]>();
+    const openNavigationTarget = vi.fn(async () => true);
+    const openPhpClassTarget = vi.fn(async () => true);
+    const readNavigationFileContent = vi.fn(
+      async () => "<?php class SyncOrder { public function handle() {} }",
+    );
+    const firstDependencies = makeDeps({
+      frameworkActivation: {
+        generation: 1,
+        isCurrent: () => true,
+        ownerKey: "workspace-owner",
+        rootPath: ROOT,
+      },
+      openNavigationTarget,
+      openPhpClassTarget,
+      readNavigationFileContent,
+      resolvePhpClassSourcePaths: vi.fn(() => classPaths.promise),
+    });
+    const harness = renderHook(firstDependencies);
+    const source = `<?php\nuse App\\Jobs\\SyncOrder;\ndispatch(new SyncOrder());`;
+    const pending = harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("SyncOrder());"));
+
+    harness.rerender(
+      makeDeps({
+        frameworkActivation: {
+          generation: 2,
+          isCurrent: () => true,
+          ownerKey: "workspace-owner",
+          rootPath: ROOT,
+        },
+        openNavigationTarget,
+        openPhpClassTarget,
+      }),
+    );
+    classPaths.resolve([`${ROOT}/app/Jobs/SyncOrder.php`]);
+
+    await expect(pending).resolves.toBe(false);
+    expect(readNavigationFileContent).not.toHaveBeenCalled();
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+    expect(openPhpClassTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
+  it("fences a class target commit when another owner opens the same root without a navigation request", async () => {
+    const classOpen = deferred<boolean>();
+    const openPhpClassTarget = vi.fn<
+      PhpFrameworkDefinitionNavigationDependencies["openPhpClassTarget"]
+    >(() => classOpen.promise);
+    const firstDependencies = makeDeps({
+      frameworkActivation: {
+        generation: 1,
+        isCurrent: () => true,
+        ownerKey: "workspace-owner",
+        rootPath: ROOT,
+      },
+      frameworkRuntime: GENERIC_RUNTIME,
+      openPhpClassTarget,
+    });
+    const harness = renderHook(firstDependencies);
+    const source = `<?php\nuse App\\Services\\QaService;\nnew QaService();`;
+    const pending = harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.lastIndexOf("QaService") + 2);
+
+    expect(openPhpClassTarget).toHaveBeenCalledTimes(1);
+    const fencedRequest = openPhpClassTarget.mock.calls[0]?.[2];
+    expect(fencedRequest?.canNavigate()).toBe(true);
+
+    harness.rerender(
+      makeDeps({
+        frameworkActivation: {
+          generation: 1,
+          isCurrent: () => true,
+          ownerKey: "replacement-owner",
+          rootPath: ROOT,
+        },
+        frameworkRuntime: GENERIC_RUNTIME,
+        openPhpClassTarget,
+      }),
+    );
+
+    expect(fencedRequest?.canNavigate()).toBe(false);
+    classOpen.resolve(true);
+
+    await expect(pending).resolves.toBe(false);
 
     harness.unmount();
   });
@@ -390,7 +537,48 @@ private function getElementDescendants(ActiveRow $element): array
     expect(openPhpClassTarget).toHaveBeenCalledWith(
       "App\\Models\\AdminUser",
       "AdminUser",
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
+
+    harness.unmount();
+  });
+
+  it("drops an awaited route binding when the same root reopens without a navigation request", async () => {
+    const searchResults = deferred<TextSearchResult[]>();
+    const openPhpClassTarget = vi.fn(async () => true);
+    const firstDependencies = makeDeps({
+      frameworkActivation: {
+        generation: 1,
+        isCurrent: () => true,
+        ownerKey: "workspace-owner",
+        rootPath: ROOT,
+      },
+      frameworkRuntime: ROUTE_CAPABLE_RUNTIME,
+      openPhpClassTarget,
+      textSearch: makeTextSearch(vi.fn(() => searchResults.promise)),
+    });
+    const harness = renderHook(firstDependencies);
+    const source = `<?php\nframeworkRoute('/accounts/{account}');`;
+    const pending = harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("{account}") + 2);
+
+    harness.rerender(
+      makeDeps({
+        frameworkActivation: {
+          generation: 2,
+          isCurrent: () => true,
+          ownerKey: "workspace-owner",
+          rootPath: ROOT,
+        },
+        frameworkRuntime: ROUTE_CAPABLE_RUNTIME,
+        openPhpClassTarget,
+      }),
+    );
+    searchResults.resolve([]);
+
+    await expect(pending).resolves.toBe(false);
+    expect(openPhpClassTarget).not.toHaveBeenCalled();
 
     harness.unmount();
   });
@@ -502,6 +690,7 @@ private function getElementDescendants(ActiveRow $element): array
     expect(openPhpClassTarget).toHaveBeenCalledWith(
       "App\\Models\\Account",
       "Account",
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
 
     harness.unmount();
@@ -544,6 +733,7 @@ private function getElementDescendants(ActiveRow $element): array
     expect(openPhpClassTarget).toHaveBeenCalledWith(
       "App\\Models\\ExternalAccount",
       "ExternalAccount",
+      expect.objectContaining({ canNavigate: expect.any(Function) }),
     );
 
     harness.unmount();
@@ -667,6 +857,67 @@ private function getElementDescendants(ActiveRow $element): array
     harness.unmount();
   });
 
+  it("drops an awaited literal target when the same root reopens without a navigation request", async () => {
+    const viewTarget = deferred<{
+      name: string;
+      path: string;
+      position: EditorPosition;
+    } | null>();
+    const openNavigationTarget = vi.fn(async () => true);
+    const activeDocument: EditorDocument = {
+      content: "",
+      language: "php",
+      name: "Controller.php",
+      path: `${ROOT}/app/Http/Controllers/Controller.php`,
+      savedContent: "",
+    };
+    const firstDependencies = makeDeps({
+      activeDocument,
+      frameworkActivation: {
+        generation: 1,
+        isCurrent: () => true,
+        ownerKey: "workspace-owner",
+        rootPath: ROOT,
+      },
+      frameworkLiteralNavigationDependencies: {
+        collectNamedRouteTargets: vi.fn(async () => []),
+        findConfigTarget: vi.fn(async () => null),
+        findEnvTarget: vi.fn(async () => null),
+        findTranslationTarget: vi.fn(async () => null),
+        findViewTarget: vi.fn(() => viewTarget.promise),
+      },
+      openNavigationTarget,
+    });
+    const harness = renderHook(firstDependencies);
+    const source = "<?php view('orders.show');";
+    const pending = harness
+      .api()
+      .providePhpFrameworkDefinition(source, source.indexOf("orders.show") + 2);
+
+    harness.rerender(
+      makeDeps({
+        activeDocument,
+        frameworkActivation: {
+          generation: 2,
+          isCurrent: () => true,
+          ownerKey: "workspace-owner",
+          rootPath: ROOT,
+        },
+        openNavigationTarget,
+      }),
+    );
+    viewTarget.resolve({
+      name: "orders.show",
+      path: `${ROOT}/resources/views/orders/show.blade.php`,
+      position: position(1, 1),
+    });
+
+    await expect(pending).resolves.toBe(false);
+    expect(openNavigationTarget).not.toHaveBeenCalled();
+
+    harness.unmount();
+  });
+
   it("blocks a literal commit when the workspace changes during open", async () => {
     const currentWorkspaceRootRef = { current: ROOT };
     const openNavigationTarget = vi.fn(
@@ -707,10 +958,12 @@ private function getElementDescendants(ActiveRow $element): array
     const source = "<?php view('orders.show');";
 
     await expect(
-      harness.api().providePhpFrameworkDefinition(
-        source,
-        source.indexOf("orders.show") + 2,
-      ),
+      harness
+        .api()
+        .providePhpFrameworkDefinition(
+          source,
+          source.indexOf("orders.show") + 2,
+        ),
     ).resolves.toBe(false);
     const options = openNavigationTarget.mock.calls[0]?.[3];
     expect(options?.shouldCommit?.()).toBe(false);

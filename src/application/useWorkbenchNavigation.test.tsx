@@ -260,6 +260,28 @@ describe("useWorkbenchNavigation Search Everywhere actions", () => {
 });
 
 describe("useWorkbenchNavigation PHP read-only boundary", () => {
+  it("rejects a filesystem read when its cooperative signal aborts", async () => {
+    const read = deferred<string>();
+    const readTextFile = vi.fn(() => read.promise);
+    const files = workspaceFiles();
+    files.readTextFile = readTextFile;
+    const harness = renderNavigation({ workspaceFiles: files });
+    const abortController = new AbortController();
+    const pending = harness
+      .api()
+      .readNavigationFileContent(
+        `${ROOT}/app/Services/Service.php`,
+        abortController.signal,
+      );
+
+    await vi.waitFor(() => expect(readTextFile).toHaveBeenCalledOnce());
+    abortController.abort();
+    read.resolve("<?php");
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    harness.root.unmount();
+  });
+
   it("does not commit reveal, history, or message after a navigation owner replacement", async () => {
     let resolveOpen: ((opened: boolean) => void) | undefined;
     let requestActive = true;
@@ -427,3 +449,12 @@ describe("useWorkbenchNavigation PHP read-only boundary", () => {
     harness.root.unmount();
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+
+  return { promise, resolve };
+}

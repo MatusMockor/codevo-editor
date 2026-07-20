@@ -5,6 +5,7 @@ import {
   phpFrameworkProvidersForProject,
   phpFrameworkSupportsInertia,
 } from "./phpFrameworkProviders";
+import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
 import {
   phpLaravelInertiaReferenceContextAt,
   resolveLaravelInertiaComponentTarget,
@@ -22,7 +23,10 @@ describe("phpLaravelInertia", () => {
         "Route::inertia(uri: '/users', component: 'Users/Index')",
         "Route::inertia",
       ],
-      ["Inertia::render(\n    'Users/Index',\n    ['filter' => nested(1, 2)],\n)", "Inertia::render"],
+      [
+        "Inertia::render(\n    'Users/Index',\n    ['filter' => nested(1, 2)],\n)",
+        "Inertia::render",
+      ],
     ] as const;
 
     for (const [expression, call] of samples) {
@@ -103,30 +107,51 @@ describe("phpLaravelInertia", () => {
   });
 
   it("rejects traversal and unsafe component names", () => {
-    for (const name of ["../Admin", "Users/../Admin", "Users..Admin", "Users Index", "Users\\Index", "Users/$id", "/Users/Index"]) {
+    for (const name of [
+      "../Admin",
+      "Users/../Admin",
+      "Users..Admin",
+      "Users Index",
+      "Users\\Index",
+      "Users/$id",
+      "/Users/Index",
+    ]) {
       expect(resolveLaravelInertiaComponentTarget(name)).toBeNull();
     }
   });
 
   it("gates the provider capability on inertiajs/inertia-laravel", () => {
-    const active = phpFrameworkProvidersForProject(phpProjectDescriptor({
-      packageName: "laravel/laravel",
-      packages: [{ name: "inertiajs/inertia-laravel" }],
-    }));
-    const inactive = phpFrameworkProvidersForProject(phpProjectDescriptor({
-      packageName: "laravel/laravel",
-      packages: [],
-    }));
+    const providers = [phpLaravelFrameworkProvider];
+    const active = phpFrameworkProvidersForProject(
+      phpProjectDescriptor({
+        packageName: "laravel/laravel",
+        packages: [{ name: "inertiajs/inertia-laravel" }],
+      }),
+      providers,
+    );
+    const inactive = phpFrameworkProvidersForProject(
+      phpProjectDescriptor({
+        packageName: "laravel/laravel",
+        packages: [],
+      }),
+      providers,
+    );
     const source = "<?php\nreturn Inertia::render('Dashboard');";
     const position = positionAfter(source, "Dash");
 
     expect(phpFrameworkSupportsInertia(active)).toBe(true);
     expect(phpFrameworkSupportsInertia(inactive)).toBe(false);
-    expect(phpFrameworkInertiaReferenceAt(source, position, active)).toMatchObject({
+    expect(
+      phpFrameworkInertiaReferenceAt(source, position, active),
+    ).toMatchObject({
       name: "Dashboard",
     });
-    expect(phpFrameworkInertiaReferenceAt(source, position, inactive)).toBeNull();
-    expect(phpFrameworkInertiaLiteralTarget("Dashboard", active)).not.toBeNull();
+    expect(
+      phpFrameworkInertiaReferenceAt(source, position, inactive),
+    ).toBeNull();
+    expect(
+      phpFrameworkInertiaLiteralTarget("Dashboard", active),
+    ).not.toBeNull();
     expect(phpFrameworkInertiaLiteralTarget("Dashboard", inactive)).toBeNull();
   });
 });

@@ -1,7 +1,13 @@
+import {
+  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
+  phpNetteFrameworkProvider,
+} from "./phpFrameworkNetteProvider";
+import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
 import { describe, expect, it } from "vitest";
 import {
   classifyPhpLanguageServerDiagnostic,
   filterPhpLanguageServerDiagnostics,
+  FRAMEWORK_MAGIC_DIAGNOSTIC_SOURCE,
   LARAVEL_MAGIC_DIAGNOSTIC_SOURCE,
   phpMemberMethodDiagnosticKey,
   phpMemberPropertyDiagnosticKey,
@@ -16,11 +22,7 @@ import {
   phpUnresolvedStaticMethodDiagnosticContext,
 } from "./phpLanguageServerDiagnosticFilters";
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
-import {
-  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-} from "./phpFrameworkProviders";
+import type { PhpFrameworkProvider } from "./phpFrameworkProviders";
 
 describe("filterPhpLanguageServerDiagnostics", () => {
   it("downgrades unresolved global Laravel Eloquent static builder methods to soft hints", () => {
@@ -70,6 +72,30 @@ $queryBuilder = Album::whereNull('parent_id');
     expect(classified?.severity).toBe("hint");
     expect(classified?.source).toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
     expect(classified?.message).toBe(magic.message);
+  });
+
+  it("uses a neutral source when a framework provider omits its magic label", () => {
+    const source = "<?php\nCustomModel::runtimeMethod();\n";
+    const magic = diagnosticAt(source, "runtimeMethod", {
+      message: "Method CustomModel::runtimeMethod() does not exist",
+    });
+    const provider: PhpFrameworkProvider = {
+      diagnostics: {
+        isKnownStaticMethod: () => true,
+      },
+      id: "custom-framework",
+    };
+
+    const [classified, ...rest] = filterPhpLanguageServerDiagnostics(
+      source,
+      [magic],
+      { frameworkProviders: [provider] },
+    );
+
+    expect(rest).toEqual([]);
+    expect(classified?.severity).toBe("hint");
+    expect(classified?.source).toBe(FRAMEWORK_MAGIC_DIAGNOSTIC_SOURCE);
+    expect(classified?.source).not.toBe(LARAVEL_MAGIC_DIAGNOSTIC_SOURCE);
   });
 
   it("stamps a Nette template magic call with the nette-magic source label", () => {
@@ -213,10 +239,13 @@ $bad = Album::whereNulll('parent_id');
       character: 20,
       code: "worse.docblock_missing_return_type",
       line: 4,
-      message: 'Method "loadByCredentials" is missing docblock return type: void',
+      message:
+        'Method "loadByCredentials" is missing docblock return type: void',
     });
     expect(
-      classifyPhpLanguageServerDiagnostic("<?php\n", docblockArtifact),
+      classifyPhpLanguageServerDiagnostic("<?php\n", docblockArtifact, {
+        frameworkProviders: [],
+      }),
     ).toBe("parse-artifact");
 
     const contextualSource = `<?php
@@ -230,6 +259,7 @@ $album = Album::published()->first();
     });
     expect(
       classifyPhpLanguageServerDiagnostic(contextualSource, contextual, {
+        frameworkProviders: [],
         contextualExistingMethods: new Set([
           phpMethodDiagnosticKey("Album", "published"),
         ]),
@@ -261,7 +291,11 @@ $queryBuilder = Album::whereNulll('parent_id');
       line: 2,
       message: "Method App\\Models\\Album::whereNulll() does not exist",
     });
-    expect(classifyPhpLanguageServerDiagnostic(realSource, real)).toBeNull();
+    expect(
+      classifyPhpLanguageServerDiagnostic(realSource, real, {
+        frameworkProviders: [],
+      }),
+    ).toBeNull();
   });
 
   it("keeps Laravel static builder method diagnostics for non-model receivers", () => {
@@ -294,9 +328,11 @@ $queryBuilder = Album::whereNulll('parent_id');
       message: "Method App\\Models\\Album::whereNulll() does not exist",
     });
 
-    expect(filterPhpLanguageServerDiagnostics(source, [unresolved])).toEqual([
-      unresolved,
-    ]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([unresolved]);
   });
 
   it("can keep framework magic diagnostics when no framework provider is active", () => {
@@ -334,11 +370,14 @@ $album = Album::published()->first();
       message: "Method App\\Models\\Album::published() does not exist",
     });
 
-    expect(filterPhpLanguageServerDiagnostics(source, [unresolved])).toEqual([
-      unresolved,
-    ]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([unresolved]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualExistingMethods: new Set([
           phpMethodDiagnosticKey("Album", "published"),
         ]),
@@ -366,10 +405,13 @@ $album = Album::query()->missingMagic()->first();
     });
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
+      }),
     ).toEqual([confirmed, unknown]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
         contextualMemberMethods: new Set([
           phpMemberMethodDiagnosticKey("Album::query()", "withRelations"),
         ]),
@@ -404,10 +446,13 @@ $album = Album::query()?->missingMagic()?->first();
       receiverExpression: "Album::query()",
     });
     expect(
-      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
+      }),
     ).toEqual([confirmed, unknown]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
         contextualMemberMethods: new Set([
           phpMemberMethodDiagnosticKey("Album::query()", "withRelations"),
         ]),
@@ -442,9 +487,13 @@ $album = Album::query()->withCount()->first();
     });
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [globalBuilderMethod, globalAggregateMethod], {
-        frameworkProviders: [phpLaravelFrameworkProvider],
-      }),
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [globalBuilderMethod, globalAggregateMethod],
+        {
+          frameworkProviders: [phpLaravelFrameworkProvider],
+        },
+      ),
     ).toEqual([
       frameworkMagicHint(globalBuilderMethod),
       frameworkMagicHint(globalAggregateMethod),
@@ -558,13 +607,18 @@ class AppServiceProvider extends ServiceProvider
       source,
       "withEditorialRelations()->first();\n$fromMember",
       {
-        message: "Method App\\Models\\Post::withEditorialRelations() does not exist",
+        message:
+          "Method App\\Models\\Post::withEditorialRelations() does not exist",
       },
     );
-    const memberMacro = diagnosticAt(source, "withEditorialRelations()->first();\n$query", {
-      message:
-        "Method Illuminate\\Database\\Eloquent\\Builder::withEditorialRelations() does not exist",
-    });
+    const memberMacro = diagnosticAt(
+      source,
+      "withEditorialRelations()->first();\n$query",
+      {
+        message:
+          "Method Illuminate\\Database\\Eloquent\\Builder::withEditorialRelations() does not exist",
+      },
+    );
     const variableMacro = diagnosticAt(
       source,
       "withEditorialRelations()->first();\n$fromUnknown",
@@ -776,6 +830,7 @@ $album = Album::query()
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
         contextualMemberMethods: new Set([
           phpMemberMethodDiagnosticKey("Album::query()", "withRelations"),
         ]),
@@ -804,10 +859,13 @@ $comment->missing();
     });
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
+      }),
     ).toEqual([confirmed, unknown]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
         contextualMemberProperties: new Set([
           phpMemberPropertyDiagnosticKey("$comment", "content"),
         ]),
@@ -834,14 +892,16 @@ $comment->Name;
     const misspelled = diagnostic({
       character: 11,
       line: 2,
-      message: 'Property "$Name" does not exist on class "App\\Models\\Comment"',
+      message:
+        'Property "$Name" does not exist on class "App\\Models\\Comment"',
     });
 
-    expect(
-      phpMemberPropertyDiagnosticKey("$comment", "Name"),
-    ).not.toBe(phpMemberPropertyDiagnosticKey("$comment", "name"));
+    expect(phpMemberPropertyDiagnosticKey("$comment", "Name")).not.toBe(
+      phpMemberPropertyDiagnosticKey("$comment", "name"),
+    );
     expect(
       filterPhpLanguageServerDiagnostics(source, [misspelled], {
+        frameworkProviders: [],
         contextualMemberProperties: new Set([
           phpMemberPropertyDiagnosticKey("$comment", "name"),
         ]),
@@ -877,10 +937,13 @@ $comment?->missing();
       receiverExpression: "$comment",
     });
     expect(
-      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown]),
+      filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
+      }),
     ).toEqual([confirmed, unknown]);
     expect(
       filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
         contextualMemberProperties: new Set([
           phpMemberPropertyDiagnosticKey("$comment", "content"),
         ]),
@@ -1020,6 +1083,7 @@ $post->missingMagic()->each(function (Post $localPost): void {
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [confirmed, unknown], {
+        frameworkProviders: [],
         contextualMemberMethods: new Set([
           phpMemberMethodDiagnosticKey("$post", "localPosts"),
         ]),
@@ -1084,9 +1148,11 @@ $queryBuilder = Album::whereNull('parent_id')
       message: "unexpected EOF, expecting ';'",
     });
 
-    expect(filterPhpLanguageServerDiagnostics(source, [syntax])).toEqual([
-      syntax,
-    ]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [syntax], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([syntax]);
   });
 
   it("suppresses PHPactor docblock hygiene diagnostics for valid legacy interfaces", () => {
@@ -1099,21 +1165,25 @@ interface LocalUserInterface
 `;
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [
-        diagnostic({
-          character: 20,
-          code: "worse.docblock_missing_return_type",
-          line: 4,
-          message:
-            'Method "loadByCredentials" is missing docblock return type: void',
-        }),
-        diagnostic({
-          character: 38,
-          code: "worse.docblock_missing_param",
-          line: 4,
-          message: 'Method "loadByCredentials" is missing @param $login',
-        }),
-      ]),
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnostic({
+            character: 20,
+            code: "worse.docblock_missing_return_type",
+            line: 4,
+            message:
+              'Method "loadByCredentials" is missing docblock return type: void',
+          }),
+          diagnostic({
+            character: 38,
+            code: "worse.docblock_missing_param",
+            line: 4,
+            message: 'Method "loadByCredentials" is missing @param $login',
+          }),
+        ],
+        { frameworkProviders: [] },
+      ),
     ).toEqual([]);
   });
 
@@ -1126,15 +1196,19 @@ interface LocalUserInterface
     });
 
     expect(
-      filterPhpLanguageServerDiagnostics("<?php\ninterface Broken\n{\n", [
-        diagnostic({
-          character: 20,
-          code: "worse.docblock_missing_return_type",
-          line: 2,
-          message: 'Method "broken" is missing docblock return type: void',
-        }),
-        syntax,
-      ]),
+      filterPhpLanguageServerDiagnostics(
+        "<?php\ninterface Broken\n{\n",
+        [
+          diagnostic({
+            character: 20,
+            code: "worse.docblock_missing_return_type",
+            line: 2,
+            message: 'Method "broken" is missing docblock return type: void',
+          }),
+          syntax,
+        ],
+        { frameworkProviders: [] },
+      ),
     ).toEqual([syntax]);
   });
 
@@ -1145,14 +1219,18 @@ return (new CommentResource($comment))->response()->setStatusCode(200);
 `;
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [
-        diagnostic({
-          character: 0,
-          line: 2,
-          message:
-            'Method "return" does not exist on class "Kontentino\\Communication\\Models\\Comment"',
-        }),
-      ]),
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnostic({
+            character: 0,
+            line: 2,
+            message:
+              'Method "return" does not exist on class "Kontentino\\Communication\\Models\\Comment"',
+          }),
+        ],
+        { frameworkProviders: [] },
+      ),
     ).toEqual([]);
   });
 
@@ -1199,12 +1277,7 @@ PlainResponder::collection($comments);
     expect(
       filterPhpLanguageServerDiagnostics(
         source,
-        [
-          resourceResponse,
-          plainResponse,
-          resourceCollection,
-          plainCollection,
-        ],
+        [resourceResponse, plainResponse, resourceCollection, plainCollection],
         { frameworkProviders: [phpLaravelFrameworkProvider] },
       ),
     ).toEqual([
@@ -1227,9 +1300,11 @@ $comment->return();
         'Method "return" does not exist on class "Kontentino\\Communication\\Models\\Comment"',
     });
 
-    expect(filterPhpLanguageServerDiagnostics(source, [unresolved])).toEqual([
-      unresolved,
-    ]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([unresolved]);
   });
 
   it("suppresses stale PHPactor return parse diagnostics after completed calls", () => {
@@ -1240,14 +1315,18 @@ return (new CommentResource($comment))->response()->setStatusCode(200);
 `;
 
     expect(
-      filterPhpLanguageServerDiagnostics(source, [
-        diagnostic({
-          character: 0,
-          line: 3,
-          message:
-            'Parse error: syntax error, unexpected token "return" in Standard input code on line 4 Errors parsing Standard input code',
-        }),
-      ]),
+      filterPhpLanguageServerDiagnostics(
+        source,
+        [
+          diagnostic({
+            character: 0,
+            line: 3,
+            message:
+              'Parse error: syntax error, unexpected token "return" in Standard input code on line 4 Errors parsing Standard input code',
+          }),
+        ],
+        { frameworkProviders: [] },
+      ),
     ).toEqual([]);
   });
 
@@ -1264,9 +1343,11 @@ return (new CommentResource($comment))->response()->setStatusCode(200);
         'Parse error: syntax error, unexpected token "return" in Standard input code on line 4 Errors parsing Standard input code',
     });
 
-    expect(filterPhpLanguageServerDiagnostics(source, [parseError])).toEqual([
-      parseError,
-    ]);
+    expect(
+      filterPhpLanguageServerDiagnostics(source, [parseError], {
+        frameworkProviders: [],
+      }),
+    ).toEqual([parseError]);
   });
 
   it("suppresses PHPactor trait host-method diagnostics with confirmed host context", () => {
@@ -1291,20 +1372,16 @@ trait SoftDeletes
     });
 
     expect(
-      filterPhpLanguageServerDiagnostics(
-        source,
-        [unresolved],
-        {
-          contextualTraitHostMethods: new Set([
-            phpTraitHostMethodDiagnosticKey(
-              "Illuminate\\Database\\Eloquent\\SoftDeletes",
-              "fireModelEvent",
-            ),
-          ]),
-          path:
-            "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
-        },
-      ),
+      filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
+        contextualTraitHostMethods: new Set([
+          phpTraitHostMethodDiagnosticKey(
+            "Illuminate\\Database\\Eloquent\\SoftDeletes",
+            "fireModelEvent",
+          ),
+        ]),
+        path: "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
+      }),
     ).toEqual([]);
   });
 
@@ -1345,9 +1422,9 @@ trait SoftDeletes
           }),
         ],
         {
+          frameworkProviders: [],
           contextualTraitHostMethods: contexts,
-          path:
-            "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
+          path: "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
         },
       ),
     ).toEqual([]);
@@ -1371,6 +1448,7 @@ trait BrokenTrait
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         path: "/workspace/app/BrokenTrait.php",
       }),
     ).toEqual([unresolved]);
@@ -1397,6 +1475,7 @@ trait DispatchesEvents
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostMethods: new Set([
           phpTraitHostMethodDiagnosticKey(
             "App\\Support\\DispatchesEvents",
@@ -1449,6 +1528,7 @@ trait HasTenancy
           }),
         ],
         {
+          frameworkProviders: [],
           contextualTraitHostMethods: new Set([
             phpTraitHostMethodDiagnosticKey(
               "App\\Tenancy\\HasTenancy",
@@ -1486,6 +1566,7 @@ trait ResolvesHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostMethods: new Set([
           phpTraitHostMethodDiagnosticKey(
             "App\\Support\\ResolvesHostState",
@@ -1518,6 +1599,7 @@ trait ResolvesHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostMethods: new Set([
           phpTraitHostMethodDiagnosticKey(
             "App\\Support\\ResolvesHostState",
@@ -1550,6 +1632,7 @@ trait BootsHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostMethods: new Set([
           phpTraitHostMethodDiagnosticKey(
             "App\\Support\\BootsHostState",
@@ -1582,6 +1665,7 @@ trait BootsHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         path: "/workspace/app/Support/BootsHostState.php",
       }),
     ).toEqual([unresolved]);
@@ -1608,6 +1692,7 @@ trait ResolvesHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         path: "/workspace/app/Support/ResolvesHostState.php",
       }),
     ).toEqual([unresolved]);
@@ -1632,6 +1717,7 @@ trait SoftDeletes
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         path: "/workspace/vendor/laravel/framework/src/Illuminate/Database/Eloquent/SoftDeletes.php",
       }),
     ).toEqual([unresolved]);
@@ -1658,6 +1744,7 @@ trait ResolvesHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostConstants: new Set([
           phpTraitHostConstantDiagnosticKey(
             "App\\Support\\ResolvesHostState",
@@ -1709,6 +1796,7 @@ trait ResolvesHostState
           }),
         ],
         {
+          frameworkProviders: [],
           contextualTraitHostConstants: new Set([
             phpTraitHostConstantDiagnosticKey(
               "App\\Support\\ResolvesHostState",
@@ -1742,6 +1830,7 @@ trait ResolvesHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         path: "/workspace/app/Support/ResolvesHostState.php",
       }),
     ).toEqual([unresolved]);
@@ -1768,6 +1857,7 @@ trait ResolvesHostState
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostConstants: new Set([
           phpTraitHostConstantDiagnosticKey(
             "App\\Support\\ResolvesHostState",
@@ -1822,6 +1912,7 @@ trait ResolvesHostState
     ).toBeNull();
     expect(
       filterPhpLanguageServerDiagnostics(source, [misspelled], {
+        frameworkProviders: [],
         contextualTraitHostConstants: new Set([
           phpTraitHostConstantDiagnosticKey(
             "App\\Support\\ResolvesHostState",
@@ -1852,14 +1943,13 @@ trait ResolvesHostState
         'Constant "HostState" does not exist on trait "App\\Support\\ResolvesHostState"',
     });
 
-    expect(
-      phpTraitHostConstantDiagnosticContext(source, unresolved),
-    ).toEqual({
+    expect(phpTraitHostConstantDiagnosticContext(source, unresolved)).toEqual({
       constantName: "HostState",
       traitName: "App\\Support\\ResolvesHostState",
     });
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostConstants: new Set([
           phpTraitHostConstantDiagnosticKey(
             "App\\Support\\ResolvesHostState",
@@ -1892,6 +1982,7 @@ trait UsesConnection
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostProperties: new Set([
           phpTraitHostPropertyDiagnosticKey(
             "App\\Support\\UsesConnection",
@@ -1933,9 +2024,12 @@ trait UsesConnection
         "connectionName",
       ),
     );
-    expect(phpTraitHostPropertyDiagnosticContext(source, misspelled)).toBeNull();
+    expect(
+      phpTraitHostPropertyDiagnosticContext(source, misspelled),
+    ).toBeNull();
     expect(
       filterPhpLanguageServerDiagnostics(source, [misspelled], {
+        frameworkProviders: [],
         contextualTraitHostProperties: new Set([
           phpTraitHostPropertyDiagnosticKey(
             "App\\Support\\UsesConnection",
@@ -1987,6 +2081,7 @@ trait ResolvesHostState
           }),
         ],
         {
+          frameworkProviders: [],
           contextualTraitHostProperties: new Set([
             phpTraitHostPropertyDiagnosticKey(
               "App\\Support\\ResolvesHostState",
@@ -2020,6 +2115,7 @@ trait UsesConnection
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         path: "/workspace/app/Support/UsesConnection.php",
       }),
     ).toEqual([unresolved]);
@@ -2046,6 +2142,7 @@ trait UsesConnection
 
     expect(
       filterPhpLanguageServerDiagnostics(source, [unresolved], {
+        frameworkProviders: [],
         contextualTraitHostProperties: new Set([
           phpTraitHostPropertyDiagnosticKey(
             "App\\Support\\UsesConnection",

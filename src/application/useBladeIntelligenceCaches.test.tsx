@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -5,7 +6,6 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import {
   createPhpFrameworkProviderCapabilityRegistry,
-  phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { FileEntry, TextSearchResult } from "../domain/workspace";
@@ -70,8 +70,6 @@ function frameworkRuntime(
     capabilities,
     providers,
     profile: "laravel",
-    isLaravel: providers.some((provider) => provider.id === "laravel"),
-    isNette: providers.some((provider) => provider.id === "nette"),
     hasProvider: (providerId) =>
       providers.some((provider) => provider.id === providerId),
     supports: (capability) => capabilities.supports(capability),

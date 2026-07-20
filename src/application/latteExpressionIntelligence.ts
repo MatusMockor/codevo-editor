@@ -618,9 +618,7 @@ function inheritedCacheKeyMatchesRoot(
 function hasNetteProvider(
   context: LatteExpressionResolutionContext,
 ): boolean {
-  return context.deps.frameworkIntelligence.providers.some(
-    (provider) => provider.id === "nette",
-  );
+  return context.deps.frameworkIntelligence.hasProvider("nette");
 }
 
 function latteTemplateTypeContext(context: LatteExpressionResolutionContext) {

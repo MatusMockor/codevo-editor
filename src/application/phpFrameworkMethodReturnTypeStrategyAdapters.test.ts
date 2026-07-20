@@ -12,10 +12,9 @@ function makeDeps(
       hasProvider: (providerId) => providerId === "laravel",
       supports: (capability) => capability === "eloquentModelSemantics",
     },
-    netteDatabaseTypeResolver: {
-      resolveClassTypes: vi.fn(async () => null),
-      resolveTableType: vi.fn(async () => null),
-    },
+    isWorkspaceCurrent: () => true,
+    readPhpClassSource: vi.fn(async () => ""),
+    resolvePhpClassSourcePaths: vi.fn(async () => []),
     resolvePhpFrameworkBuilderModelType: vi.fn(
       async () => null as string | null,
     ),
@@ -70,6 +69,18 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
         returnType: "MorphTo",
       }),
     ).resolves.toBeNull();
+    await expect(
+      adapter.resolveDeclaredMethodReturnType({
+        callExpression: "$row->ref('users')",
+        declaringClassName: "App\\Row",
+        lateStaticClassName: "App\\Row",
+        methodName: "ref",
+        methodReturnExpressions: [],
+        rawReturnType: "ActiveRow",
+        resolvedReturnType: "App\\ActiveRow",
+        resolveTypeReference: (typeName) => typeName,
+      }),
+    ).resolves.toBe("App\\ActiveRow");
     expect(
       adapter.staticCallReturnType({
         className: "App\\Models\\Post",
@@ -87,7 +98,6 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
     const frameworkRuntime = {
       hasProvider: vi.fn((_providerId: string) => false),
       supports: vi.fn((_capability: string) => false),
-      isLaravel: true,
       profile: "laravel" as const,
     };
     const adapter = createPhpFrameworkMethodReturnTypeStrategyAdapters(
@@ -134,20 +144,32 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
   });
 
   it("delegates concrete repository returns to the Nette database strategy", async () => {
-    const netteDatabaseTypeResolver = {
-      resolveClassTypes: vi.fn(async () => ({
-        activeRowType: "App\\Generated\\ActiveRow\\UsersActiveRow",
-        selectionType: "App\\Generated\\Selection\\UsersSelection",
-      })),
-      resolveTableType: vi.fn(async () => null),
+    const types = {
+      activeRowType: "App\\Generated\\ActiveRow\\UsersActiveRow",
+      selectionType: "App\\Generated\\Selection\\UsersSelection",
     };
+    const sources: Record<string, string> = {
+      "App\\UsersRepository": `<?php
+use App\\Generated\\ActiveRow\\UsersActiveRow;
+use App\\Generated\\Repository\\UsersRepositoryTrait;
+use App\\Generated\\Selection\\UsersSelection;
+class UsersRepository { use UsersRepositoryTrait; protected string $tableName = 'users'; }`,
+      [types.activeRowType]: "<?php abstract class UsersActiveRow {}",
+      [types.selectionType]: "<?php abstract class UsersSelection {}",
+    };
+    const resolvePhpClassSourcePaths = vi.fn(async (className: string) =>
+      sources[className] ? [`/${className}.php`] : [],
+    );
     const adapter = createPhpFrameworkMethodReturnTypeStrategyAdapters(
       makeDeps({
         frameworkRuntime: {
           hasProvider: () => true,
           supports: (capability) => capability === "netteDatabaseSemantics",
         },
-        netteDatabaseTypeResolver,
+        readPhpClassSource: vi.fn(
+          async (_path, className) => sources[className] ?? "",
+        ),
+        resolvePhpClassSourcePaths,
       }),
     );
 
@@ -157,7 +179,7 @@ describe("phpFrameworkMethodReturnTypeStrategyAdapters", () => {
         methodName: "findBy",
       }),
     ).resolves.toBe("App\\Generated\\ActiveRow\\UsersActiveRow|null");
-    expect(netteDatabaseTypeResolver.resolveClassTypes).toHaveBeenCalledWith(
+    expect(resolvePhpClassSourcePaths).toHaveBeenCalledWith(
       "App\\UsersRepository",
     );
   });

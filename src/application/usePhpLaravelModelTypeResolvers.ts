@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   isLaravelCollectionFluentMethod,
@@ -29,6 +29,7 @@ import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpLaravelCarrierKind } from "./usePhpLaravelMethodGenericModelType";
 import { phpClassDocGenericCollectionModelTypeCandidate } from "./usePhpLaravelRelationResolver";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { createPhpFrameworkSemanticTypeExtensions } from "./phpFrameworkSemanticTypeExtensions";
 
 export type PhpLaravelModelTypeResolver = (
   source: string,
@@ -53,7 +54,10 @@ export interface UsePhpLaravelModelTypeResolversOptions {
     propertyName: string,
     includeCollectionRelations?: boolean,
   ) => Promise<string | null>;
-  resolvePhpClassReference: (source: string, className: string) => string | null;
+  resolvePhpClassReference: (
+    source: string,
+    className: string,
+  ) => string | null;
   readNavigationFileContent: (path: string) => Promise<string>;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   resolvePhpLaravelMethodGenericModelType: (
@@ -89,6 +93,13 @@ export function usePhpLaravelModelTypeResolvers({
   workspaceRoot,
 }: UsePhpLaravelModelTypeResolversOptions) {
   const frameworkProviders = frameworkRuntime.providers;
+  const typeExtensions = useMemo(
+    () =>
+      createPhpFrameworkSemanticTypeExtensions({
+        providers: frameworkProviders,
+      }),
+    [frameworkProviders],
+  );
   const supportsEloquentModelSemantics = frameworkRuntime.supports(
     "eloquentModelSemantics",
   );
@@ -118,7 +129,7 @@ export function usePhpLaravelModelTypeResolvers({
           source,
           position,
           normalizedModelExpression,
-          { frameworkProviders },
+          { typeExtensions },
         );
 
         if (directType) {
@@ -154,7 +165,9 @@ export function usePhpLaravelModelTypeResolvers({
           return resolvePhpClassReference(source, constructedClassName);
         }
 
-        const modelMethodCall = phpMethodCallExpression(normalizedModelExpression);
+        const modelMethodCall = phpMethodCallExpression(
+          normalizedModelExpression,
+        );
 
         if (modelMethodCall) {
           const receiverType = await resolvePhpModelExpressionType(
@@ -163,11 +176,16 @@ export function usePhpLaravelModelTypeResolvers({
           );
 
           return receiverType
-            ? resolvePhpMethodReturnType(receiverType, modelMethodCall.methodName)
+            ? resolvePhpMethodReturnType(
+                receiverType,
+                modelMethodCall.methodName,
+              )
             : null;
         }
 
-        const modelStaticCall = phpStaticCallExpression(normalizedModelExpression);
+        const modelStaticCall = phpStaticCallExpression(
+          normalizedModelExpression,
+        );
 
         if (modelStaticCall) {
           const className = resolvePhpClassReference(
@@ -218,7 +236,8 @@ export function usePhpLaravelModelTypeResolvers({
                 )
               : null;
           const callbackRelationOwnerType =
-            callbackHostModelType && callbackContext.previousRelationNames?.length
+            callbackHostModelType &&
+            callbackContext.previousRelationNames?.length
               ? await resolvePhpLaravelRelationPathOwnerType(
                   callbackHostModelType,
                   callbackContext.previousRelationNames,
@@ -277,7 +296,7 @@ export function usePhpLaravelModelTypeResolvers({
           source,
           position,
           methodCall.receiverExpression,
-          { frameworkProviders },
+          { typeExtensions },
         );
         const constructedReceiverType =
           directReceiverType ??
@@ -414,6 +433,7 @@ export function usePhpLaravelModelTypeResolvers({
       resolvePhpLaravelRelationPathOwnerType,
       resolvePhpMethodReturnType,
       supportsEloquentModelSemantics,
+      typeExtensions,
     ],
   );
 
@@ -537,13 +557,15 @@ export function usePhpLaravelModelTypeResolvers({
         source,
         position,
         normalizedExpression,
-        { frameworkProviders },
+        { typeExtensions },
       );
       const resolvedDirectCollectionType = directCollectionType
         ? resolvePhpClassReference(source, directCollectionType)
         : null;
       const directCollectionModelType = resolvedDirectCollectionType
-        ? await resolvePhpCollectionModelTypeFromClass(resolvedDirectCollectionType)
+        ? await resolvePhpCollectionModelTypeFromClass(
+            resolvedDirectCollectionType,
+          )
         : null;
 
       if (directCollectionModelType) {
@@ -601,7 +623,10 @@ export function usePhpLaravelModelTypeResolvers({
         );
       }
 
-      if (methodCall && isLaravelCollectionFluentMethod(methodCall.methodName)) {
+      if (
+        methodCall &&
+        isLaravelCollectionFluentMethod(methodCall.methodName)
+      ) {
         return resolvePhpLaravelCollectionModelType(
           source,
           position,
@@ -627,7 +652,7 @@ export function usePhpLaravelModelTypeResolvers({
           source,
           position,
           methodCall.receiverExpression,
-          { frameworkProviders },
+          { typeExtensions },
         );
         const constructedReceiverType =
           directReceiverType ??
@@ -656,13 +681,14 @@ export function usePhpLaravelModelTypeResolvers({
       const staticCallClassName = staticCall
         ? resolvePhpClassReference(source, staticCall.className)
         : null;
-      const staticGenericModelType = staticCall && staticCallClassName
-        ? await resolvePhpLaravelMethodGenericModelType(
-            "collection",
-            staticCallClassName,
-            staticCall.methodName,
-          )
-        : null;
+      const staticGenericModelType =
+        staticCall && staticCallClassName
+          ? await resolvePhpLaravelMethodGenericModelType(
+              "collection",
+              staticCallClassName,
+              staticCall.methodName,
+            )
+          : null;
 
       if (staticGenericModelType) {
         return staticGenericModelType;
@@ -677,6 +703,7 @@ export function usePhpLaravelModelTypeResolvers({
       resolvePhpEloquentBuilderModelType,
       resolvePhpLaravelMethodGenericModelType,
       supportsEloquentModelSemantics,
+      typeExtensions,
     ],
   );
 

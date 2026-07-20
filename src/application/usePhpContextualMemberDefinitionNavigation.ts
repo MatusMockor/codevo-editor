@@ -2,11 +2,11 @@ import { useCallback, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpClassConstantPositionOrNull,
-  phpParameterTypeForVariable,
   resolvePhpClassName,
   type PhpIdentifierContext,
   type PhpMethodDefinitionHint,
 } from "../domain/phpNavigation";
+import { phpParameterTypeForVariable } from "../domain/phpParameterTypes";
 import {
   phpMixinClassNames,
   phpTraitClassNames,

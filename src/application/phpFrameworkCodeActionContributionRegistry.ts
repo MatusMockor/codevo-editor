@@ -1,100 +1,58 @@
-import {
-  buildCreateMissingViewFileCodeAction,
-  type CreateMissingViewFileCodeAction,
-} from "./phpBladeViewCodeActions";
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import { collectActiveContributions } from "./phpFrameworkContributionRegistry";
+import type {
+  ActivePhpFrameworkCodeActionContribution,
+  PhpFrameworkCodeActionContributionAdapter,
+} from "./phpFrameworkCodeActionContributions";
+import { assertUniquePhpFrameworkRegistrationIds } from "./phpFrameworkExtensionRegistry";
+import { orderPhpFrameworkRegistrationsByPriority } from "./phpFrameworkRegistrationOrdering";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import type { PhpFrameworkCodeActionContribution } from "./phpCodeActionWorkspaceCollector";
-import { phpNettePresenterLinkCodeActions } from "./phpNettePresenterLinkCodeActions";
-
-export interface PhpFrameworkCodeActionContributionDependencies {
-  collectViewTargets: () => Promise<ReadonlyArray<{ name: string }>>;
-  readTestFileIfExists: (path: string) => Promise<string | null>;
-  workspaceRoot: string | null;
-}
-
-interface ActivePhpFrameworkCodeActionContribution {
-  readonly createMissingBladeViewCodeAction?: CreateMissingViewFileCodeAction;
-  readonly providePhpCodeAction: PhpFrameworkCodeActionContribution;
-}
-
-const NO_FRAMEWORK_CODE_ACTION: CreateMissingViewFileCodeAction = async () =>
-  null;
 
 export interface ActivePhpFrameworkCodeActions {
   readonly contributions: readonly PhpFrameworkCodeActionContribution[];
-  readonly createMissingBladeViewCodeAction: CreateMissingViewFileCodeAction;
 }
 
 export function activePhpFrameworkCodeActions({
+  contributionAdapters,
   frameworkRuntime,
-  ...dependencies
-}: PhpFrameworkCodeActionContributionDependencies & {
+}: {
+  contributionAdapters: readonly PhpFrameworkCodeActionContributionAdapter[];
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "providers" | "supports">;
 }): ActivePhpFrameworkCodeActions {
+  assertUniquePhpFrameworkRegistrationIds(
+    contributionAdapters,
+    "PHP framework code-action contribution catalog",
+  );
   const activeContributions = collectActiveContributions({
     capability: "codeActions",
     frameworkRuntime,
     select: (provider) =>
-      phpFrameworkCodeActionContributionsForProvider(provider, dependencies),
+      contributionAdapters.flatMap((adapter) =>
+        adapter.contributionsFor(provider).map((contribution) => ({
+          ...contribution,
+          priority: contribution.priority ?? adapter.priority ?? 0,
+        })),
+      ),
   });
+  const orderedContributions =
+    orderActiveCodeActionContributions(activeContributions);
 
   return {
-    contributions: activeContributions.map(
+    contributions: orderedContributions.map(
       (contribution) => contribution.providePhpCodeAction,
     ),
-    createMissingBladeViewCodeAction:
-      activeContributions.find(
-        (contribution) => contribution.createMissingBladeViewCodeAction,
-      )?.createMissingBladeViewCodeAction ?? NO_FRAMEWORK_CODE_ACTION,
   };
 }
 
-function phpFrameworkCodeActionContributionsForProvider(
-  provider: PhpFrameworkProvider,
-  dependencies: PhpFrameworkCodeActionContributionDependencies,
-): ActivePhpFrameworkCodeActionContribution[] {
-  const codeActions = provider.codeActions;
+function orderActiveCodeActionContributions(
+  contributions: readonly ActivePhpFrameworkCodeActionContribution[],
+): readonly ActivePhpFrameworkCodeActionContribution[] {
+  assertUniquePhpFrameworkRegistrationIds(
+    contributions,
+    "active PHP framework code-action contributions",
+  );
 
-  if (!codeActions) {
-    return [];
-  }
-
-  const contributions: ActivePhpFrameworkCodeActionContribution[] = [];
-  const missingTemplateFile = codeActions.missingTemplateFile;
-
-  if (missingTemplateFile) {
-    const createMissingBladeViewCodeAction =
-      buildCreateMissingViewFileCodeAction({
-        ...dependencies,
-        canCreateMissingViewFiles: true,
-        detectMissingViewReference: missingTemplateFile.detectMissingReference,
-      });
-
-    contributions.push({
-      createMissingBladeViewCodeAction,
-      providePhpCodeAction: async (source, range, isRequestedRootActive) => {
-        const action = await createMissingBladeViewCodeAction(
-          source,
-          range,
-          "php",
-          isRequestedRootActive,
-        );
-
-        return action ? [action] : null;
-      },
-    });
-  }
-
-  if (codeActions.phpPresenterLinkMethod === true) {
-    contributions.push({
-      providePhpCodeAction: async (source, range, isRequestedRootActive) =>
-        isRequestedRootActive()
-          ? phpNettePresenterLinkCodeActions(source, range)
-          : null,
-    });
-  }
-
-  return contributions;
+  return orderPhpFrameworkRegistrationsByPriority(contributions, (left, right) =>
+    left.registration.id.localeCompare(right.registration.id),
+  );
 }

@@ -33,7 +33,6 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
           (providerId: string) => providerId === activeProviderId,
         ),
         supports: vi.fn((_capability: string) => false),
-        isLaravel: true,
       };
       const deps = makeDeps({
         frameworkRuntime,
@@ -81,7 +80,6 @@ describe("phpFrameworkDiagnosticContextStrategyAdapters", () => {
       supports: vi.fn((capability: string) =>
         capability === "eloquentModelSemantics"
       ),
-      isLaravel: false,
       profile: "nette",
     };
     const phpClassHasDynamicBuilderFinder = vi.fn(async () => false);

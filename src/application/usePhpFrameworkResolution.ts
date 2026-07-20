@@ -1,5 +1,8 @@
 import { useEffect, useMemo } from "react";
-import { resolvePhpFrameworkProfile } from "../domain/phpFrameworkProviders";
+import {
+  resolvePhpFrameworkProfile,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import {
   createPhpFrameworkIntelligence,
@@ -9,8 +12,10 @@ import {
   createPhpFrameworkRuntimeContext,
   type PhpFrameworkRuntimeContext,
 } from "./phpFrameworkRuntimeContext";
+import { phpFrameworkPluginCatalog } from "./phpFrameworkPluginCatalog";
 
 export interface UsePhpFrameworkResolutionOptions {
+  providerCatalog?: readonly PhpFrameworkProvider[];
   workspaceDescriptor: WorkspaceDescriptor | null;
 }
 
@@ -22,14 +27,19 @@ export interface PhpFrameworkResolutionApi {
 }
 
 export function usePhpFrameworkResolution({
+  providerCatalog = phpFrameworkPluginCatalog,
   workspaceDescriptor,
 }: UsePhpFrameworkResolutionOptions): PhpFrameworkResolutionApi {
   // One detection pass per workspace: the active provider set and the exclusive
   // profile ("laravel" | "nette" | "generic") are derived from the same result,
   // so they can never disagree (no second source of truth).
   const phpFrameworkResolution = useMemo(
-    () => resolvePhpFrameworkProfile(workspaceDescriptor?.php ?? null),
-    [workspaceDescriptor?.php],
+    () =>
+      resolvePhpFrameworkProfile(
+        workspaceDescriptor?.php ?? null,
+        providerCatalog,
+      ),
+    [providerCatalog, workspaceDescriptor?.php],
   );
   const phpFrameworkIntelligence = useMemo(
     () => createPhpFrameworkIntelligence(phpFrameworkResolution),

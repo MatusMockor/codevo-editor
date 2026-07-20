@@ -1,16 +1,18 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+import { type PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
+import {
+  composePhpFrameworkActiveDocumentDiagnosticsContributions,
+  type PhpFrameworkActiveDocumentDiagnosticsCompositionDependencies,
+} from "./phpFrameworkActiveDocumentDiagnosticsComposition";
 import {
   createPhpFrameworkRuntimeContext,
   type PhpFrameworkRuntimeContext,
@@ -20,8 +22,9 @@ import {
   type PhpFrameworkActiveDocumentDiagnosticsHookDependencies,
 } from "./usePhpFrameworkActiveDocumentDiagnostics";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROOT = "/workspace";
 const BLADE_PATH = `${ROOT}/resources/views/comments/show.blade.php`;
@@ -49,8 +52,6 @@ function runtimeWithProvider(
 
   return {
     ...LARAVEL_RUNTIME,
-    isLaravel: providerId === "laravel",
-    isNette: providerId === "nette",
     providers,
     profile: providerId === "nette" ? "nette" : "generic",
     hasProvider: (candidateId) => candidateId === providerId,
@@ -132,7 +133,10 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 function renderProvider(
-  overrides: Partial<PhpFrameworkActiveDocumentDiagnosticsHookDependencies> = {},
+  overrides: Partial<
+    PhpFrameworkActiveDocumentDiagnosticsHookDependencies &
+      PhpFrameworkActiveDocumentDiagnosticsCompositionDependencies
+  > = {},
 ) {
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -144,15 +148,28 @@ function renderProvider(
   const frameworkDiagnostics = stateHolder<
     Record<string, LanguageServerDiagnostic[]>
   >({});
+  const collectCompleteLatteTemplateRelativePaths =
+    overrides.collectCompleteLatteTemplateRelativePaths ??
+    vi.fn(async () => []);
+  const collectViewTargets =
+    overrides.collectViewTargets ??
+    vi.fn(async () => [viewTarget("dashboard")]);
+  const provideLattePresenterLinkDiagnostics =
+    overrides.provideLattePresenterLinkDiagnostics ?? vi.fn(async () => []);
+  const contributions =
+    overrides.contributions ??
+    composePhpFrameworkActiveDocumentDiagnosticsContributions({
+      collectCompleteLatteTemplateRelativePaths,
+      collectViewTargets,
+      provideLattePresenterLinkDiagnostics,
+    });
 
   let deps: PhpFrameworkActiveDocumentDiagnosticsHookDependencies = {
     activeDocument,
     activeDocumentRef,
-    collectCompleteLatteTemplateRelativePaths: vi.fn(async () => []),
-    collectViewTargets: vi.fn(async () => [viewTarget("dashboard")]),
+    contributions,
     currentWorkspaceRootRef,
     frameworkRuntime: LARAVEL_RUNTIME,
-    provideLattePresenterLinkDiagnostics: vi.fn(async () => []),
     setFrameworkDiagnosticsByPath: frameworkDiagnostics.set,
     workspaceRoot: ROOT,
     ...overrides,
@@ -197,7 +214,7 @@ function renderProvider(
 describe("usePhpFrameworkActiveDocumentDiagnostics", () => {
   it("activates Laravel Blade diagnostics by provider identity", async () => {
     const harness = renderProvider({
-      frameworkRuntime: runtimeWithProvider("laravel", { isLaravel: false }),
+      frameworkRuntime: runtimeWithProvider("laravel"),
     });
 
     await harness.rerender();
@@ -306,9 +323,8 @@ describe("usePhpFrameworkActiveDocumentDiagnostics", () => {
   );
 
   it("ignores stale async diagnostics when active document content changes", async () => {
-    const collectRequests: Array<
-      ReturnType<typeof deferred<ViewTarget[]>>
-    > = [];
+    const collectRequests: Array<ReturnType<typeof deferred<ViewTarget[]>>> =
+      [];
     const collectViewTargets = vi.fn(() => {
       const request = deferred<ViewTarget[]>();
       collectRequests.push(request);

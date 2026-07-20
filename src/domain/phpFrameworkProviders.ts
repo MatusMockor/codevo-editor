@@ -1,31 +1,33 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
+import type {
+  PhpFrameworkSemanticCapabilities,
+  PhpFrameworkSourceContext,
+} from "./phpFrameworkSemanticContracts";
 import {
   phpFrameworkSupportsTargetCollection,
   phpFrameworkTargetSearchQueries,
 } from "./phpFrameworkTargetCapabilities";
-import {
-  isLaravelPhpProject,
-  phpLaravelFrameworkProvider,
-} from "./phpFrameworkLaravelProvider";
-import {
-  defaultPhpFrameworkProviders,
-} from "./phpFrameworkProviderDefaults";
-import {
-  isNettePhpProject,
-  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
-  phpNetteFrameworkProvider,
-} from "./phpFrameworkNetteProvider";
 import type { PhpProjectDescriptor } from "./workspace";
 
-export {
-  defaultPhpFrameworkProviders,
-  isLaravelPhpProject,
-  isNettePhpProject,
-  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-};
+export type {
+  PhpFrameworkContainerAutowiredCandidate,
+  PhpFrameworkContainerAutowiredCandidatesContext,
+  PhpFrameworkContainerBinding,
+  PhpFrameworkContainerBindingPathContext,
+  PhpFrameworkContainerBindingsContext,
+  PhpFrameworkContainerConcreteClassNamesContext,
+  PhpFrameworkContainerExpressionContext,
+  PhpFrameworkMethodCallReturnTypeContext,
+  PhpFrameworkPropertyTypeContext,
+  PhpFrameworkQueryCallbackContext,
+  PhpFrameworkQueryCallbackVariableContext,
+  PhpFrameworkSameSourceMethodReturnFallbackContext,
+  PhpFrameworkSemanticCapabilities,
+  PhpFrameworkSemanticProvider,
+  PhpFrameworkSourceContext,
+} from "./phpFrameworkSemanticContracts";
+
 export {
   phpFrameworkAuthorizationAbilityDefinitionsFromSource,
   phpFrameworkAuthorizationAbilitySearchQueries,
@@ -90,90 +92,6 @@ export interface PhpFrameworkMemberPropertyContext {
   receiverExpression: string;
   sourceContext?: PhpFrameworkSourceContext;
   source: string;
-}
-
-export interface PhpFrameworkPropertyTypeContext {
-  propertyName: string;
-  receiverType: string | null;
-  source: string;
-}
-
-/**
- * Framework-neutral query callback context. Laravel currently supplies this
- * for Eloquent builder callbacks; other providers remain inert unless they
- * explicitly add the capability.
- */
-export interface PhpFrameworkQueryCallbackContext {
-  methodName: string;
-  modelClassName: string | null;
-  morphTypeClassNames?: string[];
-  previousRelationNames?: string[];
-  receiverExpression: string | null;
-  relationName: string | null;
-}
-
-export interface PhpFrameworkQueryCallbackVariableContext {
-  position: EditorPosition;
-  source: string;
-  variableName: string;
-}
-
-export interface PhpFrameworkMethodCallReturnTypeContext {
-  callExpression: string | null;
-  methodName: string;
-  receiverExpression: string | null;
-  receiverType: string | null;
-  sourceContext?: PhpFrameworkSourceContext;
-  source: string;
-}
-
-export interface PhpFrameworkSameSourceMethodReturnFallbackContext {
-  methodName: string;
-}
-
-export interface PhpFrameworkContainerExpressionContext {
-  expression: string;
-}
-
-export interface PhpFrameworkContainerBinding {
-  abstractClassName: string;
-  concreteClassName: string;
-}
-
-export interface PhpFrameworkContainerBindingsContext {
-  source: string;
-}
-
-export interface PhpFrameworkContainerConcreteClassNamesContext {
-  source: string;
-}
-
-export interface PhpFrameworkContainerAutowiredCandidate {
-  autowiredTypes: readonly string[] | null;
-  producedTypeSource:
-    | {
-        className: string;
-        kind: "class";
-      }
-    | {
-        declaringClassName: string;
-        kind: "factoryMethod";
-        methodName: string;
-        staticOnly: boolean;
-      };
-  source: string;
-}
-
-export interface PhpFrameworkContainerAutowiredCandidatesContext {
-  sources: readonly string[];
-}
-
-export interface PhpFrameworkContainerBindingPathContext {
-  path: string;
-}
-
-export interface PhpFrameworkSourceContext {
-  workspaceSources?: readonly string[];
 }
 
 export interface PhpFrameworkMagicDiagnosticMatch {
@@ -535,11 +453,7 @@ export interface PhpFrameworkValidationRuleCompletionContext {
  * path never binds to one framework's classifier.
  */
 export type PhpFrameworkStringLiteralHelper =
-  | "config"
-  | "route"
-  | "view"
-  | "trans"
-  | "env";
+  "config" | "route" | "view" | "trans" | "env";
 
 /**
  * A string literal at the cursor classified as a framework navigation-helper
@@ -589,8 +503,7 @@ export interface PhpFrameworkScopedStringCompletion {
   prefix: string;
 }
 
-export interface PhpFrameworkResolvedScopedStringCompletion
-  extends PhpFrameworkScopedStringCompletion {
+export interface PhpFrameworkResolvedScopedStringCompletion extends PhpFrameworkScopedStringCompletion {
   insertText: (name: string) => string;
   providerId: string;
 }
@@ -688,11 +601,7 @@ export interface PhpFrameworkBladeSourceContext {
 }
 
 export type PhpFrameworkBladeReferenceKind =
-  | "view"
-  | "component"
-  | "livewire"
-  | "section"
-  | "stack";
+  "view" | "component" | "livewire" | "section" | "stack";
 
 export interface PhpFrameworkBladeReference {
   kind: PhpFrameworkBladeReferenceKind;
@@ -748,15 +657,27 @@ export interface PhpFrameworkTargetCollectionCapability {
   searchQueries: readonly string[];
 }
 
-export type PhpFrameworkActiveDocumentDiagnosticsDescriptor =
-  | {
-      kind: "bladeViewReferences";
-      language: "blade";
-    }
-  | {
-      kind: "lattePresenterLinks" | "latteTemplateReferences";
-      language: "latte";
-    };
+/**
+ * Framework-owned active-document diagnostics registration.
+ *
+ * `kind` is the stable contribution identifier and `language` is the editor
+ * language the contribution accepts. Both remain open strings so a new
+ * framework can register diagnostics without changing the semantic core.
+ */
+export interface PhpFrameworkActiveDocumentDiagnosticsDescriptor<
+  Kind extends string = string,
+  Language extends string = string,
+> {
+  readonly kind: Kind;
+  readonly language: Language;
+}
+
+export function definePhpFrameworkActiveDocumentDiagnostics<
+  const Descriptors extends
+    readonly PhpFrameworkActiveDocumentDiagnosticsDescriptor[],
+>(descriptors: Descriptors): Descriptors {
+  return descriptors;
+}
 
 export type PhpFrameworkFileChangeInvalidationDescriptor =
   | {
@@ -827,11 +748,11 @@ export interface PhpFrameworkProvider {
     /**
      * Optional diagnostic `source` label stamped on a framework-magic hint when
      * THIS provider's magic classification fires (spec §4.6). Absent → the
-     * shared `laravel-magic` marker, so Laravel output stays byte-identical; the
-     * Nette provider overrides it to `nette-magic` so a Nette project's
-     * downgraded hints are not mislabelled as Laravel. Read once per filter pass
-     * by `phpLanguageServerDiagnosticFilters`; it never affects severity or
-     * WHICH diagnostics are downgraded (that is driven purely by the predicates
+     * neutral `framework-magic` marker; the Laravel provider declares
+     * `laravel-magic` and the Nette provider `nette-magic` so downgraded hints
+     * carry their framework's label. Read once per filter pass by
+     * `phpLanguageServerDiagnosticFilters`; it never affects severity or WHICH
+     * diagnostics are downgraded (that is driven purely by the predicates
      * above), only the label a user sees on the resulting soft hint.
      */
     magicSource?: string;
@@ -1140,57 +1061,8 @@ export interface PhpFrameworkProvider {
     ) => string[];
     presenterScanDirectories?: readonly string[];
   };
-  semantics?: {
-    queryCallbackContextForVariable?: (
-      context: PhpFrameworkQueryCallbackVariableContext,
-    ) => PhpFrameworkQueryCallbackContext | null;
-    propertyTypeFromSource?: (
-      context: PhpFrameworkPropertyTypeContext,
-    ) => string | null;
-    methodCallReturnTypeFromSource?: (
-      context: PhpFrameworkMethodCallReturnTypeContext,
-    ) => string | null;
-    suppressesSameSourceMethodReturnFallback?: (
-      context: PhpFrameworkSameSourceMethodReturnFallbackContext,
-    ) => boolean;
-    containerExpressionClassName?: (
-      context: PhpFrameworkContainerExpressionContext,
-    ) => string | null;
-    containerBindingsFromSource?: (
-      context: PhpFrameworkContainerBindingsContext,
-    ) => PhpFrameworkContainerBinding[];
-    containerConcreteClassNamesFromSource?: (
-      context: PhpFrameworkContainerConcreteClassNamesContext,
-    ) => string[];
-    containerAutowiredCandidatesFromSources?: (
-      context: PhpFrameworkContainerAutowiredCandidatesContext,
-    ) => PhpFrameworkContainerAutowiredCandidate[];
-    isContainerBindingCandidatePath?: (
-      context: PhpFrameworkContainerBindingPathContext,
-    ) => boolean;
-    supportsContainerBindingTextSearch?: true;
-    /**
-     * Provider-owned opt-in for Eloquent-style model semantics: dynamic
-     * builders, local scopes, model properties/relations, and model-aware
-     * method return recovery. This activates Laravel-named adapters without
-     * tying dispatch to the Laravel provider id.
-     */
-    supportsEloquentModelSemantics?: true;
-    /** Provider-owned opt-in for concrete Nette Database row/selection types. */
-    supportsNetteDatabaseSemantics?: true;
-  };
+  semantics?: PhpFrameworkSemanticCapabilities;
 }
-
-/**
- * Plugin registry of every known framework provider. Adding a framework means
- * appending its provider here (and giving it an `appliesTo`); the rest of the
- * pipeline discovers it automatically. Laravel and Nette ship today; the seam is
- * ready for further providers (Symfony, ...) without further changes.
- */
-export const phpFrameworkProviderRegistry: readonly PhpFrameworkProvider[] = [
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-];
 
 export type PhpFrameworkProviderCapability =
   | "authorizationAbilities"
@@ -1256,7 +1128,7 @@ export interface PhpFrameworkInertiaCompletionContext {
 }
 
 export function createPhpFrameworkProviderCapabilityRegistry(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkProviderCapabilityRegistry {
   return {
     providerSignature: phpFrameworkProviderSignature(providers),
@@ -1278,7 +1150,7 @@ export function createPhpFrameworkProviderCapabilityRegistry(
  */
 export function phpFrameworkProvidersForProject(
   php: PhpProjectDescriptor | null,
-  registry: readonly PhpFrameworkProvider[] = phpFrameworkProviderRegistry,
+  registry: readonly PhpFrameworkProvider[],
 ): readonly PhpFrameworkProvider[] {
   return resolvePhpFrameworkProfile(php, registry).providers;
 }
@@ -1299,7 +1171,7 @@ export function isPhpFrameworkProviderActive(
 export function phpFrameworkMemberCompletionsFromSource(
   source: string,
   declaringClassName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
 ): PhpMethodCompletion[] {
   return providers.flatMap(
@@ -1308,8 +1180,7 @@ export function phpFrameworkMemberCompletionsFromSource(
         declaringClassName,
         source,
         sourceContext,
-      }) ??
-      [],
+      }) ?? [],
   );
 }
 
@@ -1317,7 +1188,7 @@ export function isKnownPhpFrameworkStaticMethod(
   source: string,
   className: string,
   methodName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
 ): boolean {
   return Boolean(
@@ -1335,7 +1206,7 @@ export function phpFrameworkStaticMethodMagicDiagnostic(
   source: string,
   className: string,
   methodName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
 ): PhpFrameworkMagicDiagnosticMatch | null {
   for (const provider of providers) {
@@ -1358,7 +1229,7 @@ export function isKnownPhpFrameworkMemberMethod(
   source: string,
   receiverExpression: string,
   methodName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
   receiverClassName?: string | null,
 ): boolean {
@@ -1378,7 +1249,7 @@ export function phpFrameworkMemberMethodMagicDiagnostic(
   source: string,
   receiverExpression: string,
   methodName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
   receiverClassName?: string | null,
 ): PhpFrameworkMagicDiagnosticMatch | null {
@@ -1403,7 +1274,7 @@ export function phpFrameworkMemberPropertyMagicDiagnostic(
   source: string,
   receiverExpression: string,
   propertyName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
   sourceContext?: PhpFrameworkSourceContext,
   receiverClassName?: string | null,
 ): PhpFrameworkMagicDiagnosticMatch | null {
@@ -1426,7 +1297,7 @@ export function phpFrameworkMemberPropertyMagicDiagnostic(
 
 export function phpFrameworkRouteMissingTargetMessage(
   name: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string | null {
   for (const provider of providers) {
     const message = provider.routes?.missingTargetMessage?.({ name });
@@ -1447,16 +1318,18 @@ export function phpFrameworkRouteMissingTargetMessage(
 export function phpFrameworkConfigReferenceAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkConfigReference | null {
-  return phpFrameworkConfigCompletionContextAt(source, position, providers)
-    ?.reference ?? null;
+  return (
+    phpFrameworkConfigCompletionContextAt(source, position, providers)
+      ?.reference ?? null
+  );
 }
 
 export function phpFrameworkConfigCompletionContextAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkConfigCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.config?.referenceAt?.({ position, source });
@@ -1476,7 +1349,7 @@ export function phpFrameworkConfigCompletionContextAt(
 export function phpFrameworkConfigKeysFromSource(
   source: string,
   fileName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkConfigKey[] {
   return providers.flatMap(
     (provider) => provider.config?.keysFromSource?.({ fileName, source }) ?? [],
@@ -1491,7 +1364,7 @@ export function phpFrameworkConfigTargetFromSource(
   source: string,
   fileName: string,
   key: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkConfigKey | null {
   for (const provider of providers) {
     const target = provider.config?.targetFromSource?.({
@@ -1510,7 +1383,7 @@ export function phpFrameworkConfigTargetFromSource(
 
 export function phpFrameworkConfigLiteralTarget(
   literal: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkResolvedLiteralTarget | null {
   for (const provider of providers) {
     const target = provider.config?.resolveLiteralTarget?.({ literal });
@@ -1525,7 +1398,7 @@ export function phpFrameworkConfigLiteralTarget(
 
 export function phpFrameworkConfigMissingTargetMessage(
   key: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string | null {
   for (const provider of providers) {
     const message = provider.config?.missingTargetMessage?.({ key });
@@ -1541,16 +1414,18 @@ export function phpFrameworkConfigMissingTargetMessage(
 export function phpFrameworkEnvReferenceAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkEnvReference | null {
-  return phpFrameworkEnvCompletionContextAt(source, position, providers)
-    ?.reference ?? null;
+  return (
+    phpFrameworkEnvCompletionContextAt(source, position, providers)
+      ?.reference ?? null
+  );
 }
 
 export function phpFrameworkEnvCompletionContextAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkEnvCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.env?.referenceAt?.({ position, source });
@@ -1565,7 +1440,7 @@ export function phpFrameworkEnvCompletionContextAt(
 
 export function phpFrameworkEnvEntriesFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkEnvEntry[] {
   return providers.flatMap(
     (provider) => provider.env?.entriesFromSource?.({ source }) ?? [],
@@ -1575,7 +1450,7 @@ export function phpFrameworkEnvEntriesFromSource(
 export function phpFrameworkEnvTargetFromSource(
   source: string,
   name: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkEnvEntry | null {
   for (const provider of providers) {
     const target = provider.env?.targetFromSource?.({ name, source });
@@ -1585,9 +1460,9 @@ export function phpFrameworkEnvTargetFromSource(
     }
 
     if (!provider.env?.targetFromSource) {
-      const entry = provider.env?.entriesFromSource?.({ source }).find(
-        (candidate) => candidate.name === name,
-      );
+      const entry = provider.env
+        ?.entriesFromSource?.({ source })
+        .find((candidate) => candidate.name === name);
 
       if (entry) {
         return entry;
@@ -1600,7 +1475,7 @@ export function phpFrameworkEnvTargetFromSource(
 
 export function phpFrameworkEnvLiteralTarget(
   literal: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkResolvedLiteralTarget | null {
   for (const provider of providers) {
     const target = provider.env?.resolveLiteralTarget?.({ literal });
@@ -1615,7 +1490,7 @@ export function phpFrameworkEnvLiteralTarget(
 
 export function phpFrameworkEnvMissingTargetMessage(
   name: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string | null {
   for (const provider of providers) {
     const message = provider.env?.missingTargetMessage?.({ name });
@@ -1629,7 +1504,7 @@ export function phpFrameworkEnvMissingTargetMessage(
 }
 
 export function phpFrameworkSupportsEnv(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "env");
 }
@@ -1639,7 +1514,7 @@ export function phpFrameworkSupportsEnv(
  * gate that replaces the hardcoded `isLaravelFrameworkActive` config checks.
  */
 export function phpFrameworkSupportsConfig(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "config");
 }
@@ -1652,19 +1527,24 @@ export function phpFrameworkSupportsConfig(
 export function phpFrameworkTranslationReferenceAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkTranslationReference | null {
-  return phpFrameworkTranslationCompletionContextAt(source, position, providers)
-    ?.reference ?? null;
+  return (
+    phpFrameworkTranslationCompletionContextAt(source, position, providers)
+      ?.reference ?? null
+  );
 }
 
 export function phpFrameworkTranslationCompletionContextAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkTranslationCompletionContext | null {
   for (const provider of providers) {
-    const reference = provider.translations?.referenceAt?.({ position, source });
+    const reference = provider.translations?.referenceAt?.({
+      position,
+      source,
+    });
 
     if (reference) {
       return { provider, reference };
@@ -1682,7 +1562,7 @@ export function phpFrameworkTranslationCompletionContextAt(
 export function phpFrameworkTranslationKeysFromSource(
   source: string,
   fileName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkTranslationKey[] {
   return providers.flatMap(
     (provider) =>
@@ -1699,7 +1579,7 @@ export function phpFrameworkTranslationTargetFromSource(
   source: string,
   fileName: string,
   key: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkTranslationKey | null {
   for (const provider of providers) {
     const target = provider.translations?.targetFromSource?.({
@@ -1718,7 +1598,7 @@ export function phpFrameworkTranslationTargetFromSource(
 
 export function phpFrameworkTranslationLiteralTarget(
   literal: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkResolvedLiteralTarget | null {
   for (const provider of providers) {
     const target = provider.translations?.resolveLiteralTarget?.({ literal });
@@ -1733,7 +1613,7 @@ export function phpFrameworkTranslationLiteralTarget(
 
 export function phpFrameworkTranslationMissingTargetMessage(
   key: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string | null {
   for (const provider of providers) {
     const message = provider.translations?.missingTargetMessage?.({ key });
@@ -1753,7 +1633,7 @@ export function phpFrameworkTranslationMissingTargetMessage(
  */
 export function phpFrameworkJsonTranslationKeysFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkTranslationKey[] {
   return providers.flatMap(
     (provider) => provider.translations?.jsonKeysFromSource?.({ source }) ?? [],
@@ -1768,7 +1648,7 @@ export function phpFrameworkJsonTranslationKeysFromSource(
 export function phpFrameworkJsonTranslationTargetFromSource(
   source: string,
   key: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkTranslationKey | null {
   for (const provider of providers) {
     const target = provider.translations?.jsonTargetFromSource?.({
@@ -1790,7 +1670,7 @@ export function phpFrameworkJsonTranslationTargetFromSource(
  * translation checks.
  */
 export function phpFrameworkSupportsTranslations(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "translations");
 }
@@ -1803,16 +1683,18 @@ export function phpFrameworkSupportsTranslations(
 export function phpFrameworkViewReferenceAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkViewReference | null {
-  return phpFrameworkViewCompletionContextAt(source, position, providers)
-    ?.reference ?? null;
+  return (
+    phpFrameworkViewCompletionContextAt(source, position, providers)
+      ?.reference ?? null
+  );
 }
 
 export function phpFrameworkViewCompletionContextAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkViewCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.templating?.referenceAt?.({ position, source });
@@ -1827,7 +1709,7 @@ export function phpFrameworkViewCompletionContextAt(
 
 export function phpFrameworkViewLiteralTarget(
   literal: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkResolvedLiteralTarget | null {
   for (const provider of providers) {
     const target = provider.templating?.resolveLiteralTarget?.({ literal });
@@ -1842,7 +1724,7 @@ export function phpFrameworkViewLiteralTarget(
 
 export function phpFrameworkViewMissingTargetMessage(
   name: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string | null {
   for (const provider of providers) {
     const message = provider.templating?.missingTargetMessage?.({ name });
@@ -1857,11 +1739,12 @@ export function phpFrameworkViewMissingTargetMessage(
 
 export function phpFrameworkTemplateNameFromRelativePath(
   relativePath: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string | null {
   for (const provider of providers) {
-    const templateName =
-      provider.templating?.templateNameFromRelativePath?.({ relativePath });
+    const templateName = provider.templating?.templateNameFromRelativePath?.({
+      relativePath,
+    });
 
     if (templateName) {
       return templateName;
@@ -1874,16 +1757,18 @@ export function phpFrameworkTemplateNameFromRelativePath(
 export function phpFrameworkInertiaReferenceAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkInertiaReference | null {
-  return phpFrameworkInertiaCompletionContextAt(source, position, providers)
-    ?.reference ?? null;
+  return (
+    phpFrameworkInertiaCompletionContextAt(source, position, providers)
+      ?.reference ?? null
+  );
 }
 
 export function phpFrameworkInertiaCompletionContextAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkInertiaCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.inertia?.referenceAt?.({ position, source });
@@ -1898,7 +1783,7 @@ export function phpFrameworkInertiaCompletionContextAt(
 
 export function phpFrameworkInertiaLiteralTarget(
   literal: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkResolvedLiteralTarget | null {
   for (const provider of providers) {
     const target = provider.inertia?.resolveLiteralTarget?.({ literal });
@@ -1912,7 +1797,7 @@ export function phpFrameworkInertiaLiteralTarget(
 }
 
 export function phpFrameworkSupportsInertia(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "inertia");
 }
@@ -1923,7 +1808,7 @@ export function phpFrameworkSupportsInertia(
  * view checks.
  */
 export function phpFrameworkSupportsViews(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "views");
 }
@@ -1935,7 +1820,7 @@ export function phpFrameworkSupportsViews(
  */
 export function phpFrameworkViewDataEntryFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkViewDataEntry | null {
   for (const provider of providers) {
     const entry = provider.viewData?.entryFromSource?.({ source });
@@ -1953,7 +1838,7 @@ export function phpFrameworkViewDataEntryFromSource(
  * data into templates. Empty when no active provider ships viewData.
  */
 export function phpFrameworkViewDataSearchQueries(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): readonly string[] {
   return phpFrameworkTargetSearchQueries("viewData", providers);
 }
@@ -1964,13 +1849,13 @@ export function phpFrameworkViewDataSearchQueries(
  * view-data checks.
  */
 export function phpFrameworkSupportsViewData(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "viewData");
 }
 
 export function phpFrameworkSupportsViewDataComponentFactories(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(
     providers,
@@ -1986,7 +1871,7 @@ export function phpFrameworkSupportsViewDataComponentFactories(
 export function phpFrameworkValidationRuleReferenceAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkValidationRuleReference | null {
   for (const provider of providers) {
     const reference = provider.validation?.ruleReferenceAt?.({
@@ -2008,7 +1893,7 @@ export function phpFrameworkValidationRuleReferenceAt(
  */
 export function phpFrameworkValidationRuleCompletions(
   prefix: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkValidationRuleCompletion[] {
   return providers.flatMap(
     (provider) => provider.validation?.ruleCompletions?.({ prefix }) ?? [],
@@ -2021,7 +1906,7 @@ export function phpFrameworkValidationRuleCompletions(
  * validation checks.
  */
 export function phpFrameworkSupportsValidation(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "validation");
 }
@@ -2035,7 +1920,7 @@ export function phpFrameworkSupportsValidation(
 export function phpFrameworkStringLiteralHelperAt(
   source: string,
   offset: number,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkStringLiteralHelperMatch | null {
   for (const provider of providers) {
     const match = provider.stringLiterals?.helperAt?.({ offset, source });
@@ -2051,7 +1936,7 @@ export function phpFrameworkStringLiteralHelperAt(
 export function phpFrameworkScopedStringCompletionContextAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return providers.some(
     (provider) =>
@@ -2064,7 +1949,7 @@ export function phpFrameworkScopedStringCompletionContextAt(
 export function phpFrameworkScopedStringCompletionAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkResolvedScopedStringCompletion | null {
   for (const provider of providers) {
     const completion = provider.php?.scopedStringCompletionAt?.({
@@ -2092,7 +1977,7 @@ export function phpFrameworkScopedStringCompletionAt(
 export function phpFrameworkPhpPresenterLinkAt(
   source: string,
   offset: number,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkPhpPresenterLink | null {
   for (const provider of providers) {
     const link = provider.php?.presenterLinkAt?.({ offset, source });
@@ -2108,7 +1993,7 @@ export function phpFrameworkPhpPresenterLinkAt(
 export function phpFrameworkPhpPresenterLinkCompletionAt(
   source: string,
   offset: number,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkPhpPresenterLinkCompletion | null {
   for (const provider of providers) {
     const completion = provider.php?.presenterLinkCompletionAt?.({
@@ -2125,7 +2010,7 @@ export function phpFrameworkPhpPresenterLinkCompletionAt(
 }
 
 export function phpFrameworkSupportsPhpPresenterLinks(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "phpPresenterLinks");
 }
@@ -2136,7 +2021,7 @@ export function phpFrameworkSupportsPhpPresenterLinks(
  * string-helper navigation checks.
  */
 export function phpFrameworkSupportsStringLiterals(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "stringLiterals");
 }
@@ -2146,7 +2031,7 @@ export function phpFrameworkSupportsStringLiterals(
  * Nette capability, but the application layer only asks the provider boundary.
  */
 export function phpFrameworkSupportsNeonConfigIntelligence(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(
     providers,
@@ -2160,7 +2045,7 @@ export function phpFrameworkSupportsNeonConfigIntelligence(
  * boundary.
  */
 export function phpFrameworkSupportsLatteTemplateIntelligence(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(
     providers,
@@ -2175,7 +2060,7 @@ export function phpFrameworkSupportsLatteTemplateIntelligence(
  * `$this->link(...)` targets.
  */
 export function phpFrameworkSupportsLattePresenterLinkIntelligence(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(
     providers,
@@ -2326,14 +2211,14 @@ function matchingPhpFrameworkProviders(
 
 /**
  * Resolves the exclusive framework profile and active provider from a project
- * descriptor over the given registry (defaulting to the shipped registry). This
+ * descriptor over the explicitly supplied registry. This
  * is the single detection path both `phpFrameworkProvidersForProject` and
  * `frameworkProfileForProject` delegate to. If the registry has no provider for
  * the project the result is empty/generic.
  */
 export function resolvePhpFrameworkProfile(
   php: PhpProjectDescriptor | null,
-  registry: readonly PhpFrameworkProvider[] = phpFrameworkProviderRegistry,
+  registry: readonly PhpFrameworkProvider[],
 ): PhpFrameworkResolution {
   if (!php) {
     return {
@@ -2390,6 +2275,7 @@ function frameworkProfileFromProviderId(id: string): FrameworkProfile {
  */
 export function frameworkProfileForProject(
   php: PhpProjectDescriptor | null | undefined,
+  registry: readonly PhpFrameworkProvider[],
 ): FrameworkProfile {
-  return resolvePhpFrameworkProfile(php ?? null).profile;
+  return resolvePhpFrameworkProfile(php ?? null, registry).profile;
 }

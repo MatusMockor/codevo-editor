@@ -1,3 +1,4 @@
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -9,7 +10,6 @@ import {
   parseNetteLinkTarget,
 } from "../domain/latteLinkNavigation";
 import {
-  phpNetteFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import {

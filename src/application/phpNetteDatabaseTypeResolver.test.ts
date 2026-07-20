@@ -27,14 +27,18 @@ class UsersRepository { use UsersRepositoryTrait; protected string $tableName = 
       resolveClassSourcePaths,
     });
 
-    await expect(resolver.resolveClassTypes("App\\UsersRepository")).resolves.toEqual(
-      TYPES,
+    await expect(
+      resolver.resolveClassTypes("App\\UsersRepository"),
+    ).resolves.toEqual(TYPES);
+    await expect(
+      resolver.resolveClassTypes("App\\UsersRepository"),
+    ).resolves.toEqual(TYPES);
+    expect(resolveClassSourcePaths).toHaveBeenCalledWith(
+      "App\\UsersRepository",
     );
-    await expect(resolver.resolveClassTypes("App\\UsersRepository")).resolves.toEqual(
-      TYPES,
+    expect(resolveClassSourcePaths).toHaveBeenCalledWith(
+      "App\\UsersRepository",
     );
-    expect(resolveClassSourcePaths).toHaveBeenCalledWith("App\\UsersRepository");
-    expect(resolveClassSourcePaths).toHaveBeenCalledWith("App\\UsersRepository");
   });
 
   it("rejects missing generated classes and inactive workspace owners", async () => {
@@ -49,13 +53,18 @@ class UsersRepository {}`,
         className === "App\\UsersRepository" ? ["/repo.php"] : [],
     });
 
-    await expect(resolver.resolveClassTypes("App\\UsersRepository")).resolves.toBeNull();
+    await expect(
+      resolver.resolveClassTypes("App\\UsersRepository"),
+    ).resolves.toBeNull();
     active = false;
-    await expect(resolver.resolveClassTypes("App\\UsersRepository")).resolves.toBeNull();
+    await expect(
+      resolver.resolveClassTypes("App\\UsersRepository"),
+    ).resolves.toBeNull();
   });
 
   it("resolves literal relation targets only when the generated type exists", async () => {
-    const target = "Generated\\ActiveRowTypes\\ActiveRow\\UserStatusesActiveRow";
+    const target =
+      "Generated\\ActiveRowTypes\\ActiveRow\\UserStatusesActiveRow";
     const resolver = createPhpNetteDatabaseTypeResolver({
       isActive: () => true,
       readClassSource: async () => "",
@@ -124,7 +133,8 @@ class UsersRepository {}`,
             return ["/repository.php"];
           }
 
-          return generatedTypesExist() && Object.values(types).includes(candidate)
+          return generatedTypesExist() &&
+            Object.values(types).includes(candidate)
             ? [`/${candidate}.php`]
             : [];
         },
@@ -133,9 +143,13 @@ class UsersRepository {}`,
     const second = createResolver(secondTypes, () => true);
 
     await expect(first.resolveClassTypes(className)).resolves.toBeNull();
-    await expect(second.resolveClassTypes(className)).resolves.toEqual(secondTypes);
+    await expect(second.resolveClassTypes(className)).resolves.toEqual(
+      secondTypes,
+    );
     firstGeneratedTypesExist = true;
-    await expect(first.resolveClassTypes(className)).resolves.toEqual(firstTypes);
+    await expect(first.resolveClassTypes(className)).resolves.toEqual(
+      firstTypes,
+    );
   });
 
   it("evicts a rejected discovery so a transient read failure can retry", async () => {
@@ -153,7 +167,8 @@ class UsersRepository { use UsersRepositoryTrait; }`;
         return source;
       },
       resolveClassSourcePaths: async (className) =>
-        className === "App\\UsersRepository" || Object.values(TYPES).includes(className)
+        className === "App\\UsersRepository" ||
+        Object.values(TYPES).includes(className)
           ? [`/${className}.php`]
           : [],
     });
@@ -179,21 +194,89 @@ class Repository { use UsersRepositoryTrait; }`;
       readClassSource: async () => source,
       resolveClassSourcePaths: async (className) =>
         className === "App\\Repository" ||
-        [...Object.values(TYPES), ...Object.values(profileTypes)].includes(className)
+        [...Object.values(TYPES), ...Object.values(profileTypes)].includes(
+          className,
+        )
           ? [`/${className}.php`]
           : [],
     });
 
-    await expect(resolver.resolveClassTypes("App\\Repository")).resolves.toEqual(
-      TYPES,
-    );
+    await expect(
+      resolver.resolveClassTypes("App\\Repository"),
+    ).resolves.toEqual(TYPES);
 
     source = `<?php
 use Generated\\ActiveRowTypes\\Repository\\ProfilesRepositoryTrait;
 class Repository { use ProfilesRepositoryTrait; }`;
 
-    await expect(resolver.resolveClassTypes("App\\Repository")).resolves.toEqual(
-      profileTypes,
+    await expect(
+      resolver.resolveClassTypes("App\\Repository"),
+    ).resolves.toEqual(profileTypes);
+  });
+
+  it("memoizes positive class and table lookups for one generation and clears them", async () => {
+    const sources: Record<string, string> = {
+      "App\\UsersRepository": `<?php
+use Generated\\ActiveRowTypes\\ActiveRow\\UsersActiveRow;
+use Generated\\ActiveRowTypes\\Selection\\UsersSelection;
+class UsersRepository {}`,
+      [TYPES.activeRowType]: "<?php abstract class UsersActiveRow {}",
+      [TYPES.selectionType]: "<?php abstract class UsersSelection {}",
+    };
+    const tableTarget =
+      "Generated\\ActiveRowTypes\\Selection\\UserStatusesSelection";
+    sources[tableTarget] = "<?php abstract class UserStatusesSelection {}";
+    const readClassSource = vi.fn(
+      async (_path: string, className: string) => sources[className] ?? "",
+    );
+    const resolveClassSourcePaths = vi.fn(async (className: string) =>
+      sources[className] ? [`/${className}.php`] : [],
+    );
+    const resolver = createPhpNetteDatabaseTypeResolver({
+      cachePolicy: "generation",
+      isActive: () => true,
+      readClassSource,
+      resolveClassSourcePaths,
+    });
+
+    await expect(
+      resolver.resolveClassTypes("App\\UsersRepository"),
+    ).resolves.toEqual(TYPES);
+    const classReadsAfterFirstLookup = readClassSource.mock.calls.length;
+    const classSearchesAfterFirstLookup =
+      resolveClassSourcePaths.mock.calls.length;
+    await expect(
+      resolver.resolveClassTypes("App\\UsersRepository"),
+    ).resolves.toEqual(TYPES);
+    expect(readClassSource).toHaveBeenCalledTimes(classReadsAfterFirstLookup);
+    expect(resolveClassSourcePaths).toHaveBeenCalledTimes(
+      classSearchesAfterFirstLookup,
+    );
+
+    await expect(
+      resolver.resolveTableType(
+        "Generated\\ActiveRowTypes\\ActiveRow\\UsersActiveRow",
+        "selection",
+        "user_statuses",
+      ),
+    ).resolves.toBe(tableTarget);
+    const searchesAfterFirstTableLookup =
+      resolveClassSourcePaths.mock.calls.length;
+    await expect(
+      resolver.resolveTableType(
+        "Generated\\ActiveRowTypes\\ActiveRow\\UsersActiveRow",
+        "selection",
+        "user_statuses",
+      ),
+    ).resolves.toBe(tableTarget);
+    expect(resolveClassSourcePaths).toHaveBeenCalledTimes(
+      searchesAfterFirstTableLookup,
+    );
+
+    resolver.clear?.();
+    await resolver.resolveClassTypes("App\\UsersRepository");
+    expect(readClassSource.mock.calls.length).toBeGreaterThan(
+      classReadsAfterFirstLookup,
     );
   });
 });

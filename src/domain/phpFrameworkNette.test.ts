@@ -1,3 +1,4 @@
+import { phpNetteFrameworkProvider } from "./phpFrameworkNetteProvider";
 import { describe, expect, it } from "vitest";
 import {
   neonServiceAliasesFromSource,
@@ -8,7 +9,6 @@ import {
   phpFrameworkContainerBindingsFromSource,
   phpFrameworkContainerConcreteClassNameFromSource,
   phpFrameworkContainerExpressionClassName,
-  phpNetteFrameworkProvider,
 } from "./phpFrameworkProviders";
 import {
   isNetteContainerBindingCandidatePath,

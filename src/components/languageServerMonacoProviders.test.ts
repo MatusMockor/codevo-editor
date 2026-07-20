@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it, vi } from "vitest";
 import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import {
@@ -35,7 +36,6 @@ import type {
 } from "../domain/phpMethodCompletions";
 import {
   phpFrameworkScopedStringCompletionContextAt,
-  phpLaravelFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { UserSnippet } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";

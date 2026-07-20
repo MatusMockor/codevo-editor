@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -10,7 +11,7 @@ import {
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
 } from "../domain/phpFrameworkLaravel";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";

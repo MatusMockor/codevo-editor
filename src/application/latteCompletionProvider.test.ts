@@ -47,7 +47,6 @@ function functionWorkspaceOptions(): LatteProviderFlowFactoryOptions {
         supports: (capability: string) =>
           capability === "latteTemplateIntelligence",
       },
-      isNette: true,
     },
     getActiveDocument: () => ({
       languageId: "latte",

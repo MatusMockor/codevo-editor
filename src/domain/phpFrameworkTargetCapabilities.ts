@@ -9,9 +9,6 @@ import type {
   PhpFrameworkRouteReference,
   PhpFrameworkTargetCollectionKind,
 } from "./phpFrameworkProviders";
-import {
-  defaultPhpFrameworkProviders,
-} from "./phpFrameworkProviderDefaults";
 import type { EditorPosition } from "./languageServerFeatures";
 import type { PhpProjectDescriptor } from "./workspace";
 
@@ -23,16 +20,18 @@ import type { PhpProjectDescriptor } from "./workspace";
 export function phpFrameworkRouteReferenceAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkRouteReference | null {
-  return phpFrameworkRouteCompletionContextAt(source, position, providers)
-    ?.reference ?? null;
+  return (
+    phpFrameworkRouteCompletionContextAt(source, position, providers)
+      ?.reference ?? null
+  );
 }
 
 export function phpFrameworkRouteCompletionContextAt(
   source: string,
   position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkRouteCompletionContext | null {
   for (const provider of providers) {
     const reference = provider.routes?.referenceAt?.({ position, source });
@@ -51,7 +50,7 @@ export function phpFrameworkRouteCompletionContextAt(
  */
 export function phpFrameworkRouteDefinitionsFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkRouteDefinition[] {
   return providers.flatMap(
     (provider) => provider.routes?.definitionsFromSource?.({ source }) ?? [],
@@ -61,7 +60,7 @@ export function phpFrameworkRouteDefinitionsFromSource(
 export function phpFrameworkRouteModelBindingAt(
   source: string,
   offset: number,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkRouteModelBinding | null {
   for (const provider of providers) {
     const binding = provider.routes?.modelBindingAt?.({ offset, source });
@@ -77,7 +76,7 @@ export function phpFrameworkRouteModelBindingAt(
 export function phpFrameworkExplicitRouteModelBindingClassName(
   source: string,
   parameterName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string | null {
   for (const provider of providers) {
     const className =
@@ -95,7 +94,7 @@ export function phpFrameworkExplicitRouteModelBindingClassName(
 }
 
 export function phpFrameworkExplicitRouteModelBindingSearchQueries(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): readonly string[] {
   return providers.flatMap(
     (provider) => provider.routes?.explicitModelBindingSearchQueries ?? [],
@@ -104,12 +103,14 @@ export function phpFrameworkExplicitRouteModelBindingSearchQueries(
 
 export function phpFrameworkModelNamespacePrefixes(
   php: PhpProjectDescriptor | null | undefined,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string[] {
   const prefixes: string[] = [];
 
   for (const provider of providers) {
-    prefixes.push(...(provider.routes?.modelNamespacePrefixes?.({ php }) ?? []));
+    prefixes.push(
+      ...(provider.routes?.modelNamespacePrefixes?.({ php }) ?? []),
+    );
   }
 
   return prefixes;
@@ -120,7 +121,7 @@ export function phpFrameworkModelNamespacePrefixes(
  * other files. Empty when no active provider ships routes.
  */
 export function phpFrameworkRouteSearchQueries(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): readonly string[] {
   return phpFrameworkTargetSearchQueries("routes", providers);
 }
@@ -130,23 +131,24 @@ export function phpFrameworkRouteSearchQueries(
  * gate that replaces the hardcoded `isLaravelFrameworkActive` route checks.
  */
 export function phpFrameworkSupportsRoutes(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return providers.some((provider) => provider.routes !== undefined);
 }
 
 export function phpFrameworkAuthorizationAbilityDefinitionsFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkAuthorizationAbilityDefinition[] {
   return providers.flatMap(
     (provider) =>
-      provider.authorizationAbilities?.definitionsFromSource?.({ source }) ?? [],
+      provider.authorizationAbilities?.definitionsFromSource?.({ source }) ??
+      [],
   );
 }
 
 export function phpFrameworkAuthorizationAbilitySearchQueries(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): readonly string[] {
   return providers.flatMap(
     (provider) => provider.authorizationAbilities?.searchQueries ?? [],
@@ -154,7 +156,7 @@ export function phpFrameworkAuthorizationAbilitySearchQueries(
 }
 
 export function phpFrameworkSupportsAuthorizationAbilities(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return providers.some(
     (provider) => provider.authorizationAbilities !== undefined,
@@ -163,7 +165,7 @@ export function phpFrameworkSupportsAuthorizationAbilities(
 
 export function phpFrameworkMiddlewareAliasDefinitionsFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkMiddlewareAliasDefinition[] {
   return providers.flatMap(
     (provider) =>
@@ -172,7 +174,7 @@ export function phpFrameworkMiddlewareAliasDefinitionsFromSource(
 }
 
 export function phpFrameworkMiddlewareAliasSearchQueries(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): readonly string[] {
   return providers.flatMap(
     (provider) => provider.middlewareAliases?.searchQueries ?? [],
@@ -180,7 +182,7 @@ export function phpFrameworkMiddlewareAliasSearchQueries(
 }
 
 export function phpFrameworkSupportsMiddlewareAliases(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return providers.some((provider) => provider.middlewareAliases !== undefined);
 }
@@ -188,7 +190,7 @@ export function phpFrameworkSupportsMiddlewareAliases(
 export function phpFrameworkDispatchTargetAt(
   source: string,
   offset: number,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): PhpFrameworkDispatchTarget | null {
   for (const provider of providers) {
     const target = provider.dispatch?.targetAt?.({ offset, source });
@@ -203,7 +205,7 @@ export function phpFrameworkDispatchTargetAt(
 
 export function phpFrameworkEventListenerMapFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): Map<string, string[]> {
   for (const provider of providers) {
     const map = provider.dispatch?.eventListenerMapFromSource?.({ source });
@@ -218,7 +220,7 @@ export function phpFrameworkEventListenerMapFromSource(
 
 export function phpFrameworkEventServiceProviderClassNames(
   php: PhpProjectDescriptor | null | undefined,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): string[] {
   const classNames: string[] = [];
 
@@ -232,14 +234,14 @@ export function phpFrameworkEventServiceProviderClassNames(
 }
 
 export function phpFrameworkSupportsDispatch(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return providers.some((provider) => provider.dispatch !== undefined);
 }
 
 export function phpFrameworkTargetSearchQueries(
   kind: PhpFrameworkTargetCollectionKind,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): readonly string[] {
   return providers.flatMap((provider) => {
     const queries =
@@ -257,7 +259,7 @@ export function phpFrameworkTargetSearchQueries(
 
 export function phpFrameworkSupportsTargetCollection(
   kind: PhpFrameworkTargetCollectionKind,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return providers.some((provider) => {
     const collections = provider.targetCollections?.filter(

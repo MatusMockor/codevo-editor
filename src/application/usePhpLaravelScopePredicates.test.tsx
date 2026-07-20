@@ -1,9 +1,10 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -33,7 +34,6 @@ const STALE_LEGACY_LARAVEL_RUNTIME = {
   providers: [],
   hasProvider: (providerId: string) => providerId === "laravel",
   supports: () => false,
-  isLaravel: true,
 };
 
 function methodCompletion(

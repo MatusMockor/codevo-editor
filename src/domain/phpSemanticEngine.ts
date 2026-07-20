@@ -1,5 +1,5 @@
 import type { EditorPosition } from "./languageServerFeatures";
-import { phpParameterTypeForVariable } from "./phpNavigation";
+import { phpParameterTypeForVariable } from "./phpParameterTypes";
 import {
   firstPhpDocTypeToken,
   phpDocClassStringReturnTemplate,
@@ -16,17 +16,13 @@ import {
   phpDeclaredTypeCandidate,
 } from "./phpTypeAnalysis";
 import {
-  phpFrameworkContainerConcreteClassNameFromSource,
-  phpFrameworkMethodCallReturnTypeFromSource,
-  phpFrameworkPropertyTypeFromSource,
-  phpFrameworkSuppressesSameSourceMethodReturnFallback,
-  type PhpFrameworkProvider,
-  type PhpFrameworkSourceContext,
-} from "./phpFrameworkProviders";
-export {
-  phpLaravelQueryCallbackContextForVariable,
-  type PhpLaravelQueryCallbackContext,
-} from "./phpLaravelQueryCallbackContext";
+  phpContainerExpressionTypeFromExtensions,
+  phpMethodCallReturnTypeFromExtensions,
+  phpPropertyTypeFromExtensions,
+  phpSuppressesSameSourceMethodReturnFallback,
+  type PhpSemanticSourceContext,
+  type PhpSemanticTypeExtension,
+} from "./phpSemanticTypeExtensions";
 
 export {
   phpDeclaredGenericTypeCandidates,
@@ -34,11 +30,6 @@ export {
   phpMethodReturnExpressions,
 } from "./phpTypeAnalysis";
 export { phpArrayOffsetValueType } from "./phpTypeAnalysis";
-export {
-  phpLaravelContainerBindingsFromSource,
-  phpLaravelContainerExpressionClassName,
-  type PhpLaravelContainerBinding,
-} from "./phpFrameworkLaravel";
 
 export interface PhpMethodCallExpression {
   methodName: string;
@@ -85,14 +76,15 @@ export interface PhpDocGenericInheritance {
 
 export interface PhpSemanticEngineOptions {
   contextualThisClassName?: string;
-  frameworkProviders?: readonly PhpFrameworkProvider[];
-  frameworkSourceContext?: PhpFrameworkSourceContext;
+  sourceContext?: PhpSemanticSourceContext;
+  typeExtensions?: readonly PhpSemanticTypeExtension[];
 }
 
 export function phpCurrentClassName(source: string): string | null {
-  const classMatch = /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
-    source,
-  );
+  const classMatch =
+    /\b(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(
+      source,
+    );
 
   if (!classMatch?.[1]) {
     return null;
@@ -147,12 +139,15 @@ export function phpReceiverExpressionTypeInSource(
   receiverExpression: string,
   options: PhpSemanticEngineOptions = {},
 ): string | null {
-  const normalizedExpression = phpNormalizeReceiverExpression(receiverExpression);
+  const normalizedExpression =
+    phpNormalizeReceiverExpression(receiverExpression);
 
   if (normalizedExpression === "$this") {
-    return options.contextualThisClassName?.trim().replace(/^\\+/, "") ||
+    return (
+      options.contextualThisClassName?.trim().replace(/^\\+/, "") ||
       phpCurrentClassNameAtPosition(source, position) ||
-      phpCurrentClassName(source);
+      phpCurrentClassName(source)
+    );
   }
 
   const thisPropertyMatch = new RegExp(
@@ -163,25 +158,21 @@ export function phpReceiverExpressionTypeInSource(
     return phpThisPropertyType(source, thisPropertyMatch[1], options);
   }
 
-  // Laravel container resolution as a receiver: `app(X::class)`,
-  // `resolve(X::class)`, `app()->make(X::class)`, `App::make(X::class)`, … all
-  // yield an instance of `X`. This mirrors the variable-assignment path
-  // (`phpVariableTypeInSource`) so inline chains like
-  // `app()->make(X::class)->method()` resolve the receiver type and stop emitting
-  // false "undefined method" diagnostics. Gated by an active framework provider,
-  // and the resolver only fires when the container call is the outer operation.
-  const containerClassName = phpFrameworkContainerConcreteClassNameFromSource(
-    source,
-    normalizedExpression,
-    options.frameworkProviders,
-    options.frameworkSourceContext,
+  const containerClassName = phpContainerExpressionTypeFromExtensions(
+    options.typeExtensions ?? [],
+    {
+      expression: normalizedExpression,
+      source,
+      sourceContext: options.sourceContext,
+    },
   );
 
   if (containerClassName) {
     return containerClassName;
   }
 
-  const newExpressionClassName = phpNewExpressionClassName(normalizedExpression);
+  const newExpressionClassName =
+    phpNewExpressionClassName(normalizedExpression);
 
   if (newExpressionClassName) {
     return newExpressionClassName;
@@ -197,12 +188,12 @@ export function phpReceiverExpressionTypeInSource(
       options,
     );
 
-    return phpFrameworkPropertyTypeFromSource(
-      source,
-      propertyAccess.propertyName,
-      options.frameworkProviders,
+    return phpPropertyTypeFromExtensions(options.typeExtensions ?? [], {
+      propertyName: propertyAccess.propertyName,
       receiverType,
-    );
+      source,
+      sourceContext: options.sourceContext,
+    });
   }
 
   const methodCall = phpMethodCallExpression(normalizedExpression);
@@ -215,19 +206,21 @@ export function phpReceiverExpressionTypeInSource(
       options,
     );
 
-    return phpFrameworkMethodCallReturnTypeFromSource(
-      source,
-      methodCall.methodName,
-      receiverType,
-      methodCall.receiverExpression,
-      options.frameworkProviders,
-      normalizedExpression,
-      options.frameworkSourceContext,
-    ) ?? phpSameSourceMethodCallReturnType(
-      source,
-      methodCall.methodName,
-      receiverType,
-      options.frameworkProviders,
+    return (
+      phpMethodCallReturnTypeFromExtensions(options.typeExtensions ?? [], {
+        callExpression: normalizedExpression,
+        methodName: methodCall.methodName,
+        receiverExpression: methodCall.receiverExpression,
+        receiverType,
+        source,
+        sourceContext: options.sourceContext,
+      }) ??
+      phpSameSourceMethodCallReturnType(
+        source,
+        methodCall.methodName,
+        receiverType,
+        options.typeExtensions,
+      )
     );
   }
 
@@ -239,19 +232,21 @@ export function phpReceiverExpressionTypeInSource(
       staticCall.className,
     );
 
-    return phpFrameworkMethodCallReturnTypeFromSource(
-      source,
-      staticCall.methodName,
-      staticCall.className,
-      normalizedExpression,
-      options.frameworkProviders,
-      normalizedExpression,
-      options.frameworkSourceContext,
-    ) ?? phpSameSourceMethodCallReturnType(
-      source,
-      staticCall.methodName,
-      fallbackReceiverType,
-      options.frameworkProviders,
+    return (
+      phpMethodCallReturnTypeFromExtensions(options.typeExtensions ?? [], {
+        callExpression: normalizedExpression,
+        methodName: staticCall.methodName,
+        receiverExpression: normalizedExpression,
+        receiverType: staticCall.className,
+        source,
+        sourceContext: options.sourceContext,
+      }) ??
+      phpSameSourceMethodCallReturnType(
+        source,
+        staticCall.methodName,
+        fallbackReceiverType,
+        options.typeExtensions,
+      )
     );
   }
 
@@ -273,33 +268,38 @@ export function phpVariableTypeInSource(
   options: PhpSemanticEngineOptions = {},
 ): string | null {
   const assignmentExpression =
-    phpAssignmentExpressionForVariableBefore(source, position, variableName) ?? "";
+    phpAssignmentExpressionForVariableBefore(source, position, variableName) ??
+    "";
 
   return (
     phpParameterTypeForVariable(source, position, variableName) ??
     phpDocTypeForVariableBefore(source, position, variableName) ??
     phpNewExpressionClassName(assignmentExpression) ??
-    phpFrameworkContainerConcreteClassNameFromSource(
+    phpContainerExpressionTypeFromExtensions(options.typeExtensions ?? [], {
+      expression: assignmentExpression,
       source,
-      assignmentExpression,
-      options.frameworkProviders,
-      options.frameworkSourceContext,
-    ) ??
-    phpFrameworkPropertyAccessAssignmentReturnType(
-      source,
-      position,
-      variableName,
-      assignmentExpression,
-      options,
-    ) ??
-    phpFrameworkMethodCallAssignmentReturnType(
+      sourceContext: options.sourceContext,
+    }) ??
+    phpPropertyAccessAssignmentReturnType(
       source,
       position,
       variableName,
       assignmentExpression,
       options,
     ) ??
-    phpForeachValueTypeForVariableBefore(source, position, variableName, options)
+    phpMethodCallAssignmentReturnType(
+      source,
+      position,
+      variableName,
+      assignmentExpression,
+      options,
+    ) ??
+    phpForeachValueTypeForVariableBefore(
+      source,
+      position,
+      variableName,
+      options,
+    )
   );
 }
 
@@ -313,16 +313,17 @@ export function phpThisPropertyType(
     phpDeclaredPropertyType(source, propertyName) ??
     phpDocTypeForProperty(source, propertyName) ??
     phpConstructorAssignedPropertyType(source, propertyName) ??
-    phpFrameworkPropertyTypeFromSource(
-      source,
+    phpPropertyTypeFromExtensions(options.typeExtensions ?? [], {
       propertyName,
-      options.frameworkProviders,
-      options.contextualThisClassName ?? phpCurrentClassName(source),
-    )
+      receiverType:
+        options.contextualThisClassName ?? phpCurrentClassName(source),
+      source,
+      sourceContext: options.sourceContext,
+    })
   );
 }
 
-function phpFrameworkPropertyAccessAssignmentReturnType(
+function phpPropertyAccessAssignmentReturnType(
   source: string,
   position: EditorPosition,
   variableName: string,
@@ -358,16 +359,14 @@ export function phpAssignmentExpressionForVariableBefore(
 ): string | null {
   const offset = offsetAtPosition(source, position);
   const before = source.slice(0, offset);
-  const pattern = new RegExp(
-    `\\$${escapeRegExp(variableName)}\\s*=\\s*`,
-    "g",
-  );
+  const pattern = new RegExp(`\\$${escapeRegExp(variableName)}\\s*=\\s*`, "g");
   let expression: string | null = null;
 
   for (const match of before.matchAll(pattern)) {
     const assignmentStart = (match.index ?? 0) + match[0].length;
     expression =
-      phpAssignmentExpressionAfterEquals(before, assignmentStart)?.trim() || null;
+      phpAssignmentExpressionAfterEquals(before, assignmentStart)?.trim() ||
+      null;
   }
 
   return expression;
@@ -409,7 +408,7 @@ function phpStripOuterParentheses(expression: string): string {
   return value;
 }
 
-function phpFrameworkMethodCallAssignmentReturnType(
+function phpMethodCallAssignmentReturnType(
   source: string,
   position: EditorPosition,
   variableName: string,
@@ -430,19 +429,21 @@ function phpFrameworkMethodCallAssignmentReturnType(
       staticCall.className,
     );
 
-    return phpFrameworkMethodCallReturnTypeFromSource(
-      source,
-      staticCall.methodName,
-      staticCall.className,
-      assignmentExpression,
-      options.frameworkProviders,
-      assignmentExpression,
-      options.frameworkSourceContext,
-    ) ?? phpSameSourceMethodCallReturnType(
-      source,
-      staticCall.methodName,
-      fallbackReceiverType,
-      options.frameworkProviders,
+    return (
+      phpMethodCallReturnTypeFromExtensions(options.typeExtensions ?? [], {
+        callExpression: assignmentExpression,
+        methodName: staticCall.methodName,
+        receiverExpression: assignmentExpression,
+        receiverType: staticCall.className,
+        source,
+        sourceContext: options.sourceContext,
+      }) ??
+      phpSameSourceMethodCallReturnType(
+        source,
+        staticCall.methodName,
+        fallbackReceiverType,
+        options.typeExtensions,
+      )
     );
   }
 
@@ -461,19 +462,21 @@ function phpFrameworkMethodCallAssignmentReturnType(
     options,
   );
 
-  return phpFrameworkMethodCallReturnTypeFromSource(
-    source,
-    methodCall.methodName,
-    receiverType,
-    methodCall.receiverExpression,
-    options.frameworkProviders,
-    assignmentExpression,
-    options.frameworkSourceContext,
-  ) ?? phpSameSourceMethodCallReturnType(
-    source,
-    methodCall.methodName,
-    receiverType,
-    options.frameworkProviders,
+  return (
+    phpMethodCallReturnTypeFromExtensions(options.typeExtensions ?? [], {
+      callExpression: assignmentExpression,
+      methodName: methodCall.methodName,
+      receiverExpression: methodCall.receiverExpression,
+      receiverType,
+      source,
+      sourceContext: options.sourceContext,
+    }) ??
+    phpSameSourceMethodCallReturnType(
+      source,
+      methodCall.methodName,
+      receiverType,
+      options.typeExtensions,
+    )
   );
 }
 
@@ -524,8 +527,12 @@ function phpForeachValueTypeForVariableBefore(
     }
 
     typeName =
-      phpForeachIterableValueType(source, position, iterableExpression, options) ??
-      typeName;
+      phpForeachIterableValueType(
+        source,
+        position,
+        iterableExpression,
+        options,
+      ) ?? typeName;
   }
 
   return typeName;
@@ -601,13 +608,10 @@ function phpSameSourceMethodCallReturnType(
   source: string,
   methodName: string,
   receiverType: string | null,
-  frameworkProviders?: readonly PhpFrameworkProvider[],
+  typeExtensions: readonly PhpSemanticTypeExtension[] = [],
 ): string | null {
   if (
-    phpFrameworkSuppressesSameSourceMethodReturnFallback(
-      methodName,
-      frameworkProviders,
-    )
+    phpSuppressesSameSourceMethodReturnFallback(typeExtensions, { methodName })
   ) {
     return null;
   }
@@ -620,7 +624,10 @@ function phpSameSourceMethodCallReturnType(
 
   for (const classBody of phpSameSourceClassBodies(source)) {
     if (
-      !phpClassNameMatchesReceiverType(classBody.className, normalizedReceiverType)
+      !phpClassNameMatchesReceiverType(
+        classBody.className,
+        normalizedReceiverType,
+      )
     ) {
       continue;
     }
@@ -788,16 +795,21 @@ function phpDocMethodSignatureReturnType(
   signature: string,
   methodName: string,
 ): string | null {
-  const methodMatch = new RegExp(
-    `\\b${escapeRegExp(methodName)}\\s*\\(`,
-  ).exec(signature);
+  const methodMatch = new RegExp(`\\b${escapeRegExp(methodName)}\\s*\\(`).exec(
+    signature,
+  );
 
   if (!methodMatch) {
     return null;
   }
 
   const parametersStart = signature.indexOf("(", methodMatch.index);
-  const parametersEnd = matchingPairOffset(signature, parametersStart, "(", ")");
+  const parametersEnd = matchingPairOffset(
+    signature,
+    parametersStart,
+    "(",
+    ")",
+  );
 
   if (parametersEnd === null) {
     return null;
@@ -839,7 +851,7 @@ function phpMethodReturnTypeEndOffset(
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -882,7 +894,7 @@ function phpIsTopLevelClassBodyOffset(source: string, offset: number): boolean {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -930,7 +942,10 @@ function phpShortClassName(className: string): string {
   return className.split("\\").pop() ?? className;
 }
 
-function phpNamespaceBeforeOffset(source: string, offset: number): string | null {
+function phpNamespaceBeforeOffset(
+  source: string,
+  offset: number,
+): string | null {
   let namespace: string | null = null;
   const pattern = /\bnamespace\s+([^;{]+)[;{]/g;
   let match: RegExpExecArray | null;
@@ -1042,7 +1057,7 @@ export function phpArrayOffsetExpression(
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1057,7 +1072,8 @@ export function phpArrayOffsetExpression(
     }
 
     const open = delimiters.pop();
-    const expectedOpen = character === ")" ? "(" : character === "]" ? "[" : "{";
+    const expectedOpen =
+      character === ")" ? "(" : character === "]" ? "[" : "{";
 
     if (!open || open.character !== expectedOpen) {
       return null;
@@ -1177,15 +1193,19 @@ function phpLastTopLevelMethodCall(
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
 
     if (character === "(" || character === "[" || character === "{") {
-      const close =
-        character === "(" ? ")" : character === "[" ? "]" : "}";
-      const closeOffset = matchingPairOffset(expression, index, character, close);
+      const close = character === "(" ? ")" : character === "[" ? "]" : "}";
+      const closeOffset = matchingPairOffset(
+        expression,
+        index,
+        character,
+        close,
+      );
 
       if (closeOffset === null) {
         break;
@@ -1383,7 +1403,9 @@ export function phpDocGenericInheritances(
   return inheritances;
 }
 
-export function phpDocGenericMixins(source: string): PhpDocGenericInheritance[] {
+export function phpDocGenericMixins(
+  source: string,
+): PhpDocGenericInheritance[] {
   const mixins: PhpDocGenericInheritance[] = [];
 
   for (const match of source.matchAll(
@@ -1409,9 +1431,8 @@ function phpPromotedPropertyType(
   source: string,
   propertyName: string,
 ): string | null {
-  const constructorMatch = /\bfunction\s+__construct\s*\(([\s\S]*?)\)\s*[{;]/.exec(
-    source,
-  );
+  const constructorMatch =
+    /\bfunction\s+__construct\s*\(([\s\S]*?)\)\s*[{;]/.exec(source);
 
   if (!constructorMatch?.[1]) {
     return null;
@@ -1603,8 +1624,10 @@ function phpConstructorAssignedParameterName(
   while ((match = pattern.exec(constructorBody)) !== null) {
     const equalsOffset = (match.index ?? 0) + match[0].length;
     const expression =
-      phpAssignmentExpressionAfterEquals(constructorBody, equalsOffset)?.trim() ??
-      "";
+      phpAssignmentExpressionAfterEquals(
+        constructorBody,
+        equalsOffset,
+      )?.trim() ?? "";
     const parameterMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression);
 
     if (!parameterMatch?.[1]) {
@@ -1709,7 +1732,7 @@ function splitPhpList(parameters: string): string[] {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1784,7 +1807,7 @@ function isTopLevelExpressionOffset(source: string, offset: number): boolean {
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }
@@ -1827,7 +1850,7 @@ function matchingPairOffset(
       continue;
     }
 
-    if (character === "'" || character === "\"" || character === "`") {
+    if (character === "'" || character === '"' || character === "`") {
       quote = character;
       continue;
     }

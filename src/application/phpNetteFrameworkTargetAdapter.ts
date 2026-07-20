@@ -1,3 +1,4 @@
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import {
   exceedsScannedFileContentLength,
@@ -7,7 +8,7 @@ import {
   netteTranslationKeysFromSource,
   netteTranslationTargetFromSource,
 } from "../domain/netteTranslations";
-import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import type { FileEntry } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";

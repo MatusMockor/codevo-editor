@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it } from "vitest";
 import {
   BLADE_DIRECTIVES,
@@ -9,7 +10,6 @@ import {
   detectBladeReferenceAt,
 } from "../domain/bladeNavigation";
 import {
-  phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { createBladeFrameworkCapabilities } from "./bladeFrameworkCapabilities";

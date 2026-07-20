@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
 import { describe, expect, it } from "vitest";
 import {
   orderPhpMemberCompletionsByCategory,
@@ -30,7 +31,6 @@ import {
   phpLaravelStaticModelMemberCompletionsFromMethods,
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
-import { phpLaravelFrameworkProvider } from "./phpFrameworkProviders";
 
 const laravelCompletionOptions = {
   frameworkProviders: [phpLaravelFrameworkProvider],
@@ -75,22 +75,26 @@ describe("phpMethodCompletions", () => {
     expect(isLaravelEloquentBuilderTerminalModelMethod("findOr")).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("findOrNew")).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("findSole")).toBe(true);
-    expect(isLaravelEloquentBuilderTerminalModelMethod("firstWhere")).toBe(true);
-    expect(isLaravelEloquentBuilderTerminalModelMethod("firstOrNew")).toBe(true);
+    expect(isLaravelEloquentBuilderTerminalModelMethod("firstWhere")).toBe(
+      true,
+    );
+    expect(isLaravelEloquentBuilderTerminalModelMethod("firstOrNew")).toBe(
+      true,
+    );
     expect(isLaravelEloquentBuilderTerminalModelMethod("forceCreate")).toBe(
       true,
     );
-    expect(isLaravelEloquentBuilderTerminalModelMethod("forceCreateQuietly")).toBe(
-      true,
-    );
+    expect(
+      isLaravelEloquentBuilderTerminalModelMethod("forceCreateQuietly"),
+    ).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("getModel")).toBe(true);
-    expect(isLaravelEloquentBuilderTerminalModelMethod("incrementOrCreate")).toBe(
-      true,
-    );
+    expect(
+      isLaravelEloquentBuilderTerminalModelMethod("incrementOrCreate"),
+    ).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("make")).toBe(true);
-    expect(isLaravelEloquentBuilderTerminalModelMethod("newModelInstance")).toBe(
-      true,
-    );
+    expect(
+      isLaravelEloquentBuilderTerminalModelMethod("newModelInstance"),
+    ).toBe(true);
     expect(isLaravelEloquentBuilderTerminalModelMethod("restoreOrCreate")).toBe(
       true,
     );
@@ -552,7 +556,9 @@ class Album extends Model
         "Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Album>",
         null,
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
@@ -560,7 +566,9 @@ class Album extends Model
         "Album",
         "Album::all()",
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
@@ -591,7 +599,9 @@ class Album extends Model
         "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
         null,
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     for (const methodName of [
       "load",
       "loadAggregate",
@@ -612,7 +622,9 @@ class Album extends Model
           "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
           null,
         ),
-      ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+      ).toBe(
+        "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+      );
     }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
@@ -645,7 +657,9 @@ class Album extends Model
         "Album",
         "Album::findMany([1, 2])",
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     for (const methodName of ["fromQuery", "hydrate"]) {
       expect(
         phpLaravelMethodCallReturnTypeFromSource(
@@ -654,7 +668,9 @@ class Album extends Model
           "Album",
           null,
         ),
-      ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+      ).toBe(
+        "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+      );
     }
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
@@ -680,7 +696,9 @@ class Album extends Model
         "Album::findOrFail([1, 2])",
         "Album::findOrFail([1, 2])",
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
@@ -689,7 +707,9 @@ class Album extends Model
         "Album::query()",
         "Album::query()->find(id: [1, 2])",
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
@@ -1136,7 +1156,9 @@ class AlbumRepository
         "AlbumRepository",
         "$this->matching()",
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
@@ -1200,7 +1222,9 @@ class ReadAlbumRepository extends BaseRepository
         "ReadAlbumRepository",
         "$this->matching()",
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
   });
 
   it("infers Laravel relation factory and relation chain return types", () => {
@@ -1305,7 +1329,9 @@ class Post extends Model
         "Illuminate\\Database\\Eloquent\\Relations\\HasMany<App\\Models\\Post>",
         "$this->hasMany(Post::class)",
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Post>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Post>",
+    );
     expect(
       phpLaravelMethodCallReturnTypeFromSource(
         source,
@@ -1476,7 +1502,8 @@ Album::query()
         source: "<?php\nApp::make(CommentService::class)->cre",
       },
       {
-        expectedReceiver: "Container::getInstance()->make(CommentService::class)",
+        expectedReceiver:
+          "Container::getInstance()->make(CommentService::class)",
         source:
           "<?php\nContainer::getInstance()->make(CommentService::class)->cre",
       },
@@ -1505,7 +1532,10 @@ service(CommentService::class)->cre
     expect(
       phpMemberAccessCompletionContextAt(
         source,
-        positionAfter(source, "ServiceLocator::get(CommentService::class)->cre"),
+        positionAfter(
+          source,
+          "ServiceLocator::get(CommentService::class)->cre",
+        ),
       ),
     ).toEqual({
       prefix: "cre",
@@ -1543,7 +1573,10 @@ return
 `;
 
     expect(
-      phpStaticAccessCompletionContextAt(source, positionAfter(source, "::pub")),
+      phpStaticAccessCompletionContextAt(
+        source,
+        positionAfter(source, "::pub"),
+      ),
     ).toEqual({
       className: "Album",
       prefix: "pub",
@@ -1737,7 +1770,11 @@ class Request
 }
 `;
 
-    expect(phpMethodCompletionsFromSource(source, "Request")).toEqual([
+    expect(
+      phpMethodCompletionsFromSource(source, "Request", {
+        frameworkProviders: [],
+      }),
+    ).toEqual([
       {
         declaringClassName: "Request",
         name: "get",
@@ -1761,6 +1798,7 @@ class Repository
 
     expect(
       phpMethodCompletionsFromSource(source, "Repository", {
+        frameworkProviders: [],
         includeNonPublicMembers: true,
       }).map(({ kind, name, visibility }) => ({ kind, name, visibility })),
     ).toEqual([
@@ -1783,7 +1821,11 @@ class Request
 }
 `;
 
-    expect(phpMethodCompletionsFromSource(source, "Request")).toEqual([
+    expect(
+      phpMethodCompletionsFromSource(source, "Request", {
+        frameworkProviders: [],
+      }),
+    ).toEqual([
       {
         declaringClassName: "Request",
         name: "get",
@@ -1828,6 +1870,7 @@ class Comment
 }
 `,
       "Comment",
+      { frameworkProviders: [] },
     );
 
     expect(phpLaravelLocalScopeCompletionsFromMethods(methods)).toEqual([
@@ -1876,6 +1919,7 @@ class Comment
 }
 `,
       "Comment",
+      { frameworkProviders: [] },
     );
 
     expect(phpLaravelStaticLocalScopeCompletionsFromMethods(methods)).toEqual([
@@ -1918,6 +1962,7 @@ class ReportRun
 }
 `,
       "App\\Models\\ReportRun",
+      { frameworkProviders: [] },
     );
 
     // The merge layer replaces the raw scope source methods with the derived
@@ -1948,10 +1993,13 @@ class ReportRun
 
     // Raw `scopeInFlight` and the `#[Scope]` source method `failed` are dropped
     // from the base members so only the derived scopes represent them.
-    expect(baseMembers.map((member) => member.name)).toEqual(["getStatus", "status"]);
-    expect(
-      baseMembers.some((member) => member.name === "scopeInFlight"),
-    ).toBe(false);
+    expect(baseMembers.map((member) => member.name)).toEqual([
+      "getStatus",
+      "status",
+    ]);
+    expect(baseMembers.some((member) => member.name === "scopeInFlight")).toBe(
+      false,
+    );
 
     const ordered = orderPhpMemberCompletionsByCategory([
       ...baseMembers,
@@ -2063,6 +2111,7 @@ class ReportRun
 }
 `,
       "App\\Models\\ReportRun",
+      { frameworkProviders: [] },
     );
 
     const sourceNames = methods
@@ -2292,7 +2341,8 @@ Collection::macro('toUpper', function (): Collection {
       ),
     ).toEqual([
       {
-        declaringClassName: "Illuminate\\Support\\Collection<App\\Models\\Post>",
+        declaringClassName:
+          "Illuminate\\Support\\Collection<App\\Models\\Post>",
         name: "toUpper",
         parameters: "",
         returnType: "Collection",
@@ -2367,10 +2417,14 @@ class AppServiceProvider extends ServiceProvider
 `;
 
     expect(
-      phpMethodCompletionsFromSource(source, "Illuminate\\Database\\Query\\Builder", {
-        ...laravelCompletionOptions,
-        frameworkSourceContext: { workspaceSources: [providerSource] },
-      }),
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Database\\Query\\Builder",
+        {
+          ...laravelCompletionOptions,
+          frameworkSourceContext: { workspaceSources: [providerSource] },
+        },
+      ),
     ).toEqual([
       {
         declaringClassName: "Illuminate\\Database\\Query\\Builder",
@@ -2380,10 +2434,14 @@ class AppServiceProvider extends ServiceProvider
       },
     ]);
     expect(
-      phpMethodCompletionsFromSource(source, "Illuminate\\Support\\Collection", {
-        ...laravelCompletionOptions,
-        frameworkSourceContext: { workspaceSources: [providerSource] },
-      }),
+      phpMethodCompletionsFromSource(
+        source,
+        "Illuminate\\Support\\Collection",
+        {
+          ...laravelCompletionOptions,
+          frameworkSourceContext: { workspaceSources: [providerSource] },
+        },
+      ),
     ).toEqual([
       {
         declaringClassName: "Illuminate\\Support\\Collection",
@@ -2589,10 +2647,12 @@ class Comment extends Model {}
       ),
     ).toBe("Illuminate\\Database\\Eloquent\\Builder<App\\Models\\Comment>");
 
-    expect(phpLaravelModelAttributeTargetFromSource(source, "content")).toEqual({
-      attributeName: "content",
-      position: positionAfter(source, "$table->string('"),
-    });
+    expect(phpLaravelModelAttributeTargetFromSource(source, "content")).toEqual(
+      {
+        attributeName: "content",
+        position: positionAfter(source, "$table->string('"),
+      },
+    );
     expect(phpLaravelModelAttributeTargetFromSource(source, "slug")).toEqual({
       attributeName: "slug",
       position: positionAfter(
@@ -2619,7 +2679,10 @@ class Comment extends Model {}
       phpLaravelModelAttributeTargetFromSource(source, "legacy_slug"),
     ).toBeNull();
     expect(
-      phpLaravelDynamicWhereAttributeTargetFromSource(source, "whereLegacySlug"),
+      phpLaravelDynamicWhereAttributeTargetFromSource(
+        source,
+        "whereLegacySlug",
+      ),
     ).toBeNull();
   });
 
@@ -2708,7 +2771,9 @@ class User extends Model
         "User::whereEmail('ada@example.test')",
       ),
     ).toBeNull();
-    expect(isLaravelDynamicWhereMethodForSource(source, "whereEmail")).toBe(false);
+    expect(isLaravelDynamicWhereMethodForSource(source, "whereEmail")).toBe(
+      false,
+    );
   });
 
   it("ignores destructive Laravel Schema table calls for model attributes", () => {
@@ -2812,14 +2877,18 @@ class Comment
 }
 `;
 
-    expect(phpLaravelModelAttributeTargetFromSource(source, "content")).toEqual({
-      attributeName: "content",
-      position: {
-        column: 10,
-        lineNumber: 5,
+    expect(phpLaravelModelAttributeTargetFromSource(source, "content")).toEqual(
+      {
+        attributeName: "content",
+        position: {
+          column: 10,
+          lineNumber: 5,
+        },
       },
-    });
-    expect(phpLaravelModelAttributeTargetFromSource(source, "is_pinned")).toEqual({
+    );
+    expect(
+      phpLaravelModelAttributeTargetFromSource(source, "is_pinned"),
+    ).toEqual({
       attributeName: "is_pinned",
       position: {
         column: 10,
@@ -2835,7 +2904,9 @@ class Comment
         lineNumber: 13,
       },
     });
-    expect(phpLaravelModelAttributeTargetFromSource(source, "missing")).toBeNull();
+    expect(
+      phpLaravelModelAttributeTargetFromSource(source, "missing"),
+    ).toBeNull();
   });
 
   it("locates Laravel accessor source attributes", () => {
@@ -2893,9 +2964,9 @@ class Comment
 }
 `;
 
-    expect(isLaravelDynamicWhereMethodForSource(source, "whereContentAndType")).toBe(
-      true,
-    );
+    expect(
+      isLaravelDynamicWhereMethodForSource(source, "whereContentAndType"),
+    ).toBe(true);
     expect(isLaravelDynamicWhereMethodForSource(source, "orWhereContent")).toBe(
       true,
     );
@@ -2933,6 +3004,7 @@ class Comment
       phpMethodCompletionsFromSource(
         "<?php\nclass Factory\n{\n    /** @phpstan-return Comment */\n    public static function make() {}\n}\n",
         "Factory",
+        { frameworkProviders: [] },
       ),
     ).toEqual([
       {
@@ -2959,7 +3031,11 @@ class Container
 }
 `;
 
-    expect(phpMethodCompletionsFromSource(source, "Container")).toEqual([
+    expect(
+      phpMethodCompletionsFromSource(source, "Container", {
+        frameworkProviders: [],
+      }),
+    ).toEqual([
       {
         classStringTemplate: "T",
         declaringClassName: "Container",
@@ -3238,6 +3314,7 @@ class Album
 }
 `,
         "App\\Models\\Album",
+        { frameworkProviders: [] },
       ),
     ).toEqual([
       {
@@ -3282,6 +3359,7 @@ class Album
 }
 `,
         "App\\Models\\Album",
+        { frameworkProviders: [] },
       ),
     ).toEqual([
       {
@@ -3317,6 +3395,7 @@ trait InteractsWithInput
 }
 `,
         "Illuminate\\Http\\Concerns\\InteractsWithInput",
+        { frameworkProviders: [] },
       ),
     ).toEqual([
       {
@@ -3350,6 +3429,7 @@ class Comment
 }
 `,
         "Comment",
+        { frameworkProviders: [] },
       ),
     ).toEqual([
       {
@@ -3378,7 +3458,8 @@ class Comment
         kind: "property",
         name: "children",
         parameters: "",
-        returnType: "\\Illuminate\\Database\\Eloquent\\Collection<int, Comment>",
+        returnType:
+          "\\Illuminate\\Database\\Eloquent\\Collection<int, Comment>",
       },
       {
         declaringClassName: "Comment",
@@ -4223,7 +4304,11 @@ class Comment extends Model
 `;
 
     expect(
-      phpMethodCompletionsFromSource(source, "Comment", laravelCompletionOptions),
+      phpMethodCompletionsFromSource(
+        source,
+        "Comment",
+        laravelCompletionOptions,
+      ),
     ).toEqual([
       {
         declaringClassName: "Comment",
@@ -4492,7 +4577,8 @@ class Ticket extends Model
     );
 
     expect(
-      completions.find((completion) => completion.name === "priority")?.returnType,
+      completions.find((completion) => completion.name === "priority")
+        ?.returnType,
     ).toBe("App\\Enums\\Priority");
     expect(
       completions.find((completion) => completion.name === "shipping_address")
@@ -4670,10 +4756,7 @@ class Comment
 {
 }
 `),
-    ).toEqual([
-      "Illuminate\\Database\\Eloquent\\Builder",
-      "IdeHelperComment",
-    ]);
+    ).toEqual(["Illuminate\\Database\\Eloquent\\Builder", "IdeHelperComment"]);
   });
 
   it("detects #[Scope] attribute names through stacked attributes", () => {
@@ -4691,6 +4774,7 @@ class Comment
 }
 `,
       "Comment",
+      { frameworkProviders: [] },
     );
 
     // The stacked attributes (including a literal `]` inside a masked string)
@@ -4723,7 +4807,9 @@ ${attributes}
 `;
 
     const start = performance.now();
-    const methods = phpMethodCompletionsFromSource(source, "BigModel");
+    const methods = phpMethodCompletionsFromSource(source, "BigModel", {
+      frameworkProviders: [],
+    });
     const elapsed = performance.now() - start;
 
     expect(Array.isArray(methods)).toBe(true);
@@ -4910,6 +4996,7 @@ class UserAccount extends AdminModel
     const names = phpMethodCompletionsFromSource(
       hasTenancyTrait,
       "App\\Tenancy\\HasTenancy",
+      { frameworkProviders: [] },
     ).map((member) => member.name);
 
     // These flow into the host's `$this->`/`$account->` completion list when the
@@ -4966,6 +5053,7 @@ enum Status: string implements HasLabel
     const members = phpMethodCompletionsFromSource(
       backedEnumSource,
       "App\\Enums\\Status",
+      { frameworkProviders: [] },
     );
     const active = members.find((member) => member.name === "Active");
     const archived = members.find((member) => member.name === "Archived");
@@ -4992,6 +5080,7 @@ enum Status: string implements HasLabel
     const names = phpMethodCompletionsFromSource(
       backedEnumSource,
       "App\\Enums\\Status",
+      { frameworkProviders: [] },
     ).map((member) => member.name);
 
     expect(names).toEqual(
@@ -5003,6 +5092,7 @@ enum Status: string implements HasLabel
     const members = phpMethodCompletionsFromSource(
       backedEnumSource,
       "App\\Enums\\Status",
+      { frameworkProviders: [] },
     );
 
     expect(members.filter((member) => member.isEnumCase)).toHaveLength(2);
@@ -5017,7 +5107,9 @@ enum Suit
     case Spades;
 }
 `;
-    const members = phpMethodCompletionsFromSource(source, "Suit");
+    const members = phpMethodCompletionsFromSource(source, "Suit", {
+      frameworkProviders: [],
+    });
     const hearts = members.find((member) => member.name === "Hearts");
 
     expect(hearts).toMatchObject({
@@ -5042,7 +5134,9 @@ enum ReportState: int
     case Draft = 1;
 }
 `;
-    const members = phpMethodCompletionsFromSource(source, "App\\Report");
+    const members = phpMethodCompletionsFromSource(source, "App\\Report", {
+      frameworkProviders: [],
+    });
 
     expect(members.some((member) => member.isEnumCase)).toBe(false);
   });
@@ -5061,7 +5155,9 @@ class Dispatcher
     }
 }
 `;
-    const members = phpMethodCompletionsFromSource(source, "Dispatcher");
+    const members = phpMethodCompletionsFromSource(source, "Dispatcher", {
+      frameworkProviders: [],
+    });
 
     expect(members.some((member) => member.isEnumCase)).toBe(false);
   });
@@ -5075,7 +5171,9 @@ enum Kind: string
     case Real = 'case Fake = 1;';
 }
 `;
-    const members = phpMethodCompletionsFromSource(source, "Kind");
+    const members = phpMethodCompletionsFromSource(source, "Kind", {
+      frameworkProviders: [],
+    });
     const cases = members.filter((member) => member.isEnumCase);
 
     expect(cases.map((member) => member.name)).toEqual(["Real"]);

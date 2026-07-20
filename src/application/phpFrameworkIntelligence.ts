@@ -19,8 +19,6 @@ export interface PhpFrameworkIntelligence {
   readonly providerSignature: string;
   readonly providers: readonly PhpFrameworkProvider[];
   readonly capabilities: PhpFrameworkProviderCapabilityRegistry;
-  readonly isLaravel: boolean;
-  readonly isNette: boolean;
   hasProvider(providerId: string): boolean;
 }
 
@@ -43,8 +41,6 @@ export function createPhpFrameworkIntelligence(
     providerSignature: capabilities.providerSignature,
     providers: resolution.providers,
     capabilities,
-    isLaravel: capabilities.hasProvider("laravel"),
-    isNette: capabilities.hasProvider("nette"),
     hasProvider: (providerId) => capabilities.hasProvider(providerId),
   };
 }

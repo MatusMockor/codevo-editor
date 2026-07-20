@@ -40,8 +40,6 @@ function makeOptions(
         supportsTargetCollection: () => false,
       },
       hasProvider: () => true,
-      isLaravel: false,
-      isNette: true,
       matchedProviderIds: ["nette"],
       profile: "nette",
       providerIds: ["nette"],

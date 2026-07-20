@@ -1,20 +1,15 @@
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
-import { bladeLaravelReferenceDiagnostics } from "../domain/laravelDiagnostics";
-import { netteLatteReferenceDiagnostics } from "../domain/netteTemplateDiagnostics";
-import type { PhpFrameworkActiveDocumentDiagnosticsDescriptor } from "../domain/phpFrameworkProviders";
 import type { EditorDocument } from "../domain/workspace";
 import { collectActiveContributions } from "./phpFrameworkContributionRegistry";
+import {
+  activeDocumentDiagnosticsContributionForDescriptor,
+  type PhpFrameworkActiveDocumentDiagnosticsContributionCatalog,
+} from "./phpFrameworkActiveDocumentDiagnosticsContributionCatalog";
+import type {
+  PhpFrameworkActiveDocumentDiagnosticsContribution,
+  PhpFrameworkActiveDocumentDiagnosticsDescriptorLike,
+} from "./phpFrameworkActiveDocumentDiagnosticsContributions";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import type { PhpFrameworkTargets } from "./usePhpFrameworkTargets";
-
-export interface PhpFrameworkActiveDocumentDiagnosticsDependencies {
-  collectCompleteLatteTemplateRelativePaths: () => Promise<readonly string[]>;
-  collectViewTargets: PhpFrameworkTargets["collectViewTargets"];
-  provideLattePresenterLinkDiagnostics: (
-    source: string,
-    currentTemplateRelativePath: string,
-  ) => Promise<LanguageServerDiagnostic[]>;
-}
 
 export interface PhpFrameworkActiveDocumentDiagnosticsProvider {
   provideDiagnostics(): Promise<LanguageServerDiagnostic[]>;
@@ -24,11 +19,12 @@ export function activePhpFrameworkDocumentDiagnosticsProvider({
   frameworkRuntime,
   document,
   workspaceRoot,
-  ...dependencies
-}: PhpFrameworkActiveDocumentDiagnosticsDependencies & {
+  contributions,
+}: {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "providers">;
   document: EditorDocument;
   workspaceRoot: string;
+  contributions: PhpFrameworkActiveDocumentDiagnosticsContributionCatalog;
 }): PhpFrameworkActiveDocumentDiagnosticsProvider | null {
   const descriptors = collectActiveContributions({
     frameworkRuntime,
@@ -38,7 +34,12 @@ export function activePhpFrameworkDocumentDiagnosticsProvider({
       ),
   });
 
-  if (descriptors.length === 0) {
+  const activeContributions = diagnosticsContributionsForDescriptors(
+    descriptors,
+    contributions,
+  );
+
+  if (activeContributions.length === 0) {
     return null;
   }
 
@@ -49,12 +50,10 @@ export function activePhpFrameworkDocumentDiagnosticsProvider({
         workspaceRoot,
       );
       const diagnostics = await Promise.all(
-        descriptors.map((descriptor) =>
-          provideDescriptorDiagnostics(
-            descriptor,
-            diagnosticDocument,
-            dependencies,
-          ),
+        activeContributions.map((contribution) =>
+          contribution.provideDiagnostics({
+            document: diagnosticDocument,
+          }),
         ),
       );
 
@@ -63,56 +62,38 @@ export function activePhpFrameworkDocumentDiagnosticsProvider({
   };
 }
 
-async function provideDescriptorDiagnostics(
-  descriptor: PhpFrameworkActiveDocumentDiagnosticsDescriptor,
-  document: EditorDocument,
-  dependencies: PhpFrameworkActiveDocumentDiagnosticsDependencies,
-): Promise<LanguageServerDiagnostic[]> {
-  switch (descriptor.kind) {
-    case "bladeViewReferences":
-      return bladeViewReferenceDiagnostics(document, dependencies);
-    case "lattePresenterLinks":
-      return dependencies.provideLattePresenterLinkDiagnostics(
-        document.content,
-        document.path,
-      );
-    case "latteTemplateReferences":
-      return latteTemplateReferenceDiagnostics(document, dependencies);
+function diagnosticsContributionsForDescriptors(
+  descriptors: readonly PhpFrameworkActiveDocumentDiagnosticsDescriptorLike[],
+  catalog: PhpFrameworkActiveDocumentDiagnosticsContributionCatalog,
+): readonly PhpFrameworkActiveDocumentDiagnosticsContribution[] {
+  const seen = new Set<string>();
+  const contributions: PhpFrameworkActiveDocumentDiagnosticsContribution[] = [];
+
+  for (const descriptor of descriptors) {
+    const contribution = activeDocumentDiagnosticsContributionForDescriptor(
+      catalog,
+      descriptor,
+    );
+
+    if (!contribution || seen.has(contribution.id)) {
+      continue;
+    }
+
+    seen.add(contribution.id);
+    contributions.push(contribution);
   }
-}
 
-async function bladeViewReferenceDiagnostics(
-  document: EditorDocument,
-  { collectViewTargets }: PhpFrameworkActiveDocumentDiagnosticsDependencies,
-): Promise<LanguageServerDiagnostic[]> {
-  const viewTargets = await collectViewTargets();
-
-  return bladeLaravelReferenceDiagnostics(document.content, {
-    viewNames: viewTargets.map((target) => target.name),
-  });
-}
-
-async function latteTemplateReferenceDiagnostics(
-  document: EditorDocument,
-  {
-    collectCompleteLatteTemplateRelativePaths,
-  }: PhpFrameworkActiveDocumentDiagnosticsDependencies,
-): Promise<LanguageServerDiagnostic[]> {
-  const templateRelativePaths =
-    await collectCompleteLatteTemplateRelativePaths();
-
-  return netteLatteReferenceDiagnostics(
-    document.content,
-    document.path,
-    templateRelativePaths,
-  );
+  return contributions;
 }
 
 function documentWithWorkspaceRelativePath(
   document: EditorDocument,
   workspaceRoot: string,
 ): EditorDocument {
-  const normalizedRoot = normalizePathSeparators(workspaceRoot).replace(/\/+$/, "");
+  const normalizedRoot = normalizePathSeparators(workspaceRoot).replace(
+    /\/+$/,
+    "",
+  );
   const normalizedPath = normalizePathSeparators(document.path);
   const prefix = `${normalizedRoot}/`;
 

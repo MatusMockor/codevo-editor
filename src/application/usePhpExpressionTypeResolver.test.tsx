@@ -1,13 +1,12 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
@@ -211,22 +210,29 @@ describe("usePhpExpressionTypeResolver", () => {
     ["plain array", "array", null],
     ["mixed", "mixed", null],
     ["scalar", "string", null],
-  ])("resolves a %s array-offset value", async (_kind, containerType, expected) => {
-    const source = `<?php
+  ])(
+    "resolves a %s array-offset value",
+    async (_kind, containerType, expected) => {
+      const source = `<?php
 /** @var ${containerType} $paymentLogs */
 $paymentLogs['payment_id'];
 `;
-    const harness = renderHook(makeOptions({ frameworkRuntime: GENERIC_RUNTIME }));
+      const harness = renderHook(
+        makeOptions({ frameworkRuntime: GENERIC_RUNTIME }),
+      );
 
-    await expect(
-      harness.api().resolvePhpExpressionType(
-        source,
-        positionAfter(source, "payment_id"),
-        "$paymentLogs['payment_id']",
-      ),
-    ).resolves.toBe(expected);
-    harness.unmount();
-  });
+      await expect(
+        harness
+          .api()
+          .resolvePhpExpressionType(
+            source,
+            positionAfter(source, "payment_id"),
+            "$paymentLogs['payment_id']",
+          ),
+      ).resolves.toBe(expected);
+      harness.unmount();
+    },
+  );
 
   it("resolves model factories and builder fluent methods to Builder", async () => {
     const calls: Array<[string, string, number | undefined]> = [];
@@ -254,11 +260,7 @@ $paymentLogs['payment_id'];
         ),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
 
-    expect(calls).toContainEqual([
-      "builder-model",
-      "$unknown->newQuery()",
-      1,
-    ]);
+    expect(calls).toContainEqual(["builder-model", "$unknown->newQuery()", 1]);
     expect(calls).toContainEqual(["builder-model", "$unknownBuilder", 1]);
     expect(options.resolvePhpMethodReturnType).not.toHaveBeenCalled();
     harness.unmount();
@@ -273,9 +275,7 @@ $paymentLogs['payment_id'];
         return expression === "$unknown" ? "App\\Models\\Post" : null;
       },
     );
-    const harness = renderHook(
-      makeOptions({ resolvePhpBuilderModelType }),
-    );
+    const harness = renderHook(makeOptions({ resolvePhpBuilderModelType }));
 
     await expect(
       harness
@@ -290,12 +290,8 @@ $paymentLogs['payment_id'];
   });
 
   it("resolves builder terminal and collection methods from the builder model", async () => {
-    const resolvePhpBuilderModelType = vi.fn(
-      async () => "App\\Models\\Post",
-    );
-    const harness = renderHook(
-      makeOptions({ resolvePhpBuilderModelType }),
-    );
+    const resolvePhpBuilderModelType = vi.fn(async () => "App\\Models\\Post");
+    const harness = renderHook(makeOptions({ resolvePhpBuilderModelType }));
 
     await expect(
       harness
@@ -322,16 +318,12 @@ $paymentLogs['payment_id'];
     const harness = renderHook(options);
 
     await expect(
-      harness.api().resolvePhpExpressionType(
-        SOURCE,
-        POSITION,
-        "Post::updateOrCreate([])",
-      ),
-    ).resolves.toBe("App\\Models\\Post");
-    await expect(
       harness
         .api()
-        .resolvePhpExpressionType(SOURCE, POSITION, "Post::query()"),
+        .resolvePhpExpressionType(SOURCE, POSITION, "Post::updateOrCreate([])"),
+    ).resolves.toBe("App\\Models\\Post");
+    await expect(
+      harness.api().resolvePhpExpressionType(SOURCE, POSITION, "Post::query()"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
     expect(options.resolvePhpMethodReturnType).not.toHaveBeenCalled();
     harness.unmount();
@@ -341,9 +333,7 @@ $paymentLogs['payment_id'];
     const resolvePhpCollectionModelType = vi.fn(
       async () => "App\\Models\\Post",
     );
-    const harness = renderHook(
-      makeOptions({ resolvePhpCollectionModelType }),
-    );
+    const harness = renderHook(makeOptions({ resolvePhpCollectionModelType }));
 
     await expect(
       harness
@@ -398,11 +388,9 @@ $paymentLogs['payment_id'];
       const resolvePhpClassPropertyOrRelationType = vi.fn(
         async (className, propertyName, includeCollectionRelations) => {
           calls.push("relation");
-          expect([className, propertyName, includeCollectionRelations]).toEqual([
-            "App\\Models\\Post",
-            relationName,
-            true,
-          ]);
+          expect([className, propertyName, includeCollectionRelations]).toEqual(
+            ["App\\Models\\Post", relationName, true],
+          );
           return "App\\Models\\Comment";
         },
       );
@@ -458,7 +446,11 @@ $paymentLogs['payment_id'];
     await expect(
       harness
         .api()
-        .resolvePhpExpressionType(SOURCE, POSITION, "$model->comments->first()"),
+        .resolvePhpExpressionType(
+          SOURCE,
+          POSITION,
+          "$model->comments->first()",
+        ),
     ).resolves.toBeNull();
     expect(calls).toEqual([
       "relation:true",
@@ -509,14 +501,20 @@ $paymentLogs['payment_id'];
     await expect(
       harness
         .api()
-        .resolvePhpExpressionType(SOURCE, POSITION, "$connection->table('posts')"),
+        .resolvePhpExpressionType(
+          SOURCE,
+          POSITION,
+          "$connection->table('posts')",
+        ),
     ).resolves.toBe("Illuminate\\Database\\Query\\Builder");
     await expect(
-      harness.api().resolvePhpExpressionType(
-        SOURCE,
-        POSITION,
-        "DB::table('posts')->where('active', true)",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          SOURCE,
+          POSITION,
+          "DB::table('posts')->where('active', true)",
+        ),
     ).resolves.toBe("Illuminate\\Database\\Query\\Builder");
 
     expect(options.resolvePhpMethodReturnType).not.toHaveBeenCalled();
@@ -550,9 +548,7 @@ $paymentLogs['payment_id'];
         return methodName === "whereTitle";
       },
     );
-    const resolvePhpBuilderModelType = vi.fn(
-      async () => "App\\Models\\Post",
-    );
+    const resolvePhpBuilderModelType = vi.fn(async () => "App\\Models\\Post");
     const harness = renderHook(
       makeOptions({
         phpClassHasDynamicBuilderFinder,
@@ -567,11 +563,13 @@ $paymentLogs['payment_id'];
         .resolvePhpExpressionType(SOURCE, POSITION, "Post::published()"),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
     await expect(
-      harness.api().resolvePhpExpressionType(
-        SOURCE,
-        POSITION,
-        "Post::query()->published()",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          SOURCE,
+          POSITION,
+          "Post::query()->published()",
+        ),
     ).resolves.toBe("Illuminate\\Database\\Eloquent\\Builder");
     await expect(
       harness
@@ -583,7 +581,8 @@ $paymentLogs['payment_id'];
     expect(calls).toContain("scope:whereTitle");
     expect(calls).toContain("dynamic:whereTitle");
     expect(calls).not.toContain("dynamic:published");
-    const localScopeCallOrder = phpClassHasNamedBuilderScope.mock.invocationCallOrder;
+    const localScopeCallOrder =
+      phpClassHasNamedBuilderScope.mock.invocationCallOrder;
     const dynamicWhereCallOrder =
       phpClassHasDynamicBuilderFinder.mock.invocationCallOrder;
     expect(
@@ -596,9 +595,7 @@ $paymentLogs['payment_id'];
 
   it("resolves a chained dynamic where terminal to its builder model", async () => {
     const resolvePhpCollectionModelType = vi.fn(async () => null);
-    const resolvePhpBuilderModelType = vi.fn(
-      async () => "App\\Models\\Post",
-    );
+    const resolvePhpBuilderModelType = vi.fn(async () => "App\\Models\\Post");
     const harness = renderHook(
       makeOptions({
         resolvePhpBuilderModelType,
@@ -607,11 +604,13 @@ $paymentLogs['payment_id'];
     );
 
     await expect(
-      harness.api().resolvePhpExpressionType(
-        SOURCE,
-        POSITION,
-        "Post::whereTitle('published')->first()",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          SOURCE,
+          POSITION,
+          "Post::whereTitle('published')->first()",
+        ),
     ).resolves.toBe("App\\Models\\Post");
     expect(resolvePhpBuilderModelType).toHaveBeenCalledWith(
       SOURCE,
@@ -689,9 +688,7 @@ Post::query()->whereHas('comments', function ($query): void {
     const resolvePhpBuilderModelType = vi.fn(
       async () => "App\\Models\\Comment",
     );
-    const harness = renderHook(
-      makeOptions({ resolvePhpBuilderModelType }),
-    );
+    const harness = renderHook(makeOptions({ resolvePhpBuilderModelType }));
 
     await expect(
       harness.api().resolvePhpExpressionType(source, position, "$query"),
@@ -737,9 +734,7 @@ $users->map(fn ($user) => $user->nam);
     const resolvePhpCollectionModelType = vi.fn(
       async () => "App\\Models\\User",
     );
-    const harness = renderHook(
-      makeOptions({ resolvePhpCollectionModelType }),
-    );
+    const harness = renderHook(makeOptions({ resolvePhpCollectionModelType }));
 
     await expect(
       harness.api().resolvePhpExpressionType(source, position, "$user"),
@@ -763,9 +758,7 @@ $users->map(function (Post $user) {
     const resolvePhpCollectionModelType = vi.fn(
       async () => "App\\Models\\User",
     );
-    const harness = renderHook(
-      makeOptions({ resolvePhpCollectionModelType }),
-    );
+    const harness = renderHook(makeOptions({ resolvePhpCollectionModelType }));
 
     await expect(
       harness.api().resolvePhpExpressionType(source, position, "$user"),
@@ -817,16 +810,12 @@ $loop = $loop;
 $loop->probe;
 `;
     const position = positionAfter(source, "$loop->probe");
-    const resolvePhpFrameworkReturnTypeReference = vi.fn(
-      resolveClassReference,
-    );
+    const resolvePhpFrameworkReturnTypeReference = vi.fn(resolveClassReference);
     const options = makeOptions({ resolvePhpFrameworkReturnTypeReference });
     const harness = renderHook(options);
 
     await expect(
-      harness
-        .api()
-        .resolvePhpExpressionType(source, position, "$loop", 8),
+      harness.api().resolvePhpExpressionType(source, position, "$loop", 8),
     ).resolves.toBeNull();
     expect(options.resolvePhpBuilderModelType).not.toHaveBeenCalled();
     expect(resolvePhpFrameworkReturnTypeReference).toHaveBeenCalledTimes(1);
@@ -837,9 +826,7 @@ $loop->probe;
   it("disables Laravel predicates under an explicit generic runtime", async () => {
     const phpClassHasNamedBuilderScope = vi.fn(async () => true);
     const phpClassHasDynamicBuilderFinder = vi.fn(async () => true);
-    const resolvePhpBuilderModelType = vi.fn(
-      async () => "App\\Models\\Post",
-    );
+    const resolvePhpBuilderModelType = vi.fn(async () => "App\\Models\\Post");
     const harness = renderHook(
       makeOptions({
         frameworkRuntime: GENERIC_RUNTIME,
@@ -948,11 +935,13 @@ $loop->probe;
     const harness = renderHook(options);
 
     await expect(
-      harness.api().resolvePhpExpressionType(
-        SOURCE,
-        POSITION,
-        "$model->comments->first()",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          SOURCE,
+          POSITION,
+          "$model->comments->first()",
+        ),
     ).resolves.toBe("App\\Models\\First");
     await expect(
       harness
@@ -966,11 +955,13 @@ $loop->probe;
       resolvePhpCollectionModelType: latestCollectionResolver,
     });
     await expect(
-      harness.api().resolvePhpExpressionType(
-        SOURCE,
-        POSITION,
-        "$model->comments->first()",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          SOURCE,
+          POSITION,
+          "$model->comments->first()",
+        ),
     ).resolves.toBe("App\\Models\\Latest");
     await expect(
       harness
@@ -1056,12 +1047,20 @@ $reporter->table('events');
     await expect(
       harness
         .api()
-        .resolvePhpExpressionType(source, position, "$reporter->table('events')"),
+        .resolvePhpExpressionType(
+          source,
+          position,
+          "$reporter->table('events')",
+        ),
     ).resolves.toBe("App\\DTO\\Report");
     expect(resolvePhpSemanticTypeReference).toHaveBeenCalledTimes(1);
     expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
       "App\\Services\\Reporter",
       "table",
+      undefined,
+      undefined,
+      undefined,
+      "$reporter->table('events')",
     );
     harness.unmount();
   });
@@ -1082,13 +1081,11 @@ ${expression};
     const position = positionAfter(source, "'orders'");
     const accountsRow =
       "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\AccountsActiveRow";
-    const usersRow =
-      "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
+    const usersRow = "Efabrica\\Crm\\ActiveRowTypes\\ActiveRow\\UsersActiveRow";
     const ordersSelection =
       "Efabrica\\Crm\\ActiveRowTypes\\Selection\\OrdersSelection";
-    const resolvePhpFrameworkBoundConcrete = vi.fn(
-      async (className: string) =>
-        className === accountsContract ? accountsRow : null,
+    const resolvePhpFrameworkBoundConcrete = vi.fn(async (className: string) =>
+      className === accountsContract ? accountsRow : null,
     );
     const resolvePhpMethodReturnType = vi.fn(
       async (
@@ -1102,7 +1099,8 @@ ${expression};
         if (
           className === accountsRow &&
           methodName.toLowerCase() === "ref" &&
-          callExpression === `$row?->REF(
+          callExpression ===
+            `$row?->REF(
         'users',
     )`
         ) {
@@ -1190,10 +1188,7 @@ $pairs['pay_123']->getPaymentStatus();
           return `${paymentLogsRow}[]`;
         }
 
-        if (
-          className === paymentLogsRow &&
-          methodName === "getPaymentStatus"
-        ) {
+        if (className === paymentLogsRow && methodName === "getPaymentStatus") {
           return "Crm\\PaymentsModule\\Status\\PaymentStatus";
         }
 
@@ -1205,11 +1200,13 @@ $pairs['pay_123']->getPaymentStatus();
     );
 
     await expect(
-      harness.api().resolvePhpExpressionType(
-        source,
-        position,
-        "$pairs['pay_123']->getPaymentStatus()",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          source,
+          position,
+          "$pairs['pay_123']->getPaymentStatus()",
+        ),
     ).resolves.toBe("Crm\\PaymentsModule\\Status\\PaymentStatus");
     expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
       paymentLogsSelection,
@@ -1222,6 +1219,10 @@ $pairs['pay_123']->getPaymentStatus();
     expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
       paymentLogsRow,
       "getPaymentStatus",
+      undefined,
+      undefined,
+      undefined,
+      "$pairs['pay_123']->getPaymentStatus()",
     );
     harness.unmount();
   });
@@ -1276,18 +1277,18 @@ $pairs['pay_123']->getPaymentStatus();
       );
 
       await expect(
-        harness.api().resolvePhpExpressionType(
-          source,
-          position,
-          "$this->recencyStorage",
-        ),
+        harness
+          .api()
+          .resolvePhpExpressionType(source, position, "$this->recencyStorage"),
       ).resolves.toBe("App\\Storage\\IRecencyStorage");
       await expect(
-        harness.api().resolvePhpExpressionType(
-          source,
-          position,
-          "$this->recencyStorage->latest()",
-        ),
+        harness
+          .api()
+          .resolvePhpExpressionType(
+            source,
+            position,
+            "$this->recencyStorage->latest()",
+          ),
       ).resolves.toBe("App\\Dto\\RecentItemList");
       expect(resolvePhpFrameworkBoundConcrete).toHaveBeenCalledWith(
         "App\\Storage\\IRecencyStorage",
@@ -1295,10 +1296,18 @@ $pairs['pay_123']->getPaymentStatus();
       expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
         "App\\Storage\\RedisRecencyStorage",
         "latest",
+        undefined,
+        undefined,
+        undefined,
+        "$this->recencyStorage->latest()",
       );
       expect(resolvePhpMethodReturnType).not.toHaveBeenCalledWith(
         "App\\Storage\\IRecencyStorage",
         "latest",
+        undefined,
+        undefined,
+        undefined,
+        "$this->recencyStorage->latest()",
       );
       harness.unmount();
     },
@@ -1326,18 +1335,18 @@ $pairs['pay_123']->getPaymentStatus();
     );
 
     await expect(
-      harness.api().resolvePhpExpressionType(
-        source,
-        position,
-        "$this->recencyStorage",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(source, position, "$this->recencyStorage"),
     ).resolves.toBe("App\\Storage\\IRecencyStorage");
     await expect(
-      harness.api().resolvePhpExpressionType(
-        source,
-        position,
-        "$this->recencyStorage->latest()",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          source,
+          position,
+          "$this->recencyStorage->latest()",
+        ),
     ).resolves.toBe("App\\Dto\\InterfaceRecentItemList");
     expect(resolvePhpFrameworkBoundConcrete).toHaveBeenCalledWith(
       "App\\Storage\\IRecencyStorage",
@@ -1345,6 +1354,10 @@ $pairs['pay_123']->getPaymentStatus();
     expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
       "App\\Storage\\IRecencyStorage",
       "latest",
+      undefined,
+      undefined,
+      undefined,
+      "$this->recencyStorage->latest()",
     );
     harness.unmount();
   });
@@ -1373,21 +1386,30 @@ $pairs['pay_123']->getPaymentStatus();
     );
 
     await expect(
-      harness.api().resolvePhpExpressionType(
-        source,
-        position,
-        "$this->recencyStorage->latest()",
-      ),
+      harness
+        .api()
+        .resolvePhpExpressionType(
+          source,
+          position,
+          "$this->recencyStorage->latest()",
+        ),
     ).resolves.toBe("App\\Dto\\InterfaceRecentItemList");
     expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
       "App\\Storage\\RedisRecencyStorage",
       "latest",
+      undefined,
+      undefined,
+      undefined,
+      "$this->recencyStorage->latest()",
     );
     expect(resolvePhpMethodReturnType).toHaveBeenCalledWith(
       "App\\Storage\\IRecencyStorage",
       "latest",
+      undefined,
+      undefined,
+      undefined,
+      "$this->recencyStorage->latest()",
     );
     harness.unmount();
   });
-
 });

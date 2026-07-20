@@ -1,7 +1,7 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it, vi } from "vitest";
 import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
   phpFrameworkProvidersForProject,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
@@ -12,6 +12,7 @@ import {
 import { resolvePhpFrameworkLiteralNavigationTarget } from "./phpFrameworkLiteralNavigation";
 import type { PhpFrameworkLiteralNavigationDependencies } from "./phpFrameworkLiteralNavigation";
 import type { PhpProjectDescriptor } from "../domain/workspace";
+import { phpFrameworkPluginCatalog } from "./phpFrameworkPluginCatalog";
 
 const position = { column: 24, lineNumber: 3 };
 const targetPosition = { column: 6, lineNumber: 4 };
@@ -149,10 +150,13 @@ describe("resolvePhpFrameworkLiteralNavigationTarget", () => {
   });
 
   it("resolves an Inertia component literal through the provider branch", async () => {
-    const providers = phpFrameworkProvidersForProject(phpProjectDescriptor({
-      packageName: "laravel/laravel",
-      packages: [{ name: "inertiajs/inertia-laravel" }],
-    }));
+    const providers = phpFrameworkProvidersForProject(
+      phpProjectDescriptor({
+        packageName: "laravel/laravel",
+        packages: [{ name: "inertiajs/inertia-laravel" }],
+      }),
+      phpFrameworkPluginCatalog,
+    );
     const deps = dependencies({
       findInertiaComponentTarget: vi.fn(async () => ({
         name: "Users/Index",

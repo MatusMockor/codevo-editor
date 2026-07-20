@@ -8,6 +8,7 @@ import {
 } from "../domain/phpNetteDatabaseTypes";
 
 export interface PhpNetteDatabaseTypeResolver {
+  clear?(): void;
   resolveClassTypes(className: string): Promise<PhpNetteDatabaseTypes | null>;
   resolveTableType(
     carrierType: string,
@@ -17,12 +18,14 @@ export interface PhpNetteDatabaseTypeResolver {
 }
 
 export interface PhpNetteDatabaseTypeResolverDependencies {
+  cachePolicy?: "generation" | "revalidate";
   isActive(): boolean;
   readClassSource(path: string, className: string): Promise<string>;
   resolveClassSourcePaths(className: string): Promise<string[]>;
 }
 
 export function createPhpNetteDatabaseTypeResolver({
+  cachePolicy = "revalidate",
   isActive,
   readClassSource,
   resolveClassSourcePaths,
@@ -33,6 +36,7 @@ export function createPhpNetteDatabaseTypeResolver({
   }
 
   const cache = new Map<string, CacheEntry>();
+  const tableTypeCache = new Map<string, Promise<string | null>>();
 
   const classExists = async (className: string): Promise<boolean> => {
     const paths = await resolveClassSourcePaths(className);
@@ -48,6 +52,13 @@ export function createPhpNetteDatabaseTypeResolver({
 
     const normalizedClassName = className.trim().replace(/^\\+/, "");
     const cacheKey = normalizedClassName.toLowerCase();
+    const generationCached = cache.get(cacheKey);
+
+    if (cachePolicy === "generation" && generationCached) {
+      const cachedTypes = await generationCached.types;
+      return isActive() ? cachedTypes : null;
+    }
+
     const sourceSignature = await classSourceSignature(normalizedClassName);
 
     if (!isActive()) {
@@ -110,7 +121,10 @@ export function createPhpNetteDatabaseTypeResolver({
         return null;
       }
 
-      if (!(await classExists(activeRowType)) || !(await classExists(selectionType))) {
+      if (
+        !(await classExists(activeRowType)) ||
+        !(await classExists(selectionType))
+      ) {
         return null;
       }
 
@@ -134,7 +148,10 @@ export function createPhpNetteDatabaseTypeResolver({
         return verifiedTypes(directTypes);
       }
 
-      for (const traitName of phpNetteRepositoryTraitClassNames(source, className)) {
+      for (const traitName of phpNetteRepositoryTraitClassNames(
+        source,
+        className,
+      )) {
         const traitTypes = await resolveTypesFromTrait(traitName);
 
         if (traitTypes) {
@@ -149,10 +166,16 @@ export function createPhpNetteDatabaseTypeResolver({
         continue;
       }
 
-      const repositoryNamespace = traitName.replace(/\\Repository\\[^\\]+$/, "");
+      const repositoryNamespace = traitName.replace(
+        /\\Repository\\[^\\]+$/,
+        "",
+      );
       const activeRowType = `${repositoryNamespace}\\ActiveRow\\${phpNetteTypeStem(tableName)}ActiveRow`;
       const selectionType = `${repositoryNamespace}\\Selection\\${phpNetteTypeStem(tableName)}Selection`;
-      const conventionalTypes = await verifiedTypes({ activeRowType, selectionType });
+      const conventionalTypes = await verifiedTypes({
+        activeRowType,
+        selectionType,
+      });
 
       if (conventionalTypes) {
         return conventionalTypes;
@@ -192,14 +215,51 @@ export function createPhpNetteDatabaseTypeResolver({
   };
 
   return {
+    clear() {
+      cache.clear();
+      tableTypeCache.clear();
+    },
     resolveClassTypes,
     async resolveTableType(carrierType, kind, tableName) {
       if (!isActive()) {
         return null;
       }
 
-      const candidate = phpNetteSiblingDatabaseType(carrierType, kind, tableName);
-      return candidate && (await classExists(candidate)) ? candidate : null;
+      const cacheKey = `${carrierType.trim().toLowerCase()}\0${kind}\0${tableName.toLowerCase()}`;
+      const cached = tableTypeCache.get(cacheKey);
+
+      if (cachePolicy === "generation" && cached) {
+        const cachedType = await cached;
+        return isActive() ? cachedType : null;
+      }
+
+      const candidate = phpNetteSiblingDatabaseType(
+        carrierType,
+        kind,
+        tableName,
+      );
+      const pending = candidate
+        ? classExists(candidate).then((exists) => (exists ? candidate : null))
+        : Promise.resolve(null);
+
+      if (cachePolicy !== "generation") {
+        return pending;
+      }
+
+      tableTypeCache.set(cacheKey, pending);
+
+      try {
+        const result = await pending;
+
+        if (!result) {
+          tableTypeCache.delete(cacheKey);
+        }
+
+        return result;
+      } catch (error) {
+        tableTypeCache.delete(cacheKey);
+        throw error;
+      }
     },
   };
 }

@@ -1,3 +1,4 @@
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 // @vitest-environment jsdom
 
 import { existsSync } from "node:fs";
@@ -6,7 +7,7 @@ import path from "node:path";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { phpNetteFrameworkProvider } from "../domain/phpFrameworkProviders";
+
 import { resolvePhpClassName } from "../domain/phpNavigation";
 import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
 import type {

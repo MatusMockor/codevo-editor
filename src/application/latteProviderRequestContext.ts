@@ -64,7 +64,9 @@ export function latteProviderRequestContext(
 
   const { isRequestedRootActive, requestedRoot } = workspaceContext;
   const loadFactoryTemplateOwner = (templatePath: string) => {
-    if (!deps.frameworkIntelligence.isNette) {
+    if (
+      !options.frameworkCapabilities.supportsFactoryTemplateOwnerIntelligence()
+    ) {
       return Promise.resolve(null);
     }
 

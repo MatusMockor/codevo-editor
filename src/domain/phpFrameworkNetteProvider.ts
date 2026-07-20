@@ -31,7 +31,10 @@ import {
   netteTranslationKeysFromSource,
   netteTranslationTargetFromSource,
 } from "./netteTranslations";
-import type { PhpFrameworkProvider } from "./phpFrameworkProviders";
+import {
+  definePhpFrameworkActiveDocumentDiagnostics,
+  type PhpFrameworkProvider,
+} from "./phpFrameworkProviders";
 import type { PhpProjectDescriptor } from "./workspace";
 
 /**
@@ -56,6 +59,18 @@ export function isNettePhpProject(php: PhpProjectDescriptor): boolean {
       composerPackage.name === "latte/latte",
   );
 }
+
+const PHP_NETTE_ACTIVE_DOCUMENT_DIAGNOSTICS =
+  definePhpFrameworkActiveDocumentDiagnostics([
+    {
+      kind: "latteTemplateReferences",
+      language: "latte",
+    },
+    {
+      kind: "lattePresenterLinks",
+      language: "latte",
+    },
+  ] as const);
 
 /**
  * Nette provider. Detection resolves the framework profile + per-workspace
@@ -109,16 +124,7 @@ export const phpNetteFrameworkProvider: PhpFrameworkProvider = {
       searchQueries: NETTE_VIEW_DATA_SEARCH_QUERIES,
     },
   ],
-  activeDocumentDiagnostics: [
-    {
-      kind: "latteTemplateReferences",
-      language: "latte",
-    },
-    {
-      kind: "lattePresenterLinks",
-      language: "latte",
-    },
-  ],
+  activeDocumentDiagnostics: PHP_NETTE_ACTIVE_DOCUMENT_DIAGNOSTICS,
   fileChangeInvalidations: [
     {
       kind: "latteExpressionData",

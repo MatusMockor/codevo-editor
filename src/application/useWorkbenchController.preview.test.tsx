@@ -54846,6 +54846,78 @@ return [
       });
     });
 
+    it("keeps framework navigation active after cancelling the workspace picker", async () => {
+      const controllerPath =
+        "/workspace/app/Http/Controllers/AppController.php";
+      const appConfigPath = "/workspace/config/app.php";
+      const controllerSource = `<?php
+
+class AppController
+{
+    public function name(): string
+    {
+        return config('app.name');
+    }
+}
+`;
+      const appConfigSource = `<?php
+
+return [
+    'name' => 'Codevo',
+];
+`;
+      const openFromPicker = vi.fn(async () => ({
+        status: "cancelled" as const,
+      }));
+      const { getWorkbench } = renderController({
+        appSettings: {
+          ...defaultAppSettings(),
+          recentWorkspacePath: "/workspace",
+        },
+        readTextFile: vi.fn(async (path: string) => {
+          if (path === controllerPath) {
+            return controllerSource;
+          }
+
+          if (path === appConfigPath) {
+            return appConfigSource;
+          }
+
+          throw new Error(`Unexpected read ${path}`);
+        }),
+        workspaceDescriptor: phpWorkspaceDescriptor(),
+        workspaceIdentityGateway: {
+          getDescriptor: vi.fn(),
+          openFromPicker,
+          unregister: vi.fn(async () => undefined),
+        },
+      });
+      await flushAsyncTurns();
+      await act(async () => {
+        await getWorkbench().setSmartMode("lightSmart");
+        await getWorkbench().openFile(
+          fileEntry(controllerPath, "AppController.php"),
+        );
+      });
+      await act(async () => {
+        await getWorkbench().openWorkspace();
+      });
+
+      expect(openFromPicker).toHaveBeenCalledOnce();
+      expect(getWorkbench().workspaceRoot).toBe("/workspace");
+
+      let handled = false;
+      await act(async () => {
+        handled = await getWorkbench().providePhpFrameworkDefinition(
+          controllerSource,
+          controllerSource.indexOf("app.name") + 1,
+        );
+      });
+
+      expect(handled).toBe(true);
+      expect(getWorkbench().activePath).toBe(appConfigPath);
+    });
+
     it("navigates a view literal to its Blade file", async () => {
       const controllerPath =
         "/workspace/app/Http/Controllers/DashboardController.php";

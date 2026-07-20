@@ -1,3 +1,4 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -5,7 +6,6 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
-  phpLaravelFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
@@ -48,7 +48,6 @@ const AUTHORIZATION_ONLY_RUNTIME: PhpFrameworkRuntimeContext = {
   ...LARAVEL_RUNTIME,
   providers: [AUTHORIZATION_ONLY_PROVIDER],
   profile: "generic",
-  isLaravel: false,
   hasProvider: (providerId) => providerId === AUTHORIZATION_ONLY_PROVIDER.id,
   supports: (capability) => capability === "authorizationAbilities",
   supportsTargetCollection: () => false,
@@ -57,7 +56,6 @@ const MIDDLEWARE_ONLY_RUNTIME: PhpFrameworkRuntimeContext = {
   ...LARAVEL_RUNTIME,
   providers: [MIDDLEWARE_ONLY_PROVIDER],
   profile: "generic",
-  isLaravel: false,
   hasProvider: (providerId) => providerId === MIDDLEWARE_ONLY_PROVIDER.id,
   supports: (capability) => capability === "middlewareAliases",
   supportsTargetCollection: () => false,

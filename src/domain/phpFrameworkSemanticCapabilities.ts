@@ -1,18 +1,17 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import { resolvePhpClassName } from "./phpClassNameResolution";
-import { defaultPhpFrameworkProviders } from "./phpFrameworkProviderDefaults";
 import type {
   PhpFrameworkContainerAutowiredCandidate,
   PhpFrameworkContainerBinding,
-  PhpFrameworkProvider,
   PhpFrameworkQueryCallbackContext,
+  PhpFrameworkSemanticProvider,
   PhpFrameworkSourceContext,
-} from "./phpFrameworkProviders";
+} from "./phpFrameworkSemanticContracts";
 
 export function phpFrameworkPropertyTypeFromSource(
   source: string,
   propertyName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
   receiverType: string | null = null,
 ): string | null {
   for (const provider of providers) {
@@ -38,7 +37,7 @@ export function phpFrameworkQueryCallbackContextForVariable(
   source: string,
   position: EditorPosition,
   variableName: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): PhpFrameworkQueryCallbackContext | null {
   for (const provider of providers) {
     const context = provider.semantics?.queryCallbackContextForVariable?.({
@@ -60,7 +59,7 @@ export function phpFrameworkMethodCallReturnTypeFromSource(
   methodName: string,
   receiverType: string | null,
   receiverExpression: string | null,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
   callExpression: string | null = null,
   sourceContext?: PhpFrameworkSourceContext,
 ): string | null {
@@ -84,12 +83,8 @@ export function phpFrameworkMethodCallReturnTypeFromSource(
 
 export function phpFrameworkSuppressesSameSourceMethodReturnFallback(
   methodName: string,
-  providers?: readonly PhpFrameworkProvider[],
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): boolean {
-  if (!providers) {
-    return methodName === "findOrFail";
-  }
-
   if (providers.length === 0) {
     return false;
   }
@@ -104,7 +99,7 @@ export function phpFrameworkSuppressesSameSourceMethodReturnFallback(
 
 export function phpFrameworkContainerExpressionClassName(
   expression: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): string | null {
   for (const provider of providers) {
     const className = provider.semantics?.containerExpressionClassName?.({
@@ -122,7 +117,7 @@ export function phpFrameworkContainerExpressionClassName(
 export function phpFrameworkContainerConcreteClassNameFromSource(
   source: string,
   expression: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
   sourceContext?: PhpFrameworkSourceContext,
 ): string | null {
   const abstractClassName = phpFrameworkContainerExpressionClassName(
@@ -153,7 +148,7 @@ export function phpFrameworkContainerConcreteClassNameFromSource(
 
 export function phpFrameworkContainerBindingsFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): PhpFrameworkContainerBinding[] {
   return providers.flatMap(
     (provider) =>
@@ -163,7 +158,7 @@ export function phpFrameworkContainerBindingsFromSource(
 
 export function phpFrameworkContainerConcreteClassNamesFromSource(
   source: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): string[] {
   return providers.flatMap(
     (provider) =>
@@ -173,7 +168,7 @@ export function phpFrameworkContainerConcreteClassNamesFromSource(
 }
 
 export function phpFrameworkSupportsContainerBindingsFromSource(
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): boolean {
   return providers.some(
     (provider) =>
@@ -184,7 +179,7 @@ export function phpFrameworkSupportsContainerBindingsFromSource(
 
 export function isPhpFrameworkContainerBindingCandidatePath(
   path: string,
-  providers: readonly PhpFrameworkProvider[] = defaultPhpFrameworkProviders,
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): boolean {
   return providers.some(
     (provider) =>
@@ -194,7 +189,7 @@ export function isPhpFrameworkContainerBindingCandidatePath(
 
 function phpFrameworkContainerBindingsFromSources(
   sources: readonly string[],
-  providers: readonly PhpFrameworkProvider[],
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): PhpFrameworkContainerBinding[] {
   const bindings: PhpFrameworkContainerBinding[] = [];
 
@@ -217,19 +212,20 @@ function phpFrameworkContainerBindingsFromSources(
 function phpFrameworkAutowiredConcreteClassNameFromSources(
   abstractClassName: string,
   sources: readonly string[],
-  providers: readonly PhpFrameworkProvider[],
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): string | null {
   const candidates = phpFrameworkContainerAutowiredCandidatesFromSources(
     sources,
     providers,
   );
-  const matches = candidates.filter((candidate) =>
-    candidate.producedTypeSource.kind === "class" &&
-    phpFrameworkSourceDeclaresClassImplementing(
-      sources,
-      candidate.producedTypeSource.className,
-      abstractClassName,
-    ),
+  const matches = candidates.filter(
+    (candidate) =>
+      candidate.producedTypeSource.kind === "class" &&
+      phpFrameworkSourceDeclaresClassImplementing(
+        sources,
+        candidate.producedTypeSource.className,
+        abstractClassName,
+      ),
   );
   const eligible = matches.filter((candidate) =>
     candidate.autowiredTypes
@@ -261,13 +257,15 @@ function phpFrameworkAutowiredConcreteClassNameFromSources(
 
 export function phpFrameworkContainerAutowiredCandidatesFromSources(
   sources: readonly string[],
-  providers: readonly PhpFrameworkProvider[],
+  providers: readonly PhpFrameworkSemanticProvider[],
 ): PhpFrameworkContainerAutowiredCandidate[] {
   const candidates: PhpFrameworkContainerAutowiredCandidate[] = [];
 
   for (const provider of providers) {
     const providerCandidates =
-      provider.semantics?.containerAutowiredCandidatesFromSources?.({ sources });
+      provider.semantics?.containerAutowiredCandidatesFromSources?.({
+        sources,
+      });
 
     if (providerCandidates) {
       candidates.push(...providerCandidates);
@@ -349,11 +347,13 @@ function phpFrameworkSourceDeclaresClassImplementing(
       continue;
     }
 
-    if (phpFrameworkDirectInterfaceNames(source).some(
-      (implementedName) =>
-        phpFrameworkNormalizedClassName(implementedName) ===
-        phpFrameworkNormalizedClassName(interfaceName),
-    )) {
+    if (
+      phpFrameworkDirectInterfaceNames(source).some(
+        (implementedName) =>
+          phpFrameworkNormalizedClassName(implementedName) ===
+          phpFrameworkNormalizedClassName(interfaceName),
+      )
+    ) {
       return true;
     }
   }
@@ -366,9 +366,10 @@ function phpFrameworkCurrentClassName(source: string): string | null {
     .exec(source)?.[1]
     ?.trim()
     .replace(/^\\+/, "");
-  const match = /^\s*(?:abstract\s+|final\s+|readonly\s+)*(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/m.exec(
-    source,
-  );
+  const match =
+    /^\s*(?:abstract\s+|final\s+|readonly\s+)*(?:class|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/m.exec(
+      source,
+    );
   const shortName = match?.[1] ?? null;
 
   if (!shortName) {
@@ -378,12 +379,11 @@ function phpFrameworkCurrentClassName(source: string): string | null {
   return namespace ? `${namespace}\\${shortName}` : shortName;
 }
 
-function phpFrameworkDirectInterfaceNames(
-  source: string,
-): string[] {
-  const match = /^\s*(?:abstract\s+|final\s+|readonly\s+)*class\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+extends\s+[^\s{]+)?\s+implements\s+([^{]+)/m.exec(
-    source,
-  );
+function phpFrameworkDirectInterfaceNames(source: string): string[] {
+  const match =
+    /^\s*(?:abstract\s+|final\s+|readonly\s+)*class\s+[A-Za-z_][A-Za-z0-9_]*(?:\s+extends\s+[^\s{]+)?\s+implements\s+([^{]+)/m.exec(
+      source,
+    );
   const implementsList = match?.[1] ?? "";
 
   if (!implementsList) {

@@ -9,11 +9,11 @@ import {
   type UsePhpCodeActionsResult,
 } from "./usePhpCodeActions";
 import { usePhpInheritedMemberCollector } from "./usePhpInheritedMemberCollector";
-import {
-  activePhpFrameworkCodeActions,
-  type ActivePhpFrameworkCodeActions,
-} from "./phpFrameworkCodeActionContributionRegistry";
+import { activePhpFrameworkCodeActions } from "./phpFrameworkCodeActionContributionRegistry";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { createActiveMissingTemplateFileCodeAction } from "./phpMissingTemplateFileCodeActionContribution";
+import type { CreateMissingViewFileCodeAction } from "./phpBladeViewCodeActions";
+import { createPhpFrameworkCodeActionContributionCatalog } from "./phpFrameworkCodeActionContributionCatalog";
 
 interface UsePhpCodeActionProviderOptions {
   activeDocumentPath: string | null;
@@ -31,9 +31,8 @@ interface UsePhpCodeActionProviderOptions {
   workspaceRoot: string | null;
 }
 
-export interface UsePhpCodeActionProviderResult
-  extends UsePhpCodeActionsResult {
-  createMissingBladeViewCodeAction: ActivePhpFrameworkCodeActions["createMissingBladeViewCodeAction"];
+export interface UsePhpCodeActionProviderResult extends UsePhpCodeActionsResult {
+  createMissingBladeViewCodeAction: CreateMissingViewFileCodeAction;
 }
 
 export function usePhpCodeActionProvider({
@@ -58,12 +57,27 @@ export function usePhpCodeActionProvider({
     readNavigationFileContent,
     resolvePhpClassSourcePaths,
   });
-  const {
-    contributions: frameworkCodeActionContributions,
-    createMissingBladeViewCodeAction,
-  } = useMemo(
+  const { contributions: frameworkCodeActionContributions } = useMemo(() => {
+    const contributionAdapters =
+      createPhpFrameworkCodeActionContributionCatalog({
+        collectViewTargets,
+        readTestFileIfExists,
+        workspaceRoot,
+      });
+
+    return activePhpFrameworkCodeActions({
+      contributionAdapters,
+      frameworkRuntime,
+    });
+  }, [
+    collectViewTargets,
+    frameworkRuntime,
+    readTestFileIfExists,
+    workspaceRoot,
+  ]);
+  const createMissingBladeViewCodeAction = useMemo(
     () =>
-      activePhpFrameworkCodeActions({
+      createActiveMissingTemplateFileCodeAction({
         collectViewTargets,
         frameworkRuntime,
         readTestFileIfExists,

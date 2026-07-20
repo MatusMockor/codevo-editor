@@ -1,7 +1,7 @@
+import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it, vi } from "vitest";
 import {
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import type { LatteIntelligenceDependencies } from "./latteIntelligenceContracts";
@@ -141,6 +141,30 @@ class Widget {}`;
     expect(resolvePhpClassSourcePaths).not.toHaveBeenCalled();
   });
 
+  it("uses the Latte capability instead of framework identity", async () => {
+    const searchText = vi.fn(async () => []);
+    const customCapabilities = createLatteFrameworkCapabilities(() => [
+      frameworkProvider,
+    ]);
+    const request = latteProviderRequestContext(
+      options(
+        deps({
+          frameworkIntelligence: netteFrameworkIntelligence,
+          searchText,
+        }),
+        providerCaches(),
+        customCapabilities,
+      ),
+    );
+
+    await expect(
+      request?.loadFactoryTemplateOwner(
+        `${root}/app/UI/Home/default.latte`,
+      ),
+    ).resolves.toBeNull();
+    expect(searchText).not.toHaveBeenCalled();
+  });
+
   it("does not run factory-owner discovery for Laravel-only projects", () => {
     const readFileContent = vi.fn(async () => "");
     const resolvePhpClassSourcePaths = vi.fn(async () => []);
@@ -226,12 +250,13 @@ function deps(
 function options(
   dependencies: LatteIntelligenceDependencies,
   caches: LatteProviderFlowCaches,
+  frameworkCapabilities = createLatteFrameworkCapabilities(
+    () => dependencies.frameworkIntelligence.providers,
+  ),
 ): LatteProviderFlowFactoryOptions {
   return {
     caches,
-    frameworkCapabilities: createLatteFrameworkCapabilities(
-      () => frameworkIntelligence.providers,
-    ),
+    frameworkCapabilities,
     getDependencies: () => dependencies,
     inFlight: {
       filterInFlight: new Map(),

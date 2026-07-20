@@ -101,7 +101,9 @@ describe("phpNetteMethodReturnTypeStrategyAdapter", () => {
         className: TYPES.activeRowType,
         methodName: "ref",
       }),
-    ).resolves.toBe("Generated\\ActiveRowTypes\\ActiveRow\\UserStatusesActiveRow");
+    ).resolves.toBe(
+      "Generated\\ActiveRowTypes\\ActiveRow\\UserStatusesActiveRow",
+    );
     await expect(
       strategy.knownClassMethodReturnType({
         callExpression: "$user->related($table)",
@@ -127,8 +129,7 @@ describe("phpNetteMethodReturnTypeStrategyAdapter", () => {
     );
     await expect(
       strategy.knownClassMethodReturnType({
-        callExpression:
-          "$user->related($repository->ref('user_statuses'))",
+        callExpression: "$user->related($repository->ref('user_statuses'))",
         className: TYPES.activeRowType,
         methodName: "related",
       }),
@@ -182,6 +183,59 @@ describe("phpNetteMethodReturnTypeStrategyAdapter", () => {
         methodName: "FETCHALL",
       }),
     ).resolves.toBe(`${eboxTypes.activeRowType}[]`);
+  });
+
+  it("owns conditional relation refinement for literal and dynamic calls", async () => {
+    const strategy = adapter();
+    const rawReturnType =
+      "($key is 'user_statuses' ? UserStatusesActiveRow|null : \\Nette\\Database\\Table\\ActiveRow|null)";
+    const baseContext = {
+      declaringClassName: "Nette\\Database\\Table\\ActiveRow",
+      lateStaticClassName: TYPES.activeRowType,
+      methodName: "ref",
+      methodReturnExpressions: [],
+      rawReturnType,
+      resolvedReturnType: rawReturnType,
+      resolveTypeReference: (typeName: string) => {
+        if (typeName === "UserStatusesActiveRow") {
+          return "Generated\\ActiveRowTypes\\ActiveRow\\UserStatusesActiveRow";
+        }
+
+        return typeName;
+      },
+    };
+
+    await expect(
+      strategy.resolveDeclaredMethodReturnType({
+        ...baseContext,
+        callExpression: "$row->ref('user_statuses')",
+      }),
+    ).resolves.toBe(
+      "Generated\\ActiveRowTypes\\ActiveRow\\UserStatusesActiveRow",
+    );
+    await expect(
+      strategy.resolveDeclaredMethodReturnType({
+        ...baseContext,
+        callExpression: "$row->ref($table)",
+      }),
+    ).resolves.toBe("Nette\\Database\\Table\\ActiveRow");
+  });
+
+  it("preserves concrete custom declarations instead of applying generated types", async () => {
+    const strategy = adapter();
+
+    await expect(
+      strategy.resolveDeclaredMethodReturnType({
+        callExpression: "$repository->insert($data)",
+        declaringClassName: "App\\UsersRepository",
+        lateStaticClassName: "App\\UsersRepository",
+        methodName: "insert",
+        methodReturnExpressions: [],
+        rawReturnType: "CustomRow|null",
+        resolvedReturnType: "App\\CustomRow|null",
+        resolveTypeReference: (typeName) => typeName,
+      }),
+    ).resolves.toBe("App\\CustomRow|null");
   });
 
   it("does not enrich unrelated classes", async () => {

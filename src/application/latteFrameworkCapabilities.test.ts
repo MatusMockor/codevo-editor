@@ -1,6 +1,6 @@
+import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
 import { describe, expect, it } from "vitest";
 import {
-  phpNetteFrameworkProvider,
   type PhpFrameworkProvider,
 } from "../domain/phpFrameworkProviders";
 import { createLatteFrameworkCapabilities } from "./latteFrameworkCapabilities";
@@ -57,6 +57,8 @@ describe("createLatteFrameworkCapabilities", () => {
     ]);
     const linkSource = "{link Product:show}";
 
+    expect(capabilities.supportsFactoryTemplateOwnerIntelligence()).toBe(true);
+
     expect(
       capabilities.detectLattePresenterLinkAt(
         linkSource,
@@ -107,6 +109,8 @@ describe("createLatteFrameworkCapabilities", () => {
     ]);
     const source = "{link Product:show}";
 
+    expect(capabilities.supportsFactoryTemplateOwnerIntelligence()).toBe(false);
+
     expect(
       capabilities.detectLattePresenterLinkAt(source, source.indexOf("P") + 1),
     ).toBeNull();
@@ -139,9 +143,11 @@ describe("createLatteFrameworkCapabilities", () => {
     const offset = source.indexOf("Product:show") + 2;
 
     expect(capabilities.detectLattePresenterLinkAt(source, offset)).toBeNull();
+    expect(capabilities.supportsFactoryTemplateOwnerIntelligence()).toBe(false);
 
     providers = [phpNetteFrameworkProvider];
 
+    expect(capabilities.supportsFactoryTemplateOwnerIntelligence()).toBe(true);
     expect(
       capabilities.detectLattePresenterLinkAt(source, offset),
     ).toMatchObject({ target: "Product:show" });

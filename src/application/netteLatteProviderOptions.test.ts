@@ -344,6 +344,7 @@ function options(
       viewDataCache: {},
     },
     frameworkCapabilities: {
+      supportsFactoryTemplateOwnerIntelligence: () => false,
       detectLattePresenterLinkAt: () => null,
       isPresenterSourcePath: () => false,
       lattePresenterLinkCompletionContextAt: () => null,

@@ -7,10 +7,12 @@ import type {
   ComposerPackageDescriptor,
   WorkspaceDescriptor,
 } from "../domain/workspace";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   usePhpFrameworkResolution,
   type UsePhpFrameworkResolutionOptions,
 } from "./usePhpFrameworkResolution";
+import { phpFrameworkPluginCatalog } from "./phpFrameworkPluginCatalog";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -31,7 +33,10 @@ function composerPackage(name: string): ComposerPackageDescriptor {
   };
 }
 
-function phpDescriptor(packageNames: string[]): WorkspaceDescriptor {
+function phpDescriptor(
+  packageNames: string[],
+  rootPath: string = ROOT,
+): WorkspaceDescriptor {
   return {
     javaScriptTypeScript: null,
     php: {
@@ -43,7 +48,7 @@ function phpDescriptor(packageNames: string[]): WorkspaceDescriptor {
       phpVersionConstraint: null,
       psr4Roots: [],
     },
-    rootPath: ROOT,
+    rootPath,
   };
 }
 
@@ -87,16 +92,47 @@ afterEach(() => {
 });
 
 describe("usePhpFrameworkResolution", () => {
+  it("uses the application-owned shipped plugin catalog", () => {
+    expect(phpFrameworkPluginCatalog.map((provider) => provider.id)).toEqual([
+      "laravel",
+      "nette",
+    ]);
+  });
+
+  it("resolves an injected third provider without changing the hook", () => {
+    const symfonyProvider: PhpFrameworkProvider = {
+      id: "symfony",
+      appliesTo: (php) =>
+        php.packages.some(
+          (composerPackage) =>
+            composerPackage.name === "symfony/framework-bundle",
+        ),
+      presentation: { activityLabel: "Symfony" },
+    };
+    const harness = renderHook({
+      providerCatalog: [symfonyProvider],
+      workspaceDescriptor: phpDescriptor(["symfony/framework-bundle"]),
+    });
+
+    expect(harness.api().activeFrameworkActivityLabel).toBe("Symfony");
+    expect(
+      harness.api().activePhpFrameworkProviders.map((provider) => provider.id),
+    ).toEqual(["symfony"]);
+    expect(harness.api().phpFrameworkRuntimeContext.profile).toBe("generic");
+
+    harness.unmount();
+  });
+
   it("resolves a Laravel descriptor to the Laravel runtime and providers", () => {
     const harness = renderHook({
       workspaceDescriptor: phpDescriptor(["laravel/framework"]),
     });
     const api = harness.api();
 
-    expect(api.phpFrameworkRuntimeContext.isLaravel).toBe(true);
-    expect(api.phpFrameworkRuntimeContext.isNette).toBe(false);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("laravel")).toBe(true);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("nette")).toBe(false);
     expect(api.phpFrameworkRuntimeContext.profile).toBe("laravel");
-    expect(api.phpFrameworkIntelligence.isLaravel).toBe(true);
+    expect(api.phpFrameworkIntelligence.hasProvider("laravel")).toBe(true);
     expect(
       api.activePhpFrameworkProviders.map((provider) => provider.id),
     ).toEqual(["laravel"]);
@@ -111,8 +147,8 @@ describe("usePhpFrameworkResolution", () => {
     });
     const api = harness.api();
 
-    expect(api.phpFrameworkRuntimeContext.isNette).toBe(true);
-    expect(api.phpFrameworkRuntimeContext.isLaravel).toBe(false);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("nette")).toBe(true);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("laravel")).toBe(false);
     expect(api.phpFrameworkRuntimeContext.profile).toBe("nette");
     expect(
       api.activePhpFrameworkProviders.map((provider) => provider.id),
@@ -122,13 +158,78 @@ describe("usePhpFrameworkResolution", () => {
     harness.unmount();
   });
 
+  it("does not leak framework resolution across project rerenders", () => {
+    const harness = renderHook({
+      workspaceDescriptor: phpDescriptor(
+        ["laravel/framework"],
+        "/workspace/laravel",
+      ),
+    });
+
+    expect(harness.api().phpFrameworkRuntimeContext.profile).toBe("laravel");
+    expect(
+      harness.api().phpFrameworkRuntimeContext.hasProvider("laravel"),
+    ).toBe(true);
+    expect(harness.api().phpFrameworkRuntimeContext.hasProvider("nette")).toBe(
+      false,
+    );
+    expect(
+      harness.api().phpFrameworkIntelligence.hasProvider("laravel"),
+    ).toBe(true);
+    expect(
+      harness.api().activePhpFrameworkProviders.map((provider) => provider.id),
+    ).toEqual(["laravel"]);
+    expect(harness.api().activeFrameworkActivityLabel).toBe("Laravel");
+
+    harness.rerender({
+      workspaceDescriptor: phpDescriptor(
+        ["nette/application"],
+        "/workspace/nette",
+      ),
+    });
+
+    expect(harness.api().phpFrameworkRuntimeContext.profile).toBe("nette");
+    expect(
+      harness.api().phpFrameworkRuntimeContext.hasProvider("laravel"),
+    ).toBe(false);
+    expect(harness.api().phpFrameworkRuntimeContext.hasProvider("nette")).toBe(
+      true,
+    );
+    expect(
+      harness.api().phpFrameworkIntelligence.hasProvider("laravel"),
+    ).toBe(false);
+    expect(
+      harness.api().activePhpFrameworkProviders.map((provider) => provider.id),
+    ).toEqual(["nette"]);
+    expect(harness.api().activeFrameworkActivityLabel).toBe("Nette");
+
+    harness.rerender({
+      workspaceDescriptor: phpDescriptor([], "/workspace/generic"),
+    });
+
+    expect(harness.api().phpFrameworkRuntimeContext.profile).toBe("generic");
+    expect(
+      harness.api().phpFrameworkRuntimeContext.hasProvider("laravel"),
+    ).toBe(false);
+    expect(harness.api().phpFrameworkRuntimeContext.hasProvider("nette")).toBe(
+      false,
+    );
+    expect(
+      harness.api().phpFrameworkIntelligence.hasProvider("laravel"),
+    ).toBe(false);
+    expect(harness.api().activePhpFrameworkProviders).toEqual([]);
+    expect(harness.api().activeFrameworkActivityLabel).toBeNull();
+
+    harness.unmount();
+  });
+
   it("resolves a missing php descriptor to the generic runtime with no providers", () => {
     const harness = renderHook({ workspaceDescriptor: null });
     const api = harness.api();
 
     expect(api.phpFrameworkRuntimeContext.profile).toBe("generic");
-    expect(api.phpFrameworkRuntimeContext.isLaravel).toBe(false);
-    expect(api.phpFrameworkRuntimeContext.isNette).toBe(false);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("laravel")).toBe(false);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("nette")).toBe(false);
     expect(api.activePhpFrameworkProviders).toEqual([]);
     expect(api.activeFrameworkActivityLabel).toBeNull();
 

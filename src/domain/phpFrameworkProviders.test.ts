@@ -1,11 +1,17 @@
-import { describe, expect, it } from "vitest";
+import {
+  isNettePhpProject,
+  phpNetteFrameworkProvider,
+  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
+} from "./phpFrameworkNetteProvider";
+import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   createPhpFrameworkProviderCapabilityRegistry,
+  definePhpFrameworkActiveDocumentDiagnostics,
   frameworkProfileForProject,
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
   isPhpFrameworkContainerBindingCandidatePath,
-  isNettePhpProject,
   phpFrameworkAuthorizationAbilityDefinitionsFromSource,
   phpFrameworkAuthorizationAbilitySearchQueries,
   phpFrameworkContainerBindingsFromSource,
@@ -20,7 +26,6 @@ import {
   phpFrameworkModelNamespacePrefixes,
   phpFrameworkMemberPropertyMagicDiagnostic,
   isPhpFrameworkProviderActive,
-  phpFrameworkProviderRegistry,
   phpFrameworkProviderSignature,
   phpFrameworkMemberCompletionsFromSource,
   phpFrameworkMiddlewareAliasDefinitionsFromSource,
@@ -82,12 +87,10 @@ import {
   phpFrameworkViewLiteralTarget,
   phpFrameworkViewMissingTargetMessage,
   phpFrameworkViewReferenceAt,
-  phpLaravelFrameworkProvider,
-  phpNetteFrameworkProvider,
-  NETTE_MAGIC_DIAGNOSTIC_SOURCE,
   resolvePhpFrameworkProfile,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
+
 import {
   detectLaravelRouteModelBindingAt,
   explicitLaravelRouteModelBindingClassName,
@@ -156,6 +159,11 @@ import {
 } from "./latteLinkNavigation";
 import type { PhpProjectDescriptor } from "./workspace";
 
+const SHIPPED_FRAMEWORK_PROVIDERS = [
+  phpLaravelFrameworkProvider,
+  phpNetteFrameworkProvider,
+] as const;
+
 describe("phpFrameworkProviders", () => {
   const queryCallbackSource = `<?php
 Post::query()->whereHas('comments', function ($query): void {
@@ -166,6 +174,46 @@ Post::query()->whereHas('comments', function ($query): void {
     queryCallbackSource,
     "$query->where",
   );
+
+  it("keeps active-document diagnostics open to future framework languages", () => {
+    const symfonyDiagnostics = definePhpFrameworkActiveDocumentDiagnostics([
+      {
+        kind: "twigTemplateReferences",
+        language: "twig",
+      },
+    ] as const);
+    const symfonyProvider: PhpFrameworkProvider = {
+      id: "symfony",
+      activeDocumentDiagnostics: symfonyDiagnostics,
+    };
+
+    expectTypeOf(
+      symfonyDiagnostics[0].kind,
+    ).toEqualTypeOf<"twigTemplateReferences">();
+    expectTypeOf(symfonyDiagnostics[0].language).toEqualTypeOf<"twig">();
+    expect(symfonyProvider.activeDocumentDiagnostics).toEqual([
+      {
+        kind: "twigTemplateReferences",
+        language: "twig",
+      },
+    ]);
+    expect(phpLaravelFrameworkProvider.activeDocumentDiagnostics).toEqual([
+      {
+        kind: "bladeViewReferences",
+        language: "blade",
+      },
+    ]);
+    expect(phpNetteFrameworkProvider.activeDocumentDiagnostics).toEqual([
+      {
+        kind: "latteTemplateReferences",
+        language: "latte",
+      },
+      {
+        kind: "lattePresenterLinks",
+        language: "latte",
+      },
+    ]);
+  });
 
   it("dispatches query-callback context only through an active provider capability", () => {
     expect(
@@ -242,9 +290,6 @@ Post::query()->whereHas('comments', function ($query): void {
         inertCustomProvider,
       ]),
     ).toBe(false);
-    expect(
-      phpFrameworkSuppressesSameSourceMethodReturnFallback("findOrFail"),
-    ).toBe(true);
     expect(
       phpFrameworkSuppressesSameSourceMethodReturnFallback("findOrFail", []),
     ).toBe(false);
@@ -372,9 +417,9 @@ class Comment extends Model
 }
 `;
 
-    expect(phpFrameworkMemberCompletionsFromSource(source, "Comment", [])).toEqual(
-      [],
-    );
+    expect(
+      phpFrameworkMemberCompletionsFromSource(source, "Comment", []),
+    ).toEqual([]);
   });
 
   it("routes Laravel model attribute types from constant metadata through the framework seam", () => {
@@ -395,9 +440,12 @@ class Comment extends Model
 `;
 
     expect(
-      phpFrameworkPropertyTypeFromSource(source, "type", [
-        phpLaravelFrameworkProvider,
-      ], "Comment"),
+      phpFrameworkPropertyTypeFromSource(
+        source,
+        "type",
+        [phpLaravelFrameworkProvider],
+        "Comment",
+      ),
     ).toBe("App\\Enums\\CommentType");
     expect(
       phpFrameworkPropertyTypeFromSource(source, "type", [], "Comment"),
@@ -451,7 +499,12 @@ class Album extends Model
       ]),
     ).toBe(true);
     expect(
-      isKnownPhpFrameworkMemberMethod(source, "Album::query()", "whereNull", []),
+      isKnownPhpFrameworkMemberMethod(
+        source,
+        "Album::query()",
+        "whereNull",
+        [],
+      ),
     ).toBe(false);
     expect(
       isKnownPhpFrameworkMemberMethod(source, "Album::query()", "withCount", [
@@ -603,7 +656,9 @@ class Album extends Model
         "Album::all()",
         [phpLaravelFrameworkProvider],
       ),
-    ).toBe("Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>");
+    ).toBe(
+      "Illuminate\\Database\\Eloquent\\Collection<int, App\\Models\\Album>",
+    );
     expect(
       phpFrameworkMethodCallReturnTypeFromSource(
         source,
@@ -766,9 +821,7 @@ class PlainService
           [phpLaravelFrameworkProvider],
           "UserResource::collection($users)",
         ),
-      ).toBe(
-        "Illuminate\\Http\\Resources\\Json\\AnonymousResourceCollection",
-      );
+      ).toBe("Illuminate\\Http\\Resources\\Json\\AnonymousResourceCollection");
     });
 
     it("keeps the resource type across fluent additional()/withResponse()", () => {
@@ -1073,9 +1126,12 @@ class Post extends Model
       ]),
     ).toBe(true);
     expect(
-      isKnownPhpFrameworkMemberMethod("<?php", "Article::query()", "whereMagic", [
-        netteProvider,
-      ]),
+      isKnownPhpFrameworkMemberMethod(
+        "<?php",
+        "Article::query()",
+        "whereMagic",
+        [netteProvider],
+      ),
     ).toBe(true);
     expect(
       isKnownPhpFrameworkStaticMethod("<?php", "Article", "whereMissing", [
@@ -1091,6 +1147,7 @@ class Post extends Model
           packageName: "laravel/laravel",
           packages: [],
         }),
+        SHIPPED_FRAMEWORK_PROVIDERS,
       ),
     ).toEqual([phpLaravelFrameworkProvider]);
     expect(
@@ -1099,6 +1156,7 @@ class Post extends Model
           packageName: "custom/api",
           packages: [{ name: "laravel/framework" }],
         }),
+        SHIPPED_FRAMEWORK_PROVIDERS,
       ),
     ).toEqual([phpLaravelFrameworkProvider]);
     expect(
@@ -1107,6 +1165,7 @@ class Post extends Model
           packageName: "symfony/app",
           packages: [{ name: "symfony/framework-bundle" }],
         }),
+        SHIPPED_FRAMEWORK_PROVIDERS,
       ),
     ).toEqual([]);
   });
@@ -1118,7 +1177,8 @@ class Post extends Model
       id: "symfony",
       appliesTo: (php) =>
         php.packages.some(
-          (composerPackage) => composerPackage.name === "symfony/framework-bundle",
+          (composerPackage) =>
+            composerPackage.name === "symfony/framework-bundle",
         ),
     };
     const registry = [phpLaravelFrameworkProvider, symfonyProvider];
@@ -1151,10 +1211,6 @@ class Post extends Model
         registry,
       ),
     ).toEqual([]);
-  });
-
-  it("exposes the Laravel provider through the default registry", () => {
-    expect(phpFrameworkProviderRegistry).toContain(phpLaravelFrameworkProvider);
   });
 
   it("carries Laravel project detection on the provider itself", () => {
@@ -1269,7 +1325,10 @@ return new class extends Migration
       );
 
       const byName = new Map(
-        completions.map((completion) => [completion.name, completion.returnType]),
+        completions.map((completion) => [
+          completion.name,
+          completion.returnType,
+        ]),
       );
       expect(byName.get("id")).toBe("int");
       expect(byName.get("created_at")).toBe("\\Illuminate\\Support\\Carbon");
@@ -1330,7 +1389,11 @@ return new class extends Migration
     it("detects Laravel projects from the composer signal", () => {
       expect(
         frameworkProfileForProject(
-          phpProjectDescriptor({ packageName: "laravel/laravel", packages: [] }),
+          phpProjectDescriptor({
+            packageName: "laravel/laravel",
+            packages: [],
+          }),
+          SHIPPED_FRAMEWORK_PROVIDERS,
         ),
       ).toBe("laravel");
       expect(
@@ -1339,6 +1402,7 @@ return new class extends Migration
             packageName: "custom/api",
             packages: [{ name: "laravel/framework" }],
           }),
+          SHIPPED_FRAMEWORK_PROVIDERS,
         ),
       ).toBe("laravel");
     });
@@ -1350,6 +1414,7 @@ return new class extends Migration
             packageName: "nette/web-project",
             packages: [{ name: "nette/application" }],
           }),
+          SHIPPED_FRAMEWORK_PROVIDERS,
         ),
       ).toBe("nette");
       expect(
@@ -1358,6 +1423,7 @@ return new class extends Migration
             packageName: "acme/site",
             packages: [{ name: "latte/latte" }],
           }),
+          SHIPPED_FRAMEWORK_PROVIDERS,
         ),
       ).toBe("nette");
     });
@@ -1369,10 +1435,15 @@ return new class extends Migration
             packageName: "symfony/app",
             packages: [{ name: "symfony/framework-bundle" }],
           }),
+          SHIPPED_FRAMEWORK_PROVIDERS,
         ),
       ).toBe("generic");
-      expect(frameworkProfileForProject(null)).toBe("generic");
-      expect(frameworkProfileForProject(undefined)).toBe("generic");
+      expect(
+        frameworkProfileForProject(null, SHIPPED_FRAMEWORK_PROVIDERS),
+      ).toBe("generic");
+      expect(
+        frameworkProfileForProject(undefined, SHIPPED_FRAMEWORK_PROVIDERS),
+      ).toBe("generic");
     });
 
     it("resolves the ambiguous both-frameworks edge to Laravel deterministically", () => {
@@ -1387,6 +1458,7 @@ return new class extends Migration
               { name: "nette/application" },
             ],
           }),
+          SHIPPED_FRAMEWORK_PROVIDERS,
         ),
       ).toBe("laravel");
     });
@@ -1424,15 +1496,17 @@ return new class extends Migration
       packages: [{ name: "nette/application" }],
     });
 
-    it("is registered and activates only for Nette projects (exclusive with Laravel)", () => {
-      expect(phpFrameworkProviderRegistry).toContain(phpNetteFrameworkProvider);
+    it("activates only for Nette projects in an explicitly supplied catalog", () => {
       expect(phpNetteFrameworkProvider.appliesTo?.(netteDescriptor)).toBe(true);
       expect(phpLaravelFrameworkProvider.appliesTo?.(netteDescriptor)).toBe(
         false,
       );
-      expect(phpFrameworkProvidersForProject(netteDescriptor)).toEqual([
-        phpNetteFrameworkProvider,
-      ]);
+      expect(
+        phpFrameworkProvidersForProject(
+          netteDescriptor,
+          SHIPPED_FRAMEWORK_PROVIDERS,
+        ),
+      ).toEqual([phpNetteFrameworkProvider]);
     });
 
     it("stays inert through the dispatchers it does not implement", () => {
@@ -1442,7 +1516,12 @@ return new class extends Migration
         phpFrameworkMemberCompletionsFromSource("<?php", "Article", providers),
       ).toEqual([]);
       expect(
-        isKnownPhpFrameworkStaticMethod("<?php", "Article", "render", providers),
+        isKnownPhpFrameworkStaticMethod(
+          "<?php",
+          "Article",
+          "render",
+          providers,
+        ),
       ).toBe(false);
       // No presenter/control context in a bare source, so magic suppression is
       // conservatively off (never a false positive).
@@ -1504,9 +1583,7 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(entry?.bindings).toEqual([
         {
           viewName: "Product:show",
-          variables: [
-            expect.objectContaining({ name: "$product" }),
-          ],
+          variables: [expect.objectContaining({ name: "$product" })],
         },
       ]);
     });
@@ -1525,11 +1602,13 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(phpFrameworkSupportsLatteTemplateIntelligence(providers)).toBe(
         true,
       );
-      expect(phpFrameworkSupportsLattePresenterLinkIntelligence(providers)).toBe(
-        true,
-      );
+      expect(
+        phpFrameworkSupportsLattePresenterLinkIntelligence(providers),
+      ).toBe(true);
       expect(phpFrameworkSupportsLatteTemplateIntelligence([])).toBe(false);
-      expect(phpFrameworkSupportsLattePresenterLinkIntelligence([])).toBe(false);
+      expect(phpFrameworkSupportsLattePresenterLinkIntelligence([])).toBe(
+        false,
+      );
       expect(
         phpFrameworkSupportsLatteTemplateIntelligence([
           phpLaravelFrameworkProvider,
@@ -1663,7 +1742,9 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
           laravelOnly,
         ),
       ).toBe(false);
-      expect(phpLaravelFrameworkProvider.diagnostics?.magicSource).toBeUndefined();
+      expect(phpLaravelFrameworkProvider.diagnostics?.magicSource).toBe(
+        "laravel-magic",
+      );
     });
   });
 
@@ -1689,8 +1770,9 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
         ]).supports("codeActions"),
       ).toBe(true);
       expect(
-        createPhpFrameworkProviderCapabilityRegistry([{ id: "custom" }])
-          .supports("codeActions"),
+        createPhpFrameworkProviderCapabilityRegistry([
+          { id: "custom" },
+        ]).supports("codeActions"),
       ).toBe(false);
     });
 
@@ -1708,6 +1790,7 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
             { name: "nette/application" },
           ],
         }),
+        SHIPPED_FRAMEWORK_PROVIDERS,
       );
 
       expect(providers).toEqual([phpLaravelFrameworkProvider]);
@@ -1721,6 +1804,7 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
           packageName: "laravel/laravel",
           packages: [{ name: "latte/latte" }],
         }),
+        SHIPPED_FRAMEWORK_PROVIDERS,
       );
 
       expect(providers).toEqual([phpLaravelFrameworkProvider]);
@@ -1733,6 +1817,7 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
           packageName: "nette/web-project",
           packages: [{ name: "nette/application" }],
         }),
+        SHIPPED_FRAMEWORK_PROVIDERS,
       );
 
       expect(providers).toEqual([phpNetteFrameworkProvider]);
@@ -1746,6 +1831,7 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
             packageName: "vendor/plain",
             packages: [{ name: "symfony/framework-bundle" }],
           }),
+          SHIPPED_FRAMEWORK_PROVIDERS,
         ),
       ).toEqual([]);
     });
@@ -1758,7 +1844,10 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
           { name: "nette/application" },
         ],
       });
-      const resolution = resolvePhpFrameworkProfile(php);
+      const resolution = resolvePhpFrameworkProfile(
+        php,
+        SHIPPED_FRAMEWORK_PROVIDERS,
+      );
 
       // Single winner + laravel profile, but both matches surface for the edge log.
       expect(resolution.providers).toEqual([phpLaravelFrameworkProvider]);
@@ -1766,8 +1855,12 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       expect(resolution.activityLabel).toBe("Laravel");
       expect(resolution.matchedProviderIds).toEqual(["laravel", "nette"]);
       // The public helpers agree with the resolution (single source of truth).
-      expect(phpFrameworkProvidersForProject(php)).toEqual(resolution.providers);
-      expect(frameworkProfileForProject(php)).toBe(resolution.profile);
+      expect(
+        phpFrameworkProvidersForProject(php, SHIPPED_FRAMEWORK_PROVIDERS),
+      ).toEqual(resolution.providers);
+      expect(frameworkProfileForProject(php, SHIPPED_FRAMEWORK_PROVIDERS)).toBe(
+        resolution.profile,
+      );
     });
 
     it("reports a single match for single-framework projects (no edge log)", () => {
@@ -1776,6 +1869,7 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
           packageName: "nette/web-project",
           packages: [{ name: "latte/latte" }],
         }),
+        SHIPPED_FRAMEWORK_PROVIDERS,
       );
 
       expect(resolution.matchedProviderIds).toEqual(["nette"]);
@@ -1938,7 +2032,9 @@ Route::model('user', AdminUser::class);
           phpNetteFrameworkProvider,
         ]),
       ).toEqual([]);
-      expect(phpFrameworkExplicitRouteModelBindingSearchQueries([])).toEqual([]);
+      expect(phpFrameworkExplicitRouteModelBindingSearchQueries([])).toEqual(
+        [],
+      );
     });
 
     it("exposes the Laravel route search anchors through the provider", () => {
@@ -1950,7 +2046,9 @@ Route::model('user', AdminUser::class);
       expect(queries).toContain("Route::resource");
       expect(queries).toContain("Route::apiResources");
       expect(
-        phpFrameworkTargetSearchQueries("routes", [phpLaravelFrameworkProvider]),
+        phpFrameworkTargetSearchQueries("routes", [
+          phpLaravelFrameworkProvider,
+        ]),
       ).toEqual(queries);
       expect(
         phpFrameworkSupportsTargetCollection("routes", [
@@ -2004,9 +2102,13 @@ Route::model('user', AdminUser::class);
       ]);
       const genericRegistry = createPhpFrameworkProviderCapabilityRegistry([]);
 
-      expect(laravelRegistry.supports("containerBindingsFromSource")).toBe(true);
+      expect(laravelRegistry.supports("containerBindingsFromSource")).toBe(
+        true,
+      );
       expect(netteRegistry.supports("containerBindingsFromSource")).toBe(true);
-      expect(genericRegistry.supports("containerBindingsFromSource")).toBe(false);
+      expect(genericRegistry.supports("containerBindingsFromSource")).toBe(
+        false,
+      );
       expect(laravelRegistry.supports("eloquentModelSemantics")).toBe(true);
       expect(netteRegistry.supports("eloquentModelSemantics")).toBe(false);
       expect(genericRegistry.supports("eloquentModelSemantics")).toBe(false);
@@ -2016,11 +2118,12 @@ Route::model('user', AdminUser::class);
       expect(
         laravelRegistry.supports("netteRedrawControlSnippetCompletions"),
       ).toBe(false);
-      expect(netteRegistry.supports("netteRedrawControlSnippetCompletions")).toBe(
-        true,
-      );
-      expect(genericRegistry.supports("netteRedrawControlSnippetCompletions"))
-        .toBe(false);
+      expect(
+        netteRegistry.supports("netteRedrawControlSnippetCompletions"),
+      ).toBe(true);
+      expect(
+        genericRegistry.supports("netteRedrawControlSnippetCompletions"),
+      ).toBe(false);
       expect(
         phpFrameworkSupportsContainerBindingsFromSource([
           phpLaravelFrameworkProvider,
@@ -2082,19 +2185,19 @@ Route::model('user', AdminUser::class);
       expect(phpFrameworkRouteSearchQueries([])).toEqual([]);
     });
 
-    it("keeps omitted target-capability providers inert by default", () => {
+    it("keeps an explicit empty target-capability provider set inert", () => {
       expect(
-        phpFrameworkRouteReferenceAt(referenceSource, referencePosition),
+        phpFrameworkRouteReferenceAt(referenceSource, referencePosition, []),
       ).toBeNull();
-      expect(phpFrameworkRouteDefinitionsFromSource(definitionSource)).toEqual(
-        [],
-      );
-      expect(phpFrameworkRouteSearchQueries()).toEqual([]);
-      expect(phpFrameworkSupportsRoutes()).toBe(false);
-      expect(phpFrameworkTargetSearchQueries("routes")).toEqual([]);
-      expect(phpFrameworkSupportsTargetCollection("routes")).toBe(false);
-      expect(phpFrameworkViewDataSearchQueries()).toEqual([]);
-      expect(phpFrameworkSupportsViewData()).toBe(false);
+      expect(
+        phpFrameworkRouteDefinitionsFromSource(definitionSource, []),
+      ).toEqual([]);
+      expect(phpFrameworkRouteSearchQueries([])).toEqual([]);
+      expect(phpFrameworkSupportsRoutes([])).toBe(false);
+      expect(phpFrameworkTargetSearchQueries("routes", [])).toEqual([]);
+      expect(phpFrameworkSupportsTargetCollection("routes", [])).toBe(false);
+      expect(phpFrameworkViewDataSearchQueries([])).toEqual([]);
+      expect(phpFrameworkSupportsViewData([])).toBe(false);
     });
 
     it("supports generic target collection descriptors and legacy query fields", () => {
@@ -2166,7 +2269,9 @@ Gate::define('delete-post', fn ($user) => $user->isAdmin());
 
     it("reports authorization ability support only for providers shipping the capability", () => {
       expect(
-        phpFrameworkSupportsAuthorizationAbilities([phpLaravelFrameworkProvider]),
+        phpFrameworkSupportsAuthorizationAbilities([
+          phpLaravelFrameworkProvider,
+        ]),
       ).toBe(true);
       expect(
         phpFrameworkSupportsAuthorizationAbilities([phpNetteFrameworkProvider]),
@@ -2267,7 +2372,9 @@ class EventServiceProvider
           phpNetteFrameworkProvider,
         ]),
       ).toBeNull();
-      expect(phpFrameworkDispatchTargetAt(dispatchSource, offset, [])).toBeNull();
+      expect(
+        phpFrameworkDispatchTargetAt(dispatchSource, offset, []),
+      ).toBeNull();
     });
 
     it("dispatches Laravel event listener maps 1:1 through the provider", () => {
@@ -2346,9 +2453,12 @@ class EventServiceProvider
 
       expect(direct).not.toBeNull();
       expect(
-        phpFrameworkConfigTargetFromSource(configFileSource, "app", "app.name", [
-          phpLaravelFrameworkProvider,
-        ]),
+        phpFrameworkConfigTargetFromSource(
+          configFileSource,
+          "app",
+          "app.name",
+          [phpLaravelFrameworkProvider],
+        ),
       ).toEqual(direct);
     });
 
@@ -2374,9 +2484,12 @@ class EventServiceProvider
         ]),
       ).toEqual([]);
       expect(
-        phpFrameworkConfigTargetFromSource(configFileSource, "app", "app.name", [
-          phpNetteFrameworkProvider,
-        ]),
+        phpFrameworkConfigTargetFromSource(
+          configFileSource,
+          "app",
+          "app.name",
+          [phpNetteFrameworkProvider],
+        ),
       ).toBeNull();
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(
@@ -2386,7 +2499,12 @@ class EventServiceProvider
         phpFrameworkConfigKeysFromSource(configFileSource, "app", []),
       ).toEqual([]);
       expect(
-        phpFrameworkConfigTargetFromSource(configFileSource, "app", "app.name", []),
+        phpFrameworkConfigTargetFromSource(
+          configFileSource,
+          "app",
+          "app.name",
+          [],
+        ),
       ).toBeNull();
     });
   });
@@ -2469,7 +2587,9 @@ class EventServiceProvider
         ]),
       ).toBeNull();
       expect(
-        phpFrameworkEnvEntriesFromSource(envSource, [phpNetteFrameworkProvider]),
+        phpFrameworkEnvEntriesFromSource(envSource, [
+          phpNetteFrameworkProvider,
+        ]),
       ).toEqual([]);
       expect(
         phpFrameworkEnvTargetFromSource(envSource, "APP_ENV", [
@@ -2643,7 +2763,11 @@ class EventServiceProvider
     it("stays a safe no-op with an empty provider set", () => {
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(
-        phpFrameworkTranslationReferenceAt(referenceSource, referencePosition, []),
+        phpFrameworkTranslationReferenceAt(
+          referenceSource,
+          referencePosition,
+          [],
+        ),
       ).toBeNull();
       expect(
         phpFrameworkTranslationKeysFromSource(langFileSource, "messages", []),
@@ -2691,7 +2815,9 @@ class EventServiceProvider
       expect(phpFrameworkSupportsViews([phpLaravelFrameworkProvider])).toBe(
         true,
       );
-      expect(phpFrameworkSupportsViews([phpNetteFrameworkProvider])).toBe(false);
+      expect(phpFrameworkSupportsViews([phpNetteFrameworkProvider])).toBe(
+        false,
+      );
       expect(phpFrameworkSupportsViews([])).toBe(false);
     });
 
@@ -2742,7 +2868,10 @@ class EventServiceProvider
           source: componentSource,
         }),
       ).toEqual(
-        detectBladeComponentCompletionAt(componentSource, componentSource.length),
+        detectBladeComponentCompletionAt(
+          componentSource,
+          componentSource.length,
+        ),
       );
 
       const attributeSource = "<x-alert ty";
@@ -2836,7 +2965,9 @@ class EventServiceProvider
           phpNetteFrameworkProvider,
         ]),
       ).toBe(true);
-      expect(phpFrameworkSupportsViewData([capabilitylessProvider])).toBe(false);
+      expect(phpFrameworkSupportsViewData([capabilitylessProvider])).toBe(
+        false,
+      );
       expect(phpFrameworkSupportsViewData([])).toBe(false);
     });
 
@@ -2871,7 +3002,9 @@ class EventServiceProvider
         phpFrameworkViewDataSearchQueries([capabilitylessProvider]),
       ).toEqual([]);
       // Empty provider set: dispatchers stay inert (no active framework).
-      expect(phpFrameworkViewDataEntryFromSource(viewDataSource, [])).toBeNull();
+      expect(
+        phpFrameworkViewDataEntryFromSource(viewDataSource, []),
+      ).toBeNull();
       expect(phpFrameworkViewDataSearchQueries([])).toEqual([]);
     });
   });
@@ -2909,9 +3042,9 @@ class EventServiceProvider
     });
 
     it("reports validation support only for providers shipping the capability", () => {
-      expect(phpFrameworkSupportsValidation([phpLaravelFrameworkProvider])).toBe(
-        true,
-      );
+      expect(
+        phpFrameworkSupportsValidation([phpLaravelFrameworkProvider]),
+      ).toBe(true);
       expect(phpFrameworkSupportsValidation([phpNetteFrameworkProvider])).toBe(
         false,
       );
@@ -2927,7 +3060,9 @@ class EventServiceProvider
         ),
       ).toBeNull();
       expect(
-        phpFrameworkValidationRuleCompletions("req", [phpNetteFrameworkProvider]),
+        phpFrameworkValidationRuleCompletions("req", [
+          phpNetteFrameworkProvider,
+        ]),
       ).toEqual([]);
       // Empty provider set: dispatchers stay inert (no active framework).
       expect(
@@ -2946,7 +3081,10 @@ class EventServiceProvider
     const helperOffset = 25;
 
     it("dispatches Laravel string-literal helpers 1:1 through the provider", () => {
-      const direct = detectLaravelStringLiteralHelper(helperSource, helperOffset);
+      const direct = detectLaravelStringLiteralHelper(
+        helperSource,
+        helperOffset,
+      );
 
       expect(direct).not.toBeNull();
       expect(direct?.helper).toBe("config");
@@ -2963,14 +3101,11 @@ class EventServiceProvider
       expect(phpFrameworkConfigLiteralTarget("app.name", providers)).toEqual(
         resolveLaravelConfigTarget("app.name"),
       );
-      expect(phpFrameworkViewLiteralTarget("admin/dashboard", providers)).toEqual(
-        resolveLaravelViewTarget("admin/dashboard"),
-      );
       expect(
-        phpFrameworkTranslationLiteralTarget(
-          "messages.welcome",
-          providers,
-        ),
+        phpFrameworkViewLiteralTarget("admin/dashboard", providers),
+      ).toEqual(resolveLaravelViewTarget("admin/dashboard"));
+      expect(
+        phpFrameworkTranslationLiteralTarget("messages.welcome", providers),
       ).toEqual(resolveLaravelTransTarget("messages.welcome"));
       expect(phpFrameworkEnvLiteralTarget("APP_ENV", providers)).toEqual(
         resolveLaravelEnvTarget("APP_ENV"),
@@ -3041,7 +3176,9 @@ class EventServiceProvider
         phpFrameworkStringLiteralHelperAt(helperSource, helperOffset, []),
       ).toBeNull();
       expect(
-        phpFrameworkConfigLiteralTarget("app.name", [phpNetteFrameworkProvider]),
+        phpFrameworkConfigLiteralTarget("app.name", [
+          phpNetteFrameworkProvider,
+        ]),
       ).toBeNull();
       expect(
         phpFrameworkViewLiteralTarget("admin.dashboard", [
@@ -3086,7 +3223,10 @@ class EventServiceProvider
         translations: {
           completionInsertText: ({ key }) => key,
           keysFromSource: () => [],
-          referenceAt: ({ position: currentPosition, source: currentSource }) =>
+          referenceAt: ({
+            position: currentPosition,
+            source: currentSource,
+          }) =>
             currentSource === source && currentPosition === position
               ? {
                   call: "translate",
@@ -3185,7 +3325,11 @@ class EventServiceProvider
     it("dispatches Nette PHP presenter-link completion ranges through the provider", () => {
       const source = "<?php\n$url = $this->link('Pro');\n";
       const offset = source.indexOf("Pro") + "Pro".length;
-      const direct = nettePresenterLinkCompletionContextAt(source, offset, "php");
+      const direct = nettePresenterLinkCompletionContextAt(
+        source,
+        offset,
+        "php",
+      );
 
       expect(direct).not.toBeNull();
       expect(

@@ -83,7 +83,10 @@ export interface WorkbenchNavigation {
   ) => Promise<void>;
   goToNextProblem: () => Promise<boolean>;
   goToPreviousProblem: () => Promise<boolean>;
-  readNavigationFileContent: (path: string) => Promise<string>;
+  readNavigationFileContent: (
+    path: string,
+    context?: AbortSignal | NavigationRequest,
+  ) => Promise<string>;
 }
 
 /**
@@ -361,7 +364,12 @@ export function useWorkbenchNavigation(
   }, [currentProblemLocation, goToProblemLocation]);
 
   const readNavigationFileContent = useCallback(
-    async (path: string): Promise<string> => {
+    async (
+      path: string,
+      context?: AbortSignal | NavigationRequest,
+    ): Promise<string> => {
+      const signal = navigationAbortSignal(context);
+      throwIfNavigationAborted(signal);
       const activeOpenDocument = activeDocumentRef.current;
 
       if (activeOpenDocument?.path === path) {
@@ -374,7 +382,9 @@ export function useWorkbenchNavigation(
         return openDocument.content;
       }
 
-      return workspaceFiles.readTextFile(path);
+      const content = await workspaceFiles.readTextFile(path);
+      throwIfNavigationAborted(signal);
+      return content;
     },
     [workspaceFiles],
   );
@@ -459,6 +469,22 @@ function navigationCommitGuard(
   }
 
   return () => (shouldCommit?.() ?? true) && canNavigate(request);
+}
+
+function throwIfNavigationAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return;
+  }
+
+  const error = new Error("Navigation file read was aborted.");
+  error.name = "AbortError";
+  throw error;
+}
+
+function navigationAbortSignal(
+  context?: AbortSignal | NavigationRequest,
+): AbortSignal | undefined {
+  return context && "aborted" in context ? context : undefined;
 }
 
 function navigationTargetReadOnly(

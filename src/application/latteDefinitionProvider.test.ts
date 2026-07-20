@@ -57,7 +57,6 @@ function makeDeps(files: Record<string, string>) {
         supports: (capability: string) =>
           capability === "latteTemplateIntelligence",
       },
-      isNette: true,
     },
     getActiveDocument: () => ({
       languageId: "latte",
