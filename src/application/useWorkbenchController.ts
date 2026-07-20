@@ -137,6 +137,7 @@ import { usePhpLaravelScopePredicates } from "./usePhpLaravelScopePredicates";
 import { usePhpSignatureHelpProvider } from "./usePhpSignatureHelpProvider";
 import { usePhpFrameworkMorphMapResolver } from "./usePhpFrameworkMorphMapResolver";
 import { usePhpFrameworkModelSemantics } from "./usePhpFrameworkModelSemantics";
+import { usePhpLaravelModelSemanticsAdapter } from "./usePhpLaravelModelSemanticsAdapter";
 import { usePhpSemanticResolver } from "./usePhpSemanticResolver";
 import {
   useWorkbenchImplementationChooserState,
@@ -8072,6 +8073,7 @@ export function useWorkbenchController(
     resolvePhpGenericTemplateTypesForMixinClass,
     resolvePhpMethodDeclaredReturnType,
     resolvePhpSemanticTypeReference,
+    useModelSemanticsAdapter: usePhpLaravelModelSemanticsAdapter,
     workspaceDescriptor,
     workspaceRoot,
   });

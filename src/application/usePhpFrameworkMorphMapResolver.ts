@@ -1,7 +1,7 @@
-import { useCallback, useRef, type MutableRefObject } from "react";
-import { phpLaravelMorphMapEntriesFromSource } from "../domain/phpFrameworkLaravel";
+import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import type { TextSearchGateway, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { phpFrameworkModelSourceSemanticsAdapter } from "./phpFrameworkModelSemanticsAdapters";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
 export interface UsePhpFrameworkMorphMapResolverOptions {
@@ -33,6 +33,10 @@ export function usePhpFrameworkMorphMapResolver({
     phpFrameworkRuntimeProviderSignature(frameworkRuntime);
   const supportsEloquentModelSemantics = frameworkRuntime.supports(
     "eloquentModelSemantics",
+  );
+  const modelSourceSemantics = useMemo(
+    () => phpFrameworkModelSourceSemanticsAdapter(frameworkRuntime),
+    [frameworkRuntime],
   );
 
   const resetPhpFrameworkMorphMapModelTypeCache = useCallback((): void => {
@@ -96,7 +100,9 @@ export function usePhpFrameworkMorphMapResolver({
             return null;
           }
 
-          for (const entry of phpLaravelMorphMapEntriesFromSource(content)) {
+          for (const entry of modelSourceSemantics.morphMapEntriesFromSource(
+            content,
+          )) {
             modelTypes.add(entry.modelClassName.replace(/^\\+/, ""));
           }
         } catch {
@@ -121,6 +127,7 @@ export function usePhpFrameworkMorphMapResolver({
     }, [
       currentWorkspaceRootRef,
       frameworkProviderSignature,
+      modelSourceSemantics,
       supportsEloquentModelSemantics,
       readNavigationFileContent,
       textSearch,

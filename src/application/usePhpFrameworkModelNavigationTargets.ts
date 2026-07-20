@@ -1,6 +1,5 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpLaravelModelSourcesForTableName } from "../domain/phpFrameworkLaravel";
 import {
   phpFrameworkModelNamespacePrefixes,
   type PhpFrameworkProvider,
@@ -9,7 +8,9 @@ import { type ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { phpFrameworkModelSourceSemanticsAdapter } from "./phpFrameworkModelSemanticsAdapters";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import type { PhpModelSourceSemanticsAdapter } from "./phpModelSemanticsAdapter";
 
 export interface PhpFrameworkModelNavigationTargetsDependencies {
   currentWorkspaceRootRef: MutableRefObject<string | null>;
@@ -46,6 +47,10 @@ export function usePhpFrameworkModelNavigationTargets({
 }: PhpFrameworkModelNavigationTargetsDependencies): PhpFrameworkModelNavigationTargets {
   const canFindValidationRuleModelTargets =
     frameworkRuntime.providers.length > 0 && frameworkRuntime.supports("validation");
+  const modelSourceSemantics = useMemo(
+    () => phpFrameworkModelSourceSemanticsAdapter(frameworkRuntime),
+    [frameworkRuntime],
+  );
 
   const findValidationRuleModelTargets = useCallback(
     async (
@@ -54,6 +59,7 @@ export function usePhpFrameworkModelNavigationTargets({
       findFrameworkValidationRuleModelTargets({
         canFindValidationRuleModelTargets,
         currentWorkspaceRootRef,
+        modelSourceSemantics,
         projectSymbolSearch,
         providers,
         readNavigationFileContent,
@@ -65,6 +71,7 @@ export function usePhpFrameworkModelNavigationTargets({
     [
       canFindValidationRuleModelTargets,
       currentWorkspaceRootRef,
+      modelSourceSemantics,
       projectSymbolSearch,
       providers,
       readNavigationFileContent,
@@ -82,6 +89,7 @@ export function usePhpFrameworkModelNavigationTargets({
 interface FindFrameworkValidationRuleModelTargetsInput {
   canFindValidationRuleModelTargets: boolean;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  modelSourceSemantics: PhpModelSourceSemanticsAdapter;
   projectSymbolSearch: ProjectSymbolSearchGateway;
   providers: readonly PhpFrameworkProvider[];
   readNavigationFileContent(path: string): Promise<string>;
@@ -94,6 +102,7 @@ interface FindFrameworkValidationRuleModelTargetsInput {
 async function findFrameworkValidationRuleModelTargets({
   canFindValidationRuleModelTargets,
   currentWorkspaceRootRef,
+  modelSourceSemantics,
   projectSymbolSearch,
   providers,
   readNavigationFileContent,
@@ -205,11 +214,11 @@ async function findFrameworkValidationRuleModelTargets({
     }
   }
 
-  return phpLaravelModelSourcesForTableName(tableName, candidates).map(
-    (candidate) => ({
+  return modelSourceSemantics
+    .modelSourcesForTableName(tableName, candidates)
+    .map((candidate) => ({
       label: candidate.className,
       path: candidate.path,
       position: candidate.position,
-    }),
-  );
+    }));
 }

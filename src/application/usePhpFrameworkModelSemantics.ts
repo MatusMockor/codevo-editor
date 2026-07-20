@@ -1,24 +1,10 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  type MutableRefObject,
-} from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
-import {
-  phpLaravelCollectionModelTypeCandidate,
-  phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
-  phpLaravelEloquentBuilderModelTypeCandidate,
-  phpLaravelEloquentBuilderModelTypeFromExpression,
-  phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
-} from "../domain/phpFrameworkLaravel";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import type { PhpModelSemanticsAdapterHook } from "./phpModelSemanticsAdapter";
 import { usePhpExpressionTypeResolver } from "./usePhpExpressionTypeResolver";
-import { usePhpLaravelMethodGenericModelType } from "./usePhpLaravelMethodGenericModelType";
-import { usePhpLaravelModelTypeResolvers } from "./usePhpLaravelModelTypeResolvers";
-import { usePhpLaravelRelationResolver } from "./usePhpLaravelRelationResolver";
 import { usePhpMethodReturnTypeResolver } from "./usePhpMethodReturnTypeResolver";
 
 export interface PhpFrameworkModelSemantics {
@@ -43,27 +29,11 @@ export interface PhpFrameworkModelSemantics {
     className: string,
     previousRelationNames?: readonly string[],
   ): Promise<string | null>;
-  resolvePhpEloquentBuilderModelType(
-    source: string,
-    position: EditorPosition,
-    expression: string,
-    depth?: number,
-  ): Promise<string | null>;
   resolvePhpExpressionType(
     source: string,
     position: EditorPosition,
     expression: string,
     depth?: number,
-  ): Promise<string | null>;
-  resolvePhpLaravelCollectionModelType(
-    source: string,
-    position: EditorPosition,
-    expression: string,
-    depth?: number,
-  ): Promise<string | null>;
-  resolvePhpLaravelRelationPathOwnerType(
-    className: string,
-    previousRelationNames?: readonly string[],
   ): Promise<string | null>;
 }
 
@@ -125,6 +95,7 @@ export interface UsePhpFrameworkModelSemanticsOptions {
     source: string,
     typeName: string | null,
   ): string | null;
+  useModelSemanticsAdapter: PhpModelSemanticsAdapterHook;
   workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceRoot: string | null;
 }
@@ -147,10 +118,11 @@ export function usePhpFrameworkModelSemantics({
   resolvePhpGenericTemplateTypesForMixinClass,
   resolvePhpMethodDeclaredReturnType,
   resolvePhpSemanticTypeReference,
+  useModelSemanticsAdapter,
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpFrameworkModelSemanticsOptions): PhpFrameworkModelSemantics {
-  const resolvePhpEloquentBuilderModelTypeRef = useRef(
+  const resolvePhpFrameworkBuilderModelTypeRef = useRef(
     async (
       _source: string,
       _position: EditorPosition,
@@ -163,7 +135,8 @@ export function usePhpFrameworkModelSemantics({
     readPhpClassMembersFromPath,
     resolvePhpClassReference,
     resolvePhpClassSourcePaths,
-    resolvePhpEloquentBuilderModelTypeRef,
+    resolvePhpEloquentBuilderModelTypeRef:
+      resolvePhpFrameworkBuilderModelTypeRef,
     resolvePhpFrameworkBoundConcrete,
     resolvePhpFrameworkReturnTypeReference,
     resolvePhpGenericTemplateTypesForInheritedClass,
@@ -174,98 +147,54 @@ export function usePhpFrameworkModelSemantics({
     workspaceRoot,
   });
 
-  const phpFrameworkGenericModelTypeHelpers = useMemo(
-    () => ({
-      builderCollectionModelTypeFromExpression:
-        phpLaravelEloquentBuilderCollectionModelTypeFromExpression,
-      builderModelTypeCandidate: phpLaravelEloquentBuilderModelTypeCandidate,
-      builderModelTypeFromExpression:
-        phpLaravelEloquentBuilderModelTypeFromExpression,
-      collectionModelTypeCandidate: phpLaravelCollectionModelTypeCandidate,
-      repositoryConventionModelTypeFromCarrierReturnType:
-        phpLaravelRepositoryConventionModelTypeFromCarrierReturnType,
-    }),
-    [],
-  );
-
-  const { resolvePhpLaravelMethodGenericModelType } =
-    usePhpLaravelMethodGenericModelType({
-      currentWorkspaceRootRef,
-      frameworkRuntime,
-      helpers: phpFrameworkGenericModelTypeHelpers,
-      readPhpClassMembersFromPath,
-      resolvePhpClassReference,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    });
-
   const {
-    resolvePhpClassPropertyOrRelationType,
-    resolvePhpLaravelRelationPathOwnerType,
-  } = usePhpLaravelRelationResolver({
+    resolveModelBuilderModelType,
+    resolveModelCollectionModelType,
+    resolveModelPropertyOrRelationType,
+    resolveModelRelationPathOwnerType,
+  } = useModelSemanticsAdapter({
     currentWorkspaceRootRef,
     frameworkRuntime,
+    phpClassHasDynamicBuilderFinder,
+    phpClassHasNamedBuilderScope,
+    readNavigationFileContent,
     readPhpClassMembersFromPath,
     resolvePhpClassReference,
     resolvePhpClassSourcePaths,
     resolvePhpDeclaredType,
+    resolvePhpFrameworkProjectMorphMapModelType,
     resolvePhpGenericTemplateTypesForInheritedClass,
     resolvePhpGenericTemplateTypesForMixinClass,
-    resolvePhpFrameworkProjectMorphMapModelType,
-    workspaceDescriptor,
-    workspaceRoot,
-  });
-
-  const {
-    resolvePhpEloquentBuilderModelType,
-    resolvePhpLaravelCollectionModelType,
-  } = usePhpLaravelModelTypeResolvers({
-    currentWorkspaceRootRef,
-    frameworkRuntime,
-    phpClassHasLaravelDynamicWhere: phpClassHasDynamicBuilderFinder,
-    phpClassHasLaravelLocalScope: phpClassHasNamedBuilderScope,
-    readNavigationFileContent,
-    resolvePhpClassPropertyOrRelationType,
-    resolvePhpClassReference,
-    resolvePhpClassSourcePaths,
-    resolvePhpLaravelMethodGenericModelType,
-    resolvePhpLaravelRelationPathOwnerType,
     resolvePhpMethodReturnType,
     workspaceDescriptor,
     workspaceRoot,
   });
 
   useEffect(() => {
-    resolvePhpEloquentBuilderModelTypeRef.current =
-      resolvePhpEloquentBuilderModelType;
-  }, [resolvePhpEloquentBuilderModelType]);
+    resolvePhpFrameworkBuilderModelTypeRef.current =
+      resolveModelBuilderModelType;
+  }, [resolveModelBuilderModelType]);
 
   const { resolvePhpExpressionType } = usePhpExpressionTypeResolver({
     collectPhpMethodsForClass,
     frameworkRuntime,
     phpClassHasDynamicBuilderFinder,
     phpClassHasNamedBuilderScope,
-    resolvePhpClassPropertyOrRelationType,
+    resolvePhpClassPropertyOrRelationType: resolveModelPropertyOrRelationType,
     resolvePhpClassReference,
-    resolvePhpBuilderModelType: resolvePhpEloquentBuilderModelType,
+    resolvePhpBuilderModelType: resolveModelBuilderModelType,
     resolvePhpFrameworkBoundConcrete,
     resolvePhpFrameworkReturnTypeReference,
-    resolvePhpCollectionModelType: resolvePhpLaravelCollectionModelType,
+    resolvePhpCollectionModelType: resolveModelCollectionModelType,
     resolvePhpMethodReturnType,
     resolvePhpSemanticTypeReference,
   });
 
   return {
-    resolvePhpClassPropertyOrRelationType,
-    resolvePhpFrameworkBuilderModelType: resolvePhpEloquentBuilderModelType,
-    resolvePhpFrameworkCollectionModelType:
-      resolvePhpLaravelCollectionModelType,
-    resolvePhpFrameworkRelationPathOwnerType:
-      resolvePhpLaravelRelationPathOwnerType,
-    resolvePhpEloquentBuilderModelType,
+    resolvePhpClassPropertyOrRelationType: resolveModelPropertyOrRelationType,
+    resolvePhpFrameworkBuilderModelType: resolveModelBuilderModelType,
+    resolvePhpFrameworkCollectionModelType: resolveModelCollectionModelType,
+    resolvePhpFrameworkRelationPathOwnerType: resolveModelRelationPathOwnerType,
     resolvePhpExpressionType,
-    resolvePhpLaravelCollectionModelType,
-    resolvePhpLaravelRelationPathOwnerType,
   };
 }
