@@ -1,11 +1,14 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodDefinitionHint } from "../domain/phpNavigation";
-import type { PhpIdentifierContext } from "../domain/phpNavigation";
 
-type PhpFrameworkRelationStringContext = Extract<
-  PhpIdentifierContext,
-  { kind: "laravelRelationString" }
->;
+export interface PhpFrameworkRelationStringContext {
+  className: string | null;
+  kind: string;
+  methodName: string;
+  previousRelationNames?: string[];
+  receiverExpression: string | null;
+  relationName: string;
+}
 
 export interface PhpContextualMemberDefinitionNavigationResult {
   failureMessage?: string;

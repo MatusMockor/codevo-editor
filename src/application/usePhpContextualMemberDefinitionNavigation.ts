@@ -14,6 +14,7 @@ import {
 import { phpSuperTypeReferences } from "../domain/phpNavigation";
 import type { EditorDocument, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { PhpFrameworkRelationStringContext } from "./phpFrameworkContextualMemberDefinitionNavigationAdapter";
 import { createPhpFrameworkContextualMemberDefinitionNavigationAdapters } from "./phpFrameworkContextualMemberDefinitionNavigationAdapters";
 import { createPhpLaravelContextualMemberDefinitionNavigationContribution } from "./phpLaravelContextualMemberDefinitionNavigationAdapter";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
@@ -34,10 +35,6 @@ type PhpStaticMethodCallContext = Extract<
 type PhpClassConstantContext = Extract<
   PhpIdentifierContext,
   { kind: "classConstant" }
->;
-type PhpLaravelRelationStringContext = Extract<
-  PhpIdentifierContext,
-  { kind: "laravelRelationString" }
 >;
 
 export interface PhpContextualMemberDefinitionNavigationDependencies {
@@ -111,7 +108,7 @@ export interface PhpContextualMemberDefinitionNavigation {
     request?: NavigationRequest,
   ): Promise<boolean>;
   goToPhpLaravelRelationStringDefinition(
-    context: PhpLaravelRelationStringContext,
+    context: PhpFrameworkRelationStringContext,
     request?: NavigationRequest,
   ): Promise<boolean>;
   goToPhpMethodCallDefinition(
@@ -736,7 +733,7 @@ export function usePhpContextualMemberDefinitionNavigation({
 
   const goToPhpLaravelRelationStringDefinition = useCallback(
     async (
-      context: PhpLaravelRelationStringContext,
+      context: PhpFrameworkRelationStringContext,
       request?: NavigationRequest,
     ): Promise<boolean> => {
       const requestedRoot = workspaceRoot;

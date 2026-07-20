@@ -346,4 +346,32 @@ describe("phpLaravelIdentifierDefinitionNavigationAdapter", () => {
       }),
     ).resolves.toBe(false);
   });
+
+  it("declines core PHP contexts without invoking any Laravel delegate", async () => {
+    const deps = makeDeps();
+    const adapter = createPhpLaravelIdentifierDefinitionNavigationAdapter(deps);
+
+    await expect(
+      adapter.goToDefinition({
+        kind: "methodCall",
+        methodName: "run",
+        receiverExpression: "$service",
+        variableName: "service",
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      adapter.goToDefinition({
+        className: "Post",
+        constantName: "STATUS",
+        kind: "classConstant",
+      }),
+    ).resolves.toBe(false);
+    expect(deps.goToPhpFrameworkLiteralDefinition).not.toHaveBeenCalled();
+    expect(
+      deps.goToPhpFrameworkAuthorizationAbilityDefinition,
+    ).not.toHaveBeenCalled();
+    expect(deps.goToPhpFrameworkMiddlewareAliasDefinition).not.toHaveBeenCalled();
+    expect(deps.goToPhpLaravelRelationStringDefinition).not.toHaveBeenCalled();
+    expect(deps.openDirectPhpMethodTarget).not.toHaveBeenCalled();
+  });
 });

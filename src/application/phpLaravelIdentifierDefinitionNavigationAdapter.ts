@@ -1,7 +1,9 @@
 import {
-  resolvePhpClassName,
-  type PhpIdentifierContext,
-} from "../domain/phpNavigation";
+  isPhpLaravelIdentifierContext,
+  type PhpLaravelIdentifierContext,
+  type PhpLaravelRouteActionMethodContext,
+} from "../domain/phpLaravelNavigationContexts";
+import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { EditorDocument } from "../domain/workspace";
 import type {
   PhpFrameworkIdentifierDefinitionNavigationAdapter,
@@ -10,8 +12,8 @@ import type {
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
 import type { PhpContextualFrameworkLiteralDefinitionRequest } from "./usePhpContextualFrameworkLiteralDefinitionNavigation";
 
-type PhpContextHandler<Kind extends PhpIdentifierContext["kind"]> = (
-  context: Extract<PhpIdentifierContext, { kind: Kind }>,
+type PhpContextHandler<Kind extends PhpLaravelIdentifierContext["kind"]> = (
+  context: Extract<PhpLaravelIdentifierContext, { kind: Kind }>,
   request?: NavigationRequest,
 ) => Promise<boolean>;
 
@@ -125,6 +127,10 @@ export function createPhpLaravelIdentifierDefinitionNavigationAdapter(
     request,
   ): Promise<boolean> => {
     if (!canNavigate(request)) {
+      return false;
+    }
+
+    if (!isPhpLaravelIdentifierContext(context)) {
       return false;
     }
 
@@ -263,7 +269,7 @@ async function invokeTwoArgumentNavigationDelegate<First, Second>(
 }
 
 function phpLaravelConfigDerivedFrameworkLiteralRequest(
-  context: PhpIdentifierContext,
+  context: PhpLaravelIdentifierContext,
 ): PhpContextualFrameworkLiteralDefinitionRequest | null {
   const definition = LARAVEL_CONFIG_DERIVED_IDENTIFIER_DEFINITIONS.find(
     (candidate) => candidate.contextKind === context.kind,
@@ -288,7 +294,7 @@ function phpLaravelConfigDerivedFrameworkLiteralRequest(
 }
 
 async function goToRouteActionMethodDefinition(
-  context: Extract<PhpIdentifierContext, { kind: "laravelRouteActionMethod" }>,
+  context: PhpLaravelRouteActionMethodContext,
   {
     activeDocument,
     openDirectPhpMethodTarget,

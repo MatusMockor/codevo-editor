@@ -10,11 +10,11 @@ import { phpLaravelLogChannelReferenceContextAt } from "./phpLaravelLog";
 import { phpLaravelMailMailerReferenceContextAt } from "./phpLaravelMail";
 import { phpLaravelMiddlewareAliasReferenceContextAt } from "./phpLaravelMiddleware";
 import {
-  phpIdentifierContextAt,
   phpLaravelRelationStringIdentifierContextAt,
   phpLaravelRouteActionIdentifierContextAt,
-  type PhpIdentifierContext,
-} from "./phpNavigation";
+  type PhpLaravelIdentifierContext,
+} from "./phpLaravelNavigationContexts";
+import { phpIdentifierContextAt, type PhpIdentifierContext } from "./phpNavigation";
 import { phpLaravelPasswordBrokerReferenceContextAt } from "./phpLaravelPassword";
 import { phpLaravelQueueConnectionReferenceContextAt } from "./phpLaravelQueue";
 import { phpLaravelRedisConnectionReferenceContextAt } from "./phpLaravelRedis";
@@ -24,10 +24,16 @@ import { phpLaravelTranslationReferenceContextAt } from "./phpLaravelTranslation
 import { phpLaravelValidationRuleTableReferenceAt } from "./phpLaravelValidation";
 import { phpLaravelViewReferenceContextAt } from "./phpLaravelViews";
 
+declare module "./phpNavigation" {
+  interface PhpFrameworkIdentifierContextContributions {
+    laravel: PhpLaravelIdentifierContext;
+  }
+}
+
 export function phpLaravelIdentifierContextAt(
   source: string,
   position: EditorPosition,
-): PhpIdentifierContext | null {
+): PhpLaravelIdentifierContext | null {
   const validationTable = phpLaravelValidationRuleTableReferenceAt(
     source,
     position,
