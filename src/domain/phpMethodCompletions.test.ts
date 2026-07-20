@@ -1,10 +1,10 @@
-import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
 import { describe, expect, it } from "vitest";
 import {
   orderPhpMemberCompletionsByCategory,
   phpMemberAccessCompletionContextAt,
   phpMixinClassNames,
-  phpMethodCompletionsFromSource,
+  phpMethodCompletionsFromSource as phpCoreMethodCompletionsFromSource,
+  phpMethodNamesWithAttributeFromSource,
   phpMethodParameters,
   phpMethodSignatureContextAt,
   phpStaticAccessCompletionContextAt,
@@ -22,6 +22,9 @@ import {
   isPhpLaravelLocalScopeSourceMethod,
   phpLaravelDynamicWhereAttributeTargetFromSource,
   phpLaravelDynamicWhereCompletionsFromSource,
+  phpLaravelApiResourceCompletionsFromSource,
+  phpLaravelMacroCompletionsFromSource,
+  phpLaravelModelAttributeCompletionsFromSource,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelMethodCallReturnTypeFromSource,
   phpLaravelModelAccessorTargetFromSource,
@@ -32,9 +35,63 @@ import {
   phpLaravelStaticLocalScopeCompletionsFromMethods,
 } from "./phpFrameworkLaravel";
 
-const laravelCompletionOptions = {
-  frameworkProviders: [phpLaravelFrameworkProvider],
-};
+const laravelCompletionOptions = { laravel: true };
+
+interface TestPhpMethodCompletionOptions {
+  includeNonPublicMembers?: boolean;
+  laravel?: boolean;
+  workspaceSources?: readonly string[];
+}
+
+function phpMethodCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+  options: TestPhpMethodCompletionOptions = {},
+): PhpMethodCompletion[] {
+  const core = phpCoreMethodCompletionsFromSource(
+    source,
+    declaringClassName,
+    { includeNonPublicMembers: options.includeNonPublicMembers },
+  );
+
+  if (!options.laravel) {
+    return core;
+  }
+
+  const attributeNames = phpMethodNamesWithAttributeFromSource(source, "Scope");
+  const attributedScopes = phpCoreMethodCompletionsFromSource(
+    source,
+    declaringClassName,
+    { includeNonPublicMembers: true },
+  )
+    .filter(
+      (method) =>
+        !method.isStatic &&
+        method.visibility !== "private" &&
+        attributeNames.has(method.name.toLowerCase()),
+    )
+    .map((method) => ({ ...method, kind: "scope" as const }));
+
+  return [
+    ...core,
+    ...attributedScopes,
+    ...phpLaravelMacroCompletionsFromSource(
+      source,
+      declaringClassName,
+      options.workspaceSources,
+    ),
+    ...phpLaravelModelAttributeCompletionsFromSource(
+      source,
+      declaringClassName,
+      options.workspaceSources,
+    ),
+    ...phpLaravelRelationPropertyCompletionsFromSource(
+      source,
+      declaringClassName,
+    ),
+    ...phpLaravelApiResourceCompletionsFromSource(source, declaringClassName),
+  ];
+}
 
 function positionAfter(source: string, needle: string) {
   return positionOn(source, needle, needle.length);
@@ -1772,7 +1829,6 @@ class Request
 
     expect(
       phpMethodCompletionsFromSource(source, "Request", {
-        frameworkProviders: [],
       }),
     ).toEqual([
       {
@@ -1798,7 +1854,6 @@ class Repository
 
     expect(
       phpMethodCompletionsFromSource(source, "Repository", {
-        frameworkProviders: [],
         includeNonPublicMembers: true,
       }).map(({ kind, name, visibility }) => ({ kind, name, visibility })),
     ).toEqual([
@@ -1823,7 +1878,6 @@ class Request
 
     expect(
       phpMethodCompletionsFromSource(source, "Request", {
-        frameworkProviders: [],
       }),
     ).toEqual([
       {
@@ -1870,7 +1924,7 @@ class Comment
 }
 `,
       "Comment",
-      { frameworkProviders: [] },
+      laravelCompletionOptions,
     );
 
     expect(phpLaravelLocalScopeCompletionsFromMethods(methods)).toEqual([
@@ -1919,7 +1973,7 @@ class Comment
 }
 `,
       "Comment",
-      { frameworkProviders: [] },
+      laravelCompletionOptions,
     );
 
     expect(phpLaravelStaticLocalScopeCompletionsFromMethods(methods)).toEqual([
@@ -1962,7 +2016,7 @@ class ReportRun
 }
 `,
       "App\\Models\\ReportRun",
-      { frameworkProviders: [] },
+      laravelCompletionOptions,
     );
 
     // The merge layer replaces the raw scope source methods with the derived
@@ -2048,7 +2102,7 @@ class Comment
       "App\\Models\\Comment",
       {
         ...laravelCompletionOptions,
-        frameworkSourceContext: { workspaceSources: [migrationSource] },
+        workspaceSources: [migrationSource],
       },
     );
 
@@ -2111,7 +2165,7 @@ class ReportRun
 }
 `,
       "App\\Models\\ReportRun",
-      { frameworkProviders: [] },
+      laravelCompletionOptions,
     );
 
     const sourceNames = methods
@@ -2167,7 +2221,7 @@ Builder::macro('published', function (bool $strict = true): Builder {
       phpMethodCompletionsFromSource(
         source,
         "Illuminate\\Database\\Eloquent\\Builder",
-        { frameworkProviders: [] },
+        {},
       ),
     ).toEqual([]);
   });
@@ -2203,7 +2257,7 @@ class AppServiceProvider extends ServiceProvider
         "Illuminate\\Database\\Eloquent\\Builder",
         {
           ...laravelCompletionOptions,
-          frameworkSourceContext: { workspaceSources: [providerSource] },
+          workspaceSources: [providerSource],
         },
       ),
     ).toEqual([
@@ -2422,7 +2476,7 @@ class AppServiceProvider extends ServiceProvider
         "Illuminate\\Database\\Query\\Builder",
         {
           ...laravelCompletionOptions,
-          frameworkSourceContext: { workspaceSources: [providerSource] },
+          workspaceSources: [providerSource],
         },
       ),
     ).toEqual([
@@ -2439,7 +2493,7 @@ class AppServiceProvider extends ServiceProvider
         "Illuminate\\Support\\Collection",
         {
           ...laravelCompletionOptions,
-          frameworkSourceContext: { workspaceSources: [providerSource] },
+          workspaceSources: [providerSource],
         },
       ),
     ).toEqual([
@@ -3004,7 +3058,7 @@ class Comment
       phpMethodCompletionsFromSource(
         "<?php\nclass Factory\n{\n    /** @phpstan-return Comment */\n    public static function make() {}\n}\n",
         "Factory",
-        { frameworkProviders: [] },
+        {},
       ),
     ).toEqual([
       {
@@ -3033,7 +3087,6 @@ class Container
 
     expect(
       phpMethodCompletionsFromSource(source, "Container", {
-        frameworkProviders: [],
       }),
     ).toEqual([
       {
@@ -3314,7 +3367,7 @@ class Album
 }
 `,
         "App\\Models\\Album",
-        { frameworkProviders: [] },
+        {},
       ),
     ).toEqual([
       {
@@ -3359,7 +3412,7 @@ class Album
 }
 `,
         "App\\Models\\Album",
-        { frameworkProviders: [] },
+        {},
       ),
     ).toEqual([
       {
@@ -3395,7 +3448,7 @@ trait InteractsWithInput
 }
 `,
         "Illuminate\\Http\\Concerns\\InteractsWithInput",
-        { frameworkProviders: [] },
+        {},
       ),
     ).toEqual([
       {
@@ -3429,7 +3482,7 @@ class Comment
 }
 `,
         "Comment",
-        { frameworkProviders: [] },
+        {},
       ),
     ).toEqual([
       {
@@ -4436,7 +4489,7 @@ class Comment extends Model
 }
 `,
         "Comment",
-        { frameworkProviders: [] },
+        {},
       ),
     ).toEqual([
       {
@@ -4774,7 +4827,7 @@ class Comment
 }
 `,
       "Comment",
-      { frameworkProviders: [] },
+      laravelCompletionOptions,
     );
 
     // The stacked attributes (including a literal `]` inside a masked string)
@@ -4808,7 +4861,6 @@ ${attributes}
 
     const start = performance.now();
     const methods = phpMethodCompletionsFromSource(source, "BigModel", {
-      frameworkProviders: [],
     });
     const elapsed = performance.now() - start;
 
@@ -4996,7 +5048,7 @@ class UserAccount extends AdminModel
     const names = phpMethodCompletionsFromSource(
       hasTenancyTrait,
       "App\\Tenancy\\HasTenancy",
-      { frameworkProviders: [] },
+      {},
     ).map((member) => member.name);
 
     // These flow into the host's `$this->`/`$account->` completion list when the
@@ -5053,7 +5105,7 @@ enum Status: string implements HasLabel
     const members = phpMethodCompletionsFromSource(
       backedEnumSource,
       "App\\Enums\\Status",
-      { frameworkProviders: [] },
+      {},
     );
     const active = members.find((member) => member.name === "Active");
     const archived = members.find((member) => member.name === "Archived");
@@ -5080,7 +5132,7 @@ enum Status: string implements HasLabel
     const names = phpMethodCompletionsFromSource(
       backedEnumSource,
       "App\\Enums\\Status",
-      { frameworkProviders: [] },
+      {},
     ).map((member) => member.name);
 
     expect(names).toEqual(
@@ -5092,7 +5144,7 @@ enum Status: string implements HasLabel
     const members = phpMethodCompletionsFromSource(
       backedEnumSource,
       "App\\Enums\\Status",
-      { frameworkProviders: [] },
+      {},
     );
 
     expect(members.filter((member) => member.isEnumCase)).toHaveLength(2);
@@ -5108,7 +5160,6 @@ enum Suit
 }
 `;
     const members = phpMethodCompletionsFromSource(source, "Suit", {
-      frameworkProviders: [],
     });
     const hearts = members.find((member) => member.name === "Hearts");
 
@@ -5135,7 +5186,6 @@ enum ReportState: int
 }
 `;
     const members = phpMethodCompletionsFromSource(source, "App\\Report", {
-      frameworkProviders: [],
     });
 
     expect(members.some((member) => member.isEnumCase)).toBe(false);
@@ -5156,7 +5206,6 @@ class Dispatcher
 }
 `;
     const members = phpMethodCompletionsFromSource(source, "Dispatcher", {
-      frameworkProviders: [],
     });
 
     expect(members.some((member) => member.isEnumCase)).toBe(false);
@@ -5172,7 +5221,6 @@ enum Kind: string
 }
 `;
     const members = phpMethodCompletionsFromSource(source, "Kind", {
-      frameworkProviders: [],
     });
     const cases = members.filter((member) => member.isEnumCase);
 

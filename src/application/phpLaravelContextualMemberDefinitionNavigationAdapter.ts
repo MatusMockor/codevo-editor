@@ -159,6 +159,8 @@ export function createPhpLaravelContextualMemberDefinitionNavigationContribution
 ): PhpFrameworkContextualMemberDefinitionNavigationContribution {
   return {
     providerId: "laravel",
+    id: "laravel-contextual-member-definition-navigation",
+    priority: 100,
     createAdapter: () =>
       createPhpLaravelContextualMemberDefinitionNavigationAdapter(deps),
   };

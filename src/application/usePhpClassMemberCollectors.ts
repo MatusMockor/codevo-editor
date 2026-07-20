@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import {
   phpMixinClassNames,
-  phpMethodCompletionsFromSource,
   phpTraitClassNames,
   type PhpMethodCompletion,
 } from "../domain/phpMethodCompletions";
@@ -25,6 +24,12 @@ import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
   createPhpFrameworkClassMemberCollectionProviderAdapters,
 } from "./phpFrameworkClassMemberCollectionProviderAdapters";
+import { phpFrameworkMemberCompletionContributions } from "./phpFrameworkMemberCompletionContributions";
+import { createPhpMemberCompletionCollector } from "./phpMemberCompletionContribution";
+import {
+  createPhpMemberCompletionContributionIdentity,
+  type PhpMemberCompletionContribution,
+} from "./phpMemberCompletionContribution";
 
 export interface PhpClassMemberReadResult {
   content: string;
@@ -44,6 +49,7 @@ export interface UsePhpClassMemberCollectorsOptions {
   currentPhpFrameworkSourceContext: () => PhpFrameworkSourceRegistryContext;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   frameworkRuntime: PhpFrameworkRuntimeContext;
+  memberCompletionContributions?: readonly PhpMemberCompletionContribution[];
   readNavigationFileContent: (path: string) => Promise<string>;
   resolvePhpClassReference: (source: string, className: string) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
@@ -89,6 +95,7 @@ export function usePhpClassMemberCollectors({
   currentPhpFrameworkSourceContext,
   currentWorkspaceRootRef,
   frameworkRuntime,
+  memberCompletionContributions: injectedMemberCompletionContributions,
   readNavigationFileContent,
   resolvePhpClassReference,
   resolvePhpClassSourcePaths,
@@ -100,9 +107,26 @@ export function usePhpClassMemberCollectors({
   const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
     {},
   );
-  const frameworkProviders = frameworkRuntime.providers;
+  const memberCompletionContributionIdentityRef = useRef(
+    createPhpMemberCompletionContributionIdentity(),
+  );
   const frameworkProviderSignature =
     phpFrameworkRuntimeProviderSignature(frameworkRuntime);
+  const activeMemberCompletionContributions = useMemo(
+    () =>
+      injectedMemberCompletionContributions ??
+      phpFrameworkMemberCompletionContributions(frameworkRuntime),
+    [frameworkRuntime, injectedMemberCompletionContributions],
+  );
+  const memberCompletionCollector = useMemo(
+    () =>
+      createPhpMemberCompletionCollector(activeMemberCompletionContributions),
+    [activeMemberCompletionContributions],
+  );
+  const memberCompletionContributionSignature =
+    memberCompletionContributionIdentityRef.current.signature(
+      activeMemberCompletionContributions,
+    );
   const memberCollectionStrategy = useMemo(
     () =>
       createPhpFrameworkClassMemberCollectionProviderAdapters({
@@ -232,6 +256,7 @@ export function usePhpClassMemberCollectors({
         path,
         className,
         frameworkProviderSignature,
+        memberCompletionContributionSignature,
         frameworkSourceSignature,
         options.includeNonPublicMembers === true,
       );
@@ -244,12 +269,12 @@ export function usePhpClassMemberCollectors({
         };
       }
 
-      const members = phpMethodCompletionsFromSource(content, className, {
-        frameworkProviders,
-        frameworkSourceContext:
-          workspaceSources.length > 0 ? { workspaceSources } : undefined,
-        includeNonPublicMembers: options.includeNonPublicMembers,
-      });
+      const members = memberCompletionCollector.collect(
+        content,
+        className,
+        { includeNonPublicMembers: options.includeNonPublicMembers },
+        workspaceSources,
+      );
       phpClassMemberCacheRef.current[cacheKey] = {
         members,
         sourceSignature,
@@ -263,7 +288,8 @@ export function usePhpClassMemberCollectors({
     [
       currentPhpFrameworkSourceContext,
       frameworkProviderSignature,
-      frameworkProviders,
+      memberCompletionContributionSignature,
+      memberCompletionCollector,
       readNavigationFileContent,
     ],
   );
@@ -298,7 +324,7 @@ export function usePhpClassMemberCollectors({
             continue;
           }
 
-          const key = `${method.kind ?? "method"}:${method.name.toLowerCase()}`;
+          const key = phpMethodCompletionSemanticIdentity(method);
 
           if (completions.has(key)) {
             continue;
@@ -713,10 +739,31 @@ function phpClassMemberCacheKey(
   path: string,
   className: string,
   frameworkProviderSignature: string,
+  memberCompletionContributionSignature: string,
   migrationSourcesSignature: string,
   includeNonPublicMembers: boolean,
 ): string {
-  return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}#${migrationSourcesSignature}#${includeNonPublicMembers ? "all" : "public"}`;
+  return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}#${memberCompletionContributionSignature}#${migrationSourcesSignature}#${includeNonPublicMembers ? "all" : "public"}`;
+}
+
+export function phpMethodCompletionSemanticIdentity(
+  completion: PhpMethodCompletion,
+): string {
+  return JSON.stringify([
+    completion.kind ?? "method",
+    completion.name.toLowerCase(),
+    completion.isStatic ? "static" : "instance",
+    completion.parameters.replace(/\s+/g, " ").trim(),
+  ]);
+}
+
+export function phpMethodCompletionReconciliationIdentity(
+  completion: PhpMethodCompletion,
+): string {
+  return phpMethodCompletionSemanticIdentity({
+    ...completion,
+    kind: completion.kind === "scope" ? undefined : completion.kind,
+  });
 }
 
 function phpFrameworkRuntimeProviderSignature(

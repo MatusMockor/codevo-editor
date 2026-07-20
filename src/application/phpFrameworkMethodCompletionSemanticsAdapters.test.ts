@@ -4,6 +4,7 @@ import {
   createPhpFrameworkMethodCompletionSemanticsAdapters,
   type PhpFrameworkMethodCompletionSemanticsAdapterDependencies,
 } from "./phpFrameworkMethodCompletionSemanticsAdapters";
+import type { PhpFrameworkPlugin } from "./phpFrameworkPlugin";
 
 function method(
   name: string,
@@ -130,5 +131,43 @@ describe("phpFrameworkMethodCompletionSemanticsAdapters", () => {
     expect(
       adapter.facadeTargetClassName("Illuminate\\Support\\Facades\\Cache"),
     ).toBe("Illuminate\\Cache\\CacheManager");
+  });
+
+  it("derives the adapter contributions from the plugin list", () => {
+    const customPlugin: PhpFrameworkPlugin = {
+      features: {},
+      provider: {
+        appliesTo: () => false,
+        id: "custom",
+        presentation: { activityLabel: "Custom" },
+      },
+      semantics: {
+        methodCompletion: () => ({
+          capability: "eloquentModelSemantics",
+          id: "custom-method-completion",
+          createAdapter: () => ({
+            facadeTargetClassName: () => "App\\Support\\CustomFacadeTarget",
+            receiverCompletionGroups: async () => ({
+              baseMethods: [],
+              dynamicWhereMethods: [],
+              localScopeMethods: [],
+            }),
+            staticCompletionGroups: async () => ({
+              baseMethods: [],
+              dynamicWhereMethods: [],
+              localScopeMethods: [],
+            }),
+          }),
+        }),
+      },
+    };
+    const adapter = createPhpFrameworkMethodCompletionSemanticsAdapters(
+      makeDeps(),
+      [customPlugin],
+    );
+
+    expect(adapter.facadeTargetClassName("Anything")).toBe(
+      "App\\Support\\CustomFacadeTarget",
+    );
   });
 });

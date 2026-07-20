@@ -1,4 +1,7 @@
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import type {
+  PhpFrameworkCapabilityDefinition,
+  PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import {
   selectPhpFrameworkProvidersForProject,
   type PhpFrameworkProviderSelection,
@@ -9,7 +12,12 @@ export type FrameworkProfile = "laravel" | "nette" | "generic";
 
 export interface PhpFrameworkResolution
   extends PhpFrameworkProviderSelection<PhpFrameworkProvider> {
+  readonly capabilityDefinitions?: readonly PhpFrameworkCapabilityDefinition<PhpFrameworkProvider>[];
   readonly profile: FrameworkProfile;
+}
+
+interface PhpFrameworkProviderCatalog extends ReadonlyArray<PhpFrameworkProvider> {
+  readonly capabilityDefinitions?: readonly PhpFrameworkCapabilityDefinition<PhpFrameworkProvider>[];
 }
 
 export function frameworkProfileFromProviderId(
@@ -28,12 +36,13 @@ export function frameworkProfileFromProviderId(
 
 export function resolvePhpFrameworkProfile(
   php: PhpProjectDescriptor | null,
-  registry: readonly PhpFrameworkProvider[],
+  registry: PhpFrameworkProviderCatalog,
 ): PhpFrameworkResolution {
   const selection = selectPhpFrameworkProvidersForProject(php, registry);
 
   return {
     ...selection,
+    capabilityDefinitions: registry.capabilityDefinitions,
     profile: frameworkProfileFromProviderId(
       selection.matchedProviderIds[0] ?? null,
     ),

@@ -678,7 +678,6 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
         {
           [usersRow]: {
             members: phpMethodCompletionsFromSource(usersSource, usersRow, {
-              frameworkProviders: [],
             }),
             source: usersSource,
           },
@@ -773,7 +772,6 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
         {
           [usersRow]: {
             members: phpMethodCompletionsFromSource(usersSource, usersRow, {
-              frameworkProviders: [],
             }),
             source: usersSource,
           },
@@ -827,7 +825,6 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       const classes: Record<string, ClassSource> = {
         [usersRow]: {
           members: phpMethodCompletionsFromSource(usersSource, usersRow, {
-            frameworkProviders: [],
           }),
           source: usersSource,
         },
@@ -917,7 +914,6 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
           {
             [usersRow]: {
               members: phpMethodCompletionsFromSource(usersSource, usersRow, {
-                frameworkProviders: [],
               }),
               source: usersSource,
             },
@@ -1035,7 +1031,6 @@ abstract class UsersActiveRow extends \\Nette\\Database\\Table\\ActiveRow {}`;
       const classes: Record<string, ClassSource> = {
         [usersRow]: {
           members: phpMethodCompletionsFromSource(usersSource, usersRow, {
-            frameworkProviders: [],
           }),
           source: usersSource,
         },

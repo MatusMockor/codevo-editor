@@ -1,6 +1,6 @@
 import { bladeFrameworkHelperCompletionContextAt } from "../domain/bladeFrameworkHelperCompletions";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpFrameworkTemplateNameFromRelativePath } from "../domain/phpFrameworkProviders";
+import { phpFrameworkTemplateNameFromRelativePath } from "../domain/phpFrameworkTemplateDispatch";
 import { orderPhpMemberCompletionsByCategory } from "../domain/phpMethodCompletions";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {

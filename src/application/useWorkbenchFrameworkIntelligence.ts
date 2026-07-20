@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import { phpFrameworkScopedStringCompletionContextAt } from "../domain/phpFrameworkProviders";
+import { phpFrameworkScopedStringCompletionContextAt } from "../domain/phpFrameworkLiteralDispatch";
 import { useBladeIntelligence } from "./useBladeIntelligence";
 import { useLatteIntelligence } from "./useLatteIntelligence";
 import { useNeonIntelligence } from "./useNeonIntelligence";

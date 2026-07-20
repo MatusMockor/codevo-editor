@@ -2,7 +2,7 @@ import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
 import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkTemplateDispatch";
 import type { LatteFrameworkCapabilities } from "./latteIntelligenceContracts";
 
 export function createLatteFrameworkCapabilities(

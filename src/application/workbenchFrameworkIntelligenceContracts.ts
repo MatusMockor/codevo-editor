@@ -1,5 +1,5 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { phpFrameworkScopedStringCompletionContextAt } from "../domain/phpFrameworkProviders";
+import type { phpFrameworkScopedStringCompletionContextAt } from "../domain/phpFrameworkLiteralDispatch";
 import type {
   BladeIntelligence,
   BladeIntelligenceDependencies,

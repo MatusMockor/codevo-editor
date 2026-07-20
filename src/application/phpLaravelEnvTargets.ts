@@ -2,7 +2,7 @@ import {
   phpLaravelEnvTargetFromSource,
   type PhpLaravelEnvTarget,
 } from "../domain/phpLaravelEnv";
-import { phpFrameworkEnvEntriesFromSource } from "../domain/phpFrameworkProviders";
+import { phpFrameworkEnvEntriesFromSource } from "../domain/phpFrameworkLiteralDispatch";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {

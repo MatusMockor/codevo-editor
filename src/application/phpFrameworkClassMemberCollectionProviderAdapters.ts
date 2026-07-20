@@ -25,6 +25,8 @@ export function createPhpFrameworkClassMemberCollectionProviderAdapters({
     [
       {
         capability: "eloquentModelSemantics",
+        id: "laravel-class-member-collection",
+        priority: 100,
         createAdapter: () =>
           createPhpLaravelClassMemberCollectionProviderAdapter({
             resolvePhpDeclaredType: resolvePhpFrameworkDeclaredType,

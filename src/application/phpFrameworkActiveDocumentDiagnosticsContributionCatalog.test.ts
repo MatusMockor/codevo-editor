@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { createPhpFrameworkActiveDocumentDiagnosticsContributionCatalog } from "./phpFrameworkActiveDocumentDiagnosticsContributionCatalog";
+import {
+  activeDocumentDiagnosticsContributionForDescriptor,
+  createPhpFrameworkActiveDocumentDiagnosticsContributionCatalog,
+} from "./phpFrameworkActiveDocumentDiagnosticsContributionCatalog";
 import type { PhpFrameworkActiveDocumentDiagnosticsContribution } from "./phpFrameworkActiveDocumentDiagnosticsContributions";
 
 function contribution(
   id: string,
+  priority = 0,
 ): PhpFrameworkActiveDocumentDiagnosticsContribution {
   return {
     id,
-    supports: () => false,
+    priority,
+    supports: ({ kind }) => kind === "future-framework",
     provideDiagnostics: async () => [],
   };
 }
@@ -33,5 +38,21 @@ describe("createPhpFrameworkActiveDocumentDiagnosticsContributionCatalog", () =>
 
     expect(catalog.map((item) => item.id)).toEqual(["first"]);
     expect(Object.isFrozen(catalog)).toBe(true);
+  });
+
+  it("selects future framework diagnostics by stable priority", () => {
+    const catalog =
+      createPhpFrameworkActiveDocumentDiagnosticsContributionCatalog([
+        contribution("first-high", 10),
+        contribution("lower", 1),
+        contribution("second-high", 10),
+      ]);
+
+    expect(
+      activeDocumentDiagnosticsContributionForDescriptor(catalog, {
+        kind: "future-framework",
+        language: "php",
+      })?.id,
+    ).toBe("first-high");
   });
 });

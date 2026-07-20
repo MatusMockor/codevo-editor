@@ -3,7 +3,7 @@ import {
   phpFrameworkJsonTranslationTargetFromSource,
   phpFrameworkTranslationKeysFromSource,
   phpFrameworkTranslationTargetFromSource,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkLiteralDispatch";
 import {
   isUsableLaravelTranslationLocale,
   phpLaravelJsonTranslationLocaleFromRelativePath,

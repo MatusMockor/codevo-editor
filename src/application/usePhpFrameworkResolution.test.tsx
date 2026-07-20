@@ -173,9 +173,9 @@ describe("usePhpFrameworkResolution", () => {
     expect(harness.api().phpFrameworkRuntimeContext.hasProvider("nette")).toBe(
       false,
     );
-    expect(
-      harness.api().phpFrameworkIntelligence.hasProvider("laravel"),
-    ).toBe(true);
+    expect(harness.api().phpFrameworkIntelligence.hasProvider("laravel")).toBe(
+      true,
+    );
     expect(
       harness.api().activePhpFrameworkProviders.map((provider) => provider.id),
     ).toEqual(["laravel"]);
@@ -195,9 +195,9 @@ describe("usePhpFrameworkResolution", () => {
     expect(harness.api().phpFrameworkRuntimeContext.hasProvider("nette")).toBe(
       true,
     );
-    expect(
-      harness.api().phpFrameworkIntelligence.hasProvider("laravel"),
-    ).toBe(false);
+    expect(harness.api().phpFrameworkIntelligence.hasProvider("laravel")).toBe(
+      false,
+    );
     expect(
       harness.api().activePhpFrameworkProviders.map((provider) => provider.id),
     ).toEqual(["nette"]);
@@ -214,9 +214,9 @@ describe("usePhpFrameworkResolution", () => {
     expect(harness.api().phpFrameworkRuntimeContext.hasProvider("nette")).toBe(
       false,
     );
-    expect(
-      harness.api().phpFrameworkIntelligence.hasProvider("laravel"),
-    ).toBe(false);
+    expect(harness.api().phpFrameworkIntelligence.hasProvider("laravel")).toBe(
+      false,
+    );
     expect(harness.api().activePhpFrameworkProviders).toEqual([]);
     expect(harness.api().activeFrameworkActivityLabel).toBeNull();
 
@@ -263,7 +263,7 @@ describe("usePhpFrameworkResolution", () => {
     harness.unmount();
   });
 
-  it("warns once when a descriptor carries multiple framework signals", () => {
+  it("warns once per workspace and stable ambiguity signature across descriptor rescans", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const workspaceDescriptor = phpDescriptor([
       "laravel/framework",
@@ -277,11 +277,106 @@ describe("usePhpFrameworkResolution", () => {
       'Multiple PHP framework signals detected (laravel, nette); resolved exclusively to "laravel" by registry priority.',
     );
 
-    harness.rerender({ workspaceDescriptor });
+    harness.rerender({
+      workspaceDescriptor: phpDescriptor(
+        ["laravel/framework", "latte/latte"],
+        ROOT,
+      ),
+    });
 
     expect(warn).toHaveBeenCalledTimes(1);
 
     harness.unmount();
+  });
+
+  it("warns once for each changed ambiguity signature in the same workspace", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const providerCatalog: PhpFrameworkProvider[] = [
+      {
+        id: "first",
+        appliesTo: (php) =>
+          php.packages.some(
+            (composerPackage) => composerPackage.name === "vendor/first",
+          ),
+      },
+      {
+        id: "second",
+        appliesTo: (php) =>
+          php.packages.some(
+            (composerPackage) => composerPackage.name === "vendor/second",
+          ),
+      },
+      {
+        id: "third",
+        appliesTo: (php) =>
+          php.packages.some(
+            (composerPackage) => composerPackage.name === "vendor/third",
+          ),
+      },
+    ];
+    const harness = renderHook({
+      providerCatalog,
+      workspaceDescriptor: phpDescriptor(["vendor/first", "vendor/second"]),
+    });
+
+    harness.rerender({
+      providerCatalog,
+      workspaceDescriptor: phpDescriptor([
+        "vendor/first",
+        "vendor/second",
+        "vendor/third",
+      ]),
+    });
+    harness.rerender({
+      providerCatalog,
+      workspaceDescriptor: phpDescriptor(["vendor/first", "vendor/second"]),
+    });
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      'Multiple PHP framework signals detected (first, second); resolved exclusively to "generic" by registry priority.',
+    );
+    expect(warn).toHaveBeenNthCalledWith(
+      2,
+      'Multiple PHP framework signals detected (first, second, third); resolved exclusively to "generic" by registry priority.',
+    );
+
+    harness.unmount();
+  });
+
+  it("warns independently for the same ambiguity in different workspaces", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const packages = ["laravel/framework", "latte/latte"];
+    const harness = renderHook({
+      workspaceDescriptor: phpDescriptor(packages, "/workspace/first"),
+    });
+
+    harness.rerender({
+      workspaceDescriptor: phpDescriptor(packages, "/workspace/second"),
+    });
+    harness.rerender({
+      workspaceDescriptor: phpDescriptor(packages, "/workspace/first"),
+    });
+
+    expect(warn).toHaveBeenCalledTimes(2);
+
+    harness.unmount();
+  });
+
+  it("does not leak warned ambiguity signatures between hook owners", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const options = {
+      workspaceDescriptor: phpDescriptor(["laravel/framework", "latte/latte"]),
+    };
+    const firstHarness = renderHook(options);
+
+    firstHarness.unmount();
+    const secondHarness = renderHook(options);
+
+    expect(warn).toHaveBeenCalledTimes(2);
+
+    secondHarness.unmount();
   });
 
   it("does not warn for a single-signal descriptor", () => {

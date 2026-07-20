@@ -1,49 +1,42 @@
-import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   createPhpFrameworkDefinitionNavigationRegistry,
   type PhpFrameworkDefinitionNavigationProvider,
 } from "./phpFrameworkDefinitionNavigationContributions";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import type { NavigationRequest } from "./navigationRequest";
 import type { PhpFrameworkActivationContext } from "./phpFrameworkExtensionRegistry";
-import { createPhpNetteDatabaseDefinitionNavigationContribution } from "./phpNetteDatabaseDefinitionNavigationContribution";
+import type {
+  PhpFrameworkPlugin,
+  PhpFrameworkPluginNavigationDependencies,
+} from "./phpFrameworkPlugin";
+import {
+  phpFrameworkPluginContributions,
+  phpFrameworkPlugins,
+} from "./phpFrameworkPluginCatalog";
 
-export interface PhpFrameworkDefinitionNavigationContributionCatalogDependencies {
+export interface PhpFrameworkDefinitionNavigationContributionCatalogDependencies
+  extends PhpFrameworkPluginNavigationDependencies {
   activation: PhpFrameworkActivationContext;
   frameworkRuntime: Pick<
     PhpFrameworkRuntimeContext,
     "hasProvider" | "supports"
   >;
-  openPhpClassTarget(
-    className: string,
-    label: string,
-    request?: NavigationRequest,
-  ): Promise<boolean>;
-  readNavigationFileContent(
-    path: string,
-    signal?: AbortSignal,
-  ): Promise<string>;
-  resolvePhpClassSourcePaths(
-    className: string,
-    signal?: AbortSignal,
-  ): Promise<readonly string[]>;
-  resolvePhpExpressionType(
-    source: string,
-    position: EditorPosition,
-    expression: string,
-  ): Promise<string | null>;
+  plugins?: readonly PhpFrameworkPlugin[];
 }
 
 export function createPhpFrameworkDefinitionNavigationContributionCatalog({
   activation,
   frameworkRuntime,
+  plugins = phpFrameworkPlugins,
   ...dependencies
 }: PhpFrameworkDefinitionNavigationContributionCatalogDependencies): PhpFrameworkDefinitionNavigationProvider {
   return createPhpFrameworkDefinitionNavigationRegistry({
     activation,
     frameworkRuntime,
-    contributions: [
-      createPhpNetteDatabaseDefinitionNavigationContribution(dependencies),
-    ],
+    contributions: phpFrameworkPluginContributions(
+      plugins,
+      (plugin) => plugin.navigation,
+      dependencies,
+      "PHP framework definition navigation catalog",
+    ),
   });
 }

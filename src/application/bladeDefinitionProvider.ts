@@ -1,8 +1,6 @@
 import { bladeFrameworkStringLiteralHelperAt } from "../domain/bladeFrameworkHelperCompletions";
-import {
-  phpFrameworkTemplateNameFromRelativePath,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import { phpFrameworkTemplateNameFromRelativePath } from "../domain/phpFrameworkTemplateDispatch";
 import { phpIdentifierContextAt } from "../domain/phpNavigation";
 import { joinWorkspacePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";

@@ -1,14 +1,20 @@
 import { useCallback, useMemo } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  phpMethodCompletionsFromSource,
-  type PhpMethodCompletion,
-} from "../domain/phpMethodCompletions";
+import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { phpObjectTypeCandidates } from "../domain/phpObjectTypeCandidates";
 import { phpReceiverExpressionTypeInSource } from "../domain/phpSemanticEngine";
 import { createPhpFrameworkSemanticTypeExtensions } from "./phpFrameworkSemanticTypeExtensions";
 import { createPhpFrameworkMethodCompletionSemanticsAdapters } from "./phpFrameworkMethodCompletionSemanticsAdapters";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import { phpFrameworkMemberCompletionContributions } from "./phpFrameworkMemberCompletionContributions";
+import {
+  createPhpMemberCompletionCollector,
+  type PhpMemberCompletionCollector,
+} from "./phpMemberCompletionContribution";
+import {
+  phpMethodCompletionReconciliationIdentity,
+  phpMethodCompletionSemanticIdentity,
+} from "./usePhpClassMemberCollectors";
 
 export interface PhpTraitThisCompletionContext {
   contextualThisClassName: string | null;
@@ -36,6 +42,7 @@ export interface PhpMethodCompletionResolverDependencies {
     options?: { includeNonPublicMembers?: boolean },
   ): Promise<PhpMethodCompletion[]>;
   currentPhpFrameworkSourceContext(): PhpFrameworkSourceRegistryContext;
+  memberCompletionCollector?: PhpMemberCompletionCollector;
   frameworkRuntime: PhpFrameworkRuntimeContext;
   phpNormalizedReceiverExpressionIsThis(receiverExpression: string): boolean;
   resolvePhpClassReference(source: string, className: string): string | null;
@@ -73,12 +80,21 @@ export function usePhpMethodCompletionResolvers(
     collectPhpMethodsForClass,
     currentPhpFrameworkSourceContext,
     frameworkRuntime,
+    memberCompletionCollector: injectedMemberCompletionCollector,
     phpNormalizedReceiverExpressionIsThis,
     resolvePhpClassReference,
     resolvePhpFrameworkBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
   const frameworkProviders = frameworkRuntime.providers;
+  const memberCompletionCollector = useMemo(
+    () =>
+      injectedMemberCompletionCollector ??
+      createPhpMemberCompletionCollector(
+        phpFrameworkMemberCompletionContributions(frameworkRuntime),
+      ),
+    [frameworkRuntime, injectedMemberCompletionCollector],
+  );
   const typeExtensions = useMemo(
     () =>
       createPhpFrameworkSemanticTypeExtensions({
@@ -127,15 +143,11 @@ export function usePhpMethodCompletionResolvers(
           ) ?? traitThisContext.declaringClassName;
         const { workspaceSources } = currentPhpFrameworkSourceContext();
 
-        const traitMethods = phpMethodCompletionsFromSource(
+        const traitMethods = memberCompletionCollector.collect(
           traitThisContext.traitMemberSource ?? traitThisContext.memberSource,
           declaringClassName,
-          {
-            frameworkProviders,
-            frameworkSourceContext:
-              workspaceSources.length > 0 ? { workspaceSources } : undefined,
-            includeNonPublicMembers: true,
-          },
+          { includeNonPublicMembers: true },
+          workspaceSources,
         );
 
         if (
@@ -149,17 +161,11 @@ export function usePhpMethodCompletionResolvers(
 
         if (traitThisContext.sameSourceHost) {
           hostMethodGroups.push(
-            phpMethodCompletionsFromSource(
+            memberCompletionCollector.collect(
               traitThisContext.sameSourceHost.memberSource,
               traitThisContext.sameSourceHost.className,
-              {
-                frameworkProviders,
-                frameworkSourceContext:
-                  workspaceSources.length > 0
-                    ? { workspaceSources }
-                    : undefined,
-                includeNonPublicMembers: true,
-              },
+              { includeNonPublicMembers: true },
+              workspaceSources,
             ),
           );
         }
@@ -219,7 +225,7 @@ export function usePhpMethodCompletionResolvers(
       currentPhpFrameworkSourceContext,
       frameworkSemantics,
       typeExtensions,
-      frameworkProviders,
+      memberCompletionCollector,
       phpNormalizedReceiverExpressionIsThis,
       resolvePhpExpressionType,
     ],
@@ -267,14 +273,14 @@ export function usePhpMethodCompletionResolvers(
   };
 }
 
-function mergePhpMethodCompletions(
+export function mergePhpMethodCompletions(
   ...groups: PhpMethodCompletion[][]
 ): PhpMethodCompletion[] {
   const completions = new Map<string, PhpMethodCompletion>();
 
   for (const group of groups) {
     for (const completion of group) {
-      const key = `${completion.kind ?? "method"}:${completion.name.toLowerCase()}`;
+      const key = phpMethodCompletionSemanticIdentity(completion);
 
       if (!completions.has(key)) {
         completions.set(key, completion);
@@ -289,20 +295,13 @@ export function mergePhpTraitAndHostMethodCompletions(
   traitMethods: PhpMethodCompletion[],
   hostMethodGroups: readonly PhpMethodCompletion[][],
 ): PhpMethodCompletion[] {
-  const traitMap = new Map(
-    traitMethods.map((method) => [phpMethodCompletionKey(method), method]),
-  );
+  const traitMap = phpMethodCompletionMap(traitMethods);
 
   if (hostMethodGroups.length === 0) {
     return Array.from(traitMap.values());
   }
 
-  const hostMaps = hostMethodGroups.map(
-    (methods) =>
-      new Map(
-        methods.map((method) => [phpMethodCompletionKey(method), method]),
-      ),
-  );
+  const hostMaps = hostMethodGroups.map(phpMethodCompletionMap);
   const candidateKeys = new Set([
     ...traitMap.keys(),
     ...hostMaps.flatMap((hostMethods) => Array.from(hostMethods.keys())),
@@ -323,7 +322,9 @@ export function mergePhpTraitAndHostMethodCompletions(
     const returnTypes = new Set(
       effectiveMethods.map((candidate) => candidate.returnType ?? null),
     );
-    const method = effectiveMethods[0];
+    const method =
+      effectiveMethods.find((candidate) => candidate.kind === "scope") ??
+      effectiveMethods[0];
 
     if (!method) {
       continue;
@@ -338,6 +339,24 @@ export function mergePhpTraitAndHostMethodCompletions(
   return Array.from(merged.values());
 }
 
-function phpMethodCompletionKey(completion: PhpMethodCompletion): string {
-  return `${completion.kind ?? "method"}:${completion.name.toLowerCase()}`;
+function phpMethodCompletionMap(
+  methods: readonly PhpMethodCompletion[],
+): Map<string, PhpMethodCompletion> {
+  const completions = new Map<string, PhpMethodCompletion>();
+
+  for (const method of methods) {
+    const key = phpMethodCompletionReconciliationIdentity(method);
+    const existing = completions.get(key);
+
+    if (!existing) {
+      completions.set(key, method);
+      continue;
+    }
+
+    if (existing.kind !== "scope" && method.kind === "scope") {
+      completions.set(key, method);
+    }
+  }
+
+  return completions;
 }

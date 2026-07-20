@@ -1,46 +1,34 @@
-import type { EditorPosition } from "../domain/languageServerFeatures";
-import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { activePhpFrameworkMethodCompletionAdapter } from "./phpFrameworkMethodCompletionAdapterRegistry";
 import {
   genericPhpMethodCompletionSemantics,
   type PhpFrameworkMethodCompletionSemanticsAdapter,
 } from "./phpFrameworkMethodCompletionSemantics";
-import {
-  createPhpLaravelMethodCompletionSemanticsAdapter,
-} from "./phpLaravelMethodCompletionSemanticsAdapter";
+import type {
+  PhpFrameworkPlugin,
+  PhpFrameworkPluginMethodCompletionSemanticsDependencies,
+} from "./phpFrameworkPlugin";
+import { phpFrameworkPlugins } from "./phpFrameworkPluginCatalog";
 
-export interface PhpFrameworkMethodCompletionSemanticsAdapterDependencies {
-  collectPhpFrameworkSyntheticMethodsForClass(
-    className: string,
-    options?: { isStatic?: boolean },
-  ): Promise<PhpMethodCompletion[]>;
+export interface PhpFrameworkMethodCompletionSemanticsAdapterDependencies
+  extends PhpFrameworkPluginMethodCompletionSemanticsDependencies {
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">;
-  resolvePhpFrameworkBuilderModelType(
-    source: string,
-    position: EditorPosition,
-    expression: string,
-  ): Promise<string | null>;
 }
 
-export function createPhpFrameworkMethodCompletionSemanticsAdapters({
-  collectPhpFrameworkSyntheticMethodsForClass,
-  frameworkRuntime,
-  resolvePhpFrameworkBuilderModelType,
-}: PhpFrameworkMethodCompletionSemanticsAdapterDependencies): PhpFrameworkMethodCompletionSemanticsAdapter {
+export function createPhpFrameworkMethodCompletionSemanticsAdapters(
+  {
+    frameworkRuntime,
+    ...dependencies
+  }: PhpFrameworkMethodCompletionSemanticsAdapterDependencies,
+  plugins: readonly PhpFrameworkPlugin[] = phpFrameworkPlugins,
+): PhpFrameworkMethodCompletionSemanticsAdapter {
   return activePhpFrameworkMethodCompletionAdapter(
     frameworkRuntime,
     genericPhpMethodCompletionSemantics,
-    [
-      {
-        capability: "eloquentModelSemantics",
-        createAdapter: () =>
-          createPhpLaravelMethodCompletionSemanticsAdapter({
-            collectPhpFrameworkSyntheticMethodsForClass,
-            resolvePhpEloquentBuilderModelType:
-              resolvePhpFrameworkBuilderModelType,
-          }),
-      },
-    ],
+    plugins.flatMap((plugin) =>
+      plugin.semantics?.methodCompletion
+        ? [plugin.semantics.methodCompletion(dependencies)]
+        : [],
+    ),
   );
 }

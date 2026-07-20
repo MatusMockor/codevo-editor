@@ -4,6 +4,7 @@ import {
   type PhpFrameworkContextualMemberDefinitionNavigationContribution,
 } from "./phpFrameworkContextualMemberDefinitionNavigationAdapters";
 import type { PhpFrameworkContextualMemberDefinitionNavigationAdapter } from "./phpFrameworkContextualMemberDefinitionNavigationAdapter";
+import { phpLaravelFrameworkPlugin } from "./phpLaravelFrameworkPlugin";
 
 function makeActiveAdapter(): PhpFrameworkContextualMemberDefinitionNavigationAdapter {
   return {
@@ -21,11 +22,32 @@ function makeProviderContribution(
 ): PhpFrameworkContextualMemberDefinitionNavigationContribution {
   return {
     createAdapter: vi.fn(() => makeActiveAdapter()),
+    id: `${providerId}-contextual-member-navigation`,
+    priority: 100,
     providerId,
   };
 }
 
 describe("phpFrameworkContextualMemberDefinitionNavigationAdapters", () => {
+  it("loads Laravel contextual navigation through the unified plugin descriptor", () => {
+    const adapter =
+      createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
+        dependencies: {
+          openDirectMethodTarget: vi.fn(async () => false),
+          openDynamicMethodTarget: vi.fn(async () => false),
+          resolveBuilderModelType: vi.fn(async () => null),
+          resolveExpressionType: vi.fn(async () => null),
+          resolveRelationPathOwnerType: vi.fn(async () => null),
+        },
+        frameworkRuntime: {
+          hasProvider: (providerId) => providerId === "laravel",
+        },
+        plugins: [phpLaravelFrameworkPlugin],
+      });
+
+    expect(adapter.supportsBuilderModelNavigation()).toBe(true);
+  });
+
   it("returns an inert generic adapter without resolving provider targets", async () => {
     const providerContribution = makeProviderContribution();
     const adapter =

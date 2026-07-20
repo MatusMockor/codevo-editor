@@ -1,12 +1,14 @@
 import type { LanguageServerDiagnostic } from "./languageServerDiagnostics";
 import {
-  phpFrameworkMemberMethodMagicDiagnostic,
-  phpFrameworkMemberPropertyMagicDiagnostic,
-  phpFrameworkStaticMethodMagicDiagnostic,
   type PhpFrameworkMagicDiagnosticMatch,
   type PhpFrameworkProvider,
   type PhpFrameworkSourceContext,
 } from "./phpFrameworkProviders";
+import {
+  phpFrameworkMemberMethodMagicDiagnostic,
+  phpFrameworkMemberPropertyMagicDiagnostic,
+  phpFrameworkStaticMethodMagicDiagnostic,
+} from "./phpFrameworkMemberDispatch";
 import {
   PHP_EXPRESSION_RECEIVER_PATTERN,
   PHP_MEMBER_ACCESS_PATTERN,

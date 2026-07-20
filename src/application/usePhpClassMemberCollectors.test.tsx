@@ -9,6 +9,7 @@ import { resolvePhpClassName } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import type { PhpMemberCompletionContribution } from "./phpMemberCompletionContribution";
 import {
   usePhpClassMemberCollectors,
   type PhpClassMemberCollectors,
@@ -52,6 +53,23 @@ function phpDescriptor(): WorkspaceDescriptor {
 
 function classPath(className: string): string {
   return `${ROOT}/${className.split("\\").join("/")}.php`;
+}
+
+function memberContribution(
+  id: string,
+  name: string,
+): PhpMemberCompletionContribution {
+  return {
+    id,
+    collect: ({ declaringClassName }) => [
+      {
+        declaringClassName,
+        name,
+        parameters: "",
+        returnType: "void",
+      },
+    ],
+  };
 }
 
 function makeOptions(
@@ -122,6 +140,11 @@ function renderHook(options: HookOptions) {
 
       return captured.api;
     },
+    rerender: (nextOptions: HookOptions) => {
+      act(() => {
+        root.render(<Harness hookOptions={nextOptions} />);
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -140,6 +163,150 @@ function createDeferred<T>() {
 }
 
 describe("usePhpClassMemberCollectors", () => {
+  it("preserves semantic member variants and collapses inherited duplicates", async () => {
+    const options = makeOptions({
+      BaseRepository: `<?php
+class BaseRepository extends RootRepository
+{
+    public static function resolve(int $id): void {}
+    public string $resolve;
+    public function exact(int $id): void {}
+}`,
+      RootRepository: `<?php
+class RootRepository
+{
+    public function resolve(string $id): void {}
+}`,
+      ChildRepository: `<?php
+class ChildRepository extends BaseRepository
+{
+    public function resolve(int $id): void {}
+    public function exact(  int   $id  ): void {}
+}`,
+    });
+    const harness = renderHook(options);
+
+    const members = await harness
+      .api()
+      .collectPhpMethodsForClass("ChildRepository");
+
+    expect(
+      members.map(({ isStatic, kind, name, parameters }) => ({
+        isStatic: isStatic === true,
+        kind: kind ?? "method",
+        name,
+        parameters: parameters.replace(/\s+/g, " ").trim(),
+      })),
+    ).toEqual([
+      {
+        isStatic: false,
+        kind: "method",
+        name: "resolve",
+        parameters: "int $id",
+      },
+      {
+        isStatic: false,
+        kind: "method",
+        name: "exact",
+        parameters: "int $id",
+      },
+      {
+        isStatic: true,
+        kind: "method",
+        name: "resolve",
+        parameters: "int $id",
+      },
+      {
+        isStatic: false,
+        kind: "property",
+        name: "resolve",
+        parameters: "",
+      },
+      {
+        isStatic: false,
+        kind: "method",
+        name: "resolve",
+        parameters: "string $id",
+      },
+    ]);
+
+    harness.unmount();
+  });
+
+  it("keeps a derived scope alongside colliding method and property members", async () => {
+    const scopeContribution: PhpMemberCompletionContribution = {
+      id: "test.scopes",
+      collect: ({ declaringClassName }) => [
+        {
+          declaringClassName,
+          kind: "scope",
+          name: "owner",
+          parameters: "",
+          returnType: "Builder",
+        },
+      ],
+    };
+    const harness = renderHook(
+      makeOptions(
+        {
+          Report: `<?php
+class Report
+{
+    public function owner(): Builder {}
+    public string $owner;
+}`,
+        },
+        { memberCompletionContributions: [scopeContribution] },
+      ),
+    );
+
+    const members = await harness.api().collectPhpMethodsForClass("Report");
+
+    expect(
+      members
+        .filter(({ name }) => name === "owner")
+        .map(({ kind }) => kind ?? "method"),
+    ).toEqual(["method", "property", "scope"]);
+
+    harness.unmount();
+  });
+
+  it("collects members from an active custom legacy provider", async () => {
+    const memberCompletionsFromSource = vi.fn(({ declaringClassName }) => [
+      {
+        declaringClassName,
+        name: "fromCustomProvider",
+        parameters: "",
+        returnType: "void",
+      },
+    ]);
+    const frameworkRuntime = createPhpFrameworkRuntimeContext(
+      createPhpFrameworkIntelligence({
+        matchedProviderIds: ["custom"],
+        profile: "generic",
+        providers: [
+          {
+            id: "custom",
+            completions: { memberCompletionsFromSource },
+          },
+        ],
+      }),
+    );
+    const harness = renderHook(
+      makeOptions(
+        { Report: "<?php class Report {}" },
+        { frameworkRuntime },
+      ),
+    );
+
+    const members = await harness.api().collectPhpMethodsForClass("Report");
+
+    expect(members.map(({ name }) => name)).toEqual(["fromCustomProvider"]);
+    expect(memberCompletionsFromSource).toHaveBeenCalledOnce();
+
+    harness.unmount();
+  });
+
   it("keeps direct private and inherited protected members but drops ancestor private members", async () => {
     const options = makeOptions({
       "App\\BaseRepository": `<?php
@@ -222,6 +389,73 @@ class User
 
     expect(third.members).not.toBe(first.members);
     expect(third.members.map((member) => member.name)).toEqual(["activate"]);
+
+    harness.unmount();
+  });
+
+  it("invalidates cached members when the contribution signature changes", async () => {
+    const source = "<?php class User {}";
+    const firstContribution = memberContribution("first", "fromFirst");
+    const secondContribution = memberContribution("second", "fromSecond");
+    const firstOptions = makeOptions(
+      { User: source },
+      { memberCompletionContributions: [firstContribution] },
+    );
+    const harness = renderHook(firstOptions);
+
+    const first = await harness.api().readPhpClassMembersFromPath(
+      classPath("User"),
+      "User",
+    );
+
+    harness.rerender(
+      makeOptions(
+        { User: source },
+        { memberCompletionContributions: [secondContribution] },
+      ),
+    );
+
+    const second = await harness.api().readPhpClassMembersFromPath(
+      classPath("User"),
+      "User",
+    );
+
+    expect(first.members.map(({ name }) => name)).toEqual(["fromFirst"]);
+    expect(second.members.map(({ name }) => name)).toEqual(["fromSecond"]);
+    expect(second.members).not.toBe(first.members);
+
+    harness.unmount();
+  });
+
+  it("invalidates cached members when a contribution object is replaced with the same id and priority", async () => {
+    const source = "<?php class User {}";
+    const firstContribution = memberContribution("custom", "fromFirst");
+    const replacementContribution = memberContribution("custom", "fromReplacement");
+    const contributions = [firstContribution];
+    const options = makeOptions(
+      { User: source },
+      { memberCompletionContributions: contributions },
+    );
+    const harness = renderHook(options);
+
+    const first = await harness.api().readPhpClassMembersFromPath(
+      classPath("User"),
+      "User",
+    );
+
+    contributions[0] = replacementContribution;
+    harness.rerender(options);
+
+    const second = await harness.api().readPhpClassMembersFromPath(
+      classPath("User"),
+      "User",
+    );
+
+    expect(first.members.map(({ name }) => name)).toEqual(["fromFirst"]);
+    expect(second.members.map(({ name }) => name)).toEqual([
+      "fromReplacement",
+    ]);
+    expect(second.members).not.toBe(first.members);
 
     harness.unmount();
   });
@@ -354,6 +588,44 @@ class User
         kind: "magic-where",
         name: "whereEmail",
       }),
+    );
+
+    harness.unmount();
+  });
+
+  it("composes Laravel source members after the framework-neutral PHP parser", async () => {
+    const harness = renderHook(
+      makeOptions(
+        {
+          "App\\Models\\User": `<?php
+namespace App\\Models;
+
+use Illuminate\\Database\\Eloquent\\Relations\\HasMany;
+
+class User
+{
+    protected $fillable = ['email'];
+    public function posts(): HasMany {}
+    public function saveProfile(): void {}
+}
+`,
+        },
+        { frameworkRuntime: LARAVEL_RUNTIME },
+      ),
+    );
+
+    const completions = await harness
+      .api()
+      .collectPhpMethodsForClass("App\\Models\\User");
+
+    expect(
+      completions.map(({ kind, name }) => ({ kind, name })),
+    ).toEqual(
+      expect.arrayContaining([
+        { kind: undefined, name: "saveProfile" },
+        { kind: "property", name: "email" },
+        { kind: "property", name: "posts" },
+      ]),
     );
 
     harness.unmount();

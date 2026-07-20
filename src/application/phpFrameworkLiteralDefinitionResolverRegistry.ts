@@ -1,10 +1,10 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   isPhpFrameworkProviderActive,
-  phpFrameworkStringLiteralHelperAt,
   type PhpFrameworkProvider,
   type PhpFrameworkStringLiteralHelperMatch,
 } from "../domain/phpFrameworkProviders";
+import { phpFrameworkStringLiteralHelperAt } from "../domain/phpFrameworkLiteralDispatch";
 import { PHP_FRAMEWORK_LITERAL_DEFINITION_RESOLVER_CONTRIBUTIONS } from "./phpFrameworkLiteralDefinitionResolverContributions";
 
 export interface PhpFrameworkLiteralNavigationDocument {

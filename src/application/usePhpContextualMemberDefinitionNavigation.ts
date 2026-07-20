@@ -16,7 +16,6 @@ import type { EditorDocument, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { PhpFrameworkRelationStringContext } from "./phpFrameworkContextualMemberDefinitionNavigationAdapter";
 import { createPhpFrameworkContextualMemberDefinitionNavigationAdapters } from "./phpFrameworkContextualMemberDefinitionNavigationAdapters";
-import { createPhpLaravelContextualMemberDefinitionNavigationContribution } from "./phpLaravelContextualMemberDefinitionNavigationAdapter";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { canNavigate, type NavigationRequest } from "./navigationRequest";
 
@@ -155,32 +154,25 @@ export function usePhpContextualMemberDefinitionNavigation({
     (request?: NavigationRequest) =>
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
         frameworkRuntime,
-        providerContributions: [
-          createPhpLaravelContextualMemberDefinitionNavigationContribution({
-            openDirectPhpMethodTarget: (className, methodName) =>
-              request
-                ? openDirectPhpMethodTarget(className, methodName, request)
-                : openDirectPhpMethodTarget(className, methodName),
-            openPhpLaravelDynamicWhereTarget: (className, methodName) =>
-              request
-                ? openPhpLaravelDynamicWhereTarget(
-                    className,
-                    methodName,
-                    request,
-                  )
-                : openPhpLaravelDynamicWhereTarget(className, methodName),
-            resolvePhpEloquentBuilderModelType: async (
-              source,
-              position,
-              expression,
-            ) => resolvePhpBuilderModelType(source, position, expression),
-            resolvePhpExpressionType,
-            resolvePhpLaravelRelationPathOwnerType: async (
-              ownerType,
-              relationPath,
-            ) => resolvePhpRelationPathOwnerType(ownerType, relationPath),
-          }),
-        ],
+        dependencies: {
+          openDirectMethodTarget: (className, methodName) =>
+            request
+              ? openDirectPhpMethodTarget(className, methodName, request)
+              : openDirectPhpMethodTarget(className, methodName),
+          openDynamicMethodTarget: (className, methodName) =>
+            request
+              ? openPhpLaravelDynamicWhereTarget(
+                  className,
+                  methodName,
+                  request,
+                )
+              : openPhpLaravelDynamicWhereTarget(className, methodName),
+          resolveBuilderModelType: async (source, position, expression) =>
+            resolvePhpBuilderModelType(source, position, expression),
+          resolveExpressionType: resolvePhpExpressionType,
+          resolveRelationPathOwnerType: async (ownerType, relationPath) =>
+            resolvePhpRelationPathOwnerType(ownerType, relationPath),
+        },
       }),
     [
       frameworkRuntime,

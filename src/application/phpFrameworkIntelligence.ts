@@ -1,10 +1,13 @@
 import {
   createPhpFrameworkProviderCapabilityRegistry,
-  type FrameworkProfile,
+  type PhpFrameworkCapabilityDefinition,
   type PhpFrameworkProviderCapabilityRegistry,
   type PhpFrameworkProvider,
-  type PhpFrameworkResolution,
 } from "../domain/phpFrameworkProviders";
+import { phpFrameworkPluginCapabilityDefinitions } from "./phpFrameworkPluginCatalog";
+import type {
+  FrameworkProfile,
+} from "./phpFrameworkResolution";
 
 /**
  * Application-layer view of the active PHP framework intelligence. The domain
@@ -22,12 +25,21 @@ export interface PhpFrameworkIntelligence {
   hasProvider(providerId: string): boolean;
 }
 
+export interface PhpFrameworkIntelligenceSource {
+  readonly activityLabel?: string | null;
+  readonly capabilityDefinitions?: readonly PhpFrameworkCapabilityDefinition<PhpFrameworkProvider>[];
+  readonly matchedProviderIds: readonly string[];
+  readonly profile: FrameworkProfile;
+  readonly providers: readonly PhpFrameworkProvider[];
+}
+
 export function createPhpFrameworkIntelligence(
-  resolution: PhpFrameworkResolution,
+  resolution: PhpFrameworkIntelligenceSource,
 ): PhpFrameworkIntelligence {
   const providerIds = resolution.providers.map((provider) => provider.id);
   const capabilities = createPhpFrameworkProviderCapabilityRegistry(
     resolution.providers,
+    resolution.capabilityDefinitions ?? phpFrameworkPluginCapabilityDefinitions,
   );
 
   return {

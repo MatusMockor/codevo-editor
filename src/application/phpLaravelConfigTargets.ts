@@ -1,7 +1,7 @@
 import {
   phpFrameworkConfigKeysFromSource,
   phpFrameworkConfigTargetFromSource,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkLiteralDispatch";
 import {
   phpLaravelConfigFileNameFromRelativePath,
   phpLaravelConfigKeyCandidateRelativePath,

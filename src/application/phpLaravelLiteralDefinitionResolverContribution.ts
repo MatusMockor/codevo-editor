@@ -7,10 +7,12 @@ import {
   phpFrameworkInertiaLiteralTarget,
   phpFrameworkInertiaReferenceAt,
   phpFrameworkRouteMissingTargetMessage,
+} from "../domain/phpFrameworkLiteralDispatch";
+import {
   phpFrameworkViewMissingTargetMessage,
   phpFrameworkViewLiteralTarget,
   phpFrameworkViewReferenceAt,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkTemplateDispatch";
 import type {
   PhpContextualFrameworkLiteralDefinitionRequest,
   PhpFrameworkLiteralDefinitionResolverContribution,

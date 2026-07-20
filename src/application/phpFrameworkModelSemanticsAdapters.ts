@@ -1,6 +1,7 @@
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
+import type { PhpFrameworkPlugin } from "./phpFrameworkPlugin";
+import { phpFrameworkPlugins } from "./phpFrameworkPluginCatalog";
 import { activePhpFrameworkSemanticAdapter } from "./phpFrameworkSemanticAdapterRegistry";
-import { createPhpLaravelModelSemanticsSourceAdapter } from "./phpLaravelModelSemanticsSourceAdapter";
 import {
   emptyPhpModelSourceSemanticsAdapter,
   type PhpModelSourceSemanticsAdapter,
@@ -8,15 +9,13 @@ import {
 
 export function phpFrameworkModelSourceSemanticsAdapter(
   frameworkRuntime: Pick<PhpFrameworkRuntimeContext, "hasProvider" | "supports">,
+  plugins: readonly PhpFrameworkPlugin[] = phpFrameworkPlugins,
 ): PhpModelSourceSemanticsAdapter {
   return activePhpFrameworkSemanticAdapter(
     frameworkRuntime,
-    [
-      {
-        capability: "eloquentModelSemantics",
-        createAdapter: createPhpLaravelModelSemanticsSourceAdapter,
-      },
-    ],
+    plugins.flatMap((plugin) =>
+      plugin.semantics?.modelSource ? [plugin.semantics.modelSource] : [],
+    ),
     emptyPhpModelSourceSemanticsAdapter,
   );
 }

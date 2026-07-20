@@ -158,6 +158,36 @@ describe("phpFrameworkPlugins", () => {
     expect(registry.supports("foreign")).toBe(false);
     expect(foreignPredicate).not.toHaveBeenCalled();
   });
+
+  it("rejects duplicate capability tokens across plugins", () => {
+    const capability = definePhpFrameworkCapability("shared", () => true);
+
+    expect(() =>
+      composePhpFrameworkPluginCatalog([
+        {
+          capabilityDefinitions: [capability],
+          ...pluginFromLegacyProvider({ id: "first" }),
+        },
+        {
+          capabilityDefinitions: [capability],
+          ...pluginFromLegacyProvider({ id: "second" }),
+        },
+      ]),
+    ).toThrowError("Duplicate PHP framework capability token: shared");
+  });
+
+  it("rejects plugin capability tokens owned by the built-in registry", () => {
+    expect(() =>
+      composePhpFrameworkPluginCatalog([
+        {
+          capabilityDefinitions: [
+            definePhpFrameworkCapability("routes", () => true),
+          ],
+          ...pluginFromLegacyProvider({ id: "custom" }),
+        },
+      ]),
+    ).toThrowError("Duplicate PHP framework capability token: routes");
+  });
 });
 
 describe("phpFrameworkPluginCatalog", () => {

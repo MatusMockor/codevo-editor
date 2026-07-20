@@ -28,19 +28,24 @@ import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
 import { describe, expect, it } from "vitest";
 import {
   orderPhpMemberCompletionsByCategory,
-  phpMethodCompletionsFromSource,
+  phpMethodCompletionsFromSource as phpCoreMethodCompletionsFromSource,
+  phpMethodNamesWithAttributeFromSource,
+  type PhpMethodCompletion,
 } from "./phpMethodCompletions";
 import {
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
-  phpFrameworkMemberCompletionsFromSource,
 } from "./phpFrameworkProviders";
 import {
   isPhpLaravelLocalScopeSourceMethod,
   phpLaravelDynamicWhereCompletionsFromSource,
+  phpLaravelApiResourceCompletionsFromSource,
+  phpLaravelMacroCompletionsFromSource,
+  phpLaravelModelAttributeCompletionsFromSource,
   phpLaravelEloquentBuilderModelTypeFromExpression,
   phpLaravelLocalScopeCompletionsFromMethods,
   phpLaravelRelationTargetClassNameFromExpression,
+  phpLaravelRelationPropertyCompletionsFromSource,
   phpLaravelScopeMethodName,
 } from "./phpFrameworkLaravel";
 import {
@@ -64,6 +69,65 @@ const laravelOptions = {
     providers: [phpLaravelFrameworkProvider],
   }),
 };
+
+function phpLaravelMemberCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+  workspaceSources: readonly string[] = [],
+) {
+  return [
+    ...phpLaravelMacroCompletionsFromSource(
+      source,
+      declaringClassName,
+      workspaceSources,
+    ),
+    ...phpLaravelModelAttributeCompletionsFromSource(
+      source,
+      declaringClassName,
+      workspaceSources,
+    ),
+    ...phpLaravelRelationPropertyCompletionsFromSource(
+      source,
+      declaringClassName,
+    ),
+    ...phpLaravelApiResourceCompletionsFromSource(source, declaringClassName),
+  ];
+}
+
+function phpMethodCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+  options: {
+    frameworkProviders?: readonly unknown[];
+    includeNonPublicMembers?: boolean;
+  } = {},
+): PhpMethodCompletion[] {
+  const core = phpCoreMethodCompletionsFromSource(
+    source,
+    declaringClassName,
+    { includeNonPublicMembers: options.includeNonPublicMembers },
+  );
+
+  if (!options.frameworkProviders?.includes(phpLaravelFrameworkProvider)) {
+    return core;
+  }
+
+  const scopeNames = phpMethodNamesWithAttributeFromSource(source, "Scope");
+  const attributedScopes = phpCoreMethodCompletionsFromSource(
+    source,
+    declaringClassName,
+    { includeNonPublicMembers: true },
+  )
+    .filter(
+      (method) =>
+        !method.isStatic &&
+        method.visibility !== "private" &&
+        scopeNames.has(method.name.toLowerCase()),
+    )
+    .map((method) => ({ ...method, kind: "scope" as const }));
+
+  return [...core, ...attributedScopes];
+}
 
 function positionAfter(source: string, needle: string) {
   const offset = source.indexOf(needle);
@@ -361,10 +425,9 @@ describe("Laravel/PHP IDE correctness matrix", () => {
       // Mirrors `readPhpClassMembersFromPath` in useWorkbenchController.ts:
       // `phpMethodCompletionsFromSource(content, className, { frameworkProviders })`
       // is the real call used to build `$model->` completions for a class.
-      const attributeCompletions = phpFrameworkMemberCompletionsFromSource(
+      const attributeCompletions = phpLaravelMemberCompletionsFromSource(
         PROJECT_MODEL,
         "App\\Models\\Project",
-        [phpLaravelFrameworkProvider],
       ).filter((completion) => completion.kind === "property");
 
       expect(attributeCompletions).toEqual([
@@ -445,15 +508,14 @@ describe("Laravel/PHP IDE correctness matrix", () => {
       // `scopeX()` source methods via `phpLaravelLocalScopeCompletionsFromMethods`,
       // then the final list is ordered PhpStorm-like.
       const attributeAndRelationMembers =
-        phpFrameworkMemberCompletionsFromSource(
+        phpLaravelMemberCompletionsFromSource(
           PROJECT_MODEL,
           "App\\Models\\Project",
-          [phpLaravelFrameworkProvider],
         );
       const rawScopeSourceMembers = phpMethodCompletionsFromSource(
         PROJECT_MODEL,
         "App\\Models\\Project",
-        { frameworkProviders: [] },
+        {},
       ).filter((member) => isPhpLaravelLocalScopeSourceMethod(member));
       const scopeMembers = phpLaravelLocalScopeCompletionsFromMethods(
         rawScopeSourceMembers,
@@ -966,11 +1028,10 @@ class ProjectController
       // completion is currently missing for the bare-model-receiver case.
       // This row locks the CURRENT (imperfect) behavior so a future fix is a
       // deliberate, visible change to this test, not a silent regression.
-      const memberCompletions = phpFrameworkMemberCompletionsFromSource(
+      const memberCompletions = phpLaravelMemberCompletionsFromSource(
         PROJECT_MODEL,
         "App\\Models\\Project",
-        [phpLaravelFrameworkProvider],
-        { workspaceSources: [APP_SERVICE_PROVIDER] },
+        [APP_SERVICE_PROVIDER],
       );
 
       expect(

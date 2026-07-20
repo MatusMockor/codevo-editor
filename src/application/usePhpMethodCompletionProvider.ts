@@ -16,7 +16,7 @@ import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
 import {
   phpFrameworkValidationRuleCompletions,
   phpFrameworkValidationRuleReferenceAt,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkValidationDispatch";
 import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { createPhpFrameworkMethodCompletionProviderAdapters } from "./phpFrameworkMethodCompletionProviderAdapters";

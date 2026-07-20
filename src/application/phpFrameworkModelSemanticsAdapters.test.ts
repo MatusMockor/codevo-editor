@@ -6,6 +6,7 @@ import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvid
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import { phpFrameworkModelSourceSemanticsAdapter } from "./phpFrameworkModelSemanticsAdapters";
+import type { PhpFrameworkPlugin } from "./phpFrameworkPlugin";
 
 const APPLICATION_ROOT = fileURLToPath(new URL("./", import.meta.url));
 const LARAVEL_RUNTIME = createPhpFrameworkRuntimeContext(
@@ -77,6 +78,36 @@ describe("phpFrameworkModelSourceSemanticsAdapter", () => {
     expect(
       adapter.modelSourcesForTableName("users", [EXPLICIT_TABLE_CANDIDATE]),
     ).toEqual([]);
+  });
+
+  it("derives the adapter contributions from the plugin list", () => {
+    const customPlugin: PhpFrameworkPlugin = {
+      features: {},
+      provider: {
+        appliesTo: () => false,
+        id: "custom",
+        presentation: { activityLabel: "Custom" },
+      },
+      semantics: {
+      modelSource: {
+        capability: "eloquentModelSemantics",
+        id: "custom-model-source",
+          createAdapter: () => ({
+            modelSourcesForTableName: (_tableName, candidates) => candidates,
+            morphMapEntriesFromSource: () => [
+              { alias: "custom", modelClassName: "App\\Models\\Custom" },
+            ],
+          }),
+        },
+      },
+    };
+    const adapter = phpFrameworkModelSourceSemanticsAdapter(LARAVEL_RUNTIME, [
+      customPlugin,
+    ]);
+
+    expect(adapter.morphMapEntriesFromSource(MORPH_MAP_SOURCE)).toEqual([
+      { alias: "custom", modelClassName: "App\\Models\\Custom" },
+    ]);
   });
 });
 

@@ -43,6 +43,8 @@ export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
     [
       {
         capability: "eloquentModelSemantics",
+        id: "laravel-method-return-types",
+        priority: 100,
         createAdapter: () =>
           createPhpLaravelMethodReturnTypeStrategyAdapter({
             resolvePhpEloquentBuilderModelType:
@@ -53,6 +55,8 @@ export function createPhpFrameworkMethodReturnTypeStrategyAdapters({
       },
       {
         capability: "netteDatabaseSemantics",
+        id: "nette-database-method-return-types",
+        priority: 100,
         createAdapter: () =>
           createPhpNetteMethodReturnTypeStrategyAdapter(
             netteDatabaseTypeResolver,

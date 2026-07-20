@@ -1,7 +1,7 @@
 import {
   phpFrameworkViewDataEntryFromSource,
   phpFrameworkViewDataSearchQueries,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkTemplateDispatch";
 import type { BladeViewDataEntry } from "../domain/bladeViewVariables";
 import type { TextSearchGateway } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";

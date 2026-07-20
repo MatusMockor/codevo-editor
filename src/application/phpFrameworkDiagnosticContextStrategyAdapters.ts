@@ -41,6 +41,8 @@ export function createPhpFrameworkDiagnosticContextStrategyAdapters({
     [
       {
         capability: "eloquentModelSemantics",
+        id: "laravel-diagnostic-context",
+        priority: 100,
         createAdapter: () =>
           createPhpLaravelDiagnosticContextStrategyAdapter({
             ensurePhpFrameworkSourceCollectionsLoaded,

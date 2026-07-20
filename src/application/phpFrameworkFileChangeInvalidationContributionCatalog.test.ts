@@ -51,4 +51,16 @@ describe("phpFrameworkFileChangeInvalidationContributionCatalog", () => {
       })?.id,
     ).toBe("higher");
   });
+
+  it("uses registration order when supported priorities are equal", () => {
+    const catalog = createPhpFrameworkFileChangeInvalidationContributionCatalog(
+      [contribution("first", 10), contribution("second", 10)],
+    );
+
+    expect(
+      fileChangeInvalidationContributionForDescriptor(catalog, {
+        kind: "future-framework-cache",
+      })?.id,
+    ).toBe("first");
+  });
 });

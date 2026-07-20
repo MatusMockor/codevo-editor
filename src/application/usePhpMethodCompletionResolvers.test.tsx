@@ -9,6 +9,7 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 import {
+  mergePhpMethodCompletions,
   mergePhpTraitAndHostMethodCompletions,
   usePhpMethodCompletionResolvers,
   type PhpMethodCompletionResolverDependencies,
@@ -16,6 +17,49 @@ import {
 } from "./usePhpMethodCompletionResolvers";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+describe("mergePhpMethodCompletions", () => {
+  it("preserves semantic variants and collapses exact duplicates", () => {
+    const instanceMethod = method("resolve", { parameters: "int $id" });
+    const staticMethod = method("resolve", {
+      isStatic: true,
+      parameters: "int $id",
+    });
+    const property = method("resolve", {
+      kind: "property",
+      parameters: "",
+    });
+    const stringOverload = method("resolve", {
+      parameters: "string $id",
+    });
+
+    expect(
+      mergePhpMethodCompletions(
+        [instanceMethod, staticMethod, property, stringOverload],
+        [
+          { ...instanceMethod },
+          method("resolve", { parameters: "  int   $id  " }),
+        ],
+      ),
+    ).toEqual([instanceMethod, staticMethod, property, stringOverload]);
+  });
+
+  it("keeps a real method alongside a same-signature derived scope", () => {
+    const plainMethod = method("owner");
+    const property = method("owner", { kind: "property" });
+    const scope = method("owner", {
+      detail: "Laravel scope",
+      kind: "scope",
+    });
+
+    expect(
+      mergePhpMethodCompletions(
+        [plainMethod, property],
+        [scope, { ...scope }],
+      ),
+    ).toEqual([plainMethod, property, scope]);
+  });
+});
 
 describe("mergePhpTraitAndHostMethodCompletions", () => {
   it("merges trait-local members with the intersection of host members", () => {
@@ -38,8 +82,8 @@ describe("mergePhpTraitAndHostMethodCompletions", () => {
       mergePhpTraitAndHostMethodCompletions(
         [method("resolve", { returnType: "TraitResult" })],
         [
-        [method("resolve", { returnType: "Post" })],
-        [method("resolve", { returnType: "User" })],
+          [method("resolve", { returnType: "Post" })],
+          [method("resolve", { returnType: "User" })],
         ],
       ),
     ).toEqual([method("resolve", { returnType: null })]);
@@ -64,6 +108,42 @@ describe("mergePhpTraitAndHostMethodCompletions", () => {
         [[], []],
       ),
     ).toEqual([method("moveUp", { returnType: "bool" })]);
+  });
+
+  it("keeps same-name static and instance host completions distinct", () => {
+    const instanceMember = method("resolve");
+    const staticMember = method("resolve", { isStatic: true });
+
+    expect(
+      mergePhpTraitAndHostMethodCompletions([], [
+        [instanceMember, staticMember],
+        [instanceMember, staticMember],
+      ]),
+    ).toEqual([instanceMember, staticMember]);
+  });
+
+  it("keeps same-name property and method host completions distinct", () => {
+    const methodMember = method("status");
+    const propertyMember = method("status", { kind: "property" });
+
+    expect(
+      mergePhpTraitAndHostMethodCompletions([], [
+        [methodMember, propertyMember],
+        [methodMember, propertyMember],
+      ]),
+    ).toEqual([methodMember, propertyMember]);
+  });
+
+  it("reconciles an identity-equivalent host method to one derived scope", () => {
+    const plainMethod = method("published");
+    const scope = method("published", { kind: "scope" });
+
+    expect(
+      mergePhpTraitAndHostMethodCompletions(
+        [plainMethod, scope, { ...scope }],
+        [],
+      ),
+    ).toEqual([scope]);
   });
 });
 
@@ -177,6 +257,158 @@ function deferred<T>() {
 }
 
 describe("usePhpMethodCompletionResolvers", () => {
+  it("returns one framework-owned Scope completion from a trait source", async () => {
+    const source = `<?php
+namespace App\\Traits;
+
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Builder;
+
+trait PublishedScope
+{
+    #[Scope]
+    protected function published(Builder $query, bool $strict = true): void {}
+
+    public function apply(): void { $this->; }
+}`;
+    const harness = renderHook(makeDeps());
+
+    const completions = await harness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        source,
+        positionAfter(source, "$this->"),
+        "$this",
+        {
+          contextualThisClassName: null,
+          declaringClassName: "App\\Traits\\PublishedScope",
+          memberSource: source,
+          traitMemberSource: source,
+        },
+      );
+    const published = completions.filter(({ name }) => name === "published");
+
+    expect(published).toEqual([
+      expect.objectContaining({
+        kind: "scope",
+        parameters: "bool $strict = true",
+      }),
+    ]);
+    harness.unmount();
+  });
+
+  it("returns one framework-owned Scope completion from a same-source host", async () => {
+    const traitSource = `<?php
+trait UsesPost { public function apply(): void { $this->; } }`;
+    const hostSource = `<?php
+use Illuminate\\Database\\Eloquent\\Attributes\\Scope;
+use Illuminate\\Database\\Eloquent\\Builder;
+
+class Post
+{
+    use UsesPost;
+
+    #[Scope]
+    protected function published(Builder $query): void {}
+}`;
+    const harness = renderHook(makeDeps());
+
+    const completions = await harness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        traitSource,
+        positionAfter(traitSource, "$this->"),
+        "$this",
+        {
+          contextualThisClassName: "App\\Models\\Post",
+          declaringClassName: "App\\Traits\\UsesPost",
+          memberSource: traitSource,
+          sameSourceHost: {
+            className: "App\\Models\\Post",
+            memberSource: hostSource,
+          },
+          traitMemberSource: traitSource,
+        },
+      );
+    const published = completions.filter(({ name }) => name === "published");
+
+    expect(published).toEqual([
+      expect.objectContaining({ kind: "scope", parameters: "" }),
+    ]);
+    harness.unmount();
+  });
+
+  it("preserves overload signatures while collapsing a same-source Scope duplicate", async () => {
+    const traitSource = `<?php
+trait UsesPost { public function apply(): void { $this->; } }`;
+    const hostSource = `<?php class Post { use UsesPost; }`;
+    const memberCompletionCollector = {
+      collect: vi.fn((source: string) => {
+        if (source === traitSource) {
+          return [method("find", { parameters: "int $id" })];
+        }
+
+        return [
+          method("find", { parameters: "string $slug" }),
+          method("published", { parameters: "bool $strict = true" }),
+          method("published", {
+            detail: "Laravel scope",
+            kind: "scope",
+            parameters: "bool   $strict = true",
+          }),
+        ];
+      }),
+    };
+    const harness = renderHook(makeDeps({ memberCompletionCollector }));
+
+    const completions = await harness
+      .api()
+      .resolvePhpReceiverMethodCompletions(
+        traitSource,
+        positionAfter(traitSource, "$this->"),
+        "$this",
+        {
+          contextualThisClassName: "App\\Models\\Post",
+          declaringClassName: "App\\Traits\\UsesPost",
+          memberSource: traitSource,
+          sameSourceHost: {
+            className: "App\\Models\\Post",
+            memberSource: hostSource,
+          },
+          traitMemberSource: traitSource,
+        },
+      );
+
+    expect(
+      completions.map(({ detail, kind, name, parameters }) => ({
+        detail,
+        kind,
+        name,
+        parameters,
+      })),
+    ).toEqual([
+      {
+        detail: undefined,
+        kind: undefined,
+        name: "find",
+        parameters: "int $id",
+      },
+      {
+        detail: undefined,
+        kind: undefined,
+        name: "find",
+        parameters: "string $slug",
+      },
+      {
+        detail: "Laravel scope",
+        kind: "scope",
+        name: "published",
+        parameters: "bool   $strict = true",
+      },
+    ]);
+    harness.unmount();
+  });
+
   it("drops stale trait host completions after member collection", async () => {
     const source = `<?php
 namespace App\\Traits;
@@ -255,9 +487,7 @@ trait SortableTrait { public function moveUp(): void { $this->get; } }
     expect(staticCompletions).toEqual([]);
     expect(resolvePhpFrameworkBuilderModelType).not.toHaveBeenCalled();
     expect(collectPhpFrameworkSyntheticMethodsForClass).not.toHaveBeenCalled();
-    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
-      "App\\Models\\Post",
-    );
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith("App\\Models\\Post");
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "Illuminate\\Support\\Facades\\Cache",
     );
@@ -319,9 +549,7 @@ trait SortableTrait { public function moveUp(): void { $this->get; } }
     expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
       "Illuminate\\Database\\Eloquent\\Builder",
     );
-    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
-      "App\\Models\\Post",
-    );
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith("App\\Models\\Post");
 
     harness.unmount();
   });
@@ -384,37 +612,37 @@ class ReportRepository
     harness.unmount();
   });
 
-  it.each([
-    "GeneratedActiveRow|null",
-    "GeneratedActiveRow|false|null",
-  ])("collects members for the sole object in %s", async (resolvedType) => {
-    const source = "<?php\n$row->";
-    const collectPhpMethodsForClass = vi.fn(async () => [method("update")]);
-    const deps = makeDeps({
-      collectPhpMethodsForClass,
-      frameworkRuntime: GENERIC_RUNTIME,
-      resolvePhpExpressionType: vi.fn(async () => resolvedType),
-    });
-    const harness = renderHook(deps);
+  it.each(["GeneratedActiveRow|null", "GeneratedActiveRow|false|null"])(
+    "collects members for the sole object in %s",
+    async (resolvedType) => {
+      const source = "<?php\n$row->";
+      const collectPhpMethodsForClass = vi.fn(async () => [method("update")]);
+      const deps = makeDeps({
+        collectPhpMethodsForClass,
+        frameworkRuntime: GENERIC_RUNTIME,
+        resolvePhpExpressionType: vi.fn(async () => resolvedType),
+      });
+      const harness = renderHook(deps);
 
-    const completions = await harness
-      .api()
-      .resolvePhpReceiverMethodCompletions(
-        source,
-        { column: source.length + 1, lineNumber: 2 },
-        "$row",
+      const completions = await harness
+        .api()
+        .resolvePhpReceiverMethodCompletions(
+          source,
+          { column: source.length + 1, lineNumber: 2 },
+          "$row",
+        );
+
+      expect(completions.map((completion) => completion.name)).toEqual([
+        "update",
+      ]);
+      expect(collectPhpMethodsForClass).toHaveBeenCalledOnce();
+      expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
+        "GeneratedActiveRow",
       );
 
-    expect(completions.map((completion) => completion.name)).toEqual([
-      "update",
-    ]);
-    expect(collectPhpMethodsForClass).toHaveBeenCalledOnce();
-    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
-      "GeneratedActiveRow",
-    );
-
-    harness.unmount();
-  });
+      harness.unmount();
+    },
+  );
 
   it.each([
     "GeneratedActiveRow|GeneratedSelection|null",
@@ -475,9 +703,7 @@ class ReportRepository
       "published",
     ]);
     expect(collectPhpMethodsForClass).toHaveBeenCalledOnce();
-    expect(collectPhpMethodsForClass).toHaveBeenCalledWith(
-      "App\\Models\\Post",
-    );
+    expect(collectPhpMethodsForClass).toHaveBeenCalledWith("App\\Models\\Post");
 
     harness.unmount();
   });
@@ -559,10 +785,9 @@ class ReportRepository
       "published",
       "whereTitle",
     ]);
-    expect(deps.collectPhpFrameworkSyntheticMethodsForClass).toHaveBeenCalledWith(
-      "App\\Models\\Post",
-      { isStatic: true },
-    );
+    expect(
+      deps.collectPhpFrameworkSyntheticMethodsForClass,
+    ).toHaveBeenCalledWith("App\\Models\\Post", { isStatic: true });
 
     harness.unmount();
   });

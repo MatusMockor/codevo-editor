@@ -1,9 +1,7 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
-import {
-  phpFrameworkScopedStringCompletionAt,
-  type PhpFrameworkResolvedScopedStringCompletion,
-} from "../domain/phpFrameworkProviders";
+import type { PhpFrameworkResolvedScopedStringCompletion } from "../domain/phpFrameworkProviders";
+import { phpFrameworkScopedStringCompletionAt } from "../domain/phpFrameworkLiteralDispatch";
 import { getFileName } from "../domain/workspace";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 

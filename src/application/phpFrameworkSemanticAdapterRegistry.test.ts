@@ -13,7 +13,7 @@ describe("phpFrameworkSemanticAdapterRegistry", () => {
 
     const adapter = activePhpFrameworkSemanticAdapter(
       frameworkRuntime,
-      [{ capability: "eloquentModelSemantics", createAdapter }],
+      [{ capability: "eloquentModelSemantics", createAdapter, id: "inactive" }],
       fallback,
     );
 
@@ -48,10 +48,12 @@ describe("phpFrameworkSemanticAdapterRegistry", () => {
         {
           capability: "eloquentModelSemantics",
           createAdapter: createLaravelAdapter,
+          id: "laravel",
         },
         {
           capability: "latteTemplateIntelligence",
           createAdapter: createNetteAdapter,
+          id: "nette",
         },
       ],
       fallback,
@@ -73,10 +75,86 @@ describe("phpFrameworkSemanticAdapterRegistry", () => {
         {
           hasProvider: (providerId) => providerId === "custom",
         },
-        [{ providerId: "custom", createAdapter }],
+        [{ providerId: "custom", createAdapter, id: "custom" }],
         fallback,
       ),
     ).toBe(adapter);
     expect(createAdapter).toHaveBeenCalledOnce();
+  });
+
+  it("selects the highest-priority active contribution deterministically", () => {
+    const fallback = { name: "generic" };
+    const lower = { name: "lower" };
+    const higher = { name: "higher" };
+
+    expect(
+      activePhpFrameworkSemanticAdapter(
+        { hasProvider: () => true },
+        [
+          {
+            createAdapter: () => lower,
+            id: "lower",
+            priority: 10,
+            providerId: "custom",
+          },
+          {
+            createAdapter: () => higher,
+            id: "higher",
+            priority: 100,
+            providerId: "custom",
+          },
+        ],
+        fallback,
+      ),
+    ).toBe(higher);
+  });
+
+  it("keeps registration order when active priorities are equal", () => {
+    const fallback = { name: "generic" };
+    const first = { name: "first" };
+
+    expect(
+      activePhpFrameworkSemanticAdapter(
+        { hasProvider: () => true },
+        [
+          {
+            createAdapter: () => first,
+            id: "first",
+            priority: 50,
+            providerId: "custom",
+          },
+          {
+            createAdapter: () => ({ name: "second" }),
+            id: "second",
+            priority: 50,
+            providerId: "custom",
+          },
+        ],
+        fallback,
+      ),
+    ).toBe(first);
+  });
+
+  it("rejects duplicate semantic contribution ids", () => {
+    expect(() =>
+      activePhpFrameworkSemanticAdapter(
+        { hasProvider: () => true },
+        [
+          {
+            createAdapter: () => ({ name: "first" }),
+            id: "duplicate",
+            providerId: "custom",
+          },
+          {
+            createAdapter: () => ({ name: "second" }),
+            id: "duplicate",
+            providerId: "custom",
+          },
+        ],
+        { name: "generic" },
+      ),
+    ).toThrowError(
+      'Duplicate PHP framework semantic contribution id "duplicate".',
+    );
   });
 });

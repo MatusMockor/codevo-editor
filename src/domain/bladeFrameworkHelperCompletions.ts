@@ -1,12 +1,12 @@
 import type { EditorPosition } from "./languageServerFeatures";
 import {
-  phpFrameworkStringLiteralHelperAt,
   type PhpFrameworkProvider,
   type PhpFrameworkConfigReference,
   type PhpFrameworkRouteReference,
   type PhpFrameworkStringLiteralHelperMatch,
   type PhpFrameworkTranslationReference,
 } from "./phpFrameworkProviders";
+import { phpFrameworkStringLiteralHelperAt } from "./phpFrameworkLiteralDispatch";
 
 export type BladeFrameworkHelperCompletionContext =
   | {

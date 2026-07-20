@@ -2,7 +2,7 @@ import {
   phpFrameworkTranslationLiteralTarget,
   phpFrameworkTranslationMissingTargetMessage,
   phpFrameworkTranslationReferenceAt,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkLiteralDispatch";
 import type { PhpFrameworkLiteralDefinitionResolverEntry } from "./phpFrameworkLiteralDefinitionResolverRegistry";
 
 export const phpTranslationLiteralDefinitionResolver: PhpFrameworkLiteralDefinitionResolverEntry =

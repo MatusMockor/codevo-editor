@@ -1,7 +1,6 @@
-import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { describe, expect, it, vi } from "vitest";
 import type { FileEntry } from "../domain/workspace";
-import { phpMethodCompletionsFromSource } from "../domain/phpMethodCompletions";
+import { phpLaravelMemberCompletionContribution } from "./phpLaravelMemberCompletionContribution";
 
 import {
   isPhpLaravelProviderPath,
@@ -233,9 +232,6 @@ describe("phpLaravelProviderSourcesSignature", () => {
 // engine. Only the file-system gateway is faked; the loader and completion
 // engine are exercised as real collaborators.
 describe("provider macro sources feed Eloquent Builder completions", () => {
-  const laravelCompletionOptions = {
-    frameworkProviders: [phpLaravelFrameworkProvider],
-  };
   const editorSource = `<?php
 namespace App\\Http\\Controllers;
 
@@ -245,15 +241,13 @@ Post::query()->withDash
 `;
 
   function macroCompletionNames(workspaceSources: readonly string[]): string[] {
-    return phpMethodCompletionsFromSource(
-      editorSource,
-      "Illuminate\\Database\\Eloquent\\Builder",
-      {
-        ...laravelCompletionOptions,
-        frameworkSourceContext:
-          workspaceSources.length > 0 ? { workspaceSources } : undefined,
-      },
-    ).map((completion) => completion.name);
+    return phpLaravelMemberCompletionContribution
+      .collect({
+        declaringClassName: "Illuminate\\Database\\Eloquent\\Builder",
+        source: editorSource,
+        workspaceSources,
+      })
+      .map((completion) => completion.name);
   }
 
   it("surfaces a Builder::macro defined in an app/Providers file", async () => {

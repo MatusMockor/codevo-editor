@@ -93,6 +93,8 @@ function phpExpressionTypeAdapterContributions(
   return [
     {
       capability: "eloquentModelSemantics",
+      id: "laravel-expression-type-adapters",
+      priority: 100,
       createAdapter: () => ({
         builderMagicExpressionTypeAdapter:
           phpLaravelBuilderMagicExpressionTypeAdapter({

@@ -12,11 +12,6 @@ import {
   phpSimpleVariableName,
   phpStatementPrefixBeforeOffset,
 } from "./phpReceiverExpressions";
-import {
-  phpFrameworkMemberCompletionsFromSource,
-  type PhpFrameworkProvider,
-  type PhpFrameworkSourceContext,
-} from "./phpFrameworkProviders";
 
 export interface PhpMemberAccessCompletionContext {
   prefix: string;
@@ -99,8 +94,6 @@ interface PhpMethodSignatureCallContext {
 }
 
 export interface PhpMethodCompletionOptions {
-  frameworkProviders: readonly PhpFrameworkProvider[];
-  frameworkSourceContext?: PhpFrameworkSourceContext;
   includeNonPublicMembers?: boolean;
 }
 
@@ -190,15 +183,9 @@ export function phpMethodCompletionsFromSource(
 
     const functionOffset =
       (match.index ?? 0) + match[0].lastIndexOf("function");
-    const attributes = phpAttributeNamesBefore(source, functionOffset);
-    const isScopeAttribute = phpHasAttributeName(attributes, "Scope");
-
     if (
       (!options.includeNonPublicMembers && /\bprivate\b/.test(modifiers)) ||
-      (/\bstatic\b/.test(modifiers) && isScopeAttribute) ||
-      (!options.includeNonPublicMembers &&
-        /\bprotected\b/.test(modifiers) &&
-        !isScopeAttribute)
+      (!options.includeNonPublicMembers && /\bprotected\b/.test(modifiers))
     ) {
       continue;
     }
@@ -214,7 +201,6 @@ export function phpMethodCompletionsFromSource(
     members.push({
       ...(classStringTemplate ? { classStringTemplate } : {}),
       declaringClassName,
-      ...(isScopeAttribute ? { kind: "scope" as const } : {}),
       name,
       parameters: enrichParametersFromPhpDoc(
         normalizeWhitespace(parameters),
@@ -237,6 +223,36 @@ export function phpMethodCompletionsFromSource(
   );
 
   return dedupePhpMembers(members);
+}
+
+export function phpMethodNamesWithAttributeFromSource(
+  source: string,
+  expectedAttributeName: string,
+): ReadonlySet<string> {
+  const masked = maskPhpStringsAndComments(source);
+  const names = new Set<string>();
+  const pattern =
+    /(?:^|\n)\s*((?:(?:abstract|final|private|protected|public|static)\s+)*)function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+
+  for (const match of masked.matchAll(pattern)) {
+    const methodName = match[2];
+
+    if (!methodName) {
+      continue;
+    }
+
+    const functionOffset =
+      (match.index ?? 0) + match[0].lastIndexOf("function");
+    const attributes = phpAttributeNamesBefore(source, functionOffset);
+
+    if (!phpHasAttributeName(attributes, expectedAttributeName)) {
+      continue;
+    }
+
+    names.add(methodName.toLowerCase());
+  }
+
+  return names;
 }
 
 function phpEnumCaseCompletionsFromSource(
@@ -581,15 +597,6 @@ function phpPropertyCompletionsFromSource(
       visibility: phpMemberVisibilityFromModifiers(modifiers) ?? "public",
     });
   }
-
-  members.push(
-    ...phpFrameworkMemberCompletionsFromSource(
-      source,
-      declaringClassName,
-      options.frameworkProviders,
-      options.frameworkSourceContext,
-    ),
-  );
 
   return members;
 }

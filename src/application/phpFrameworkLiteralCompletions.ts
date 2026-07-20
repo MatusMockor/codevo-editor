@@ -3,11 +3,11 @@ import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import {
   phpFrameworkConfigCompletionContextAt,
   phpFrameworkEnvCompletionContextAt,
-  phpFrameworkRouteCompletionContextAt,
   phpFrameworkTranslationCompletionContextAt,
-  phpFrameworkViewCompletionContextAt,
-  type PhpFrameworkProvider,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkLiteralDispatch";
+import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import { phpFrameworkRouteCompletionContextAt } from "../domain/phpFrameworkTargetCapabilities";
+import { phpFrameworkViewCompletionContextAt } from "../domain/phpFrameworkTemplateDispatch";
 import { getFileName } from "../domain/workspace";
 
 export interface PhpFrameworkLiteralCompletionDocument {

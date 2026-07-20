@@ -2,7 +2,7 @@ import { detectNetteCreateComponentAt } from "../domain/netteComponents";
 import {
   phpFrameworkPhpPresenterLinkAt,
   phpFrameworkPhpPresenterLinkCompletionAt,
-} from "../domain/phpFrameworkProviders";
+} from "../domain/phpFrameworkTemplateDispatch";
 import type { LatteCompletionItem } from "./latteCompletionItems";
 import {
   isLattePresenterLinkIntelligenceActive,

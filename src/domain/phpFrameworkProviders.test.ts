@@ -1,14 +1,18 @@
 import {
   isNettePhpProject,
+  phpNetteFrameworkCapabilityDefinitions,
   phpNetteFrameworkProvider,
   NETTE_MAGIC_DIAGNOSTIC_SOURCE,
 } from "./phpFrameworkNetteProvider";
-import { phpLaravelFrameworkProvider } from "./phpFrameworkLaravelProvider";
+import {
+  phpLaravelFrameworkCapabilityDefinitions,
+  phpLaravelFrameworkProvider,
+} from "./phpFrameworkLaravelProvider";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   createPhpFrameworkProviderCapabilityRegistry,
+  definePhpFrameworkCapability,
   definePhpFrameworkActiveDocumentDiagnostics,
-  frameworkProfileForProject,
   isKnownPhpFrameworkMemberMethod,
   isKnownPhpFrameworkStaticMethod,
   isPhpFrameworkContainerBindingCandidatePath,
@@ -27,7 +31,6 @@ import {
   phpFrameworkMemberPropertyMagicDiagnostic,
   isPhpFrameworkProviderActive,
   phpFrameworkProviderSignature,
-  phpFrameworkMemberCompletionsFromSource,
   phpFrameworkMiddlewareAliasDefinitionsFromSource,
   phpFrameworkMiddlewareAliasSearchQueries,
   phpFrameworkPropertyTypeFromSource,
@@ -87,8 +90,8 @@ import {
   phpFrameworkViewLiteralTarget,
   phpFrameworkViewMissingTargetMessage,
   phpFrameworkViewReferenceAt,
-  resolvePhpFrameworkProfile,
   type PhpFrameworkProvider,
+  type PhpFrameworkSourceContext,
 } from "./phpFrameworkProviders";
 
 import {
@@ -105,7 +108,13 @@ import {
   netteTranslationKeysFromSource,
   netteTranslationTargetFromSource,
 } from "./netteTranslations";
-import { phpLaravelMorphMapEntriesFromSource } from "./phpFrameworkLaravel";
+import {
+  phpLaravelApiResourceCompletionsFromSource,
+  phpLaravelMacroCompletionsFromSource,
+  phpLaravelModelAttributeCompletionsFromSource,
+  phpLaravelMorphMapEntriesFromSource,
+  phpLaravelRelationPropertyCompletionsFromSource,
+} from "./phpFrameworkLaravel";
 import {
   phpLaravelNamedRouteDefinitions,
   phpLaravelNamedRouteReferenceContextAt,
@@ -158,6 +167,35 @@ import {
   nettePresenterLinkCompletionContextAt,
 } from "./latteLinkNavigation";
 import type { PhpProjectDescriptor } from "./workspace";
+
+function phpLaravelMemberCompletionsFromSource(
+  source: string,
+  declaringClassName: string,
+  providers: readonly PhpFrameworkProvider[],
+  sourceContext?: PhpFrameworkSourceContext,
+) {
+  if (!providers.includes(phpLaravelFrameworkProvider)) {
+    return [];
+  }
+
+  return [
+    ...phpLaravelMacroCompletionsFromSource(
+      source,
+      declaringClassName,
+      sourceContext?.workspaceSources,
+    ),
+    ...phpLaravelModelAttributeCompletionsFromSource(
+      source,
+      declaringClassName,
+      sourceContext?.workspaceSources,
+    ),
+    ...phpLaravelRelationPropertyCompletionsFromSource(
+      source,
+      declaringClassName,
+    ),
+    ...phpLaravelApiResourceCompletionsFromSource(source, declaringClassName),
+  ];
+}
 
 const SHIPPED_FRAMEWORK_PROVIDERS = [
   phpLaravelFrameworkProvider,
@@ -370,7 +408,7 @@ class Post extends Model
 `;
 
     expect(
-      phpFrameworkMemberCompletionsFromSource(source, "Comment", [
+      phpLaravelMemberCompletionsFromSource(source, "Comment", [
         phpLaravelFrameworkProvider,
       ]),
     ).toEqual([
@@ -418,7 +456,7 @@ class Comment extends Model
 `;
 
     expect(
-      phpFrameworkMemberCompletionsFromSource(source, "Comment", []),
+      phpLaravelMemberCompletionsFromSource(source, "Comment", []),
     ).toEqual([]);
   });
 
@@ -714,7 +752,7 @@ class PlainService
 
     it("adds resource member and static completions only for API resources", () => {
       expect(
-        phpFrameworkMemberCompletionsFromSource(
+        phpLaravelMemberCompletionsFromSource(
           resourceSource,
           "App\\Http\\Resources\\UserResource",
           [phpLaravelFrameworkProvider],
@@ -746,7 +784,7 @@ class PlainService
         ]),
       );
       expect(
-        phpFrameworkMemberCompletionsFromSource(
+        phpLaravelMemberCompletionsFromSource(
           resourceSource,
           "App\\Http\\Resources\\PlainService",
           [phpLaravelFrameworkProvider],
@@ -1087,39 +1125,15 @@ class Post extends Model
     ).toBeNull();
   });
 
-  it("supports framework-specific providers without changing the core parser", () => {
+  it("supports framework-specific diagnostics without changing the core parser", () => {
     const netteProvider: PhpFrameworkProvider = {
       id: "nette",
-      completions: {
-        memberCompletionsFromSource: ({ declaringClassName }) => [
-          {
-            declaringClassName,
-            kind: "property",
-            name: "presenter",
-            parameters: "",
-            returnType: "Nette\\Application\\UI\\Presenter",
-          },
-        ],
-      },
       diagnostics: {
         isKnownMemberMethod: ({ methodName }) => methodName === "whereMagic",
         isKnownStaticMethod: ({ methodName }) => methodName === "whereMagic",
       },
     };
 
-    expect(
-      phpFrameworkMemberCompletionsFromSource("<?php", "Article", [
-        netteProvider,
-      ]),
-    ).toEqual([
-      {
-        declaringClassName: "Article",
-        kind: "property",
-        name: "presenter",
-        parameters: "",
-        returnType: "Nette\\Application\\UI\\Presenter",
-      },
-    ]);
     expect(
       isKnownPhpFrameworkStaticMethod("<?php", "Article", "whereMagic", [
         netteProvider,
@@ -1297,7 +1311,7 @@ return new class extends Migration
 `;
 
     function completionsFor(workspaceSources?: readonly string[]) {
-      return phpFrameworkMemberCompletionsFromSource(
+      return phpLaravelMemberCompletionsFromSource(
         aiUsageModel,
         "Kontentino\\AiHub\\Models\\AiUsage",
         [phpLaravelFrameworkProvider],
@@ -1346,7 +1360,7 @@ return new class extends Migration
         "'account_id' => 'string',",
       );
       const byName = new Map(
-        phpFrameworkMemberCompletionsFromSource(
+        phpLaravelMemberCompletionsFromSource(
           modelWithDivergentCast,
           "Kontentino\\AiHub\\Models\\AiUsage",
           [phpLaravelFrameworkProvider],
@@ -1382,85 +1396,6 @@ return new class extends Migration
       expect(names).not.toContain("id");
       // Existing fillable/casts attributes remain intact.
       expect(names).toEqual(expect.arrayContaining(["user_id", "account_id"]));
-    });
-  });
-
-  describe("frameworkProfileForProject", () => {
-    it("detects Laravel projects from the composer signal", () => {
-      expect(
-        frameworkProfileForProject(
-          phpProjectDescriptor({
-            packageName: "laravel/laravel",
-            packages: [],
-          }),
-          SHIPPED_FRAMEWORK_PROVIDERS,
-        ),
-      ).toBe("laravel");
-      expect(
-        frameworkProfileForProject(
-          phpProjectDescriptor({
-            packageName: "custom/api",
-            packages: [{ name: "laravel/framework" }],
-          }),
-          SHIPPED_FRAMEWORK_PROVIDERS,
-        ),
-      ).toBe("laravel");
-    });
-
-    it("detects Nette projects from nette/application or latte/latte", () => {
-      expect(
-        frameworkProfileForProject(
-          phpProjectDescriptor({
-            packageName: "nette/web-project",
-            packages: [{ name: "nette/application" }],
-          }),
-          SHIPPED_FRAMEWORK_PROVIDERS,
-        ),
-      ).toBe("nette");
-      expect(
-        frameworkProfileForProject(
-          phpProjectDescriptor({
-            packageName: "acme/site",
-            packages: [{ name: "latte/latte" }],
-          }),
-          SHIPPED_FRAMEWORK_PROVIDERS,
-        ),
-      ).toBe("nette");
-    });
-
-    it("falls back to generic for unknown frameworks and empty input", () => {
-      expect(
-        frameworkProfileForProject(
-          phpProjectDescriptor({
-            packageName: "symfony/app",
-            packages: [{ name: "symfony/framework-bundle" }],
-          }),
-          SHIPPED_FRAMEWORK_PROVIDERS,
-        ),
-      ).toBe("generic");
-      expect(
-        frameworkProfileForProject(null, SHIPPED_FRAMEWORK_PROVIDERS),
-      ).toBe("generic");
-      expect(
-        frameworkProfileForProject(undefined, SHIPPED_FRAMEWORK_PROVIDERS),
-      ).toBe("generic");
-    });
-
-    it("resolves the ambiguous both-frameworks edge to Laravel deterministically", () => {
-      // A project that declares both signals is rare, but the profile must be a
-      // single, deterministic value. Laravel wins because it is first in order.
-      expect(
-        frameworkProfileForProject(
-          phpProjectDescriptor({
-            packageName: "custom/app",
-            packages: [
-              { name: "laravel/framework" },
-              { name: "nette/application" },
-            ],
-          }),
-          SHIPPED_FRAMEWORK_PROVIDERS,
-        ),
-      ).toBe("laravel");
     });
   });
 
@@ -1513,7 +1448,7 @@ return new class extends Migration
       const providers = [phpNetteFrameworkProvider];
 
       expect(
-        phpFrameworkMemberCompletionsFromSource("<?php", "Article", providers),
+        phpLaravelMemberCompletionsFromSource("<?php", "Article", providers),
       ).toEqual([]);
       expect(
         isKnownPhpFrameworkStaticMethod(
@@ -1776,6 +1711,20 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toBe(false);
     });
 
+    it("accepts adapter-owned capability tokens without changing the facade", () => {
+      const symfonyMessenger = definePhpFrameworkCapability<
+        PhpFrameworkProvider,
+        "symfonyMessenger"
+      >("symfonyMessenger", (provider) => provider.id === "symfony");
+      const registry = createPhpFrameworkProviderCapabilityRegistry(
+        [{ id: "symfony" }],
+        [symfonyMessenger],
+      );
+
+      expect(registry.supports("symfonyMessenger")).toBe(true);
+      expect(registry.supports("futureCapability")).toBe(false);
+    });
+
     it("activates only the highest-priority provider when several frameworks match", () => {
       // PhpProjectDescriptor.packages carries require + require-dev + the whole
       // composer.lock / installed.json (transitive) tree, so a Laravel app that
@@ -1836,106 +1785,6 @@ class ProductPresenter extends Nette\\Application\\UI\\Presenter
       ).toEqual([]);
     });
 
-    it("derives the profile and provider set from one detection pass", () => {
-      const php = phpProjectDescriptor({
-        packageName: "custom/app",
-        packages: [
-          { name: "laravel/framework" },
-          { name: "nette/application" },
-        ],
-      });
-      const resolution = resolvePhpFrameworkProfile(
-        php,
-        SHIPPED_FRAMEWORK_PROVIDERS,
-      );
-
-      // Single winner + laravel profile, but both matches surface for the edge log.
-      expect(resolution.providers).toEqual([phpLaravelFrameworkProvider]);
-      expect(resolution.profile).toBe("laravel");
-      expect(resolution.activityLabel).toBe("Laravel");
-      expect(resolution.matchedProviderIds).toEqual(["laravel", "nette"]);
-      // The public helpers agree with the resolution (single source of truth).
-      expect(
-        phpFrameworkProvidersForProject(php, SHIPPED_FRAMEWORK_PROVIDERS),
-      ).toEqual(resolution.providers);
-      expect(frameworkProfileForProject(php, SHIPPED_FRAMEWORK_PROVIDERS)).toBe(
-        resolution.profile,
-      );
-    });
-
-    it("reports a single match for single-framework projects (no edge log)", () => {
-      const resolution = resolvePhpFrameworkProfile(
-        phpProjectDescriptor({
-          packageName: "nette/web-project",
-          packages: [{ name: "latte/latte" }],
-        }),
-        SHIPPED_FRAMEWORK_PROVIDERS,
-      );
-
-      expect(resolution.matchedProviderIds).toEqual(["nette"]);
-      expect(resolution.activityLabel).toBe("Nette");
-    });
-
-    it("uses presentation metadata from the winning custom provider", () => {
-      const first: PhpFrameworkProvider = {
-        id: "custom-first",
-        appliesTo: () => true,
-        presentation: { activityLabel: "Custom First" },
-      };
-      const second: PhpFrameworkProvider = {
-        id: "custom-second",
-        appliesTo: () => true,
-        presentation: { activityLabel: "Custom Second" },
-      };
-      const resolution = resolvePhpFrameworkProfile(
-        phpProjectDescriptor({ packageName: "custom/app" }),
-        [first, second],
-      );
-
-      expect(resolution.activityLabel).toBe("Custom First");
-      expect(resolution.providers).toEqual([first]);
-      expect(resolution.matchedProviderIds).toEqual([
-        "custom-first",
-        "custom-second",
-      ]);
-    });
-
-    it("uses presentation metadata from the project-specific provider", () => {
-      const projectProvider: PhpFrameworkProvider = {
-        id: "custom",
-        presentation: { activityLabel: "Project Custom" },
-      };
-      const provider: PhpFrameworkProvider = {
-        id: "custom",
-        appliesTo: () => true,
-        forProject: () => projectProvider,
-        presentation: { activityLabel: "Registry Custom" },
-      };
-      const resolution = resolvePhpFrameworkProfile(
-        phpProjectDescriptor({ packageName: "custom/app" }),
-        [provider],
-      );
-
-      expect(resolution.providers).toEqual([projectProvider]);
-      expect(resolution.activityLabel).toBe(
-        resolution.providers[0]?.presentation?.activityLabel,
-      );
-      expect(resolution.activityLabel).toBe("Project Custom");
-    });
-
-    it("omits presentation for a winning provider without metadata", () => {
-      const provider: PhpFrameworkProvider = {
-        id: "headless",
-        appliesTo: () => true,
-      };
-
-      expect(
-        resolvePhpFrameworkProfile(
-          phpProjectDescriptor({ packageName: "custom/app" }),
-          [provider],
-        ).activityLabel,
-      ).toBeNull();
-    });
   });
 
   describe("routes capability", () => {
@@ -2094,13 +1943,20 @@ Route::model('user', AdminUser::class);
     });
 
     it("reports container binding source ownership for configured providers", () => {
+      const frameworkCapabilityDefinitions = [
+        ...phpLaravelFrameworkCapabilityDefinitions,
+        ...phpNetteFrameworkCapabilityDefinitions,
+      ];
       const laravelRegistry = createPhpFrameworkProviderCapabilityRegistry([
         phpLaravelFrameworkProvider,
-      ]);
+      ], frameworkCapabilityDefinitions);
       const netteRegistry = createPhpFrameworkProviderCapabilityRegistry([
         phpNetteFrameworkProvider,
-      ]);
-      const genericRegistry = createPhpFrameworkProviderCapabilityRegistry([]);
+      ], frameworkCapabilityDefinitions);
+      const genericRegistry = createPhpFrameworkProviderCapabilityRegistry(
+        [],
+        frameworkCapabilityDefinitions,
+      );
 
       expect(laravelRegistry.supports("containerBindingsFromSource")).toBe(
         true,

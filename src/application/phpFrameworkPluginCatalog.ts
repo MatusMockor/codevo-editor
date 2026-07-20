@@ -1,4 +1,7 @@
-import type { PhpFrameworkProvider } from "../domain/phpFrameworkProviders";
+import {
+  createPhpFrameworkProviderCapabilityRegistry,
+  type PhpFrameworkProvider,
+} from "../domain/phpFrameworkProviders";
 import {
   cloneAndFreezePhpFrameworkSnapshot,
   createPhpFrameworkFeatureBag,
@@ -23,6 +26,11 @@ import {
 } from "./phpFrameworkLegacyProviderAdapter";
 import { phpLaravelFrameworkPlugin } from "./phpLaravelFrameworkPlugin";
 import { phpNetteFrameworkPlugin } from "./phpNetteFrameworkPlugin";
+
+export interface PhpFrameworkPluginCatalog
+  extends ReadonlyArray<PhpFrameworkProvider> {
+  readonly capabilityDefinitions: readonly PhpFrameworkCapabilityDefinition<PhpFrameworkProvider>[];
+}
 
 export function createPhpFrameworkPluginRegistry(
   plugins: readonly PhpFrameworkPlugin[],
@@ -66,23 +74,29 @@ function freezePhpFrameworkPluginSnapshot(
 
 export function createPhpFrameworkPluginCatalog(
   providers: readonly PhpFrameworkProvider[],
-): readonly PhpFrameworkProvider[] {
+  capabilityDefinitions: readonly PhpFrameworkCapabilityDefinition<PhpFrameworkProvider>[] = [],
+): PhpFrameworkPluginCatalog {
   assertUniquePhpFrameworkRegistrationIds(
     providers,
     "PHP framework plugin catalog",
   );
-  return Object.freeze(
-    providers.map((provider) =>
-      Object.isFrozen(provider)
-        ? provider
-        : cloneAndFreezePhpFrameworkSnapshot(provider),
-    ),
+  assertValidPhpFrameworkCapabilityDefinitions(capabilityDefinitions);
+
+  const catalog = providers.map((provider) =>
+    Object.isFrozen(provider)
+      ? provider
+      : cloneAndFreezePhpFrameworkSnapshot(provider),
   );
+  Object.defineProperty(catalog, "capabilityDefinitions", {
+    value: cloneAndFreezePhpFrameworkSnapshot(capabilityDefinitions),
+  });
+
+  return Object.freeze(catalog) as PhpFrameworkPluginCatalog;
 }
 
 export function composePhpFrameworkPluginCatalog(
   plugins: readonly PhpFrameworkPlugin[],
-): readonly PhpFrameworkProvider[] {
+): PhpFrameworkPluginCatalog {
   const registry = createPhpFrameworkPluginRegistry(plugins);
   const providers = registry.map((plugin) =>
     composePhpFrameworkLegacyProvider(
@@ -91,7 +105,16 @@ export function composePhpFrameworkPluginCatalog(
     ),
   );
 
-  return createPhpFrameworkPluginCatalog(providers);
+  return createPhpFrameworkPluginCatalog(
+    providers,
+    phpFrameworkCapabilityDefinitionsForPlugins(registry),
+  );
+}
+
+function assertValidPhpFrameworkCapabilityDefinitions(
+  definitions: readonly PhpFrameworkCapabilityDefinition<PhpFrameworkProvider>[],
+): void {
+  createPhpFrameworkProviderCapabilityRegistry([], definitions);
 }
 
 export function phpFrameworkPluginContributions<
