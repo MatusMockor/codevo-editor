@@ -1,4 +1,5 @@
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -26,7 +27,91 @@ const PHP_SEMANTIC_CORE_FOUNDATIONS = new Set<string>([
 const PHP_SEMANTIC_CORE_PREFIX =
   /^php(?:ExpressionType|Inheritance|Member|Oop|Semantic|Symbol)/;
 const PHP_FRAMEWORK_ADAPTER_NAME =
-  /(?:Blade|Framework|Laravel|Latte|Neon|Nette)/i;
+  /(?:Blade|Eloquent|Framework|Laravel|Latte|Neon|Nette)/i;
+const CONCRETE_FRAMEWORK_MARKER_PREFIXES: readonly string[] = [
+  "blade",
+  "eloquent",
+  "illuminate",
+  "laravel",
+  "latte",
+  "neon",
+  "nette",
+];
+const UNAMBIGUOUS_FRAMEWORK_TOKENS = new Set<string>([
+  "eloquent",
+  "illuminate",
+  "laravel",
+  "nette",
+]);
+const CONTEXTUAL_FRAMEWORK_TOKENS = new Map<string, ReadonlySet<string>>([
+  [
+    "blade",
+    new Set([
+      "adapter",
+      "capability",
+      "component",
+      "completion",
+      "compiler",
+      "core",
+      "diagnostic",
+      "directive",
+      "framework",
+      "parser",
+      "provider",
+      "resolver",
+      "service",
+      "template",
+      "view",
+    ]),
+  ],
+  [
+    "latte",
+    new Set([
+      "adapter",
+      "capability",
+      "completion",
+      "core",
+      "diagnostic",
+      "engine",
+      "framework",
+      "lexer",
+      "macro",
+      "parser",
+      "provider",
+      "resolver",
+      "template",
+    ]),
+  ],
+  [
+    "neon",
+    new Set([
+      "adapter",
+      "capability",
+      "completion",
+      "config",
+      "core",
+      "diagnostic",
+      "decoder",
+      "framework",
+      "parser",
+      "provider",
+      "reader",
+      "resolver",
+      "schema",
+    ]),
+  ],
+]);
+const PHP_NEUTRAL_FRAMEWORK_BOUNDARY_ROLE =
+  /Capabilit(?:y|ies)|(?:Core|Selection|Dispatch|ProviderFeatures?|Contracts?)$/;
+const EXISTING_PROVIDER_BOUNDARY_EDGES = new Set<string>([
+  "domain/phpFrameworkLiteralDispatch.ts -> ./phpFrameworkProviders",
+  "domain/phpFrameworkMemberDispatch.ts -> ./phpFrameworkProviders",
+  "domain/phpFrameworkSemanticContracts.ts -> embedded supportsEloquentModelSemantics",
+  "domain/phpFrameworkSemanticContracts.ts -> embedded supportsNetteDatabaseSemantics",
+  "domain/phpFrameworkTargetCapabilities.ts -> ./phpFrameworkProviders",
+  "domain/phpFrameworkTemplateDispatch.ts -> ./phpFrameworkProviders",
+  "domain/phpFrameworkValidationDispatch.ts -> ./phpFrameworkProviders",
+]);
 
 const EXISTING_FRAMEWORK_EDGES: readonly string[] = [
   'domain/snippets.ts -> embedded "blade"',
@@ -70,6 +155,43 @@ function isPhpSemanticCoreModule(fileName: string): boolean {
     PHP_SEMANTIC_CORE_FOUNDATIONS.has(fileName) ||
     PHP_SEMANTIC_CORE_PREFIX.test(fileName)
   );
+}
+
+function isNeutralFrameworkBoundaryModule(fileName: string): boolean {
+  if (!fileName.endsWith(".ts") || fileName.endsWith(".test.ts")) {
+    return false;
+  }
+
+  const moduleName = fileName.slice(0, -".ts".length);
+
+  if (
+    !moduleName.startsWith("phpFramework") ||
+    isConcreteFrameworkModule(`./${moduleName}`) ||
+    /Adapters?$/.test(moduleName)
+  ) {
+    return false;
+  }
+
+  return (
+    moduleName === "phpFrameworkPlugin" ||
+    PHP_NEUTRAL_FRAMEWORK_BOUNDARY_ROLE.test(moduleName)
+  );
+}
+
+function neutralFrameworkBoundaryPaths(
+  sourceRoot: string,
+  tree: SourceTree,
+): string[] {
+  return ["application", "domain"]
+    .flatMap((directory) => {
+      const directoryPath = join(sourceRoot, directory);
+
+      return tree
+        .list(directoryPath)
+        .filter(isNeutralFrameworkBoundaryModule)
+        .map((fileName) => join(directoryPath, fileName));
+    })
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function phpSemanticCoreEntryPaths(
@@ -125,14 +247,48 @@ function normalizedModuleStem(moduleSpecifier: string): string {
     .replace(/\/index$/i, "");
 }
 
+function identifierTokens(value: string): string[] {
+  return value
+    .split(/[^A-Za-z0-9]+/)
+    .flatMap((part) =>
+      part.match(/[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|[A-Z]+|\d+/g) ??
+      [],
+    )
+    .map((token) => token.toLowerCase());
+}
+
+function containsConcreteFrameworkTokens(tokens: readonly string[]): boolean {
+  if (tokens.some((token) => UNAMBIGUOUS_FRAMEWORK_TOKENS.has(token))) {
+    return true;
+  }
+
+  if (
+    tokens.length === 1 &&
+    CONTEXTUAL_FRAMEWORK_TOKENS.has(tokens[0] ?? "")
+  ) {
+    return true;
+  }
+
+  return tokens.some((token) => {
+    const requiredContext = CONTEXTUAL_FRAMEWORK_TOKENS.get(token);
+
+    if (!requiredContext) {
+      return false;
+    }
+
+    return tokens.some((candidate) => requiredContext.has(candidate));
+  });
+}
+
 function isConcreteFrameworkModule(moduleSpecifier: string): boolean {
   const stem = normalizedModuleStem(moduleSpecifier);
-  const segments = stem.split("/");
+  const segments = stem.split("/").filter(Boolean);
   const moduleName = segments[segments.length - 1] ?? stem;
 
   return (
-    /^(?:blade|laravel|latte|neon|nette)/i.test(moduleName) ||
-    /^php(?:framework)?(?:laravel|nette)/i.test(moduleName) ||
+    segments.some((segment) =>
+      containsConcreteFrameworkTokens(identifierTokens(segment)),
+    ) ||
     /^(?:phpFrameworkProviders|phpNavigation)$/i.test(moduleName)
   );
 }
@@ -253,61 +409,127 @@ function embeddedFrameworkMarkers(
   entryPaths: readonly string[],
   tree: SourceTree,
 ): EmbeddedFrameworkMarker[] {
-  const markers: EmbeddedFrameworkMarker[] = [];
-  const markerKeys = new Set<string>();
-
-  for (const sourcePath of discoveredModulePaths(entryPaths, tree)) {
-    const source = tree.read(sourcePath);
-    const sourceFile = ts.createSourceFile(
-      sourcePath,
-      source,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
-
-    inspectNode(sourceFile);
-
-    function inspectNode(node: ts.Node): void {
-      if (
-        ts.isIdentifier(node) &&
-        /^(?:blade|illuminate|laravel|latte|neon|nette)(?:[A-Z_]|$)/i.test(
-          node.text,
-        )
-      ) {
-        addMarker(node.text);
-      }
-
-      if (
-        ts.isStringLiteralLike(node) &&
-        !isModuleSpecifier(node) &&
-        /^(?:blade|illuminate|laravel|latte|neon|nette)(?::|[-_A-Z\\]|$)/i.test(
-          node.text,
-        )
-      ) {
-        addMarker(JSON.stringify(node.text));
-      }
-
-      ts.forEachChild(node, inspectNode);
-    }
-
-    function addMarker(marker: string): void {
-      const key = `${sourcePath}\0${marker}`;
-
-      if (markerKeys.has(key)) {
-        return;
-      }
-
-      markerKeys.add(key);
-      markers.push({ marker, sourcePath });
-    }
-  }
+  const markers = discoveredModulePaths(entryPaths, tree).flatMap(
+    (sourcePath) => embeddedFrameworkMarkersInFile(sourcePath, tree),
+  );
 
   return markers.sort((left, right) =>
     embeddedMarkerLabel(left, tree.sourceRoot).localeCompare(
       embeddedMarkerLabel(right, tree.sourceRoot),
     ),
   );
+}
+
+function embeddedFrameworkMarkersInFile(
+  sourcePath: string,
+  tree: SourceTree,
+): EmbeddedFrameworkMarker[] {
+  const markers: EmbeddedFrameworkMarker[] = [];
+  const markerKeys = new Set<string>();
+  const sourceFile = ts.createSourceFile(
+    sourcePath,
+    tree.read(sourcePath),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  inspectNode(sourceFile);
+
+  return markers;
+
+  function inspectNode(node: ts.Node): void {
+    if (
+      ts.isIdentifier(node) &&
+      isConcreteFrameworkIdentifier(node.text)
+    ) {
+      addMarker(node.text);
+    }
+
+    if (
+      ts.isStringLiteralLike(node) &&
+      !isModuleSpecifier(node) &&
+      isConcreteFrameworkStringMarker(node.text)
+    ) {
+      addMarker(JSON.stringify(node.text));
+    }
+
+    ts.forEachChild(node, inspectNode);
+  }
+
+  function addMarker(marker: string): void {
+    if (markerKeys.has(marker)) {
+      return;
+    }
+
+    markerKeys.add(marker);
+    markers.push({ marker, sourcePath });
+  }
+}
+
+function isConcreteFrameworkStringMarker(value: string): boolean {
+  const normalized = value.toLowerCase();
+
+  return CONCRETE_FRAMEWORK_MARKER_PREFIXES.some((prefix) => {
+    if (normalized === prefix) {
+      return true;
+    }
+
+    if (!normalized.startsWith(prefix)) {
+      return false;
+    }
+
+    const boundary = value[prefix.length];
+
+    if (
+      boundary !== ":" &&
+      boundary !== "-" &&
+      boundary !== "_" &&
+      boundary !== "\\" &&
+      boundary === boundary?.toLowerCase()
+    ) {
+      return false;
+    }
+
+    if (UNAMBIGUOUS_FRAMEWORK_TOKENS.has(prefix)) {
+      return true;
+    }
+
+    return containsConcreteFrameworkTokens(identifierTokens(value));
+  });
+}
+
+function isConcreteFrameworkIdentifier(identifier: string): boolean {
+  return containsConcreteFrameworkTokens(identifierTokens(identifier));
+}
+
+function providerBoundaryViolationLabels(
+  boundaryPaths: readonly string[],
+  tree: SourceTree,
+): string[] {
+  const violations: string[] = [];
+
+  for (const sourcePath of boundaryPaths) {
+    for (const moduleSpecifier of moduleSpecifiers(
+      tree.read(sourcePath),
+      sourcePath,
+    )) {
+      if (!isConcreteFrameworkModule(moduleSpecifier)) {
+        continue;
+      }
+
+      const importer = relative(tree.sourceRoot, sourcePath)
+        .split("\\")
+        .join("/");
+      violations.push(`${importer} -> ${moduleSpecifier}`);
+    }
+
+    for (const marker of embeddedFrameworkMarkersInFile(sourcePath, tree)) {
+      violations.push(embeddedMarkerLabel(marker, tree.sourceRoot));
+    }
+  }
+
+  return violations.sort((left, right) => left.localeCompare(right));
 }
 
 function isModuleSpecifier(node: ts.StringLiteralLike): boolean {
@@ -371,6 +593,176 @@ function diskSourceTree(sourceRoot: string): SourceTree {
 }
 
 describe("PHP semantic core dependency architecture", () => {
+  it("does not let concrete framework knowledge grow across neutral provider boundaries", () => {
+    const tree = diskSourceTree(SOURCE_ROOT);
+    const boundaryPaths = neutralFrameworkBoundaryPaths(SOURCE_ROOT, tree);
+    const observedViolations = providerBoundaryViolationLabels(
+      boundaryPaths,
+      tree,
+    );
+    const newViolations = observedViolations.filter(
+      (label) => !EXISTING_PROVIDER_BOUNDARY_EDGES.has(label),
+    );
+    const staleAllowances = [...EXISTING_PROVIDER_BOUNDARY_EDGES].filter(
+      (label) => !observedViolations.includes(label),
+    );
+
+    expect(newViolations).toEqual([]);
+    expect(staleAllowances).toEqual([]);
+  });
+
+  it("allows generic provider terminology while detecting concrete provider leakage", () => {
+    const fixtureRoot = mkdtempSync(
+      join(tmpdir(), "codevo-provider-boundary-"),
+    );
+
+    try {
+      const cleanBoundaryPath = join(
+        fixtureRoot,
+        "phpFrameworkCapabilityRegistry.ts",
+      );
+      const leakyBoundaryPath = join(
+        fixtureRoot,
+        "phpFrameworkProviderCore.ts",
+      );
+
+      writeFileSync(
+        cleanBoundaryPath,
+        [
+          "export interface FrameworkProvider { readonly capability: string; }",
+          "export const genericFramework = 'framework-provider';",
+          "export const eloquentlyNamedCapability = 'eloquent prose';",
+          "export const BladeRunner = 'unrelated proper name';",
+          "export const latteArt = 'coffee';",
+          "export const neonLight = 'sign';",
+          "export const movieTitle = 'BladeRunner';",
+          "export const coffeeStyle = 'latteArt';",
+          "export const signKind = 'neonLight';",
+        ].join("\n"),
+      );
+      writeFileSync(
+        leakyBoundaryPath,
+        [
+          "import { provider } from './laravel/provider';",
+          "import './latte/provider';",
+          "import { semantics } from '@vendor/phpEloquentSemantics';",
+          "import '@vendor/blade-core';",
+          "import '@vendor/blade-compiler';",
+          "import '@vendor/phpBladeAdapter';",
+          "import '@vendor/phpBladeCompiler';",
+          "import '@vendor/latte-lexer';",
+          "import '@vendor/phpLatteAdapter';",
+          "import '@vendor/phpLatteLexer';",
+          "import '@vendor/neon-decoder';",
+          "import '@vendor/neon-parser';",
+          "import '@vendor/phpNeonAdapter';",
+          "import '@vendor/phpNeonDecoder';",
+          "import type { Database } from '@nette/database';",
+          "export const bladeService = null;",
+          "export const bladeCompiler = null;",
+          "export const latteEngine = null;",
+          "export const latteLexer = null;",
+          "export const neonDecoder = null;",
+          "export const neonReader = null;",
+          "export type PhpBladeCapability = unknown;",
+          "export type PhpLaravelCapability = typeof provider;",
+          "export const NeonParser = null;",
+          "export const phpEloquentResolver = semantics;",
+          "export const phpLatteResolver = null;",
+          "export const netteDatabaseSemantics: Database | null = null;",
+        ].join("\n"),
+      );
+
+      const tree = diskSourceTree(fixtureRoot);
+
+      expect(
+        providerBoundaryViolationLabels([cleanBoundaryPath], tree),
+      ).toEqual([]);
+      expect(
+        providerBoundaryViolationLabels([leakyBoundaryPath], tree),
+      ).toEqual([
+        "phpFrameworkProviderCore.ts -> ./laravel/provider",
+        "phpFrameworkProviderCore.ts -> ./latte/provider",
+        "phpFrameworkProviderCore.ts -> @nette/database",
+        "phpFrameworkProviderCore.ts -> @vendor/blade-compiler",
+        "phpFrameworkProviderCore.ts -> @vendor/blade-core",
+        "phpFrameworkProviderCore.ts -> @vendor/latte-lexer",
+        "phpFrameworkProviderCore.ts -> @vendor/neon-decoder",
+        "phpFrameworkProviderCore.ts -> @vendor/neon-parser",
+        "phpFrameworkProviderCore.ts -> @vendor/phpBladeAdapter",
+        "phpFrameworkProviderCore.ts -> @vendor/phpBladeCompiler",
+        "phpFrameworkProviderCore.ts -> @vendor/phpEloquentSemantics",
+        "phpFrameworkProviderCore.ts -> @vendor/phpLatteAdapter",
+        "phpFrameworkProviderCore.ts -> @vendor/phpLatteLexer",
+        "phpFrameworkProviderCore.ts -> @vendor/phpNeonAdapter",
+        "phpFrameworkProviderCore.ts -> @vendor/phpNeonDecoder",
+        "phpFrameworkProviderCore.ts -> embedded bladeCompiler",
+        "phpFrameworkProviderCore.ts -> embedded bladeService",
+        "phpFrameworkProviderCore.ts -> embedded latteEngine",
+        "phpFrameworkProviderCore.ts -> embedded latteLexer",
+        "phpFrameworkProviderCore.ts -> embedded neonDecoder",
+        "phpFrameworkProviderCore.ts -> embedded NeonParser",
+        "phpFrameworkProviderCore.ts -> embedded neonReader",
+        "phpFrameworkProviderCore.ts -> embedded netteDatabaseSemantics",
+        "phpFrameworkProviderCore.ts -> embedded PhpBladeCapability",
+        "phpFrameworkProviderCore.ts -> embedded phpEloquentResolver",
+        "phpFrameworkProviderCore.ts -> embedded PhpLaravelCapability",
+        "phpFrameworkProviderCore.ts -> embedded phpLatteResolver",
+      ]);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("discovers neutral framework boundaries while excluding concrete implementations", () => {
+    const fixtureRoot = mkdtempSync(
+      join(tmpdir(), "codevo-provider-boundary-discovery-"),
+    );
+
+    try {
+      const applicationRoot = join(fixtureRoot, "application");
+      const domainRoot = join(fixtureRoot, "domain");
+      const fixturePaths = [
+        "application/phpFrameworkPlugin.ts",
+        "application/phpFrameworkPluginContract.ts",
+        "domain/phpFrameworkCapabilityRegistry.ts",
+        "domain/phpFrameworkLiteralDispatch.ts",
+        "domain/phpFrameworkProviderCore.ts",
+        "domain/phpFrameworkProviderFeature.ts",
+        "domain/phpFrameworkProviderSelection.ts",
+        "domain/phpFrameworkSemanticContracts.ts",
+      ];
+
+      mkdirSync(applicationRoot);
+      mkdirSync(domainRoot);
+
+      for (const fixturePath of fixturePaths) {
+        writeFileSync(join(fixtureRoot, fixturePath), "export {};\n");
+      }
+
+      for (const excludedPath of [
+        "application/phpFrameworkPluginCatalog.ts",
+        "application/phpLaravelFrameworkPlugin.ts",
+        "domain/phpFrameworkProviderAdapter.ts",
+        "domain/phpFrameworkProviderCore.test.ts",
+        "domain/phpFrameworkProviders.ts",
+        "domain/phpFrameworkLaravelProviderCore.ts",
+      ]) {
+        writeFileSync(join(fixtureRoot, excludedPath), "export {};\n");
+      }
+
+      const tree = diskSourceTree(fixtureRoot);
+
+      expect(
+        neutralFrameworkBoundaryPaths(fixtureRoot, tree).map((path) =>
+          relative(fixtureRoot, path).split("\\").join("/"),
+        ),
+      ).toEqual(fixturePaths);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
   it("keeps the complete discovered OOP core graph free from framework implementations", () => {
     const tree = diskSourceTree(SOURCE_ROOT);
     const entries = phpSemanticCoreEntryPaths(DOMAIN_ROOT, tree);
