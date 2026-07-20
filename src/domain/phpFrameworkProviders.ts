@@ -1,14 +1,37 @@
 import type { EditorPosition } from "./languageServerFeatures";
+import {
+  createPhpFrameworkCapabilityRegistry,
+  definePhpFrameworkCapability,
+  type PhpFrameworkCapabilityDefinition,
+  type PhpFrameworkCapabilityRegistry,
+  type PhpFrameworkCapabilityToken,
+} from "./phpFrameworkCapabilityRegistry";
+import {
+  hasPhpFrameworkProvider,
+  phpFrameworkProviderCoreSignature,
+} from "./phpFrameworkProviderCore";
+import { selectPhpFrameworkProvidersForProject } from "./phpFrameworkProviderSelection";
 import type { PhpMethodCompletion } from "./phpMethodCompletions";
 import type {
   PhpFrameworkSemanticCapabilities,
   PhpFrameworkSourceContext,
 } from "./phpFrameworkSemanticContracts";
-import {
-  phpFrameworkSupportsTargetCollection,
-  phpFrameworkTargetSearchQueries,
-} from "./phpFrameworkTargetCapabilities";
+import { phpFrameworkSupportsTargetCollection } from "./phpFrameworkTargetCapabilities";
 import type { PhpProjectDescriptor } from "./workspace";
+
+export type {
+  PhpFrameworkCapabilityDefinition,
+  PhpFrameworkCapabilityRegistry,
+  PhpFrameworkCapabilityToken,
+} from "./phpFrameworkCapabilityRegistry";
+export {
+  createPhpFrameworkCapabilityRegistry,
+  definePhpFrameworkCapability,
+} from "./phpFrameworkCapabilityRegistry";
+export type {
+  PhpFrameworkProviderCore,
+  PhpFrameworkProviderPresentation,
+} from "./phpFrameworkProviderCore";
 
 export type {
   PhpFrameworkContainerAutowiredCandidate,
@@ -64,6 +87,57 @@ export {
   phpFrameworkSuppressesSameSourceMethodReturnFallback,
   phpFrameworkSupportsContainerBindingsFromSource,
 } from "./phpFrameworkSemanticCapabilities";
+export {
+  isKnownPhpFrameworkMemberMethod,
+  isKnownPhpFrameworkStaticMethod,
+  phpFrameworkMemberMethodMagicDiagnostic,
+  phpFrameworkMemberPropertyMagicDiagnostic,
+  phpFrameworkStaticMethodMagicDiagnostic,
+} from "./phpFrameworkMemberDispatch";
+export {
+  phpFrameworkConfigCompletionContextAt,
+  phpFrameworkConfigKeysFromSource,
+  phpFrameworkConfigLiteralTarget,
+  phpFrameworkConfigMissingTargetMessage,
+  phpFrameworkConfigReferenceAt,
+  phpFrameworkConfigTargetFromSource,
+  phpFrameworkEnvCompletionContextAt,
+  phpFrameworkEnvEntriesFromSource,
+  phpFrameworkEnvLiteralTarget,
+  phpFrameworkEnvMissingTargetMessage,
+  phpFrameworkEnvReferenceAt,
+  phpFrameworkEnvTargetFromSource,
+  phpFrameworkInertiaCompletionContextAt,
+  phpFrameworkInertiaLiteralTarget,
+  phpFrameworkInertiaReferenceAt,
+  phpFrameworkJsonTranslationKeysFromSource,
+  phpFrameworkJsonTranslationTargetFromSource,
+  phpFrameworkRouteMissingTargetMessage,
+  phpFrameworkScopedStringCompletionAt,
+  phpFrameworkScopedStringCompletionContextAt,
+  phpFrameworkStringLiteralHelperAt,
+  phpFrameworkTranslationCompletionContextAt,
+  phpFrameworkTranslationKeysFromSource,
+  phpFrameworkTranslationLiteralTarget,
+  phpFrameworkTranslationMissingTargetMessage,
+  phpFrameworkTranslationReferenceAt,
+  phpFrameworkTranslationTargetFromSource,
+} from "./phpFrameworkLiteralDispatch";
+export {
+  phpFrameworkPhpPresenterLinkAt,
+  phpFrameworkPhpPresenterLinkCompletionAt,
+  phpFrameworkTemplateNameFromRelativePath,
+  phpFrameworkViewCompletionContextAt,
+  phpFrameworkViewDataEntryFromSource,
+  phpFrameworkViewDataSearchQueries,
+  phpFrameworkViewLiteralTarget,
+  phpFrameworkViewMissingTargetMessage,
+  phpFrameworkViewReferenceAt,
+} from "./phpFrameworkTemplateDispatch";
+export {
+  phpFrameworkValidationRuleCompletions,
+  phpFrameworkValidationRuleReferenceAt,
+} from "./phpFrameworkValidationDispatch";
 
 export interface PhpFrameworkMemberCompletionContext {
   declaringClassName: string;
@@ -1064,13 +1138,13 @@ export interface PhpFrameworkProvider {
   semantics?: PhpFrameworkSemanticCapabilities;
 }
 
-export type PhpFrameworkProviderCapability =
+
+export type KnownPhpFrameworkProviderCapability =
   | "authorizationAbilities"
   | "config"
   | "containerBindingsFromSource"
   | "codeActions"
   | "dispatch"
-  | "eloquentModelSemantics"
   | "env"
   | "inertia"
   | "containerConcreteClassNamesFromSource"
@@ -1078,8 +1152,6 @@ export type PhpFrameworkProviderCapability =
   | "latteTemplateIntelligence"
   | "middlewareAliases"
   | "neonConfigIntelligence"
-  | "netteDatabaseSemantics"
-  | "netteRedrawControlSnippetCompletions"
   | "newFiles"
   | "phpPresenterLinks"
   | "routes"
@@ -1090,10 +1162,17 @@ export type PhpFrameworkProviderCapability =
   | "viewDataComponentFactories"
   | "views";
 
-export interface PhpFrameworkProviderCapabilityRegistry {
-  readonly providerSignature: string;
-  hasProvider(providerId: string): boolean;
-  supports(capability: PhpFrameworkProviderCapability): boolean;
+/**
+ * Backwards-compatible open capability seam. Existing capabilities retain
+ * literal autocomplete while framework adapters may introduce new tokens
+ * without editing this module.
+ */
+export type PhpFrameworkProviderCapability =
+  | KnownPhpFrameworkProviderCapability
+  | (PhpFrameworkCapabilityToken & Record<never, never>);
+
+export interface PhpFrameworkProviderCapabilityRegistry
+  extends PhpFrameworkCapabilityRegistry<PhpFrameworkProviderCapability> {
   supportsTargetCollection(kind: PhpFrameworkTargetCollectionKind): boolean;
 }
 
@@ -1129,13 +1208,19 @@ export interface PhpFrameworkInertiaCompletionContext {
 
 export function createPhpFrameworkProviderCapabilityRegistry(
   providers: readonly PhpFrameworkProvider[],
+  additionalDefinitions: readonly PhpFrameworkCapabilityDefinition<PhpFrameworkProvider>[] =
+    [],
 ): PhpFrameworkProviderCapabilityRegistry {
+  const registry = createPhpFrameworkCapabilityRegistry({
+    definitions: [
+      ...BUILT_IN_PHP_FRAMEWORK_CAPABILITIES,
+      ...additionalDefinitions,
+    ],
+    providers,
+  });
+
   return {
-    providerSignature: phpFrameworkProviderSignature(providers),
-    hasProvider: (providerId) =>
-      isPhpFrameworkProviderActive(providers, providerId),
-    supports: (capability) =>
-      phpFrameworkProvidersSupportCapability(providers, capability),
+    ...registry,
     supportsTargetCollection: (kind) =>
       phpFrameworkSupportsTargetCollection(kind, providers),
   };
@@ -1144,363 +1229,27 @@ export function createPhpFrameworkProviderCapabilityRegistry(
 /**
  * Active provider set for a project: exclusive by construction (exactly zero or
  * one provider). It shares the single detection pass with the framework profile
- * via `resolvePhpFrameworkProfile`, so a project can never carry two active
- * frameworks at once - the exclusivity is structural, not two independent
- * computations that could drift apart.
+ * via the neutral provider selector, so a project can never carry two active
+ * frameworks at once.
  */
 export function phpFrameworkProvidersForProject(
   php: PhpProjectDescriptor | null,
   registry: readonly PhpFrameworkProvider[],
 ): readonly PhpFrameworkProvider[] {
-  return resolvePhpFrameworkProfile(php, registry).providers;
+  return selectPhpFrameworkProvidersForProject(php, registry).providers;
 }
 
 export function phpFrameworkProviderSignature(
   providers: readonly PhpFrameworkProvider[],
 ): string {
-  return providers.map((provider) => provider.id).join(",");
+  return phpFrameworkProviderCoreSignature(providers);
 }
 
 export function isPhpFrameworkProviderActive(
   providers: readonly PhpFrameworkProvider[],
   providerId: string,
 ): boolean {
-  return providers.some((provider) => provider.id === providerId);
-}
-
-export function phpFrameworkMemberCompletionsFromSource(
-  source: string,
-  declaringClassName: string,
-  providers: readonly PhpFrameworkProvider[],
-  sourceContext?: PhpFrameworkSourceContext,
-): PhpMethodCompletion[] {
-  return providers.flatMap(
-    (provider) =>
-      provider.completions?.memberCompletionsFromSource?.({
-        declaringClassName,
-        source,
-        sourceContext,
-      }) ?? [],
-  );
-}
-
-export function isKnownPhpFrameworkStaticMethod(
-  source: string,
-  className: string,
-  methodName: string,
-  providers: readonly PhpFrameworkProvider[],
-  sourceContext?: PhpFrameworkSourceContext,
-): boolean {
-  return Boolean(
-    phpFrameworkStaticMethodMagicDiagnostic(
-      source,
-      className,
-      methodName,
-      providers,
-      sourceContext,
-    ),
-  );
-}
-
-export function phpFrameworkStaticMethodMagicDiagnostic(
-  source: string,
-  className: string,
-  methodName: string,
-  providers: readonly PhpFrameworkProvider[],
-  sourceContext?: PhpFrameworkSourceContext,
-): PhpFrameworkMagicDiagnosticMatch | null {
-  for (const provider of providers) {
-    if (
-      provider.diagnostics?.isKnownStaticMethod?.({
-        className,
-        methodName,
-        source,
-        sourceContext,
-      })
-    ) {
-      return { source: provider.diagnostics.magicSource ?? null };
-    }
-  }
-
-  return null;
-}
-
-export function isKnownPhpFrameworkMemberMethod(
-  source: string,
-  receiverExpression: string,
-  methodName: string,
-  providers: readonly PhpFrameworkProvider[],
-  sourceContext?: PhpFrameworkSourceContext,
-  receiverClassName?: string | null,
-): boolean {
-  return Boolean(
-    phpFrameworkMemberMethodMagicDiagnostic(
-      source,
-      receiverExpression,
-      methodName,
-      providers,
-      sourceContext,
-      receiverClassName,
-    ),
-  );
-}
-
-export function phpFrameworkMemberMethodMagicDiagnostic(
-  source: string,
-  receiverExpression: string,
-  methodName: string,
-  providers: readonly PhpFrameworkProvider[],
-  sourceContext?: PhpFrameworkSourceContext,
-  receiverClassName?: string | null,
-): PhpFrameworkMagicDiagnosticMatch | null {
-  for (const provider of providers) {
-    if (
-      provider.diagnostics?.isKnownMemberMethod?.({
-        methodName,
-        receiverClassName,
-        receiverExpression,
-        source,
-        sourceContext,
-      })
-    ) {
-      return { source: provider.diagnostics.magicSource ?? null };
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkMemberPropertyMagicDiagnostic(
-  source: string,
-  receiverExpression: string,
-  propertyName: string,
-  providers: readonly PhpFrameworkProvider[],
-  sourceContext?: PhpFrameworkSourceContext,
-  receiverClassName?: string | null,
-): PhpFrameworkMagicDiagnosticMatch | null {
-  for (const provider of providers) {
-    if (
-      provider.diagnostics?.isKnownMemberProperty?.({
-        propertyName,
-        receiverClassName,
-        receiverExpression,
-        source,
-        sourceContext,
-      })
-    ) {
-      return { source: provider.diagnostics.magicSource ?? null };
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkRouteMissingTargetMessage(
-  name: string,
-  providers: readonly PhpFrameworkProvider[],
-): string | null {
-  for (const provider of providers) {
-    const message = provider.routes?.missingTargetMessage?.({ name });
-
-    if (message) {
-      return message;
-    }
-  }
-
-  return null;
-}
-
-/**
- * First config reference detected at the cursor across the active providers.
- * Exclusive resolution keeps this to at most one provider today, so the first
- * non-null match wins and non-config providers are inert.
- */
-export function phpFrameworkConfigReferenceAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkConfigReference | null {
-  return (
-    phpFrameworkConfigCompletionContextAt(source, position, providers)
-      ?.reference ?? null
-  );
-}
-
-export function phpFrameworkConfigCompletionContextAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkConfigCompletionContext | null {
-  for (const provider of providers) {
-    const reference = provider.config?.referenceAt?.({ position, source });
-
-    if (reference) {
-      return { provider, reference };
-    }
-  }
-
-  return null;
-}
-
-/**
- * Config keys declared in a single source, aggregated across the active
- * providers. Providers without a config capability contribute nothing.
- */
-export function phpFrameworkConfigKeysFromSource(
-  source: string,
-  fileName: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkConfigKey[] {
-  return providers.flatMap(
-    (provider) => provider.config?.keysFromSource?.({ fileName, source }) ?? [],
-  );
-}
-
-/**
- * First config target for a key resolved in a single source across the active
- * providers. Providers without a config capability contribute nothing.
- */
-export function phpFrameworkConfigTargetFromSource(
-  source: string,
-  fileName: string,
-  key: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkConfigKey | null {
-  for (const provider of providers) {
-    const target = provider.config?.targetFromSource?.({
-      fileName,
-      key,
-      source,
-    });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkConfigLiteralTarget(
-  literal: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkResolvedLiteralTarget | null {
-  for (const provider of providers) {
-    const target = provider.config?.resolveLiteralTarget?.({ literal });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkConfigMissingTargetMessage(
-  key: string,
-  providers: readonly PhpFrameworkProvider[],
-): string | null {
-  for (const provider of providers) {
-    const message = provider.config?.missingTargetMessage?.({ key });
-
-    if (message) {
-      return message;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkEnvReferenceAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkEnvReference | null {
-  return (
-    phpFrameworkEnvCompletionContextAt(source, position, providers)
-      ?.reference ?? null
-  );
-}
-
-export function phpFrameworkEnvCompletionContextAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkEnvCompletionContext | null {
-  for (const provider of providers) {
-    const reference = provider.env?.referenceAt?.({ position, source });
-
-    if (reference) {
-      return { provider, reference };
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkEnvEntriesFromSource(
-  source: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkEnvEntry[] {
-  return providers.flatMap(
-    (provider) => provider.env?.entriesFromSource?.({ source }) ?? [],
-  );
-}
-
-export function phpFrameworkEnvTargetFromSource(
-  source: string,
-  name: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkEnvEntry | null {
-  for (const provider of providers) {
-    const target = provider.env?.targetFromSource?.({ name, source });
-
-    if (target) {
-      return target;
-    }
-
-    if (!provider.env?.targetFromSource) {
-      const entry = provider.env
-        ?.entriesFromSource?.({ source })
-        .find((candidate) => candidate.name === name);
-
-      if (entry) {
-        return entry;
-      }
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkEnvLiteralTarget(
-  literal: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkResolvedLiteralTarget | null {
-  for (const provider of providers) {
-    const target = provider.env?.resolveLiteralTarget?.({ literal });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkEnvMissingTargetMessage(
-  name: string,
-  providers: readonly PhpFrameworkProvider[],
-): string | null {
-  for (const provider of providers) {
-    const message = provider.env?.missingTargetMessage?.({ name });
-
-    if (message) {
-      return message;
-    }
-  }
-
-  return null;
+  return hasPhpFrameworkProvider(providers, providerId);
 }
 
 export function phpFrameworkSupportsEnv(
@@ -1520,151 +1269,6 @@ export function phpFrameworkSupportsConfig(
 }
 
 /**
- * First translation reference detected at the cursor across the active
- * providers. Exclusive resolution keeps this to at most one provider today, so
- * the first non-null match wins and non-translation providers are inert.
- */
-export function phpFrameworkTranslationReferenceAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkTranslationReference | null {
-  return (
-    phpFrameworkTranslationCompletionContextAt(source, position, providers)
-      ?.reference ?? null
-  );
-}
-
-export function phpFrameworkTranslationCompletionContextAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkTranslationCompletionContext | null {
-  for (const provider of providers) {
-    const reference = provider.translations?.referenceAt?.({
-      position,
-      source,
-    });
-
-    if (reference) {
-      return { provider, reference };
-    }
-  }
-
-  return null;
-}
-
-/**
- * Translation keys declared in a single PHP lang source, aggregated across the
- * active providers. Providers without a translations capability contribute
- * nothing.
- */
-export function phpFrameworkTranslationKeysFromSource(
-  source: string,
-  fileName: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkTranslationKey[] {
-  return providers.flatMap(
-    (provider) =>
-      provider.translations?.keysFromSource?.({ fileName, source }) ?? [],
-  );
-}
-
-/**
- * First translation target for a key resolved in a single PHP lang source
- * across the active providers. Providers without a translations capability
- * contribute nothing.
- */
-export function phpFrameworkTranslationTargetFromSource(
-  source: string,
-  fileName: string,
-  key: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkTranslationKey | null {
-  for (const provider of providers) {
-    const target = provider.translations?.targetFromSource?.({
-      fileName,
-      key,
-      source,
-    });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkTranslationLiteralTarget(
-  literal: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkResolvedLiteralTarget | null {
-  for (const provider of providers) {
-    const target = provider.translations?.resolveLiteralTarget?.({ literal });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkTranslationMissingTargetMessage(
-  key: string,
-  providers: readonly PhpFrameworkProvider[],
-): string | null {
-  for (const provider of providers) {
-    const message = provider.translations?.missingTargetMessage?.({ key });
-
-    if (message) {
-      return message;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Translation keys declared in a single JSON lang source, aggregated across the
- * active providers. Providers without a translations capability contribute
- * nothing.
- */
-export function phpFrameworkJsonTranslationKeysFromSource(
-  source: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkTranslationKey[] {
-  return providers.flatMap(
-    (provider) => provider.translations?.jsonKeysFromSource?.({ source }) ?? [],
-  );
-}
-
-/**
- * First translation target for a key resolved in a single JSON lang source
- * across the active providers. Providers without a translations capability
- * contribute nothing.
- */
-export function phpFrameworkJsonTranslationTargetFromSource(
-  source: string,
-  key: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkTranslationKey | null {
-  for (const provider of providers) {
-    const target = provider.translations?.jsonTargetFromSource?.({
-      key,
-      source,
-    });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
-}
-
-/**
  * Whether any active provider ships a translations capability - the
  * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
  * translation checks.
@@ -1673,127 +1277,6 @@ export function phpFrameworkSupportsTranslations(
   providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "translations");
-}
-
-/**
- * First view reference detected at the cursor across the active providers.
- * Exclusive resolution keeps this to at most one provider today, so the first
- * non-null match wins and non-templating providers are inert.
- */
-export function phpFrameworkViewReferenceAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkViewReference | null {
-  return (
-    phpFrameworkViewCompletionContextAt(source, position, providers)
-      ?.reference ?? null
-  );
-}
-
-export function phpFrameworkViewCompletionContextAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkViewCompletionContext | null {
-  for (const provider of providers) {
-    const reference = provider.templating?.referenceAt?.({ position, source });
-
-    if (reference) {
-      return { provider, reference };
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkViewLiteralTarget(
-  literal: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkResolvedLiteralTarget | null {
-  for (const provider of providers) {
-    const target = provider.templating?.resolveLiteralTarget?.({ literal });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkViewMissingTargetMessage(
-  name: string,
-  providers: readonly PhpFrameworkProvider[],
-): string | null {
-  for (const provider of providers) {
-    const message = provider.templating?.missingTargetMessage?.({ name });
-
-    if (message) {
-      return message;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkTemplateNameFromRelativePath(
-  relativePath: string,
-  providers: readonly PhpFrameworkProvider[],
-): string | null {
-  for (const provider of providers) {
-    const templateName = provider.templating?.templateNameFromRelativePath?.({
-      relativePath,
-    });
-
-    if (templateName) {
-      return templateName;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkInertiaReferenceAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkInertiaReference | null {
-  return (
-    phpFrameworkInertiaCompletionContextAt(source, position, providers)
-      ?.reference ?? null
-  );
-}
-
-export function phpFrameworkInertiaCompletionContextAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkInertiaCompletionContext | null {
-  for (const provider of providers) {
-    const reference = provider.inertia?.referenceAt?.({ position, source });
-
-    if (reference) {
-      return { provider, reference };
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkInertiaLiteralTarget(
-  literal: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkResolvedLiteralTarget | null {
-  for (const provider of providers) {
-    const target = provider.inertia?.resolveLiteralTarget?.({ literal });
-
-    if (target) {
-      return target;
-    }
-  }
-
-  return null;
 }
 
 export function phpFrameworkSupportsInertia(
@@ -1811,36 +1294,6 @@ export function phpFrameworkSupportsViews(
   providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "views");
-}
-
-/**
- * First view-data entry parsed from a single controller/presenter source across
- * the active providers. Providers without a viewData capability contribute
- * nothing; exclusive resolution keeps this to at most one provider today.
- */
-export function phpFrameworkViewDataEntryFromSource(
-  source: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkViewDataEntry | null {
-  for (const provider of providers) {
-    const entry = provider.viewData?.entryFromSource?.({ source });
-
-    if (entry) {
-      return entry;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Text-search anchors the active providers use to surface the sources feeding
- * data into templates. Empty when no active provider ships viewData.
- */
-export function phpFrameworkViewDataSearchQueries(
-  providers: readonly PhpFrameworkProvider[],
-): readonly string[] {
-  return phpFrameworkTargetSearchQueries("viewData", providers);
 }
 
 /**
@@ -1864,43 +1317,6 @@ export function phpFrameworkSupportsViewDataComponentFactories(
 }
 
 /**
- * First validation-rule reference detected at the cursor across the active
- * providers. Exclusive resolution keeps this to at most one provider today, so
- * the first non-null match wins and non-validation providers are inert.
- */
-export function phpFrameworkValidationRuleReferenceAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkValidationRuleReference | null {
-  for (const provider of providers) {
-    const reference = provider.validation?.ruleReferenceAt?.({
-      position,
-      source,
-    });
-
-    if (reference) {
-      return reference;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Validation-rule completions for a prefix, aggregated across the active
- * providers. Providers without a validation capability contribute nothing.
- */
-export function phpFrameworkValidationRuleCompletions(
-  prefix: string,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkValidationRuleCompletion[] {
-  return providers.flatMap(
-    (provider) => provider.validation?.ruleCompletions?.({ prefix }) ?? [],
-  );
-}
-
-/**
  * Whether any active provider ships a validation capability - the
  * framework-agnostic gate that replaces the hardcoded `isLaravelFrameworkActive`
  * validation checks.
@@ -1909,104 +1325,6 @@ export function phpFrameworkSupportsValidation(
   providers: readonly PhpFrameworkProvider[],
 ): boolean {
   return phpFrameworkProvidersSupportCapability(providers, "validation");
-}
-
-/**
- * First string-literal helper classification detected at the cursor across the
- * active providers. Exclusive resolution keeps this to at most one provider
- * today, so the first non-null match wins and non-stringLiteral providers are
- * inert.
- */
-export function phpFrameworkStringLiteralHelperAt(
-  source: string,
-  offset: number,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkStringLiteralHelperMatch | null {
-  for (const provider of providers) {
-    const match = provider.stringLiterals?.helperAt?.({ offset, source });
-
-    if (match) {
-      return { ...match, providerId: provider.id };
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkScopedStringCompletionContextAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): boolean {
-  return providers.some(
-    (provider) =>
-      Boolean(provider.translations?.referenceAt?.({ position, source })) ||
-      (provider.php?.isScopedStringCompletionContext?.({ position, source }) ??
-        false),
-  );
-}
-
-export function phpFrameworkScopedStringCompletionAt(
-  source: string,
-  position: EditorPosition,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkResolvedScopedStringCompletion | null {
-  for (const provider of providers) {
-    const completion = provider.php?.scopedStringCompletionAt?.({
-      position,
-      source,
-    });
-    const insertText = provider.php?.scopedStringCompletionInsertText;
-
-    if (completion && insertText) {
-      return {
-        ...completion,
-        insertText: (name) =>
-          insertText({
-            kind: completion.kind,
-            name,
-          }),
-        providerId: provider.id,
-      };
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkPhpPresenterLinkAt(
-  source: string,
-  offset: number,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkPhpPresenterLink | null {
-  for (const provider of providers) {
-    const link = provider.php?.presenterLinkAt?.({ offset, source });
-
-    if (link) {
-      return link;
-    }
-  }
-
-  return null;
-}
-
-export function phpFrameworkPhpPresenterLinkCompletionAt(
-  source: string,
-  offset: number,
-  providers: readonly PhpFrameworkProvider[],
-): PhpFrameworkPhpPresenterLinkCompletion | null {
-  for (const provider of providers) {
-    const completion = provider.php?.presenterLinkCompletionAt?.({
-      offset,
-      source,
-    });
-
-    if (completion) {
-      return completion;
-    }
-  }
-
-  return null;
 }
 
 export function phpFrameworkSupportsPhpPresenterLinks(
@@ -2068,214 +1386,129 @@ export function phpFrameworkSupportsLattePresenterLinkIntelligence(
   );
 }
 
+const BUILT_IN_PHP_FRAMEWORK_CAPABILITIES = [
+  definePhpFrameworkCapability(
+    "authorizationAbilities",
+    (provider: PhpFrameworkProvider) =>
+      provider.authorizationAbilities !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "codeActions",
+    (provider: PhpFrameworkProvider) => provider.codeActions !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "config",
+    (provider: PhpFrameworkProvider) => provider.config !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "containerBindingsFromSource",
+    (provider: PhpFrameworkProvider) =>
+      provider.semantics?.containerBindingsFromSource !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "containerConcreteClassNamesFromSource",
+    (provider: PhpFrameworkProvider) =>
+      provider.semantics?.containerConcreteClassNamesFromSource !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "dispatch",
+    (provider: PhpFrameworkProvider) => provider.dispatch !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "env",
+    (provider: PhpFrameworkProvider) => provider.env !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "inertia",
+    (provider: PhpFrameworkProvider) => provider.inertia !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "lattePresenterLinkIntelligence",
+    (provider: PhpFrameworkProvider) =>
+      provider.latte?.supportsPresenterLinkIntelligence === true,
+  ),
+  definePhpFrameworkCapability(
+    "latteTemplateIntelligence",
+    (provider: PhpFrameworkProvider) =>
+      provider.latte?.supportsTemplateIntelligence === true,
+  ),
+  definePhpFrameworkCapability(
+    "middlewareAliases",
+    (provider: PhpFrameworkProvider) =>
+      provider.middlewareAliases !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "neonConfigIntelligence",
+    (provider: PhpFrameworkProvider) =>
+      provider.neon?.supportsConfigIntelligence === true,
+  ),
+  definePhpFrameworkCapability(
+    "newFiles",
+    (provider: PhpFrameworkProvider) =>
+      provider.newFiles?.skeletonForPath !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "phpPresenterLinks",
+    (provider: PhpFrameworkProvider) =>
+      provider.php?.presenterLinkAt !== undefined ||
+      provider.php?.presenterLinkCompletionAt !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "routes",
+    (provider: PhpFrameworkProvider) => provider.routes !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "stringLiterals",
+    (provider: PhpFrameworkProvider) => provider.stringLiterals !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "translations",
+    (provider: PhpFrameworkProvider) => provider.translations !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "validation",
+    (provider: PhpFrameworkProvider) => provider.validation !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "viewData",
+    (provider: PhpFrameworkProvider) => provider.viewData !== undefined,
+  ),
+  definePhpFrameworkCapability(
+    "viewDataComponentFactories",
+    (provider: PhpFrameworkProvider) =>
+      provider.viewData?.supportsComponentFactoryVariables === true,
+  ),
+  definePhpFrameworkCapability(
+    "views",
+    (provider: PhpFrameworkProvider) => provider.templating !== undefined,
+  ),
+] as const;
+
+const BUILT_IN_PHP_FRAMEWORK_CAPABILITIES_BY_TOKEN = new Map<
+  PhpFrameworkProviderCapability,
+  PhpFrameworkCapabilityDefinition<
+    PhpFrameworkProvider,
+    PhpFrameworkProviderCapability
+  >
+>();
+
+for (const definition of BUILT_IN_PHP_FRAMEWORK_CAPABILITIES) {
+  BUILT_IN_PHP_FRAMEWORK_CAPABILITIES_BY_TOKEN.set(
+    definition.token,
+    definition,
+  );
+}
+
 function phpFrameworkProvidersSupportCapability(
   providers: readonly PhpFrameworkProvider[],
   capability: PhpFrameworkProviderCapability,
 ): boolean {
-  switch (capability) {
-    case "authorizationAbilities":
-      return providers.some(
-        (provider) => provider.authorizationAbilities !== undefined,
-      );
-    case "codeActions":
-      return providers.some((provider) => provider.codeActions !== undefined);
-    case "config":
-      return providers.some((provider) => provider.config !== undefined);
-    case "containerBindingsFromSource":
-      return providers.some(
-        (provider) =>
-          provider.semantics?.containerBindingsFromSource !== undefined,
-      );
-    case "containerConcreteClassNamesFromSource":
-      return providers.some(
-        (provider) =>
-          provider.semantics?.containerConcreteClassNamesFromSource !==
-          undefined,
-      );
-    case "dispatch":
-      return providers.some((provider) => provider.dispatch !== undefined);
-    case "eloquentModelSemantics":
-      return providers.some(
-        (provider) =>
-          provider.semantics?.supportsEloquentModelSemantics === true,
-      );
-    case "netteDatabaseSemantics":
-      return providers.some(
-        (provider) =>
-          provider.semantics?.supportsNetteDatabaseSemantics === true,
-      );
-    case "env":
-      return providers.some((provider) => provider.env !== undefined);
-    case "inertia":
-      return providers.some((provider) => provider.inertia !== undefined);
-    case "lattePresenterLinkIntelligence":
-      return providers.some(
-        (provider) =>
-          provider.latte?.supportsPresenterLinkIntelligence === true,
-      );
-    case "latteTemplateIntelligence":
-      return providers.some(
-        (provider) => provider.latte?.supportsTemplateIntelligence === true,
-      );
-    case "middlewareAliases":
-      return providers.some(
-        (provider) => provider.middlewareAliases !== undefined,
-      );
-    case "neonConfigIntelligence":
-      return providers.some(
-        (provider) => provider.neon?.supportsConfigIntelligence === true,
-      );
-    case "netteRedrawControlSnippetCompletions":
-      return providers.some(
-        (provider) =>
-          provider.completions?.supportsNetteRedrawControlSnippetCompletions ===
-          true,
-      );
-    case "newFiles":
-      return providers.some(
-        (provider) => provider.newFiles?.skeletonForPath !== undefined,
-      );
-    case "phpPresenterLinks":
-      return providers.some(
-        (provider) =>
-          provider.php?.presenterLinkAt !== undefined ||
-          provider.php?.presenterLinkCompletionAt !== undefined,
-      );
-    case "routes":
-      return providers.some((provider) => provider.routes !== undefined);
-    case "stringLiterals":
-      return providers.some(
-        (provider) => provider.stringLiterals !== undefined,
-      );
-    case "translations":
-      return providers.some((provider) => provider.translations !== undefined);
-    case "validation":
-      return providers.some((provider) => provider.validation !== undefined);
-    case "viewData":
-      return providers.some((provider) => provider.viewData !== undefined);
-    case "viewDataComponentFactories":
-      return providers.some(
-        (provider) =>
-          provider.viewData?.supportsComponentFactoryVariables === true,
-      );
-    case "views":
-      return providers.some((provider) => provider.templating !== undefined);
-  }
-}
+  const definition =
+    BUILT_IN_PHP_FRAMEWORK_CAPABILITIES_BY_TOKEN.get(capability);
 
-/**
- * Exclusive, per-workspace framework profile derived from `composer.json`. This
- * is the single discriminator UI and isolation logic key off (status-bar chip,
- * gating). A project carries at most one profile.
- */
-export type FrameworkProfile = "laravel" | "nette" | "generic";
-
-/**
- * Outcome of the single framework detection pass. Both the active provider set
- * and the profile are derived from the same `matchedProviderIds`, so there is
- * exactly one source of truth - they can never disagree (the HIGH finding was
- * two independent computations that could).
- */
-export interface PhpFrameworkResolution {
-  /** Exclusive active provider set: exactly zero or one provider. */
-  readonly providers: readonly PhpFrameworkProvider[];
-  /** Exclusive framework profile derived from the winning provider. */
-  readonly profile: FrameworkProfile;
-  /** Presentation metadata from the exclusive winning provider. */
-  readonly activityLabel?: string | null;
-  /**
-   * Every provider id whose detection matched, in registry (priority) order.
-   * More than one id means the project declared several framework signals at
-   * once (e.g. a Laravel app carrying `latte/latte` transitively in
-   * composer.lock / installed.json) and the exclusive winner was chosen by
-   * registry priority - the caller should log that edge once per workspace.
-   */
-  readonly matchedProviderIds: readonly string[];
-}
-
-/**
- * The one detection pass: every provider whose `appliesTo` matches, in registry
- * order. Registry order is the deterministic priority (Laravel is registered
- * first), so the exclusive winner is simply the first match.
- */
-function matchingPhpFrameworkProviders(
-  php: PhpProjectDescriptor | null,
-  registry: readonly PhpFrameworkProvider[],
-): readonly PhpFrameworkProvider[] {
-  if (!php) {
-    return [];
+  if (!definition) {
+    return false;
   }
 
-  return registry.filter((provider) => provider.appliesTo?.(php) ?? false);
-}
-
-/**
- * Resolves the exclusive framework profile and active provider from a project
- * descriptor over the explicitly supplied registry. This
- * is the single detection path both `phpFrameworkProvidersForProject` and
- * `frameworkProfileForProject` delegate to. If the registry has no provider for
- * the project the result is empty/generic.
- */
-export function resolvePhpFrameworkProfile(
-  php: PhpProjectDescriptor | null,
-  registry: readonly PhpFrameworkProvider[],
-): PhpFrameworkResolution {
-  if (!php) {
-    return {
-      activityLabel: null,
-      matchedProviderIds: [],
-      profile: "generic",
-      providers: [],
-    };
-  }
-
-  const matches = matchingPhpFrameworkProviders(php, registry);
-  const [winner] = matches;
-
-  if (!winner) {
-    return {
-      activityLabel: null,
-      matchedProviderIds: [],
-      profile: "generic",
-      providers: [],
-    };
-  }
-
-  const projectProvider = winner.forProject?.(php) ?? winner;
-
-  return {
-    activityLabel: projectProvider.presentation?.activityLabel ?? null,
-    matchedProviderIds: matches.map((provider) => provider.id),
-    profile: frameworkProfileFromProviderId(winner.id),
-    providers: [projectProvider],
-  };
-}
-
-/**
- * Type-safe narrowing from a provider id (an open `string`) to the closed
- * `FrameworkProfile` set. Providers outside the UI-facing set (a future
- * "symfony") stay active as providers but map to "generic" for the chip.
- */
-function frameworkProfileFromProviderId(id: string): FrameworkProfile {
-  if (id === "laravel") {
-    return "laravel";
-  }
-
-  if (id === "nette") {
-    return "nette";
-  }
-
-  return "generic";
-}
-
-/**
- * Resolves the exclusive framework profile for a project. Delegates to the same
- * detection pass as `phpFrameworkProvidersForProject`, so the chip label and the
- * active provider set are always consistent.
- */
-export function frameworkProfileForProject(
-  php: PhpProjectDescriptor | null | undefined,
-  registry: readonly PhpFrameworkProvider[],
-): FrameworkProfile {
-  return resolvePhpFrameworkProfile(php ?? null, registry).profile;
+  return providers.some(definition.isSupportedBy);
 }

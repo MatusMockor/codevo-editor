@@ -27,20 +27,17 @@ import {
   isLaravelEloquentLocalScopeStaticMethod,
   isLaravelEloquentStaticBuilderReceiver,
   isLaravelMacroMemberMethodFromSource,
-  phpLaravelApiResourceCompletionsFromSource,
   phpLaravelContainerBindingsFromSource,
   phpLaravelContainerExpressionClassName,
   phpLaravelEloquentBuilderModelTypeFromExpression,
-  phpLaravelMacroCompletionsFromSource,
   phpLaravelMethodCallReturnTypeFromSource,
-  phpLaravelModelAttributeCompletionsFromSource,
   phpLaravelModelPropertyClassTypeFromSource,
-  phpLaravelRelationPropertyCompletionsFromSource,
 } from "./phpFrameworkLaravel";
 import {
   definePhpFrameworkActiveDocumentDiagnostics,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
+import { definePhpFrameworkCapability } from "./phpFrameworkCapabilityRegistry";
 import {
   detectLaravelRouteModelBindingAt,
   explicitLaravelRouteModelBindingClassName,
@@ -97,6 +94,7 @@ import {
   phpLaravelViewReferenceContextAt,
 } from "./phpLaravelViews";
 import type { PhpProjectDescriptor } from "./workspace";
+import { registerPhpFrameworkProviderProjectSpecializer } from "./phpFrameworkProviderSelection";
 import { phpLaravelQueryCallbackContextForVariable } from "./phpLaravelQueryCallbackContext";
 
 interface PhpLaravelFrameworkProvider extends PhpFrameworkProvider {
@@ -112,6 +110,15 @@ const PHP_LARAVEL_ACTIVE_DOCUMENT_DIAGNOSTICS =
       language: "blade",
     },
   ] as const);
+
+/** Compatibility definitions for callers that still operate on the facade. */
+export const phpLaravelFrameworkCapabilityDefinitions = [
+  definePhpFrameworkCapability(
+    "eloquentModelSemantics",
+    (provider: PhpFrameworkProvider) =>
+      provider.semantics?.supportsEloquentModelSemantics === true,
+  ),
+] as const;
 
 /**
  * Text-search anchors for Laravel named routes declared outside the active
@@ -250,39 +257,6 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
     missingTemplateFile: {
       detectMissingReference: missingLaravelViewReferenceAt,
     },
-  },
-  forProject: (php) => {
-    if (!laravelInertiaCapability.appliesTo?.(php)) {
-      return phpLaravelFrameworkProvider;
-    }
-
-    return {
-      ...phpLaravelFrameworkProvider,
-      inertia: laravelInertiaCapability,
-    };
-  },
-  completions: {
-    memberCompletionsFromSource: ({
-      declaringClassName,
-      source,
-      sourceContext,
-    }) => [
-      ...phpLaravelMacroCompletionsFromSource(
-        source,
-        declaringClassName,
-        sourceContext?.workspaceSources,
-      ),
-      ...phpLaravelModelAttributeCompletionsFromSource(
-        source,
-        declaringClassName,
-        sourceContext?.workspaceSources,
-      ),
-      ...phpLaravelRelationPropertyCompletionsFromSource(
-        source,
-        declaringClassName,
-      ),
-      ...phpLaravelApiResourceCompletionsFromSource(source, declaringClassName),
-    ],
   },
   diagnostics: {
     magicSource: "laravel-magic",
@@ -518,6 +492,24 @@ export const phpLaravelFrameworkProvider: PhpLaravelFrameworkProvider = {
     supportsContainerBindingTextSearch: true,
   },
 };
+
+export function phpLaravelFrameworkProviderForProject(
+  php: PhpProjectDescriptor,
+): PhpLaravelFrameworkProvider {
+  if (!laravelInertiaCapability.appliesTo?.(php)) {
+    return phpLaravelFrameworkProvider;
+  }
+
+  return {
+    ...phpLaravelFrameworkProvider,
+    inertia: laravelInertiaCapability,
+  };
+}
+
+registerPhpFrameworkProviderProjectSpecializer(
+  phpLaravelFrameworkProvider,
+  phpLaravelFrameworkProviderForProject,
+);
 
 function phpLaravelNamedRouteCompletionInsertText(
   routeName: string,

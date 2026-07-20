@@ -35,6 +35,7 @@ import {
   definePhpFrameworkActiveDocumentDiagnostics,
   type PhpFrameworkProvider,
 } from "./phpFrameworkProviders";
+import { definePhpFrameworkCapability } from "./phpFrameworkCapabilityRegistry";
 import type { PhpProjectDescriptor } from "./workspace";
 
 /**
@@ -71,6 +72,21 @@ const PHP_NETTE_ACTIVE_DOCUMENT_DIAGNOSTICS =
       language: "latte",
     },
   ] as const);
+
+/** Compatibility definitions for callers that still operate on the facade. */
+export const phpNetteFrameworkCapabilityDefinitions = [
+  definePhpFrameworkCapability(
+    "netteDatabaseSemantics",
+    (provider: PhpFrameworkProvider) =>
+      provider.semantics?.supportsNetteDatabaseSemantics === true,
+  ),
+  definePhpFrameworkCapability(
+    "netteRedrawControlSnippetCompletions",
+    (provider: PhpFrameworkProvider) =>
+      provider.completions?.supportsNetteRedrawControlSnippetCompletions ===
+      true,
+  ),
+] as const;
 
 /**
  * Nette provider. Detection resolves the framework profile + per-workspace

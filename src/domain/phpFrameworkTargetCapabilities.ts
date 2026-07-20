@@ -11,6 +11,7 @@ import type {
 } from "./phpFrameworkProviders";
 import type { EditorPosition } from "./languageServerFeatures";
 import type { PhpProjectDescriptor } from "./workspace";
+import type { PhpFrameworkTargetSearchQueryPort } from "./phpFrameworkDispatchPorts";
 
 /**
  * First named-route reference detected at the cursor across the active
@@ -241,7 +242,7 @@ export function phpFrameworkSupportsDispatch(
 
 export function phpFrameworkTargetSearchQueries(
   kind: PhpFrameworkTargetCollectionKind,
-  providers: readonly PhpFrameworkProvider[],
+  providers: readonly PhpFrameworkTargetSearchQueryPort[],
 ): readonly string[] {
   return providers.flatMap((provider) => {
     const queries =
@@ -274,7 +275,7 @@ export function phpFrameworkSupportsTargetCollection(
 }
 
 function legacyTargetSearchQueries(
-  provider: PhpFrameworkProvider,
+  provider: PhpFrameworkTargetSearchQueryPort,
   kind: PhpFrameworkTargetCollectionKind,
 ): readonly string[] {
   if (kind === "routes") {
