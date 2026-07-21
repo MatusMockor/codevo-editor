@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { EditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { EditorGroupId, EditorGroupsState } from "../domain/editorGroups";
 import type { TabDropPosition } from "../domain/tabOrdering";
 import { EditorGroupView, type EditorGroupDocument, type EditorGroupSurface } from "./EditorGroupView";
@@ -6,6 +7,7 @@ import { EditorSplit } from "./EditorSplit";
 
 export interface EditorAreaProps {
   documents: readonly EditorGroupDocument[];
+  editorSessionOwnerKey: EditorSessionOwnerKey | null;
   fileStatusesByPath?: React.ComponentProps<typeof EditorGroupView>["fileStatusesByPath"];
   projectId: string;
   state: EditorGroupsState;
@@ -28,7 +30,7 @@ export function EditorArea(props: EditorAreaProps) {
       }
       return (
         <EditorGroupView
-          key={layout.groupId}
+          key={`${props.editorSessionOwnerKey ?? "no-workspace"}:${layout.groupId}`}
           active={props.state.activeGroupId === layout.groupId}
           documents={props.documents}
           fileStatusesByPath={props.fileStatusesByPath}

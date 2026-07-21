@@ -3,20 +3,30 @@
 import { act, StrictMode, useEffect, useLayoutEffect, useRef } from "react";
 import type { ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createEditorSessionOwnerKey, type EditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
+import type { EditorGroupsState } from "../domain/editorGroups";
 import type { GitDiffHunk, GitFileDiff } from "../domain/git";
+import { maxEditorFontSize } from "../domain/settings";
+import type { EditorDocument } from "../domain/workspace";
+import { EditorArea } from "./EditorArea";
 import { GitDiffPreview } from "./GitDiffPreview";
 
 interface MockTextModel {
   attach(): void;
   detach(): void;
   dispose(): void;
+  getLineCount(): number;
+  getValue(): string;
   isDisposed(): boolean;
 }
 
 interface MockModelLifecycle {
   disposed: boolean;
   events: string[];
+  modifiedModel: MockTextModel;
   modifiedPath: string;
   originalPath: string;
 }
@@ -48,7 +58,11 @@ vi.mock("@monaco-editor/react", () => ({
     useLayoutEffect(() => {
       const events: string[] = [];
       let attached = true;
-      const acquireModel = (path: string, side: string): MockTextModel => {
+      const acquireModel = (
+        path: string,
+        side: string,
+        value: string,
+      ): MockTextModel => {
         const existing = gitDiffPreviewMocks.modelRegistry.get(path);
         if (existing) {
           existing.attach();
@@ -75,21 +89,34 @@ vi.mock("@monaco-editor/react", () => ({
             disposed = true;
             gitDiffPreviewMocks.modelRegistry.delete(path);
           },
+          getLineCount: () => value.split("\n").length,
+          getValue: () => value,
           isDisposed: () => disposed,
         };
         gitDiffPreviewMocks.modelRegistry.set(path, model);
         model.attach();
         return model;
       };
+      const originalPath = String(props.originalModelPath);
+      const modifiedPath = String(props.modifiedModelPath);
+      const originalModel = acquireModel(
+        originalPath,
+        "original",
+        String(props.original ?? ""),
+      );
+      const modifiedModel = acquireModel(
+        modifiedPath,
+        "modified",
+        String(props.modified ?? ""),
+      );
       const lifecycle = {
         disposed: false,
         events,
-        modifiedPath: String(props.modifiedModelPath),
-        originalPath: String(props.originalModelPath),
+        modifiedModel,
+        modifiedPath,
+        originalPath,
       };
       lifecycleRef.current = lifecycle;
-      const originalModel = acquireModel(lifecycle.originalPath, "original");
-      const modifiedModel = acquireModel(lifecycle.modifiedPath, "modified");
       const modifiedEditor = {
         addContentWidget: (widget: typeof gitDiffPreviewMocks.hunkWidgets[number]) => {
           gitDiffPreviewMocks.hunkWidgets.push(widget);
@@ -214,6 +241,19 @@ describe("GitDiffPreview", () => {
     });
   });
 
+  it("gives Monaco a definite flex height in WebKit", () => {
+    const appCss = readFileSync(
+      resolve(import.meta.dirname, "../App.css"),
+      "utf8",
+    );
+    const hostRule = appCss.match(/\.git-diff-editor\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(hostRule).toContain("flex: 1 1 auto");
+    expect(hostRule).toContain("height: 0");
+    expect(hostRule).toContain("min-height: 0");
+    expect(hostRule).toContain("overflow: hidden");
+  });
+
   it("coerces malformed null diff content to empty strings", async () => {
     await renderPreview({
       ...readmeDiff(),
@@ -255,6 +295,135 @@ describe("GitDiffPreview", () => {
 
     expect(lastDiffEditorProps().originalModelPath).toContain("/staged/original/");
     expect(lastDiffEditorProps().modifiedModelPath).toContain("/staged/modified/");
+  });
+
+  it("hydrates a project diff after switching projects with a restored large font", async () => {
+    const productionHydratedContent = Array.from(
+      { length: 917 },
+      (_, index) => `export const productionLine${index + 1} = ${index + 1};`,
+    ).join("\n");
+    const firstProjectDiff = {
+      ...diff(),
+      change: {
+        ...diff().change,
+        path: "/workspace-a/src/example.ts",
+      },
+    };
+    const secondProjectDiff = {
+      ...diff(),
+      change: {
+        ...diff().change,
+        path: "/workspace-b/src/ai/aiApi.ts",
+        relativePath: "src/ai/aiApi.ts",
+      },
+      modifiedContent: productionHydratedContent,
+      originalContent: "export const current = 'workspace-a';\n",
+    };
+
+    const renderProjectPreview = async (
+      projectId: string,
+      editorSessionOwnerKey: EditorSessionOwnerKey,
+      current: GitFileDiff | null,
+      isLoading: boolean,
+    ) => {
+      const previewIdentity = `mockor-git-diff:worktree:${
+        current?.change.path ?? projectId
+      }`;
+      const document: EditorDocument = {
+        content: "",
+        language: "typescript",
+        name: previewIdentity,
+        path: previewIdentity,
+        savedContent: "",
+      };
+      const state: EditorGroupsState = {
+        activeGroupId: "editor-main",
+        groups: {
+          "editor-main": {
+            activePath: previewIdentity,
+            openPaths: [previewIdentity],
+            previewPath: null,
+          },
+        },
+        layout: { kind: "group", groupId: "editor-main" },
+      };
+      await act(async () => {
+        root.render(
+          <EditorArea
+            documents={[document]}
+            editorSessionOwnerKey={editorSessionOwnerKey}
+            onActivateGroup={vi.fn()}
+            onActivateTab={vi.fn()}
+            onCloseTab={vi.fn()}
+            onMoveTab={vi.fn()}
+            onPinTab={vi.fn()}
+            onReorderTab={vi.fn()}
+            onResizeSplit={vi.fn()}
+            projectId={projectId}
+            renderContent={() => (
+              <GitDiffPreview
+                diff={current}
+                editorFontSize={maxEditorFontSize}
+                isLoading={isLoading}
+                monacoTheme="calm-dark"
+                onClose={vi.fn()}
+                previewIdentity={previewIdentity}
+              />
+            )}
+            state={state}
+          />,
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+
+    await renderProjectPreview(
+      "/workspace-a",
+      createEditorSessionOwnerKey("workspace-a", "/workspace-a"),
+      firstProjectDiff,
+      false,
+    );
+    const firstLifecycle = gitDiffPreviewMocks.modelLifecycles[0];
+
+    await renderProjectPreview(
+      "/workspace-b",
+      createEditorSessionOwnerKey("workspace-b", "/workspace-b"),
+      null,
+      true,
+    );
+    expect(host.textContent).toContain("Loading diff");
+    expect(firstLifecycle?.disposed).toBe(true);
+
+    await renderProjectPreview(
+      "/workspace-b",
+      createEditorSessionOwnerKey("workspace-b", "/workspace-b"),
+      secondProjectDiff,
+      false,
+    );
+
+    expect(lastDiffEditorProps()).toMatchObject({
+      modified: secondProjectDiff.modifiedContent,
+      original: secondProjectDiff.originalContent,
+      options: expect.objectContaining({
+        fontSize: maxEditorFontSize,
+      }),
+    });
+    const computedLineHeight = Number(lastDiffEditorProps().options.lineHeight);
+    expect(computedLineHeight).toBe(Math.round(maxEditorFontSize * 1.5));
+    expect(computedLineHeight).toBeGreaterThan(0);
+    expect(lastDiffEditorProps().modifiedModelPath).toContain(
+      encodeURIComponent(secondProjectDiff.change.path),
+    );
+    const hydratedLifecycle =
+      gitDiffPreviewMocks.modelLifecycles[
+        gitDiffPreviewMocks.modelLifecycles.length - 1
+      ];
+    expect(hydratedLifecycle?.disposed).toBe(false);
+    expect(hydratedLifecycle?.modifiedModel.getLineCount()).toBe(917);
+    expect(hydratedLifecycle?.modifiedModel.getValue()).toBe(
+      productionHydratedContent,
+    );
   });
 
   it("isolates model URIs for concurrent previews of the same path", async () => {

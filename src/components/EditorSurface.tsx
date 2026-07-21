@@ -4510,7 +4510,9 @@ function EditorSurfaceComponent({
       // tokenization) on extreme lines. Monaco's default, kept explicit so the
       // scroll-performance guards live together.
       largeFileOptimizations: true,
-      lineHeight: 20,
+      // Let Monaco derive line height from the configured font size so restored
+      // large font settings cannot render into a fixed 20px row.
+      lineHeight: 0,
       // Lines longer than this are not tokenized. Monaco tokenizes the visible
       // viewport synchronously while scrolling, so a viewport full of very long
       // lines blows the frame budget and makes fast scrolling lag. Mirrors the

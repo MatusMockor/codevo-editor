@@ -85,6 +85,7 @@ import {
 } from "./domain/indexProgress";
 import { ideProgressIndicator } from "./domain/ideProgress";
 import { editorChangeHunks } from "./domain/editorChangeMarkers";
+import { createWorkspaceEditorSessionOwnerKey } from "./domain/editorSessionOwnerKey";
 import {
   type GitChangeStatus,
 } from "./domain/git";
@@ -346,6 +347,16 @@ function App() {
       debugGateway,
     },
   );
+  const editorSessionOwnerKey = useMemo(() => {
+    if (!workbench.workspaceRoot) {
+      return null;
+    }
+
+    return createWorkspaceEditorSessionOwnerKey(
+      workbench.workspaceRoot,
+      workbench.workspaceIdentityDescriptor,
+    );
+  }, [workbench.workspaceIdentityDescriptor, workbench.workspaceRoot]);
   const phpChangeSignature = {
     ...CLOSED_PHP_CHANGE_SIGNATURE,
     ...(workbench.phpChangeSignature ?? {}),
@@ -1596,6 +1607,7 @@ function App() {
         >
           <EditorArea
             documents={editorAreaDocuments}
+            editorSessionOwnerKey={editorSessionOwnerKey}
             fileStatusesByPath={fileStatusesByPath}
             onActivateGroup={(groupId) => workbench.activateEditorGroup?.(groupId)}
             onActivateTab={activateEditorGroupTab}

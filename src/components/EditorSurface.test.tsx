@@ -19,6 +19,7 @@ import {
   type LanguageServerRuntimeStatus,
 } from "../domain/languageServerRuntime";
 import { defaultKeymapSettings } from "../domain/keymap";
+import { maxEditorFontSize } from "../domain/settings";
 import { editorChangeHunks } from "../domain/editorChangeMarkers";
 import type { EditorChangeHunk } from "../domain/editorChangeMarkers";
 import type { Breakpoint } from "../domain/debug";
@@ -15254,6 +15255,38 @@ class Foo
     expect(editorSurfaceMocks.props?.options).not.toBe(optionsBefore);
     expect(editorSurfaceMocks.props?.options).toEqual(
       expect.objectContaining({ fontSize: 20 }),
+    );
+  });
+
+  it("lets Monaco derive line height from a restored large editor font size", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const value = 1;\n",
+      language: "typescript",
+      name: "example.ts",
+      path: "/workspace/src/example.ts",
+      savedContent: "",
+    };
+    const model: FakeModel = {
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    editorSurfaceMocks.editor = createEditor(model);
+    editorSurfaceMocks.monaco = createMonaco(model);
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          editorFontSize: maxEditorFontSize,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(editorSurfaceMocks.props?.options).toEqual(
+      expect.objectContaining({
+        fontSize: maxEditorFontSize,
+        lineHeight: 0,
+      }),
     );
   });
 

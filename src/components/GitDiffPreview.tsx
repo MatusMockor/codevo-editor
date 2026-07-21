@@ -53,6 +53,11 @@ type DiffFallbackReason = "binary" | "large" | "metadata" | "unchanged" | null;
 
 const MAX_DIFF_CONTENT_BYTES = 2_000_000;
 const MAX_DIFF_LINE_COUNT = 50_000;
+const DIFF_EDITOR_LINE_HEIGHT_RATIO = 1.5;
+
+function diffEditorLineHeight(fontSize: number): number {
+  return Math.max(8, Math.round(fontSize * DIFF_EDITOR_LINE_HEIGHT_RATIO));
+}
 
 interface LoadedGitDiffHunks {
   hunks: GitDiffHunk[];
@@ -485,7 +490,11 @@ export function GitDiffPreview({
               fontLigatures,
               fontSize: editorFontSize,
               ignoreTrimWhitespace: false,
-              lineHeight: 20,
+              // DiffEditor forwards shared options through a second reactive
+              // layer to both inner editors. Resolve Monaco's macOS auto line
+              // height here so a restored large font never reaches that path
+              // with the zero sentinel.
+              lineHeight: diffEditorLineHeight(editorFontSize),
               minimap: { enabled: false },
               modifiedAriaLabel: "Current file content",
               originalAriaLabel: "Base file content",

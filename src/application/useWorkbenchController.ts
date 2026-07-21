@@ -217,6 +217,120 @@ import {
   replaceWorkbenchNoticeGroup,
   type WorkbenchNotice,
 } from "./workbenchNotice";
+
+interface WorkspaceTrustIntent {
+  owner: WorkspaceRuntimeOwner;
+  revision: number;
+  rootPath: string;
+  trusted: boolean;
+}
+
+interface WorkspaceTrustIntentResult {
+  intent: WorkspaceTrustIntent;
+  trust: WorkspaceTrustState;
+}
+
+function createWorkspaceTrustIntentCoordinator() {
+  const desiredByOwner = new Map<string, WorkspaceTrustIntent>();
+  const mutationByOwner = new Map<
+    string,
+    Promise<WorkspaceTrustIntentResult>
+  >();
+  let nextRevision = 0;
+
+  const desiredTrust = (
+    owner: WorkspaceRuntimeOwner,
+    rootPath: string,
+  ): boolean | null => {
+    const intent = desiredByOwner.get(owner.ownerKey);
+    if (!intent) {
+      return null;
+    }
+
+    if (
+      !workspaceRootKeysEqual(intent.owner.executionRoot, owner.executionRoot)
+    ) {
+      return null;
+    }
+
+    if (!workspaceRootKeysEqual(intent.rootPath, rootPath)) {
+      return null;
+    }
+
+    return intent.trusted;
+  };
+
+  const request = (
+    owner: WorkspaceRuntimeOwner,
+    rootPath: string,
+    trusted: boolean,
+  ): WorkspaceTrustIntent => {
+    const intent = {
+      owner,
+      revision: ++nextRevision,
+      rootPath,
+      trusted,
+    };
+    desiredByOwner.set(owner.ownerKey, intent);
+    return intent;
+  };
+
+  const persist = (
+    ownerKey: string,
+    gateway: WorkspaceTrustGateway,
+  ): Promise<WorkspaceTrustIntentResult> => {
+    const existing = mutationByOwner.get(ownerKey);
+    if (existing) {
+      return existing;
+    }
+
+    let mutation: Promise<WorkspaceTrustIntentResult>;
+    mutation = (async () => {
+      while (true) {
+        const intent = desiredByOwner.get(ownerKey);
+        if (!intent) {
+          throw new Error("Workspace trust intent is unavailable.");
+        }
+
+        let trust: WorkspaceTrustState;
+        try {
+          trust = await gateway.setTrust(intent.rootPath, intent.trusted);
+        } catch (error) {
+          const latest = desiredByOwner.get(ownerKey);
+          if (latest && latest.revision !== intent.revision) {
+            continue;
+          }
+
+          if (latest?.revision === intent.revision) {
+            desiredByOwner.delete(ownerKey);
+          }
+
+          throw error;
+        }
+
+        const latest = desiredByOwner.get(ownerKey);
+        if (latest && latest.revision !== intent.revision) {
+          continue;
+        }
+
+        return { intent, trust };
+      }
+    })().finally(() => {
+      if (mutationByOwner.get(ownerKey) === mutation) {
+        mutationByOwner.delete(ownerKey);
+      }
+    });
+    mutationByOwner.set(ownerKey, mutation);
+    return mutation;
+  };
+
+  const release = (ownerKey: string): void => {
+    desiredByOwner.delete(ownerKey);
+    mutationByOwner.delete(ownerKey);
+  };
+
+  return { desiredTrust, persist, release, request };
+}
 import {
   activeDotenvLocalDiagnosticNotices as buildActiveDotenvLocalDiagnosticNotices,
   activePhpLocalDiagnosticNotices as buildActivePhpLocalDiagnosticNotices,
@@ -1092,6 +1206,26 @@ export function useWorkbenchController(
   const autoStartedJavaScriptTypeScriptLanguageServerRootRef = useRef<
     string | null
   >(null);
+  const javaScriptTypeScriptTrustAutostartRef = useRef<{
+    owner: WorkspaceRuntimeOwner;
+    promise: Promise<void>;
+    revision: number;
+    trustRevision: number;
+    typeScriptVersionPreference: WorkspaceSettings["javaScriptTypeScriptVersion"];
+  } | null>(null);
+  const workspaceTrustRevisionByOwnerRef = useRef<Record<string, number>>({});
+  const workspaceTrustIntentCoordinatorRef = useRef(
+    createWorkspaceTrustIntentCoordinator(),
+  );
+  const workspaceTrustRevocationByOwnerRef = useRef<
+    Record<
+      string,
+      {
+        owner: WorkspaceRuntimeOwner;
+        promise: Promise<void>;
+      }
+    >
+  >({});
   const intelligenceModeRef = useRef<IntelligenceMode>("basic");
   const {
     documentVersionsRef,
@@ -1342,15 +1476,31 @@ export function useWorkbenchController(
   );
   const workspaceRuntimeOwnerClaimsRef =
     useRef<WorkspaceRuntimeOwnerClaimRegistry>({});
+  const releaseWorkspaceTrustOwner = useCallback((ownerKey: string) => {
+    workspaceTrustIntentCoordinatorRef.current.release(ownerKey);
+    delete workspaceTrustRevisionByOwnerRef.current[ownerKey];
+    if (
+      javaScriptTypeScriptTrustAutostartRef.current?.owner.ownerKey === ownerKey
+    ) {
+      javaScriptTypeScriptTrustAutostartRef.current = null;
+    }
+  }, []);
   const retireWorkspaceRuntimeOwnerClaim = useCallback(
     (ownerKey: string, expectedGeneration?: number | null) => {
+      const claimedOwner = workspaceRuntimeOwnerClaimsRef.current[ownerKey];
       retireClaimedWorkspaceRuntimeOwner(
         workspaceRuntimeOwnerClaimsRef.current,
         ownerKey,
         expectedGeneration,
       );
+      if (
+        claimedOwner &&
+        workspaceRuntimeOwnerClaimsRef.current[ownerKey] !== claimedOwner
+      ) {
+        releaseWorkspaceTrustOwner(ownerKey);
+      }
     },
-    [],
+    [releaseWorkspaceTrustOwner],
   );
   const resolveWorkspaceRuntimeOwnerForDiagnosticsEvent = useCallback(
     (
@@ -2791,6 +2941,146 @@ export function useWorkbenchController(
     reportLanguageServerErrorForActiveWorkspaceRoot,
     reportErrorForActiveWorkspaceRoot,
   });
+
+  const stopProjectLanguageServersAfterTrustRevocation = useCallback(
+    async (requestedOwner: WorkspaceRuntimeOwner) => {
+      const inFlight =
+        workspaceTrustRevocationByOwnerRef.current[requestedOwner.ownerKey];
+      if (
+        inFlight &&
+        workspaceRootKeysEqual(
+          inFlight.owner.executionRoot,
+          requestedOwner.executionRoot,
+        )
+      ) {
+        await inFlight.promise;
+        return;
+      }
+
+      const promise = Promise.all([
+        stopLanguageServerRuntime(
+          requestedOwner.executionRoot,
+          requestedOwner,
+        ),
+        stopJavaScriptTypeScriptLanguageServerRuntime(
+          requestedOwner.executionRoot,
+          requestedOwner,
+        ),
+      ]).then(() => undefined);
+      workspaceTrustRevocationByOwnerRef.current[requestedOwner.ownerKey] = {
+        owner: requestedOwner,
+        promise,
+      };
+
+      try {
+        await promise;
+      } finally {
+        if (
+          workspaceTrustRevocationByOwnerRef.current[requestedOwner.ownerKey]
+            ?.promise === promise
+        ) {
+          delete workspaceTrustRevocationByOwnerRef.current[
+            requestedOwner.ownerKey
+          ];
+        }
+      }
+    },
+    [
+      stopJavaScriptTypeScriptLanguageServerRuntime,
+      stopLanguageServerRuntime,
+    ],
+  );
+
+  const refreshJavaScriptTypeScriptPlanAfterTrustGrant = useCallback(
+    async (
+      requestedOwner: WorkspaceRuntimeOwner,
+      requestedRevision: number,
+      requestedTrustRevision: number,
+      typeScriptVersionPreference: WorkspaceSettings[
+        "javaScriptTypeScriptVersion"
+      ],
+    ) => {
+      const requestIsCurrent = () => {
+        const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
+        if (openWorkspaceRequestTokenRef.current !== requestedRevision) {
+          return false;
+        }
+
+        if (!currentOwner || currentOwner.ownerKey !== requestedOwner.ownerKey) {
+          return false;
+        }
+
+        if (
+          !workspaceRootKeysEqual(
+            currentOwner.executionRoot,
+            requestedOwner.executionRoot,
+          )
+        ) {
+          return false;
+        }
+
+        return (
+          (workspaceTrustRevisionByOwnerRef.current[
+            requestedOwner.ownerKey
+          ] ?? 0) === requestedTrustRevision
+        );
+      };
+      if (!requestIsCurrent()) {
+        return;
+      }
+
+      const inFlight = javaScriptTypeScriptTrustAutostartRef.current;
+      if (
+        inFlight &&
+        inFlight.revision === requestedRevision &&
+        inFlight.trustRevision === requestedTrustRevision &&
+        inFlight.typeScriptVersionPreference === typeScriptVersionPreference &&
+        inFlight.owner.ownerKey === requestedOwner.ownerKey &&
+        workspaceRootKeysEqual(
+          inFlight.owner.executionRoot,
+          requestedOwner.executionRoot,
+        )
+      ) {
+        await inFlight.promise;
+        return;
+      }
+
+      let promise: Promise<void>;
+      promise = (async () => {
+        if (!requestIsCurrent()) {
+          return;
+        }
+
+        await refreshJavaScriptTypeScriptLanguageServerPlan(
+          requestedOwner.executionRoot,
+          typeScriptVersionPreference,
+          requestedOwner,
+          () =>
+            requestIsCurrent() &&
+            javaScriptTypeScriptTrustAutostartRef.current?.promise === promise,
+        );
+      })();
+      javaScriptTypeScriptTrustAutostartRef.current = {
+        owner: requestedOwner,
+        promise,
+        revision: requestedRevision,
+        trustRevision: requestedTrustRevision,
+        typeScriptVersionPreference,
+      };
+
+      try {
+        await promise;
+      } finally {
+        if (javaScriptTypeScriptTrustAutostartRef.current?.promise === promise) {
+          javaScriptTypeScriptTrustAutostartRef.current = null;
+        }
+      }
+    },
+    [
+      refreshJavaScriptTypeScriptLanguageServerPlan,
+      resolveCurrentWorkspaceRuntimeOwner,
+    ],
+  );
 
   const isLanguageServerSessionActiveForRoot = useCallback(
     (rootPath: string, sessionId: number, owner?: WorkspaceRuntimeOwner) => {
@@ -5848,7 +6138,10 @@ export function useWorkbenchController(
         resolvedTabPath;
       const runtimeOwner =
         workspaceRuntimeOwnerByTabRef.current[resolvedTabPath] ??
-        workspaceRuntimeOwnerByTabRef.current[path];
+        workspaceRuntimeOwnerByTabRef.current[path] ??
+        (workspaceRootKeysEqual(currentWorkspaceRootRef.current, path)
+          ? resolveCurrentWorkspaceRuntimeOwner()
+          : null);
       await closeWorkspaceTabWithLifecycle(path);
 
       const resolvedTabStillOpen = appSettingsRef.current.workspaceTabs.some(
@@ -5872,6 +6165,7 @@ export function useWorkbenchController(
       delete workspaceRuntimeOwnerByTabRef.current[resolvedTabPath];
       if (runtimeOwner) {
         delete hasPhpWorkspaceByOwnerRef.current[runtimeOwner.ownerKey];
+        releaseWorkspaceTrustOwner(runtimeOwner.ownerKey);
       }
 
       recentlyClosedTabsRef.current = clearRecentlyClosedTabs(
@@ -5884,7 +6178,12 @@ export function useWorkbenchController(
           : createLegacyEditorSessionOwnerKey(resolvedTabPath),
       );
     },
-    [closeWorkspaceTabWithLifecycle, workspaceSettingsByRoot],
+    [
+      closeWorkspaceTabWithLifecycle,
+      releaseWorkspaceTrustOwner,
+      resolveCurrentWorkspaceRuntimeOwner,
+      workspaceSettingsByRoot,
+    ],
   );
 
   const recentlyClosedDocumentViewState = useCallback(
@@ -8800,34 +9099,89 @@ export function useWorkbenchController(
       return;
     }
 
-    const trusted = !workspaceTrust?.trusted;
     const requestedRoot = workspaceRoot;
+    const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
+    if (!requestedOwner) {
+      return;
+    }
+
+    const trustIntentCoordinator = workspaceTrustIntentCoordinatorRef.current;
+    const desiredTrust = trustIntentCoordinator.desiredTrust(
+      requestedOwner,
+      requestedRoot,
+    );
+    const trusted = !(desiredTrust ?? workspaceTrust?.trusted ?? false);
+    const trustIntent = trustIntentCoordinator.request(
+      requestedOwner,
+      requestedRoot,
+      trusted,
+    );
+    const requestedRevision = openWorkspaceRequestTokenRef.current;
+    workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] =
+      trustIntent.revision;
+    if (!trusted) {
+      javaScriptTypeScriptTrustAutostartRef.current = null;
+    }
+    const requestedTrustRevision = trustIntent.revision;
+    const requestIsCurrent = () => {
+      const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
+      if (openWorkspaceRequestTokenRef.current !== requestedRevision) {
+        return false;
+      }
+
+      if (!currentOwner) {
+        return false;
+      }
+
+      if (currentOwner.ownerKey !== requestedOwner.ownerKey) {
+        return false;
+      }
+
+      return (
+        workspaceRootKeysEqual(
+          currentOwner.executionRoot,
+          requestedOwner.executionRoot,
+        ) &&
+        (workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] ??
+          0) === requestedTrustRevision
+      );
+    };
 
     try {
-      const trust = await workspaceTrustGateway.setTrust(
-        requestedRoot,
-        trusted,
+      const result = await trustIntentCoordinator.persist(
+        requestedOwner.ownerKey,
+        workspaceTrustGateway,
       );
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!requestIsCurrent()) {
         return;
       }
 
+      const trust = result.trust;
       setWorkspaceTrust(trust);
       setMessage(
         trust.trusted ? "Workspace trusted." : "Workspace trust revoked.",
       );
 
       if (!trust.trusted) {
-        await stopLanguageServerRuntime(requestedRoot);
+        await stopProjectLanguageServersAfterTrustRevocation(requestedOwner);
 
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          )
-        ) {
+        if (!requestIsCurrent()) {
+          return;
+        }
+      }
+
+      if (
+        trust.trusted &&
+        workspaceSettingsRef.current.javaScriptTypeScriptService === "auto"
+      ) {
+        await refreshJavaScriptTypeScriptPlanAfterTrustGrant(
+          requestedOwner,
+          requestedRevision,
+          requestedTrustRevision,
+          workspaceSettingsRef.current.javaScriptTypeScriptVersion,
+        );
+
+        if (!requestIsCurrent()) {
           return;
         }
       }
@@ -8838,12 +9192,14 @@ export function useWorkbenchController(
 
       await refreshLanguageServerPlan(requestedRoot);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!requestIsCurrent()) {
         return;
       }
     } catch (error) {
+      if (!requestIsCurrent()) {
+        return;
+      }
+
       reportErrorForActiveWorkspaceRoot(
         requestedRoot,
         "Workspace Trust",
@@ -8851,11 +9207,14 @@ export function useWorkbenchController(
       );
     }
   }, [
+    refreshJavaScriptTypeScriptPlanAfterTrustGrant,
     refreshLanguageServerPlan,
     reportErrorForActiveWorkspaceRoot,
-    stopLanguageServerRuntime,
+    resolveCurrentWorkspaceRuntimeOwner,
+    stopProjectLanguageServersAfterTrustRevocation,
     workspaceDescriptor,
     workspaceRoot,
+    workspaceSettingsRef,
     workspaceTrust,
     workspaceTrustGateway,
   ]);
@@ -8867,6 +9226,40 @@ export function useWorkbenchController(
       nextTrusted: boolean | null,
     ) => {
       const requestedRoot = workspaceRoot;
+      const requestedOwner = resolveCurrentWorkspaceRuntimeOwner();
+      const requestedRevision = openWorkspaceRequestTokenRef.current;
+      const trustIntentCoordinator =
+        workspaceTrustIntentCoordinatorRef.current;
+      const desiredTrust =
+        requestedOwner && requestedRoot
+          ? trustIntentCoordinator.desiredTrust(requestedOwner, requestedRoot)
+          : null;
+      const pendingTrustAutostart =
+        requestedOwner !== null &&
+        javaScriptTypeScriptTrustAutostartRef.current?.owner.ownerKey ===
+          requestedOwner.ownerKey;
+      const requestsTrustChange =
+        requestedOwner !== null &&
+        requestedRoot !== null &&
+        nextTrusted !== null &&
+        (nextTrusted !== (desiredTrust ?? workspaceTrust?.trusted) ||
+          (nextTrusted && pendingTrustAutostart));
+      const trustIntent =
+        requestedOwner && requestedRoot && requestsTrustChange
+          ? trustIntentCoordinator.request(
+              requestedOwner,
+              requestedRoot,
+              nextTrusted as boolean,
+            )
+          : null;
+      if (requestedOwner && trustIntent) {
+        workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] =
+          trustIntent.revision;
+        if (!nextTrusted) {
+          javaScriptTypeScriptTrustAutostartRef.current = null;
+        }
+      }
+      const requestedTrustRevision = trustIntent?.revision ?? 0;
       const requestedRootGeneration = requestedRoot
         ? (workspaceCloseGenerationByRootRef.current[
             normalizedWorkspaceRootKey(requestedRoot)
@@ -8877,13 +9270,42 @@ export function useWorkbenchController(
           return false;
         }
 
+        if (!requestedOwner) {
+          return false;
+        }
+
+        if (openWorkspaceRequestTokenRef.current !== requestedRevision) {
+          return false;
+        }
+
+        const currentOwner = resolveCurrentWorkspaceRuntimeOwner();
+        if (!currentOwner || currentOwner.ownerKey !== requestedOwner.ownerKey) {
+          return false;
+        }
+
+        if (
+          !workspaceRootKeysEqual(
+            currentOwner.executionRoot,
+            requestedOwner.executionRoot,
+          )
+        ) {
+          return false;
+        }
+
         const currentRootGeneration =
           workspaceCloseGenerationByRootRef.current[
             normalizedWorkspaceRootKey(requestedRoot)
           ] ?? 0;
         return (
           currentRootGeneration === requestedRootGeneration &&
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
+          workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            requestedRoot,
+          ) &&
+          (!requestsTrustChange ||
+            (workspaceTrustRevisionByOwnerRef.current[
+              requestedOwner.ownerKey
+            ] ?? 0) === requestedTrustRevision)
         );
       };
 
@@ -8896,6 +9318,10 @@ export function useWorkbenchController(
           if (!currentWorkspaceRootRef.current) {
             setMessage("Settings saved.");
           }
+          return;
+        }
+
+        if (!requestedOwner) {
           return;
         }
 
@@ -9028,19 +9454,38 @@ export function useWorkbenchController(
           }
         }
 
-        if (nextTrusted !== null && nextTrusted !== workspaceTrust?.trusted) {
-          const trust = await workspaceTrustGateway.setTrust(
-            requestedRoot,
-            nextTrusted,
+        if (trustIntent) {
+          const result = await trustIntentCoordinator.persist(
+            requestedOwner.ownerKey,
+            workspaceTrustGateway,
           );
           if (!requestIsCurrent()) {
             return;
           }
 
+          const trust = result.trust;
           setWorkspaceTrust(trust);
 
           if (!trust.trusted) {
-            await stopLanguageServerRuntime(requestedRoot);
+            await stopProjectLanguageServersAfterTrustRevocation(
+              requestedOwner,
+            );
+
+            if (!requestIsCurrent()) {
+              return;
+            }
+          }
+
+          if (
+            trust.trusted &&
+            resolvedWorkspaceSettings.javaScriptTypeScriptService === "auto"
+          ) {
+            await refreshJavaScriptTypeScriptPlanAfterTrustGrant(
+              requestedOwner,
+              requestedRevision,
+              requestedTrustRevision,
+              resolvedWorkspaceSettings.javaScriptTypeScriptVersion,
+            );
 
             if (!requestIsCurrent()) {
               return;
@@ -9112,6 +9557,10 @@ export function useWorkbenchController(
 
         setMessage("Settings saved.");
       } catch (error) {
+        if (requestedRoot && !requestIsCurrent()) {
+          return;
+        }
+
         reportErrorForActiveWorkspaceRoot(requestedRoot, "Settings", error);
       }
     },
@@ -9121,13 +9570,16 @@ export function useWorkbenchController(
       persistAppSettings,
       persistWorkspaceSettings,
       refreshLanguageServerPlan,
+      refreshJavaScriptTypeScriptPlanAfterTrustGrant,
       reportErrorForActiveWorkspaceRoot,
+      resolveCurrentWorkspaceRuntimeOwner,
       runGitRepositoryDiscovery,
       runPhpWorkspaceProbe,
       smartModeGateway,
       startInitialIndexScan,
       stopBackgroundProjectRuntimes,
       stopLanguageServerRuntime,
+      stopProjectLanguageServersAfterTrustRevocation,
       workspaceDescriptor,
       workspaceIdentityDescriptor,
       workspaceRoot,

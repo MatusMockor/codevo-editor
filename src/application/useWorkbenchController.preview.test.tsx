@@ -3818,7 +3818,7 @@ describe("useWorkbenchController preview tabs", () => {
     ).toBe(false);
   });
 
-  it("does not continue stale workspace trust toggles after stopping PHP runtime", async () => {
+  it("does not continue stale workspace trust revocation after stopping project language runtimes", async () => {
     const stopRuntime = createDeferred<LanguageServerRuntimeStatus>();
     const languageServerRuntimeGateway: LanguageServerRuntimeGateway = {
       getStatus: vi.fn(async (rootPath) => ({
@@ -3859,6 +3859,9 @@ describe("useWorkbenchController preview tabs", () => {
       expect(languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
         "/workspace-a",
       );
+      expect(
+        dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+      ).toHaveBeenCalledWith("/workspace-a");
     });
 
     await act(async () => {
@@ -17345,6 +17348,939 @@ describe("useWorkbenchController preview tabs", () => {
       validationEnabled: true,
     });
     expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
+  it("starts only the trusted project's JavaScript and TypeScript service after trust is granted", async () => {
+    const trustedRoots = new Set<string>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({
+        rootPath,
+        trusted: trustedRoots.has(rootPath),
+      })),
+      setTrust: vi.fn(async (rootPath, trusted) => {
+        if (trusted) {
+          trustedRoots.add(rootPath);
+        }
+
+        if (!trusted) {
+          trustedRoots.delete(rootPath);
+        }
+
+        return { rootPath, trusted };
+      }),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(async (rootPath) =>
+        trustedRoots.has(rootPath)
+          ? readyJavaScriptTypeScriptPlan(rootPath)
+          : {
+              command: null,
+              initializeRequest: null,
+              message: "Trust this workspace to start TypeScript.",
+              provider: "typeScriptLanguageServer" as const,
+              status: "unavailable" as const,
+            },
+      ),
+      planPhpLanguageServer: vi.fn(),
+    };
+    const workspaceDetectionGateway: WorkbenchWorkspaceGateways["detection"] = {
+      detectWorkspace: vi.fn(async (rootPath) => ({
+        ...javaScriptTypeScriptWorkspaceDescriptor(),
+        rootPath,
+      })),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+      javaScriptTypeScriptRuntimeStatus: {
+        capabilities: emptyLanguageServerCapabilities(),
+        kind: "running",
+        sessionId: 41,
+      },
+      languageServerGateway,
+      workspaceDetectionGateway,
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        javaScriptTypeScriptService: "auto",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust).toEqual({
+        rootPath: "/workspace-a",
+        trusted: false,
+      });
+    });
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await getWorkbench().toggleWorkspaceTrust();
+    });
+    await vi.waitFor(() => {
+      expect(
+        dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+      ).toHaveBeenCalledWith("/workspace-a", expect.any(Object));
+    });
+
+    expect(
+      vi
+        .mocked(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start)
+        .mock.calls.map(([rootPath]) => rootPath),
+    ).toEqual(["/workspace-a"]);
+    expect(
+      vi
+        .mocked(languageServerGateway.planJavaScriptTypeScriptLanguageServer)
+        .mock.calls.some(([rootPath]) => rootPath === "/workspace-b"),
+    ).toBe(false);
+    expect(dependencies.languageServerRuntimeGateway.start).not.toHaveBeenCalled();
+  });
+
+  it("stops both current project language runtimes when settings revoke trust", async () => {
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a", "/workspace-b"],
+      },
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+    });
+    vi.mocked(dependencies.languageServerRuntimeGateway.stop).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        false,
+      );
+    });
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledWith(
+      "/workspace-a",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledWith("/workspace-a");
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalledWith(
+      "/workspace-b",
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).not.toHaveBeenCalledWith("/workspace-b");
+  });
+
+  it("deduplicates overlapping trust and settings grants before TypeScript autostart", async () => {
+    const trustedRoots = new Set<string>();
+    const trustedPlan = createDeferred<LanguageServerPlan>();
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace",
+    };
+    const workspaceSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "basic" as const,
+      javaScriptTypeScriptService: "auto" as const,
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(async (rootPath) => {
+        if (!trustedRoots.has(rootPath)) {
+          return {
+            command: null,
+            initializeRequest: null,
+            message: "Trust this workspace to start TypeScript.",
+            provider: "typeScriptLanguageServer" as const,
+            status: "unavailable" as const,
+          };
+        }
+
+        return trustedPlan.promise;
+      }),
+      planPhpLanguageServer: vi.fn(),
+    };
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+      setTrust: vi.fn(async (rootPath, trusted) => {
+        if (trusted) {
+          trustedRoots.add(rootPath);
+        }
+
+        return { rootPath, trusted };
+      }),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings,
+      languageServerGateway,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings,
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    });
+    vi.mocked(
+      languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).mockClear();
+
+    let togglePromise: Promise<void> | null = null;
+    let settingsPromise: Promise<void> | null = null;
+    await act(async () => {
+      togglePromise = getWorkbench().toggleWorkspaceTrust();
+      settingsPromise = getWorkbench().saveWorkbenchSettings(
+        appSettings,
+        workspaceSettings,
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      trustedPlan.resolve(readyJavaScriptTypeScriptPlan("/workspace"));
+      await Promise.all([togglePromise, settingsPromise]);
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledWith("/workspace", expect.any(Object));
+  });
+
+  it("keeps the latest TypeScript preference when trust plans overlap", async () => {
+    const bundledPlan = createDeferred<LanguageServerPlan>();
+    const workspacePlan = createDeferred<LanguageServerPlan>();
+    const trustedRoots = new Set<string>();
+    let workspacePlanRequests = 0;
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace",
+    };
+    const bundledSettings = {
+      ...defaultWorkspaceSettings(),
+      intelligenceMode: "basic" as const,
+      javaScriptTypeScriptService: "auto" as const,
+      javaScriptTypeScriptVersion: "bundled" as const,
+    };
+    const workspaceSettings = {
+      ...bundledSettings,
+      javaScriptTypeScriptVersion: "workspace" as const,
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(
+        async (rootPath, options) => {
+          if (!trustedRoots.has(rootPath)) {
+            return {
+              command: null,
+              initializeRequest: null,
+              message: "Trust this workspace to start TypeScript.",
+              provider: "typeScriptLanguageServer" as const,
+              status: "unavailable" as const,
+            };
+          }
+
+          if (options.typeScriptVersionPreference === "bundled") {
+            return bundledPlan.promise;
+          }
+
+          workspacePlanRequests += 1;
+          if (workspacePlanRequests === 1) {
+            return workspacePlan.promise;
+          }
+
+          return {
+            ...readyJavaScriptTypeScriptPlan(rootPath),
+            message: "Workspace TypeScript plan.",
+          };
+        },
+      ),
+      planPhpLanguageServer: vi.fn(),
+    };
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+      setTrust: vi.fn(async (rootPath, trusted) => {
+        if (trusted) {
+          trustedRoots.add(rootPath);
+        }
+
+        return { rootPath, trusted };
+      }),
+    };
+    const { getWorkbench } = renderController({
+      appSettings,
+      languageServerGateway,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: bundledSettings,
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    });
+    vi.mocked(
+      languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).mockClear();
+
+    let togglePromise: Promise<void> | null = null;
+    let settingsPromise: Promise<void> | null = null;
+    await act(async () => {
+      togglePromise = getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+      settingsPromise = getWorkbench().saveWorkbenchSettings(
+        appSettings,
+        workspaceSettings,
+        true,
+      );
+      await flushAsyncTurns(24);
+    });
+
+    expect(
+      vi
+        .mocked(languageServerGateway.planJavaScriptTypeScriptLanguageServer)
+        .mock.calls.map(
+          ([, options]) => options?.typeScriptVersionPreference,
+        ),
+    ).toEqual(["bundled", "workspace"]);
+
+    await act(async () => {
+      workspacePlan.resolve({
+        ...readyJavaScriptTypeScriptPlan("/workspace"),
+        message: "Workspace TypeScript plan.",
+      });
+      await flushAsyncTurns(24);
+      bundledPlan.resolve({
+        ...readyJavaScriptTypeScriptPlan("/workspace"),
+        message: "Bundled TypeScript plan.",
+      });
+      await Promise.all([togglePromise, settingsPromise]);
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().javaScriptTypeScriptLanguageServerPlan?.message).toBe(
+      "Workspace TypeScript plan.",
+    );
+    expect(
+      vi.mocked(languageServerGateway.planJavaScriptTypeScriptLanguageServer)
+        .mock.calls[
+        vi.mocked(languageServerGateway.planJavaScriptTypeScriptLanguageServer)
+          .mock.calls.length - 1
+      ]?.[1]?.typeScriptVersionPreference,
+    ).toBe("workspace");
+  });
+
+  it("persists a settings revocation requested while a toolbar grant is pending", async () => {
+    const grant = createDeferred<WorkspaceTrustState>();
+    const revoke = createDeferred<WorkspaceTrustState>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+      setTrust: vi.fn((_rootPath, trusted) =>
+        trusted ? grant.promise : revoke.promise,
+      ),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(async (rootPath) =>
+        readyJavaScriptTypeScriptPlan(rootPath),
+      ),
+      planPhpLanguageServer: vi.fn(),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        javaScriptTypeScriptService: "auto",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    });
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).mockClear();
+
+    let grantPromise: Promise<void> | null = null;
+    let revokePromise: Promise<void> | null = null;
+    await act(async () => {
+      grantPromise = getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+      revokePromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        false,
+      );
+      await flushAsyncTurns(12);
+    });
+
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(1);
+    expect(workspaceTrustGateway.setTrust).toHaveBeenLastCalledWith(
+      "/workspace",
+      true,
+    );
+
+    await act(async () => {
+      grant.resolve({ rootPath: "/workspace", trusted: true });
+      await flushAsyncTurns(12);
+    });
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(2);
+    expect(workspaceTrustGateway.setTrust).toHaveBeenLastCalledWith(
+      "/workspace",
+      false,
+    );
+
+    await act(async () => {
+      revoke.resolve({ rootPath: "/workspace", trusted: false });
+      await Promise.all([grantPromise, revokePromise]);
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists a toolbar grant requested while a settings revocation is pending", async () => {
+    const revoke = createDeferred<WorkspaceTrustState>();
+    const grant = createDeferred<WorkspaceTrustState>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: true })),
+      setTrust: vi.fn((_rootPath, trusted) =>
+        trusted ? grant.promise : revoke.promise,
+      ),
+    };
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(async (rootPath) =>
+        readyJavaScriptTypeScriptPlan(rootPath),
+      ),
+      planPhpLanguageServer: vi.fn(),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      languageServerGateway,
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        javaScriptTypeScriptService: "auto",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+    });
+    vi.mocked(dependencies.languageServerRuntimeGateway.stop).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).mockClear();
+
+    let revokePromise: Promise<void> | null = null;
+    let grantPromise: Promise<void> | null = null;
+    await act(async () => {
+      revokePromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        false,
+      );
+      await flushAsyncTurns(12);
+      grantPromise = getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+    });
+
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(1);
+    expect(workspaceTrustGateway.setTrust).toHaveBeenLastCalledWith(
+      "/workspace",
+      false,
+    );
+
+    await act(async () => {
+      revoke.resolve({ rootPath: "/workspace", trusted: false });
+      await flushAsyncTurns(12);
+    });
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(2);
+    expect(workspaceTrustGateway.setTrust).toHaveBeenLastCalledWith(
+      "/workspace",
+      true,
+    );
+
+    await act(async () => {
+      grant.resolve({ rootPath: "/workspace", trusted: true });
+      await Promise.all([revokePromise, grantPromise]);
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries the persisted trust state after the latest intent fails", async () => {
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+      setTrust: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("trust store unavailable"))
+        .mockImplementationOnce(async (rootPath, trusted) => ({
+          rootPath,
+          trusted,
+        })),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    });
+
+    await act(async () => {
+      await getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+    });
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    expect(workspaceTrustGateway.setTrust).toHaveBeenLastCalledWith(
+      "/workspace",
+      true,
+    );
+
+    await act(async () => {
+      await getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+    });
+
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(2);
+    expect(workspaceTrustGateway.setTrust).toHaveBeenLastCalledWith(
+      "/workspace",
+      true,
+    );
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+  });
+
+  it("releases desired trust when a workspace owner session closes", async () => {
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+      setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
+    };
+    const { getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+        workspaceTabs: ["/workspace"],
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    });
+
+    await act(async () => {
+      await getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+    });
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+
+    await act(async () => {
+      await getWorkbench().closeWorkspaceTab("/workspace");
+      await flushAsyncTurns(12);
+    });
+    expect(getWorkbench().workspaceRoot).toBeNull();
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace");
+      await flushAsyncTurns(24);
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    });
+    vi.mocked(workspaceTrustGateway.setTrust).mockClear();
+
+    await act(async () => {
+      await getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+    });
+
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledExactlyOnceWith(
+      "/workspace",
+      true,
+    );
+  });
+
+  it("drops a trust-grant autostart after replacing its owner at the same root", async () => {
+    const selectedRoot = "/selected/trust-owner-replacement";
+    const firstOwner = trustedDescriptor("ws-trust-owner-a", selectedRoot);
+    const secondOwner = trustedDescriptor("ws-trust-owner-b", selectedRoot);
+    const descriptors = [firstOwner, secondOwner];
+    const firstTrustGrant = createDeferred<WorkspaceTrustState>();
+    const languageServerGateway: LanguageServerGateway = {
+      planJavaScriptTypeScriptLanguageServer: vi.fn(async (rootPath) => ({
+        command: null,
+        initializeRequest: null,
+        message: `Trust ${rootPath} to start TypeScript.`,
+        provider: "typeScriptLanguageServer" as const,
+        status: "unavailable" as const,
+      })),
+      planPhpLanguageServer: vi.fn(),
+    };
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+      setTrust: vi.fn(() => firstTrustGrant.promise),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      languageServerGateway,
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        javaScriptTypeScriptService: "auto",
+      },
+      workspaceTrustGateway,
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(firstOwner);
+
+    let trustPromise: Promise<void> | null = null;
+    await act(async () => {
+      trustPromise = getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    vi.mocked(
+      languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).mockClear();
+
+    await act(async () => {
+      firstTrustGrant.resolve({ rootPath: selectedRoot, trusted: true });
+      await trustPromise;
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    expect(
+      languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("does not stop a same-root replacement when trust revocation completes late", async () => {
+    const selectedRoot = "/selected/trust-revoke-owner-replacement";
+    const firstOwner = trustedDescriptor("ws-trust-revoke-a", selectedRoot);
+    const secondOwner = trustedDescriptor("ws-trust-revoke-b", selectedRoot);
+    const descriptors = [firstOwner, secondOwner];
+    const firstTrustRevocation = createDeferred<WorkspaceTrustState>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: true })),
+      setTrust: vi.fn(() => firstTrustRevocation.promise),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      workspaceIdentityGateway: {
+        getDescriptor: vi.fn(),
+        openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+        openPath: vi.fn(async () => descriptors.shift() ?? secondOwner),
+        unregister: vi.fn(async () => undefined),
+      },
+      workspaceTrustGateway,
+    });
+
+    await act(async () => {
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+
+    let trustPromise: Promise<void> | null = null;
+    await act(async () => {
+      trustPromise = getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+      await getWorkbench().openWorkspaceRoot(selectedRoot);
+      await flushAsyncTurns(24);
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    vi.mocked(dependencies.languageServerRuntimeGateway.stop).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).mockClear();
+
+    await act(async () => {
+      firstTrustRevocation.resolve({ rootPath: selectedRoot, trusted: false });
+      await trustPromise;
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceIdentityDescriptor).toBe(secondOwner);
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates matching toolbar and settings revocations", async () => {
+    const toolbarRevocation = createDeferred<WorkspaceTrustState>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: true })),
+      setTrust: vi.fn(() => toolbarRevocation.promise),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+    });
+    vi.mocked(dependencies.languageServerRuntimeGateway.stop).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).mockClear();
+
+    const saveSettings = getWorkbench().saveWorkbenchSettings;
+    let toolbarPromise: Promise<void> | null = null;
+    let settingsPromise: Promise<void> | null = null;
+    await act(async () => {
+      toolbarPromise = getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+      settingsPromise = saveSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        false,
+      );
+      await flushAsyncTurns(24);
+    });
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      toolbarRevocation.resolve({ rootPath: "/workspace", trusted: false });
+      await Promise.all([toolbarPromise, settingsPromise]);
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a toolbar grant supersede a pending settings revocation", async () => {
+    const settingsRevocation = createDeferred<WorkspaceTrustState>();
+    const toolbarGrant = createDeferred<WorkspaceTrustState>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: true })),
+      setTrust: vi.fn((_rootPath, trusted) =>
+        trusted ? toolbarGrant.promise : settingsRevocation.promise,
+      ),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+    });
+    vi.mocked(dependencies.languageServerRuntimeGateway.stop).mockClear();
+    vi.mocked(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).mockClear();
+
+    const toggleTrust = getWorkbench().toggleWorkspaceTrust;
+    let settingsPromise: Promise<void> | null = null;
+    let toolbarPromise: Promise<void> | null = null;
+    await act(async () => {
+      settingsPromise = getWorkbench().saveWorkbenchSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        false,
+      );
+      await flushAsyncTurns(24);
+      toolbarPromise = toggleTrust();
+      await flushAsyncTurns(12);
+    });
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settingsRevocation.resolve({ rootPath: "/workspace", trusted: false });
+      await flushAsyncTurns(12);
+    });
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(2);
+    expect(workspaceTrustGateway.setTrust).toHaveBeenLastCalledWith(
+      "/workspace",
+      true,
+    );
+
+    await act(async () => {
+      toolbarGrant.resolve({ rootPath: "/workspace", trusted: true });
+      await Promise.all([settingsPromise, toolbarPromise]);
+      await flushAsyncTurns(24);
+    });
+
+    expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+    expect(dependencies.languageServerRuntimeGateway.stop).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("shares runtime shutdown across revocations that overlap after trust changes", async () => {
+    const phpStop = createDeferred<LanguageServerRuntimeStatus>();
+    const typeScriptStop = createDeferred<LanguageServerRuntimeStatus>();
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: true })),
+      setTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(true);
+    });
+    vi.mocked(dependencies.languageServerRuntimeGateway.stop)
+      .mockClear()
+      .mockImplementation(async () => phpStop.promise);
+    vi.mocked(dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop)
+      .mockClear()
+      .mockImplementation(async () => typeScriptStop.promise);
+
+    const saveSettings = getWorkbench().saveWorkbenchSettings;
+    let toolbarPromise: Promise<void> | null = null;
+    let settingsPromise: Promise<void> | null = null;
+    await act(async () => {
+      toolbarPromise = getWorkbench().toggleWorkspaceTrust();
+      await flushAsyncTurns(12);
+    });
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      settingsPromise = saveSettings(
+        getWorkbench().appSettings,
+        getWorkbench().workspaceSettings,
+        false,
+      );
+      await flushAsyncTurns(24);
+    });
+    expect(workspaceTrustGateway.setTrust).toHaveBeenCalledTimes(1);
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      phpStop.resolve({ kind: "stopped", rootPath: "/workspace" });
+      typeScriptStop.resolve({ kind: "stopped", rootPath: "/workspace" });
+      await Promise.all([toolbarPromise, settingsPromise]);
+      await flushAsyncTurns(24);
+    });
+
+    expect(dependencies.languageServerRuntimeGateway.stop).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.stop,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh or start JavaScript and TypeScript service after trust when it is off", async () => {
+    const workspaceTrustGateway: WorkspaceTrustGateway = {
+      getTrust: vi.fn(async (rootPath) => ({ rootPath, trusted: false })),
+      setTrust: vi.fn(async (rootPath, trusted) => ({ rootPath, trusted })),
+    };
+    const { dependencies, getWorkbench } = renderController({
+      appSettings: {
+        ...defaultAppSettings(),
+        recentWorkspacePath: "/workspace",
+      },
+      javaScriptTypeScriptLanguageServerPlan:
+        readyJavaScriptTypeScriptPlan("/workspace"),
+      workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
+      workspaceSettings: {
+        ...defaultWorkspaceSettings(),
+        intelligenceMode: "basic",
+        javaScriptTypeScriptService: "off",
+      },
+      workspaceTrustGateway,
+    });
+    await vi.waitFor(() => {
+      expect(getWorkbench().workspaceTrust?.trusted).toBe(false);
+    });
+    vi.mocked(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).mockClear();
+
+    await act(async () => {
+      await getWorkbench().toggleWorkspaceTrust();
+    });
+    await flushAsyncTurns(12);
+
+    expect(
+      dependencies.languageServerGateway.planJavaScriptTypeScriptLanguageServer,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.javaScriptTypeScriptLanguageServerRuntimeGateway.start,
+    ).not.toHaveBeenCalled();
   });
 
   it("auto-starts JavaScript and TypeScript service while initial runtime status is still unknown", async () => {

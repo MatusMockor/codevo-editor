@@ -184,6 +184,7 @@ export interface LanguageServerRuntimeLifecycle {
     rootPath: string,
     typeScriptVersionPreference?: WorkspaceSettings["javaScriptTypeScriptVersion"],
     owner?: WorkspaceRuntimeOwner,
+    requestIsValid?: () => boolean,
   ) => Promise<LanguageServerPlan | null>;
   clearManualPhpLanguageServerStop: (
     rootPath: string,
@@ -743,6 +744,7 @@ export function useLanguageServerRuntimeLifecycle(
       typeScriptVersionPreference =
         workspaceSettingsRef.current.javaScriptTypeScriptVersion,
       owner?: WorkspaceRuntimeOwner,
+      requestIsValid: () => boolean = () => true,
     ) => {
       const requestedOwner = runtimeOwnerForRoot(rootPath, owner);
       const requestedRevision = ownerRevision(requestedOwner);
@@ -760,6 +762,7 @@ export function useLanguageServerRuntimeLifecycle(
           );
 
         if (
+          requestIsValid() &&
           isOwnerRevisionCurrent(requestedOwner, requestedRevision) &&
           isCurrentRuntimeOwner(requestedOwner)
         ) {
@@ -768,6 +771,10 @@ export function useLanguageServerRuntimeLifecycle(
 
         return plan;
       } catch (error) {
+        if (!requestIsValid()) {
+          return null;
+        }
+
         if (!isOwnerRevisionCurrent(requestedOwner, requestedRevision)) {
           return null;
         }
