@@ -24,7 +24,6 @@ import {
   type LanguageServerRefreshEvent,
   type LanguageServerRefreshGateway,
   type LanguageServerSelectionRange,
-  type LanguageServerSemanticTokens,
   type LanguageServerSignature,
   type LanguageServerSignatureHelp,
   type LanguageServerSignatureHelpContext,
@@ -66,6 +65,13 @@ import {
   type UserSnippet,
 } from "../domain/snippets";
 import type { EditorDocument } from "../domain/workspace";
+import {
+  FEATURE_REQUEST_TIMED_OUT,
+  HOVER_FEATURE_REQUEST_TIMEOUT_MS,
+  observeLanguageServerRequestCancellation,
+  raceInteractiveFeatureRequest,
+  toMonacoSemanticTokens,
+} from "./languageServerRequestCancellation";
 import {
   canonicalWorkspaceEditDocumentVersion,
   mergeAliasedWorkspaceEditDocumentChanges,
@@ -181,25 +187,6 @@ const JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS = [
 const JAVASCRIPT_TYPESCRIPT_LANGUAGE_ID_SET = new Set<string>(JAVASCRIPT_TYPESCRIPT_LANGUAGE_IDS);
 const EXECUTE_LANGUAGE_SERVER_COMMAND_ID =
   "mockor.javascriptTypeScript.executeLanguageServerCommand";
-/**
- * Upper bound (ms) for an interactive hover / navigation request before the
- * provider gives up and resolves to "no result", so a stuck cold language
- * server never leaves the Monaco hover widget showing "Loading…" forever. A
- * warm server answers well under this budget, so the timeout never cancels a
- * legitimate (slower-but-valid) result.
- */
-const INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS = 2500;
-/**
- * Shorter upper bound (ms) for a hover request. Hover is passive information,
- * so the worse outcome is leaving the Monaco "Loading…" placeholder on screen
- * for the full {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS} budget when a cold
- * language server is slow. A warm server answers a hover in well under this
- * budget, so the only behavioural change is that a stuck cold hover tears down
- * its "Loading…" widget in ~700ms instead of 2.5s. Actionable
- * navigation/references/completion requests keep the longer budget.
- */
-const HOVER_FEATURE_REQUEST_TIMEOUT_MS = 700;
-const FEATURE_REQUEST_TIMED_OUT = Symbol("featureRequestTimedOut");
 const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
   tokenModifiers: [
     "declaration",
@@ -241,6 +228,7 @@ const JAVASCRIPT_TYPESCRIPT_SEMANTIC_TOKENS_LEGEND = {
 
 export interface JavaScriptTypeScriptLanguageServerProviderContext {
   applyWorkspaceEdit?: JavaScriptTypeScriptWorkspaceEditApplier;
+  cancelRequest?(rootPath: string, requestId: number): Promise<void>;
   completeFunctionCalls?: boolean;
   featuresGateway: LanguageServerFeaturesGateway;
   flushPendingDocumentChange(path: string): Promise<void>;
@@ -725,7 +713,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
         registry.registerDocumentSemanticTokensProvider(language, {
           onDidChange: semanticTokensRefreshEmitter.event,
           getLegend: () => semanticTokensLegendForActiveRuntime(context),
-          provideDocumentSemanticTokens: (model) => provideDocumentSemanticTokens(context, model),
+          provideDocumentSemanticTokens: (model, _lastResultId, token) =>
+            provideDocumentSemanticTokens(context, model, token),
           releaseDocumentSemanticTokens: () => undefined,
         }),
       );
@@ -735,8 +724,8 @@ export function registerJavaScriptTypeScriptLanguageServerMonacoProviders(
       disposables.push(
         registry.registerDocumentRangeSemanticTokensProvider(language, {
           getLegend: () => semanticTokensLegendForActiveRuntime(context),
-          provideDocumentRangeSemanticTokens: (model, range) =>
-            provideDocumentRangeSemanticTokens(context, model, range),
+          provideDocumentRangeSemanticTokens: (model, range, token) =>
+            provideDocumentRangeSemanticTokens(context, model, range, token),
         }),
       );
     }
@@ -769,7 +758,12 @@ async function provideHover(
     }
 
     const hover = await raceInteractiveFeatureRequest(
-      context.featuresGateway.hover(request.rootPath, request.position),
+      observeLanguageServerRequestCancellation(
+        context.featuresGateway.hover(request.rootPath, request.position),
+        token,
+        request.rootPath,
+        context.cancelRequest,
+      ),
       HOVER_FEATURE_REQUEST_TIMEOUT_MS,
     );
 
@@ -787,6 +781,9 @@ async function provideHover(
 
     return hover ? { contents: [{ value: hover.contents }] } : null;
   } catch (error) {
+    if (token?.isCancellationRequested) {
+      return null;
+    }
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -813,13 +810,18 @@ async function provideCompletionItems(
 
     const languageServerContext = toLanguageServerCompletionContext(completionContext);
     const completion = await raceInteractiveFeatureRequest(
-      languageServerContext
-        ? context.featuresGateway.completion(
-            request.rootPath,
-            request.position,
-            languageServerContext,
-          )
-        : context.featuresGateway.completion(request.rootPath, request.position),
+      observeLanguageServerRequestCancellation(
+        languageServerContext
+          ? context.featuresGateway.completion(
+              request.rootPath,
+              request.position,
+              languageServerContext,
+            )
+          : context.featuresGateway.completion(request.rootPath, request.position),
+        token,
+        request.rootPath,
+        context.cancelRequest,
+      ),
     );
 
     if (completion === FEATURE_REQUEST_TIMED_OUT) {
@@ -871,6 +873,9 @@ async function provideCompletionItems(
       ]),
     };
   } catch (error) {
+    if (token?.isCancellationRequested) {
+      return { suggestions: [] };
+    }
     reportErrorForActiveRequest(context, request, error);
     return { suggestions: [] };
   }
@@ -1253,13 +1258,18 @@ async function provideSignatureHelp(
 
     const languageServerSignatureContext = toLanguageServerSignatureHelpContext(signatureContext);
     const signatureHelp = await raceInteractiveFeatureRequest(
-      languageServerSignatureContext
-        ? context.featuresGateway.signatureHelp(
-            request.rootPath,
-            request.position,
-            languageServerSignatureContext,
-          )
-        : context.featuresGateway.signatureHelp(request.rootPath, request.position),
+      observeLanguageServerRequestCancellation(
+        languageServerSignatureContext
+          ? context.featuresGateway.signatureHelp(
+              request.rootPath,
+              request.position,
+              languageServerSignatureContext,
+            )
+          : context.featuresGateway.signatureHelp(request.rootPath, request.position),
+        token,
+        request.rootPath,
+        context.cancelRequest,
+      ),
     );
 
     if (signatureHelp === FEATURE_REQUEST_TIMED_OUT) {
@@ -1276,6 +1286,9 @@ async function provideSignatureHelp(
 
     return signatureHelp ? toMonacoSignatureHelp(signatureHelp) : null;
   } catch (error) {
+    if (token?.isCancellationRequested) {
+      return null;
+    }
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -1396,7 +1409,7 @@ async function provideDocumentHighlights(
   tracker: DocumentHighlightRequestTracker<Monaco.languages.DocumentHighlight>,
   model: MonacoModel,
   position: MonacoPosition,
-  token: Monaco.CancellationToken,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.DocumentHighlight[] | null> {
   const request = featureRequestContext(context, model, position, "documentHighlight");
 
@@ -1425,7 +1438,7 @@ async function provideDocumentHighlights(
       request.position,
     );
 
-    if (token.isCancellationRequested) {
+    if (token?.isCancellationRequested) {
       return null;
     }
 
@@ -1704,6 +1717,7 @@ async function provideSelectionRanges(
 async function provideDocumentSemanticTokens(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
+  token?: Monaco.CancellationToken,
 ): Promise<Monaco.languages.SemanticTokens | null> {
   const request = documentRequestContext(context, model, "semanticTokens");
 
@@ -1716,7 +1730,12 @@ async function provideDocumentSemanticTokens(
       return null;
     }
 
-    const tokens = await context.featuresGateway.semanticTokens(request.rootPath, request.path);
+    const tokens = await observeLanguageServerRequestCancellation(
+      context.featuresGateway.semanticTokens(request.rootPath, request.path),
+      token,
+      request.rootPath,
+      context.cancelRequest,
+    );
 
     if (!isFeatureRequestActive(context, request)) {
       return null;
@@ -1724,6 +1743,9 @@ async function provideDocumentSemanticTokens(
 
     return toMonacoSemanticTokens(tokens);
   } catch (error) {
+    if (token?.isCancellationRequested) {
+      return null;
+    }
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -1733,6 +1755,7 @@ async function provideDocumentRangeSemanticTokens(
   context: JavaScriptTypeScriptLanguageServerProviderContext,
   model: MonacoModel,
   range: Monaco.Range,
+  token: Monaco.CancellationToken,
 ): Promise<Monaco.languages.SemanticTokens | null> {
   const request = documentRequestContext(context, model, "semanticTokens");
 
@@ -1745,10 +1768,15 @@ async function provideDocumentRangeSemanticTokens(
       return null;
     }
 
-    const tokens = await context.featuresGateway.rangeSemanticTokens(
+    const tokens = await observeLanguageServerRequestCancellation(
+      context.featuresGateway.rangeSemanticTokens(
+        request.rootPath,
+        request.path,
+        toLanguageServerRange(range),
+      ),
+      token,
       request.rootPath,
-      request.path,
-      toLanguageServerRange(range),
+      context.cancelRequest,
     );
 
     if (!isFeatureRequestActive(context, request)) {
@@ -1757,6 +1785,9 @@ async function provideDocumentRangeSemanticTokens(
 
     return toMonacoSemanticTokens(tokens);
   } catch (error) {
+    if (token.isCancellationRequested) {
+      return null;
+    }
     reportErrorForActiveRequest(context, request, error);
     return null;
   }
@@ -2218,10 +2249,7 @@ async function resolveInlayHint(
     return hint;
   }
 
-  const runtimeStatus = runningRuntimeStatusForRoot(
-    context,
-    backedHint.__workspaceRoot,
-  );
+  const runtimeStatus = runningRuntimeStatusForRoot(context, backedHint.__workspaceRoot);
   if (
     runtimeStatus?.sessionId !== backedHint.__languageServerSessionId ||
     runtimeStatus.capabilities.inlayHintResolve !== true
@@ -2402,28 +2430,6 @@ async function flushPendingDocumentChangeForStoredPayload(
   return authority
     ? isCodeActionAuthorityActive(context, authority)
     : isStoredLanguageServerPayloadActive(context, rootPath, sessionId);
-}
-
-/**
- * Races `request` against a timeout (defaulting to
- * {@link INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS}), resolving to
- * {@link FEATURE_REQUEST_TIMED_OUT} when the timeout wins so the caller can tear
- * down the Monaco "Loading…" widget instead of waiting on a cold language
- * server forever. Hover passes the shorter
- * {@link HOVER_FEATURE_REQUEST_TIMEOUT_MS} budget. The timer is always cleared.
- */
-function raceInteractiveFeatureRequest<T>(
-  request: Promise<T>,
-  timeoutMs: number = INTERACTIVE_FEATURE_REQUEST_TIMEOUT_MS,
-): Promise<T | typeof FEATURE_REQUEST_TIMED_OUT> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<typeof FEATURE_REQUEST_TIMED_OUT>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve(FEATURE_REQUEST_TIMED_OUT), timeoutMs);
-  });
-
-  return Promise.race([request, timeout]).finally(() => {
-    clearTimeout(timeoutHandle);
-  });
 }
 
 function isFeatureRequestActive(
@@ -2933,19 +2939,6 @@ function flattenSelectionRange(
   }
 
   return ranges;
-}
-
-function toMonacoSemanticTokens(
-  tokens: LanguageServerSemanticTokens | null,
-): Monaco.languages.SemanticTokens | null {
-  if (!tokens || tokens.data.length === 0) {
-    return null;
-  }
-
-  return {
-    data: Uint32Array.from(tokens.data),
-    ...(tokens.resultId ? { resultId: tokens.resultId } : {}),
-  };
 }
 
 function toMonacoLinkedEditingRanges(

@@ -10,6 +10,7 @@ import type {
   DebugSetBreakpointsActiveRequest,
   DebugSetExpressionRequest,
   DebugSetExpressionResult,
+  DebugSetFunctionBreakpointsRequest,
   DebugRunToLocationRequest,
   DebugScope,
   DebugSetVariableRequest,
@@ -17,9 +18,15 @@ import type {
   DebugVariable,
   DebugVariablePage,
   DebugVariablePageRequest,
+  FunctionBreakpointVerification,
   StackFrame,
   StepKind,
 } from "../domain/debug";
+import {
+  decodeFunctionBreakpointVerificationList,
+  functionBreakpointVerificationsMatch,
+  validateFunctionBreakpointCommandArgs,
+} from "../domain/debugFunctionBreakpoints";
 import { isNodeDebugPort } from "../domain/debug";
 import {
   MAX_DEBUG_EVALUATION_ERROR_BYTES,
@@ -73,6 +80,7 @@ export const DEBUG_IPC_COMMANDS = {
   setBreakpointsActive: "debug_set_breakpoints_active",
   setExceptionPause: "debug_set_exception_pause",
   setExpression: "debug_set_expression",
+  setFunctionBreakpoints: "debug_set_function_breakpoints",
   setVariable: "debug_set_variable",
   stackTrace: "debug_stack_trace",
   start: "debug_start",
@@ -181,6 +189,10 @@ interface DebugIpcContract {
     readonly args: { readonly request: DebugSetBreakpointsActiveRequest };
     readonly result: void;
   };
+  readonly debug_set_function_breakpoints: {
+    readonly args: { readonly request: DebugSetFunctionBreakpointsRequest };
+    readonly result: readonly FunctionBreakpointVerification[];
+  };
   readonly debug_set_exception_pause: {
     readonly args: {
       readonly sessionId: number;
@@ -268,6 +280,16 @@ export async function invokeDebugIpc<Command extends DebugIpcCommand>(
       }
     }
   }
+  if (command === "debug_set_function_breakpoints") {
+    const request = (args as DebugIpcCommandArgs<"debug_set_function_breakpoints">).request;
+    const verification = result as readonly FunctionBreakpointVerification[];
+    if (!functionBreakpointVerificationsMatch(verification, request.breakpoints)) {
+      throw invalidDebugWire(
+        `${command} result`,
+        "one ordered verification per requested function breakpoint",
+      );
+    }
+  }
   if (command === "debug_variables") {
     validateVariablePageForRequest(
       result as DebugVariablePage,
@@ -347,6 +369,10 @@ export function decodeDebugIpcResult<Command extends DebugIpcCommand>(
         decodeBreakpoint,
         MAX_DEBUG_BREAKPOINTS_PER_FILE,
       );
+      break;
+    case "debug_set_function_breakpoints":
+      decoded = decodeFunctionBreakpointVerificationList(value);
+      if (!decoded) throw invalidDebugWire(`${command} result`, "closed verifications");
       break;
     case "debug_stack_trace":
       decoded = decodeArray(value, `${command} result`, decodeStackFrame, MAX_DEBUG_STACK_FRAMES);
@@ -776,6 +802,11 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown): void {
       requireBoolean(request.active, `${command} args.request.active`);
       return;
     }
+    case "debug_set_function_breakpoints": {
+      const error = validateFunctionBreakpointCommandArgs(args);
+      if (error) throw invalidDebugWire(`${command} args.${error.path}`, error.expected);
+      return;
+    }
     case "debug_step":
       requireUnsignedInteger(args.sessionId, `${command} args.sessionId`, U64_MAX);
       if (!STEP_KINDS.has(args.kind)) {
@@ -995,11 +1026,14 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
       requireObjectShape(
         record,
         ["kind", "scriptPath", "args", "env"],
-        ["cwd", "justMyCode"],
+        ["cwd", "envFile", "justMyCode"],
         path,
       );
       requireString(record.scriptPath, `${path}.scriptPath`);
       decodeNodeLaunchOptions(record, path);
+      if (record.envFile !== undefined) {
+        requireString(record.envFile, `${path}.envFile`);
+      }
       decodeNodeDebugJustMyCode(record.justMyCode, `${path}.justMyCode`);
       break;
     case "js-configured-test":

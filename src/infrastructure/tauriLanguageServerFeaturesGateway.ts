@@ -37,13 +37,11 @@ import {
   type LanguageServerWorkspaceEdit,
 } from "../domain/languageServerFeatures";
 
-type InvokeCommand = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<unknown>;
+type InvokeCommand = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 type RuntimeDetector = () => boolean;
 
 const invokeCommand: InvokeCommand = (command, args) => invoke(command, args);
+let nextRequestId = Date.now() * 1_000;
 const DEFAULT_FEATURE_COMMANDS = {
   codeActionResolve: "text_document_code_action_resolve",
   codeActions: "text_document_code_actions",
@@ -103,12 +101,9 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   completionResolve: "javascript_typescript_text_document_completion_resolve",
   declaration: "javascript_typescript_text_document_declaration",
   definition: "javascript_typescript_text_document_definition",
-  sourceDefinition:
-    "javascript_typescript_text_document_source_definition",
-  didChangeConfiguration:
-    "javascript_typescript_workspace_did_change_configuration",
-  didChangeWatchedFiles:
-    "javascript_typescript_workspace_did_change_watched_files",
+  sourceDefinition: "javascript_typescript_text_document_source_definition",
+  didChangeConfiguration: "javascript_typescript_workspace_did_change_configuration",
+  didChangeWatchedFiles: "javascript_typescript_workspace_did_change_watched_files",
   didCreateFiles: "javascript_typescript_workspace_did_create_files",
   didDeleteFiles: "javascript_typescript_workspace_did_delete_files",
   didRenameFiles: "javascript_typescript_workspace_did_rename_files",
@@ -118,8 +113,7 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   documentLinks: "javascript_typescript_text_document_document_links",
   documentSymbols: "javascript_typescript_text_document_document_symbols",
   executeCommand: "javascript_typescript_language_server_execute_command",
-  executeCommandLocations:
-    "javascript_typescript_language_server_execute_command_locations",
+  executeCommandLocations: "javascript_typescript_language_server_execute_command_locations",
   foldingRanges: "javascript_typescript_text_document_folding_ranges",
   formatting: "javascript_typescript_text_document_formatting",
   hover: "javascript_typescript_text_document_hover",
@@ -127,27 +121,21 @@ export const JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS = {
   implementation: "javascript_typescript_text_document_implementation",
   inlayHintResolve: "javascript_typescript_text_document_inlay_hint_resolve",
   inlayHints: "javascript_typescript_text_document_inlay_hints",
-  linkedEditingRanges:
-    "javascript_typescript_text_document_linked_editing_ranges",
+  linkedEditingRanges: "javascript_typescript_text_document_linked_editing_ranges",
   onTypeFormatting: "javascript_typescript_text_document_on_type_formatting",
   outgoingCalls: "javascript_typescript_text_document_outgoing_calls",
-  prepareCallHierarchy:
-    "javascript_typescript_text_document_prepare_call_hierarchy",
+  prepareCallHierarchy: "javascript_typescript_text_document_prepare_call_hierarchy",
   prepareRename: "javascript_typescript_text_document_prepare_rename",
-  prepareTypeHierarchy:
-    "javascript_typescript_text_document_prepare_type_hierarchy",
+  prepareTypeHierarchy: "javascript_typescript_text_document_prepare_type_hierarchy",
   rangeFormatting: "javascript_typescript_text_document_range_formatting",
   references: "javascript_typescript_text_document_references",
   rename: "javascript_typescript_text_document_rename",
   selectionRanges: "javascript_typescript_text_document_selection_ranges",
-  rangeSemanticTokens:
-    "javascript_typescript_text_document_range_semantic_tokens",
+  rangeSemanticTokens: "javascript_typescript_text_document_range_semantic_tokens",
   semanticTokens: "javascript_typescript_text_document_semantic_tokens",
   signatureHelp: "javascript_typescript_text_document_signature_help",
-  typeHierarchySubtypes:
-    "javascript_typescript_text_document_type_hierarchy_subtypes",
-  typeHierarchySupertypes:
-    "javascript_typescript_text_document_type_hierarchy_supertypes",
+  typeHierarchySubtypes: "javascript_typescript_text_document_type_hierarchy_subtypes",
+  typeHierarchySupertypes: "javascript_typescript_text_document_type_hierarchy_supertypes",
   willCreateFiles: "javascript_typescript_workspace_will_create_files",
   willDeleteFiles: "javascript_typescript_workspace_will_delete_files",
   willRenameFiles: "javascript_typescript_workspace_will_rename_files",
@@ -204,21 +192,18 @@ export interface TauriLanguageServerFeatureCommands {
   workspaceSymbols: string;
 }
 
-export class TauriLanguageServerFeaturesGateway
-  implements LanguageServerFeaturesGateway
-{
+export class TauriLanguageServerFeaturesGateway implements LanguageServerFeaturesGateway {
   constructor(
     private readonly invokeFeatureCommand: InvokeCommand = invokeCommand,
     private readonly isRuntimeAvailable: RuntimeDetector = isTauri,
-    private readonly commands: TauriLanguageServerFeatureCommands =
-      DEFAULT_FEATURE_COMMANDS,
+    private readonly commands: TauriLanguageServerFeatureCommands = DEFAULT_FEATURE_COMMANDS,
   ) {}
 
   hover(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerHover | null> {
-    return this.invokeWhenAvailable(this.commands.hover, { position, rootPath }, null);
+    return this.invokeFeatureRequest(this.commands.hover, { position, rootPath }, null);
   }
 
   completion(
@@ -226,7 +211,7 @@ export class TauriLanguageServerFeaturesGateway
     position: LanguageServerTextDocumentPosition,
     context?: LanguageServerCompletionContext,
   ): Promise<LanguageServerCompletionList> {
-    return this.invokeWhenAvailable(
+    return this.invokeFeatureRequest(
       this.commands.completion,
       { ...(context ? { context } : {}), position, rootPath },
       emptyLanguageServerCompletionList(),
@@ -237,11 +222,7 @@ export class TauriLanguageServerFeaturesGateway
     rootPath: string,
     item: LanguageServerCompletionItem,
   ): Promise<LanguageServerCompletionItem> {
-    return this.invokeWhenAvailable(
-      this.commands.completionResolve,
-      { item, rootPath },
-      item,
-    );
+    return this.invokeWhenAvailable(this.commands.completionResolve, { item, rootPath }, item);
   }
 
   definition(
@@ -255,44 +236,28 @@ export class TauriLanguageServerFeaturesGateway
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(
-      this.commands.sourceDefinition,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.sourceDefinition, { position, rootPath }, []);
   }
 
   declaration(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(
-      this.commands.declaration,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.declaration, { position, rootPath }, []);
   }
 
   implementation(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(
-      this.commands.implementation,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.implementation, { position, rootPath }, []);
   }
 
   typeDefinition(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(
-      this.commands.typeDefinition,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.typeDefinition, { position, rootPath }, []);
   }
 
   inlayHints(
@@ -300,99 +265,51 @@ export class TauriLanguageServerFeaturesGateway
     path: string,
     range: LanguageServerRange,
   ): Promise<LanguageServerInlayHint[]> {
-    return this.invokeWhenAvailable(
-      this.commands.inlayHints,
-      { path, range, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.inlayHints, { path, range, rootPath }, []);
   }
 
   resolveInlayHint(
     rootPath: string,
     hint: LanguageServerInlayHint,
   ): Promise<LanguageServerInlayHint> {
-    return this.invokeWhenAvailable(
-      this.commands.inlayHintResolve,
-      { hint, rootPath },
-      hint,
-    );
+    return this.invokeWhenAvailable(this.commands.inlayHintResolve, { hint, rootPath }, hint);
   }
 
-  documentSymbols(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerDocumentSymbol[]> {
-    return this.invokeWhenAvailable(
-      this.commands.documentSymbols,
-      { path, rootPath },
-      [],
-    );
+  documentSymbols(rootPath: string, path: string): Promise<LanguageServerDocumentSymbol[]> {
+    return this.invokeWhenAvailable(this.commands.documentSymbols, { path, rootPath }, []);
   }
 
   documentHighlights(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerDocumentHighlight[]> {
-    return this.invokeWhenAvailable(
-      this.commands.documentHighlights,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.documentHighlights, { position, rootPath }, []);
   }
 
-  documentLinks(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerDocumentLink[]> {
-    return this.invokeWhenAvailable(
-      this.commands.documentLinks,
-      { path, rootPath },
-      [],
-    );
+  documentLinks(rootPath: string, path: string): Promise<LanguageServerDocumentLink[]> {
+    return this.invokeWhenAvailable(this.commands.documentLinks, { path, rootPath }, []);
   }
 
   resolveDocumentLink(
     rootPath: string,
     link: LanguageServerDocumentLink,
   ): Promise<LanguageServerDocumentLink> {
-    return this.invokeWhenAvailable(
-      this.commands.documentLinkResolve,
-      { link, rootPath },
-      link,
-    );
+    return this.invokeWhenAvailable(this.commands.documentLinkResolve, { link, rootPath }, link);
   }
 
-  foldingRanges(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerFoldingRange[]> {
-    return this.invokeWhenAvailable(
-      this.commands.foldingRanges,
-      { path, rootPath },
-      [],
-    );
+  foldingRanges(rootPath: string, path: string): Promise<LanguageServerFoldingRange[]> {
+    return this.invokeWhenAvailable(this.commands.foldingRanges, { path, rootPath }, []);
   }
 
-  workspaceSymbols(
-    rootPath: string,
-    query: string,
-  ): Promise<LanguageServerWorkspaceSymbol[]> {
-    return this.invokeWhenAvailable(
-      this.commands.workspaceSymbols,
-      { query, rootPath },
-      [],
-    );
+  workspaceSymbols(rootPath: string, query: string): Promise<LanguageServerWorkspaceSymbol[]> {
+    return this.invokeWhenAvailable(this.commands.workspaceSymbols, { query, rootPath }, []);
   }
 
   references(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerLocation[]> {
-    return this.invokeWhenAvailable(
-      this.commands.references,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.references, { position, rootPath }, []);
   }
 
   selectionRanges(
@@ -418,15 +335,8 @@ export class TauriLanguageServerFeaturesGateway
     );
   }
 
-  semanticTokens(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerSemanticTokens | null> {
-    return this.invokeWhenAvailable(
-      this.commands.semanticTokens,
-      { path, rootPath },
-      null,
-    );
+  semanticTokens(rootPath: string, path: string): Promise<LanguageServerSemanticTokens | null> {
+    return this.invokeFeatureRequest(this.commands.semanticTokens, { path, rootPath }, null);
   }
 
   rangeSemanticTokens(
@@ -434,7 +344,7 @@ export class TauriLanguageServerFeaturesGateway
     path: string,
     range: LanguageServerRange,
   ): Promise<LanguageServerSemanticTokens | null> {
-    return this.invokeWhenAvailable(
+    return this.invokeFeatureRequest(
       this.commands.rangeSemanticTokens,
       { path, range, rootPath },
       null,
@@ -446,7 +356,7 @@ export class TauriLanguageServerFeaturesGateway
     position: LanguageServerTextDocumentPosition,
     context?: LanguageServerSignatureHelpContext,
   ): Promise<LanguageServerSignatureHelp | null> {
-    return this.invokeWhenAvailable(
+    return this.invokeFeatureRequest(
       this.commands.signatureHelp,
       {
         ...(context ? { context } : {}),
@@ -461,11 +371,7 @@ export class TauriLanguageServerFeaturesGateway
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerPrepareRenameResult | null> {
-    return this.invokeWhenAvailable(
-      this.commands.prepareRename,
-      { position, rootPath },
-      null,
-    );
+    return this.invokeWhenAvailable(this.commands.prepareRename, { position, rootPath }, null);
   }
 
   rename(
@@ -473,11 +379,7 @@ export class TauriLanguageServerFeaturesGateway
     position: LanguageServerTextDocumentPosition,
     newName: string,
   ): Promise<LanguageServerWorkspaceEdit | null> {
-    return this.invokeWhenAvailable(
-      this.commands.rename,
-      { newName, position, rootPath },
-      null,
-    );
+    return this.invokeWhenAvailable(this.commands.rename, { newName, position, rootPath }, null);
   }
 
   codeActions(
@@ -497,107 +399,64 @@ export class TauriLanguageServerFeaturesGateway
     rootPath: string,
     action: LanguageServerCodeAction,
   ): Promise<LanguageServerCodeAction> {
-    return this.invokeWhenAvailable(
-      this.commands.codeActionResolve,
-      { action, rootPath },
-      action,
-    );
+    return this.invokeWhenAvailable(this.commands.codeActionResolve, { action, rootPath }, action);
   }
 
   codeLenses(rootPath: string, path: string): Promise<LanguageServerCodeLens[]> {
-    return this.invokeWhenAvailable(
-      this.commands.codeLenses,
-      { path, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.codeLenses, { path, rootPath }, []);
   }
 
-  resolveCodeLens(
-    rootPath: string,
-    lens: LanguageServerCodeLens,
-  ): Promise<LanguageServerCodeLens> {
-    return this.invokeWhenAvailable(
-      this.commands.codeLensResolve,
-      { lens, rootPath },
-      lens,
-    );
+  resolveCodeLens(rootPath: string, lens: LanguageServerCodeLens): Promise<LanguageServerCodeLens> {
+    return this.invokeWhenAvailable(this.commands.codeLensResolve, { lens, rootPath }, lens);
   }
 
   prepareCallHierarchy(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerCallHierarchyItem[]> {
-    return this.invokeWhenAvailable(
-      this.commands.prepareCallHierarchy,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.prepareCallHierarchy, { position, rootPath }, []);
   }
 
   incomingCalls(
     rootPath: string,
     item: LanguageServerCallHierarchyItem,
   ): Promise<LanguageServerIncomingCall[]> {
-    return this.invokeWhenAvailable(
-      this.commands.incomingCalls,
-      { item, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.incomingCalls, { item, rootPath }, []);
   }
 
   outgoingCalls(
     rootPath: string,
     item: LanguageServerCallHierarchyItem,
   ): Promise<LanguageServerOutgoingCall[]> {
-    return this.invokeWhenAvailable(
-      this.commands.outgoingCalls,
-      { item, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.outgoingCalls, { item, rootPath }, []);
   }
 
   prepareTypeHierarchy(
     rootPath: string,
     position: LanguageServerTextDocumentPosition,
   ): Promise<LanguageServerTypeHierarchyItem[]> {
-    return this.invokeWhenAvailable(
-      this.commands.prepareTypeHierarchy,
-      { position, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.prepareTypeHierarchy, { position, rootPath }, []);
   }
 
   typeHierarchySupertypes(
     rootPath: string,
     item: LanguageServerTypeHierarchyItem,
   ): Promise<LanguageServerTypeHierarchyItem[]> {
-    return this.invokeWhenAvailable(
-      this.commands.typeHierarchySupertypes,
-      { item, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.typeHierarchySupertypes, { item, rootPath }, []);
   }
 
   typeHierarchySubtypes(
     rootPath: string,
     item: LanguageServerTypeHierarchyItem,
   ): Promise<LanguageServerTypeHierarchyItem[]> {
-    return this.invokeWhenAvailable(
-      this.commands.typeHierarchySubtypes,
-      { item, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.typeHierarchySubtypes, { item, rootPath }, []);
   }
 
   executeCommand(
     rootPath: string,
     command: LanguageServerCodeActionCommand,
   ): Promise<LanguageServerWorkspaceEdit | null> {
-    return this.invokeWhenAvailable(
-      this.commands.executeCommand,
-      { command, rootPath },
-      null,
-    );
+    return this.invokeWhenAvailable(this.commands.executeCommand, { command, rootPath }, null);
   }
 
   executeCommandLocations(
@@ -611,23 +470,12 @@ export class TauriLanguageServerFeaturesGateway
     );
   }
 
-  willCreateFiles(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerWorkspaceEdit | null> {
-    return this.invokeWhenAvailable(
-      this.commands.willCreateFiles,
-      { path, rootPath },
-      null,
-    );
+  willCreateFiles(rootPath: string, path: string): Promise<LanguageServerWorkspaceEdit | null> {
+    return this.invokeWhenAvailable(this.commands.willCreateFiles, { path, rootPath }, null);
   }
 
   didCreateFiles(rootPath: string, path: string): Promise<void> {
-    return this.invokeWhenAvailable(
-      this.commands.didCreateFiles,
-      { path, rootPath },
-      undefined,
-    );
+    return this.invokeWhenAvailable(this.commands.didCreateFiles, { path, rootPath }, undefined);
   }
 
   willRenameFiles(
@@ -642,11 +490,7 @@ export class TauriLanguageServerFeaturesGateway
     );
   }
 
-  didRenameFiles(
-    rootPath: string,
-    oldPath: string,
-    newPath: string,
-  ): Promise<void> {
+  didRenameFiles(rootPath: string, oldPath: string, newPath: string): Promise<void> {
     return this.invokeWhenAvailable(
       this.commands.didRenameFiles,
       { newPath, oldPath, rootPath },
@@ -654,23 +498,12 @@ export class TauriLanguageServerFeaturesGateway
     );
   }
 
-  willDeleteFiles(
-    rootPath: string,
-    path: string,
-  ): Promise<LanguageServerWorkspaceEdit | null> {
-    return this.invokeWhenAvailable(
-      this.commands.willDeleteFiles,
-      { path, rootPath },
-      null,
-    );
+  willDeleteFiles(rootPath: string, path: string): Promise<LanguageServerWorkspaceEdit | null> {
+    return this.invokeWhenAvailable(this.commands.willDeleteFiles, { path, rootPath }, null);
   }
 
   didDeleteFiles(rootPath: string, path: string): Promise<void> {
-    return this.invokeWhenAvailable(
-      this.commands.didDeleteFiles,
-      { path, rootPath },
-      undefined,
-    );
+    return this.invokeWhenAvailable(this.commands.didDeleteFiles, { path, rootPath }, undefined);
   }
 
   didChangeWatchedFiles(
@@ -700,11 +533,7 @@ export class TauriLanguageServerFeaturesGateway
     path: string,
     options: LanguageServerFormattingOptions,
   ): Promise<LanguageServerTextEdit[]> {
-    return this.invokeWhenAvailable(
-      this.commands.formatting,
-      { options, path, rootPath },
-      [],
-    );
+    return this.invokeWhenAvailable(this.commands.formatting, { options, path, rootPath }, []);
   }
 
   onTypeFormatting(
@@ -745,4 +574,26 @@ export class TauriLanguageServerFeaturesGateway
 
     return (await this.invokeFeatureCommand(command, args)) as T;
   }
+
+  private invokeFeatureRequest<T>(
+    command: string,
+    args: Record<string, unknown>,
+    fallback: T,
+  ): Promise<T> {
+    if (!command.startsWith("javascript_typescript_")) {
+      return this.invokeWhenAvailable(command, args, fallback);
+    }
+    const requestId = allocateRequestId();
+    return Object.assign(this.invokeWhenAvailable(command, { ...args, requestId }, fallback), {
+      requestId,
+    });
+  }
+}
+
+function allocateRequestId(): number {
+  if (nextRequestId >= Number.MAX_SAFE_INTEGER) {
+    nextRequestId = 1_000_000;
+  }
+  nextRequestId += 1;
+  return nextRequestId;
 }

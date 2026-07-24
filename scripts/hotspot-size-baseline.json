@@ -21,7 +21,7 @@
     },
     "src-tauri/src/lib.rs": {
       "rawLines": 10256,
-      "structuralTokens": 59441
+      "structuralTokens": 59382
     },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 4503,
@@ -29,7 +29,7 @@
     },
     "src-tauri/src/lsp_session.rs": {
       "rawLines": 8368,
-      "structuralTokens": 42544
+      "structuralTokens": 42415
     },
     "src-tauri/src/lsp.rs": {
       "rawLines": 2364,
@@ -65,7 +65,7 @@
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
       "rawLines": 3913,
-      "structuralTokens": 17469
+      "structuralTokens": 17461
     },
     "src/components/languageServerMonacoProviders.ts": {
       "rawLines": 5907,

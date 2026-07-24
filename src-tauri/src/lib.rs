@@ -8,6 +8,7 @@ mod debug_adapter;
 mod debug_breakpoint_policy;
 mod debug_cdp;
 mod debug_cdp_breakpoints;
+mod debug_cdp_function_breakpoints;
 mod debug_commands;
 mod debug_dbgp;
 mod debug_hit_condition;
@@ -17,6 +18,7 @@ mod debug_inspector_startup;
 mod debug_logpoint;
 mod debug_node_attach_list_command;
 mod debug_node_attach_start_command;
+mod debug_node_env_file;
 mod debug_node_launch;
 mod debug_node_process;
 mod debug_node_watch_start_command;
@@ -48,6 +50,7 @@ mod lsp;
 mod lsp_diagnostics;
 mod lsp_document;
 mod lsp_features;
+mod lsp_request_commands;
 mod lsp_session;
 mod lsp_transport;
 mod lsp_workspace_edit_guard;
@@ -2837,6 +2840,7 @@ async fn text_document_hover(
 #[tauri::command]
 async fn javascript_typescript_text_document_hover(
     root_path: String,
+    request_id: u64,
     position: TextDocumentPosition,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<Option<LanguageServerHover>, String> {
@@ -2845,7 +2849,7 @@ async fn javascript_typescript_text_document_hover(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.hover(&position);
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
         .await?
     else {
         return Ok(None);
@@ -2881,6 +2885,7 @@ async fn text_document_completion(
 #[tauri::command]
 async fn javascript_typescript_text_document_completion(
     root_path: String,
+    request_id: u64,
     position: TextDocumentPosition,
     context: Option<LanguageServerCompletionContext>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -2890,7 +2895,7 @@ async fn javascript_typescript_text_document_completion(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.completion(&TextDocumentCompletion { position, context });
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
         .await?
     else {
         return Ok(LanguageServerCompletionList {
@@ -4847,28 +4852,9 @@ async fn text_document_range_semantic_tokens(
 }
 
 #[tauri::command]
-async fn javascript_typescript_text_document_semantic_tokens(
-    root_path: String,
-    path: String,
-    registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
-) -> Result<Option<LanguageServerSemanticTokens>, String> {
-    ensure_lsp_path_in_workspace(&root_path, &path)?;
-
-    let factory = LspTextDocumentFeatureRequestFactory;
-    let request = factory.semantic_tokens(&path);
-    let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
-        .await?
-    else {
-        return Ok(None);
-    };
-
-    parse_semantic_tokens_result(&result)
-}
-
-#[tauri::command]
 async fn javascript_typescript_text_document_range_semantic_tokens(
     root_path: String,
+    request_id: u64,
     path: String,
     range: LanguageServerRange,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -4878,7 +4864,7 @@ async fn javascript_typescript_text_document_range_semantic_tokens(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.range_semantic_tokens(&TextDocumentRange { path, range });
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
         .await?
     else {
         return Ok(None);
@@ -4913,6 +4899,7 @@ async fn text_document_signature_help(
 #[tauri::command]
 async fn javascript_typescript_text_document_signature_help(
     root_path: String,
+    request_id: u64,
     position: TextDocumentPosition,
     context: Option<LanguageServerSignatureHelpContext>,
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
@@ -4922,7 +4909,7 @@ async fn javascript_typescript_text_document_signature_help(
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.signature_help(&TextDocumentSignatureHelp { position, context });
     let Some(result) = registry
-        .send_request_async(&root_path, &request.method, request.params)
+        .send_request_async_with_id(&root_path, request_id, &request.method, request.params)
         .await?
     else {
         return Ok(None);
@@ -5102,11 +5089,12 @@ pub fn run() {
             debug_scopes,
             debug_set_breakpoints,
             debug_set_breakpoints_active,
+            debug_set_function_breakpoints,
             debug_set_exception_pause,
             debug_set_variable,
             debug_set_expression,
             debug_stack_trace,
-            debug_start,
+            debug_node_env_file::debug_start,
             debug_start_native_node_watch,
             debug_confirm_native_node_watch,
             debug_start_compound,
@@ -5230,6 +5218,7 @@ pub fn run() {
             javascript_typescript_workspace_will_create_files,
             javascript_typescript_workspace_will_delete_files,
             javascript_typescript_workspace_will_rename_files,
+            lsp_request_commands::cancel_lsp_request,
             javascript_typescript_text_document_code_action_resolve,
             javascript_typescript_text_document_code_actions,
             javascript_typescript_text_document_code_lens_resolve,
@@ -5260,7 +5249,7 @@ pub fn run() {
             javascript_typescript_text_document_references,
             javascript_typescript_text_document_rename,
             javascript_typescript_text_document_selection_ranges,
-            javascript_typescript_text_document_semantic_tokens,
+            lsp_request_commands::javascript_typescript_text_document_semantic_tokens,
             javascript_typescript_text_document_signature_help,
             javascript_typescript_text_document_source_definition,
             javascript_typescript_text_document_type_hierarchy_subtypes,

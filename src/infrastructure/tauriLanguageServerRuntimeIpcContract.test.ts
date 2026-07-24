@@ -11,6 +11,10 @@ import {
 
 describe("language-server runtime Tauri IPC contract", () => {
   it("keeps operation arguments and results statically associated", () => {
+    expectTypeOf<LanguageServerRuntimeIpcArgs<"cancelRequest">>().toEqualTypeOf<{
+      readonly requestId: number;
+      readonly rootPath: string;
+    }>();
     expectTypeOf<LanguageServerRuntimeIpcArgs<"openLog">>().toEqualTypeOf<{
       readonly kind: "phpactor" | "tsserver";
       readonly rootPath: string;
@@ -42,6 +46,30 @@ describe("language-server runtime Tauri IPC contract", () => {
 
     expect(invokeCommand).toHaveBeenCalledWith("open_language_runtime_log", {
       kind: "tsserver",
+      rootPath: "/workspace",
+    });
+  });
+
+  it("invokes request cancellation with the exact scoped payload", async () => {
+    const invokeCommand = vi.fn<InvokeLanguageServerRuntimeCommand>().mockResolvedValue(undefined);
+
+    await invokeLanguageServerRuntimeIpc(
+      invokeCommand,
+      {
+        cancelRequest: "cancel_lsp_request",
+        getStatus: "get_status",
+        start: "start_runtime",
+        stop: "stop_runtime",
+      },
+      "cancelRequest",
+      {
+        requestId: 42,
+        rootPath: "/workspace",
+      },
+    );
+
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("cancel_lsp_request", {
+      requestId: 42,
       rootPath: "/workspace",
     });
   });
@@ -86,9 +114,7 @@ describe("language-server runtime Tauri IPC contract", () => {
         rootPath: "/workspace",
         sessionId: 4,
       }),
-    ).toThrow(
-      "running.capabilities.inlayHintResolve must be a boolean when present",
-    );
+    ).toThrow("running.capabilities.inlayHintResolve must be a boolean when present");
   });
 
   it("validates the runtime log response", () => {

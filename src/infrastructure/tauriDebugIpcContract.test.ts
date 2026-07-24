@@ -142,6 +142,17 @@ describe("debug Tauri IPC contract", () => {
         readonly active: boolean;
       };
     }>();
+    expectTypeOf<DebugIpcCommandArgs<"debug_set_function_breakpoints">>().toEqualTypeOf<{
+      readonly request: {
+        readonly rootPath: string;
+        readonly sessionId: number;
+        readonly breakpoints: readonly {
+          readonly id: string;
+          readonly functionName: string;
+          readonly enabled: boolean;
+        }[];
+      };
+    }>();
     expectTypeOf<DebugIpcCommandArgs<"debug_evaluate">>().toEqualTypeOf<{
       readonly request: {
         readonly rootPath: string;
@@ -188,6 +199,40 @@ describe("debug Tauri IPC contract", () => {
       } as never),
     ).rejects.toThrow("a boolean");
     expect(invokeCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts only closed function breakpoint names before IPC", async () => {
+    const invokeCommand = vi
+      .fn<InvokeDebugCommand>()
+      .mockResolvedValue([{ id: "fn-1", verified: true }]);
+    const request = {
+      rootPath: "/workspace",
+      sessionId: 7,
+      breakpoints: [{ id: "fn-1", functionName: "app.render", enabled: true }],
+    } as const;
+    await expect(
+      invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setFunctionBreakpoints, { request }),
+    ).resolves.toEqual([{ id: "fn-1", verified: true }]);
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_set_function_breakpoints", {
+      request,
+    });
+
+    for (const functionName of ["app.render()", "app;process.exit()", "app\nrender"]) {
+      await expect(
+        invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setFunctionBreakpoints, {
+          request: {
+            ...request,
+            breakpoints: [{ id: "fn-1", functionName, enabled: true }],
+          },
+        }),
+      ).rejects.toThrow("functionName");
+    }
+    expect(invokeCommand).toHaveBeenCalledTimes(1);
+
+    invokeCommand.mockResolvedValueOnce([{ id: "foreign", verified: true }]);
+    await expect(
+      invokeDebugIpc(invokeCommand, DEBUG_IPC_COMMANDS.setFunctionBreakpoints, { request }),
+    ).rejects.toThrow("one ordered verification");
   });
 
   it("forwards and strictly validates an exact disconnect owner", async () => {
@@ -1003,6 +1048,51 @@ describe("debug Tauri IPC contract", () => {
         exceptionPauseMode: "none",
       }),
     ).rejects.toThrow("launch.env.PORT");
+  });
+
+  it("accepts envFile only on a configured Node script launch", async () => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
+      status: "ok",
+      sessionId: 9,
+    });
+    const launch = {
+      kind: "node-configured-script",
+      scriptPath: "/workspace/app.ts",
+      args: [],
+      env: {},
+      envFile: "config/dev.env",
+    } as unknown as DebugLaunchTarget;
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start", {
+        rootPath: "/workspace",
+        launch,
+        breakpoints: [],
+        exceptionPauseMode: "none",
+      }),
+    ).resolves.toEqual({ status: "ok", sessionId: 9 });
+    expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
+      rootPath: "/workspace",
+      launch,
+      breakpoints: [],
+      exceptionPauseMode: "none",
+    });
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start", {
+        rootPath: "/workspace",
+        launch: {
+          kind: "node-npm-script",
+          script: "dev",
+          packageRootPath: "/workspace",
+          args: [],
+          env: {},
+          envFile: ".env",
+        } as unknown as DebugLaunchTarget,
+        breakpoints: [],
+        exceptionPauseMode: "none",
+      }),
+    ).rejects.toThrow("debug_start args.launch.envFile");
   });
 
   it("requires an exact startup exception pause field", async () => {

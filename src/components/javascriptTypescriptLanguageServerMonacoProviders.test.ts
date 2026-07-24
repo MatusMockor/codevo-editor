@@ -891,6 +891,55 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     await expect(completionPromise).resolves.toEqual({ suggestions: [] });
   });
 
+  it("cancels only pending TypeScript completion requests", async () => {
+    const monaco = createMonaco();
+    const pending =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
+    const resolved =
+      createDeferred<Awaited<ReturnType<LanguageServerFeaturesGateway["completion"]>>>();
+    const gateway = featuresGateway();
+    vi.mocked(gateway.completion)
+      .mockImplementationOnce(() => Object.assign(pending.promise, { requestId: 41 }))
+      .mockImplementationOnce(() => Object.assign(resolved.promise, { requestId: 42 }));
+    const cancelRequest = vi.fn(async () => undefined);
+    registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+      monaco as any,
+      providerContext({ cancelRequest, featuresGateway: gateway }),
+    );
+    const completionProvider = (monaco.languages.registerCompletionItemProvider as any).mock
+      .calls[0][1];
+    const pendingToken = cancellableToken();
+    const pendingResult = completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+      undefined,
+      pendingToken,
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    pendingToken.fire();
+    pendingToken.fire();
+    expect(cancelRequest).toHaveBeenCalledExactlyOnceWith("/project", 41);
+    pending.resolve({ isIncomplete: false, items: [] });
+    await expect(pendingResult).resolves.toEqual({ suggestions: [] });
+
+    const resolvedToken = cancellableToken();
+    const resolvedResult = completionProvider.provideCompletionItems(
+      textModel(),
+      { column: 4, lineNumber: 2 },
+      undefined,
+      resolvedToken,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    resolved.resolve({ isIncomplete: false, items: [] });
+    await expect(resolvedResult).resolves.toEqual({ suggestions: [] });
+    resolvedToken.fire();
+
+    expect(cancelRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves TypeScript completion to empty when the server does not respond before the timeout", async () => {
     vi.useFakeTimers();
 
@@ -5011,10 +5060,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
         }),
       );
       const provider = (monaco.languages.registerInlayHintsProvider as any).mock.calls[0][1];
-      const hints = await provider.provideInlayHints(
-        textModel(),
-        new monaco.Range(1, 1, 1, 20),
-      );
+      const hints = await provider.provideInlayHints(textModel(), new monaco.Range(1, 1, 1, 20));
       const originalHint = hints.hints[0];
       flushPendingDocumentChange.mockClear();
       vi.mocked(gateway.resolveInlayHint).mockClear();
@@ -5022,9 +5068,7 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
       const resolvedHint = await provider.resolveInlayHint(originalHint);
 
       if (shouldResolve) {
-        expect(flushPendingDocumentChange).toHaveBeenCalledWith(
-          "/project/src/user.ts",
-        );
+        expect(flushPendingDocumentChange).toHaveBeenCalledWith("/project/src/user.ts");
         expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
           "/project",
           expect.objectContaining({ data: { hintId: 1 } }),
@@ -5796,6 +5840,7 @@ function providerContext(
 ): JavaScriptTypeScriptLanguageServerProviderContext {
   return {
     applyWorkspaceEdit: overrides.applyWorkspaceEdit,
+    cancelRequest: overrides.cancelRequest,
     completeFunctionCalls: overrides.completeFunctionCalls,
     featuresGateway: overrides.featuresGateway ?? featuresGateway(),
     flushPendingDocumentChange:
@@ -5810,6 +5855,26 @@ function providerContext(
     refreshGateway: overrides.refreshGateway,
     reportError: overrides.reportError ?? vi.fn(),
     workspaceEditGateway: overrides.workspaceEditGateway,
+  };
+}
+
+function cancellableToken() {
+  let cancelled = false;
+  let listener: (() => void) | undefined;
+
+  return {
+    fire: () => {
+      cancelled = true;
+      listener?.();
+      return undefined;
+    },
+    get isCancellationRequested() {
+      return cancelled;
+    },
+    onCancellationRequested: (nextListener: () => void) => {
+      listener = nextListener;
+      return { dispose: () => (listener = undefined) };
+    },
   };
 }
 

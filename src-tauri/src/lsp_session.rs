@@ -23,9 +23,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 mod capabilities;
+mod request_dispatch;
 mod runtime_telemetry;
 
 use capabilities::parse_capabilities;
+use request_dispatch::{cancel_pending_request, send_request_with_timeout};
 pub use runtime_telemetry::RecentLspRequest;
 #[cfg(test)]
 use runtime_telemetry::STDERR_TAIL_CAPACITY;
@@ -1336,6 +1338,36 @@ impl LanguageServerRegistry {
         async move { request.await.map_err(|error| error.to_string()) }
     }
 
+    pub fn send_request_async_with_id(
+        &self,
+        root_path: &str,
+        request_id: u64,
+        method: &str,
+        params: Value,
+    ) -> impl std::future::Future<Output = Result<Option<Value>, String>> + 'static {
+        let supervisor = self.existing_supervisor(root_path);
+        let method = method.to_string();
+
+        async move {
+            let Some(supervisor) = supervisor else {
+                return Ok(None);
+            };
+            tauri::async_runtime::spawn_blocking(move || {
+                supervisor.send_request_with_id(request_id, &method, params)
+            })
+            .await
+            .map_err(|error| format!("Language server request task failed: {error}"))?
+            .map_err(|error| error.to_string())
+        }
+    }
+
+    pub fn cancel_request(&self, root_path: &str, request_id: u64) {
+        let Some(supervisor) = self.existing_supervisor(root_path) else {
+            return;
+        };
+        supervisor.cancel_request(request_id);
+    }
+
     pub fn send_request_async_preserving_response_error(
         &self,
         root_path: &str,
@@ -1842,78 +1874,30 @@ impl LanguageServerSupervisor {
         method: &str,
         params: Value,
     ) -> Result<Option<Value>, LanguageServerRequestError> {
-        self.send_request_with_timeout(method, params, REQUEST_TIMEOUT)
+        send_request_with_timeout(self, method, params, None, REQUEST_TIMEOUT)
     }
 
+    fn send_request_with_id(
+        &self,
+        request_id: u64,
+        method: &str,
+        params: Value,
+    ) -> Result<Option<Value>, LanguageServerRequestError> {
+        send_request_with_timeout(self, method, params, Some(request_id), REQUEST_TIMEOUT)
+    }
+
+    #[cfg(test)]
     fn send_request_with_timeout(
         &self,
         method: &str,
         params: Value,
         timeout: Duration,
     ) -> Result<Option<Value>, LanguageServerRequestError> {
-        if !matches!(self.status(), LanguageServerRuntimeStatus::Running { .. }) {
-            return Ok(None);
-        }
+        send_request_with_timeout(self, method, params, None, timeout)
+    }
 
-        let Some((stdin, pending_requests)) = self.session_request_parts() else {
-            return Ok(None);
-        };
-        let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
-        let request = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id,
-            method: method.to_string(),
-            params,
-        };
-        let bytes = serde_json::to_vec(&request).map_err(|error| {
-            LanguageServerRequestError::from(format!("Failed to serialize LSP request: {error}"))
-        })?;
-        let (tx, rx) = mpsc::channel();
-
-        {
-            let mut pending = pending_requests
-                .lock()
-                .map_err(|error| LanguageServerRequestError::from(error.to_string()))?;
-            pending.insert(id, tx);
-        }
-
-        // Capture the send instant so every outcome below (result, error,
-        // timeout, cancellation) records a measured round-trip latency into the
-        // bounded ring buffer. Recording is best-effort and never blocks the
-        // request path.
-        let started_at = Instant::now();
-
-        if let Err(error) = write_with_session_stdin(&stdin, &bytes) {
-            remove_pending_request(&pending_requests, id);
-            self.record_request_outcome(method, started_at, false);
-            return Err(LanguageServerRequestError::from(format!(
-                "Failed to send LSP request `{method}`: {error}"
-            )));
-        }
-
-        match rx.recv_timeout(timeout) {
-            Ok(Ok(result)) => {
-                self.record_request_outcome(method, started_at, true);
-                Ok(Some(result))
-            }
-            Ok(Err(message)) => {
-                self.record_request_outcome(method, started_at, false);
-                Err(message)
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                remove_pending_request(&pending_requests, id);
-                self.record_request_outcome(method, started_at, false);
-                Err(LanguageServerRequestError::from(format!(
-                    "Language server request `{method}` timed out."
-                )))
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                self.record_request_outcome(method, started_at, false);
-                Err(LanguageServerRequestError::from(format!(
-                    "Language server request `{method}` was cancelled."
-                )))
-            }
-        }
+    fn cancel_request(&self, request_id: u64) {
+        cancel_pending_request(self, request_id);
     }
 
     /// Record one completed request into the bounded recent-requests ring buffer.
@@ -2180,14 +2164,6 @@ fn terminate_session(mut session: RunningSession) {
     if let Some(stderr_reader) = session.stderr_reader.take() {
         let _ = stderr_reader.join();
     }
-}
-
-fn remove_pending_request(pending_requests: &PendingRequests, id: u64) {
-    let Ok(mut pending) = pending_requests.lock() else {
-        return;
-    };
-
-    pending.remove(&id);
 }
 
 fn reject_pending_requests(pending_requests: &PendingRequests, message: &str) {
@@ -3253,6 +3229,8 @@ fn workspace_guard_path(workspace_root: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    mod request_cancellation_tests;
+
     #[cfg(unix)]
     use super::ChildKiller;
     use super::{

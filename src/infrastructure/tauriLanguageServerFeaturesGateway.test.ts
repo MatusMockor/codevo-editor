@@ -8,9 +8,7 @@ import type {
   LanguageServerTextDocumentPosition,
 } from "../domain/languageServerFeatures";
 
-type FeaturesGatewayConstructor = ConstructorParameters<
-  typeof TauriLanguageServerFeaturesGateway
->;
+type FeaturesGatewayConstructor = ConstructorParameters<typeof TauriLanguageServerFeaturesGateway>;
 type InvokeCommand = NonNullable<FeaturesGatewayConstructor[0]>;
 
 describe("TauriLanguageServerFeaturesGateway", () => {
@@ -20,10 +18,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       message: "Server cancelled obsolete code action",
     };
     const invokeCommand = vi.fn<InvokeCommand>().mockRejectedValue(responseError);
-    const gateway = new TauriLanguageServerFeaturesGateway(
-      invokeCommand,
-      () => true,
-    );
+    const gateway = new TauriLanguageServerFeaturesGateway(invokeCommand, () => true);
 
     await expect(
       gateway.codeActions("/project", "/project/src/User.php", range(), {
@@ -34,13 +29,8 @@ describe("TauriLanguageServerFeaturesGateway", () => {
   });
 
   it("preserves legacy string code-action rejections", async () => {
-    const invokeCommand = vi
-      .fn<InvokeCommand>()
-      .mockRejectedValue("PHPactor request failed");
-    const gateway = new TauriLanguageServerFeaturesGateway(
-      invokeCommand,
-      () => true,
-    );
+    const invokeCommand = vi.fn<InvokeCommand>().mockRejectedValue("PHPactor request failed");
+    const gateway = new TauriLanguageServerFeaturesGateway(invokeCommand, () => true);
 
     await expect(
       gateway.codeActions("/project", "/project/src/User.php", range(), {
@@ -52,70 +42,41 @@ describe("TauriLanguageServerFeaturesGateway", () => {
 
   it("returns empty feature results outside Tauri", async () => {
     const invokeCommand = vi.fn<InvokeCommand>();
-    const gateway = new TauriLanguageServerFeaturesGateway(
-      invokeCommand,
-      () => false,
-    );
+    const gateway = new TauriLanguageServerFeaturesGateway(invokeCommand, () => false);
 
     await expect(gateway.hover("/project", position())).resolves.toBeNull();
     await expect(gateway.completion("/project", position())).resolves.toEqual({
       isIncomplete: false,
       items: [],
     });
-    await expect(
-      gateway.resolveCompletionItem("/project", completionItem()),
-    ).resolves.toEqual(completionItem());
+    await expect(gateway.resolveCompletionItem("/project", completionItem())).resolves.toEqual(
+      completionItem(),
+    );
     await expect(gateway.definition("/project", position())).resolves.toEqual([]);
-    await expect(gateway.sourceDefinition("/project", position())).resolves.toEqual(
-      [],
-    );
+    await expect(gateway.sourceDefinition("/project", position())).resolves.toEqual([]);
     await expect(gateway.declaration("/project", position())).resolves.toEqual([]);
-    await expect(
-      gateway.typeDefinition("/project", position()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.documentSymbols("/project", "/project/src/User.php"),
-    ).resolves.toEqual([]);
-    await expect(gateway.documentHighlights("/project", position())).resolves.toEqual(
-      [],
+    await expect(gateway.typeDefinition("/project", position())).resolves.toEqual([]);
+    await expect(gateway.documentSymbols("/project", "/project/src/User.php")).resolves.toEqual([]);
+    await expect(gateway.documentHighlights("/project", position())).resolves.toEqual([]);
+    await expect(gateway.documentLinks("/project", "/project/src/User.php")).resolves.toEqual([]);
+    await expect(gateway.resolveDocumentLink("/project", documentLink())).resolves.toEqual(
+      documentLink(),
     );
-    await expect(
-      gateway.documentLinks("/project", "/project/src/User.php"),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.resolveDocumentLink("/project", documentLink()),
-    ).resolves.toEqual(documentLink());
-    await expect(
-      gateway.foldingRanges("/project", "/project/src/User.php"),
-    ).resolves.toEqual([]);
-    await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
-      [],
-    );
+    await expect(gateway.foldingRanges("/project", "/project/src/User.php")).resolves.toEqual([]);
+    await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual([]);
     await expect(gateway.implementation("/project", position())).resolves.toEqual([]);
-    await expect(
-      gateway.inlayHints("/project", "/project/src/User.php", range()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.resolveInlayHint("/project", inlayHint()),
-    ).resolves.toEqual(inlayHint());
-    await expect(
-      gateway.signatureHelp("/project", position()),
-    ).resolves.toBeNull();
-    await expect(
-      gateway.prepareRename("/project", position()),
-    ).resolves.toBeNull();
+    await expect(gateway.inlayHints("/project", "/project/src/User.php", range())).resolves.toEqual(
+      [],
+    );
+    await expect(gateway.resolveInlayHint("/project", inlayHint())).resolves.toEqual(inlayHint());
+    await expect(gateway.signatureHelp("/project", position())).resolves.toBeNull();
+    await expect(gateway.prepareRename("/project", position())).resolves.toBeNull();
     await expect(gateway.references("/project", position())).resolves.toEqual([]);
     await expect(
-      gateway.selectionRanges("/project", "/project/src/User.php", [
-        { character: 4, line: 10 },
-      ]),
+      gateway.selectionRanges("/project", "/project/src/User.php", [{ character: 4, line: 10 }]),
     ).resolves.toEqual([]);
-    await expect(
-      gateway.linkedEditingRanges("/project", position()),
-    ).resolves.toBeNull();
-    await expect(
-      gateway.semanticTokens("/project", "/project/src/User.php"),
-    ).resolves.toBeNull();
+    await expect(gateway.linkedEditingRanges("/project", position())).resolves.toBeNull();
+    await expect(gateway.semanticTokens("/project", "/project/src/User.php")).resolves.toBeNull();
     await expect(gateway.rename("/project", position(), "Account")).resolves.toBeNull();
     await expect(
       gateway.codeActions("/project", "/project/src/User.php", range(), {
@@ -123,59 +84,33 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         only: ["quickfix"],
       }),
     ).resolves.toEqual([]);
-    await expect(
-      gateway.resolveCodeAction("/project", codeAction()),
-    ).resolves.toEqual(codeAction());
-    await expect(
-      gateway.codeLenses("/project", "/project/src/User.php"),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.resolveCodeLens("/project", codeLens()),
-    ).resolves.toEqual(codeLens());
-    await expect(
-      gateway.prepareCallHierarchy("/project", position()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.incomingCalls("/project", callHierarchyItem()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.outgoingCalls("/project", callHierarchyItem()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.prepareTypeHierarchy("/project", position()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.typeHierarchySupertypes("/project", typeHierarchyItem()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.typeHierarchySubtypes("/project", typeHierarchyItem()),
-    ).resolves.toEqual([]);
-    await expect(
-      gateway.executeCommand("/project", command()),
-    ).resolves.toBeNull();
-    await expect(
-      gateway.willCreateFiles("/project", "/project/src/User.ts"),
-    ).resolves.toBeNull();
+    await expect(gateway.resolveCodeAction("/project", codeAction())).resolves.toEqual(
+      codeAction(),
+    );
+    await expect(gateway.codeLenses("/project", "/project/src/User.php")).resolves.toEqual([]);
+    await expect(gateway.resolveCodeLens("/project", codeLens())).resolves.toEqual(codeLens());
+    await expect(gateway.prepareCallHierarchy("/project", position())).resolves.toEqual([]);
+    await expect(gateway.incomingCalls("/project", callHierarchyItem())).resolves.toEqual([]);
+    await expect(gateway.outgoingCalls("/project", callHierarchyItem())).resolves.toEqual([]);
+    await expect(gateway.prepareTypeHierarchy("/project", position())).resolves.toEqual([]);
+    await expect(gateway.typeHierarchySupertypes("/project", typeHierarchyItem())).resolves.toEqual(
+      [],
+    );
+    await expect(gateway.typeHierarchySubtypes("/project", typeHierarchyItem())).resolves.toEqual(
+      [],
+    );
+    await expect(gateway.executeCommand("/project", command())).resolves.toBeNull();
+    await expect(gateway.willCreateFiles("/project", "/project/src/User.ts")).resolves.toBeNull();
     await expect(
       gateway.didCreateFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
     await expect(
-      gateway.willRenameFiles(
-        "/project",
-        "/project/src/User.ts",
-        "/project/src/Account.ts",
-      ),
+      gateway.willRenameFiles("/project", "/project/src/User.ts", "/project/src/Account.ts"),
     ).resolves.toBeNull();
     await expect(
-      gateway.didRenameFiles(
-        "/project",
-        "/project/src/User.ts",
-        "/project/src/Account.ts",
-      ),
+      gateway.didRenameFiles("/project", "/project/src/User.ts", "/project/src/Account.ts"),
     ).resolves.toBeUndefined();
-    await expect(
-      gateway.willDeleteFiles("/project", "/project/src/User.ts"),
-    ).resolves.toBeNull();
+    await expect(gateway.willDeleteFiles("/project", "/project/src/User.ts")).resolves.toBeNull();
     await expect(
       gateway.didDeleteFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
@@ -594,10 +529,7 @@ describe("TauriLanguageServerFeaturesGateway", () => {
 
       return definition;
     });
-    const gateway = new TauriLanguageServerFeaturesGateway(
-      invokeCommand,
-      () => true,
-    );
+    const gateway = new TauriLanguageServerFeaturesGateway(invokeCommand, () => true);
     const requestPosition = position();
 
     await expect(gateway.hover("/project", requestPosition)).resolves.toEqual(hover);
@@ -607,123 +539,97 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         triggerKind: 2,
       }),
     ).resolves.toEqual(completion);
-    await expect(
-      gateway.resolveCompletionItem("/project", completionItem()),
-    ).resolves.toEqual({
+    await expect(gateway.resolveCompletionItem("/project", completionItem())).resolves.toEqual({
       ...completion.items[0],
       documentation: "Resolved docs",
     });
     await expect(gateway.definition("/project", requestPosition)).resolves.toEqual(definition);
-    await expect(
-      gateway.sourceDefinition("/project", requestPosition),
-    ).resolves.toEqual(definition);
+    await expect(gateway.sourceDefinition("/project", requestPosition)).resolves.toEqual(
+      definition,
+    );
     await expect(gateway.declaration("/project", requestPosition)).resolves.toEqual(definition);
-    await expect(
-      gateway.documentSymbols("/project", "/project/src/User.php"),
-    ).resolves.toEqual(documentSymbols);
-    await expect(
-      gateway.documentHighlights("/project", requestPosition),
-    ).resolves.toEqual(documentHighlights);
-    await expect(
-      gateway.documentLinks("/project", "/project/src/User.php"),
-    ).resolves.toEqual(documentLinks);
-    await expect(
-      gateway.resolveDocumentLink("/project", documentLink()),
-    ).resolves.toEqual(resolvedDocumentLink);
-    await expect(
-      gateway.foldingRanges("/project", "/project/src/User.php"),
-    ).resolves.toEqual(foldingRanges);
-    await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(
-      workspaceSymbols,
+    await expect(gateway.documentSymbols("/project", "/project/src/User.php")).resolves.toEqual(
+      documentSymbols,
     );
-    await expect(gateway.implementation("/project", requestPosition)).resolves.toEqual(
-      definition,
+    await expect(gateway.documentHighlights("/project", requestPosition)).resolves.toEqual(
+      documentHighlights,
     );
-    await expect(gateway.typeDefinition("/project", requestPosition)).resolves.toEqual(
-      definition,
+    await expect(gateway.documentLinks("/project", "/project/src/User.php")).resolves.toEqual(
+      documentLinks,
     );
-    await expect(gateway.references("/project", requestPosition)).resolves.toEqual(
-      definition,
+    await expect(gateway.resolveDocumentLink("/project", documentLink())).resolves.toEqual(
+      resolvedDocumentLink,
     );
+    await expect(gateway.foldingRanges("/project", "/project/src/User.php")).resolves.toEqual(
+      foldingRanges,
+    );
+    await expect(gateway.workspaceSymbols("/project", "User")).resolves.toEqual(workspaceSymbols);
+    await expect(gateway.implementation("/project", requestPosition)).resolves.toEqual(definition);
+    await expect(gateway.typeDefinition("/project", requestPosition)).resolves.toEqual(definition);
+    await expect(gateway.references("/project", requestPosition)).resolves.toEqual(definition);
     await expect(
-      gateway.selectionRanges("/project", "/project/src/User.php", [
-        { character: 4, line: 10 },
-      ]),
+      gateway.selectionRanges("/project", "/project/src/User.php", [{ character: 4, line: 10 }]),
     ).resolves.toEqual(selectionRanges);
-    await expect(
-      gateway.linkedEditingRanges("/project", requestPosition),
-    ).resolves.toEqual(linkedEditingRanges);
-    await expect(
-      gateway.semanticTokens("/project", "/project/src/User.php"),
-    ).resolves.toEqual(semanticTokens);
+    await expect(gateway.linkedEditingRanges("/project", requestPosition)).resolves.toEqual(
+      linkedEditingRanges,
+    );
+    await expect(gateway.semanticTokens("/project", "/project/src/User.php")).resolves.toEqual(
+      semanticTokens,
+    );
     await expect(
       gateway.rangeSemanticTokens("/project", "/project/src/User.php", range()),
     ).resolves.toEqual(semanticTokens);
-    await expect(gateway.rename("/project", requestPosition, "Account")).resolves.toEqual(
-      rename,
-    );
+    await expect(gateway.rename("/project", requestPosition, "Account")).resolves.toEqual(rename);
     await expect(
       gateway.codeActions("/project", "/project/src/User.php", range(), {
         diagnostics: [],
         only: ["quickfix"],
       }),
     ).resolves.toEqual(codeActions);
-    await expect(
-      gateway.resolveCodeAction("/project", codeAction()),
-    ).resolves.toEqual(codeActions[0]);
-    await expect(
-      gateway.codeLenses("/project", "/project/src/User.php"),
-    ).resolves.toEqual(codeLenses);
-    await expect(
-      gateway.resolveCodeLens("/project", codeLens()),
-    ).resolves.toEqual(codeLenses[0]);
-    await expect(
-      gateway.prepareCallHierarchy("/project", requestPosition),
-    ).resolves.toEqual(callHierarchyItems);
-    await expect(
-      gateway.incomingCalls("/project", callHierarchyItems[0]),
-    ).resolves.toEqual(incomingCalls);
-    await expect(
-      gateway.outgoingCalls("/project", callHierarchyItems[0]),
-    ).resolves.toEqual(outgoingCalls);
-    await expect(
-      gateway.prepareTypeHierarchy("/project", requestPosition),
-    ).resolves.toEqual(typeHierarchyItems);
+    await expect(gateway.resolveCodeAction("/project", codeAction())).resolves.toEqual(
+      codeActions[0],
+    );
+    await expect(gateway.codeLenses("/project", "/project/src/User.php")).resolves.toEqual(
+      codeLenses,
+    );
+    await expect(gateway.resolveCodeLens("/project", codeLens())).resolves.toEqual(codeLenses[0]);
+    await expect(gateway.prepareCallHierarchy("/project", requestPosition)).resolves.toEqual(
+      callHierarchyItems,
+    );
+    await expect(gateway.incomingCalls("/project", callHierarchyItems[0])).resolves.toEqual(
+      incomingCalls,
+    );
+    await expect(gateway.outgoingCalls("/project", callHierarchyItems[0])).resolves.toEqual(
+      outgoingCalls,
+    );
+    await expect(gateway.prepareTypeHierarchy("/project", requestPosition)).resolves.toEqual(
+      typeHierarchyItems,
+    );
     await expect(
       gateway.typeHierarchySupertypes("/project", typeHierarchyItems[0]),
     ).resolves.toEqual(supertypes);
-    await expect(
-      gateway.typeHierarchySubtypes("/project", typeHierarchyItems[0]),
-    ).resolves.toEqual(subtypes);
-    await expect(
-      gateway.executeCommand("/project", command()),
-    ).resolves.toEqual(rename);
-    await expect(
-      gateway.executeCommandLocations("/project", command()),
-    ).resolves.toEqual(definition);
-    await expect(
-      gateway.willCreateFiles("/project", "/project/src/User.ts"),
-    ).resolves.toEqual(rename);
+    await expect(gateway.typeHierarchySubtypes("/project", typeHierarchyItems[0])).resolves.toEqual(
+      subtypes,
+    );
+    await expect(gateway.executeCommand("/project", command())).resolves.toEqual(rename);
+    await expect(gateway.executeCommandLocations("/project", command())).resolves.toEqual(
+      definition,
+    );
+    await expect(gateway.willCreateFiles("/project", "/project/src/User.ts")).resolves.toEqual(
+      rename,
+    );
     await expect(
       gateway.didCreateFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
     await expect(
-      gateway.willRenameFiles(
-        "/project",
-        "/project/src/User.ts",
-        "/project/src/Account.ts",
-      ),
+      gateway.willRenameFiles("/project", "/project/src/User.ts", "/project/src/Account.ts"),
     ).resolves.toEqual(rename);
     await expect(
-      gateway.didRenameFiles(
-        "/project",
-        "/project/src/User.ts",
-        "/project/src/Account.ts",
-      ),
+      gateway.didRenameFiles("/project", "/project/src/User.ts", "/project/src/Account.ts"),
     ).resolves.toBeUndefined();
-    await expect(
-      gateway.willDeleteFiles("/project", "/project/src/User.ts"),
-    ).resolves.toEqual(rename);
+    await expect(gateway.willDeleteFiles("/project", "/project/src/User.ts")).resolves.toEqual(
+      rename,
+    );
     await expect(
       gateway.didDeleteFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
@@ -768,18 +674,16 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         },
       ),
     ).resolves.toEqual(onTypeFormatting);
-    await expect(
-      gateway.inlayHints("/project", "/project/src/User.php", range()),
-    ).resolves.toEqual(inlayHints);
-    await expect(
-      gateway.resolveInlayHint("/project", inlayHints[0]),
-    ).resolves.toEqual({
+    await expect(gateway.inlayHints("/project", "/project/src/User.php", range())).resolves.toEqual(
+      inlayHints,
+    );
+    await expect(gateway.resolveInlayHint("/project", inlayHints[0])).resolves.toEqual({
       ...inlayHints[0],
       tooltip: "Resolved inferred type",
     });
-    await expect(
-      gateway.signatureHelp("/project", requestPosition),
-    ).resolves.toEqual(signatureHelp);
+    await expect(gateway.signatureHelp("/project", requestPosition)).resolves.toEqual(
+      signatureHelp,
+    );
     const signatureContext: LanguageServerSignatureHelpContext = {
       activeSignatureHelp: signatureHelp,
       isRetrigger: true,
@@ -789,9 +693,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     await expect(
       gateway.signatureHelp("/project", requestPosition, signatureContext),
     ).resolves.toEqual(signatureHelp);
-    await expect(
-      gateway.prepareRename("/project", requestPosition),
-    ).resolves.toEqual(prepareRename);
+    await expect(gateway.prepareRename("/project", requestPosition)).resolves.toEqual(
+      prepareRename,
+    );
     expect(invokeCommand).toHaveBeenCalledWith("text_document_hover", {
       position: requestPosition,
       rootPath: "/project",
@@ -828,13 +732,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       path: "/project/src/User.php",
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_document_link_resolve",
-      {
-        link: documentLink(),
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_document_link_resolve", {
+      link: documentLink(),
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_folding_ranges", {
       path: "/project/src/User.php",
       rootPath: "/project",
@@ -860,25 +761,19 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       positions: [{ character: 4, line: 10 }],
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_linked_editing_ranges",
-      {
-        position: requestPosition,
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_linked_editing_ranges", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_semantic_tokens", {
       path: "/project/src/User.php",
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_range_semantic_tokens",
-      {
-        path: "/project/src/User.php",
-        range: range(),
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_range_semantic_tokens", {
+      path: "/project/src/User.php",
+      range: range(),
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_rename", {
       newName: "Account",
       position: requestPosition,
@@ -905,13 +800,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       lens: codeLens(),
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_prepare_call_hierarchy",
-      {
-        position: requestPosition,
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_prepare_call_hierarchy", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_incoming_calls", {
       item: callHierarchyItems[0],
       rootPath: "/project",
@@ -920,38 +812,26 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       item: callHierarchyItems[0],
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_prepare_type_hierarchy",
-      {
-        position: requestPosition,
-        rootPath: "/project",
-      },
-    );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_type_hierarchy_supertypes",
-      {
-        item: typeHierarchyItems[0],
-        rootPath: "/project",
-      },
-    );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_type_hierarchy_subtypes",
-      {
-        item: typeHierarchyItems[0],
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_prepare_type_hierarchy", {
+      position: requestPosition,
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_type_hierarchy_supertypes", {
+      item: typeHierarchyItems[0],
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_type_hierarchy_subtypes", {
+      item: typeHierarchyItems[0],
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("language_server_execute_command", {
       command: command(),
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "language_server_execute_command_locations",
-      {
-        command: command(),
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("language_server_execute_command_locations", {
+      command: command(),
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_will_create_files", {
       path: "/project/src/User.ts",
       rootPath: "/project",
@@ -978,31 +858,25 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       path: "/project/src/User.ts",
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "workspace_did_change_watched_files",
-      {
-        changes: [
-          {
-            changeType: "created",
-            path: "/project/src/User.ts",
-          },
-          {
-            changeType: "deleted",
-            path: "/project/src/Old.ts",
-          },
-        ],
-        rootPath: "/project",
-      },
-    );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "workspace_did_change_configuration",
-      {
-        rootPath: "/project",
-        settings: {
-          suggest: { autoImports: false },
+    expect(invokeCommand).toHaveBeenCalledWith("workspace_did_change_watched_files", {
+      changes: [
+        {
+          changeType: "created",
+          path: "/project/src/User.ts",
         },
+        {
+          changeType: "deleted",
+          path: "/project/src/Old.ts",
+        },
+      ],
+      rootPath: "/project",
+    });
+    expect(invokeCommand).toHaveBeenCalledWith("workspace_did_change_configuration", {
+      rootPath: "/project",
+      settings: {
+        suggest: { autoImports: false },
       },
-    );
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_formatting", {
       options: {
         insertSpaces: true,
@@ -1035,13 +909,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       range: range(),
       rootPath: "/project",
     });
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "text_document_inlay_hint_resolve",
-      {
-        hint: inlayHints[0],
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("text_document_inlay_hint_resolve", {
+      hint: inlayHints[0],
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith("text_document_signature_help", {
       position: requestPosition,
       rootPath: "/project",
@@ -1075,9 +946,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
     );
     const requestPosition = position();
 
-    await expect(
-      gateway.sourceDefinition("/project", requestPosition),
-    ).resolves.toEqual(definition);
+    await expect(gateway.sourceDefinition("/project", requestPosition)).resolves.toEqual(
+      definition,
+    );
     expect(invokeCommand).toHaveBeenCalledWith(
       "javascript_typescript_text_document_source_definition",
       {
@@ -1099,14 +970,19 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
     );
 
-    await expect(
-      gateway.rangeSemanticTokens("/project", "/project/src/User.ts", range()),
-    ).resolves.toEqual(semanticTokens);
+    const request = gateway.rangeSemanticTokens(
+      "/project",
+      "/project/src/User.ts",
+      range(),
+    ) as Promise<typeof semanticTokens> & { requestId: number };
+    expect(request.requestId).toEqual(expect.any(Number));
+    await expect(request).resolves.toEqual(semanticTokens);
     expect(invokeCommand).toHaveBeenCalledWith(
       "javascript_typescript_text_document_range_semantic_tokens",
       {
         path: "/project/src/User.ts",
         range: range(),
+        requestId: request.requestId,
         rootPath: "/project",
       },
     );
@@ -1129,9 +1005,9 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
     );
 
-    await expect(
-      gateway.executeCommandLocations("/project", command()),
-    ).resolves.toEqual(locations);
+    await expect(gateway.executeCommandLocations("/project", command())).resolves.toEqual(
+      locations,
+    );
     expect(invokeCommand).toHaveBeenCalledWith(
       "javascript_typescript_language_server_execute_command_locations",
       {
@@ -1156,15 +1032,15 @@ describe("TauriLanguageServerFeaturesGateway", () => {
       JAVASCRIPT_TYPESCRIPT_FEATURE_COMMANDS,
     );
 
-    await expect(
-      gateway.willCreateFiles("/project", "/project/src/User.ts"),
-    ).resolves.toEqual(edit);
+    await expect(gateway.willCreateFiles("/project", "/project/src/User.ts")).resolves.toEqual(
+      edit,
+    );
     await expect(
       gateway.didCreateFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
-    await expect(
-      gateway.willDeleteFiles("/project", "/project/src/User.ts"),
-    ).resolves.toEqual(edit);
+    await expect(gateway.willDeleteFiles("/project", "/project/src/User.ts")).resolves.toEqual(
+      edit,
+    );
     await expect(
       gateway.didDeleteFiles("/project", "/project/src/User.ts"),
     ).resolves.toBeUndefined();
@@ -1176,13 +1052,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         rootPath: "/project",
       },
     );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_workspace_did_create_files",
-      {
-        path: "/project/src/User.ts",
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_workspace_did_create_files", {
+      path: "/project/src/User.ts",
+      rootPath: "/project",
+    });
     expect(invokeCommand).toHaveBeenCalledWith(
       "javascript_typescript_workspace_will_delete_files",
       {
@@ -1190,13 +1063,10 @@ describe("TauriLanguageServerFeaturesGateway", () => {
         rootPath: "/project",
       },
     );
-    expect(invokeCommand).toHaveBeenCalledWith(
-      "javascript_typescript_workspace_did_delete_files",
-      {
-        path: "/project/src/User.ts",
-        rootPath: "/project",
-      },
-    );
+    expect(invokeCommand).toHaveBeenCalledWith("javascript_typescript_workspace_did_delete_files", {
+      path: "/project/src/User.ts",
+      rootPath: "/project",
+    });
   });
 });
 

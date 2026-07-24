@@ -26,6 +26,7 @@ const DEFAULT_RUNTIME_COMMANDS = {
 } as const;
 
 export const JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS = {
+  cancelRequest: "cancel_lsp_request",
   getStatus: "get_javascript_typescript_language_server_status",
   openLog: "open_language_runtime_log",
   openLogKind: "tsserver",
@@ -33,6 +34,22 @@ export const JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS = {
   statusEvent: "javascript-typescript-language-server://status",
   stop: "stop_javascript_typescript_language_server",
 } as const;
+
+export function cancelJavaScriptTypeScriptLanguageServerRequest(
+  rootPath: string,
+  requestId: number,
+): Promise<void> {
+  if (!isTauri()) {
+    return Promise.resolve();
+  }
+
+  return invokeLanguageServerRuntimeIpc(
+    invokeRuntimeCommand,
+    JAVASCRIPT_TYPESCRIPT_RUNTIME_COMMANDS,
+    "cancelRequest",
+    { requestId, rootPath },
+  );
+}
 
 export interface TauriLanguageServerRuntimeCommands extends LanguageServerRuntimeCommandProfile {
   openLogKind?: "phpactor" | "tsserver";

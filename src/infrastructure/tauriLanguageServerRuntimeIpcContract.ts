@@ -6,6 +6,13 @@ import type {
 } from "../domain/languageServerRuntime";
 
 interface LanguageServerRuntimeIpcContract {
+  readonly cancelRequest: {
+    readonly args: {
+      readonly requestId: number;
+      readonly rootPath: string;
+    };
+    readonly result: void;
+  };
   readonly getStatus: {
     readonly args: { readonly rootPath: string };
     readonly result: LanguageServerRuntimeStatus;
@@ -34,8 +41,10 @@ export type LanguageServerRuntimeIpcResult<Operation extends LanguageServerRunti
   LanguageServerRuntimeIpcContract[Operation]["result"];
 
 export type LanguageServerRuntimeCommandProfile = {
-  readonly [Operation in Exclude<LanguageServerRuntimeIpcOperation, "openLog">]: string;
-} & { readonly openLog?: string };
+  readonly [
+    Operation in Exclude<LanguageServerRuntimeIpcOperation, "cancelRequest" | "openLog">
+  ]: string;
+} & { readonly cancelRequest?: string; readonly openLog?: string };
 
 export type InvokeLanguageServerRuntimeCommand = (
   command: string,
