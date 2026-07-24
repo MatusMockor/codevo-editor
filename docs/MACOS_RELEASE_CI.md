@@ -49,7 +49,7 @@ npm run tauri build -- --debug
 hdiutil imageinfo <debug-dmg>
 ```
 
-`cargo fmt --check` is intentionally not part of the gate: `main` currently has pre-existing formatting drift, and `pr-checks.yml` (the existing PR gate) does not check formatting either. Adding a stricter gate here would fail the workflow on unrelated code, which would defeat the "must work without secrets" requirement.
+The packaging workflow keeps its release-oriented command set. Pull requests are checked separately by `pr-checks.yml`, including frontend format/lint/coverage gates plus `cargo fmt --check` and Clippy.
 
 It uploads:
 
