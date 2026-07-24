@@ -377,9 +377,18 @@ function parseConfiguration(
     "preLaunchTask",
     "postDebugTask",
     "skipFiles",
+    "justMyCode",
     "serverReadyAction",
   ]);
   if (unknown) return rejected(`${path} contains unsupported field "${unknown}"`);
+  if (
+    Object.prototype.hasOwnProperty.call(value, "justMyCode") &&
+    Object.prototype.hasOwnProperty.call(value, "skipFiles")
+  ) {
+    return rejected(
+      `${path} must not define both justMyCode and skipFiles because the filtering policy is ambiguous`,
+    );
+  }
   if (value.type !== "node" && value.type !== "pwa-node") {
     return rejected(`${path}.type must be "node" or "pwa-node"`);
   }
@@ -402,7 +411,12 @@ function parseConfiguration(
     if (serverReadyAction.value !== undefined) {
       return rejected(`${path}.serverReadyAction is supported only for launch`);
     }
-    const justMyCode = attachJustMyCodePolicy(value.skipFiles, `${path}.skipFiles`);
+    const justMyCode = attachJustMyCodePolicy(
+      value.skipFiles,
+      value.justMyCode,
+      `${path}.skipFiles`,
+      `${path}.justMyCode`,
+    );
     if (justMyCode.kind === "error") return justMyCode;
     if (!isNodeDebugPort(value.port)) {
       return rejected(`${path}.port must be an integer between 1 and 65535`);
@@ -437,7 +451,12 @@ function parseConfiguration(
   }
   if (value.port !== undefined)
     return rejected(`${path} launch configuration contains attach port`);
-  const justMyCode = launchJustMyCodePolicy(value.skipFiles, `${path}.skipFiles`);
+  const justMyCode = launchJustMyCodePolicy(
+    value.skipFiles,
+    value.justMyCode,
+    `${path}.skipFiles`,
+    `${path}.justMyCode`,
+  );
   if (justMyCode.kind === "error") return justMyCode;
   if (value.runtimeExecutable === undefined && value.runtimeArgs !== undefined) {
     return parseNativeNodeWatchConfiguration(
@@ -792,23 +811,39 @@ function startsWithAsciiDigit(value: string): boolean {
   return code >= 48 && code <= 57;
 }
 
-function launchJustMyCodePolicy(value: unknown, path: string) {
-  if (value === undefined) {
+function launchJustMyCodePolicy(
+  skipFiles: unknown,
+  justMyCode: unknown,
+  skipFilesPath: string,
+  justMyCodePath: string,
+) {
+  if (justMyCode !== undefined) {
+    if (typeof justMyCode !== "boolean") {
+      return rejected(`${justMyCodePath} must be a boolean`);
+    }
+    return {
+      kind: "ok" as const,
+      value: justMyCode ? ("nodeInternalsAndDependencies" as const) : undefined,
+    };
+  }
+  if (skipFiles === undefined) {
     return { kind: "ok" as const, value: "nodeInternals" as const };
   }
-  if (Array.isArray(value) && value.length === 0) {
+  if (Array.isArray(skipFiles) && skipFiles.length === 0) {
     return { kind: "ok" as const, value: undefined };
   }
   if (
-    !Array.isArray(value) ||
-    value.length > 2 ||
-    !value.every((entry) => typeof entry === "string")
+    !Array.isArray(skipFiles) ||
+    skipFiles.length > 2 ||
+    !skipFiles.every((entry) => typeof entry === "string")
   ) {
-    return rejected(`${path} supports only exact Node-internals and node_modules launch filters`);
+    return rejected(
+      `${skipFilesPath} supports only exact Node-internals and node_modules launch filters`,
+    );
   }
-  const filters = new Set(value);
+  const filters = new Set(skipFiles);
   if (
-    filters.size !== value.length ||
+    filters.size !== skipFiles.length ||
     [...filters].some(
       (entry) =>
         entry !== VSCODE_NODE_INTERNALS_SKIP_PATTERN &&
@@ -816,7 +851,7 @@ function launchJustMyCodePolicy(value: unknown, path: string) {
     )
   ) {
     return rejected(
-      `${path} supports only unique exact Node-internals and node_modules launch filters`,
+      `${skipFilesPath} supports only unique exact Node-internals and node_modules launch filters`,
     );
   }
   if (filters.has(VSCODE_NODE_INTERNALS_SKIP_PATTERN)) {
@@ -829,13 +864,24 @@ function launchJustMyCodePolicy(value: unknown, path: string) {
   }
   return filters.has(VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN)
     ? { kind: "ok" as const, value: "dependencies" as const }
-    : rejected(`${path} contains an unsupported launch filter`);
+    : rejected(`${skipFilesPath} contains an unsupported launch filter`);
 }
 
-function attachJustMyCodePolicy(value: unknown, path: string) {
-  return value === undefined || (Array.isArray(value) && value.length === 0)
+function attachJustMyCodePolicy(
+  skipFiles: unknown,
+  justMyCode: unknown,
+  skipFilesPath: string,
+  justMyCodePath: string,
+) {
+  if (justMyCode !== undefined && typeof justMyCode !== "boolean") {
+    return rejected(`${justMyCodePath} must be a boolean`);
+  }
+  if (justMyCode === true) {
+    return rejected(`${justMyCodePath} cannot enable filtering for attach`);
+  }
+  return skipFiles === undefined || (Array.isArray(skipFiles) && skipFiles.length === 0)
     ? { kind: "ok" as const, value: undefined }
-    : rejected(`${path} must be absent or empty for attach`);
+    : rejected(`${skipFilesPath} must be absent or empty for attach`);
 }
 
 function safeNpmScriptName(value: unknown): value is string {

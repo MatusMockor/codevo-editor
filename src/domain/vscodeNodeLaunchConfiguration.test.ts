@@ -855,6 +855,114 @@ describe("VS Code Node launch configuration import", () => {
   });
 
   it.each([
+    ["script", { program: "src/server.js" }],
+    ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
+    ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
+    ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
+    ["npm.cmd", { runtimeExecutable: "npm.cmd", runtimeArgs: ["run", "dev"] }],
+    ["native watch", { program: "src/server.js", runtimeArgs: ["--watch"] }],
+  ])("maps justMyCode booleans to the equivalent %s launch skipFiles policies", (_case, fields) => {
+    const parseWith = (filter: object) =>
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Filtered",
+              ...fields,
+              ...filter,
+            },
+          ],
+        }),
+      );
+
+    expect(parseWith({ justMyCode: true })).toEqual(
+      parseWith({
+        skipFiles: [VSCODE_NODE_INTERNALS_SKIP_PATTERN, VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN],
+      }),
+    );
+    expect(parseWith({ justMyCode: false })).toEqual(parseWith({ skipFiles: [] }));
+  });
+
+  it.each([
+    ["script", { program: "src/server.js" }],
+    ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
+    ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
+    ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
+    ["npm.cmd", { runtimeExecutable: "npm.cmd", runtimeArgs: ["run", "dev"] }],
+    ["native watch", { program: "src/server.js", runtimeArgs: ["--watch"] }],
+  ])("rejects invalid justMyCode forms for a %s launch", (_case, fields) => {
+    const parseWith = (filter: object) =>
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Ambiguous",
+              ...fields,
+              ...filter,
+            },
+          ],
+        }),
+      );
+
+    expect(parseWith({ justMyCode: "true" })).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("justMyCode must be a boolean") }],
+    });
+    expect(
+      parseWith({
+        justMyCode: true,
+        skipFiles: [VSCODE_NODE_INTERNALS_SKIP_PATTERN, VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN],
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("must not define both") }],
+    });
+  });
+
+  it("mirrors attach skipFiles semantics for justMyCode", () => {
+    const parseWith = (filter: object) =>
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "attach",
+              name: "Attach",
+              port: 9229,
+              ...filter,
+            },
+          ],
+        }),
+      );
+
+    expect(parseWith({ justMyCode: false })).toEqual(parseWith({ skipFiles: [] }));
+    expect(parseWith({ justMyCode: true })).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("cannot enable filtering for attach") }],
+    });
+    expect(parseWith({ justMyCode: 1 })).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("justMyCode must be a boolean") }],
+    });
+    expect(parseWith({ justMyCode: false, skipFiles: [] })).toMatchObject({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [{ message: expect.stringContaining("must not define both") }],
+    });
+  });
+
+  it.each([
     ["raw string", VSCODE_NODE_INTERNALS_SKIP_PATTERN],
     ["unknown pattern", ["**/*.generated.js"]],
     ["workspace-expanded node modules", ["${workspaceFolder}/node_modules/**"]],
