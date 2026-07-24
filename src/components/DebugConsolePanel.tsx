@@ -2,6 +2,7 @@ import {
   Fragment,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -80,8 +81,12 @@ const styles: Record<string, CSSProperties> = {
     color: "inherit",
     fontFamily: "var(--font-mono, monospace)",
     fontSize: 12,
+    maxHeight: 100,
+    minHeight: 28,
     outline: "none",
+    overflowY: "auto",
     padding: "5px 8px",
+    resize: "none",
     width: "100%",
   },
   muted: { color: "var(--text-muted)" },
@@ -178,7 +183,7 @@ export function DebugConsolePanel({
     readonly position: { readonly x: number; readonly y: number };
   } | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const completionListId = useId();
   const completionStatusId = useId();
   const previousCompletionRef = useRef(completion);
@@ -315,6 +320,12 @@ export function DebugConsolePanel({
     onFocusRequestHandled?.(focusRequest);
   }, [enabled, focusRequest, onFocusRequestHandled, workspaceOwnerKey]);
   const history = console.state.history;
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.max(28, Math.min(input.scrollHeight, 100))}px`;
+  }, [value]);
   const dismissCompletion = () => {
     if (!completionOpen) return;
     setCompletionOpen(false);
@@ -351,7 +362,11 @@ export function DebugConsolePanel({
       target.setSelectionRange(cursor, cursor);
     });
   };
-  const keyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+
     if (onRequest && event.ctrlKey && (event.code === "Space" || event.key === " ")) {
       event.preventDefault();
       setCompletionOpen(true);
@@ -384,20 +399,38 @@ export function DebugConsolePanel({
       event.key === "End"
     ) {
       invalidateCompletion();
-    } else if (event.key === "Enter" && enabled && value.trim()) {
+    } else if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
-      void console.submit(value.trim());
+      const start = event.currentTarget.selectionStart ?? value.length;
+      const end = event.currentTarget.selectionEnd ?? start;
+      const expression = `${value.slice(0, start)}\n${value.slice(end)}`;
+      const cursor = start + 1;
+      setValue(expression);
+      setHistoryIndex(null);
+      onInputChanged?.({ cursor, expression });
+      queueMicrotask(() => inputRef.current?.setSelectionRange(cursor, cursor));
+    } else if (event.key === "Enter" && enabled && trimBlankLines(value).trim()) {
+      event.preventDefault();
+      void console.submit(trimBlankLines(value));
       setValue("");
       setHistoryIndex(null);
     } else if (event.key === "Escape") {
       setValue("");
       setHistoryIndex(null);
-    } else if (event.key === "ArrowUp" && history.length) {
+    } else if (
+      event.key === "ArrowUp" &&
+      history.length &&
+      caretIsOnFirstLine(event.currentTarget)
+    ) {
       event.preventDefault();
       const next = Math.min(history.length - 1, (historyIndex ?? history.length) - 1);
       setHistoryIndex(next);
       setValue(history[next] ?? "");
-    } else if (event.key === "ArrowDown" && historyIndex !== null) {
+    } else if (
+      event.key === "ArrowDown" &&
+      historyIndex !== null &&
+      caretIsOnLastLine(event.currentTarget)
+    ) {
       event.preventDefault();
       const next = historyIndex + 1;
       setHistoryIndex(next >= history.length ? null : next);
@@ -715,7 +748,7 @@ export function DebugConsolePanel({
             {completionStatus}
           </div>
         ) : null}
-        <input
+        <textarea
           aria-activedescendant={
             activeCompletionItem ? `${completionListId}-option-${activeCompletionIndex}` : undefined
           }
@@ -747,6 +780,7 @@ export function DebugConsolePanel({
           }}
           placeholder={enabled ? "Evaluate expression" : "Pause to evaluate"}
           ref={inputRef}
+          rows={1}
           role="combobox"
           style={styles.input}
           value={value}
@@ -754,6 +788,22 @@ export function DebugConsolePanel({
       </div>
     </>
   );
+}
+
+function trimBlankLines(value: string): string {
+  return value.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "");
+}
+
+function caretIsOnFirstLine(input: HTMLTextAreaElement): boolean {
+  if (input.selectionStart !== input.selectionEnd) return false;
+  const caret = input.selectionStart ?? 0;
+  return input.value.lastIndexOf("\n", Math.max(0, caret - 1)) === -1;
+}
+
+function caretIsOnLastLine(input: HTMLTextAreaElement): boolean {
+  if (input.selectionStart !== input.selectionEnd) return false;
+  const caret = input.selectionStart ?? input.value.length;
+  return input.value.indexOf("\n", caret) === -1;
 }
 
 function copyDisplayedValueFromMenuAndRestoreFocus(

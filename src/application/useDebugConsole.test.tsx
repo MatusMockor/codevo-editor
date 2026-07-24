@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, startTransition, Suspense } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DebugVariable } from "../domain/debug";
@@ -13,16 +13,19 @@ describe("useDebugConsole", () => {
   let host: HTMLDivElement;
   let root: Root;
   let current: UseDebugConsoleResult;
+  let suspendedRender: Promise<never> | null;
   let options: {
     evaluate(expression: string): Promise<DebugVariable | null>;
     output: readonly DebugOutputLine[];
     owner: DebugEvaluationOwner | null;
     resultOwner?: Omit<DebugConsoleResultOwner, "epoch"> | null;
     sessionId: number | null;
+    workspaceRoot: string | null;
   };
 
   function Harness() {
     current = useDebugConsole(options);
+    if (suspendedRender) throw suspendedRender;
     return null;
   }
 
@@ -32,13 +35,16 @@ describe("useDebugConsole", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    window.localStorage.clear();
     host = document.createElement("div");
     root = createRoot(host);
+    suspendedRender = null;
     options = {
       evaluate: vi.fn().mockResolvedValue(null),
       output: [],
       owner: { sessionId: 7, pauseGeneration: 1 },
       sessionId: 7,
+      workspaceRoot: "/workspace/",
     };
   });
 
@@ -195,6 +201,159 @@ describe("useDebugConsole", () => {
     expect(options.evaluate).toHaveBeenCalledWith("mutate()");
     expect(current.state.history).toEqual(["mutate()"]);
     expect(current.state.entries.map((entry) => entry.kind)).toEqual(["pending", "result"]);
+  });
+
+  it("persists history and reloads it for the same normalized workspace root", async () => {
+    options.evaluate = vi.fn().mockResolvedValue({
+      name: "count",
+      value: "1",
+      variablesReference: 0,
+    });
+    render();
+
+    await act(async () => current.submit("count"));
+    expect(window.localStorage.getItem("mockor.debug.consoleHistory./workspace")).toBe('["count"]');
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    options = {
+      ...options,
+      owner: { sessionId: 8, pauseGeneration: 1 },
+      sessionId: 8,
+    };
+    render();
+
+    expect(current.state.history).toEqual(["count"]);
+  });
+
+  it("fails closed when persisted history is malformed", () => {
+    window.localStorage.setItem("mockor.debug.consoleHistory./workspace", '{"history":"bad"}');
+
+    render();
+
+    expect(current.state.history).toEqual([]);
+  });
+
+  it("isolates persisted history across normalized workspace roots", async () => {
+    options.workspaceRoot = "/workspace-a/";
+    options.resultOwner = {
+      frameId: 11,
+      pauseGeneration: 1,
+      rootKey: "/workspace-a/",
+      sessionId: 7,
+      workspaceOwnerKey: "workspace-owner-a",
+    };
+    options.evaluate = vi.fn().mockResolvedValue({
+      name: "count",
+      value: "1",
+      variablesReference: 0,
+    });
+    render();
+    await act(async () => current.submit("fromA"));
+
+    options = {
+      ...options,
+      owner: { sessionId: 8, pauseGeneration: 1 },
+      sessionId: 8,
+      workspaceRoot: "/workspace-b/",
+    };
+    render();
+
+    expect(current.state.history).toEqual([]);
+    expect(window.localStorage.getItem("mockor.debug.consoleHistory./workspace-a")).toBe(
+      '["fromA"]',
+    );
+    expect(window.localStorage.getItem("mockor.debug.consoleHistory./workspace-b")).toBeNull();
+  });
+
+  it("uses the current workspace root while a stale paused owner remains during a root switch", async () => {
+    options.resultOwner = {
+      frameId: 11,
+      pauseGeneration: 1,
+      rootKey: "/workspace",
+      sessionId: 7,
+      workspaceOwnerKey: "workspace-owner",
+    };
+    options.evaluate = vi.fn().mockResolvedValue({
+      name: "value",
+      value: "1",
+      variablesReference: 0,
+    });
+    render();
+    await act(async () => current.submit("fromA"));
+
+    options = { ...options, workspaceRoot: "/workspace-b" };
+    render();
+
+    expect(current.state.history).toEqual([]);
+    await act(async () => current.submit("duringBTransition"));
+
+    expect(window.localStorage.getItem("mockor.debug.consoleHistory./workspace")).toBe('["fromA"]');
+    expect(window.localStorage.getItem("mockor.debug.consoleHistory./workspace-b")).toBe(
+      '["duringBTransition"]',
+    );
+  });
+
+  it("does not persist under a root from an abandoned transition render", async () => {
+    options.evaluate = vi.fn().mockResolvedValue({
+      name: "value",
+      value: "1",
+      variablesReference: 0,
+    });
+    render();
+    const submitFromCommittedRoot = current.submit;
+    options = { ...options, workspaceRoot: "/workspace-b" };
+    suspendedRender = new Promise<never>(() => undefined);
+
+    act(() => {
+      startTransition(() => {
+        root.render(
+          <Suspense fallback={null}>
+            <Harness />
+          </Suspense>,
+        );
+      });
+    });
+    await act(async () => submitFromCommittedRoot("fromCommittedA"));
+
+    expect(window.localStorage.getItem("mockor.debug.consoleHistory./workspace")).toBe(
+      '["fromCommittedA"]',
+    );
+    expect(window.localStorage.getItem("mockor.debug.consoleHistory./workspace-b")).toBeNull();
+    suspendedRender = null;
+  });
+
+  it("loads workspace history without an active debug pause", () => {
+    window.localStorage.setItem("mockor.debug.consoleHistory./workspace", '["fromPreviousAppRun"]');
+    options = {
+      ...options,
+      owner: null,
+      resultOwner: null,
+      sessionId: null,
+    };
+
+    render();
+
+    expect(current.state.history).toEqual(["fromPreviousAppRun"]);
+  });
+
+  it("keeps persisted history through a same-root session replacement", async () => {
+    options.evaluate = vi.fn().mockResolvedValue({
+      name: "count",
+      value: "1",
+      variablesReference: 0,
+    });
+    render();
+    await act(async () => current.submit("count"));
+
+    options = {
+      ...options,
+      owner: { sessionId: 8, pauseGeneration: 1 },
+      sessionId: 8,
+    };
+    render();
+
+    expect(current.state.history).toEqual(["count"]);
   });
 
   it("cancels only the pending row when an upstream stale evaluation returns null", async () => {

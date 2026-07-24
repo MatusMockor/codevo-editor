@@ -26,6 +26,8 @@ export interface DebugConsoleResultOwner extends DebugEvaluationOwner {
 
 const UTF8_ENCODER = new TextEncoder();
 const FATAL_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const MAX_DEBUG_CONSOLE_HISTORY_SERIALIZED_CHARS =
+  MAX_DEBUG_CONSOLE_HISTORY * (MAX_DEBUG_EVALUATION_EXPRESSION_BYTES * 6 + 3) + 1;
 
 interface DebugConsoleEntryBase {
   readonly id: string;
@@ -72,6 +74,7 @@ export interface DebugConsoleState {
 
 export type DebugConsoleAction =
   | { readonly type: "own"; readonly owner: DebugEvaluationOwner | null }
+  | { readonly type: "replace-history"; readonly history: readonly string[] }
   | {
       readonly type: "output";
       readonly owner: DebugEvaluationOwner;
@@ -109,6 +112,10 @@ export function reduceDebugConsoleState(
   action: DebugConsoleAction,
 ): DebugConsoleState {
   if (action.type === "own") return ownConsole(state, action.owner);
+  if (action.type === "replace-history") {
+    const history = normalizeDebugConsoleHistory(action.history);
+    return historiesEqual(state.history, history) ? state : { ...state, history };
+  }
   if (!state.owner || !debugEvaluationOwnersEqual(state.owner, action.owner)) return state;
   if (action.type === "clear") {
     return state.entries.length === 0 && state.pendingRequestIds.length === 0
@@ -123,7 +130,7 @@ export function reduceDebugConsoleState(
   if (!isRequestId(action.requestId)) return state;
   if (action.type === "evaluation-pending") {
     if (state.pendingRequestIds.includes(action.requestId)) return state;
-    const expression = validateDebugExpression(action.expression);
+    const expression = validateDebugConsoleExpression(action.expression);
     if (!expression.ok) return state;
     const resultOwner = isDebugConsoleResultOwner(action.resultOwner)
       ? Object.freeze({ ...action.resultOwner })
@@ -140,7 +147,7 @@ export function reduceDebugConsoleState(
     );
     return {
       ...next,
-      history: appendHistory(state.history, expression.expression),
+      history: appendDebugConsoleHistory(state.history, expression.expression),
       pendingRequestIds: next.pendingRequestIds.includes(action.requestId)
         ? next.pendingRequestIds
         : [...next.pendingRequestIds, action.requestId],
@@ -150,6 +157,14 @@ export function reduceDebugConsoleState(
     return cancelEvaluation(state, action.requestId);
   }
   return settleEvaluation(state, action.requestId, action.result);
+}
+
+function validateDebugConsoleExpression(
+  value: unknown,
+): ReturnType<typeof validateDebugExpression> {
+  if (typeof value !== "string") return { ok: false, reason: "type" };
+  const validation = validateDebugExpression(value.replace(/[\r\n]/g, " "));
+  return validation.ok ? { ok: true, expression: value } : validation;
 }
 
 function ownConsole(
@@ -162,7 +177,7 @@ function ownConsole(
   return {
     owner,
     entries: preserveSession ? state.entries : [],
-    history: preserveSession ? state.history : [],
+    history: state.history,
     pendingRequestIds: [],
     nextSequence: preserveSession ? state.nextSequence : 1,
     totalBytes: preserveSession ? state.totalBytes : 0,
@@ -315,9 +330,48 @@ function appendEntry(
   };
 }
 
-function appendHistory(history: readonly string[], expression: string): readonly string[] {
-  const next = [...history.filter((candidate) => candidate !== expression), expression];
+export function appendDebugConsoleHistory(
+  history: readonly string[],
+  expression: string,
+): readonly string[] {
+  if (!validateDebugConsoleExpression(expression).ok) return history;
+  if (history[history.length - 1] === expression) return history;
+  const next = [...history, expression];
   return next.slice(-MAX_DEBUG_CONSOLE_HISTORY);
+}
+
+export function serializeDebugConsoleHistory(history: readonly string[]): string {
+  return JSON.stringify(normalizeDebugConsoleHistory(history));
+}
+
+export function deserializeDebugConsoleHistory(raw: string): readonly string[] {
+  if (raw.length > MAX_DEBUG_CONSOLE_HISTORY_SERIALIZED_CHARS) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_DEBUG_CONSOLE_HISTORY) return [];
+  if (parsed.some((entry) => typeof entry !== "string")) return [];
+  if (parsed.some((entry) => !validateDebugConsoleExpression(entry).ok)) return [];
+  return normalizeDebugConsoleHistory(parsed);
+}
+
+function normalizeDebugConsoleHistory(history: readonly string[]): readonly string[] {
+  return history.reduce<readonly string[]>(
+    (current, expression) =>
+      typeof expression === "string" && expression.length > 0
+        ? appendDebugConsoleHistory(current, expression)
+        : current,
+    [],
+  );
+}
+
+function historiesEqual(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length && left.every((expression, index) => expression === right[index])
+  );
 }
 
 function consoleEntryBytes(entry: DebugConsoleEntry): number {

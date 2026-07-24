@@ -52,8 +52,8 @@ function completion(
   };
 }
 
-function setInputValue(input: HTMLInputElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+function setInputValue(input: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
   setter?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
@@ -171,8 +171,8 @@ describe("DebugConsolePanel completions", () => {
     return { console, onAccept, onDismiss, onInputChanged, onRequest };
   }
 
-  function input(): HTMLInputElement {
-    return host.querySelector<HTMLInputElement>('[aria-label="Debug expression"]')!;
+  function input(): HTMLTextAreaElement {
+    return host.querySelector<HTMLTextAreaElement>('[aria-label="Debug expression"]')!;
   }
 
   it("copies only the immutable console result through keyboard and accessible context actions", () => {
@@ -508,7 +508,7 @@ describe("DebugConsolePanel completions", () => {
 
   function key(
     key: string,
-    options: Pick<KeyboardEventInit, "code" | "ctrlKey"> = {},
+    options: Pick<KeyboardEventInit, "code" | "ctrlKey" | "isComposing" | "shiftKey"> = {},
   ): KeyboardEvent {
     const event = new KeyboardEvent("keydown", {
       bubbles: true,
@@ -647,6 +647,143 @@ describe("DebugConsolePanel completions", () => {
     expect(input().value).toBe("first");
     key("ArrowDown");
     expect(input().value).toBe("");
+  });
+
+  it("inserts a newline with Shift+Enter instead of submitting", () => {
+    const debugConsole = consoleResult();
+    render({ console: debugConsole });
+    act(() => {
+      setInputValue(input(), "first");
+      input().setSelectionRange(5, 5);
+    });
+
+    const event = key("Enter", { shiftKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(input().value).toBe("first\n");
+    expect(debugConsole.submit).not.toHaveBeenCalled();
+  });
+
+  it("submits multiline text with only leading and trailing blank lines removed", () => {
+    const debugConsole = consoleResult();
+    render({ console: debugConsole });
+    act(() => setInputValue(input(), "\n \nfirst\n  second  \n\n"));
+
+    const event = key("Enter");
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(debugConsole.submit).toHaveBeenCalledWith("first\n  second  ");
+    expect(input().value).toBe("");
+  });
+
+  it("preserves input without submitting when Enter confirms an IME composition", () => {
+    const debugConsole = consoleResult();
+    render({ console: debugConsole });
+    act(() => setInputValue(input(), "日本語"));
+
+    const event = key("Enter", { isComposing: true });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(debugConsole.submit).not.toHaveBeenCalled();
+    expect(input().value).toBe("日本語");
+  });
+
+  it("does not navigate history with arrow keys during IME composition", () => {
+    let state = createDebugConsoleState(OWNER);
+    state = reduceDebugConsoleState(state, {
+      expression: "historical",
+      owner: OWNER,
+      requestId: "request-1",
+      type: "evaluation-pending",
+    });
+    render({ console: consoleResult(state) });
+    act(() => setInputValue(input(), "日本語"));
+
+    expect(key("ArrowUp", { isComposing: true }).defaultPrevented).toBe(false);
+    expect(input().value).toBe("日本語");
+    expect(key("ArrowDown", { isComposing: true }).defaultPrevented).toBe(false);
+    expect(input().value).toBe("日本語");
+  });
+
+  it("navigates history only from the first and last line caret boundaries", () => {
+    let state = createDebugConsoleState(OWNER);
+    state = reduceDebugConsoleState(state, {
+      expression: "historical\nentry",
+      owner: OWNER,
+      requestId: "request-1",
+      type: "evaluation-pending",
+    });
+    render({ console: consoleResult(state) });
+    act(() => {
+      setInputValue(input(), "first\nmiddle\nlast");
+      input().setSelectionRange(8, 8);
+    });
+
+    expect(key("ArrowUp").defaultPrevented).toBe(false);
+    expect(input().value).toBe("first\nmiddle\nlast");
+    expect(key("ArrowDown").defaultPrevented).toBe(false);
+    expect(input().value).toBe("first\nmiddle\nlast");
+
+    act(() => input().setSelectionRange(2, 2));
+    expect(key("ArrowUp").defaultPrevented).toBe(true);
+    expect(input().value).toBe("historical\nentry");
+
+    act(() => {
+      input().setSelectionRange(2, 2);
+    });
+    expect(key("ArrowDown").defaultPrevented).toBe(false);
+    expect(input().value).toBe("historical\nentry");
+
+    act(() => input().setSelectionRange(input().value.length, input().value.length));
+    expect(key("ArrowDown").defaultPrevented).toBe(true);
+    expect(input().value).toBe("");
+  });
+
+  it("leaves multiline selections to normal arrow-key movement", () => {
+    let state = createDebugConsoleState(OWNER);
+    state = reduceDebugConsoleState(state, {
+      expression: "historical\nentry",
+      owner: OWNER,
+      requestId: "request-1",
+      type: "evaluation-pending",
+    });
+    render({ console: consoleResult(state) });
+    act(() => {
+      setInputValue(input(), "first\nlast");
+      input().setSelectionRange(0, 3);
+    });
+
+    expect(key("ArrowUp").defaultPrevented).toBe(false);
+    expect(input().value).toBe("first\nlast");
+
+    act(() => input().setSelectionRange(2, 2));
+    key("ArrowUp");
+    act(() => input().setSelectionRange(12, 15));
+    expect(key("ArrowDown").defaultPrevented).toBe(false);
+    expect(input().value).toBe("historical\nentry");
+  });
+
+  it("keeps completion navigation and acceptance ahead of multiline history and submit", () => {
+    let state = createDebugConsoleState(OWNER);
+    state = reduceDebugConsoleState(state, {
+      expression: "historical",
+      owner: OWNER,
+      requestId: "request-1",
+      type: "evaluation-pending",
+    });
+    const debugConsole = consoleResult(state);
+    const onAccept = vi.fn(() => ({ cursor: 5, expression: "count" }));
+    render({ console: debugConsole, onAccept });
+    act(() => setInputValue(input(), "first\nlast"));
+    key(" ", { code: "Space", ctrlKey: true });
+
+    expect(key("ArrowUp").defaultPrevented).toBe(true);
+    expect(input().value).toBe("first\nlast");
+    expect(key("ArrowDown").defaultPrevented).toBe(true);
+    expect(input().value).toBe("first\nlast");
+    expect(key("Enter").defaultPrevented).toBe(true);
+    expect(onAccept).toHaveBeenCalledOnce();
+    expect(debugConsole.submit).not.toHaveBeenCalled();
   });
 
   it("accepts a mouse choice without moving focus away from the input", async () => {

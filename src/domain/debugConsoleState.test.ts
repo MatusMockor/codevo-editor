@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MAX_DEBUG_CONSOLE_BYTES,
   MAX_DEBUG_CONSOLE_ENTRIES,
   MAX_DEBUG_CONSOLE_HISTORY,
   MAX_DEBUG_CONSOLE_OUTPUT_BYTES,
   createDebugConsoleState,
+  deserializeDebugConsoleHistory,
   reduceDebugConsoleState,
+  serializeDebugConsoleHistory,
 } from "./debugConsoleState";
 
 const owner = { sessionId: 7, pauseGeneration: 2 };
@@ -142,7 +144,7 @@ describe("debug console state", () => {
       type: "own",
       owner: { sessionId: 8, pauseGeneration: 1 },
     });
-    expect(state.history).toEqual([]);
+    expect(state.history).toEqual(["count"]);
     expect(state.entries).toEqual([]);
   });
 
@@ -306,7 +308,7 @@ describe("debug console state", () => {
     });
   });
 
-  it("bounds and exact-deduplicates evaluation history", () => {
+  it("bounds history and deduplicates only consecutive evaluations", () => {
     let state = createDebugConsoleState(owner);
     for (let index = 0; index <= MAX_DEBUG_CONSOLE_HISTORY; index += 1) {
       state = reduceDebugConsoleState(state, {
@@ -320,11 +322,72 @@ describe("debug console state", () => {
       type: "evaluation-pending",
       owner,
       requestId: "request-last",
-      expression: "value1",
+      expression: "value50",
+    });
+    state = reduceDebugConsoleState(state, {
+      type: "evaluation-pending",
+      owner,
+      requestId: "request-consecutive",
+      expression: "value50",
     });
     expect(state.history).toHaveLength(MAX_DEBUG_CONSOLE_HISTORY);
-    expect(state.history[state.history.length - 1]).toBe("value1");
-    expect(state.history.filter((expression) => expression === "value1")).toHaveLength(1);
+    expect(state.history[state.history.length - 1]).toBe("value50");
+    expect(state.history.filter((expression) => expression === "value50")).toHaveLength(2);
+  });
+
+  it("preserves evaluation history when the debug session changes", () => {
+    let state = createDebugConsoleState(owner);
+    state = reduceDebugConsoleState(state, {
+      type: "evaluation-pending",
+      owner,
+      requestId: "request",
+      expression: "count",
+    });
+
+    state = reduceDebugConsoleState(state, {
+      type: "own",
+      owner: { sessionId: 8, pauseGeneration: 1 },
+    });
+
+    expect(state.history).toEqual(["count"]);
+  });
+
+  it("round-trips bounded history with consecutive-only deduplication", () => {
+    const history = Array.from(
+      { length: MAX_DEBUG_CONSOLE_HISTORY + 2 },
+      (_, index) => `value${index}`,
+    );
+    const serialized = serializeDebugConsoleHistory([...history, "repeat", "repeat", "value50"]);
+
+    const restored = deserializeDebugConsoleHistory(serialized);
+
+    expect(restored).toHaveLength(MAX_DEBUG_CONSOLE_HISTORY);
+    expect(restored.slice(-3)).toEqual(["value101", "repeat", "value50"]);
+    expect(restored.filter((expression) => expression === "value50")).toHaveLength(2);
+  });
+
+  it.each(["not-json", '{"history":[]}', '["valid", 3]', `["${"x".repeat(4_097)}"]`])(
+    "fails closed for malformed persisted history %s",
+    (raw) => {
+      expect(deserializeDebugConsoleHistory(raw)).toEqual([]);
+    },
+  );
+
+  it("rejects oversized persisted history before parsing", () => {
+    const parse = vi.spyOn(JSON, "parse");
+
+    expect(deserializeDebugConsoleHistory("x".repeat(2_500_000))).toEqual([]);
+    expect(parse).not.toHaveBeenCalled();
+
+    parse.mockRestore();
+  });
+
+  it("rejects persisted history with more than the authoritative entry limit", () => {
+    const raw = JSON.stringify(
+      Array.from({ length: MAX_DEBUG_CONSOLE_HISTORY + 1 }, (_, index) => `value${index}`),
+    );
+
+    expect(deserializeDebugConsoleHistory(raw)).toEqual([]);
   });
 
   it("caps entry count and emits one accumulated truncation marker", () => {

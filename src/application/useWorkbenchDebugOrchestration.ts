@@ -354,6 +354,7 @@ export function useWorkbenchDebugOrchestration({
           }
         : null,
     sessionId: debugSessionState.kind === "inactive" ? null : debugSessionState.sessionId,
+    workspaceRoot,
   });
   const debugConsoleCompletions = useDebugConsoleCompletions({
     complete: debugSession.completeDebugConsole,

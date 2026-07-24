@@ -1,13 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DebugVariable } from "../domain/debug";
 import {
+  appendDebugConsoleHistory,
   createDebugConsoleState,
+  deserializeDebugConsoleHistory,
   reduceDebugConsoleState,
+  serializeDebugConsoleHistory,
   type DebugConsoleResultOwner,
   type DebugConsoleState,
 } from "../domain/debugConsoleState";
 import type { DebugEvaluationOwner, DebugEvaluationResult } from "../domain/debugEvaluationPolicy";
+import { normalizedWorkspaceRootKey } from "../domain/workspaceRootKey";
 import type { DebugOutputLine } from "./debugSessionContracts";
+
+const STORAGE_KEY_PREFIX = "mockor.debug.consoleHistory.";
+
+interface DebugConsoleStorage {
+  getItem(key: string): string | null;
+  removeItem(key: string): void;
+  setItem(key: string, value: string): void;
+}
 
 export interface UseDebugConsoleOptions {
   evaluate(expression: string): Promise<DebugVariable | null>;
@@ -15,6 +27,8 @@ export interface UseDebugConsoleOptions {
   owner: DebugEvaluationOwner | null;
   resultOwner?: Omit<DebugConsoleResultOwner, "epoch"> | null;
   sessionId: number | null;
+  storage?: DebugConsoleStorage;
+  workspaceRoot: string | null;
 }
 
 export interface UseDebugConsoleResult {
@@ -30,6 +44,8 @@ export function useDebugConsole({
   owner,
   resultOwner = null,
   sessionId,
+  storage,
+  workspaceRoot,
 }: UseDebugConsoleOptions): UseDebugConsoleResult {
   const ownerPauseGeneration = owner?.sessionId === sessionId ? owner.pauseGeneration : null;
   const consoleOwner = useMemo(
@@ -42,6 +58,11 @@ export function useDebugConsole({
     [ownerPauseGeneration, sessionId],
   );
   const [state, setState] = useState(() => createDebugConsoleState(consoleOwner));
+  const historyByRootRef = useRef(new Map<string, readonly string[]>());
+  const loadedRootsRef = useRef(new Set<string>());
+  const activeRootKeyRef = useRef("");
+  const storageRef = useRef(storage);
+  storageRef.current = storage;
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
   const consoleOwnerRef = useRef(consoleOwner);
@@ -64,6 +85,7 @@ export function useDebugConsole({
       }
     : null;
   resultOwnerRef.current = currentResultOwner;
+  const activeRootKey = normalizedWorkspaceRootKey(workspaceRoot);
   const outputCursorRef = useRef<{
     lastLine: DebugOutputLine | null;
     seenLines: WeakSet<DebugOutputLine>;
@@ -74,6 +96,26 @@ export function useDebugConsole({
   useEffect(() => {
     setState((current) => reduceDebugConsoleState(current, { type: "own", owner: consoleOwner }));
   }, [consoleOwner]);
+
+  useLayoutEffect(() => {
+    activeRootKeyRef.current = activeRootKey;
+    if (!activeRootKey) {
+      setState((current) =>
+        reduceDebugConsoleState(current, { type: "replace-history", history: [] }),
+      );
+      return;
+    }
+    if (!loadedRootsRef.current.has(activeRootKey)) {
+      loadedRootsRef.current.add(activeRootKey);
+      historyByRootRef.current.set(activeRootKey, loadHistory(storageRef.current, activeRootKey));
+    }
+    setState((current) =>
+      reduceDebugConsoleState(current, {
+        type: "replace-history",
+        history: historyByRootRef.current.get(activeRootKey) ?? [],
+      }),
+    );
+  }, [activeRootKey]);
 
   useEffect(() => {
     if (sessionId === null || consoleOwner === null) {
@@ -114,17 +156,31 @@ export function useDebugConsole({
       const requestOwner = ownerRef.current;
       const requestResultOwner = resultOwnerRef.current;
       if (!requestOwner) return;
+      const requestRootKey = activeRootKeyRef.current;
+      let requestHistory: readonly string[] = [];
+      if (requestRootKey) {
+        const currentHistory = historyByRootRef.current.get(requestRootKey) ?? [];
+        requestHistory = appendDebugConsoleHistory(currentHistory, expression);
+        historyByRootRef.current.set(requestRootKey, requestHistory);
+        if (requestHistory !== currentHistory) {
+          saveHistory(storageRef.current, requestRootKey, requestHistory);
+        }
+      }
       requestIdRef.current += 1;
       const requestId = `repl-${requestIdRef.current}`;
-      setState((current) =>
-        reduceDebugConsoleState(current, {
+      setState((current) => {
+        const rooted = reduceDebugConsoleState(current, {
+          type: "replace-history",
+          history: requestHistory,
+        });
+        return reduceDebugConsoleState(rooted, {
           type: "evaluation-pending",
           owner: requestOwner,
           requestId,
           expression,
           ...(requestResultOwner ? { resultOwner: requestResultOwner } : {}),
-        }),
-      );
+        });
+      });
       let result: DebugEvaluationResult;
       try {
         const value = await evaluate(expression);
@@ -175,7 +231,43 @@ export function useDebugConsole({
         reduceDebugConsoleState(current, { type: "clear", owner: currentOwner }),
       );
   }, []);
-  return { resultOwner: currentResultOwner, state, clear, submit };
+  const activeHistory = activeRootKey ? (historyByRootRef.current.get(activeRootKey) ?? []) : [];
+  return {
+    resultOwner: currentResultOwner,
+    state: { ...state, history: activeHistory },
+    clear,
+    submit,
+  };
+}
+
+function storageKey(rootKey: string): string {
+  return `${STORAGE_KEY_PREFIX}${rootKey}`;
+}
+
+function loadHistory(storage: DebugConsoleStorage | undefined, rootKey: string): readonly string[] {
+  try {
+    const raw = (storage ?? window.localStorage).getItem(storageKey(rootKey));
+    return raw === null ? [] : deserializeDebugConsoleHistory(raw);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(
+  storage: DebugConsoleStorage | undefined,
+  rootKey: string,
+  history: readonly string[],
+): void {
+  try {
+    const target = storage ?? window.localStorage;
+    if (history.length === 0) {
+      target.removeItem(storageKey(rootKey));
+      return;
+    }
+    target.setItem(storageKey(rootKey), serializeDebugConsoleHistory(history));
+  } catch {
+    return;
+  }
 }
 
 function snapshotResultOwner(
