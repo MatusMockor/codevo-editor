@@ -121,6 +121,85 @@ fn wait_for_disconnect(disconnected: &Receiver<()>) {
         .expect("transport disconnect");
 }
 
+fn start_late_resumed_server() -> (MockCdpServer, Receiver<()>, Receiver<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind late resumed server");
+    let port = listener
+        .local_addr()
+        .expect("late resumed server addr")
+        .port();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&requests);
+    let (resume_replied_tx, resume_replied_rx) = mpsc::channel();
+    let (resumed_sent_tx, resumed_sent_rx) = mpsc::channel();
+    let _handle = thread::spawn(move || {
+        let Ok((stream, _)) = listener.accept() else {
+            return;
+        };
+        let Ok(mut socket) = tungstenite::accept(stream) else {
+            return;
+        };
+        loop {
+            let message = match socket.read() {
+                Ok(message) => message,
+                Err(_) => break,
+            };
+            let text = match message {
+                Message::Text(text) => text,
+                Message::Close(_) => break,
+                _ => continue,
+            };
+            let Ok(request) = serde_json::from_str::<Value>(text.as_str()) else {
+                continue;
+            };
+            let id = request.get("id").and_then(Value::as_u64).unwrap_or(0);
+            let method = request
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let params = request.get("params").cloned().unwrap_or(Value::Null);
+            recorded
+                .lock()
+                .expect("late resumed requests")
+                .push((method.clone(), params));
+            if socket.send(Message::text(ok(id))).is_err() {
+                return;
+            }
+            if method == "Runtime.runIfWaitingForDebugger"
+                && socket
+                    .send(Message::text(event(
+                        "Debugger.paused",
+                        exception_pause(Some("RangeError"), None),
+                    )))
+                    .is_err()
+            {
+                return;
+            }
+            if method != "Debugger.resume" {
+                continue;
+            }
+            resume_replied_tx.send(()).expect("publish resume reply");
+            thread::sleep(FILTER_TIMEOUT * 3);
+            if socket
+                .send(Message::text(event("Debugger.resumed", json!({}))))
+                .is_err()
+            {
+                return;
+            }
+            resumed_sent_tx.send(()).expect("publish resumed event");
+        }
+    });
+    (
+        MockCdpServer {
+            _handle,
+            requests,
+            url: format!("ws://127.0.0.1:{port}/late-resumed-session"),
+        },
+        resume_replied_rx,
+        resumed_sent_rx,
+    )
+}
+
 #[test]
 fn non_matching_exception_suppresses_stopped_and_resumed_events() {
     let server = MockCdpServer::start(Box::new(|id, method, _params| match method {
@@ -138,6 +217,38 @@ fn non_matching_exception_suppresses_stopped_and_resumed_events() {
     wait_for_method_count(&server, "Debugger.resume", 1);
     thread::sleep(Duration::from_millis(100));
 
+    assert_eq!(stopped_count(&sink), 0);
+    assert_eq!(resumed_count(&sink), 0);
+    assert!(registry.stop_by_id(session_id));
+}
+
+#[test]
+fn successful_hidden_resume_survives_a_resumed_event_after_the_request_timeout() {
+    let (server, resume_replied_rx, resumed_sent_rx) = start_late_resumed_server();
+    let sink = Arc::new(CollectingSink::default());
+    let (disconnected_tx, disconnected_rx) = mpsc::channel();
+    let (registry, session_id) = start_filtered_session(
+        &server,
+        sink.clone(),
+        FILTER_TIMEOUT,
+        None,
+        Some(disconnected_tx),
+    );
+
+    wait_for_method_count(&server, "Debugger.resume", 1);
+    resume_replied_rx
+        .recv_timeout(EVENT_WAIT_TIMEOUT)
+        .expect("successful hidden resume reply");
+    resumed_sent_rx
+        .recv_timeout(EVENT_WAIT_TIMEOUT)
+        .expect("late resumed event");
+    thread::sleep(FILTER_TIMEOUT);
+
+    assert_eq!(disconnected_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+    assert_eq!(
+        registry.session_id_for_root(WORKSPACE_KEY),
+        Some(session_id)
+    );
     assert_eq!(stopped_count(&sink), 0);
     assert_eq!(resumed_count(&sink), 0);
     assert!(registry.stop_by_id(session_id));

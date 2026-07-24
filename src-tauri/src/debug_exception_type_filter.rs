@@ -260,6 +260,13 @@ pub(crate) fn handle_response(
     }
     if phase == PendingExceptionPhase::Resume {
         if message.get("error").is_none() {
+            let mut state = context.exception_filter.lock().ok()?;
+            if state.pending.as_ref().is_none_or(|pending| {
+                pending.request_id != id || pending.phase != PendingExceptionPhase::Resume
+            }) {
+                return None;
+            }
+            state.pending.take()?;
             return Some(InternalResponse::Handled(None));
         }
         let pending = context.exception_filter.lock().ok()?.pending.take()?;
