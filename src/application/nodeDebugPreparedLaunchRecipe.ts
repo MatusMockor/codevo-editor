@@ -24,6 +24,10 @@ export function clonePreparedNodeDebugLaunch(
     prepared.launch as PreparedNodeDebugLaunch["launch"] & { readonly envFile?: unknown }
   ).envFile;
   const launchEnvFile = cloneEnvFile(rawLaunchEnvFile);
+  const rawRuntime = (
+    prepared.launch as PreparedNodeDebugLaunch["launch"] & { readonly runtime?: unknown }
+  ).runtime;
+  const runtime = cloneRuntime(rawRuntime);
   if (
     !launch ||
     preTask.kind === "invalid" ||
@@ -33,23 +37,32 @@ export function clonePreparedNodeDebugLaunch(
     (prepared.nativeWatch !== undefined && nativeWatch?.kind !== "ok") ||
     (prepared.envFile !== undefined && !envFile) ||
     (rawLaunchEnvFile !== undefined && !launchEnvFile) ||
+    (rawRuntime !== undefined && !runtime) ||
     (launchEnvFile !== envFile && (launchEnvFile !== null || envFile !== null)) ||
-    (envFile !== null && launch.kind !== "node-configured-script")
+    ((envFile !== null || runtime !== null) && launch.kind !== "node-configured-script")
   ) {
     return null;
   }
-  const launchWithEnvFile =
-    envFile && launch.kind === "node-configured-script"
-      ? Object.freeze({ ...launch, envFile })
+  const launchWithMetadata =
+    launch.kind === "node-configured-script" && (envFile || runtime)
+      ? Object.freeze({
+          ...launch,
+          ...(envFile ? { envFile } : {}),
+          ...(runtime ? { runtime } : {}),
+        })
       : launch;
   return Object.freeze({
     ...(envFile ? { envFile } : {}),
-    launch: launchWithEnvFile,
+    launch: launchWithMetadata,
     ...(nativeWatch?.kind === "ok" ? { nativeWatch: nativeWatch.intent } : {}),
     preLaunchTask: preTask.kind === "valid" ? preTask.task : null,
     ...(postTask.kind === "valid" ? { postDebugTask: postTask.task } : {}),
     ...(serverReadyAction ? { serverReadyAction } : {}),
   });
+}
+
+function cloneRuntime(value: unknown): "tsx" | "ts-node" | null {
+  return value === "tsx" || value === "ts-node" ? value : null;
 }
 
 function cloneEnvFile(value: unknown): string | null {

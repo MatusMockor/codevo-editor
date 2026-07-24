@@ -490,6 +490,85 @@ describe("VS Code Node launch configuration import", () => {
     expect(parsed.configurations[0]).not.toHaveProperty("runtimeArgs");
   });
 
+  it.each(["tsx", "ts-node"] as const)(
+    "imports the exact direct %s runtime as a configured script",
+    (runtime) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: `${runtime} API`,
+              runtimeExecutable: runtime,
+              ...(runtime === "ts-node" ? { runtimeArgs: [] } : {}),
+              program: "${workspaceFolder}/src/server.ts",
+              args: ["--port", "4100"],
+              cwd: "${workspaceFolder}/apps/api",
+              env: { NODE_ENV: "development" },
+              envFile: "${workspaceFolder}/config/dev.env",
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toEqual({
+        kind: "ok",
+        diagnostics: [],
+        configurations: [
+          {
+            configuration: {
+              args: ["--port", "4100"],
+              cwd: "apps/api",
+              default: false,
+              env: { NODE_ENV: "development" },
+              envFile: "config/dev.env",
+              name: `${runtime} API`,
+              runtime,
+              target: { kind: "script", path: "src/server.ts" },
+            },
+            envFile: "config/dev.env",
+            justMyCode: "nodeInternals",
+          },
+        ],
+      });
+    },
+  );
+
+  it.each([
+    ["unsupported runtime", "nodemon", undefined, "src/server.ts", "runtimeExecutable"],
+    ["runtime arguments", "tsx", ["--esm"], "src/server.ts", "runtimeArgs"],
+    ["parent program", "tsx", undefined, "../server.ts", "inside the workspace"],
+    ["absolute program", "ts-node", undefined, "/tmp/server.ts", "inside the workspace"],
+    ["unsupported extension", "tsx", undefined, "src/server.py", "program"],
+  ])(
+    "rejects direct wrapper launch with %s",
+    (_case, runtimeExecutable, runtimeArgs, program, diagnostic) => {
+      const parsed = parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "launch",
+              name: "Direct wrapper",
+              runtimeExecutable,
+              ...(runtimeArgs ? { runtimeArgs } : {}),
+              program,
+            },
+          ],
+        }),
+      );
+
+      expect(parsed).toMatchObject({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [{ message: expect.stringContaining(diagnostic) }],
+      });
+    },
+  );
+
   it("imports exact direct native Node watch forms as frozen semantic metadata", () => {
     const parsed = parseVscodeNodeLaunchConfigurations(
       JSON.stringify({

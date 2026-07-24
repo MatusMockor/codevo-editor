@@ -1,6 +1,6 @@
 use crate::debug_adapter::{
     DebugBreakpoint, DebugExceptionPauseMode, DebugJustMyCodePolicy, DebugLaunchTarget,
-    DebugSessionRegistry, DebugStartResponse,
+    DebugSessionRegistry, DebugStartResponse, NodeConfiguredScriptRuntime,
 };
 use crate::trust::WorkspaceTrustService;
 use crate::workspace_registry::WorkspaceRegistry;
@@ -34,6 +34,7 @@ pub(crate) struct NodeConfiguredScriptLaunchWire {
     env: HashMap<String, String>,
     env_file: Option<String>,
     just_my_code: Option<DebugJustMyCodePolicy>,
+    runtime: Option<NodeConfiguredScriptRuntime>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +88,7 @@ fn decode_node_launch_with_env_file(
         env,
         env_file,
         just_my_code,
+        runtime,
     } = configured;
     let mut environment = env;
     if let Some(env_file) = env_file {
@@ -99,6 +101,16 @@ fn decode_node_launch_with_env_file(
         merged.extend(environment);
         crate::debug_node_launch::validate_environment(&merged)?;
         environment = merged;
+    }
+    if let Some(runtime) = runtime {
+        return Ok(DebugLaunchTarget::NodeConfiguredRuntimeScript {
+            script_path,
+            args,
+            cwd,
+            env: environment,
+            runtime,
+            just_my_code,
+        });
     }
     Ok(DebugLaunchTarget::NodeConfiguredScript {
         script_path,
@@ -218,7 +230,9 @@ mod tests {
         }
 
         fn write(&self, relative: &str, source: &[u8]) {
-            fs::write(self.root.join(relative), source).unwrap();
+            let path = self.root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, source).unwrap();
         }
     }
 
@@ -325,6 +339,60 @@ REFERENCE=${PLAIN}
         assert_eq!(environment.get("FROM_FILE").unwrap(), "file");
         assert_eq!(environment.get("INLINE").unwrap(), "inline");
         assert_eq!(environment.get("OVERRIDE").unwrap(), "inline");
+    }
+
+    #[test]
+    fn configured_script_runtime_wire_is_closed_and_typed() {
+        let fixture = Fixture::new("runtime-wire");
+        for (wire_name, runtime) in [
+            ("tsx", NodeConfiguredScriptRuntime::Tsx),
+            ("ts-node", NodeConfiguredScriptRuntime::TsNode),
+        ] {
+            let launch = serde_json::json!({
+                "kind": "node-configured-script",
+                "scriptPath": fixture.root.join("server.ts").to_string_lossy(),
+                "args": [],
+                "env": {},
+                "runtime": wire_name
+            });
+            let wire = serde_json::from_value(launch).expect("runtime wire");
+            let decoded =
+                decode_node_launch_with_env_file(&fixture.directory, wire).expect("runtime target");
+            assert!(matches!(
+                decoded,
+                DebugLaunchTarget::NodeConfiguredRuntimeScript {
+                    runtime: decoded_runtime,
+                    ..
+                } if decoded_runtime == runtime
+            ));
+        }
+
+        for launch in [
+            serde_json::json!({
+                "kind": "node-configured-script",
+                "scriptPath": fixture.root.join("server.ts").to_string_lossy(),
+                "args": [],
+                "env": {},
+                "runtime": "nodemon"
+            }),
+            serde_json::json!({
+                "kind": "node-configured-script",
+                "scriptPath": fixture.root.join("server.ts").to_string_lossy(),
+                "args": [],
+                "env": {},
+                "runtime": "tsx",
+                "runtimeArgs": ["--esm"]
+            }),
+            serde_json::json!({
+                "kind": "node-configured-runtime-script",
+                "scriptPath": fixture.root.join("server.ts").to_string_lossy(),
+                "args": [],
+                "env": {},
+                "runtime": "tsx"
+            }),
+        ] {
+            assert!(serde_json::from_value::<NodeDebugLaunchWire>(launch).is_err());
+        }
     }
 
     #[test]

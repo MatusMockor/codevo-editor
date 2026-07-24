@@ -1050,6 +1050,58 @@ describe("debug Tauri IPC contract", () => {
     ).rejects.toThrow("launch.env.PORT");
   });
 
+  it.each(["tsx", "ts-node"] as const)(
+    "accepts the exact configured Node %s runtime",
+    async (runtime) => {
+      const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
+        status: "ok",
+        sessionId: 9,
+      });
+      const launch = {
+        kind: "node-configured-script",
+        scriptPath: "/workspace/app.ts",
+        args: [],
+        env: {},
+        runtime,
+      } as unknown as DebugLaunchTarget;
+
+      await expect(
+        invokeDebugIpc(invokeCommand, "debug_start", {
+          rootPath: "/workspace",
+          launch,
+          breakpoints: [],
+          exceptionPauseMode: "none",
+        }),
+      ).resolves.toEqual({ status: "ok", sessionId: 9 });
+      expect(invokeCommand).toHaveBeenCalledWith("debug_start", {
+        rootPath: "/workspace",
+        launch,
+        breakpoints: [],
+        exceptionPauseMode: "none",
+      });
+    },
+  );
+
+  it("rejects an unknown configured Node runtime", async () => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>();
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start", {
+        rootPath: "/workspace",
+        launch: {
+          kind: "node-configured-script",
+          scriptPath: "/workspace/app.ts",
+          args: [],
+          env: {},
+          runtime: "nodemon",
+        } as unknown as DebugLaunchTarget,
+        breakpoints: [],
+        exceptionPauseMode: "none",
+      }),
+    ).rejects.toThrow("debug_start args.launch.runtime");
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
   it("accepts envFile only on a configured Node script launch", async () => {
     const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
       status: "ok",

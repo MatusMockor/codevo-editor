@@ -1,5 +1,6 @@
 use crate::debug_adapter::{
     DebugLaunchTarget, JsTestDebugNameMatch, JsTestDebugRunner, JsTestDebugSelection,
+    NodeConfiguredScriptRuntime,
 };
 use crate::debug_source_map::{
     emitted_type_script_path, source_map_url_from_generated, SourceMapRegistry,
@@ -139,7 +140,7 @@ pub(crate) fn build_launch_plan(
             Err("Node inspector attach targets do not spawn a process.".to_string())
         }
         DebugLaunchTarget::NodeScript { script_path, .. } => {
-            script_plan(root, script_path, &[], None, HashMap::new(), false)
+            script_plan(root, script_path, &[], None, HashMap::new(), false, None)
         }
         DebugLaunchTarget::JsTestFile {
             runner,
@@ -162,7 +163,31 @@ pub(crate) fn build_launch_plan(
             cwd,
             env,
             ..
-        } => script_plan(root, script_path, args, cwd.as_deref(), env.clone(), true),
+        } => script_plan(
+            root,
+            script_path,
+            args,
+            cwd.as_deref(),
+            env.clone(),
+            true,
+            None,
+        ),
+        DebugLaunchTarget::NodeConfiguredRuntimeScript {
+            script_path,
+            args,
+            cwd,
+            env,
+            runtime,
+            ..
+        } => script_plan(
+            root,
+            script_path,
+            args,
+            cwd.as_deref(),
+            env.clone(),
+            true,
+            Some(*runtime),
+        ),
         DebugLaunchTarget::JsConfiguredTest {
             runner,
             file_path,
@@ -236,6 +261,7 @@ fn reject_run_only_unsupported_target(target: &DebugLaunchTarget) -> Result<(), 
         DebugLaunchTarget::NodeScript { .. }
         | DebugLaunchTarget::JsTestFile { .. }
         | DebugLaunchTarget::NodeConfiguredScript { .. }
+        | DebugLaunchTarget::NodeConfiguredRuntimeScript { .. }
         | DebugLaunchTarget::JsConfiguredTest { .. }
         | DebugLaunchTarget::NodeNpmScript { .. } => Ok(()),
         _ => Err("Run Without Debugging supports Node scripts, JavaScript tests, and safe NPM Node scripts only.".to_string()),
@@ -245,6 +271,7 @@ fn reject_run_only_unsupported_target(target: &DebugLaunchTarget) -> Result<(), 
 fn reject_configured_inspector_arguments(target: &DebugLaunchTarget) -> Result<(), String> {
     let arguments = match target {
         DebugLaunchTarget::NodeConfiguredScript { args, .. }
+        | DebugLaunchTarget::NodeConfiguredRuntimeScript { args, .. }
         | DebugLaunchTarget::JsConfiguredTest { args, .. }
         | DebugLaunchTarget::NodeNpmScript { args, .. } => args.as_slice(),
         _ => &[],
@@ -265,6 +292,7 @@ fn script_plan(
     cwd: Option<&str>,
     environment: HashMap<String, String>,
     isolated_environment: bool,
+    runtime: Option<NodeConfiguredScriptRuntime>,
 ) -> Result<NodeLaunchPlan, String> {
     if isolated_environment {
         validate_configured_arguments(args)?;
@@ -277,6 +305,23 @@ fn script_plan(
     let script = validate_workspace_file(root, script_path)?;
     let source = Path::new(&script);
     validate_node_script_path(source)?;
+    if let Some(runtime) = runtime {
+        let context = PackageToolContext::resolve(&root.to_string_lossy(), &script)?;
+        let runtime_name = match runtime {
+            NodeConfiguredScriptRuntime::Tsx => "tsx",
+            NodeConfiguredScriptRuntime::TsNode => "ts-node",
+        };
+        let mut arguments = vec![script.clone()];
+        arguments.extend(args.iter().cloned());
+        return workspace_wrapper_plan(
+            &context,
+            runtime_name,
+            script,
+            arguments,
+            validate_working_directory(root, cwd)?,
+            environment,
+        );
+    }
     let is_type_script = is_type_script_path(source);
     let launched = if is_type_script {
         emitted_type_script_path(root, source)?
@@ -490,7 +535,7 @@ fn npm_script_plan(
         return Err("NPM debug script command is too large.".to_string());
     }
     let tokens = safe_npm_command_tokens(command)?;
-    let tool = tokens.first().map(String::as_str).unwrap_or_default();
+    let tool = tokens.first().cloned().unwrap_or_default();
     if tool == "node" {
         if tokens.len() < 2 || tokens[1].starts_with('-') {
             return Err(unsupported_npm_script());
@@ -520,7 +565,9 @@ fn npm_script_plan(
             startup_entry: None,
         });
     }
-    if !ALLOWED_NPM_NODE_WRAPPERS.contains(&tool) || tokens.len() < 2 || tokens[1].starts_with('-')
+    if !ALLOWED_NPM_NODE_WRAPPERS.contains(&tool.as_str())
+        || tokens.len() < 2
+        || tokens[1].starts_with('-')
     {
         return Err(unsupported_npm_script());
     }
@@ -528,23 +575,48 @@ fn npm_script_plan(
         validate_workspace_file(root, &package_root.join(&tokens[1]).to_string_lossy())?;
     validate_node_script_path(Path::new(&wrapper_target))?;
     let context = PackageToolContext::resolve(&root.to_string_lossy(), &package_json_file)?;
-    let wrapper = context.nearest_executable(tool)?.ok_or_else(|| {
-        format!("The allowlisted Node wrapper `{tool}` was not found in workspace node_modules.")
-    })?;
     let mut arguments = vec![wrapper_target.clone()];
     arguments.extend(tokens.into_iter().skip(2));
     arguments.extend(configured_args.iter().cloned());
-    Ok(NodeLaunchPlan {
-        program: NodeLaunchProgram::WorkspaceTool(wrapper),
+    workspace_wrapper_plan(
+        &context,
+        &tool,
+        wrapper_target,
         arguments,
-        working_directory: match cwd {
+        match cwd {
             Some(value) => validate_working_directory(root, Some(value))?,
             None => package_root,
         },
         environment,
+    )
+}
+
+fn workspace_wrapper_plan(
+    context: &PackageToolContext,
+    tool: &str,
+    target: String,
+    arguments: Vec<String>,
+    working_directory: PathBuf,
+    environment: HashMap<String, String>,
+) -> Result<NodeLaunchPlan, String> {
+    let expected = context
+        .nearest_package_root()
+        .join("node_modules/.bin")
+        .join(tool);
+    let wrapper = context.nearest_executable(tool)?.ok_or_else(|| {
+        format!(
+            "The allowlisted Node wrapper `{tool}` was not found at the expected workspace path `{}`.",
+            expected.display()
+        )
+    })?;
+    Ok(NodeLaunchPlan {
+        program: NodeLaunchProgram::WorkspaceTool(wrapper),
+        arguments,
+        working_directory,
+        environment,
         isolated_environment: true,
         inspect_via_environment: true,
-        startup_entry: Some(PathBuf::from(wrapper_target)),
+        startup_entry: Some(PathBuf::from(target)),
     })
 }
 
@@ -847,6 +919,9 @@ mod tests {
             fs::set_permissions(path, permissions).expect("wrapper permissions");
         }
     }
+
+    #[path = "debug_node_launch_runtime_tests.rs"]
+    mod runtime_tests;
 
     #[test]
     fn configured_script_applies_args_cwd_and_environment() {
@@ -1313,48 +1388,6 @@ mod tests {
             root.join("src/server.js").to_string_lossy()
         );
         assert_eq!(plan.arguments[2..], ["--watch", "--port", "4100"]);
-    }
-
-    #[test]
-    fn npm_accepts_an_allowlisted_wrapper_but_never_interprets_it_as_a_program() {
-        let root = fixture("npm-wrapper");
-        write(
-            &root.join("package.json"),
-            r#"{"scripts":{"dev":"tsx src/server.ts --watch"}}"#,
-        );
-        write(&root.join("src/server.ts"), "console.log('server');");
-        write_executable(&root.join("node_modules/.bin/tsx"), "#!/usr/bin/env node\n");
-        let plan = build_launch_plan(
-            &root,
-            &DebugLaunchTarget::NodeNpmScript {
-                script: "dev".to_string(),
-                package_root_path: root.to_string_lossy().to_string(),
-                args: vec!["--port".to_string(), "4100".to_string()],
-                cwd: None,
-                env: HashMap::new(),
-                just_my_code: None,
-            },
-        )
-        .expect("wrapper plan");
-
-        assert_eq!(
-            plan.program,
-            NodeLaunchProgram::WorkspaceTool(
-                root.join("node_modules/.bin/tsx")
-                    .canonicalize()
-                    .expect("wrapper path")
-            )
-        );
-        assert_eq!(
-            plan.arguments,
-            vec![
-                root.join("src/server.ts").to_string_lossy().to_string(),
-                "--watch".to_string(),
-                "--port".to_string(),
-                "4100".to_string(),
-            ]
-        );
-        assert!(plan.inspect_via_environment);
     }
 
     #[test]

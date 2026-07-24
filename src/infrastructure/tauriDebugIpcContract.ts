@@ -275,9 +275,8 @@ export async function invokeDebugIpc<Command extends DebugIpcCommand>(
   if (command === "debug_set_breakpoints") {
     const request = (args as DebugIpcCommandArgs<"debug_set_breakpoints">).request;
     for (const [index, breakpoint] of (result as Breakpoint[]).entries()) {
-      if (breakpoint.filePath !== request.filePath) {
+      if (breakpoint.filePath !== request.filePath)
         throw invalidDebugWire(`${command} result[${index}].filePath`, "the request filePath");
-      }
     }
   }
   if (command === "debug_set_function_breakpoints") {
@@ -298,19 +297,16 @@ export async function invokeDebugIpc<Command extends DebugIpcCommand>(
   }
   if (command === "debug_set_variable") {
     const request = (args as DebugIpcCommandArgs<"debug_set_variable">).request;
-    if ((result as DebugVariable).name !== request.name) {
+    if ((result as DebugVariable).name !== request.name)
       throw invalidDebugWire(`${command} result.name`, "the request name");
-    }
   }
   if (command === "debug_set_expression") {
     const request = (args as DebugIpcCommandArgs<"debug_set_expression">).request;
     const expressionResult = result as DebugSetExpressionResult;
-    if (expressionResult.setExpressionReference !== request.setExpressionReference) {
+    if (expressionResult.setExpressionReference !== request.setExpressionReference)
       throw invalidDebugWire(`${command} result.setExpressionReference`, "the request reference");
-    }
-    if (expressionResult.expression !== request.expression) {
+    if (expressionResult.expression !== request.expression)
       throw invalidDebugWire(`${command} result.expression`, "the request expression");
-    }
   }
   if (
     command === "debug_start_compound" &&
@@ -431,18 +427,15 @@ function validateCompletionRequest(
 }
 
 function decodeCompletionQuery(value: unknown, path: string): DebugConsoleCompletionQuery {
-  if (encodedJsonBytes(value, path) > MAX_DEBUG_COMPLETION_QUERY_BYTES) {
+  if (encodedJsonBytes(value, path) > MAX_DEBUG_COMPLETION_QUERY_BYTES)
     throw invalidDebugWire(path, `at most ${MAX_DEBUG_COMPLETION_QUERY_BYTES} UTF-8 bytes`);
-  }
   const query = requireRecord(value, path);
   if (query.kind === "lexical") {
     requireExactKeys(query, ["kind", "prefix"], path);
     const prefix = requireCompletionPrefix(query.prefix, `${path}.prefix`);
     return Object.freeze({ kind: "lexical", prefix });
   }
-  if (query.kind !== "member") {
-    throw invalidDebugWire(`${path}.kind`, "lexical or member");
-  }
+  if (query.kind !== "member") throw invalidDebugWire(`${path}.kind`, "lexical or member");
 
   requireExactKeys(query, ["kind", "root", "path", "prefix"], path);
   const rootRecord = requireRecord(query.root, `${path}.root`);
@@ -453,9 +446,8 @@ function decodeCompletionQuery(value: unknown, path: string): DebugConsoleComple
           return Object.freeze({ kind: "this" as const });
         })()
       : (() => {
-          if (rootRecord.kind !== "binding") {
+          if (rootRecord.kind !== "binding")
             throw invalidDebugWire(`${path}.root.kind`, "binding or this");
-          }
           requireExactKeys(rootRecord, ["kind", "name"], `${path}.root`);
           const name = requireCompletionIdentifier(rootRecord.name, `${path}.root.name`, false);
           return Object.freeze({ kind: "binding" as const, name });
@@ -465,9 +457,8 @@ function decodeCompletionQuery(value: unknown, path: string): DebugConsoleComple
     `${path}.path`,
     (segment, segmentPath) => {
       const text = requireCompletionText(segment, segmentPath, MAX_DEBUG_COMPLETION_QUERY_BYTES);
-      if ([...text].some((value) => /\p{Cc}/u.test(value))) {
+      if ([...text].some((value) => /\p{Cc}/u.test(value)))
         throw invalidDebugWire(segmentPath, "control-free text");
-      }
       return text;
     },
     MAX_DEBUG_COMPLETION_RECEIVER_SEGMENTS,
@@ -499,16 +490,14 @@ function requireCompletionIdentifier(value: unknown, path: string, allowEmpty: b
 function requireCompletionText(value: unknown, path: string, maximumBytes: number): string {
   const text = requireString(value, path);
   if (!isWellFormedUnicode(text)) throw invalidDebugWire(path, "valid Unicode text");
-  if (utf8ByteLength(text) > maximumBytes) {
+  if (utf8ByteLength(text) > maximumBytes)
     throw invalidDebugWire(path, `at most ${maximumBytes} UTF-8 bytes`);
-  }
   return text;
 }
 
 function decodeCompletionResponse(value: unknown, path: string): DebugConsoleCompletionResponse {
-  if (encodedJsonBytes(value, path) > MAX_DEBUG_COMPLETION_RESPONSE_BYTES) {
+  if (encodedJsonBytes(value, path) > MAX_DEBUG_COMPLETION_RESPONSE_BYTES)
     throw invalidDebugWire(path, `at most ${MAX_DEBUG_COMPLETION_RESPONSE_BYTES} UTF-8 bytes`);
-  }
   const response = requireRecord(value, path);
   requireExactKeys(response, ["items", "isIncomplete"], path);
   const items = decodeArray(
@@ -1026,14 +1015,13 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
       requireObjectShape(
         record,
         ["kind", "scriptPath", "args", "env"],
-        ["cwd", "envFile", "justMyCode"],
+        ["cwd", "envFile", "justMyCode", "runtime"],
         path,
       );
       requireString(record.scriptPath, `${path}.scriptPath`);
       decodeNodeLaunchOptions(record, path);
-      if (record.envFile !== undefined) {
-        requireString(record.envFile, `${path}.envFile`);
-      }
+      if (record.envFile !== undefined) requireString(record.envFile, `${path}.envFile`);
+      decodeOptionalEnum(record.runtime, `${path}.runtime`, ["tsx", "ts-node"], "tsx or ts-node");
       decodeNodeDebugJustMyCode(record.justMyCode, `${path}.justMyCode`);
       break;
     case "js-configured-test":
@@ -1043,9 +1031,8 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
         ["cwd"],
         path,
       );
-      if (record.runner !== "vitest" && record.runner !== "jest") {
+      if (record.runner !== "vitest" && record.runner !== "jest")
         throw invalidDebugWire(`${path}.runner`, "vitest or jest");
-      }
       requireString(record.filePath, `${path}.filePath`);
       requireString(record.packageRootPath, `${path}.packageRootPath`);
       decodeNodeLaunchOptions(record, path);
@@ -1068,9 +1055,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
       break;
     case "php-listen":
       requireObjectShape(record, ["kind"], ["port"], path);
-      if (record.port !== undefined) {
-        requireUnsignedInteger(record.port, `${path}.port`, U16_MAX);
-      }
+      if (record.port !== undefined) requireUnsignedInteger(record.port, `${path}.port`, U16_MAX);
       break;
     default:
       throw invalidDebugWire(`${path}.kind`, "a known launch target");
@@ -1136,14 +1121,21 @@ function decodeNodeLaunchOptions(record: Record<string, unknown>, path: string):
 }
 
 function decodeNodeDebugJustMyCode(value: unknown, path: string): void {
-  if (
-    value !== undefined &&
-    value !== "dependencies" &&
-    value !== "nodeInternals" &&
-    value !== "nodeInternalsAndDependencies"
-  ) {
-    throw invalidDebugWire(path, "dependencies, nodeInternals, or nodeInternalsAndDependencies");
-  }
+  decodeOptionalEnum(
+    value,
+    path,
+    ["dependencies", "nodeInternals", "nodeInternalsAndDependencies"],
+    "dependencies, nodeInternals, or nodeInternalsAndDependencies",
+  );
+}
+
+function decodeOptionalEnum(
+  value: unknown,
+  path: string,
+  allowed: readonly unknown[],
+  expected: string,
+): void {
+  if (value !== undefined && !allowed.includes(value)) throw invalidDebugWire(path, expected);
 }
 
 function decodeBreakpointInput(value: unknown, path: string): Breakpoint {

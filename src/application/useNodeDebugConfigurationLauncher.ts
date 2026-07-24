@@ -15,6 +15,7 @@ import type {
   NodeLaunchConfigurationEntry,
 } from "./nodeLaunchConfigurationLoader";
 import type { VscodeNodeServerReadyActionRecipe } from "../domain/vscodeNodeLaunchConfiguration";
+import type { VscodeNodeScriptRuntime } from "../domain/vscodeNodeLaunchConfiguration";
 import {
   cloneNativeNodeWatchLaunchIntent,
   type NativeNodeWatchLaunchIntent,
@@ -69,7 +70,10 @@ export interface UseNodeDebugConfigurationLauncherOptions {
 
 export interface PreparedNodeDebugLaunch {
   readonly envFile?: string;
-  readonly launch: DebugLaunchTarget & { readonly envFile?: string };
+  readonly launch: DebugLaunchTarget & {
+    readonly envFile?: string;
+    readonly runtime?: VscodeNodeScriptRuntime;
+  };
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly preLaunchTask: NodeDebugPreLaunchTask | null;
   readonly postDebugTask?: NodeDebugPostTask | null;
@@ -130,18 +134,29 @@ export function prepareNodeDebugLaunch(
     nodeLaunchTargetFromConfiguration(configuration, rootPath),
     entry,
   );
+  const runtime = importedScriptRuntime(configuration, entry);
+  if (runtime.kind === "invalid") {
+    return { kind: "unsupported", reason: "invalidOptions" };
+  }
   if (envFile.value && launch.kind !== "node-configured-script") {
     return { kind: "unsupported", reason: "invalidOptions" };
   }
-  const launchWithEnvFile =
-    envFile.value && launch.kind === "node-configured-script"
-      ? Object.freeze({ ...launch, envFile: envFile.value })
+  if (runtime.value && launch.kind !== "node-configured-script") {
+    return { kind: "unsupported", reason: "invalidOptions" };
+  }
+  const launchWithMetadata =
+    launch.kind === "node-configured-script" && (envFile.value || runtime.value)
+      ? Object.freeze({
+          ...launch,
+          ...(envFile.value ? { envFile: envFile.value } : {}),
+          ...(runtime.value ? { runtime: runtime.value } : {}),
+        })
       : launch;
   return {
     kind: "supported",
     value: Object.freeze({
       ...(envFile.value ? { envFile: envFile.value } : {}),
-      launch: launchWithEnvFile,
+      launch: launchWithMetadata,
       ...(nativeWatch?.kind === "ok" ? { nativeWatch: nativeWatch.intent } : {}),
       preLaunchTask: task.kind === "valid" ? task.task : null,
       ...(postTask.kind === "valid" ? { postDebugTask: postTask.task } : {}),
@@ -161,7 +176,16 @@ export function prepareNodeDebugCompoundLaunch(
   if (
     entry.compound.members.some((member) => {
       const envFile = importedEnvFile(member.configuration, { source: "vscode", ...member });
-      return envFile.kind === "invalid" || envFile.value !== undefined;
+      const runtime = importedScriptRuntime(member.configuration, {
+        source: "vscode",
+        ...member,
+      });
+      return (
+        envFile.kind === "invalid" ||
+        envFile.value !== undefined ||
+        runtime.kind === "invalid" ||
+        runtime.value !== undefined
+      );
     })
   ) {
     return { kind: "unsupported", reason: "invalidOptions" };
@@ -227,7 +251,21 @@ type NodeLaunchConfigurationWithEnvFile = Parameters<
   typeof nodeLaunchTargetFromConfiguration
 >[0] & {
   readonly envFile?: unknown;
+  readonly runtime?: unknown;
 };
+
+function importedScriptRuntime(
+  configuration: Parameters<typeof nodeLaunchTargetFromConfiguration>[0],
+  entry: NodeLaunchConfigurationEntry,
+):
+  | { readonly kind: "valid"; readonly value?: VscodeNodeScriptRuntime }
+  | { readonly kind: "invalid" } {
+  if (entry.source !== "vscode") return { kind: "valid" };
+  const value = (configuration as NodeLaunchConfigurationWithEnvFile).runtime;
+  if (value === undefined) return { kind: "valid" };
+  if (value !== "tsx" && value !== "ts-node") return { kind: "invalid" };
+  return { kind: "valid", value };
+}
 
 export interface NodeDebugConfigurationLauncher {
   readonly busy: boolean;

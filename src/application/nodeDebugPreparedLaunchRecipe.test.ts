@@ -11,6 +11,7 @@ describe("clonePreparedNodeDebugLaunch", () => {
         env: { TOKEN: "accepted" },
         envFile: "config/dev.env",
         kind: "node-configured-script",
+        runtime: "tsx",
         scriptPath: "/workspace/api.js",
       },
       postDebugTask: { label: "stop api" },
@@ -35,11 +36,27 @@ describe("clonePreparedNodeDebugLaunch", () => {
         env: { TOKEN: "accepted" },
         envFile: "config/dev.env",
         kind: "node-configured-script",
+        runtime: "tsx",
         scriptPath: "/workspace/api.js",
       },
       postDebugTask: { label: "stop api" },
       preLaunchTask: { label: "build api" },
     });
+  });
+
+  it("rejects a structurally typed configured script with an unknown runtime", () => {
+    expect(
+      clonePreparedNodeDebugLaunch({
+        launch: {
+          args: [],
+          env: {},
+          kind: "node-configured-script",
+          runtime: "nodemon",
+          scriptPath: "/workspace/api.ts",
+        },
+        preLaunchTask: null,
+      } as unknown as PreparedNodeDebugLaunch),
+    ).toBeNull();
   });
 
   it("rejects recipes without an exact post task or with an unsupported launch", () => {

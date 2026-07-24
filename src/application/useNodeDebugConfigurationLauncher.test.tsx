@@ -546,6 +546,46 @@ describe("useNodeDebugConfigurationLauncher", () => {
     ui.unmount();
   });
 
+  it.each(["tsx", "ts-node"] as const)(
+    "threads the imported direct %s runtime into the private prepared launch",
+    async (runtime) => {
+      const startDebug = vi.fn(async () => true);
+      const ui = renderLauncher({
+        startDebug,
+        workspaceReads: vscodeReadsFor(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "API",
+                runtimeExecutable: runtime,
+                program: "src/api.ts",
+              },
+            ],
+          }),
+        ),
+      });
+
+      await act(async () => ui.hook().load());
+      await act(async () => expect(await ui.hook().startNamed("API")).toBe(true));
+
+      expect(startDebug).toHaveBeenCalledWith({
+        launch: {
+          args: [],
+          env: {},
+          justMyCode: "nodeInternals",
+          kind: "node-configured-script",
+          runtime,
+          scriptPath: `${ROOT_A}/src/api.ts`,
+        },
+        preLaunchTask: null,
+      });
+      ui.unmount();
+    },
+  );
+
   it("starts an exact private named configuration without changing selection", async () => {
     const startDebug = vi.fn(async () => true);
     const ui = renderLauncher({

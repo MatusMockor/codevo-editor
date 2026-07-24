@@ -374,6 +374,20 @@ pub enum DebugLaunchTarget {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         just_my_code: Option<DebugJustMyCodePolicy>,
     },
+    #[serde(
+        rename = "node-configured-runtime-script",
+        rename_all = "camelCase",
+        skip_deserializing
+    )]
+    NodeConfiguredRuntimeScript {
+        script_path: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        env: HashMap<String, String>,
+        runtime: NodeConfiguredScriptRuntime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        just_my_code: Option<DebugJustMyCodePolicy>,
+    },
     #[serde(rename = "js-configured-test", rename_all = "camelCase")]
     JsConfiguredTest {
         runner: String,
@@ -412,6 +426,7 @@ impl DebugLaunchTarget {
     pub(crate) fn just_my_code(&self) -> Option<DebugJustMyCodePolicy> {
         match self {
             Self::NodeConfiguredScript { just_my_code, .. }
+            | Self::NodeConfiguredRuntimeScript { just_my_code, .. }
             | Self::NodeNpmScript { just_my_code, .. } => *just_my_code,
             Self::NodeAttach { .. }
             | Self::NodeScript { .. }
@@ -431,11 +446,20 @@ impl DebugLaunchTarget {
                 | Self::NodeScript { .. }
                 | Self::JsTestFile { .. }
                 | Self::NodeConfiguredScript { .. }
+                | Self::NodeConfiguredRuntimeScript { .. }
                 | Self::JsConfiguredTest { .. }
                 | Self::JsTestSelection { .. }
                 | Self::NodeNpmScript { .. }
         )
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum NodeConfiguredScriptRuntime {
+    #[serde(rename = "tsx")]
+    Tsx,
+    #[serde(rename = "ts-node")]
+    TsNode,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

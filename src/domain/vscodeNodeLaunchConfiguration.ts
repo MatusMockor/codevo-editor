@@ -15,6 +15,7 @@ export const VSCODE_SERVER_READY_PATTERN_MAX_BYTES = 512;
 export const VSCODE_SERVER_READY_URI_FORMAT_MAX_BYTES = 512;
 export const VSCODE_NODE_INTERNALS_SKIP_PATTERN = "<node_internals>/**";
 export const VSCODE_NODE_DEPENDENCIES_SKIP_PATTERN = "**/node_modules/**";
+export type VscodeNodeScriptRuntime = "tsx" | "ts-node";
 
 const MAX_CONFIGURATIONS = 64;
 const MAX_COMPOUNDS = 16;
@@ -39,7 +40,10 @@ const BLOCKED_NPM_ENVIRONMENT_NAMES = new Set([
 ]);
 
 export interface VscodeNodeLaunchConfiguration {
-  readonly configuration: NodeLaunchConfiguration & { readonly envFile?: string };
+  readonly configuration: NodeLaunchConfiguration & {
+    readonly envFile?: string;
+    readonly runtime?: VscodeNodeScriptRuntime;
+  };
   readonly envFile?: string;
   /** Private semantic import metadata; raw runtime arguments are never retained. */
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
@@ -445,6 +449,17 @@ function parseConfiguration(
       serverReadyAction.value,
     );
   }
+  if (value.runtimeExecutable === "tsx" || value.runtimeExecutable === "ts-node") {
+    return parseScriptLaunchConfiguration(
+      value,
+      path,
+      preLaunchTask.value,
+      postDebugTask.value,
+      justMyCode.value,
+      serverReadyAction.value,
+      value.runtimeExecutable,
+    );
+  }
   if (value.runtimeExecutable !== undefined) {
     return parseNpmLaunchConfiguration(
       value,
@@ -455,11 +470,44 @@ function parseConfiguration(
       serverReadyAction.value,
     );
   }
+  return parseScriptLaunchConfiguration(
+    value,
+    path,
+    preLaunchTask.value,
+    postDebugTask.value,
+    justMyCode.value,
+    serverReadyAction.value,
+  );
+}
+
+function parseScriptLaunchConfiguration(
+  value: Record<string, unknown>,
+  path: string,
+  preLaunchTask: string | undefined,
+  postDebugTask: string | undefined,
+  justMyCode: NodeDebugJustMyCodePolicy | undefined,
+  serverReadyAction: VscodeNodeServerReadyActionRecipe | undefined,
+  runtime?: VscodeNodeScriptRuntime,
+):
+  | { readonly kind: "ok"; readonly value: VscodeNodeLaunchConfiguration }
+  | { readonly kind: "error"; readonly message: string } {
+  if (
+    runtime &&
+    value.runtimeArgs !== undefined &&
+    (!Array.isArray(value.runtimeArgs) || value.runtimeArgs.length > 0)
+  ) {
+    return rejected(`${path}.runtimeArgs must be absent or empty for a direct ${runtime} launch`);
+  }
   const program = workspaceRelative(value.program, `${path}.program`, false);
   if (program.kind === "error" || !program.value) {
     return program.kind === "error"
       ? program
       : rejected(`${path}.program must be a non-empty workspace path`);
+  }
+  if (runtime && !/\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/u.test(program.value)) {
+    return rejected(
+      `${path}.program must be a workspace .ts, .tsx, .mts, .cts, .js, .mjs or .cjs path`,
+    );
   }
   const cwd = workspaceRelative(value.cwd, `${path}.cwd`, true);
   if (cwd.kind === "error") return cwd;
@@ -481,14 +529,15 @@ function parseConfiguration(
         default: false,
         env: env.value,
         ...(envFile.value ? { envFile: envFile.value } : {}),
-        name: value.name,
+        name: value.name as string,
+        ...(runtime ? { runtime } : {}),
         target: { kind: "script", path: program.value },
       },
       ...(envFile.value ? { envFile: envFile.value } : {}),
-      ...(justMyCode.value ? { justMyCode: justMyCode.value } : {}),
-      ...(preLaunchTask.value ? { preLaunchTask: preLaunchTask.value } : {}),
-      ...(postDebugTask.value ? { postDebugTask: postDebugTask.value } : {}),
-      ...(serverReadyAction.value ? { serverReadyAction: serverReadyAction.value } : {}),
+      ...(justMyCode ? { justMyCode } : {}),
+      ...(preLaunchTask ? { preLaunchTask } : {}),
+      ...(postDebugTask ? { postDebugTask } : {}),
+      ...(serverReadyAction ? { serverReadyAction } : {}),
     },
   };
 }
