@@ -10,6 +10,7 @@ struct OpenCdpTransportOptions {
     pause_generation_floor: PauseGenerationFloor,
     disconnected: Option<mpsc::Sender<()>>,
     attached: bool,
+    stop_on_entry: bool,
 }
 
 enum CdpSocketAuthorization {
@@ -106,12 +107,16 @@ fn open_cdp_transport_with_authorization(
         options.source_maps,
         options.pause_generation_floor,
     );
-    shared_state.first_pause_seen = options.attached;
+    shared_state.first_pause_seen =
+        startup_policy::first_pause_seen_at_transport_open(options.attached, options.stop_on_entry);
     let shared = Arc::new(Mutex::new(shared_state));
-    let exception_filter = Arc::new(Mutex::new(ExceptionFilterState::default()));
-    let function_breakpoints = Arc::new(
-        crate::debug_cdp_function_breakpoints::FunctionBreakpointSessionState::default(),
-    );
+    let mut exception_filter_state = ExceptionFilterState::default();
+    if startup_policy::should_surface_startup_entry(options.attached, options.stop_on_entry) {
+        exception_filter_state.arm_startup_entry_pause();
+    }
+    let exception_filter = Arc::new(Mutex::new(exception_filter_state));
+    let function_breakpoints =
+        Arc::new(crate::debug_cdp_function_breakpoints::FunctionBreakpointSessionState::default());
     let client = CdpClient::start(
         socket,
         Arc::clone(&shared),
@@ -291,13 +296,33 @@ impl NodeCdpAdapter {
         exception_type_filter: &[String],
         options: NodeCdpConnectOptions<'_>,
     ) -> Result<Self, String> {
-        Self::connect_with_source_maps_at_pause_generation_floor(
+        Self::connect_with_source_maps_and_exception_filter_at_pause_generation_floor(
             ws_url,
             emitter,
             initial_breakpoints,
             exception_type_filter,
             options,
             PauseGenerationFloor::INITIAL,
+            false,
+        )
+    }
+
+    pub(super) fn connect_with_source_maps_exception_filter_and_stop_on_entry(
+        ws_url: &str,
+        emitter: DebugEventEmitter,
+        initial_breakpoints: &[DebugBreakpoint],
+        exception_type_filter: &[String],
+        options: NodeCdpConnectOptions<'_>,
+        stop_on_entry: bool,
+    ) -> Result<Self, String> {
+        Self::connect_with_source_maps_and_exception_filter_at_pause_generation_floor(
+            ws_url,
+            emitter,
+            initial_breakpoints,
+            exception_type_filter,
+            options,
+            PauseGenerationFloor::INITIAL,
+            stop_on_entry,
         )
     }
 
@@ -308,6 +333,26 @@ impl NodeCdpAdapter {
         exception_type_filter: &[String],
         options: NodeCdpConnectOptions<'_>,
         pause_generation_floor: PauseGenerationFloor,
+    ) -> Result<Self, String> {
+        Self::connect_with_source_maps_and_exception_filter_at_pause_generation_floor(
+            ws_url,
+            emitter,
+            initial_breakpoints,
+            exception_type_filter,
+            options,
+            pause_generation_floor,
+            false,
+        )
+    }
+
+    fn connect_with_source_maps_and_exception_filter_at_pause_generation_floor(
+        ws_url: &str,
+        emitter: DebugEventEmitter,
+        initial_breakpoints: &[DebugBreakpoint],
+        exception_type_filter: &[String],
+        options: NodeCdpConnectOptions<'_>,
+        pause_generation_floor: PauseGenerationFloor,
+        stop_on_entry: bool,
     ) -> Result<Self, String> {
         let NodeCdpConnectOptions {
             exception_pause_mode,
@@ -331,6 +376,7 @@ impl NodeCdpAdapter {
                 pause_generation_floor,
                 disconnected,
                 attached,
+                stop_on_entry,
             },
         )?;
         ensure_startup_current(startup_is_current.as_ref())?;
@@ -348,7 +394,10 @@ impl NodeCdpAdapter {
             CdpStartupPolicy::SpawnedWaiting { startup_entry } => startup_entry,
             CdpStartupPolicy::Attached => return Ok(adapter),
         };
-        let startup_probe: Option<StartupEntryProbe> = if let Some(entry) = startup_entry {
+        let startup_probe: Option<StartupEntryProbe> = if let (true, Some(entry)) = (
+            startup_policy::should_arm_startup_entry_probe(stop_on_entry),
+            startup_entry,
+        ) {
             let (probe, validation) = arm_startup_entry_probe(entry, |method, params| {
                 ensure_startup_current(startup_is_current.as_ref())?;
                 adapter.client.request(method, params)
@@ -379,10 +428,7 @@ impl NodeCdpAdapter {
         Ok(adapter)
     }
 
-    fn remove_startup_breakpoint_without_wait(
-        &self,
-        breakpoint_id: String,
-    ) -> Result<(), String> {
+    fn remove_startup_breakpoint_without_wait(&self, breakpoint_id: String) -> Result<(), String> {
         self.client.send_without_wait(
             "Debugger.removeBreakpoint",
             json!({"breakpointId": breakpoint_id}),
@@ -446,6 +492,7 @@ impl NodeCdpAdapter {
                 pause_generation_floor: PauseGenerationFloor::INITIAL,
                 disconnected,
                 attached: true,
+                stop_on_entry: false,
             },
             CdpSocketAuthorization::KernelBoundExternal(request),
         )?;
@@ -496,6 +543,7 @@ impl NodeCdpAdapter {
                 pause_generation_floor,
                 disconnected,
                 attached: false,
+                stop_on_entry: false,
             },
         )
     }

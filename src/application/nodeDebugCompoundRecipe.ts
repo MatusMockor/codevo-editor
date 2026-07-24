@@ -1,9 +1,9 @@
 import type { DebugCompoundLaunchTarget, DebugLaunchTarget } from "../domain/debug";
-import { cloneNodeLaunchTarget } from "./debugRestartCoordinator";
+import { cloneNodeLaunchTarget, type NodeDebugLaunchTarget } from "./debugRestartCoordinator";
 import type { PreparedNodeDebugLaunch } from "./useNodeDebugConfigurationLauncher";
 
 export interface NodeDebugCompoundMemberRecipe {
-  readonly launch: DebugCompoundLaunchTarget;
+  readonly launch: DebugCompoundLaunchTarget & { readonly stopOnEntry?: boolean };
 }
 
 /**
@@ -34,7 +34,10 @@ export function cloneNodeDebugCompoundMembers(
 
 function isCompoundLaunch(
   launch: ReturnType<typeof cloneNodeLaunchTarget>,
-): launch is DebugCompoundLaunchTarget {
+): launch is Extract<
+  NodeDebugLaunchTarget,
+  { kind: "node-script" | "node-configured-script" | "node-npm-script" }
+> {
   return (
     launch?.kind === "node-script" ||
     launch?.kind === "node-configured-script" ||

@@ -31,6 +31,30 @@ import type {
 } from "../domain/debugConsoleCompletions";
 import type { NativeNodeWatchDebugStartRequest } from "../domain/nativeNodeWatchDebugGateway";
 
+type NodeLaunchWithStopOnEntry<Launch> = Launch extends {
+  readonly kind: "node-script" | "node-configured-script" | "node-npm-script";
+}
+  ? Launch & { readonly stopOnEntry?: boolean }
+  : Launch extends { readonly kind: "node-attach" }
+    ? Launch & { readonly stopOnEntry?: false }
+    : Launch;
+
+export type DebugLaunchTargetWire = NodeLaunchWithStopOnEntry<DebugLaunchTarget>;
+
+type DebugCompoundLaunchMemberWire = Omit<
+  DebugCompoundStartRequest["members"][number],
+  "launch"
+> & {
+  readonly launch: Extract<
+    DebugLaunchTargetWire,
+    { readonly kind: "node-script" | "node-configured-script" | "node-npm-script" }
+  >;
+};
+
+export type DebugCompoundStartRequestWire = Omit<DebugCompoundStartRequest, "members"> & {
+  readonly members: readonly DebugCompoundLaunchMemberWire[];
+};
+
 export const DEBUG_IPC_COMMANDS = {
   completions: "debug_completions",
   disconnect: "debug_disconnect",
@@ -95,7 +119,7 @@ interface DebugIpcContract {
   readonly debug_start: {
     readonly args: {
       readonly rootPath: string;
-      readonly launch: DebugLaunchTarget;
+      readonly launch: DebugLaunchTargetWire;
       readonly breakpoints: Breakpoint[];
       readonly exceptionPauseMode: DebugExceptionPauseMode;
       readonly exceptionTypeFilter: readonly string[];
@@ -103,7 +127,7 @@ interface DebugIpcContract {
     readonly result: DebugStartResponseWire;
   };
   readonly debug_start_compound: {
-    readonly args: { readonly request: DebugCompoundStartRequest };
+    readonly args: { readonly request: DebugCompoundStartRequestWire };
     readonly result: DebugCompoundStartResponseWire;
   };
   readonly debug_start_native_node_watch: {

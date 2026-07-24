@@ -49,6 +49,7 @@ export interface VscodeNodeLaunchConfiguration {
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly justMyCode?: NodeDebugJustMyCodePolicy;
   readonly sourceMaps?: boolean;
+  readonly stopOnEntry?: boolean;
   /** Exact display-safe task label only. No task command or execution capability is projected. */
   readonly preLaunchTask?: string;
   /** Exact display-safe task label only. No task command or execution capability is projected. */
@@ -312,6 +313,8 @@ function frozenCompoundMember(entry: VscodeNodeLaunchConfiguration): VscodeNodeL
     }),
     ...(entry.nativeWatch ? { nativeWatch: entry.nativeWatch } : {}),
     ...(entry.justMyCode ? { justMyCode: entry.justMyCode } : {}),
+    ...(entry.sourceMaps !== undefined ? { sourceMaps: entry.sourceMaps } : {}),
+    ...(entry.stopOnEntry !== undefined ? { stopOnEntry: entry.stopOnEntry } : {}),
   });
 }
 
@@ -387,11 +390,15 @@ function parseConfiguration(
     "skipFiles",
     "justMyCode",
     "sourceMaps",
+    "stopOnEntry",
     "serverReadyAction",
   ]);
   if (unknown) return rejected(`${path} contains unsupported field "${unknown}"`);
   if (value.sourceMaps !== undefined && typeof value.sourceMaps !== "boolean") {
     return rejected(`${path}.sourceMaps must be a boolean`);
+  }
+  if (value.stopOnEntry !== undefined && typeof value.stopOnEntry !== "boolean") {
+    return rejected(`${path}.stopOnEntry must be a boolean`);
   }
   if (
     Object.prototype.hasOwnProperty.call(value, "justMyCode") &&
@@ -417,6 +424,9 @@ function parseConfiguration(
   );
   if (serverReadyAction.kind === "error") return serverReadyAction;
   if (value.request === "attach") {
+    if (value.stopOnEntry === true) {
+      return rejected(`${path}.stopOnEntry is supported only for launch`);
+    }
     if (value.envFile !== undefined) {
       return rejected(`${path}.envFile is supported only for a script launch`);
     }
@@ -568,6 +578,7 @@ function parseScriptLaunchConfiguration(
       ...(envFile.value ? { envFile: envFile.value } : {}),
       ...(justMyCode ? { justMyCode } : {}),
       ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
+      ...(value.stopOnEntry !== undefined ? { stopOnEntry: value.stopOnEntry as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
       ...(serverReadyAction ? { serverReadyAction } : {}),
@@ -585,6 +596,9 @@ function parseNativeNodeWatchConfiguration(
 ):
   | { readonly kind: "ok"; readonly value: VscodeNodeLaunchConfiguration }
   | { readonly kind: "error"; readonly message: string } {
+  if (value.stopOnEntry !== undefined) {
+    return rejected(`${path}.stopOnEntry is unsupported for a native Node watch launch`);
+  }
   if (value.envFile !== undefined) {
     return rejected(`${path}.envFile is unsupported for a native Node watch launch`);
   }
@@ -712,6 +726,7 @@ function parseNpmLaunchConfiguration(
       },
       ...(justMyCode ? { justMyCode } : {}),
       ...(value.sourceMaps !== undefined ? { sourceMaps: value.sourceMaps as boolean } : {}),
+      ...(value.stopOnEntry !== undefined ? { stopOnEntry: value.stopOnEntry as boolean } : {}),
       ...(preLaunchTask ? { preLaunchTask } : {}),
       ...(postDebugTask ? { postDebugTask } : {}),
       ...(serverReadyAction ? { serverReadyAction } : {}),

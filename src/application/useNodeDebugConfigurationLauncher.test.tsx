@@ -80,6 +80,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
               preLaunchTask: "build imported",
               postDebugTask: "stop imported",
               sourceMaps: false,
+              stopOnEntry: true,
               skipFiles: ["<node_internals>/**"],
               serverReadyAction: {
                 action: "openExternally",
@@ -125,6 +126,7 @@ describe("useNodeDebugConfigurationLauncher", () => {
         env: { PRIVATE_TOKEN: "hidden-value" },
         justMyCode: "nodeInternals",
         sourceMaps: false,
+        stopOnEntry: true,
       },
       preLaunchTask: { label: "build imported" },
       postDebugTask: { label: "stop imported" },

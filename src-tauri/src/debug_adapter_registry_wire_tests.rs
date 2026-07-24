@@ -184,7 +184,7 @@ fn debug_start_response_serializes_with_status_tag() {
 #[test]
 fn debug_event_payload_serializes_with_kind_tag() {
     let stopped = DebugEventPayload::Stopped {
-        reason: DebugStopReason::Breakpoint,
+        reason: DebugStopReason::Entry,
         pause_generation: 1,
         frames: vec![DebugStackFrame {
             frame_id: 4,
@@ -218,7 +218,7 @@ fn debug_event_payload_serializes_with_kind_tag() {
         serde_json::to_value(&stopped).expect("serialize stopped"),
         serde_json::json!({
             "kind": "stopped",
-            "reason": "breakpoint",
+            "reason": "entry",
             "pauseGeneration": 1,
             "frames": [{
                 "frameId": 4,

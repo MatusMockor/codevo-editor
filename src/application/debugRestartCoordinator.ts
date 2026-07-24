@@ -24,7 +24,18 @@ export type NodeDebugLaunchKind =
   | "js-configured-test"
   | "node-npm-script";
 
-export type NodeDebugLaunchTarget = Extract<DebugLaunchTarget, { kind: NodeDebugLaunchKind }>;
+export type NodeDebugLaunchTarget =
+  | Extract<DebugLaunchTarget, { kind: "node-attach" }>
+  | (Extract<
+      DebugLaunchTarget,
+      { kind: "node-script" | "node-configured-script" | "node-npm-script" }
+    > & {
+      readonly stopOnEntry?: boolean;
+    })
+  | Extract<
+      DebugLaunchTarget,
+      { kind: "js-test-file" | "js-test-selection" | "js-configured-test" }
+    >;
 
 export interface DebugRestartEligibilityContext {
   readonly rootPath: string | null;
@@ -186,7 +197,8 @@ export class DebugRestartCoordinator {
 export function cloneNodeLaunchTarget(launch: DebugLaunchTarget): NodeDebugLaunchTarget | null {
   if (!isRecord(launch) || typeof launch.kind !== "string") return null;
   const sourceMaps = cloneSourceMaps(launch);
-  if (!sourceMaps) return null;
+  const stopOnEntry = cloneStopOnEntry(launch);
+  if (!sourceMaps || !stopOnEntry) return null;
   let clone: NodeDebugLaunchTarget | null = null;
   switch (launch.kind) {
     case "node-attach":
@@ -262,12 +274,30 @@ export function cloneNodeLaunchTarget(launch: DebugLaunchTarget): NodeDebugLaunc
       return null;
   }
   const launchWithSourceMaps = clone
-    ? ({ ...clone, ...sourceMaps } as NodeDebugLaunchTarget)
+    ? ({ ...clone, ...sourceMaps, ...stopOnEntry } as NodeDebugLaunchTarget)
     : null;
   return launchWithSourceMaps &&
     launchTextBytes(launchWithSourceMaps) <= MAX_DEBUG_RESTART_RETAINED_TEXT_BYTES
     ? deepFreezeLaunch(launchWithSourceMaps)
     : null;
+}
+
+function cloneStopOnEntry(
+  launch: Record<string, unknown>,
+): { readonly stopOnEntry?: boolean } | null {
+  if (!Object.prototype.hasOwnProperty.call(launch, "stopOnEntry")) return {};
+  if (
+    launch.kind !== "node-attach" &&
+    launch.kind !== "node-script" &&
+    launch.kind !== "node-configured-script" &&
+    launch.kind !== "node-npm-script"
+  ) {
+    return null;
+  }
+  if (typeof launch.stopOnEntry !== "boolean") return null;
+  if (launch.kind === "node-attach" && launch.stopOnEntry) return null;
+  if (launch.kind === "node-attach") return {};
+  return { stopOnEntry: launch.stopOnEntry };
 }
 
 function cloneSourceMaps(

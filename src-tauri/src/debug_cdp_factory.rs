@@ -62,6 +62,7 @@ pub(crate) fn create_node_cdp_adapter(
         exception_pause_mode,
         &[],
         true,
+        false,
         emitter,
         finish,
         startup_is_current,
@@ -76,6 +77,7 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: &[String],
     source_maps_enabled: bool,
+    stop_on_entry: bool,
     emitter: DebugEventEmitter,
     finish: DebugSessionFinish,
     startup_is_current: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -88,7 +90,8 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
         let source_maps =
             optional_source_maps(source_maps_enabled, || SourceMapRegistry::new(root))?;
         let (disconnected_tx, disconnected_rx) = mpsc::channel();
-        let adapter = NodeCdpAdapter::connect_with_source_maps_and_exception_filter(
+        let adapter =
+            NodeCdpAdapter::connect_with_source_maps_exception_filter_and_stop_on_entry(
             &target.web_socket_url,
             emitter,
             initial_breakpoints,
@@ -103,6 +106,7 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
                 startup_is_current: Arc::clone(&startup_is_current),
                 internal_step_filter,
             },
+            stop_on_entry,
         )?;
         ensure_startup_current(startup_is_current.as_ref())?;
         let confirmed = crate::debug_inspector_attach::discover_single_node_target(root, *port)?;
@@ -130,7 +134,8 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
     let (disconnected_tx, disconnected_rx) = mpsc::channel();
     let finish = shared_debug_session_finish(finish);
     let retained_process = process.process;
-    let mut adapter = match NodeCdpAdapter::connect_with_source_maps_and_exception_filter(
+    let mut adapter =
+        match NodeCdpAdapter::connect_with_source_maps_exception_filter_and_stop_on_entry(
         &process.ws_url,
         emitter,
         initial_breakpoints,
@@ -147,6 +152,7 @@ pub(crate) fn create_node_cdp_adapter_with_exception_filter(
             startup_is_current: Arc::clone(&startup_is_current),
             internal_step_filter,
         },
+        stop_on_entry,
     ) {
         Ok(adapter) => adapter,
         Err(error) => {

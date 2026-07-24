@@ -13,6 +13,7 @@ describe("clonePreparedNodeDebugLaunch", () => {
         kind: "node-configured-script",
         runtime: "tsx",
         scriptPath: "/workspace/api.js",
+        stopOnEntry: true,
       },
       postDebugTask: { label: "stop api" },
       preLaunchTask: { label: "build api" },
@@ -38,6 +39,7 @@ describe("clonePreparedNodeDebugLaunch", () => {
         kind: "node-configured-script",
         runtime: "tsx",
         scriptPath: "/workspace/api.js",
+        stopOnEntry: true,
       },
       postDebugTask: { label: "stop api" },
       preLaunchTask: { label: "build api" },
@@ -53,6 +55,21 @@ describe("clonePreparedNodeDebugLaunch", () => {
           kind: "node-configured-script",
           runtime: "nodemon",
           scriptPath: "/workspace/api.ts",
+        },
+        preLaunchTask: null,
+      } as unknown as PreparedNodeDebugLaunch),
+    ).toBeNull();
+  });
+
+  it("rejects a structurally typed launch with a null stopOnEntry", () => {
+    expect(
+      clonePreparedNodeDebugLaunch({
+        launch: {
+          args: [],
+          env: {},
+          kind: "node-configured-script",
+          scriptPath: "/workspace/api.ts",
+          stopOnEntry: null,
         },
         preLaunchTask: null,
       } as unknown as PreparedNodeDebugLaunch),

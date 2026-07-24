@@ -54,6 +54,11 @@ enum DebugCompoundLaunchTarget {
             deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
         )]
         source_maps: Option<bool>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
+        stop_on_entry: Option<bool>,
     },
     #[serde(rename = "node-configured-script", rename_all = "camelCase")]
     ConfiguredScript {
@@ -68,6 +73,11 @@ enum DebugCompoundLaunchTarget {
             deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
         )]
         source_maps: Option<bool>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
+        stop_on_entry: Option<bool>,
     },
     #[serde(rename = "node-npm-script", rename_all = "camelCase")]
     NpmScript {
@@ -83,18 +93,25 @@ enum DebugCompoundLaunchTarget {
             deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
         )]
         source_maps: Option<bool>,
+        #[serde(
+            default,
+            deserialize_with = "crate::debug_node_env_file::deserialize_optional_bool"
+        )]
+        stop_on_entry: Option<bool>,
     },
 }
 
 impl DebugCompoundLaunchTarget {
-    fn into_launch(self) -> (DebugLaunchTarget, bool) {
+    fn into_launch(self) -> (DebugLaunchTarget, bool, bool) {
         match self {
             Self::Script {
                 script_path,
                 source_maps,
+                stop_on_entry,
             } => (
                 DebugLaunchTarget::NodeScript { script_path },
                 source_maps.unwrap_or(true),
+                stop_on_entry.unwrap_or(false),
             ),
             Self::ConfiguredScript {
                 script_path,
@@ -103,6 +120,7 @@ impl DebugCompoundLaunchTarget {
                 env,
                 just_my_code,
                 source_maps,
+                stop_on_entry,
             } => (
                 DebugLaunchTarget::NodeConfiguredScript {
                     script_path,
@@ -112,6 +130,7 @@ impl DebugCompoundLaunchTarget {
                     just_my_code,
                 },
                 source_maps.unwrap_or(true),
+                stop_on_entry.unwrap_or(false),
             ),
             Self::NpmScript {
                 script,
@@ -121,6 +140,7 @@ impl DebugCompoundLaunchTarget {
                 env,
                 just_my_code,
                 source_maps,
+                stop_on_entry,
             } => (
                 DebugLaunchTarget::NodeNpmScript {
                     script,
@@ -131,6 +151,7 @@ impl DebugCompoundLaunchTarget {
                     just_my_code,
                 },
                 source_maps.unwrap_or(true),
+                stop_on_entry.unwrap_or(false),
             ),
         }
     }
@@ -273,7 +294,7 @@ async fn start_member(
     let member_root = Arc::clone(context.retained_root);
     let member_registry = Arc::clone(context.registry);
     let member_group = context.group.clone();
-    let (launch, source_maps_enabled) = member.launch.into_launch();
+    let (launch, source_maps_enabled, stop_on_entry) = member.launch.into_launch();
     let result = crate::run_blocking_command(move || {
         Ok(start_compound_member_blocking(
             member_root,
@@ -284,6 +305,7 @@ async fn start_member(
             member.exception_pause_mode,
             member.exception_type_filter,
             source_maps_enabled,
+            stop_on_entry,
             sink,
             member_registry,
         ))
@@ -406,6 +428,7 @@ fn start_compound_member_blocking(
     exception_pause_mode: DebugExceptionPauseMode,
     exception_type_filter: Vec<String>,
     source_maps_enabled: bool,
+    stop_on_entry: bool,
     sink: Arc<dyn DebugEventSink>,
     registry: Arc<DebugSessionRegistry>,
 ) -> Result<u64, ()> {
@@ -438,6 +461,7 @@ fn start_compound_member_blocking(
                 exception_pause_mode,
                 &exception_type_filter,
                 source_maps_enabled,
+                stop_on_entry,
                 emitter,
                 finish,
                 startup_is_current,
@@ -623,7 +647,7 @@ mod tests {
             }
             let decoded: DebugCompoundLaunchTarget =
                 serde_json::from_value(launch).expect("compound launch");
-            let (_, source_maps_enabled) = decoded.into_launch();
+            let (_, source_maps_enabled, _) = decoded.into_launch();
             assert_eq!(source_maps_enabled, expected);
         }
 
@@ -646,6 +670,38 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn compound_stop_on_entry_defaults_disabled_preserves_boolean_and_is_typed() {
+        for (stop_on_entry, expected) in [
+            (None, false),
+            (Some(serde_json::json!(false)), false),
+            (Some(serde_json::json!(true)), true),
+        ] {
+            let mut launch = serde_json::json!({
+                "kind": "node-script",
+                "scriptPath": "/workspace/a.js"
+            });
+            if let Some(value) = stop_on_entry {
+                launch["stopOnEntry"] = value;
+            }
+            let decoded: DebugCompoundLaunchTarget =
+                serde_json::from_value(launch).expect("compound launch");
+            let (_, _, decoded) = decoded.into_launch();
+            assert_eq!(decoded, expected);
+        }
+
+        for invalid in [serde_json::Value::Null, serde_json::json!("true")] {
+            assert!(
+                serde_json::from_value::<DebugCompoundLaunchTarget>(serde_json::json!({
+                    "kind": "node-script",
+                    "scriptPath": "/workspace/a.js",
+                    "stopOnEntry": invalid
+                }))
+                .is_err()
+            );
+        }
     }
 
     #[test]

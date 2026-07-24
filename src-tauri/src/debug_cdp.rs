@@ -1,5 +1,4 @@
-#![allow(dead_code)] // Node CDP debug adapter awaiting the tauri debugger command wiring slice.
-
+#![allow(dead_code)]
 use crate::debug_adapter::{
     DebugAdapter, DebugBreakpoint, DebugCompletionRequest, DebugCompletionResult,
     DebugEventEmitter, DebugEventPayload, DebugExceptionPauseMode, DebugLaunchTarget,
@@ -95,10 +94,8 @@ mod tests {
     use crate::debug_adapter::{
         DebugEvent, DebugEventSink, DebugHitCondition, DebugSessionRegistry,
     };
-    use std::net::TcpListener;
-    use std::path::PathBuf;
-    use std::sync::atomic::AtomicU32;
-    use std::time::Instant;
+    use std::{net::TcpListener, path::PathBuf};
+    use std::{sync::atomic::AtomicU32, time::Instant};
 
     const MOCK_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
     const SHORT_REQUEST_TIMEOUT: Duration = Duration::from_millis(250);
@@ -108,6 +105,7 @@ mod tests {
 
     #[path = "../../debug_cdp_completion_tests.rs"]
     mod completion_tests;
+    mod debug_cdp_stop_on_entry_integration_tests;
     mod debug_exception_type_filter_integration_tests;
     #[cfg(target_os = "macos")]
     #[path = "debug_cdp_held_external_attach_tests.rs"]

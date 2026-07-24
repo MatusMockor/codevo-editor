@@ -6,6 +6,7 @@ import {
   MAX_DEBUG_RESTART_ENVIRONMENT_ENTRIES,
   MAX_DEBUG_RESTART_PATH_BYTES,
   MAX_DEBUG_RESTART_ROOT_BYTES,
+  type NodeDebugLaunchTarget,
 } from "./debugRestartCoordinator";
 
 const ROOT = "/workspace/project";
@@ -84,6 +85,61 @@ describe("DebugRestartCoordinator retention", () => {
     const resolved = coordinator.resolve(coordinator.begin(eligible())!, current());
 
     expect(resolved).toEqual(launch);
+  });
+
+  it.each(["node-script", "node-configured-script", "node-npm-script"] as const)(
+    "preserves stopOnEntry across a %s restart lease",
+    (kind) => {
+      const coordinator = new DebugRestartCoordinator();
+      const launch = stopOnEntryLaunch(kind);
+
+      expect(coordinator.retain(ROOT, SESSION, launch)).toBe(true);
+      const resolved = coordinator.resolve(coordinator.begin(eligible())!, current());
+
+      expect(resolved).toEqual(launch);
+    },
+  );
+
+  it.each([null, "true", 1])(
+    "rejects malformed stopOnEntry value %# before retention",
+    (stopOnEntry) => {
+      const coordinator = retainedCoordinator();
+      const launch = {
+        kind: "node-script",
+        scriptPath: `${ROOT}/server.js`,
+        stopOnEntry,
+      } as unknown as DebugLaunchTarget;
+
+      expect(coordinator.retain(ROOT, SESSION + 1, launch)).toBe(false);
+      expect(coordinator.availability(eligible()).canRestart).toBe(false);
+    },
+  );
+
+  it("rejects stopOnEntry on attach before retention", () => {
+    const coordinator = retainedCoordinator();
+    const launch = {
+      kind: "node-attach",
+      port: 9229,
+      stopOnEntry: true,
+    } as unknown as DebugLaunchTarget;
+
+    expect(coordinator.retain(ROOT, SESSION + 1, launch)).toBe(false);
+    expect(coordinator.availability(eligible()).canRestart).toBe(false);
+  });
+
+  it("normalizes an explicit false stopOnEntry on attach to absent", () => {
+    const coordinator = new DebugRestartCoordinator();
+    const launch = {
+      kind: "node-attach",
+      port: 9229,
+      stopOnEntry: false,
+    } as DebugLaunchTarget;
+
+    expect(coordinator.retain(ROOT, SESSION, launch)).toBe(true);
+    expect(coordinator.resolve(coordinator.begin(eligible())!, current())).toEqual({
+      kind: "node-attach",
+      port: 9229,
+    });
   });
 
   it("rejects sourceMaps on JavaScript test launch kinds before retention", () => {
@@ -430,4 +486,33 @@ function eligible(overrides: Partial<Parameters<DebugRestartCoordinator["availab
 
 function current(overrides: Partial<Parameters<DebugRestartCoordinator["resolve"]>[1]> = {}) {
   return { rootPath: ROOT, sessionId: SESSION, workspaceTrusted: true, ...overrides };
+}
+
+function stopOnEntryLaunch(
+  kind: "node-script" | "node-configured-script" | "node-npm-script",
+): NodeDebugLaunchTarget {
+  if (kind === "node-script") {
+    return {
+      kind,
+      scriptPath: `${ROOT}/server.js`,
+      stopOnEntry: true,
+    };
+  }
+  if (kind === "node-configured-script") {
+    return {
+      args: [],
+      env: {},
+      kind,
+      scriptPath: `${ROOT}/server.ts`,
+      stopOnEntry: true,
+    };
+  }
+  return {
+    args: [],
+    env: {},
+    kind,
+    packageRootPath: ROOT,
+    script: "dev",
+    stopOnEntry: true,
+  };
 }

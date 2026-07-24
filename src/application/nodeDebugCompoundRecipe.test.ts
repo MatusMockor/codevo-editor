@@ -14,6 +14,7 @@ describe("cloneNodeDebugCompoundMembers", () => {
           kind: "node-configured-script" as const,
           scriptPath: "/workspace/api.ts",
           sourceMaps: false,
+          stopOnEntry: true,
         },
         preLaunchTask: null,
       },
@@ -40,6 +41,7 @@ describe("cloneNodeDebugCompoundMembers", () => {
       env: { PRIVATE_TOKEN: "original" },
       justMyCode: "nodeInternalsAndDependencies",
       sourceMaps: false,
+      stopOnEntry: true,
     });
     expect(cloned?.[1]?.launch).toMatchObject({ justMyCode: "dependencies" });
     expect(Object.isFrozen(cloned)).toBe(true);
@@ -49,6 +51,58 @@ describe("cloneNodeDebugCompoundMembers", () => {
       expect(Object.isFrozen(cloned[0].launch.args)).toBe(true);
       expect(Object.isFrozen(cloned[0].launch.env)).toBe(true);
     }
+  });
+
+  it.each([null, "true", 1])(
+    "rejects malformed stopOnEntry value %# in a compound member",
+    (stopOnEntry) => {
+      expect(
+        cloneNodeDebugCompoundMembers([
+          {
+            launch: {
+              kind: "node-script",
+              scriptPath: "/workspace/api.ts",
+              stopOnEntry,
+            },
+            preLaunchTask: null,
+          },
+          {
+            launch: { kind: "node-script", scriptPath: "/workspace/worker.ts" },
+            preLaunchTask: null,
+          },
+        ] as never),
+      ).toBeNull();
+    },
+  );
+
+  it.each([
+    {
+      launch: {
+        kind: "node-script" as const,
+        scriptPath: "/workspace/api.js",
+        stopOnEntry: false,
+      },
+    },
+    {
+      launch: {
+        args: [],
+        env: {},
+        kind: "node-npm-script" as const,
+        packageRootPath: "/workspace",
+        script: "worker",
+        stopOnEntry: true,
+      },
+    },
+  ])("preserves stopOnEntry for the $launch.kind compound member", ({ launch }) => {
+    const cloned = cloneNodeDebugCompoundMembers([
+      { launch, preLaunchTask: null },
+      {
+        launch: { kind: "node-script", scriptPath: "/workspace/worker.ts" },
+        preLaunchTask: null,
+      },
+    ]);
+
+    expect(cloned?.[0]?.launch).toMatchObject({ stopOnEntry: launch.stopOnEntry });
   });
 
   it.each([

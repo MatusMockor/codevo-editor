@@ -923,6 +923,142 @@ describe("VS Code Node launch configuration import", () => {
     ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
     ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
     ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
+  ])("accepts explicit stopOnEntry booleans for a %s launch", (_case, fields) => {
+    for (const stopOnEntry of [true, false]) {
+      expect(
+        parseVscodeNodeLaunchConfigurations(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "Entry policy",
+                ...fields,
+                stopOnEntry,
+              },
+            ],
+          }),
+        ),
+      ).toMatchObject({
+        kind: "ok",
+        configurations: [{ stopOnEntry }],
+        diagnostics: [],
+      });
+    }
+  });
+
+  it.each([
+    ["script", { program: "src/server.js" }],
+    ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
+    ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
+    ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
+    ["attach", { request: "attach", port: 9229 }],
+    ["native watch", { program: "src/server.js", runtimeArgs: ["--watch"] }],
+  ])("rejects a non-boolean stopOnEntry value for a %s configuration", (_case, fields) => {
+    for (const stopOnEntry of ["true", null]) {
+      expect(
+        parseVscodeNodeLaunchConfigurations(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "Entry policy",
+                ...fields,
+                stopOnEntry,
+              },
+            ],
+          }),
+        ),
+      ).toEqual({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [
+          {
+            configurationIndex: 0,
+            message: "configurations[0].stopOnEntry must be a boolean.",
+          },
+        ],
+      });
+    }
+  });
+
+  it("accepts false and rejects true stopOnEntry for attach configurations", () => {
+    const parseWith = (stopOnEntry: boolean) =>
+      parseVscodeNodeLaunchConfigurations(
+        JSON.stringify({
+          version: "0.2.0",
+          configurations: [
+            {
+              type: "node",
+              request: "attach",
+              name: "Inspector",
+              port: 9229,
+              stopOnEntry,
+            },
+          ],
+        }),
+      );
+
+    expect(parseWith(false)).toMatchObject({
+      kind: "ok",
+      configurations: [{ configuration: { target: { kind: "attach" } } }],
+      diagnostics: [],
+    });
+    expect(parseWith(false)).not.toMatchObject({
+      configurations: [{ stopOnEntry: expect.anything() }],
+    });
+    expect(parseWith(true)).toEqual({
+      kind: "ok",
+      configurations: [],
+      diagnostics: [
+        {
+          configurationIndex: 0,
+          message: "configurations[0].stopOnEntry is supported only for launch.",
+        },
+      ],
+    });
+  });
+
+  it.each([true, false])(
+    "rejects stopOnEntry=%s for native Node watch with a clear limitation",
+    (stopOnEntry) => {
+      expect(
+        parseVscodeNodeLaunchConfigurations(
+          JSON.stringify({
+            version: "0.2.0",
+            configurations: [
+              {
+                type: "node",
+                request: "launch",
+                name: "API watch",
+                program: "src/server.js",
+                runtimeArgs: ["--watch"],
+                stopOnEntry,
+              },
+            ],
+          }),
+        ),
+      ).toEqual({
+        kind: "ok",
+        configurations: [],
+        diagnostics: [
+          {
+            configurationIndex: 0,
+            message: "configurations[0].stopOnEntry is unsupported for a native Node watch launch.",
+          },
+        ],
+      });
+    },
+  );
+
+  it.each([
+    ["script", { program: "src/server.js" }],
+    ["tsx", { program: "src/server.ts", runtimeExecutable: "tsx" }],
+    ["ts-node", { program: "src/server.ts", runtimeExecutable: "ts-node" }],
+    ["npm", { runtimeExecutable: "npm", runtimeArgs: ["run", "dev"] }],
     ["attach", { request: "attach", port: 9229 }],
     ["native watch", { program: "src/server.js", runtimeArgs: ["--watch"] }],
   ])("rejects a non-boolean sourceMaps value for a %s configuration", (_case, fields) => {
@@ -1491,13 +1627,20 @@ describe("VS Code Node launch configuration import", () => {
       JSON.stringify({
         version: "0.2.0",
         configurations: [
-          { type: "node", request: "launch", name: "API", program: "src/api.js" },
+          {
+            type: "node",
+            request: "launch",
+            name: "API",
+            program: "src/api.js",
+            stopOnEntry: true,
+          },
           {
             type: "node",
             request: "launch",
             name: "Worker",
             runtimeExecutable: "npm",
             runtimeArgs: ["run", "worker"],
+            stopOnEntry: false,
           },
         ],
         compounds: [
@@ -1517,8 +1660,14 @@ describe("VS Code Node launch configuration import", () => {
         {
           name: "Services",
           members: [
-            { configuration: { name: "API", target: { kind: "script" } } },
-            { configuration: { name: "Worker", target: { kind: "npm" } } },
+            {
+              configuration: { name: "API", target: { kind: "script" } },
+              stopOnEntry: true,
+            },
+            {
+              configuration: { name: "Worker", target: { kind: "npm" } },
+              stopOnEntry: false,
+            },
           ],
           preLaunchTask: "build services",
         },

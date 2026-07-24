@@ -12,6 +12,8 @@ import {
   invokeDebugIpc,
   type DebugIpcCommandArgs,
   type DebugIpcCommandResult,
+  type DebugCompoundStartRequestWire,
+  type DebugLaunchTargetWire,
   type InvokeDebugCommand,
 } from "./tauriDebugIpcContract";
 
@@ -1133,6 +1135,154 @@ describe("debug Tauri IPC contract", () => {
     ).rejects.toThrow("launch.env.PORT");
   });
 
+  const stopOnEntryLaunchTargets: DebugLaunchTargetWire[] = [
+    {
+      kind: "node-script",
+      scriptPath: "/workspace/app.js",
+      stopOnEntry: true,
+    },
+    {
+      kind: "node-configured-script",
+      scriptPath: "/workspace/app.ts",
+      args: [],
+      env: {},
+      stopOnEntry: false,
+    },
+    {
+      kind: "node-npm-script",
+      script: "dev",
+      packageRootPath: "/workspace",
+      args: [],
+      env: {},
+      stopOnEntry: true,
+    },
+  ];
+
+  it.each(stopOnEntryLaunchTargets)("accepts and forwards stopOnEntry on $kind", async (launch) => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
+      status: "ok",
+      sessionId: 9,
+    });
+    const args = {
+      rootPath: "/workspace",
+      launch,
+      breakpoints: [],
+      exceptionPauseMode: "none" as const,
+      exceptionTypeFilter: [],
+    };
+
+    await expect(invokeDebugIpc(invokeCommand, "debug_start", args)).resolves.toEqual({
+      status: "ok",
+      sessionId: 9,
+    });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start", args);
+  });
+
+  it.each([
+    {
+      kind: "node-script",
+      scriptPath: "/workspace/app.js",
+    },
+    {
+      kind: "node-configured-script",
+      scriptPath: "/workspace/app.ts",
+      args: [],
+      env: {},
+    },
+    {
+      kind: "node-npm-script",
+      script: "dev",
+      packageRootPath: "/workspace",
+      args: [],
+      env: {},
+    },
+  ])("rejects null and non-boolean stopOnEntry on $kind", async (launch) => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>();
+
+    for (const stopOnEntry of [null, "true", 1]) {
+      await expect(
+        invokeDebugIpc(invokeCommand, "debug_start", {
+          rootPath: "/workspace",
+          launch: { ...launch, stopOnEntry } as never,
+          breakpoints: [],
+          exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
+        }),
+      ).rejects.toThrow("debug_start args.launch.stopOnEntry");
+    }
+    expect(invokeCommand).not.toHaveBeenCalled();
+  });
+
+  it("accepts only false stopOnEntry on Node attach", async () => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
+      status: "ok",
+      sessionId: 9,
+    });
+    const args = {
+      rootPath: "/workspace",
+      launch: { kind: "node-attach", port: 9229, stopOnEntry: false } as const,
+      breakpoints: [],
+      exceptionPauseMode: "none" as const,
+      exceptionTypeFilter: [],
+    };
+
+    await expect(invokeDebugIpc(invokeCommand, "debug_start", args)).resolves.toEqual({
+      status: "ok",
+      sessionId: 9,
+    });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start", args);
+
+    for (const stopOnEntry of [true, null, "false"]) {
+      await expect(
+        invokeDebugIpc(invokeCommand, "debug_start", {
+          ...args,
+          launch: { ...args.launch, stopOnEntry } as never,
+        }),
+      ).rejects.toThrow("debug_start args.launch.stopOnEntry");
+    }
+    expect(invokeCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves stopOnEntry in strict compound member launch payloads", async () => {
+    const invokeCommand = vi
+      .fn<InvokeDebugCommand>()
+      .mockResolvedValue({ status: "ok", sessionIds: [11, 12] });
+    const request: DebugCompoundStartRequestWire = {
+      rootPath: "/workspace",
+      stopAll: true,
+      members: [
+        {
+          launch: {
+            kind: "node-script",
+            scriptPath: "/workspace/a.js",
+            stopOnEntry: true,
+          },
+          breakpoints: [],
+          exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
+        },
+        {
+          launch: {
+            kind: "node-npm-script",
+            script: "dev",
+            packageRootPath: "/workspace",
+            args: [],
+            env: {},
+            stopOnEntry: false,
+          },
+          breakpoints: [],
+          exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
+        },
+      ],
+    };
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_compound", { request }),
+    ).resolves.toEqual({ status: "ok", sessionIds: [11, 12] });
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("debug_start_compound", { request });
+  });
+
   it("validates native Node watch sourceMaps as a boolean", async () => {
     const invokeCommand = vi.fn<InvokeDebugCommand>().mockResolvedValue({
       status: "ok",
@@ -1161,6 +1311,25 @@ describe("debug Tauri IPC contract", () => {
         request: { ...args, sourceMaps: null },
       } as never),
     ).rejects.toThrow("debug_start_native_node_watch args.request.sourceMaps");
+  });
+
+  it("rejects stopOnEntry from the native Node watch wire shape", async () => {
+    const invokeCommand = vi.fn<InvokeDebugCommand>();
+
+    await expect(
+      invokeDebugIpc(invokeCommand, "debug_start_native_node_watch", {
+        request: {
+          rootPath: "/workspace",
+          scriptPath: "/workspace/app.js",
+          watch: true,
+          breakpoints: [],
+          exceptionPauseMode: "none",
+          exceptionTypeFilter: [],
+          stopOnEntry: true,
+        },
+      } as never),
+    ).rejects.toThrow("debug_start_native_node_watch args.request.stopOnEntry");
+    expect(invokeCommand).not.toHaveBeenCalled();
   });
 
   it.each(["tsx", "ts-node"] as const)(

@@ -23,3 +23,41 @@ pub(crate) fn ensure_startup_current(
         Err("The workspace debugger lifecycle changed during startup.".to_string())
     }
 }
+
+pub(super) fn first_pause_seen_at_transport_open(attached: bool, stop_on_entry: bool) -> bool {
+    attached || stop_on_entry
+}
+
+pub(super) fn should_arm_startup_entry_probe(stop_on_entry: bool) -> bool {
+    !stop_on_entry
+}
+
+pub(super) fn should_surface_startup_entry(attached: bool, stop_on_entry: bool) -> bool {
+    !attached && stop_on_entry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        first_pause_seen_at_transport_open, should_arm_startup_entry_probe,
+        should_surface_startup_entry,
+    };
+
+    #[test]
+    fn spawned_entry_pause_auto_resumes_by_default_and_surfaces_when_requested() {
+        assert!(!first_pause_seen_at_transport_open(false, false));
+        assert!(should_arm_startup_entry_probe(false));
+        assert!(first_pause_seen_at_transport_open(false, true));
+        assert!(!should_arm_startup_entry_probe(true));
+        assert!(should_surface_startup_entry(false, true));
+        assert!(!should_surface_startup_entry(false, false));
+    }
+
+    #[test]
+    fn attached_sessions_never_treat_the_first_pause_as_startup_entry() {
+        assert!(first_pause_seen_at_transport_open(true, false));
+        assert!(first_pause_seen_at_transport_open(true, true));
+        assert!(!should_surface_startup_entry(true, false));
+        assert!(!should_surface_startup_entry(true, true));
+    }
+}

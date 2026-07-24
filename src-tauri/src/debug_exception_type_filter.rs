@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use crate::debug_adapter::{DebugEventPayload, DebugOutputStream};
+use crate::debug_adapter::{DebugEventPayload, DebugOutputStream, DebugStopReason};
 use crate::debug_cdp::transport::{
     advance_logpoint, build_pause_inventory, emit_debug_event, fail_closed_exception_timeout,
     fallback_from_internal_action, install_visible_pause, invalidate_pause,
@@ -194,9 +194,24 @@ pub(crate) struct ExceptionFilterState {
     pub(crate) pending: Option<PendingExceptionClassification>,
     pub(crate) revision: u64,
     pub(crate) startup_breakpoint_to_ignore: Option<String>,
+    startup_entry_pause_pending: bool,
 }
 
 impl ExceptionFilterState {
+    pub(crate) fn arm_startup_entry_pause(&mut self) {
+        self.startup_entry_pause_pending = true;
+    }
+
+    fn take_startup_entry_reason(&mut self, params: &Value) -> Option<DebugStopReason> {
+        let first_pause = std::mem::take(&mut self.startup_entry_pause_pending);
+        (first_pause
+            && matches!(
+                params.get("reason").and_then(Value::as_str),
+                Some("Break on start")
+            ))
+        .then_some(DebugStopReason::Entry)
+    }
+
     pub(crate) fn begin_policy_update(&mut self) {
         self.active = DebugExceptionTypeFilter::default();
         self.revision = self.revision.wrapping_add(1);
@@ -211,6 +226,14 @@ impl ExceptionFilterState {
 pub(crate) fn handle_paused(params: &Value, context: &SocketLoopContext) -> Option<String> {
     if !(context.mutation_is_allowed)() {
         return None;
+    }
+    let startup_entry_reason = context
+        .exception_filter
+        .lock()
+        .ok()
+        .and_then(|mut state| state.take_startup_entry_reason(params));
+    if let Some(reason) = startup_entry_reason {
+        return handle_startup_entry_pause(params, context, reason);
     }
     if !is_exception_pause(params) {
         return handle_visible_pause(params, context);
@@ -651,6 +674,31 @@ fn handle_visible_pause(params: &Value, context: &SocketLoopContext) -> Option<S
     None
 }
 
+fn handle_startup_entry_pause(
+    params: &Value,
+    context: &SocketLoopContext,
+    reason: DebugStopReason,
+) -> Option<String> {
+    let (frames, pause_generation) = {
+        let Ok(mut shared) = context.shared.lock() else {
+            return None;
+        };
+        let Ok((frames, pause_generation, _)) = install_visible_pause(params, &mut shared) else {
+            return None;
+        };
+        (frames, pause_generation)
+    };
+    emit_debug_event(
+        context,
+        DebugEventPayload::Stopped {
+            reason,
+            frames,
+            pause_generation,
+        },
+    );
+    None
+}
+
 fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > MAX_EXCEPTION_TYPE_NAME_BYTES {
         return Err("Exception type filter entry is invalid.".to_string());
@@ -720,6 +768,36 @@ mod tests {
             "result": {"result": {"value": 7}}
         }))
         .is_none());
+    }
+
+    #[test]
+    fn startup_entry_reason_requires_armed_first_break_on_start_pause() {
+        let mut state = ExceptionFilterState::default();
+        state.arm_startup_entry_pause();
+
+        assert_eq!(
+            state.take_startup_entry_reason(&json!({"reason": "Break on start"})),
+            Some(DebugStopReason::Entry)
+        );
+        assert_eq!(
+            state.take_startup_entry_reason(&json!({"reason": "Break on start"})),
+            None
+        );
+    }
+
+    #[test]
+    fn non_entry_first_pause_consumes_startup_entry_reason_eligibility() {
+        let mut state = ExceptionFilterState::default();
+        state.arm_startup_entry_pause();
+
+        assert_eq!(
+            state.take_startup_entry_reason(&json!({"reason": "other"})),
+            None
+        );
+        assert_eq!(
+            state.take_startup_entry_reason(&json!({"reason": "Break on start"})),
+            None
+        );
     }
 
     #[test]
@@ -870,6 +948,7 @@ mod tests {
             }),
             revision: 0,
             startup_breakpoint_to_ignore: None,
+            startup_entry_pause_pending: false,
         };
         assert!(DebugExceptionTypeFilter::parse(vec!["not-valid!".to_string()]).is_err());
         assert_eq!(state.revision, 0);

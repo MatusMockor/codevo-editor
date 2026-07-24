@@ -73,6 +73,7 @@ export interface PreparedNodeDebugLaunch {
   readonly launch: DebugLaunchTarget & {
     readonly envFile?: string;
     readonly runtime?: VscodeNodeScriptRuntime;
+    readonly stopOnEntry?: boolean;
   };
   readonly nativeWatch?: NativeNodeWatchLaunchIntent;
   readonly preLaunchTask: NodeDebugPreLaunchTask | null;
@@ -219,14 +220,21 @@ export function prepareNodeDebugCompoundLaunch(
 function debugLaunchWithVscodeOptions(
   launch: DebugLaunchTarget,
   entry: NodeLaunchConfigurationEntry,
-): DebugLaunchTarget {
+): PreparedNodeDebugLaunch["launch"] {
   if (entry.source !== "vscode") return launch;
-  if (entry.justMyCode === undefined && entry.sourceMaps === undefined) return launch;
+  if (
+    entry.justMyCode === undefined &&
+    entry.sourceMaps === undefined &&
+    entry.stopOnEntry === undefined
+  ) {
+    return launch;
+  }
   return Object.freeze({
     ...launch,
     ...(entry.justMyCode ? { justMyCode: entry.justMyCode } : {}),
     ...(entry.sourceMaps !== undefined ? { sourceMaps: entry.sourceMaps } : {}),
-  }) as DebugLaunchTarget;
+    ...(entry.stopOnEntry !== undefined ? { stopOnEntry: entry.stopOnEntry } : {}),
+  });
 }
 
 function importedEnvFile(

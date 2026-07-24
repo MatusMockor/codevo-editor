@@ -2,7 +2,6 @@ import type {
   Breakpoint,
   DebugEvent,
   DebugEventPayload,
-  DebugLaunchTarget,
   DebugSetExpressionResult,
   DebugScope,
   DebugVariable,
@@ -57,16 +56,19 @@ import {
   type DebugIpcCommand,
   type DebugIpcCommandArgs,
   type DebugIpcCommandResult,
+  type DebugLaunchTargetWire,
   type DebugStartResponseWire,
   type InvokeDebugCommand,
 } from "./tauriDebugIpcProtocol";
 export {
   DEBUG_IPC_COMMANDS,
+  type DebugCompoundStartRequestWire,
   type DebugCompoundStartResponseWire,
   type DebugEvaluationResultWire,
   type DebugIpcCommand,
   type DebugIpcCommandArgs,
   type DebugIpcCommandResult,
+  type DebugLaunchTargetWire,
   type DebugStartResponseWire,
   type InvokeDebugCommand,
 } from "./tauriDebugIpcProtocol";
@@ -814,20 +816,24 @@ function validateDebugIpcArgs(command: DebugIpcCommand, value: unknown) {
   }
 }
 
-function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
+function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTargetWire {
   const record = requireRecord(value, path);
   switch (record.kind) {
     case "node-attach":
-      requireObjectShape(record, ["kind", "port"], ["sourceMaps"], path);
+      requireObjectShape(record, ["kind", "port"], ["sourceMaps", "stopOnEntry"], path);
       if (!isNodeDebugPort(record.port)) {
         throw invalidDebugWire(`${path}.port`, "an integer between 1 and 65535");
       }
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      if (record.stopOnEntry !== undefined && record.stopOnEntry !== false) {
+        throw invalidDebugWire(`${path}.stopOnEntry`, "false when present");
+      }
       break;
     case "node-script":
-      requireObjectShape(record, ["kind", "scriptPath"], ["sourceMaps"], path);
+      requireObjectShape(record, ["kind", "scriptPath"], ["sourceMaps", "stopOnEntry"], path);
       requireString(record.scriptPath, `${path}.scriptPath`);
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      decodeOptionalBoolean(record.stopOnEntry, `${path}.stopOnEntry`);
       break;
     case "php-script":
       requireObjectShape(record, ["kind", "scriptPath"], [], path);
@@ -861,7 +867,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
       requireObjectShape(
         record,
         ["kind", "scriptPath", "args", "env"],
-        ["cwd", "envFile", "justMyCode", "runtime", "sourceMaps"],
+        ["cwd", "envFile", "justMyCode", "runtime", "sourceMaps", "stopOnEntry"],
         path,
       );
       requireString(record.scriptPath, `${path}.scriptPath`);
@@ -870,6 +876,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
       decodeOptionalEnum(record.runtime, `${path}.runtime`, ["tsx", "ts-node"], "tsx or ts-node");
       decodeNodeDebugJustMyCode(record.justMyCode, `${path}.justMyCode`);
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      decodeOptionalBoolean(record.stopOnEntry, `${path}.stopOnEntry`);
       break;
     case "js-configured-test":
       requireObjectShape(
@@ -888,7 +895,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
       requireObjectShape(
         record,
         ["kind", "script", "packageRootPath", "args", "env"],
-        ["cwd", "justMyCode", "sourceMaps"],
+        ["cwd", "justMyCode", "sourceMaps", "stopOnEntry"],
         path,
       );
       requireString(record.script, `${path}.script`);
@@ -896,6 +903,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
       decodeNodeLaunchOptions(record, path);
       decodeNodeDebugJustMyCode(record.justMyCode, `${path}.justMyCode`);
       decodeOptionalBoolean(record.sourceMaps, `${path}.sourceMaps`);
+      decodeOptionalBoolean(record.stopOnEntry, `${path}.stopOnEntry`);
       break;
     case "php-test-file":
       requireObjectShape(record, ["kind", "filePath"], [], path);
@@ -908,7 +916,7 @@ function decodeLaunchTarget(value: unknown, path: string): DebugLaunchTarget {
     default:
       throw invalidDebugWire(`${path}.kind`, "a known launch target");
   }
-  return value as DebugLaunchTarget;
+  return value as DebugLaunchTargetWire;
 }
 
 function decodeJsTestDebugSelection(value: unknown, path: string): void {
