@@ -1,0 +1,8 @@
+coverage
+dist
+node_modules
+src-tauri/target
+tmp
+
+# Generated and machine-owned files.
+package-lock.json

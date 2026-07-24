@@ -1,0 +1,5 @@
+{
+  "budget": 0,
+  "files": {},
+  "rule": "react-hooks/exhaustive-deps"
+}

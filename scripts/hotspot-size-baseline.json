@@ -1,0 +1,103 @@
+{
+  "productionLineLimit": 2000,
+  "productionStructuralTokenLimit": 10000,
+  "trackedTests": ["src/application/useWorkbenchController.preview.test.tsx"],
+  "files": {
+    "src-tauri/src/debug_cdp.rs": {
+      "rawLines": 1493,
+      "structuralTokens": 8994
+    },
+    "src-tauri/src/debug_dbgp.rs": {
+      "rawLines": 2623,
+      "structuralTokens": 15581
+    },
+    "src-tauri/src/git.rs": {
+      "rawLines": 7113,
+      "structuralTokens": 44029
+    },
+    "src-tauri/src/index.rs": {
+      "rawLines": 2090,
+      "structuralTokens": 10277
+    },
+    "src-tauri/src/lib.rs": {
+      "rawLines": 10199,
+      "structuralTokens": 59238
+    },
+    "src-tauri/src/lsp_features.rs": {
+      "rawLines": 4503,
+      "structuralTokens": 25032
+    },
+    "src-tauri/src/lsp_session.rs": {
+      "rawLines": 8364,
+      "structuralTokens": 42527
+    },
+    "src-tauri/src/lsp.rs": {
+      "rawLines": 2364,
+      "structuralTokens": 10802
+    },
+    "src-tauri/src/workspace_file_commands.rs": {
+      "rawLines": 4005,
+      "structuralTokens": 26158
+    },
+    "src/App.tsx": {
+      "rawLines": 1695,
+      "structuralTokens": 8619
+    },
+    "src/application/useDocumentSync.ts": {
+      "rawLines": 1831,
+      "structuralTokens": 6395
+    },
+    "src/application/useLanguageServerRuntimeLifecycle.ts": {
+      "rawLines": 2455,
+      "structuralTokens": 8820
+    },
+    "src/application/useWorkbenchController.preview.test.tsx": {
+      "rawLines": 74627,
+      "structuralTokens": 345131
+    },
+    "src/application/useWorkbenchController.ts": {
+      "rawLines": 10142,
+      "structuralTokens": 38630
+    },
+    "src/components/EditorSurface.tsx": {
+      "rawLines": 5348,
+      "structuralTokens": 22417
+    },
+    "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
+      "rawLines": 3902,
+      "structuralTokens": 17430
+    },
+    "src/components/languageServerMonacoProviders.ts": {
+      "rawLines": 5896,
+      "structuralTokens": 11810
+    },
+    "src/components/SettingsDialog.tsx": {
+      "rawLines": 1762,
+      "structuralTokens": 6481
+    },
+    "src/domain/latteLinkNavigation.ts": {
+      "rawLines": 2446,
+      "structuralTokens": 5029
+    },
+    "src/domain/netteComponents.ts": {
+      "rawLines": 4267,
+      "structuralTokens": 16907
+    },
+    "src/domain/netteDiContainer.ts": {
+      "rawLines": 2362,
+      "structuralTokens": 1661
+    },
+    "src/domain/phpCreateFromUsage.ts": {
+      "rawLines": 2079,
+      "structuralTokens": 7734
+    },
+    "src/domain/phpFrameworkLaravel.ts": {
+      "rawLines": 7948,
+      "structuralTokens": 19189
+    },
+    "src/domain/phpInspections.ts": {
+      "rawLines": 2244,
+      "structuralTokens": 7852
+    }
+  }
+}

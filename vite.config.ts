@@ -9,6 +9,13 @@ export default defineConfig(async () => ({
   plugins: [react()],
   base: "./",
 
+  test: {
+    execArgv: process.allowedNodeEnvironmentFlags.has("--no-experimental-webstorage")
+      ? ["--no-experimental-webstorage"]
+      : [],
+    setupFiles: ["./src/test/setup.ts"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
