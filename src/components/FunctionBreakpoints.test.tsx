@@ -77,6 +77,37 @@ describe("FunctionBreakpoints", () => {
     act(() => input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(input?.value).toBe("");
   });
+
+  it("renders unresolved verification and updates to the filled verified indicator", () => {
+    const render = (verified: boolean) =>
+      act(() => {
+        root.render(
+          <FunctionBreakpoints
+            breakpoints={[{ id: "fn-1", functionName: "app.render", enabled: true, verified }]}
+            onAdd={vi.fn()}
+            onRemove={vi.fn()}
+            onSetEnabled={vi.fn()}
+          />,
+        );
+      });
+
+    render(false);
+    const unverified = host.querySelector<HTMLElement>(
+      '[role="img"][aria-label="Unverified function breakpoint app.render - function not resolved yet"]',
+    );
+    expect(unverified?.title).toBe("Unverified - function not resolved yet");
+    expect(unverified?.style.background).toBe("transparent");
+    expect(unverified?.style.border).toBe("1.5px solid var(--color-text-muted)");
+
+    render(true);
+    const verified = host.querySelector<HTMLElement>(
+      '[role="img"][aria-label="Verified function breakpoint app.render"]',
+    );
+    expect(verified).toBe(unverified);
+    expect(verified?.title).toBe("Verified function breakpoint");
+    expect(verified?.style.background).toBe("var(--color-error)");
+    expect(verified?.style.border).toBe("");
+  });
 });
 
 function setInputValue(input: HTMLInputElement | null, value: string) {

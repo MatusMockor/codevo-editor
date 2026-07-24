@@ -45,6 +45,25 @@ export function FunctionBreakpoints({
             onChange={(event) => onSetEnabled(breakpoint.id, event.target.checked)}
             type="checkbox"
           />
+          <span
+            aria-label={
+              breakpoint.verified === false
+                ? `Unverified function breakpoint ${breakpoint.functionName} - function not resolved yet`
+                : `Verified function breakpoint ${breakpoint.functionName}`
+            }
+            role="img"
+            style={{
+              ...styles.indicator,
+              ...(breakpoint.verified === false
+                ? styles.indicatorUnverified
+                : styles.indicatorVerified),
+            }}
+            title={
+              breakpoint.verified === false
+                ? "Unverified - function not resolved yet"
+                : "Verified function breakpoint"
+            }
+          />
           <span style={styles.name}>{breakpoint.functionName}</span>
           <button
             aria-label={`Remove function breakpoint ${breakpoint.functionName}`}
@@ -77,6 +96,21 @@ export function FunctionBreakpoints({
 
 const styles: Record<string, CSSProperties> = {
   error: { color: "var(--text-danger, #f87171)", fontSize: 11 },
+  indicator: {
+    borderRadius: "50%",
+    boxSizing: "border-box",
+    flex: "0 0 auto",
+    height: 10,
+    width: 10,
+  },
+  indicatorUnverified: {
+    background: "transparent",
+    border: "1.5px solid var(--color-text-muted)",
+  },
+  indicatorVerified: {
+    background: "var(--color-error)",
+    boxShadow: "0 0 0 1px color-mix(in srgb, var(--color-error) 35%, transparent)",
+  },
   name: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   remove: { fontSize: 11 },
   row: { alignItems: "center", display: "flex", gap: 6 },
