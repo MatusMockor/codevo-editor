@@ -65,7 +65,11 @@ const INSPECTION_OWNER = {
   rootKey: "/workspace",
 };
 
-function settledConsole(value = "captured-value", variablesReference = 0): UseDebugConsoleResult {
+function settledConsole(
+  value = "captured-value",
+  variablesReference = 0,
+  evaluateName?: string,
+): UseDebugConsoleResult {
   let state = createDebugConsoleState(OWNER);
   state = reduceDebugConsoleState(state, {
     expression: "sideEffecting()",
@@ -77,7 +81,12 @@ function settledConsole(value = "captured-value", variablesReference = 0): UseDe
   state = reduceDebugConsoleState(state, {
     owner: OWNER,
     requestId: "request-1",
-    result: { status: "ok", value, variablesReference },
+    result: {
+      status: "ok",
+      value,
+      variablesReference,
+      ...(evaluateName === undefined ? {} : { evaluateName }),
+    },
     type: "evaluation-settled",
   });
   return consoleResult(state);
@@ -223,6 +232,56 @@ describe("DebugConsolePanel completions", () => {
     expect(copy.copyDisplayedValueFromMenu).toHaveBeenCalledOnce();
   });
 
+  it("offers and copies the adapter evaluate name only when a console result has one", () => {
+    const copy = displayedValueSurface();
+    const rendered = render({
+      console: settledConsole("User", 0, 'root["user"]'),
+      copyDisplayedValueSurface: copy.surface,
+      inspectionOwner: INSPECTION_OWNER,
+    });
+    const result = host.querySelector<HTMLElement>('[data-kind="result"]')!;
+
+    act(() =>
+      result.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 20,
+        }),
+      ),
+    );
+    let menuItems = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+    );
+    expect(menuItems.map((item) => item.textContent)).toEqual(["Copy Value", "Copy as Expression"]);
+
+    act(() => menuItems[1]?.click());
+
+    expect(copy.copyDisplayedValueFromMenu).toHaveBeenCalledOnce();
+    expect(copy.read()?.displayedValue).toBe('root["user"]');
+
+    rendered.console.state = settledConsole("User").state;
+    render({
+      ...rendered,
+      copyDisplayedValueSurface: copy.surface,
+      inspectionOwner: INSPECTION_OWNER,
+    });
+    act(() =>
+      host
+        .querySelector<HTMLElement>('[data-kind="result"]')!
+        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    menuItems = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+    );
+    expect(menuItems.map((item) => item.textContent)).toEqual(["Copy Value"]);
+  });
+
   it("lazily expands paged result children, nested references, and load-more rows", () => {
     const onLoadVariablePage = vi.fn();
     let variablePages = createDebugVariablePagesState(INSPECTION_OWNER);
@@ -297,6 +356,87 @@ describe("DebugConsolePanel completions", () => {
       loadMore?.click();
     });
     expect(onLoadVariablePage).toHaveBeenLastCalledWith(INSPECTION_OWNER, 41, 2);
+  });
+
+  it("inherits copy-value and adapter-path actions on expanded result child rows", () => {
+    const copy = displayedValueSurface();
+    const onLoadVariablePage = vi.fn();
+    let variablePages = createDebugVariablePagesState(INSPECTION_OWNER);
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "request",
+      owner: INSPECTION_OWNER,
+      variablesReference: 41,
+      start: 0,
+      requestId: "page-1",
+    });
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "resolve",
+      owner: INSPECTION_OWNER,
+      variablesReference: 41,
+      start: 0,
+      requestId: "page-1",
+      result: {
+        variablesReference: 41,
+        start: 0,
+        variables: [
+          {
+            name: "named",
+            value: "1",
+            evaluateName: "result.named",
+            variablesReference: 0,
+          },
+          { name: "unnamed", value: "2", variablesReference: 0 },
+        ],
+        nextStart: null,
+      },
+    });
+    render({
+      console: settledConsole("Object", 41),
+      copyDisplayedValueSurface: copy.surface,
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage,
+      variablePages,
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    const rows = host.querySelectorAll<HTMLElement>('[data-testid="debug-console-variable"]');
+
+    act(() => {
+      rows[0]?.focus();
+      rows[0]?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          key: "c",
+        }),
+      );
+    });
+    expect(copy.copyDisplayedValue).toHaveBeenCalledOnce();
+    expect(copy.read()?.displayedValue).toBe("1");
+
+    act(() =>
+      rows[0]?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    let menuItems = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+    );
+    expect(menuItems.map((item) => item.textContent)).toEqual(["Copy Value", "Copy as Expression"]);
+    act(() => menuItems[1]?.click());
+    expect(copy.read()?.displayedValue).toBe("result.named");
+
+    act(() =>
+      rows[1]?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })),
+    );
+    menuItems = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[role="menu"][aria-label="Debug console value actions"] [role="menuitem"]',
+      ),
+    );
+    expect(menuItems.map((item) => item.textContent)).toEqual(["Copy Value"]);
   });
 
   it("fails closed and clears expanded result children when the pause owner changes", () => {

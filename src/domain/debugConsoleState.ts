@@ -48,6 +48,7 @@ export type DebugConsoleEntry =
       readonly requestId: string;
       readonly value: string;
       readonly valueType: string | null;
+      readonly evaluateName?: string;
       readonly variablesReference: number;
       readonly resultOwner?: DebugConsoleResultOwner;
     })
@@ -213,6 +214,7 @@ function settleEvaluation(
       requestId,
       value: value.value,
       valueType: result.type === null || result.type === undefined ? null : valueType.value,
+      ...(result.evaluateName === undefined ? {} : { evaluateName: result.evaluateName }),
       variablesReference: result.variablesReference ?? 0,
       ...(resultOwner ? { resultOwner } : {}),
     },
@@ -254,6 +256,7 @@ type NewDebugConsoleEntry =
       readonly requestId: string;
       readonly value: string;
       readonly valueType: string | null;
+      readonly evaluateName?: string;
       readonly variablesReference: number;
       readonly resultOwner?: DebugConsoleResultOwner;
     }
@@ -390,6 +393,7 @@ function consoleEntryBytes(entry: DebugConsoleEntry): number {
         debugUtf8ByteLength(entry.requestId) +
         debugUtf8ByteLength(entry.value) +
         debugUtf8ByteLength(entry.valueType ?? "") +
+        debugUtf8ByteLength(entry.evaluateName ?? "") +
         resultOwnerBytes(entry.resultOwner)
       );
     case "error":

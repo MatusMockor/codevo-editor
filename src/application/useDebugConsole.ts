@@ -198,6 +198,7 @@ export function useDebugConsole({
           status: "ok",
           value: value.value,
           type: value.type,
+          ...(value.evaluateName === undefined ? {} : { evaluateName: value.evaluateName }),
           variablesReference: value.variablesReference,
         };
       } catch (error) {

@@ -302,6 +302,7 @@ describe("debug console state", () => {
     });
     expect(state.entries[state.entries.length - 1]).toMatchObject({
       kind: "result",
+      evaluateName: 'root["user"]',
       value: "User",
       valueType: "object",
       variablesReference: 9,

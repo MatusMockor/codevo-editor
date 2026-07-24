@@ -125,6 +125,26 @@ describe("useDebugConsole", () => {
     ]);
   });
 
+  it("carries the adapter evaluate name into the settled console result", async () => {
+    options.evaluate = vi.fn().mockResolvedValue({
+      name: "user",
+      value: "User",
+      type: "object",
+      evaluateName: 'root["user"]',
+      variablesReference: 9,
+    });
+    render();
+
+    await act(async () => current.submit("user"));
+
+    expect(current.state.entries.find((entry) => entry.kind === "result")).toMatchObject({
+      kind: "result",
+      evaluateName: 'root["user"]',
+      value: "User",
+      variablesReference: 9,
+    });
+  });
+
   it("keeps session output live after Continue removes the pause owner", () => {
     const beforeContinue = { stream: "stdout" as const, text: "before continue" };
     options.output = [beforeContinue];

@@ -185,6 +185,7 @@ export function DebugConsolePanel({
   const [pinnedResultEntryId, setPinnedResultEntryId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     readonly candidate: DebugCopyValueCandidate;
+    readonly entryId: string;
     readonly invoker: HTMLElement;
     readonly position: { readonly x: number; readonly y: number };
   } | null>(null);
@@ -254,7 +255,7 @@ export function DebugConsolePanel({
     }
 
     if (contextMenu) {
-      entryIds.add(contextMenu.candidate.identity);
+      entryIds.add(contextMenu.entryId);
     }
 
     if (entryIds.size === 0) {
@@ -360,18 +361,27 @@ export function DebugConsolePanel({
       publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
     }
     if (contextMenu) {
-      const current = console.state.entries.find(
-        (entry) => entry.kind === "result" && entry.id === contextMenu.candidate.identity,
+      const currentItem = renderItems.find((item) => item.id === contextMenu.candidate.identity);
+      const entryItem = renderItems.find(
+        (item) => item.kind === "entry" && item.entryId === contextMenu.entryId,
       );
       const candidate =
-        current?.kind === "result"
+        currentItem?.kind === "entry" && currentItem.entry.kind === "result"
           ? consoleCopyCandidate(
-              current,
+              currentItem.entry,
               console.resultOwner,
               inspectionOwner,
               copyDisplayedValueSurface,
             )
-          : null;
+          : currentItem?.kind === "result-variable"
+            ? debugCopyValueCandidateForNode({
+                adapterEvaluateName: currentItem.variable.evaluateName,
+                displayedValue: currentItem.variable.value,
+                identity: currentItem.id,
+                owner: entryItem?.kind === "entry" ? entryItem.resultInspectionOwner : null,
+                surface: copyDisplayedValueSurface,
+              })
+            : null;
       if (!debugCopyValuePresentationCandidatesEqual(contextMenu.candidate, candidate)) {
         setContextMenu(null);
         publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
@@ -383,6 +393,7 @@ export function DebugConsolePanel({
     contextMenu,
     copyDisplayedValueSurface,
     inspectionOwner,
+    renderItems,
   ]);
   useEffect(
     () => () => publishDebugCopyValueCandidate(copyDisplayedValueSurfaceRef.current, null),
@@ -625,6 +636,7 @@ export function DebugConsolePanel({
                 publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
                 setContextMenu({
                   candidate: copyCandidate,
+                  entryId: entry.id,
                   invoker: event.currentTarget,
                   position: { x: event.clientX, y: event.clientY },
                 });
@@ -675,6 +687,7 @@ export function DebugConsolePanel({
           const bounds = event.currentTarget.getBoundingClientRect();
           setContextMenu({
             candidate: copyCandidate,
+            entryId: entry.id,
             invoker: event.currentTarget,
             position: { x: bounds.left + 8, y: bounds.top + 8 },
           });
@@ -742,6 +755,13 @@ export function DebugConsolePanel({
     }
 
     const owner = resultOwnerByEntryId.get(item.entryId);
+    const copyCandidate = debugCopyValueCandidateForNode({
+      adapterEvaluateName: item.variable.evaluateName,
+      displayedValue: item.variable.value,
+      identity: item.id,
+      owner: owner ?? null,
+      surface: copyDisplayedValueSurface,
+    });
     const toggle = () => {
       if (!owner) {
         return;
@@ -762,8 +782,39 @@ export function DebugConsolePanel({
         aria-level={item.depth + 1}
         data-testid="debug-console-variable"
         key={item.id}
+        onBlur={
+          copyCandidate
+            ? () => publishDebugCopyValueCandidate(copyDisplayedValueSurface, null)
+            : undefined
+        }
         onClick={item.expandable ? toggle : undefined}
+        onContextMenu={
+          copyCandidate
+            ? (event) => {
+                event.preventDefault();
+                publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
+                setContextMenu({
+                  candidate: copyCandidate,
+                  entryId: item.entryId,
+                  invoker: event.currentTarget,
+                  position: { x: event.clientX, y: event.clientY },
+                });
+              }
+            : undefined
+        }
+        onFocus={
+          copyCandidate
+            ? () => publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate)
+            : undefined
+        }
         onKeyDown={(event) => {
+          if (copyCandidate && isLocalDebugCopyShortcut(event)) {
+            publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
+            if (runDebugCopyDisplayedValue(copyDisplayedValueSurface)) {
+              event.preventDefault();
+            }
+            return;
+          }
           if (event.key === "ArrowRight" && item.expandable && !item.expanded) {
             event.preventDefault();
             toggle();
@@ -882,10 +933,25 @@ export function DebugConsolePanel({
                 );
               },
             },
+            ...(contextMenu.candidate.adapterEvaluateName === undefined
+              ? []
+              : [
+                  {
+                    id: "copy-evaluate-path",
+                    label: "Copy as Expression",
+                    onSelect: () => {
+                      copyConsoleEvaluatePathFromMenuAndRestoreFocus(
+                        copyDisplayedValueSurface,
+                        contextMenu.candidate,
+                        contextMenu.invoker,
+                      );
+                    },
+                  },
+                ]),
           ]}
           onClose={(reason) => {
             const invoker = contextMenu.invoker;
-            setPinnedResultEntryId(contextMenu.candidate.identity);
+            setPinnedResultEntryId(contextMenu.entryId);
             setContextMenu(null);
             if (reason === "cancel") {
               publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
@@ -1094,11 +1160,29 @@ function consoleCopyCandidate(
     return null;
   }
   return debugCopyValueCandidateForNode({
+    adapterEvaluateName: entry.evaluateName,
     displayedValue: entry.value,
     identity: entry.id,
     owner,
     surface,
   });
+}
+
+function copyConsoleEvaluatePathFromMenuAndRestoreFocus(
+  surface: DebugCopyDisplayedValueSurface | undefined,
+  candidate: DebugCopyValueCandidate,
+  invoker: HTMLElement,
+): void {
+  const evaluateName = candidate.adapterEvaluateName;
+  if (evaluateName === undefined) {
+    queueMicrotask(() => invoker.focus());
+    return;
+  }
+  publishDebugCopyValueCandidate(surface, {
+    ...candidate,
+    displayedValue: evaluateName,
+  });
+  copyDisplayedValueFromMenuAndRestoreFocus(surface, invoker);
 }
 
 function consoleResultOwnersEqual(
