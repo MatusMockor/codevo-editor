@@ -30,10 +30,7 @@ export interface GitBranchPanel {
   switchGitBranch: (name: string) => Promise<void>;
   checkoutRemoteBranch: (name: string) => Promise<void>;
   createGitBranch: () => Promise<void>;
-  deleteGitBranch: (
-    name: string,
-    options: { force: boolean },
-  ) => Promise<void>;
+  deleteGitBranch: (name: string, options: { force: boolean }) => Promise<void>;
   renameGitBranch: (oldName: string, newName: string) => Promise<void>;
   refreshGitBranches: () => Promise<void>;
 }
@@ -42,9 +39,7 @@ export interface GitBranchPanel {
  * Git branch switcher (PhpStorm-style) panel state. Per-tab isolated like the
  * stash panel: a switched-away tab's late list resolve must never repopulate.
  */
-export function useGitBranchPanel(
-  dependencies: GitBranchPanelDependencies,
-): GitBranchPanel {
+export function useGitBranchPanel(dependencies: GitBranchPanelDependencies): GitBranchPanel {
   const {
     gitGateway,
     currentWorkspaceRootRef,
@@ -57,9 +52,7 @@ export function useGitBranchPanel(
 
   const [gitBranchPanelOpen, setGitBranchPanelOpen] = useState(false);
   const [gitBranchEntries, setGitBranchEntries] = useState<GitBranch[]>([]);
-  const [gitRemoteBranchEntries, setGitRemoteBranchEntries] = useState<
-    GitBranch[]
-  >([]);
+  const [gitRemoteBranchEntries, setGitRemoteBranchEntries] = useState<GitBranch[]>([]);
   const [gitBranchLoading, setGitBranchLoading] = useState(false);
   // Invalidates an in-flight branch list request so a late resolve from a
   // switched-away tab (or a superseded refresh) cannot repopulate the panel.
@@ -112,7 +105,7 @@ export function useGitBranchPanel(
         setGitBranchLoading(false);
       }
     }
-  }, [gitGateway, reportError, workspaceRoot]);
+  }, [currentWorkspaceRootRef, gitGateway, reportError, workspaceRoot]);
 
   const refreshGitRemoteBranches = useCallback(async () => {
     const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
@@ -149,7 +142,7 @@ export function useGitBranchPanel(
         setGitBranchLoading(false);
       }
     }
-  }, [gitGateway, reportError, workspaceRoot]);
+  }, [currentWorkspaceRootRef, gitGateway, reportError, workspaceRoot]);
 
   const openGitBranchPanel = useCallback(async () => {
     const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
@@ -162,14 +155,12 @@ export function useGitBranchPanel(
     setGitBranchPanelOpen(true);
 
     await refreshGitBranches();
-    if (
-      !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-    ) {
+    if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
       return;
     }
 
     await refreshGitRemoteBranches();
-  }, [refreshGitBranches, refreshGitRemoteBranches, workspaceRoot]);
+  }, [currentWorkspaceRootRef, refreshGitBranches, refreshGitRemoteBranches, workspaceRoot]);
 
   const checkoutRemoteBranch = useCallback(
     async (name: string) => {
@@ -194,30 +185,21 @@ export function useGitBranchPanel(
         const branches = await checkout(requestedRoot, trimmed);
         let remoteBranches = gitRemoteBranchEntries;
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         if (remoteBranchList) {
           remoteBranches = await remoteBranchList(requestedRoot);
 
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            )
-          ) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             return;
           }
         }
 
         await refreshGitStatus();
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -225,23 +207,20 @@ export function useGitBranchPanel(
         setGitRemoteBranchEntries(remoteBranches);
         setMessage(`Checked out remote branch ${trimmed}`);
       } catch (error) {
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         reportError("Git Branch", error);
       } finally {
         gitBranchMutationInFlightRef.current = false;
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitBranchLoading(false);
         }
       }
     },
     [
+      currentWorkspaceRootRef,
       gitGateway,
       gitRemoteBranchEntries,
       refreshGitStatus,
@@ -256,11 +235,7 @@ export function useGitBranchPanel(
       const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
       const trimmed = name.trim();
 
-      if (
-        !requestedRoot ||
-        trimmed.length === 0 ||
-        gitBranchMutationInFlightRef.current
-      ) {
+      if (!requestedRoot || trimmed.length === 0 || gitBranchMutationInFlightRef.current) {
         return;
       }
 
@@ -270,9 +245,7 @@ export function useGitBranchPanel(
       try {
         await gitGateway.switchBranch(requestedRoot, trimmed);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -281,10 +254,8 @@ export function useGitBranchPanel(
         // The status-bar branch indicator and the changes panel both read the
         // refreshed status, scoped to the requested root.
         await refreshGitStatus();
-      } catch (error) {
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+      } catch {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -299,18 +270,18 @@ export function useGitBranchPanel(
         );
       } finally {
         gitBranchMutationInFlightRef.current = false;
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitBranchLoading(false);
         }
       }
     },
     [
       closeGitBranchPanel,
+      currentWorkspaceRootRef,
       gitGateway,
       refreshGitStatus,
       reportError,
+      setMessage,
       workspaceRoot,
     ],
   );
@@ -342,29 +313,31 @@ export function useGitBranchPanel(
       // the branch WITHOUT switching, so uncommitted work is never touched.
       await gitGateway.createBranch(requestedRoot, trimmed);
 
-      if (
-        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         return;
       }
 
       setMessage(`Created branch ${trimmed}`);
       await refreshGitBranches();
     } catch (error) {
-      if (
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         reportError("Git Branch", error);
       }
     } finally {
       gitBranchMutationInFlightRef.current = false;
-      if (
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-      ) {
+      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
         setGitBranchLoading(false);
       }
     }
-  }, [gitGateway, prompter, refreshGitBranches, reportError, workspaceRoot]);
+  }, [
+    currentWorkspaceRootRef,
+    gitGateway,
+    prompter,
+    refreshGitBranches,
+    reportError,
+    setMessage,
+    workspaceRoot,
+  ]);
 
   const deleteGitBranch = useCallback(
     async (name: string, options: { force: boolean }) => {
@@ -387,30 +360,31 @@ export function useGitBranchPanel(
       try {
         await deleteBranch(requestedRoot, trimmed, options);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         setMessage(`Deleted branch ${trimmed}`);
         await refreshGitBranches();
       } catch (error) {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git Branch", error);
         }
       } finally {
         gitBranchMutationInFlightRef.current = false;
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitBranchLoading(false);
         }
       }
     },
-    [gitGateway, refreshGitBranches, reportError, setMessage, workspaceRoot],
+    [
+      currentWorkspaceRootRef,
+      gitGateway,
+      refreshGitBranches,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
   );
 
   const renameGitBranch = useCallback(
@@ -436,9 +410,7 @@ export function useGitBranchPanel(
       try {
         await renameBranch(requestedRoot, trimmedOldName, trimmedNewName);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -446,21 +418,18 @@ export function useGitBranchPanel(
         await refreshGitBranches();
         await refreshGitStatus();
       } catch (error) {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git Branch", error);
         }
       } finally {
         gitBranchMutationInFlightRef.current = false;
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitBranchLoading(false);
         }
       }
     },
     [
+      currentWorkspaceRootRef,
       gitGateway,
       refreshGitBranches,
       refreshGitStatus,

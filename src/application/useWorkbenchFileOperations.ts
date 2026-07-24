@@ -47,7 +47,7 @@ import type { ResolveDocumentSaveOwnership } from "./documentSaveIdentity";
 const WORKSPACE_DIRECTORY_REFRESH_DEBOUNCE_MS = 120;
 const WORKSPACE_GIT_STATUS_REFRESH_DEBOUNCE_MS = 120;
 
-type SidebarView = "files" | "git" | "php";
+type SidebarView = "files" | "git" | "php" | "scripts";
 
 interface OpenFileOptions {
   pin?: boolean;

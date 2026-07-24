@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { detectJsTestRunner } from "./jsTestRunnerDetection";
+import {
+  detectJsTestRunner,
+  detectJsTestRunnerContext,
+} from "./jsTestRunnerDetection";
 
 const ROOT = "/workspace";
 
@@ -104,5 +107,111 @@ describe("detectJsTestRunner", () => {
     );
 
     expect(runner).toBeNull();
+  });
+
+  it("selects the nearest configured sibling package for an active test", async () => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({
+        [`${ROOT}/packages/a/vitest.config.ts`]: "export default {};",
+        [`${ROOT}/packages/b/jest.config.js`]: "module.exports = {};",
+      }),
+      `${ROOT}/packages/a/src/example.test.ts`,
+    );
+
+    expect(runner).toEqual({
+      executablePath: null,
+      rootPath: `${ROOT}/packages/a`,
+      runner: "vitest",
+      targetRelativePath: "src/example.test.ts",
+    });
+  });
+
+  it("prefers a nested package and preserves the root fallback", async () => {
+    const files = readerFor({
+      [`${ROOT}/jest.config.js`]: "module.exports = {};",
+      [`${ROOT}/packages/a/nested/vitest.config.ts`]: "export default {};",
+    });
+
+    await expect(
+      detectJsTestRunnerContext(
+        ROOT,
+        files,
+        `${ROOT}/packages/a/nested/src/example.test.ts`,
+      ),
+    ).resolves.toMatchObject({
+      rootPath: `${ROOT}/packages/a/nested`,
+      runner: "vitest",
+    });
+    await expect(
+      detectJsTestRunnerContext(ROOT, files, `${ROOT}/other/example.test.ts`),
+    ).resolves.toMatchObject({ rootPath: ROOT, runner: "jest" });
+  });
+
+  it("does not use a stale path from another workspace", async () => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({
+        [`${ROOT}/vitest.config.ts`]: "export default {};",
+        "/old/packages/a/jest.config.js": "module.exports = {};",
+      }),
+      "/old/packages/a/src/example.test.ts",
+    );
+
+    expect(runner).toMatchObject({ rootPath: ROOT, runner: "vitest" });
+  });
+
+  it("uses the nearest local or hoisted runner binary without visiting a sibling", async () => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({
+        [`${ROOT}/packages/a/vitest.config.ts`]: "export default {};",
+        [`${ROOT}/packages/b/node_modules/.bin/vitest`]: "#!/bin/sh",
+        [`${ROOT}/node_modules/.bin/vitest`]: "#!/bin/sh",
+      }),
+      `${ROOT}/packages/a/src/example.test.ts`,
+    );
+
+    expect(runner).toMatchObject({
+      executablePath: "../../node_modules/.bin/vitest",
+      rootPath: `${ROOT}/packages/a`,
+    });
+  });
+
+  it("uses a package-local binary when the runner config is at workspace root", async () => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({
+        [`${ROOT}/vitest.config.ts`]: "export default {};",
+        [`${ROOT}/packages/a/package.json`]: "{}",
+        [`${ROOT}/packages/a/node_modules/.bin/vitest`]: "#!/bin/sh",
+      }),
+      `${ROOT}/packages/a/src/example.test.ts`,
+    );
+
+    expect(runner).toEqual({
+      executablePath: "packages/a/node_modules/.bin/vitest",
+      rootPath: ROOT,
+      runner: "vitest",
+      targetRelativePath: "packages/a/src/example.test.ts",
+    });
+  });
+
+  it("ignores a sibling binary and falls back from the active package to root", async () => {
+    const runner = await detectJsTestRunnerContext(
+      ROOT,
+      readerFor({
+        [`${ROOT}/vitest.config.ts`]: "export default {};",
+        [`${ROOT}/packages/a/package.json`]: "{}",
+        [`${ROOT}/packages/b/node_modules/.bin/vitest`]: "#!/bin/sh",
+        [`${ROOT}/node_modules/.bin/vitest`]: "#!/bin/sh",
+      }),
+      `${ROOT}/packages/a/src/example.test.ts`,
+    );
+
+    expect(runner).toMatchObject({
+      executablePath: "node_modules/.bin/vitest",
+      rootPath: ROOT,
+    });
   });
 });

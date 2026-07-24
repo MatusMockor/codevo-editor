@@ -76,9 +76,7 @@ export interface RecentNavigation {
   ) => void;
   openRecentLocationsPanel: () => void;
   currentNavigationLocation: () => NavigationLocation | null;
-  recordNavigationLocationSnapshot: (
-    location: NavigationLocation | null,
-  ) => void;
+  recordNavigationLocationSnapshot: (location: NavigationLocation | null) => void;
   recordRecentLocationSnapshot: (location: NavigationLocation | null) => void;
   recordCurrentNavigationLocation: () => void;
 }
@@ -91,9 +89,7 @@ export interface RecentNavigation {
  * are injected (see {@link RecentNavigationDependencies}) since the shell's
  * per-tab cache lifecycle and other overlay flows read/write them directly.
  */
-export function useRecentNavigation(
-  dependencies: RecentNavigationDependencies,
-): RecentNavigation {
+export function useRecentNavigation(dependencies: RecentNavigationDependencies): RecentNavigation {
   const {
     currentWorkspaceRootRef,
     resolveCurrentWorkspaceRuntimeOwner,
@@ -113,19 +109,25 @@ export function useRecentNavigation(
   // Records a file at the head of the per-workspace MRU buffer. Called whenever a
   // document is opened or activated so the Cmd+E switcher always reflects the
   // user's most recent navigation order.
-  const recordRecentFile = useCallback((entry: RecentFileEntry) => {
-    setRecentFiles((current) => pushRecentFile(current, entry));
-  }, []);
+  const recordRecentFile = useCallback(
+    (entry: RecentFileEntry) => {
+      setRecentFiles((current) => pushRecentFile(current, entry));
+    },
+    [setRecentFiles],
+  );
 
-  const forgetRecentFile = useCallback((path: string) => {
-    setRecentFiles((current) => removeRecentFile(current, path));
-  }, []);
+  const forgetRecentFile = useCallback(
+    (path: string) => {
+      setRecentFiles((current) => removeRecentFile(current, path));
+    },
+    [setRecentFiles],
+  );
 
   const remapRecentFile = useCallback(
     (oldPath: string, entry: RecentFileEntry) => {
       setRecentFiles((current) => renameRecentFile(current, oldPath, entry));
     },
-    [],
+    [setRecentFiles],
   );
 
   const openRecentFilesSwitcher = useCallback(() => {
@@ -138,21 +140,27 @@ export function useRecentNavigation(
     setWorkspaceSymbolsOpen(false);
     setRecentLocationsPanelOpen(false);
     setRecentFilesSwitcherOpen(true);
-  }, []);
+  }, [
+    currentWorkspaceRootRef,
+    setClassOpenOpen,
+    setQuickOpenOpen,
+    setRecentFilesSwitcherOpen,
+    setRecentLocationsPanelOpen,
+    setWorkspaceSymbolsOpen,
+  ]);
 
-  const forgetRecentLocationsForPath = useCallback((path: string) => {
-    setRecentLocations((current) =>
-      removeRecentLocationsForPath(current, path),
-    );
-  }, []);
+  const forgetRecentLocationsForPath = useCallback(
+    (path: string) => {
+      setRecentLocations((current) => removeRecentLocationsForPath(current, path));
+    },
+    [setRecentLocations],
+  );
 
   const remapRecentLocations = useCallback(
     (oldPath: string, next: { name: string; path: string; relativePath: string }) => {
-      setRecentLocations((current) =>
-        renameRecentLocationsPath(current, oldPath, next),
-      );
+      setRecentLocations((current) => renameRecentLocationsPath(current, oldPath, next));
     },
-    [],
+    [setRecentLocations],
   );
 
   const openRecentLocationsPanel = useCallback(() => {
@@ -165,42 +173,47 @@ export function useRecentNavigation(
     setWorkspaceSymbolsOpen(false);
     setRecentFilesSwitcherOpen(false);
     setRecentLocationsPanelOpen(true);
-  }, []);
+  }, [
+    currentWorkspaceRootRef,
+    setClassOpenOpen,
+    setQuickOpenOpen,
+    setRecentFilesSwitcherOpen,
+    setRecentLocationsPanelOpen,
+    setWorkspaceSymbolsOpen,
+  ]);
 
-  const currentNavigationLocation =
-    useCallback((): NavigationLocation | null => {
-      if (!activeDocument) {
-        return null;
-      }
-
-      if (!isPersistableEditorDocumentPath(activeDocument.path)) {
-        return null;
-      }
-
-      return {
-        path: activeDocument.path,
-        position: activeEditorPositionRef.current || {
-          column: 1,
-          lineNumber: 1,
-        },
-      };
-    }, [activeDocument]);
-
-  const recordNavigationLocationSnapshot = useCallback((
-    location: NavigationLocation | null,
-  ) => {
-    const owner = resolveCurrentWorkspaceRuntimeOwner();
-
-    if (!owner) {
-      return;
+  const currentNavigationLocation = useCallback((): NavigationLocation | null => {
+    if (!activeDocument) {
+      return null;
     }
 
-    writeNavigationHistory(
-      setNavigationHistory,
-      (current) =>
+    if (!isPersistableEditorDocumentPath(activeDocument.path)) {
+      return null;
+    }
+
+    return {
+      path: activeDocument.path,
+      position: activeEditorPositionRef.current || {
+        column: 1,
+        lineNumber: 1,
+      },
+    };
+  }, [activeDocument, activeEditorPositionRef]);
+
+  const recordNavigationLocationSnapshot = useCallback(
+    (location: NavigationLocation | null) => {
+      const owner = resolveCurrentWorkspaceRuntimeOwner();
+
+      if (!owner) {
+        return;
+      }
+
+      writeNavigationHistory(setNavigationHistory, (current) =>
         recordOwnedNavigationLocation(current, location, owner.ownerKey),
-    );
-  }, [resolveCurrentWorkspaceRuntimeOwner, setNavigationHistory]);
+      );
+    },
+    [resolveCurrentWorkspaceRuntimeOwner, setNavigationHistory],
+  );
 
   // Records a visited/edited POSITION in the per-workspace Recent Locations
   // history. Reads documents + workspace root from refs (so it stays stable on
@@ -230,18 +243,14 @@ export function useRecentNavigation(
 
       setRecentLocations((current) => pushRecentLocation(current, built));
     },
-    [],
+    [currentWorkspaceRootRef, documentsRef, setRecentLocations],
   );
 
   const recordCurrentNavigationLocation = useCallback(() => {
     const location = currentNavigationLocation();
     recordNavigationLocationSnapshot(location);
     recordRecentLocationSnapshot(location);
-  }, [
-    currentNavigationLocation,
-    recordNavigationLocationSnapshot,
-    recordRecentLocationSnapshot,
-  ]);
+  }, [currentNavigationLocation, recordNavigationLocationSnapshot, recordRecentLocationSnapshot]);
 
   return {
     recordRecentFile,
@@ -285,10 +294,7 @@ export interface NavigationHistoryDependencies {
     path: string,
     options?: { readOnly?: boolean; shouldCommit?: () => boolean },
   ) => Promise<boolean>;
-  shouldOpenNavigationTargetReadOnly: (
-    rootPath: string,
-    path: string,
-  ) => boolean;
+  shouldOpenNavigationTargetReadOnly: (rootPath: string, path: string) => boolean;
 }
 
 export interface NavigationHistoryPlayback {
@@ -363,9 +369,7 @@ function createOwnedNavigationHistory(ownerKey: string): NavigationHistory {
   };
 }
 
-function removeTransientNavigationLocations(
-  history: NavigationHistory,
-): NavigationHistory {
+function removeTransientNavigationLocations(history: NavigationHistory): NavigationHistory {
   const backStack = history.backStack.filter((location) =>
     isPersistableEditorDocumentPath(location.path),
   );
@@ -412,9 +416,7 @@ function workspaceNavigationRequestIsCurrent(
     return false;
   }
 
-  return (
-    resolveCurrentWorkspaceRuntimeOwner()?.ownerKey === requestedOwner.ownerKey
-  );
+  return resolveCurrentWorkspaceRuntimeOwner()?.ownerKey === requestedOwner.ownerKey;
 }
 
 /**
@@ -442,10 +444,8 @@ export function useNavigationHistory(
     shouldOpenNavigationTargetReadOnly,
   } = dependencies;
   const navigationHistoryTransaction = useRef<NavigationHistory | null>(null);
-  const lastRegularNavigationLocation =
-    useRef<OwnedNavigationLocation | null>(null);
-  const currentOwnerKey =
-    resolveCurrentWorkspaceRuntimeOwner()?.ownerKey ?? null;
+  const lastRegularNavigationLocation = useRef<OwnedNavigationLocation | null>(null);
+  const currentOwnerKey = resolveCurrentWorkspaceRuntimeOwner()?.ownerKey ?? null;
 
   useLayoutEffect(() => {
     if (!currentOwnerKey) {
@@ -463,9 +463,7 @@ export function useNavigationHistory(
       return;
     }
 
-    if (
-      lastRegularNavigationLocation.current?.ownerKey !== currentOwnerKey
-    ) {
+    if (lastRegularNavigationLocation.current?.ownerKey !== currentOwnerKey) {
       lastRegularNavigationLocation.current = null;
     }
   }, [currentNavigationLocation, currentOwnerKey, workspaceRoot]);
@@ -483,39 +481,23 @@ export function useNavigationHistory(
     }
 
     navigationHistoryTransaction.current = navigationHistory;
-    navigationHistoryTransactions.set(
-      setNavigationHistory,
-      navigationHistoryTransaction,
-    );
+    navigationHistoryTransactions.set(setNavigationHistory, navigationHistoryTransaction);
 
     return () => {
       if (
-        navigationHistoryTransactions.get(setNavigationHistory) !==
-        navigationHistoryTransaction
+        navigationHistoryTransactions.get(setNavigationHistory) !== navigationHistoryTransaction
       ) {
         return;
       }
 
       navigationHistoryTransactions.delete(setNavigationHistory);
     };
-  }, [
-    navigationHistory,
-    currentOwnerKey,
-    setNavigationHistory,
-    workspaceRoot,
-  ]);
+  }, [navigationHistory, currentOwnerKey, setNavigationHistory, workspaceRoot]);
 
   const applyNavigationLocation = useCallback(
-    async (
-      location: NavigationLocation,
-      requestedRoot: string,
-      shouldCommit: () => boolean,
-    ) => {
+    async (location: NavigationLocation, requestedRoot: string, shouldCommit: () => boolean) => {
       const opened = await openPathForNavigation(location.path, {
-        readOnly: shouldOpenNavigationTargetReadOnly(
-          requestedRoot,
-          location.path,
-        ),
+        readOnly: shouldOpenNavigationTargetReadOnly(requestedRoot, location.path),
         shouldCommit,
       });
 
@@ -557,7 +539,7 @@ export function useNavigationHistory(
       setEditorRevealTarget(target);
       return true;
     },
-    [navigationHistoryTransaction, setNavigationHistory],
+    [setEditorRevealTarget, setNavigationHistory],
   );
 
   const currentPlaybackOrigin = useCallback(
@@ -587,19 +569,12 @@ export function useNavigationHistory(
       return;
     }
 
-    if (
-      navigationHistory.ownerKey &&
-      navigationHistory.ownerKey !== requestedOwner.ownerKey
-    ) {
+    if (navigationHistory.ownerKey && navigationHistory.ownerKey !== requestedOwner.ownerKey) {
       return;
     }
 
-    const playableHistory =
-      removeTransientNavigationLocations(navigationHistory);
-    const next = navigateBack(
-      playableHistory,
-      currentPlaybackOrigin(requestedOwner.ownerKey),
-    );
+    const playableHistory = removeTransientNavigationLocations(navigationHistory);
+    const next = navigateBack(playableHistory, currentPlaybackOrigin(requestedOwner.ownerKey));
 
     if (!next.target) {
       compareAndSetNavigationHistory(
@@ -619,22 +594,13 @@ export function useNavigationHistory(
         requestedRoot,
         requestedOwner,
       );
-    const applied = await applyNavigationLocation(
-      next.target,
-      requestedRoot,
-      shouldCommit,
-    );
+    const applied = await applyNavigationLocation(next.target, requestedRoot, shouldCommit);
 
     if (!applied) {
       return;
     }
 
-    const committed = commitNavigation(
-      requestedHistory,
-      next.history,
-      next.target,
-      shouldCommit,
-    );
+    const committed = commitNavigation(requestedHistory, next.history, next.target, shouldCommit);
 
     if (!committed) {
       return;
@@ -648,8 +614,10 @@ export function useNavigationHistory(
     applyNavigationLocation,
     commitNavigation,
     currentPlaybackOrigin,
+    currentWorkspaceRootRef,
     navigationHistory,
     resolveCurrentWorkspaceRuntimeOwner,
+    setNavigationHistory,
   ]);
 
   const navigateForwardInHistory = useCallback(async () => {
@@ -661,19 +629,12 @@ export function useNavigationHistory(
       return;
     }
 
-    if (
-      navigationHistory.ownerKey &&
-      navigationHistory.ownerKey !== requestedOwner.ownerKey
-    ) {
+    if (navigationHistory.ownerKey && navigationHistory.ownerKey !== requestedOwner.ownerKey) {
       return;
     }
 
-    const playableHistory =
-      removeTransientNavigationLocations(navigationHistory);
-    const next = navigateForward(
-      playableHistory,
-      currentPlaybackOrigin(requestedOwner.ownerKey),
-    );
+    const playableHistory = removeTransientNavigationLocations(navigationHistory);
+    const next = navigateForward(playableHistory, currentPlaybackOrigin(requestedOwner.ownerKey));
 
     if (!next.target) {
       compareAndSetNavigationHistory(
@@ -693,22 +654,13 @@ export function useNavigationHistory(
         requestedRoot,
         requestedOwner,
       );
-    const applied = await applyNavigationLocation(
-      next.target,
-      requestedRoot,
-      shouldCommit,
-    );
+    const applied = await applyNavigationLocation(next.target, requestedRoot, shouldCommit);
 
     if (!applied) {
       return;
     }
 
-    const committed = commitNavigation(
-      requestedHistory,
-      next.history,
-      next.target,
-      shouldCommit,
-    );
+    const committed = commitNavigation(requestedHistory, next.history, next.target, shouldCommit);
 
     if (!committed) {
       return;
@@ -722,8 +674,10 @@ export function useNavigationHistory(
     applyNavigationLocation,
     commitNavigation,
     currentPlaybackOrigin,
+    currentWorkspaceRootRef,
     navigationHistory,
     resolveCurrentWorkspaceRuntimeOwner,
+    setNavigationHistory,
   ]);
 
   // Jumps to a recent location from the panel. Mirrors the navigation flow:
@@ -754,10 +708,7 @@ export function useNavigationHistory(
           requestedOwner,
         );
       const opened = await openPathForNavigation(target.path, {
-        readOnly: shouldOpenNavigationTargetReadOnly(
-          requestedRoot,
-          target.path,
-        ),
+        readOnly: shouldOpenNavigationTargetReadOnly(requestedRoot, target.path),
         shouldCommit,
       });
 
@@ -778,9 +729,12 @@ export function useNavigationHistory(
     },
     [
       forgetRecentLocationsForPath,
+      currentWorkspaceRootRef,
       openPathForNavigation,
       recordCurrentNavigationLocation,
       resolveCurrentWorkspaceRuntimeOwner,
+      setEditorRevealTarget,
+      setRecentLocationsPanelOpen,
       shouldOpenNavigationTargetReadOnly,
     ],
   );

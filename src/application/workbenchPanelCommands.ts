@@ -3,6 +3,10 @@ import type { KeymapCommandId } from "../domain/keymap";
 import type { Command } from "./commandRegistry";
 
 interface WorkbenchPanelCommandsOptions {
+  canShowExpressRoutes?: boolean;
+  canShowNette?: boolean;
+  canShowSymfony?: boolean;
+  openExpressRoutesPanel?: Command["run"];
   shortcut(commandId: KeymapCommandId): string;
   openCommandsPalette: Command["run"];
   showBottomPanelView(view: BottomPanelView): void;
@@ -12,6 +16,10 @@ interface WorkbenchPanelCommandsOptions {
 }
 
 export function workbenchPanelCommands({
+  canShowExpressRoutes = false,
+  canShowNette = false,
+  canShowSymfony = false,
+  openExpressRoutesPanel = () => undefined,
   shortcut,
   openCommandsPalette,
   showBottomPanelView,
@@ -41,6 +49,27 @@ export function workbenchPanelCommands({
       category: "Index",
       isEnabled: () => true,
       run: () => showBottomPanelView("index"),
+    },
+    {
+      id: "panel.showExpressRoutes",
+      title: "Show Express Routes",
+      category: "Workbench",
+      isEnabled: (context) => context.hasWorkspace && canShowExpressRoutes,
+      run: openExpressRoutesPanel,
+    },
+    {
+      id: "panel.showNette",
+      title: "Show Nette",
+      category: "PHP",
+      isEnabled: (context) => context.hasWorkspace && canShowNette,
+      run: () => showBottomPanelView("nette"),
+    },
+    {
+      id: "panel.showSymfony",
+      title: "Show Symfony",
+      category: "PHP",
+      isEnabled: (context) => context.hasWorkspace && canShowSymfony,
+      run: () => showBottomPanelView("symfony"),
     },
     {
       id: "panel.toggle",

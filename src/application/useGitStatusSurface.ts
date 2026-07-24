@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MutableRefObject,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
   emptyGitStatus,
   type GitChangedFile,
@@ -24,10 +17,7 @@ import {
   type GitRepositoryStatus,
 } from "../domain/gitRepositoryMapping";
 import type { WorkspaceSettings } from "../domain/settings";
-import {
-  workspaceRelativePath,
-  type EditorDocument,
-} from "../domain/workspace";
+import { workspaceRelativePath, type EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { GitDiffDocumentState } from "./useGitDiffWorkspace";
 import type { GitOperationCurrency } from "./useGitOperationCurrency";
@@ -51,11 +41,7 @@ export interface GitStatusSurfaceDependencies {
   gitOperationCurrency: GitOperationCurrency;
   gitRepositoryDiscoveryRequestTokenRef: MutableRefObject<number>;
   reportError: (title: string, error: unknown) => void;
-  reportErrorForActiveWorkspaceRoot: (
-    rootPath: string,
-    title: string,
-    error: unknown,
-  ) => void;
+  reportErrorForActiveWorkspaceRoot: (rootPath: string, title: string, error: unknown) => void;
   setMessage: (message: null) => void;
   workspaceRoot: string | null;
 }
@@ -79,14 +65,12 @@ export function useGitStatusSurface({
   // Effective git repository mappings (manual + auto-detected, always incl. the
   // workspace root). Defaults to the single workspace-root repo so behaviour is
   // identical to the pre-multi-repo world until discovery runs.
-  const [gitRepositoryMappings, setGitRepositoryMappings] = useState<
-    GitRepositoryMapping[]
-  >([WORKSPACE_ROOT_MAPPING]);
+  const [gitRepositoryMappings, setGitRepositoryMappings] = useState<GitRepositoryMapping[]>([
+    WORKSPACE_ROOT_MAPPING,
+  ]);
   // Whole-map status view (one entry per mapping), for the multi-repo Changes
   // panel. `gitStatus` above stays the primary (workspace-root) repo.
-  const [gitRepositoryStatuses, setGitRepositoryStatuses] = useState<
-    GitRepositoryStatus[]
-  >([]);
+  const [gitRepositoryStatuses, setGitRepositoryStatuses] = useState<GitRepositoryStatus[]>([]);
   const [gitLoading, setGitLoading] = useState(false);
   const gitStatusRequestGenerationRef = useRef(0);
   const [editorGitBaselinesByPath, setEditorGitBaselinesByPath] = useState<
@@ -167,11 +151,7 @@ export function useGitStatusSurface({
         return null;
       }
 
-      const resolved = resolveGitRepositoryForPath(
-        gitRepositoryMappings,
-        root,
-        absolutePath,
-      );
+      const resolved = resolveGitRepositoryForPath(gitRepositoryMappings, root, absolutePath);
 
       if (resolved && resolved.repositoryRelativePath !== "") {
         return {
@@ -208,8 +188,7 @@ export function useGitStatusSurface({
         ? `${requestedRoot.replace(/[\\/]+$/, "")}/${mapping.rootRelativePath}`
         : requestedRoot,
     );
-    const reservation =
-      gitOperationCurrency.reservePublication(repositoryRoots);
+    const reservation = gitOperationCurrency.reservePublication(repositoryRoots);
     const isCurrentRequest = () =>
       gitStatusRequestGenerationRef.current === requestGeneration &&
       workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
@@ -237,9 +216,7 @@ export function useGitStatusSurface({
         return;
       }
 
-      setGitRepositoryStatuses((current) =>
-        mergeGitRepositoryStatuses(current, currentStatuses),
-      );
+      setGitRepositoryStatuses((current) => mergeGitRepositoryStatuses(current, currentStatuses));
       // The primary (workspace-root) repo drives the existing single-status UI
       // and the diff-preview reconciliation below.
       const primaryStatus = currentStatuses.find((entry) =>
@@ -251,10 +228,7 @@ export function useGitStatusSurface({
       const selectedDiffDocument = getSelectedGitDiffDocument();
       const selectedRepositoryStatus = selectedDiffDocument
         ? currentStatuses.find((entry) =>
-            workspaceRootKeysEqual(
-              entry.root,
-              selectedDiffDocument.repositoryRoot,
-            )
+            workspaceRootKeysEqual(entry.root, selectedDiffDocument.repositoryRoot),
           )
         : null;
       if (selectedRepositoryStatus && !selectedRepositoryStatus.failed) {
@@ -279,11 +253,9 @@ export function useGitStatusSurface({
       setGitRepositoryStatuses([]);
       reportError("Git", error);
     } finally {
-      if (!isCurrentRequest()) {
-        return;
+      if (isCurrentRequest()) {
+        setGitLoading(false);
       }
-
-      setGitLoading(false);
     }
   }, [
     currentWorkspaceRootRef,
@@ -297,29 +269,25 @@ export function useGitStatusSurface({
     workspaceRoot,
   ]);
 
+  const activeDocumentPath = activeDocument?.path ?? null;
+  const activeDocumentSavedContent = activeDocument?.savedContent ?? null;
+
   useEffect(() => {
-    if (!workspaceRoot || !activeDocument) {
+    if (!workspaceRoot || !activeDocumentPath) {
       return;
     }
 
     const requestedRoot = workspaceRoot;
-    const requestedPath = activeDocument.path;
+    const requestedPath = activeDocumentPath;
     // Route the gutter baseline into the repository that owns the active file: a
     // nested-repo file diffs against its own repository. The primary status is
     // published only for a primary-repo file so a nested file's status never
     // overwrites the primary Changes panel view.
     const baselineTarget = resolveGitRepositoryTarget(requestedPath);
-    const baselineRepoRoot = baselineTarget
-      ? baselineTarget.repositoryRoot
-      : requestedRoot;
-    const isPrimaryRepo = workspaceRootKeysEqual(
-      baselineRepoRoot,
-      requestedRoot,
-    );
+    const baselineRepoRoot = baselineTarget ? baselineTarget.repositoryRoot : requestedRoot;
+    const isPrimaryRepo = workspaceRootKeysEqual(baselineRepoRoot, requestedRoot);
     const token = (editorGitBaselineRequestTokenRef.current += 1);
-    const publication = gitOperationCurrency.reservePublication([
-      baselineRepoRoot,
-    ]);
+    const publication = gitOperationCurrency.reservePublication([baselineRepoRoot]);
     let active = true;
 
     const loadGitBaseline = async () => {
@@ -329,14 +297,8 @@ export function useGitStatusSurface({
         if (
           !active ||
           token !== editorGitBaselineRequestTokenRef.current ||
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          !gitOperationCurrency.isRepositoryCurrent(
-            publication,
-            baselineRepoRoot,
-          )
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
+          !gitOperationCurrency.isRepositoryCurrent(publication, baselineRepoRoot)
         ) {
           return;
         }
@@ -346,9 +308,7 @@ export function useGitStatusSurface({
         }
 
         const change = status.changes.find(
-          (candidate) =>
-            candidate.path === requestedPath ||
-            candidate.oldPath === requestedPath,
+          (candidate) => candidate.path === requestedPath || candidate.oldPath === requestedPath,
         );
 
         if (!status.isRepository || !change) {
@@ -364,14 +324,8 @@ export function useGitStatusSurface({
         if (
           !active ||
           token !== editorGitBaselineRequestTokenRef.current ||
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          !gitOperationCurrency.isRepositoryCurrent(
-            publication,
-            baselineRepoRoot,
-          )
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
+          !gitOperationCurrency.isRepositoryCurrent(publication, baselineRepoRoot)
         ) {
           return;
         }
@@ -384,14 +338,8 @@ export function useGitStatusSurface({
         if (
           !active ||
           token !== editorGitBaselineRequestTokenRef.current ||
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            requestedRoot,
-          ) ||
-          !gitOperationCurrency.isRepositoryCurrent(
-            publication,
-            baselineRepoRoot,
-          )
+          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
+          !gitOperationCurrency.isRepositoryCurrent(publication, baselineRepoRoot)
         ) {
           return;
         }
@@ -409,8 +357,8 @@ export function useGitStatusSurface({
       active = false;
     };
   }, [
-    activeDocument?.path,
-    activeDocument?.savedContent,
+    activeDocumentPath,
+    activeDocumentSavedContent,
     currentWorkspaceRootRef,
     editorGitBaselineRequestTokenRef,
     gitGateway,
@@ -431,17 +379,13 @@ export function useGitStatusSurface({
         return;
       }
 
-      const primary = statuses.find((entry) =>
-        workspaceRootKeysEqual(entry.root, requestedRoot),
-      );
+      const primary = statuses.find((entry) => workspaceRootKeysEqual(entry.root, requestedRoot));
 
       if (primary && !primary.failed) {
         setGitStatus(primary.status);
       }
 
-      setGitRepositoryStatuses((current) =>
-        mergeGitRepositoryStatuses(current, statuses),
-      );
+      setGitRepositoryStatuses((current) => mergeGitRepositoryStatuses(current, statuses));
 
       const selectedDiffDocument = getSelectedGitDiffDocument();
 
@@ -484,18 +428,12 @@ export function useGitStatusSurface({
         repositoryStatuses: gitRepositoryStatuses,
         primaryBranch: gitStatus.branch,
       }),
-    [
-      activePath,
-      gitRepositoryMappings,
-      gitRepositoryStatuses,
-      gitStatus.branch,
-      workspaceRoot,
-    ],
+    [activePath, gitRepositoryMappings, gitRepositoryStatuses, gitStatus.branch, workspaceRoot],
   );
 
   return {
     activeDocumentGitBaseline: activeDocument
-      ? editorGitBaselinesByPath[activeDocument.path] ?? null
+      ? (editorGitBaselinesByPath[activeDocument.path] ?? null)
       : null,
     applyGitOperationStatuses,
     editorGitBaselinesByPath,

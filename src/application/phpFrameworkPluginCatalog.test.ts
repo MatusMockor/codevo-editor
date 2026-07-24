@@ -1,5 +1,6 @@
 import { phpLaravelFrameworkProvider } from "../domain/phpFrameworkLaravelProvider";
 import { phpNetteFrameworkProvider } from "../domain/phpFrameworkNetteProvider";
+import { phpSymfonyFrameworkProvider } from "../domain/phpFrameworkSymfonyProvider";
 import { describe, expect, it, vi } from "vitest";
 import {
   createPhpFrameworkCapabilityRegistry,
@@ -19,6 +20,7 @@ import {
 import type { PhpFrameworkPlugin } from "./phpFrameworkPlugin";
 import { phpLaravelFrameworkPlugin } from "./phpLaravelFrameworkPlugin";
 import { phpNetteFrameworkPlugin } from "./phpNetteFrameworkPlugin";
+import { phpSymfonyFrameworkPlugin } from "./phpSymfonyFrameworkPlugin";
 import { resolvePhpFrameworkProfile } from "./phpFrameworkResolution";
 import {
   phpFrameworkLegacyFeatures,
@@ -59,6 +61,7 @@ describe("phpFrameworkPlugins", () => {
     expect(phpFrameworkPlugins).toEqual([
       phpLaravelFrameworkPlugin,
       phpNetteFrameworkPlugin,
+      phpSymfonyFrameworkPlugin,
     ]);
     expect(Object.isFrozen(phpFrameworkPlugins)).toBe(true);
   });
@@ -195,6 +198,7 @@ describe("phpFrameworkPluginCatalog", () => {
     expect(phpFrameworkPluginCatalog).toEqual([
       phpLaravelFrameworkProvider,
       phpNetteFrameworkProvider,
+      phpSymfonyFrameworkProvider,
     ]);
     expect(Object.isFrozen(phpFrameworkPluginCatalog)).toBe(true);
     expect(phpFrameworkPluginCatalog[0]).not.toBe(phpLaravelFrameworkProvider);
@@ -219,29 +223,28 @@ describe("phpFrameworkPluginCatalog", () => {
     expect(inertiaLaravel?.id).toBe("laravel");
   });
 
-  it("accepts a third provider without changing framework resolution", () => {
-    const symfonyProvider: PhpFrameworkProvider = {
-      id: "symfony",
+  it("accepts another provider without changing framework resolution", () => {
+    const cakeProvider: PhpFrameworkProvider = {
+      id: "cakephp",
       appliesTo: (php) =>
         php.packages.some(
-          (composerPackage) =>
-            composerPackage.name === "symfony/framework-bundle",
+          (composerPackage) => composerPackage.name === "cakephp/cakephp",
         ),
-      presentation: { activityLabel: "Symfony" },
+      presentation: { activityLabel: "CakePHP" },
     };
     const catalog = createPhpFrameworkPluginCatalog([
       ...phpFrameworkPluginCatalog,
-      symfonyProvider,
+      cakeProvider,
     ]);
 
     const resolution = resolvePhpFrameworkProfile(
-      phpProjectDescriptor(["symfony/framework-bundle"]),
+      phpProjectDescriptor(["cakephp/cakephp"]),
       catalog,
     );
 
-    expect(resolution.providers).toEqual([symfonyProvider]);
-    expect(resolution.matchedProviderIds).toEqual(["symfony"]);
-    expect(resolution.activityLabel).toBe("Symfony");
+    expect(resolution.providers).toEqual([cakeProvider]);
+    expect(resolution.matchedProviderIds).toEqual(["cakephp"]);
+    expect(resolution.activityLabel).toBe("CakePHP");
     expect(resolution.profile).toBe("generic");
   });
 

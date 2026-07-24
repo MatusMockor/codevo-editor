@@ -133,15 +133,13 @@ export function useJavaScriptTypeScriptFileStructure(
         }));
         reportError("JavaScript/TypeScript File Structure", error);
       } finally {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          setLoadingJavaScriptTypeScriptFileOutlinePaths((current) => {
+            const next = new Set(current);
+            next.delete(path);
+            return next;
+          });
         }
-
-        setLoadingJavaScriptTypeScriptFileOutlinePaths((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
       }
     },
     [

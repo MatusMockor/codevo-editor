@@ -1,4 +1,4 @@
-import { useCallback, type MutableRefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject } from "react";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import {
   phpClassConstantPositionOrNull,
@@ -7,10 +7,7 @@ import {
   type PhpMethodDefinitionHint,
 } from "../domain/phpNavigation";
 import { phpParameterTypeForVariable } from "../domain/phpParameterTypes";
-import {
-  phpMixinClassNames,
-  phpTraitClassNames,
-} from "../domain/phpMethodCompletions";
+import { phpMixinClassNames, phpTraitClassNames } from "../domain/phpMethodCompletions";
 import { phpSuperTypeReferences } from "../domain/phpNavigation";
 import type { EditorDocument, WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
@@ -23,18 +20,9 @@ interface OpenNavigationOptions {
   readOnly?: boolean;
 }
 
-type PhpMethodCallContext = Extract<
-  PhpIdentifierContext,
-  { kind: "methodCall" }
->;
-type PhpStaticMethodCallContext = Extract<
-  PhpIdentifierContext,
-  { kind: "staticMethodCall" }
->;
-type PhpClassConstantContext = Extract<
-  PhpIdentifierContext,
-  { kind: "classConstant" }
->;
+type PhpMethodCallContext = Extract<PhpIdentifierContext, { kind: "methodCall" }>;
+type PhpStaticMethodCallContext = Extract<PhpIdentifierContext, { kind: "staticMethodCall" }>;
+type PhpClassConstantContext = Extract<PhpIdentifierContext, { kind: "classConstant" }>;
 
 export interface PhpContextualMemberDefinitionNavigationDependencies {
   activeDocument: EditorDocument | null;
@@ -67,10 +55,7 @@ export interface PhpContextualMemberDefinitionNavigationDependencies {
     hint: PhpMethodDefinitionHint,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  readNavigationFileContent(
-    path: string,
-    request?: NavigationRequest,
-  ): Promise<string>;
+  readNavigationFileContent(path: string, request?: NavigationRequest): Promise<string>;
   resolvePhpClassReference(source: string, className: string): string | null;
   resolvePhpClassSourcePaths(className: string): Promise<readonly string[]>;
   resolvePhpFrameworkBuilderModelType?(
@@ -142,14 +127,20 @@ export function usePhpContextualMemberDefinitionNavigation({
   workspaceDescriptor,
   workspaceRoot,
 }: PhpContextualMemberDefinitionNavigationDependencies): PhpContextualMemberDefinitionNavigation {
-  const resolvePhpBuilderModelType =
-    resolvePhpFrameworkBuilderModelType ??
-    resolvePhpEloquentBuilderModelType ??
-    (async () => null);
-  const resolvePhpRelationPathOwnerType =
-    resolvePhpFrameworkRelationPathOwnerType ??
-    resolvePhpLaravelRelationPathOwnerType ??
-    (async () => null);
+  const resolvePhpBuilderModelType = useMemo(
+    () =>
+      resolvePhpFrameworkBuilderModelType ??
+      resolvePhpEloquentBuilderModelType ??
+      (async () => null),
+    [resolvePhpEloquentBuilderModelType, resolvePhpFrameworkBuilderModelType],
+  );
+  const resolvePhpRelationPathOwnerType = useMemo(
+    () =>
+      resolvePhpFrameworkRelationPathOwnerType ??
+      resolvePhpLaravelRelationPathOwnerType ??
+      (async () => null),
+    [resolvePhpFrameworkRelationPathOwnerType, resolvePhpLaravelRelationPathOwnerType],
+  );
   const navigationAdapterForRequest = useCallback(
     (request?: NavigationRequest) =>
       createPhpFrameworkContextualMemberDefinitionNavigationAdapters({
@@ -161,11 +152,7 @@ export function usePhpContextualMemberDefinitionNavigation({
               : openDirectPhpMethodTarget(className, methodName),
           openDynamicMethodTarget: (className, methodName) =>
             request
-              ? openPhpLaravelDynamicWhereTarget(
-                  className,
-                  methodName,
-                  request,
-                )
+              ? openPhpLaravelDynamicWhereTarget(className, methodName, request)
               : openPhpLaravelDynamicWhereTarget(className, methodName),
           resolveBuilderModelType: async (source, position, expression) =>
             resolvePhpBuilderModelType(source, position, expression),
@@ -194,24 +181,15 @@ export function usePhpContextualMemberDefinitionNavigation({
       const requestedDescriptor = workspaceDescriptor;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const isNavigationActive = () =>
-        isRequestedRootActive() && canNavigate(request);
+      const isNavigationActive = () => isRequestedRootActive() && canNavigate(request);
 
-      if (
-        !requestedRoot ||
-        !requestedDescriptor?.php ||
-        !isNavigationActive()
-      ) {
+      if (!requestedRoot || !requestedDescriptor?.php || !isNavigationActive()) {
         return false;
       }
 
       const visitedClassNames = new Set<string>();
-      const openConstantInClassHierarchy = async (
-        candidateClassName: string,
-      ): Promise<boolean> => {
-        const normalizedCandidate = candidateClassName
-          .trim()
-          .replace(/^\\+/, "");
+      const openConstantInClassHierarchy = async (candidateClassName: string): Promise<boolean> => {
+        const normalizedCandidate = candidateClassName.trim().replace(/^\\+/, "");
         const visitedKey = normalizedCandidate.toLowerCase();
 
         if (!normalizedCandidate || visitedClassNames.has(visitedKey)) {
@@ -224,9 +202,7 @@ export function usePhpContextualMemberDefinitionNavigation({
 
         visitedClassNames.add(visitedKey);
 
-        const sourcePaths = await resolvePhpClassSourcePaths(
-          normalizedCandidate,
-        );
+        const sourcePaths = await resolvePhpClassSourcePaths(normalizedCandidate);
 
         if (!isNavigationActive()) {
           return false;
@@ -246,10 +222,7 @@ export function usePhpContextualMemberDefinitionNavigation({
               return false;
             }
 
-            const position = phpClassConstantPositionOrNull(
-              content,
-              constantName,
-            );
+            const position = phpClassConstantPositionOrNull(content, constantName);
 
             if (position) {
               if (!isNavigationActive()) {
@@ -257,23 +230,14 @@ export function usePhpContextualMemberDefinitionNavigation({
               }
 
               const opened = request
-                ? await openNavigationTarget(
-                    path,
-                    position,
-                    constantName,
-                    {},
-                    request,
-                  )
+                ? await openNavigationTarget(path, position, constantName, {}, request)
                 : await openNavigationTarget(path, position, constantName);
 
               return isNavigationActive() && opened;
             }
 
             for (const traitName of phpTraitClassNames(content)) {
-              const resolvedTraitName = resolvePhpClassReference(
-                content,
-                traitName,
-              );
+              const resolvedTraitName = resolvePhpClassReference(content, traitName);
 
               const opened = resolvedTraitName
                 ? await openConstantInClassHierarchy(resolvedTraitName)
@@ -289,10 +253,7 @@ export function usePhpContextualMemberDefinitionNavigation({
             }
 
             for (const mixinName of phpMixinClassNames(content)) {
-              const resolvedMixinName = resolvePhpClassReference(
-                content,
-                mixinName,
-              );
+              const resolvedMixinName = resolvePhpClassReference(content, mixinName);
 
               const opened = resolvedMixinName
                 ? await openConstantInClassHierarchy(resolvedMixinName)
@@ -308,10 +269,7 @@ export function usePhpContextualMemberDefinitionNavigation({
             }
 
             for (const superTypeName of phpSuperTypeReferences(content)) {
-              const resolvedSuperTypeName = resolvePhpClassReference(
-                content,
-                superTypeName,
-              );
+              const resolvedSuperTypeName = resolvePhpClassReference(content, superTypeName);
 
               const opened = resolvedSuperTypeName
                 ? await openConstantInClassHierarchy(resolvedSuperTypeName)
@@ -353,20 +311,15 @@ export function usePhpContextualMemberDefinitionNavigation({
   );
 
   const goToPhpMethodCallDefinition = useCallback(
-    async (
-      context: PhpMethodCallContext,
-      request?: NavigationRequest,
-    ): Promise<boolean> => {
+    async (context: PhpMethodCallContext, request?: NavigationRequest): Promise<boolean> => {
       if (!activeDocument || !canNavigate(request)) {
         return false;
       }
 
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
-        !requestedRoot ||
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const isNavigationActive = () =>
-        isRequestedRootActive() && canNavigate(request);
+        !requestedRoot || workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const isNavigationActive = () => isRequestedRootActive() && canNavigate(request);
       const navigationAdapter = navigationAdapterForRequest(request);
       const position = activeEditorPositionRef.current ?? {
         column: 1,
@@ -383,17 +336,11 @@ export function usePhpContextualMemberDefinitionNavigation({
       }
 
       const variableType = context.variableName
-        ? phpParameterTypeForVariable(
-            activeDocument.content,
-            position,
-            context.variableName,
-          )
+        ? phpParameterTypeForVariable(activeDocument.content, position, context.variableName)
         : null;
       const resolvedVariableType =
         receiverType ??
-        (variableType
-          ? resolvePhpClassName(activeDocument.content, variableType)
-          : null);
+        (variableType ? resolvePhpClassName(activeDocument.content, variableType) : null);
       const frameworkHint = navigationAdapter.requestMethodDefinitionHint(
         resolvedVariableType,
         context.methodName,
@@ -417,15 +364,8 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
 
         const directTargetOpened = request
-          ? await openDirectPhpMethodTarget(
-              resolvedVariableType,
-              context.methodName,
-              request,
-            )
-          : await openDirectPhpMethodTarget(
-              resolvedVariableType,
-              context.methodName,
-            );
+          ? await openDirectPhpMethodTarget(resolvedVariableType, context.methodName, request)
+          : await openDirectPhpMethodTarget(resolvedVariableType, context.methodName);
 
         if (!isNavigationActive()) {
           return false;
@@ -437,11 +377,9 @@ export function usePhpContextualMemberDefinitionNavigation({
       }
 
       const builderReceiverExpression =
-        context.receiverExpression ||
-        (context.variableName ? `$${context.variableName}` : null);
+        context.receiverExpression || (context.variableName ? `$${context.variableName}` : null);
       const builderModelType =
-        builderReceiverExpression &&
-        navigationAdapter.supportsBuilderModelNavigation()
+        builderReceiverExpression && navigationAdapter.supportsBuilderModelNavigation()
           ? await resolvePhpBuilderModelType(
               activeDocument.content,
               position,
@@ -463,15 +401,8 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
 
         const scopeTargetOpened = request
-          ? await openDirectPhpMethodTarget(
-              builderModelType,
-              builderScopeMethodName,
-              request,
-            )
-          : await openDirectPhpMethodTarget(
-              builderModelType,
-              builderScopeMethodName,
-            );
+          ? await openDirectPhpMethodTarget(builderModelType, builderScopeMethodName, request)
+          : await openDirectPhpMethodTarget(builderModelType, builderScopeMethodName);
 
         if (!isNavigationActive()) {
           return false;
@@ -482,13 +413,11 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
       }
 
-      const dynamicWhereResult = await navigationAdapter.dynamicWhereDefinition(
-        {
-          className: builderModelType,
-          isRequestStillCurrent: isNavigationActive,
-          methodName: context.methodName,
-        },
-      );
+      const dynamicWhereResult = await navigationAdapter.dynamicWhereDefinition({
+        className: builderModelType,
+        isRequestStillCurrent: isNavigationActive,
+        methodName: context.methodName,
+      });
 
       if (!isNavigationActive()) {
         return false;
@@ -522,25 +451,17 @@ export function usePhpContextualMemberDefinitionNavigation({
   );
 
   const goToPhpStaticMethodCallDefinition = useCallback(
-    async (
-      context: PhpStaticMethodCallContext,
-      request?: NavigationRequest,
-    ): Promise<boolean> => {
+    async (context: PhpStaticMethodCallContext, request?: NavigationRequest): Promise<boolean> => {
       if (!activeDocument || !canNavigate(request)) {
         return false;
       }
 
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
-        !requestedRoot ||
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const isNavigationActive = () =>
-        isRequestedRootActive() && canNavigate(request);
+        !requestedRoot || workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const isNavigationActive = () => isRequestedRootActive() && canNavigate(request);
       const navigationAdapter = navigationAdapterForRequest(request);
-      const className = resolvePhpClassReference(
-        activeDocument.content,
-        context.className,
-      );
+      const className = resolvePhpClassReference(activeDocument.content, context.className);
 
       if (!className) {
         return false;
@@ -551,11 +472,7 @@ export function usePhpContextualMemberDefinitionNavigation({
       }
 
       const directTargetOpened = request
-        ? await openDirectPhpMethodTarget(
-            className,
-            context.methodName,
-            request,
-          )
+        ? await openDirectPhpMethodTarget(className, context.methodName, request)
         : await openDirectPhpMethodTarget(className, context.methodName);
 
       if (!isNavigationActive()) {
@@ -566,9 +483,7 @@ export function usePhpContextualMemberDefinitionNavigation({
         return true;
       }
 
-      const scopeMethodName = navigationAdapter.localScopeMethodName(
-        context.methodName,
-      );
+      const scopeMethodName = navigationAdapter.localScopeMethodName(context.methodName);
 
       if (scopeMethodName) {
         if (!isNavigationActive()) {
@@ -576,11 +491,7 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
 
         const scopeTargetOpened = request
-          ? await openDirectPhpMethodTarget(
-              className,
-              scopeMethodName,
-              request,
-            )
+          ? await openDirectPhpMethodTarget(className, scopeMethodName, request)
           : await openDirectPhpMethodTarget(className, scopeMethodName);
 
         if (!isNavigationActive()) {
@@ -592,13 +503,11 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
       }
 
-      const dynamicWhereResult = await navigationAdapter.dynamicWhereDefinition(
-        {
-          className,
-          isRequestStillCurrent: isNavigationActive,
-          methodName: context.methodName,
-        },
-      );
+      const dynamicWhereResult = await navigationAdapter.dynamicWhereDefinition({
+        className,
+        isRequestStillCurrent: isNavigationActive,
+        methodName: context.methodName,
+      });
 
       if (!isNavigationActive()) {
         return false;
@@ -608,8 +517,9 @@ export function usePhpContextualMemberDefinitionNavigation({
         return true;
       }
 
-      const builderTargetClassName =
-        navigationAdapter.staticBuilderTargetClassName(context.methodName);
+      const builderTargetClassName = navigationAdapter.staticBuilderTargetClassName(
+        context.methodName,
+      );
 
       if (builderTargetClassName) {
         if (!isNavigationActive()) {
@@ -617,15 +527,8 @@ export function usePhpContextualMemberDefinitionNavigation({
         }
 
         const builderTargetOpened = request
-          ? await openDirectPhpMethodTarget(
-              builderTargetClassName,
-              context.methodName,
-              request,
-            )
-          : await openDirectPhpMethodTarget(
-              builderTargetClassName,
-              context.methodName,
-            );
+          ? await openDirectPhpMethodTarget(builderTargetClassName, context.methodName, request)
+          : await openDirectPhpMethodTarget(builderTargetClassName, context.methodName);
 
         if (!isNavigationActive()) {
           return false;
@@ -640,9 +543,7 @@ export function usePhpContextualMemberDefinitionNavigation({
         return false;
       }
 
-      setMessage(
-        `No typed target found for ${context.className}::${context.methodName}().`,
-      );
+      setMessage(`No typed target found for ${context.className}::${context.methodName}().`);
       return false;
     },
     [
@@ -657,24 +558,16 @@ export function usePhpContextualMemberDefinitionNavigation({
   );
 
   const goToPhpClassConstantDefinition = useCallback(
-    async (
-      context: PhpClassConstantContext,
-      request?: NavigationRequest,
-    ): Promise<boolean> => {
+    async (context: PhpClassConstantContext, request?: NavigationRequest): Promise<boolean> => {
       if (!activeDocument || !canNavigate(request)) {
         return false;
       }
 
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
-        !requestedRoot ||
-        workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const isNavigationActive = () =>
-        isRequestedRootActive() && canNavigate(request);
-      const className = resolvePhpClassReference(
-        activeDocument.content,
-        context.className,
-      );
+        !requestedRoot || workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
+      const isNavigationActive = () => isRequestedRootActive() && canNavigate(request);
+      const className = resolvePhpClassReference(activeDocument.content, context.className);
 
       if (!className) {
         return false;
@@ -685,15 +578,8 @@ export function usePhpContextualMemberDefinitionNavigation({
       }
 
       const constantTargetOpened = request
-        ? await openDirectPhpClassConstantTarget(
-            className,
-            context.constantName,
-            request,
-          )
-        : await openDirectPhpClassConstantTarget(
-            className,
-            context.constantName,
-          );
+        ? await openDirectPhpClassConstantTarget(className, context.constantName, request)
+        : await openDirectPhpClassConstantTarget(className, context.constantName);
 
       if (!isNavigationActive()) {
         return false;
@@ -731,8 +617,7 @@ export function usePhpContextualMemberDefinitionNavigation({
       const requestedRoot = workspaceRoot;
       const isRequestedRootActive = () =>
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
-      const isNavigationActive = () =>
-        isRequestedRootActive() && canNavigate(request);
+      const isNavigationActive = () => isRequestedRootActive() && canNavigate(request);
 
       if (!requestedRoot || !activeDocument || !isNavigationActive()) {
         return false;
@@ -742,9 +627,7 @@ export function usePhpContextualMemberDefinitionNavigation({
         column: 1,
         lineNumber: 1,
       };
-      const result = await navigationAdapterForRequest(
-        request,
-      ).relationStringDefinition({
+      const result = await navigationAdapterForRequest(request).relationStringDefinition({
         context,
         isRequestStillCurrent: isNavigationActive,
         position,

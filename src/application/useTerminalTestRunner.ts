@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   type Dispatch,
   type MutableRefObject,
@@ -7,17 +8,11 @@ import {
 } from "react";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import { jsGutterTargetsCoordinator } from "../domain/jsGutterTargetsCoordinator";
-import {
-  jsTestRunCommand,
-  type JsTestRunCommandInput,
-} from "../domain/jsTestCommand";
+import { jsTestRunCommand, type JsTestRunCommandInput } from "../domain/jsTestCommand";
 import { isJsTestRelativePath } from "../domain/jsTestFilePatterns";
 import type { EditorPosition } from "../domain/languageServerFeatures";
 import { phpGutterTargetsCoordinator } from "../domain/phpGutterTargetsCoordinator";
-import {
-  runAllTestsTarget,
-  type PhpTestGutterTarget,
-} from "../domain/phpTestGutterTargets";
+import { runAllTestsTarget, type PhpTestGutterTarget } from "../domain/phpTestGutterTargets";
 import {
   phpTestRunCommand,
   type PhpTestRunCommandInput,
@@ -25,6 +20,7 @@ import {
 } from "../domain/phpTestCommand";
 import { isPhpTestRelativePath } from "../domain/phpTestNavigation";
 import type { TerminalGateway } from "../domain/terminal";
+import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import {
   joinWorkspacePath,
   workspaceRelativePath,
@@ -32,7 +28,7 @@ import {
   type WorkspaceDescriptor,
 } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { detectJsTestRunner } from "./jsTestRunnerDetection";
+import { detectJsTestRunnerContext } from "./jsTestRunnerDetection";
 
 /**
  * Collaborators the terminal / PHP test runner needs from the workbench
@@ -48,8 +44,10 @@ import { detectJsTestRunner } from "./jsTestRunnerDetection";
 export interface TerminalTestRunnerDependencies {
   terminalGateway: TerminalGateway;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
+  workspaceRuntimeOwnerRef: MutableRefObject<WorkspaceRuntimeOwner | null>;
   workspaceRoot: string | null;
   workspaceDescriptor: WorkspaceDescriptor | null;
+  workspaceRuntimeOwner: WorkspaceRuntimeOwner | null;
   activeDocumentRef: MutableRefObject<EditorDocument | null>;
   activeEditorPositionRef: MutableRefObject<EditorPosition | null>;
   // Returns the test file's content when it already exists, otherwise `null`.
@@ -60,6 +58,7 @@ export interface TerminalTestRunnerDependencies {
     source: string,
     error: unknown,
   ) => void;
+  invalidateJsTestCoverageAndResults?: () => void;
   setMessage: (message: string | null) => void;
   setBottomPanelView: (view: BottomPanelView) => void;
   setBottomPanelVisible: Dispatch<SetStateAction<boolean>>;
@@ -70,18 +69,49 @@ export interface TerminalTestRunnerDependencies {
 // after the runner probe), `rejected` means the sanitizer refused the filter.
 export type PhpTestRunOutcome = "ran" | "dropped" | "rejected";
 
+const MAX_PENDING_TERMINAL_REQUESTS = 32;
+
+interface TerminalOwnerBinding {
+  readonly epoch: number;
+  readonly owner: WorkspaceRuntimeOwner;
+}
+
+function sameTerminalOwner(
+  first: TerminalOwnerBinding | null | undefined,
+  second: TerminalOwnerBinding | null | undefined,
+): boolean {
+  return (
+    !!first &&
+    !!second &&
+    first.epoch === second.epoch &&
+    first.owner.ownerKey === second.owner.ownerKey &&
+    workspaceRootKeysEqual(first.owner.executionRoot, second.owner.executionRoot)
+  );
+}
+
+function takeTerminalOwnerRequests<T extends { readonly owner: TerminalOwnerBinding }>(
+  requests: T[],
+  owner: TerminalOwnerBinding,
+): T[] {
+  const matches: T[] = [];
+  let writeIndex = 0;
+  for (const request of requests) {
+    if (sameTerminalOwner(request.owner, owner)) matches.push(request);
+    else requests[writeIndex++] = request;
+  }
+  requests.length = writeIndex;
+  return matches;
+}
+
 export interface TerminalTestRunner {
   showBottomPanelView: (view: BottomPanelView) => void;
   hideBottomPanel: () => void;
   toggleBottomPanel: () => void;
   runInActiveTerminal: (command: string) => void;
   registerActiveTerminalSession: (sessionId: number | null) => void;
-  runPhpTestCommand: (
-    input: Omit<PhpTestRunCommandInput, "runner">,
-  ) => Promise<PhpTestRunOutcome>;
-  runJsTestCommand: (
-    input: Omit<JsTestRunCommandInput, "runner">,
-  ) => Promise<PhpTestRunOutcome>;
+  requestActiveTerminalSession: (consumer: (sessionId: number | null) => void) => void;
+  runPhpTestCommand: (input: Omit<PhpTestRunCommandInput, "runner">) => Promise<PhpTestRunOutcome>;
+  runJsTestCommand: (input: Omit<JsTestRunCommandInput, "runner">) => Promise<PhpTestRunOutcome>;
   runTestAt: (target: PhpTestGutterTarget) => Promise<void>;
   runTestForActiveDocument: () => Promise<void>;
   runAllTestsForActiveDocument: () => Promise<void>;
@@ -139,16 +169,42 @@ export function useTerminalTestRunner(
   const {
     terminalGateway,
     currentWorkspaceRootRef,
+    workspaceRuntimeOwnerRef,
     workspaceRoot,
     workspaceDescriptor,
+    workspaceRuntimeOwner,
     activeDocumentRef,
     activeEditorPositionRef,
     readTestFileIfExists,
     reportErrorForActiveWorkspaceRoot,
+    invalidateJsTestCoverageAndResults,
     setMessage,
     setBottomPanelView,
     setBottomPanelVisible,
   } = dependencies;
+  const terminalOwnerEpochRef = useRef(0);
+  const terminalOwnerSourceRef = useRef<WorkspaceRuntimeOwner | null | undefined>(undefined);
+  const terminalOwnerBindingRef = useRef<TerminalOwnerBinding | null>(null);
+  const effectiveTerminalOwner = workspaceRuntimeOwner ?? workspaceRuntimeOwnerRef.current;
+  const previousTerminalOwner = terminalOwnerSourceRef.current;
+  const terminalOwnerChanged =
+    previousTerminalOwner === undefined ||
+    (previousTerminalOwner === null) !== (effectiveTerminalOwner === null) ||
+    (!!previousTerminalOwner &&
+      !!effectiveTerminalOwner &&
+      (previousTerminalOwner.ownerKey !== effectiveTerminalOwner.ownerKey ||
+        !workspaceRootKeysEqual(
+          previousTerminalOwner.executionRoot,
+          effectiveTerminalOwner.executionRoot,
+        )));
+  if (terminalOwnerChanged) {
+    terminalOwnerEpochRef.current += 1;
+    terminalOwnerSourceRef.current = effectiveTerminalOwner;
+    terminalOwnerBindingRef.current = effectiveTerminalOwner
+      ? { epoch: terminalOwnerEpochRef.current, owner: effectiveTerminalOwner }
+      : null;
+  }
+  const terminalOwnerBinding = terminalOwnerBindingRef.current;
 
   // The backend session id of the project terminal currently mounted in the
   // bottom panel, tagged with the workspace root it belongs to. The terminal
@@ -156,17 +212,25 @@ export function useTerminalTestRunner(
   // keeps the per-tab isolation invariant: a session reported for one project
   // can never be addressed while a different project tab is active.
   const activeTerminalSessionRef = useRef<{
-    rootPath: string;
+    owner: TerminalOwnerBinding;
     sessionId: number;
   } | null>(null);
   // A test-run command staged while the terminal session for the active root is
   // not yet ready (e.g. the panel was just revealed). It is flushed exactly once
   // when a matching-root session registers, then cleared. A workspace switch
   // before the session arrives discards it (root mismatch on flush).
-  const pendingTerminalCommandRef = useRef<{
-    command: string;
-    rootPath: string;
-  } | null>(null);
+  const pendingTerminalCommandsRef = useRef<
+    Array<{
+      command: string;
+      owner: TerminalOwnerBinding;
+    }>
+  >([]);
+  const pendingTerminalSessionConsumersRef = useRef<
+    Array<{
+      consume(sessionId: number | null): void;
+      owner: TerminalOwnerBinding;
+    }>
+  >([]);
 
   const showBottomPanelView = useCallback(
     (view: BottomPanelView) => {
@@ -205,12 +269,16 @@ export function useTerminalTestRunner(
   // for that exact root is active. When no session is ready yet, the command is
   // staged and flushed by `registerActiveTerminalSession` once a matching-root
   // session arrives (a tab switch in between discards it on root mismatch).
-  const runInActiveTerminal = useCallback(
-    (command: string) => {
+  const runInTerminalForOwner = useCallback(
+    (command: string, requestedOwner: TerminalOwnerBinding): boolean => {
       const requestedRoot = currentWorkspaceRootRef.current;
 
-      if (!requestedRoot) {
-        return;
+      if (
+        !requestedRoot ||
+        !sameTerminalOwner(terminalOwnerBindingRef.current, requestedOwner) ||
+        !workspaceRootKeysEqual(requestedOwner.owner.executionRoot, requestedRoot)
+      ) {
+        return false;
       }
 
       // Reveal the terminal so the panel mounts (and reports its session id) and
@@ -219,18 +287,37 @@ export function useTerminalTestRunner(
 
       const active = activeTerminalSessionRef.current;
 
-      if (active && workspaceRootKeysEqual(active.rootPath, requestedRoot)) {
-        void terminalGateway
-          .writeInput(active.sessionId, `${command}\r`)
-          .catch((error) =>
-            reportErrorForActiveWorkspaceRoot(requestedRoot, "Run Test", error),
-          );
-        return;
+      if (active && sameTerminalOwner(active.owner, requestedOwner)) {
+        void terminalGateway.writeInput(active.sessionId, `${command}\r`).catch((error) => {
+          if (sameTerminalOwner(terminalOwnerBindingRef.current, requestedOwner)) {
+            reportErrorForActiveWorkspaceRoot(requestedRoot, "Run Test", error);
+          }
+        });
+        return true;
       }
 
-      pendingTerminalCommandRef.current = { command, rootPath: requestedRoot };
+      if (pendingTerminalCommandsRef.current.length >= MAX_PENDING_TERMINAL_REQUESTS) {
+        setMessage("Terminal command queue is full. Wait for the terminal to start and try again.");
+        return false;
+      }
+      pendingTerminalCommandsRef.current.push({ command, owner: requestedOwner });
+      return true;
     },
-    [reportErrorForActiveWorkspaceRoot, showBottomPanelView, terminalGateway],
+    [
+      currentWorkspaceRootRef,
+      reportErrorForActiveWorkspaceRoot,
+      setMessage,
+      showBottomPanelView,
+      terminalGateway,
+    ],
+  );
+  const runInActiveTerminal = useCallback(
+    (command: string) => {
+      const requestedOwner = terminalOwnerBindingRef.current;
+      if (!requestedOwner) return;
+      runInTerminalForOwner(command, requestedOwner);
+    },
+    [runInTerminalForOwner],
   );
 
   // Receives the backend session id of the terminal panel for the active
@@ -239,35 +326,134 @@ export function useTerminalTestRunner(
   // when the session belongs to the same root the command was requested for.
   const registerActiveTerminalSession = useCallback(
     (sessionId: number | null) => {
-      const rootPath = currentWorkspaceRootRef.current;
-
-      if (sessionId === null || !rootPath) {
-        activeTerminalSessionRef.current = null;
+      const registrationOwner = terminalOwnerBinding;
+      if (
+        !registrationOwner ||
+        !sameTerminalOwner(terminalOwnerBindingRef.current, registrationOwner) ||
+        !workspaceRootKeysEqual(
+          currentWorkspaceRootRef.current,
+          registrationOwner.owner.executionRoot,
+        )
+      ) {
         return;
       }
 
-      activeTerminalSessionRef.current = { rootPath, sessionId };
-
-      const pending = pendingTerminalCommandRef.current;
-
-      if (!pending) {
-        return;
-      }
-
-      pendingTerminalCommandRef.current = null;
-
-      if (!workspaceRootKeysEqual(pending.rootPath, rootPath)) {
-        return;
-      }
-
-      void terminalGateway
-        .writeInput(sessionId, `${pending.command}\r`)
-        .catch((error) =>
-          reportErrorForActiveWorkspaceRoot(rootPath, "Run Test", error),
+      if (sessionId === null) {
+        if (sameTerminalOwner(activeTerminalSessionRef.current?.owner, registrationOwner)) {
+          activeTerminalSessionRef.current = null;
+        }
+        const consumers = takeTerminalOwnerRequests(
+          pendingTerminalSessionConsumersRef.current,
+          registrationOwner,
         );
+        for (const pending of consumers) pending.consume(null);
+        return;
+      }
+
+      activeTerminalSessionRef.current = { owner: registrationOwner, sessionId };
+
+      const sessionConsumers = takeTerminalOwnerRequests(
+        pendingTerminalSessionConsumersRef.current,
+        registrationOwner,
+      );
+      for (const pending of sessionConsumers) {
+        pending.consume(sessionId);
+      }
+
+      const commands = takeTerminalOwnerRequests(
+        pendingTerminalCommandsRef.current,
+        registrationOwner,
+      );
+      for (const pending of commands) {
+        if (
+          !sameTerminalOwner(terminalOwnerBindingRef.current, registrationOwner) ||
+          !workspaceRootKeysEqual(
+            currentWorkspaceRootRef.current,
+            registrationOwner.owner.executionRoot,
+          )
+        ) {
+          return;
+        }
+        void terminalGateway.writeInput(sessionId, `${pending.command}\r`).catch((error) => {
+          if (sameTerminalOwner(terminalOwnerBindingRef.current, registrationOwner)) {
+            reportErrorForActiveWorkspaceRoot(
+              registrationOwner.owner.executionRoot,
+              "Run Test",
+              error,
+            );
+          }
+        });
+      }
     },
-    [reportErrorForActiveWorkspaceRoot, terminalGateway],
+    [
+      currentWorkspaceRootRef,
+      reportErrorForActiveWorkspaceRoot,
+      terminalGateway,
+      terminalOwnerBinding,
+    ],
   );
+
+  const requestActiveTerminalSession = useCallback(
+    (consumer: (sessionId: number | null) => void) => {
+      const requestedRoot = currentWorkspaceRootRef.current;
+      if (!requestedRoot) {
+        consumer(null);
+        return;
+      }
+      showBottomPanelView("terminal");
+      const requestedOwner = terminalOwnerBindingRef.current;
+      if (
+        !workspaceRuntimeOwner ||
+        !requestedOwner ||
+        requestedOwner.owner.ownerKey !== workspaceRuntimeOwner.ownerKey ||
+        !workspaceRootKeysEqual(
+          requestedOwner.owner.executionRoot,
+          workspaceRuntimeOwner.executionRoot,
+        ) ||
+        !workspaceRootKeysEqual(requestedOwner.owner.executionRoot, requestedRoot)
+      ) {
+        consumer(null);
+        return;
+      }
+      const active = activeTerminalSessionRef.current;
+      if (active && sameTerminalOwner(active.owner, requestedOwner)) {
+        consumer(active.sessionId);
+        return;
+      }
+      if (pendingTerminalSessionConsumersRef.current.length >= MAX_PENDING_TERMINAL_REQUESTS) {
+        consumer(null);
+        setMessage("Terminal request queue is full. Wait for the terminal to start and try again.");
+        return;
+      }
+      pendingTerminalSessionConsumersRef.current.push({
+        consume: consumer,
+        owner: requestedOwner,
+      });
+    },
+    [currentWorkspaceRootRef, setMessage, showBottomPanelView, workspaceRuntimeOwner],
+  );
+
+  useEffect(() => {
+    const sessionConsumers = pendingTerminalSessionConsumersRef.current;
+    const commands = pendingTerminalCommandsRef.current;
+    const effectOwner = terminalOwnerBinding;
+    if (!effectOwner || !sameTerminalOwner(activeTerminalSessionRef.current?.owner, effectOwner)) {
+      activeTerminalSessionRef.current = null;
+    }
+    return () => {
+      if (!effectOwner) return;
+      if (sameTerminalOwner(activeTerminalSessionRef.current?.owner, effectOwner)) {
+        activeTerminalSessionRef.current = null;
+      }
+      takeTerminalOwnerRequests(commands, effectOwner);
+      const pending = takeTerminalOwnerRequests(sessionConsumers, effectOwner);
+      if (pending.length > 0) {
+        queueMicrotask(() => {
+          for (const request of pending) request.consume(null);
+        });
+      }
+    };
+  }, [terminalOwnerBinding]);
 
   // PhpStorm-style "Run test from gutter": builds and writes the test command
   // for a parsed gutter target into the active project terminal. The runner is
@@ -285,21 +471,26 @@ export function useTerminalTestRunner(
   // with no `--filter`. Returning the runner-built command unchanged means no
   // value derived from file content can introduce shell metacharacters.
   const runPhpTestCommand = useCallback(
-    async (
-      input: Omit<PhpTestRunCommandInput, "runner">,
-    ): Promise<PhpTestRunOutcome> => {
+    async (input: Omit<PhpTestRunCommandInput, "runner">): Promise<PhpTestRunOutcome> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
+      const requestedOwner = terminalOwnerBinding;
+      const isRequestedOwnerActive = () =>
+        sameTerminalOwner(terminalOwnerBindingRef.current, requestedOwner) &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot || !requestedDescriptor?.php) {
+      if (
+        !requestedRoot ||
+        !requestedOwner ||
+        !workspaceRootKeysEqual(requestedOwner.owner.executionRoot, requestedRoot) ||
+        !requestedDescriptor?.php
+      ) {
         return "dropped";
       }
 
       const runner = await detectPhpTestRunner(requestedRoot);
 
-      if (!isRequestedRootActive()) {
+      if (!isRequestedOwnerActive()) {
         return "dropped";
       }
 
@@ -309,12 +500,14 @@ export function useTerminalTestRunner(
         return "rejected";
       }
 
-      runInActiveTerminal(command);
+      runInTerminalForOwner(command, requestedOwner);
       return "ran";
     },
     [
+      currentWorkspaceRootRef,
       detectPhpTestRunner,
-      runInActiveTerminal,
+      runInTerminalForOwner,
+      terminalOwnerBinding,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -325,18 +518,11 @@ export function useTerminalTestRunner(
     const requestedDescriptor = workspaceDescriptor;
     const requestedDocument = activeDocumentRef.current;
 
-    if (
-      !requestedRoot ||
-      !requestedDescriptor?.javaScriptTypeScript ||
-      !requestedDocument
-    ) {
+    if (!requestedRoot || !requestedDescriptor?.javaScriptTypeScript || !requestedDocument) {
       return null;
     }
 
-    const relativePath = workspaceRelativePath(
-      requestedRoot,
-      requestedDocument.path,
-    );
+    const relativePath = workspaceRelativePath(requestedRoot, requestedDocument.path);
 
     if (!relativePath || !isJsTestRelativePath(relativePath)) {
       return null;
@@ -346,47 +532,66 @@ export function useTerminalTestRunner(
   }, [activeDocumentRef, workspaceDescriptor, workspaceRoot]);
 
   const runJsTestCommand = useCallback(
-    async (
-      input: Omit<JsTestRunCommandInput, "runner">,
-    ): Promise<PhpTestRunOutcome> => {
+    async (input: Omit<JsTestRunCommandInput, "runner">): Promise<PhpTestRunOutcome> => {
       const requestedRoot = workspaceRoot;
       const requestedDescriptor = workspaceDescriptor;
-      const isRequestedRootActive = () =>
+      const requestedOwner = terminalOwnerBinding;
+      const isRequestedOwnerActive = () =>
+        sameTerminalOwner(terminalOwnerBindingRef.current, requestedOwner) &&
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot);
 
-      if (!requestedRoot || !requestedDescriptor?.javaScriptTypeScript) {
+      if (
+        !requestedRoot ||
+        !requestedOwner ||
+        !workspaceRootKeysEqual(requestedOwner.owner.executionRoot, requestedRoot) ||
+        !requestedDescriptor?.javaScriptTypeScript
+      ) {
         return "dropped";
       }
 
-      const runner = await detectJsTestRunner(
+      const targetPath = input.filePath ? joinWorkspacePath(requestedRoot, input.filePath) : null;
+      const runnerContext = await detectJsTestRunnerContext(
         requestedRoot,
         readTestFileIfExists,
+        targetPath,
       );
 
-      if (!isRequestedRootActive()) {
+      if (!isRequestedOwnerActive()) {
         return "dropped";
       }
 
-      if (!runner) {
-        setMessage(
-          "Run test: no vitest or jest setup detected in this workspace.",
-        );
+      if (!runnerContext) {
+        setMessage("Run test: no vitest or jest setup detected in this workspace.");
         return "dropped";
       }
 
-      const command = jsTestRunCommand({ ...input, runner });
+      const workingDirectory = workspaceRelativePath(requestedRoot, runnerContext.rootPath) ?? null;
+      const command = jsTestRunCommand({
+        ...input,
+        filePath: input.filePath ? runnerContext.targetRelativePath : input.filePath,
+        executablePath: runnerContext.executablePath,
+        runner: runnerContext.runner,
+        workingDirectory,
+      });
 
       if (!command) {
         return "rejected";
       }
 
-      runInActiveTerminal(command);
+      const admitted = runInTerminalForOwner(command, requestedOwner);
+      if (!admitted) {
+        return "dropped";
+      }
+      invalidateJsTestCoverageAndResults?.();
       return "ran";
     },
     [
+      currentWorkspaceRootRef,
+      invalidateJsTestCoverageAndResults,
       readTestFileIfExists,
-      runInActiveTerminal,
+      runInTerminalForOwner,
       setMessage,
+      terminalOwnerBinding,
       workspaceDescriptor,
       workspaceRoot,
     ],
@@ -490,15 +695,9 @@ export function useTerminalTestRunner(
       return;
     }
 
-    const relativePath = workspaceRelativePath(
-      requestedRoot,
-      requestedDocument.path,
-    );
+    const relativePath = workspaceRelativePath(requestedRoot, requestedDocument.path);
 
-    if (
-      !relativePath ||
-      !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)
-    ) {
+    if (!relativePath || !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)) {
       return;
     }
 
@@ -551,15 +750,9 @@ export function useTerminalTestRunner(
       return;
     }
 
-    const relativePath = workspaceRelativePath(
-      requestedRoot,
-      requestedDocument.path,
-    );
+    const relativePath = workspaceRelativePath(requestedRoot, requestedDocument.path);
 
-    if (
-      !relativePath ||
-      !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)
-    ) {
+    if (!relativePath || !isPhpTestRelativePath(relativePath, requestedDescriptor.php.psr4Roots)) {
       return;
     }
 
@@ -576,17 +769,12 @@ export function useTerminalTestRunner(
     }
 
     await runPhpTestCommand({ filter: null });
-  }, [
-    activeDocumentRef,
-    runPhpTestCommand,
-    runTestAt,
-    workspaceDescriptor,
-    workspaceRoot,
-  ]);
+  }, [activeDocumentRef, runPhpTestCommand, runTestAt, workspaceDescriptor, workspaceRoot]);
 
   return {
     hideBottomPanel,
     registerActiveTerminalSession,
+    requestActiveTerminalSession,
     runAllJsTestsForActiveDocument,
     runAllTestsForActiveDocument,
     runInActiveTerminal,

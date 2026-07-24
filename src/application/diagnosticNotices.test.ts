@@ -11,6 +11,7 @@ import {
   javaScriptTypeScriptDiagnosticNoticeGroup,
   localPhpDiagnosticsFromSource,
   PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX,
+  phpLocalDiagnosticFileIdentity,
   phpLocalDiagnosticNoticeGroup,
 } from "./diagnosticNotices";
 import {
@@ -117,6 +118,13 @@ describe("phpLocalDiagnosticNoticeGroup", () => {
     expect(phpLocalDiagnosticNoticeGroup(path)).toBe(
       `${PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX}${fileUriFromPath(path)}`,
     );
+  });
+
+  it.each([
+    "mockor-git-diff:worktree:/project/app/Foo.php",
+    "mockor-git-history-diff:abc123:app/Foo.php",
+  ])("fails closed for synthetic document path %s", (path) => {
+    expect(phpLocalDiagnosticFileIdentity(path)).toBeNull();
   });
 });
 
@@ -338,6 +346,16 @@ describe("active local diagnostic notices", () => {
       activeDotenvLocalDiagnosticNotices(
         { language: "dotenv", path: dotenvPath },
         {},
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not create local PHP notices for synthetic read-only documents", () => {
+    const syntheticPath = "mockor-git-diff:worktree:/project/app/Foo.php";
+    expect(
+      activePhpLocalDiagnosticNotices(
+        { language: "php", path: syntheticPath },
+        { [syntheticPath]: [diagnostic()] },
       ),
     ).toEqual([]);
   });

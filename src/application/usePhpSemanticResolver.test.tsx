@@ -31,17 +31,14 @@ function bindingSearchResult(path = PROVIDER_PATH): TextSearchResult {
   return {
     column: 20,
     lineNumber: 8,
-    lineText:
-      "$this->app->bind(CommentRepository::class, EloquentCommentRepository::class);",
+    lineText: "$this->app->bind(CommentRepository::class, EloquentCommentRepository::class);",
     path,
     relativePath: path.slice(path.indexOf("/app/") + 1),
   };
 }
 
 function classSymbol(path: string, fullyQualifiedName: string) {
-  const name = fullyQualifiedName.slice(
-    fullyQualifiedName.lastIndexOf("\\") + 1,
-  );
+  const name = fullyQualifiedName.slice(fullyQualifiedName.lastIndexOf("\\") + 1);
   return {
     column: 1,
     containerName: null,
@@ -140,6 +137,19 @@ function renderResolver(initialOptions: UsePhpSemanticResolverOptions) {
 }
 
 describe("usePhpSemanticResolver container binding scans", () => {
+  it("keeps the bound-concrete resolver stable when its inputs are unchanged", () => {
+    const options = makeOptions({
+      workspaceDescriptor: phpWorkspaceDescriptor(),
+    });
+    const harness = renderResolver(options);
+    const initialResolver = harness.api().resolvePhpFrameworkBoundConcrete;
+
+    harness.rerender(options);
+
+    expect(harness.api().resolvePhpFrameworkBoundConcrete).toBe(initialResolver);
+    harness.unmount();
+  });
+
   it("does not search for generic or Nette providers", async () => {
     const searchText = vi.fn(async () => []);
     const genericOptions = makeOptions({
@@ -174,10 +184,7 @@ describe("usePhpSemanticResolver container binding scans", () => {
         currentPhpFrameworkSourceContext: () => ({
           signature: "neon:1",
           workspaceSources: [
-            [
-              "services:",
-              "    App\\Contracts\\Gateway: App\\Services\\NetteGateway",
-            ].join("\n"),
+            ["services:", "    App\\Contracts\\Gateway: App\\Services\\NetteGateway"].join("\n"),
           ],
         }),
         textSearch: {
@@ -229,10 +236,9 @@ final class DatabaseReportRepository implements ReportRepository
         currentPhpFrameworkSourceContext: () => ({
           signature: "neon:1",
           workspaceSources: [
-            [
-              "services:",
-              "    reportRepository: App\\Repository\\DatabaseReportRepository",
-            ].join("\n"),
+            ["services:", "    reportRepository: App\\Repository\\DatabaseReportRepository"].join(
+              "\n",
+            ),
           ],
         }),
         fileSearch: { searchFiles },
@@ -249,9 +255,7 @@ final class DatabaseReportRepository implements ReportRepository
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
     ).resolves.toBe("App\\Repository\\DatabaseReportRepository");
     expect(readNavigationFileContent).toHaveBeenCalledWith(concretePath);
     expect(searchText).not.toHaveBeenCalled();
@@ -307,16 +311,10 @@ final class RouterFactory
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete(
-          "Nette\\Application\\Routers\\RouteList",
-        ),
+      harness.api().resolvePhpFrameworkBoundConcrete("Nette\\Application\\Routers\\RouteList"),
     ).resolves.toBe("Nette\\Application\\Routers\\RouteList");
     expect(readNavigationFileContent).toHaveBeenCalledTimes(2);
-    expect(
-      harness.api().isPhpFrameworkBindingSearchCandidatePath(factoryPath),
-    ).toBe(true);
+    expect(harness.api().isPhpFrameworkBindingSearchCandidatePath(factoryPath)).toBe(true);
 
     harness.unmount();
   });
@@ -356,16 +354,12 @@ class RouterFactory
       );
       const result = await harness
         .api()
-        .resolvePhpFrameworkBoundConcrete(
-          "Nette\\Application\\Routers\\RouteList",
-        );
+        .resolvePhpFrameworkBoundConcrete("Nette\\Application\\Routers\\RouteList");
       harness.unmount();
       return result;
     };
 
-    await expect(
-      resolve("App\\Routing\\RouterFactory::createRouter"),
-    ).resolves.toBeNull();
+    await expect(resolve("App\\Routing\\RouterFactory::createRouter")).resolves.toBeNull();
     await expect(resolve("@routerFactory::createRouter")).resolves.toBe(
       "Nette\\Application\\Routers\\RouteList",
     );
@@ -409,9 +403,7 @@ class RouterFactory
         projectSymbolSearch: {
           searchProjectSymbols: vi.fn(async (_root, query) => {
             if (query === "ChildRouterFactory") {
-              return [
-                classSymbol(childPath, "App\\Routing\\ChildRouterFactory"),
-              ];
+              return [classSymbol(childPath, "App\\Routing\\ChildRouterFactory")];
             }
 
             if (query === "RouterFactory") {
@@ -435,18 +427,10 @@ class RouterFactory
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete(
-          "Nette\\Application\\Routers\\RouteList",
-        ),
+      harness.api().resolvePhpFrameworkBoundConcrete("Nette\\Application\\Routers\\RouteList"),
     ).resolves.toBe("Nette\\Application\\Routers\\RouteList");
-    expect(
-      harness.api().isPhpFrameworkBindingSearchCandidatePath(childPath),
-    ).toBe(true);
-    expect(
-      harness.api().isPhpFrameworkBindingSearchCandidatePath(parentPath),
-    ).toBe(true);
+    expect(harness.api().isPhpFrameworkBindingSearchCandidatePath(childPath)).toBe(true);
+    expect(harness.api().isPhpFrameworkBindingSearchCandidatePath(parentPath)).toBe(true);
     harness.unmount();
   });
 
@@ -494,9 +478,7 @@ class RouterFactory
           projectSymbolSearch: {
             searchProjectSymbols: vi.fn(async (_root, query) => {
               if (query === "ChildRouterFactory") {
-                return [
-                  classSymbol(childPath, "App\\Routing\\ChildRouterFactory"),
-                ];
+                return [classSymbol(childPath, "App\\Routing\\ChildRouterFactory")];
               }
 
               return [classSymbol(parentPath, "App\\Routing\\RouterFactory")];
@@ -506,22 +488,16 @@ class RouterFactory
           workspaceDescriptor: phpWorkspaceDescriptor(),
         }),
       );
-      const result = await harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete(requestedType);
+      const result = await harness.api().resolvePhpFrameworkBoundConcrete(requestedType);
       harness.unmount();
       return { readCount: readNavigationFileContent.mock.calls.length, result };
     };
 
-    await expect(
-      resolve("createLateStatic", "App\\Routing\\ChildRouterFactory"),
-    ).resolves.toEqual({
+    await expect(resolve("createLateStatic", "App\\Routing\\ChildRouterFactory")).resolves.toEqual({
       readCount: 2,
       result: "App\\Routing\\ChildRouterFactory",
     });
-    await expect(
-      resolve("createSelf", "App\\Routing\\RouterFactory"),
-    ).resolves.toEqual({
+    await expect(resolve("createSelf", "App\\Routing\\RouterFactory")).resolves.toEqual({
       readCount: 2,
       result: "App\\Routing\\RouterFactory",
     });
@@ -572,9 +548,7 @@ class RouterFactory extends ChildRouterFactory { ${parentMethod} }`,
       );
       const result = await harness
         .api()
-        .resolvePhpFrameworkBoundConcrete(
-          "Nette\\Application\\Routers\\RouteList",
-        );
+        .resolvePhpFrameworkBoundConcrete("Nette\\Application\\Routers\\RouteList");
       harness.unmount();
       return result;
     };
@@ -605,9 +579,7 @@ class RouterFactory extends ChildRouterFactory { ${parentMethod} }`,
         activePhpFrameworkProviders: [phpNetteFrameworkProvider],
         currentPhpFrameworkSourceContext: () => ({
           signature: "neon:coalesced-factory",
-          workspaceSources: [
-            "services:\n    router: App\\Routing\\RouterFactory::createRouter",
-          ],
+          workspaceSources: ["services:\n    router: App\\Routing\\RouterFactory::createRouter"],
         }),
         intelligenceMode: "fullSmart",
         projectSymbolSearch: {
@@ -621,9 +593,7 @@ class RouterFactory extends ChildRouterFactory { ${parentMethod} }`,
     );
     const target = "Nette\\Application\\Routers\\RouteList";
     const stale = harness.api().resolvePhpFrameworkBoundConcrete(target);
-    const staleCoalesced = harness
-      .api()
-      .resolvePhpFrameworkBoundConcrete(target);
+    const staleCoalesced = harness.api().resolvePhpFrameworkBoundConcrete(target);
 
     await vi.waitFor(() => {
       expect(readNavigationFileContent).toHaveBeenCalledOnce();
@@ -633,10 +603,7 @@ class RouterFactory extends ChildRouterFactory { ${parentMethod} }`,
     staleRead.resolve(`<?php
 namespace App\\Routing;
 class RouterFactory { public static function createRouter(): \\Old\\RouteList {} }`);
-    await expect(Promise.all([stale, staleCoalesced])).resolves.toEqual([
-      null,
-      null,
-    ]);
+    await expect(Promise.all([stale, staleCoalesced])).resolves.toEqual([null, null]);
 
     currentRead.resolve(`<?php
 namespace App\\Routing;
@@ -718,9 +685,7 @@ final class OtherGateway implements \\App\\Contracts\\Gateway
       harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Gateway"),
     ).resolves.toBe("App\\Services\\PreferredGateway");
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\Suppressed"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Suppressed"),
     ).resolves.toBeNull();
 
     harness.unmount();
@@ -811,10 +776,7 @@ abstract class AbstractRepo implements \\App\\Contracts\\ReportRepository
         currentPhpFrameworkSourceContext: () => ({
           signature: "neon:1",
           workspaceSources: [
-            [
-              "services:",
-              "    reportRepository: App\\Repository\\ConcreteChild",
-            ].join("\n"),
+            ["services:", "    reportRepository: App\\Repository\\ConcreteChild"].join("\n"),
           ],
         }),
         readNavigationFileContent,
@@ -830,9 +792,7 @@ abstract class AbstractRepo implements \\App\\Contracts\\ReportRepository
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
     ).resolves.toBe("App\\Repository\\ConcreteChild");
     expect(searchText).not.toHaveBeenCalled();
 
@@ -882,9 +842,7 @@ interface ChildGateway extends ParentGateway
         currentPhpFrameworkSourceContext: () => ({
           signature: "neon:1",
           workspaceSources: [
-            ["services:", "    gateway: App\\Service\\ConcreteGateway"].join(
-              "\n",
-            ),
+            ["services:", "    gateway: App\\Service\\ConcreteGateway"].join("\n"),
           ],
         }),
         readNavigationFileContent,
@@ -900,9 +858,7 @@ interface ChildGateway extends ParentGateway
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\ParentGateway"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\ParentGateway"),
     ).resolves.toBe("App\\Service\\ConcreteGateway");
     expect(searchText).not.toHaveBeenCalled();
 
@@ -963,9 +919,7 @@ interface SecondGateway extends FirstGateway
         currentPhpFrameworkSourceContext: () => ({
           signature: "neon:1",
           workspaceSources: [
-            ["services:", "    gateway: App\\Service\\ConcreteGateway"].join(
-              "\n",
-            ),
+            ["services:", "    gateway: App\\Service\\ConcreteGateway"].join("\n"),
           ],
         }),
         readNavigationFileContent,
@@ -981,9 +935,7 @@ interface SecondGateway extends FirstGateway
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\MissingGateway"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\MissingGateway"),
     ).resolves.toBeNull();
     expect(searchText).not.toHaveBeenCalled();
 
@@ -1007,8 +959,7 @@ interface SecondGateway extends FirstGateway
     ]);
     const readNavigationFileContent = vi
       .fn()
-      .mockRejectedValueOnce(new Error("transient read failure"))
-      .mockResolvedValueOnce(`<?php
+      .mockRejectedValueOnce(new Error("transient read failure")).mockResolvedValueOnce(`<?php
 namespace App\\Repository;
 
 use App\\Contracts\\ReportRepository;
@@ -1023,10 +974,9 @@ final class DatabaseReportRepository implements ReportRepository
         currentPhpFrameworkSourceContext: () => ({
           signature: "neon:1",
           workspaceSources: [
-            [
-              "services:",
-              "    reportRepository: App\\Repository\\DatabaseReportRepository",
-            ].join("\n"),
+            ["services:", "    reportRepository: App\\Repository\\DatabaseReportRepository"].join(
+              "\n",
+            ),
           ],
         }),
         intelligenceMode: "fullSmart",
@@ -1044,14 +994,10 @@ final class DatabaseReportRepository implements ReportRepository
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
     ).resolves.toBeNull();
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
     ).resolves.toBe("App\\Repository\\DatabaseReportRepository");
     expect(readNavigationFileContent).toHaveBeenCalledWith(concretePath);
     expect(searchProjectSymbols).toHaveBeenCalled();
@@ -1079,10 +1025,9 @@ final class DatabaseReportRepository implements ReportRepository
       currentPhpFrameworkSourceContext: () => ({
         signature: "neon:1",
         workspaceSources: [
-          [
-            "services:",
-            "    reportRepository: App\\Repository\\DatabaseReportRepository",
-          ].join("\n"),
+          ["services:", "    reportRepository: App\\Repository\\DatabaseReportRepository"].join(
+            "\n",
+          ),
         ],
       }),
       readNavigationFileContent,
@@ -1095,9 +1040,7 @@ final class DatabaseReportRepository implements ReportRepository
     const harness = renderResolver(baseOptions);
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
     ).resolves.toBeNull();
 
     harness.rerender({
@@ -1106,9 +1049,7 @@ final class DatabaseReportRepository implements ReportRepository
     });
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\ReportRepository"),
     ).resolves.toBe("App\\Repository\\DatabaseReportRepository");
     expect(readNavigationFileContent).toHaveBeenCalledWith(concretePath);
     expect(searchText).not.toHaveBeenCalled();
@@ -1125,9 +1066,7 @@ final class DatabaseReportRepository implements ReportRepository
     };
     const loadedSources = {
       signature: "neon:1",
-      workspaceSources: [
-        ["services:", "    gateway: App\\Services\\NetteGateway"].join("\n"),
-      ],
+      workspaceSources: [["services:", "    gateway: App\\Services\\NetteGateway"].join("\n")],
     };
     const baseOptions = makeOptions({
       activePhpFrameworkProviders: [phpNetteFrameworkProvider],
@@ -1209,9 +1148,7 @@ final class OtherGateway implements \\App\\Contracts\\Gateway
       activePhpFrameworkProviders: [phpNetteFrameworkProvider],
       currentPhpFrameworkSourceContext: () => ({
         signature: "neon:root",
-        workspaceSources: [
-          "services:\n    gateway: App\\Services\\RootGateway",
-        ],
+        workspaceSources: ["services:\n    gateway: App\\Services\\RootGateway"],
       }),
       currentWorkspaceRootRef,
       phpFrameworkBindingCacheRef: cacheRef,
@@ -1229,9 +1166,7 @@ final class OtherGateway implements \\App\\Contracts\\Gateway
       ...rootOptions,
       currentPhpFrameworkSourceContext: () => ({
         signature: "neon:other",
-        workspaceSources: [
-          "services:\n    gateway: App\\Services\\OtherGateway",
-        ],
+        workspaceSources: ["services:\n    gateway: App\\Services\\OtherGateway"],
       }),
       workspaceDescriptor: phpWorkspaceDescriptor(otherRoot),
       workspaceRoot: otherRoot,
@@ -1297,9 +1232,7 @@ class RouterFactory
       activePhpFrameworkProviders: [phpNetteFrameworkProvider],
       currentPhpFrameworkSourceContext: () => ({
         signature: "neon:old-factory",
-        workspaceSources: [
-          "services:\n    router: App\\Routing\\ChildRouterFactory::createRouter",
-        ],
+        workspaceSources: ["services:\n    router: App\\Routing\\ChildRouterFactory::createRouter"],
       }),
       currentWorkspaceRootRef,
       intelligenceMode: "fullSmart",
@@ -1320,9 +1253,7 @@ class RouterFactory
       ...oldOptions,
       currentPhpFrameworkSourceContext: () => ({
         signature: "neon:new-factory",
-        workspaceSources: [
-          "services:\n    router: App\\Routing\\ChildRouterFactory::createRouter",
-        ],
+        workspaceSources: ["services:\n    router: App\\Routing\\ChildRouterFactory::createRouter"],
       }),
       workspaceDescriptor: phpWorkspaceDescriptor(otherRoot),
       workspaceRoot: otherRoot,
@@ -1331,9 +1262,7 @@ class RouterFactory
     oldParentRead.resolve(validParentSource);
     await expect(stale).resolves.toBeNull();
     expect(cacheRef.current).not.toHaveProperty(target.toLowerCase());
-    await expect(
-      harness.api().resolvePhpFrameworkBoundConcrete(target),
-    ).resolves.toBe(target);
+    await expect(harness.api().resolvePhpFrameworkBoundConcrete(target)).resolves.toBe(target);
     expect(cacheRef.current).toEqual({ [target.toLowerCase()]: target });
     harness.unmount();
   });
@@ -1353,18 +1282,11 @@ class RouterFactory
       }),
     );
 
-    const first = harness
-      .api()
-      .resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
-    const concurrent = harness
-      .api()
-      .resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
+    const first = harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
+    const concurrent = harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
     search.resolve([]);
 
-    await expect(Promise.all([first, concurrent])).resolves.toEqual([
-      null,
-      null,
-    ]);
+    await expect(Promise.all([first, concurrent])).resolves.toEqual([null, null]);
     await expect(
       harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing"),
     ).resolves.toBeNull();
@@ -1389,34 +1311,25 @@ class RouterFactory
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
     ).resolves.toBe("App\\Repositories\\EloquentCommentRepository");
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
     ).resolves.toBe("App\\Repositories\\EloquentCommentRepository");
 
     expect(searchText).toHaveBeenCalledTimes(1);
     expect(readNavigationFileContent).toHaveBeenCalledTimes(1);
-    expect(
-      harness.api().isPhpFrameworkBindingSearchCandidatePath(PROVIDER_PATH),
-    ).toBe(true);
+    expect(harness.api().isPhpFrameworkBindingSearchCandidatePath(PROVIDER_PATH)).toBe(true);
     harness.unmount();
   });
 
   it("does not track an ordinary class search hit without parsed bindings", async () => {
     const classReferencePath = `${ROOT}/src/Foo.php`;
-    const searchText = vi.fn(async () => [
-      bindingSearchResult(classReferencePath),
-    ]);
+    const searchText = vi.fn(async () => [bindingSearchResult(classReferencePath)]);
     const harness = renderResolver(
       makeOptions({
         readNavigationFileContent: vi.fn(
-          async () =>
-            "<?php\nfinal class Consumer { public const TYPE = Foo::class; }\n",
+          async () => "<?php\nfinal class Consumer { public const TYPE = Foo::class; }\n",
         ),
         textSearch: {
           replaceInPath: vi.fn(async () => ({
@@ -1428,15 +1341,9 @@ class RouterFactory
       }),
     );
 
-    await expect(
-      harness.api().resolvePhpFrameworkBoundConcrete("App\\Foo"),
-    ).resolves.toBeNull();
+    await expect(harness.api().resolvePhpFrameworkBoundConcrete("App\\Foo")).resolves.toBeNull();
 
-    expect(
-      harness
-        .api()
-        .isPhpFrameworkBindingSearchCandidatePath(classReferencePath),
-    ).toBe(false);
+    expect(harness.api().isPhpFrameworkBindingSearchCandidatePath(classReferencePath)).toBe(false);
     harness.unmount();
   });
 
@@ -1460,14 +1367,10 @@ class RouterFactory
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
     ).resolves.toBeNull();
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
     ).resolves.toBe("App\\Repositories\\EloquentCommentRepository");
 
     expect(searchText).toHaveBeenCalledTimes(2);
@@ -1477,10 +1380,7 @@ class RouterFactory
 
   it("caches a positive result found after another candidate read fails", async () => {
     const failedPath = `${ROOT}/app/Providers/BrokenServiceProvider.php`;
-    const searchText = vi.fn(async () => [
-      bindingSearchResult(failedPath),
-      bindingSearchResult(),
-    ]);
+    const searchText = vi.fn(async () => [bindingSearchResult(failedPath), bindingSearchResult()]);
     const readNavigationFileContent = vi.fn(async (path: string) => {
       if (path === failedPath) {
         throw new Error("transient read failure");
@@ -1502,14 +1402,10 @@ class RouterFactory
     );
 
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
     ).resolves.toBe("App\\Repositories\\EloquentCommentRepository");
     await expect(
-      harness
-        .api()
-        .resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
+      harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\CommentRepository"),
     ).resolves.toBe("App\\Repositories\\EloquentCommentRepository");
 
     expect(searchText).toHaveBeenCalledTimes(1);
@@ -1538,25 +1434,16 @@ class RouterFactory
       }),
     );
 
-    const stale = harness
-      .api()
-      .resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
+    const stale = harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
     harness.api().invalidatePhpFrameworkBindingCache();
-    const current = harness
-      .api()
-      .resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
+    const current = harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
     oldSearch.resolve([bindingSearchResult()]);
     await expect(stale).resolves.toBeNull();
 
-    const coalesced = harness
-      .api()
-      .resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
+    const coalesced = harness.api().resolvePhpFrameworkBoundConcrete("App\\Contracts\\Missing");
     expect(searchText).toHaveBeenCalledTimes(2);
     newSearch.resolve([]);
-    await expect(Promise.all([current, coalesced])).resolves.toEqual([
-      null,
-      null,
-    ]);
+    await expect(Promise.all([current, coalesced])).resolves.toEqual([null, null]);
     expect(cacheRef.current).toHaveProperty("app\\contracts\\missing", null);
     harness.unmount();
   });
@@ -1593,9 +1480,7 @@ describe("usePhpSemanticResolver cooperative class-resolution cancellation", () 
   it("passes the signal into candidate reads and drops an aborted lookup", async () => {
     const candidatePath = `${ROOT}/app/Services/ReportService.php`;
     const read = createDeferred<string>();
-    const readNavigationFileContent = vi.fn(
-      (_path: string, _signal?: AbortSignal) => read.promise,
-    );
+    const readNavigationFileContent = vi.fn((_path: string, _signal?: AbortSignal) => read.promise);
     const harness = renderResolver(
       makeOptions({
         readNavigationFileContent,
@@ -1605,16 +1490,10 @@ describe("usePhpSemanticResolver cooperative class-resolution cancellation", () 
     const abortController = new AbortController();
     const pending = harness
       .api()
-      .resolvePhpClassSourcePaths(
-        "App\\Services\\ReportService",
-        abortController.signal,
-      );
+      .resolvePhpClassSourcePaths("App\\Services\\ReportService", abortController.signal);
 
     await vi.waitFor(() => {
-      expect(readNavigationFileContent).toHaveBeenCalledWith(
-        candidatePath,
-        abortController.signal,
-      );
+      expect(readNavigationFileContent).toHaveBeenCalledWith(candidatePath, abortController.signal);
     });
     abortController.abort();
     read.resolve("<?php namespace App\\Services; class ReportService {}");

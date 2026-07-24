@@ -17,6 +17,11 @@ import type {
   PhpProjectDescriptor,
   WorkspaceDescriptor,
 } from "../domain/workspace";
+import {
+  createLegacyWorkspaceRuntimeOwner,
+  createWorkspaceRuntimeOwner,
+  type WorkspaceRuntimeOwner,
+} from "../domain/workspaceRuntimeOwner";
 
 const ROOT = "/workspace";
 
@@ -30,9 +35,7 @@ function document(path: string, content: string): EditorDocument {
   };
 }
 
-function phpProjectDescriptor(
-  overrides: Partial<PhpProjectDescriptor> = {},
-): PhpProjectDescriptor {
+function phpProjectDescriptor(overrides: Partial<PhpProjectDescriptor> = {}): PhpProjectDescriptor {
   return {
     classmapRoots: [],
     hasComposer: true,
@@ -58,10 +61,9 @@ function phpWorkspaceDescriptor(
   };
 }
 
-function createFakeTerminalGateway(
-  overrides: Partial<TerminalGateway> = {},
-): TerminalGateway {
+function createFakeTerminalGateway(overrides: Partial<TerminalGateway> = {}): TerminalGateway {
   const base: TerminalGateway = {
+    acknowledgeStart: vi.fn(async () => undefined),
     listProfiles: vi.fn(async () => []),
     resize: vi.fn(async () => undefined),
     start: vi.fn(async () => ({ kind: "stopped" as const, sessionId: 1 })),
@@ -99,6 +101,7 @@ interface Harness {
   };
   reportErrorForActiveWorkspaceRoot: ReturnType<typeof vi.fn>;
   setMessage: ReturnType<typeof vi.fn>;
+  setOwner: (owner: WorkspaceRuntimeOwner | null) => void;
   bottomPanelView: () => string;
   bottomPanelVisible: () => boolean;
   unmount: () => void;
@@ -124,16 +127,20 @@ function renderTerminalTestRunner(
   } = { current: null };
   const reportErrorForActiveWorkspaceRoot = vi.fn();
   const setMessage = vi.fn();
-  const readTestFileIfExists =
-    overrides.readTestFileIfExists ?? (async () => null);
+  const readTestFileIfExists = overrides.readTestFileIfExists ?? (async () => null);
+  let currentOwner =
+    overrides.workspaceRuntimeOwner === undefined
+      ? createWorkspaceRuntimeOwner("workspace-a", ROOT)
+      : overrides.workspaceRuntimeOwner;
+  const runtimeOwnerRef: { current: WorkspaceRuntimeOwner | null } = {
+    current: currentOwner ?? createLegacyWorkspaceRuntimeOwner(ROOT),
+  };
 
   function Harness() {
     const [bottomPanelView, setBottomPanelView] = useState<BottomPanelView>(
       panelState.view as BottomPanelView,
     );
-    const [bottomPanelVisible, setBottomPanelVisible] = useState(
-      panelState.visible,
-    );
+    const [bottomPanelVisible, setBottomPanelVisible] = useState(panelState.visible);
     panelState.view = bottomPanelView;
     panelState.visible = bottomPanelVisible;
 
@@ -141,6 +148,7 @@ function renderTerminalTestRunner(
       activeDocumentRef,
       activeEditorPositionRef,
       currentWorkspaceRootRef: rootRef,
+      workspaceRuntimeOwnerRef: runtimeOwnerRef,
       readTestFileIfExists,
       reportErrorForActiveWorkspaceRoot,
       setBottomPanelView,
@@ -150,6 +158,7 @@ function renderTerminalTestRunner(
       workspaceDescriptor: phpWorkspaceDescriptor(),
       workspaceRoot: ROOT,
       ...overrides,
+      workspaceRuntimeOwner: currentOwner,
     };
     captured.runner = useTerminalTestRunner(deps);
     return null;
@@ -173,6 +182,11 @@ function renderTerminalTestRunner(
       return captured.runner;
     },
     setMessage,
+    setOwner: (owner) => {
+      currentOwner = owner;
+      runtimeOwnerRef.current = owner ?? createLegacyWorkspaceRuntimeOwner(rootRef.current ?? ROOT);
+      act(() => root.render(<Harness />));
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -181,9 +195,7 @@ function renderTerminalTestRunner(
   };
 }
 
-function target(
-  overrides: Partial<PhpTestGutterTarget> = {},
-): PhpTestGutterTarget {
+function target(overrides: Partial<PhpTestGutterTarget> = {}): PhpTestGutterTarget {
   return {
     filter: "testCalculate",
     kind: "method",
@@ -222,9 +234,7 @@ function jsDocument(path: string, content: string): EditorDocument {
   };
 }
 
-function jsTarget(
-  overrides: Partial<PhpTestGutterTarget> = {},
-): PhpTestGutterTarget {
+function jsTarget(overrides: Partial<PhpTestGutterTarget> = {}): PhpTestGutterTarget {
   return {
     filter: "adds numbers",
     kind: "method",
@@ -294,9 +304,170 @@ describe("useTerminalTestRunner", () => {
   });
 
   describe("registerActiveTerminalSession / runTestAt", () => {
-    it("runs a gutter test target with the artisan runner and reveals the terminal panel", async () => {
+    it("delivers the matching active terminal session without writing shell input", () => {
+      const writeInput = vi.fn(async () => undefined);
+      const consume = vi.fn();
+      const harness = renderTerminalTestRunner({
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+      });
+      act(() => harness.runner().registerActiveTerminalSession(6));
+      act(() => harness.runner().requestActiveTerminalSession(consume));
+
+      expect(consume).toHaveBeenCalledWith(6);
+      expect(writeInput).not.toHaveBeenCalled();
+      expect(harness.bottomPanelView()).toBe("terminal");
+      harness.unmount();
+    });
+
+    it("stages a typed terminal consumer and fulfills it exactly once", () => {
+      const consume = vi.fn();
+      const harness = renderTerminalTestRunner();
+      act(() => harness.runner().requestActiveTerminalSession(consume));
+      expect(consume).not.toHaveBeenCalled();
+
+      act(() => harness.runner().registerActiveTerminalSession(8));
+      act(() => harness.runner().registerActiveTerminalSession(9));
+      expect(consume).toHaveBeenCalledExactlyOnceWith(8);
+      harness.unmount();
+    });
+
+    it("fulfills every queued current-root terminal consumer in FIFO order", () => {
+      const calls: string[] = [];
+      const harness = renderTerminalTestRunner();
+      act(() => {
+        harness
+          .runner()
+          .requestActiveTerminalSession((sessionId) => calls.push(`first:${sessionId}`));
+        harness
+          .runner()
+          .requestActiveTerminalSession((sessionId) => calls.push(`second:${sessionId}`));
+      });
+
+      act(() => harness.runner().registerActiveTerminalSession(8));
+
+      expect(calls).toEqual(["first:8", "second:8"]);
+      harness.unmount();
+    });
+
+    it("fulfills 32 typed terminal consumers in FIFO order and rejects the 33rd immediately", () => {
+      const calls: string[] = [];
+      const harness = renderTerminalTestRunner();
+      act(() => {
+        for (let index = 0; index < 32; index += 1) {
+          harness
+            .runner()
+            .requestActiveTerminalSession((sessionId) => calls.push(`${index}:${sessionId}`));
+        }
+        harness
+          .runner()
+          .requestActiveTerminalSession((sessionId) => calls.push(`overflow:${sessionId}`));
+      });
+
+      expect(calls).toEqual(["overflow:null"]);
+      expect(harness.setMessage).toHaveBeenCalledExactlyOnceWith(
+        "Terminal request queue is full. Wait for the terminal to start and try again.",
+      );
+
+      act(() => harness.runner().registerActiveTerminalSession(8));
+
+      expect(calls).toEqual([
+        "overflow:null",
+        ...Array.from({ length: 32 }, (_, index) => `${index}:8`),
+      ]);
+      harness.unmount();
+    });
+
+    it("cancels a staged typed terminal consumer when the terminal tears down", () => {
+      const consume = vi.fn();
+      const harness = renderTerminalTestRunner();
+      act(() => harness.runner().requestActiveTerminalSession(consume));
+      act(() => harness.runner().registerActiveTerminalSession(null));
+      expect(consume).toHaveBeenCalledExactlyOnceWith(null);
+      harness.unmount();
+    });
+
+    it("cancels every queued consumer exactly once during cleanup", async () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      const harness = renderTerminalTestRunner();
+      act(() => {
+        harness.runner().requestActiveTerminalSession(first);
+        harness.runner().requestActiveTerminalSession(second);
+      });
+
+      harness.unmount();
+      await Promise.resolve();
+
+      expect(first).toHaveBeenCalledExactlyOnceWith(null);
+      expect(second).toHaveBeenCalledExactlyOnceWith(null);
+    });
+
+    it("drops same-root owner A queues instead of flushing them into owner B", async () => {
+      const consume = vi.fn();
       const writeInput = vi.fn(async () => undefined);
       const harness = renderTerminalTestRunner({
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+      });
+      act(() => {
+        harness.runner().requestActiveTerminalSession(consume);
+        harness.runner().runInActiveTerminal("owner-a-command");
+      });
+
+      harness.setOwner(createWorkspaceRuntimeOwner("workspace-b", ROOT));
+      await act(async () => Promise.resolve());
+      act(() => harness.runner().registerActiveTerminalSession(22));
+
+      expect(consume).toHaveBeenCalledExactlyOnceWith(null);
+      expect(writeInput).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("fences stale A callbacks across same-root A-B-A owner epochs", () => {
+      const harness = renderTerminalTestRunner();
+      const registerFirstA = harness.runner().registerActiveTerminalSession;
+      act(() => registerFirstA(11));
+
+      harness.setOwner(createWorkspaceRuntimeOwner("workspace-b", ROOT));
+      const registerB = harness.runner().registerActiveTerminalSession;
+      act(() => registerB(22));
+      act(() => registerFirstA(null));
+      const consumeB = vi.fn();
+      act(() => harness.runner().requestActiveTerminalSession(consumeB));
+      expect(consumeB).toHaveBeenCalledExactlyOnceWith(22);
+
+      harness.setOwner(createWorkspaceRuntimeOwner("workspace-a", ROOT));
+      const registerSecondA = harness.runner().registerActiveTerminalSession;
+      const consumeSecondA = vi.fn();
+      act(() => harness.runner().requestActiveTerminalSession(consumeSecondA));
+      act(() => {
+        registerFirstA(33);
+        registerFirstA(null);
+      });
+      expect(consumeSecondA).not.toHaveBeenCalled();
+      act(() => registerSecondA(44));
+      expect(consumeSecondA).toHaveBeenCalledExactlyOnceWith(44);
+      harness.unmount();
+    });
+
+    it("fails closed for typed terminal session requests without an admitted owner", () => {
+      const consume = vi.fn();
+      const harness = renderTerminalTestRunner({
+        workspaceRuntimeOwner: null,
+      });
+      act(() => {
+        harness.runner().requestActiveTerminalSession(consume);
+      });
+
+      expect(consume).toHaveBeenCalledExactlyOnceWith(null);
+      expect(harness.bottomPanelView()).toBe("terminal");
+      harness.unmount();
+    });
+
+    it("runs a gutter test target with the artisan runner and reveals the terminal panel", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const invalidateJsTestCoverageAndResults = vi.fn();
+      const harness = renderTerminalTestRunner({
+        invalidateJsTestCoverageAndResults,
         readTestFileIfExists: vi.fn(async (path: string) =>
           path === `${ROOT}/artisan` ? "#!/usr/bin/env php\n" : null,
         ),
@@ -313,10 +484,8 @@ describe("useTerminalTestRunner", () => {
 
       expect(harness.bottomPanelView()).toBe("terminal");
       expect(harness.bottomPanelVisible()).toBe(true);
-      expect(writeInput).toHaveBeenCalledWith(
-        7,
-        "php artisan test --filter testCalculate\r",
-      );
+      expect(writeInput).toHaveBeenCalledWith(7, "php artisan test --filter testCalculate\r");
+      expect(invalidateJsTestCoverageAndResults).not.toHaveBeenCalled();
       harness.unmount();
     });
 
@@ -332,15 +501,10 @@ describe("useTerminalTestRunner", () => {
       });
 
       await act(async () => {
-        await harness.runner().runTestAt(
-          target({ filter: "SampleTest", kind: "class" }),
-        );
+        await harness.runner().runTestAt(target({ filter: "SampleTest", kind: "class" }));
       });
 
-      expect(writeInput).toHaveBeenCalledWith(
-        3,
-        "vendor/bin/phpunit --filter SampleTest\r",
-      );
+      expect(writeInput).toHaveBeenCalledWith(3, "vendor/bin/phpunit --filter SampleTest\r");
       harness.unmount();
     });
 
@@ -361,10 +525,47 @@ describe("useTerminalTestRunner", () => {
         harness.runner().registerActiveTerminalSession(42);
       });
 
-      expect(writeInput).toHaveBeenCalledWith(
-        42,
-        "vendor/bin/phpunit --filter testCalculate\r",
+      expect(writeInput).toHaveBeenCalledWith(42, "vendor/bin/phpunit --filter testCalculate\r");
+      harness.unmount();
+    });
+
+    it("flushes queued terminal commands in FIFO order without silently replacing one", () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+      });
+      act(() => {
+        harness.runner().runInActiveTerminal("first");
+        harness.runner().runInActiveTerminal("second");
+        harness.runner().registerActiveTerminalSession(42);
+      });
+
+      expect(writeInput.mock.calls).toEqual([
+        [42, "first\r"],
+        [42, "second\r"],
+      ]);
+      harness.unmount();
+    });
+
+    it("flushes 32 queued terminal commands in FIFO order and rejects the 33rd", () => {
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+      });
+      const commands = Array.from({ length: 32 }, (_, index) => `command-${index}`);
+      act(() => {
+        for (const command of commands) harness.runner().runInActiveTerminal(command);
+        harness.runner().runInActiveTerminal("overflow");
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
+      expect(harness.setMessage).toHaveBeenCalledExactlyOnceWith(
+        "Terminal command queue is full. Wait for the terminal to start and try again.",
       );
+
+      act(() => harness.runner().registerActiveTerminalSession(42));
+
+      expect(writeInput.mock.calls).toEqual(commands.map((command) => [42, `${command}\r`]));
       harness.unmount();
     });
 
@@ -416,6 +617,30 @@ describe("useTerminalTestRunner", () => {
       harness.unmount();
     });
 
+    it("drops a PHP runner probe after a same-root owner switch", async () => {
+      const deferred = createDeferred<string | null>();
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vi.fn(() => deferred.promise),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+      });
+      act(() => harness.runner().registerActiveTerminalSession(9));
+      let run: Promise<void> | null = null;
+      act(() => {
+        run = harness.runner().runTestAt(target());
+      });
+
+      harness.setOwner(createWorkspaceRuntimeOwner("workspace-b", ROOT));
+      act(() => harness.runner().registerActiveTerminalSession(10));
+      await act(async () => {
+        deferred.resolve(null);
+        await run;
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
     it("never writes a command for a maliciously named filter and shows a rejection message", async () => {
       const writeInput = vi.fn(async () => undefined);
       const harness = renderTerminalTestRunner({
@@ -424,9 +649,7 @@ describe("useTerminalTestRunner", () => {
       });
 
       await act(async () => {
-        await harness.runner().runTestAt(
-          target({ filter: "foo; rm -rf /" }),
-        );
+        await harness.runner().runTestAt(target({ filter: "foo; rm -rf /" }));
       });
 
       expect(writeInput).not.toHaveBeenCalled();
@@ -444,9 +667,9 @@ describe("useTerminalTestRunner", () => {
       });
 
       await act(async () => {
-        await harness.runner().runTestAt(
-          target({ filter: "evil\nrm -rf /", match: "description" }),
-        );
+        await harness
+          .runner()
+          .runTestAt(target({ filter: "evil\nrm -rf /", match: "description" }));
       });
 
       expect(writeInput).not.toHaveBeenCalled();
@@ -470,15 +693,12 @@ describe("useTerminalTestRunner", () => {
       });
 
       await act(async () => {
-        await harness.runner().runTestAt(
-          target({ filter: "adds two numbers", match: "description" }),
-        );
+        await harness
+          .runner()
+          .runTestAt(target({ filter: "adds two numbers", match: "description" }));
       });
 
-      expect(writeInput).toHaveBeenCalledWith(
-        11,
-        "php artisan test --filter 'adds two numbers'\r",
-      );
+      expect(writeInput).toHaveBeenCalledWith(11, "php artisan test --filter 'adds two numbers'\r");
       harness.unmount();
     });
 
@@ -553,20 +773,14 @@ class InvoiceServiceTest extends TestCase
         await harness.runner().runTestForActiveDocument();
       });
 
-      expect(writeInput).toHaveBeenCalledWith(
-        21,
-        "vendor/bin/phpunit --filter testCalculate\r",
-      );
+      expect(writeInput).toHaveBeenCalledWith(21, "vendor/bin/phpunit --filter testCalculate\r");
       harness.unmount();
     });
 
     it("uses captured edited content after old test targets were warmed", async () => {
       const path = `${ROOT}/tests/Unit/EditedInvoiceServiceTest.php`;
       const oldSource = testSource.replace("testCalculate", "testOldName");
-      const editedSource = testSource.replace(
-        "testCalculate",
-        "testEditedName",
-      );
+      const editedSource = testSource.replace("testCalculate", "testEditedName");
       phpGutterTargetsCoordinator.resolveTest(ROOT, path, oldSource);
 
       const writeInput = vi.fn(async () => undefined);
@@ -585,10 +799,7 @@ class InvoiceServiceTest extends TestCase
         await harness.runner().runTestForActiveDocument();
       });
 
-      expect(writeInput).toHaveBeenCalledWith(
-        22,
-        "vendor/bin/phpunit --filter testEditedName\r",
-      );
+      expect(writeInput).toHaveBeenCalledWith(22, "vendor/bin/phpunit --filter testEditedName\r");
       harness.unmount();
     });
 
@@ -604,9 +815,7 @@ class InvoiceServiceTest extends TestCase
         await harness.runner().runTestForActiveDocument();
       });
 
-      expect(harness.setMessage).toHaveBeenCalledWith(
-        "Run test: no test found at the cursor.",
-      );
+      expect(harness.setMessage).toHaveBeenCalledWith("Run test: no test found at the cursor.");
       harness.unmount();
     });
 
@@ -677,10 +886,7 @@ class InvoiceServiceTest extends TestCase
         await harness.runner().runAllTestsForActiveDocument();
       });
 
-      expect(writeInput).toHaveBeenCalledWith(
-        21,
-        "php artisan test --filter InvoiceServiceTest\r",
-      );
+      expect(writeInput).toHaveBeenCalledWith(21, "php artisan test --filter InvoiceServiceTest\r");
       harness.unmount();
     });
 
@@ -720,15 +926,14 @@ it('subtracts two numbers', function () {
   describe("JavaScript test runs", () => {
     it("runTestAt routes a JS gutter target to vitest with the file path and -t filter", async () => {
       const writeInput = vi.fn(async () => undefined);
+      const invalidateJsTestCoverageAndResults = vi.fn();
       const harness = renderTerminalTestRunner({
+        invalidateJsTestCoverageAndResults,
         readTestFileIfExists: vitestWorkspaceReader(),
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: jsWorkspaceDescriptor(),
       });
-      harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
-        JS_TEST_SOURCE,
-      );
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
 
       act(() => {
         harness.runner().registerActiveTerminalSession(31);
@@ -743,6 +948,7 @@ it('subtracts two numbers', function () {
         31,
         "node_modules/.bin/vitest run 'src/sum.test.ts' -t 'adds numbers'\r",
       );
+      expect(invalidateJsTestCoverageAndResults).toHaveBeenCalledOnce();
       harness.unmount();
     });
 
@@ -755,10 +961,7 @@ it('subtracts two numbers', function () {
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: jsWorkspaceDescriptor(),
       });
-      harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
-        JS_TEST_SOURCE,
-      );
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
 
       act(() => {
         harness.runner().registerActiveTerminalSession(32);
@@ -777,15 +980,14 @@ it('subtracts two numbers', function () {
 
     it("runJsTestForActiveDocument runs the test that owns the cursor line", async () => {
       const writeInput = vi.fn(async () => undefined);
+      const invalidateJsTestCoverageAndResults = vi.fn();
       const harness = renderTerminalTestRunner({
+        invalidateJsTestCoverageAndResults,
         readTestFileIfExists: vitestWorkspaceReader(),
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: jsWorkspaceDescriptor(),
       });
-      harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
-        JS_TEST_SOURCE,
-      );
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
       harness.activeEditorPositionRef.current = { column: 3, lineNumber: 4 };
 
       act(() => {
@@ -800,6 +1002,7 @@ it('subtracts two numbers', function () {
         33,
         "node_modules/.bin/vitest run 'src/sum.test.ts' -t 'subtracts numbers'\r",
       );
+      expect(invalidateJsTestCoverageAndResults).toHaveBeenCalledOnce();
       harness.unmount();
     });
 
@@ -810,10 +1013,7 @@ it('subtracts two numbers', function () {
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: jsWorkspaceDescriptor(),
       });
-      harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
-        JS_TEST_SOURCE,
-      );
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
 
       act(() => {
         harness.runner().registerActiveTerminalSession(34);
@@ -830,17 +1030,48 @@ it('subtracts two numbers', function () {
       harness.unmount();
     });
 
-    it("shows a message and writes nothing when no JS runner is detected", async () => {
+    it("runs a nested package test with that package runner and working directory", async () => {
       const writeInput = vi.fn(async () => undefined);
       const harness = renderTerminalTestRunner({
-        readTestFileIfExists: vi.fn(async () => null),
+        readTestFileIfExists: vi.fn(async (path: string) =>
+          path === `${ROOT}/packages/a/vitest.config.ts`
+            ? "export default {};"
+            : path === `${ROOT}/packages/b/jest.config.js`
+              ? "module.exports = {};"
+              : null,
+        ),
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: jsWorkspaceDescriptor(),
       });
       harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
+        `${ROOT}/packages/a/src/sum.test.ts`,
         JS_TEST_SOURCE,
       );
+
+      act(() => {
+        harness.runner().registerActiveTerminalSession(340);
+      });
+      await act(async () => {
+        await harness.runner().runAllJsTestsForActiveDocument();
+      });
+
+      expect(writeInput).toHaveBeenCalledWith(
+        340,
+        "cd 'packages/a' && node_modules/.bin/vitest run 'src/sum.test.ts'\r",
+      );
+      harness.unmount();
+    });
+
+    it("shows a message and writes nothing when no JS runner is detected", async () => {
+      const writeInput = vi.fn(async () => undefined);
+      const invalidateJsTestCoverageAndResults = vi.fn();
+      const harness = renderTerminalTestRunner({
+        invalidateJsTestCoverageAndResults,
+        readTestFileIfExists: vi.fn(async () => null),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
 
       act(() => {
         harness.runner().registerActiveTerminalSession(35);
@@ -854,50 +1085,73 @@ it('subtracts two numbers', function () {
       expect(harness.setMessage).toHaveBeenCalledWith(
         "Run test: no vitest or jest setup detected in this workspace.",
       );
+      expect(invalidateJsTestCoverageAndResults).not.toHaveBeenCalled();
       harness.unmount();
     });
 
     it("rejects a JS filter carrying a control character and shows a message", async () => {
       const writeInput = vi.fn(async () => undefined);
+      const invalidateJsTestCoverageAndResults = vi.fn();
       const harness = renderTerminalTestRunner({
+        invalidateJsTestCoverageAndResults,
         readTestFileIfExists: vitestWorkspaceReader(),
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: jsWorkspaceDescriptor(),
       });
-      harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
-        JS_TEST_SOURCE,
-      );
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
 
       act(() => {
         harness.runner().registerActiveTerminalSession(36);
       });
 
       await act(async () => {
-        await harness.runner().runTestAt(
-          jsTarget({ filter: "evil\nrm -rf /" }),
-        );
+        await harness.runner().runTestAt(jsTarget({ filter: "evil\nrm -rf /" }));
       });
 
       expect(writeInput).not.toHaveBeenCalled();
       expect(harness.setMessage).toHaveBeenCalledWith(
         'Run test: "evil\nrm -rf /" contains a line break or control character and cannot be run safely.',
       );
+      expect(invalidateJsTestCoverageAndResults).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("does not invalidate when an otherwise valid JS run cannot enter the terminal queue", async () => {
+      const invalidateJsTestCoverageAndResults = vi.fn();
+      const harness = renderTerminalTestRunner({
+        invalidateJsTestCoverageAndResults,
+        readTestFileIfExists: vitestWorkspaceReader(),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      act(() => {
+        for (let index = 0; index < 32; index += 1) {
+          harness.runner().runInActiveTerminal(`pending-${index}`);
+        }
+      });
+
+      let outcome: Awaited<ReturnType<TerminalTestRunner["runJsTestCommand"]>> | null = null;
+      await act(async () => {
+        outcome = await harness.runner().runJsTestCommand({
+          filePath: "src/sum.test.ts",
+        });
+      });
+
+      expect(outcome).toBe("dropped");
+      expect(invalidateJsTestCoverageAndResults).not.toHaveBeenCalled();
       harness.unmount();
     });
 
     it("drops a JS run after a workspace switch before the write", async () => {
       const deferred = createDeferred<string | null>();
       const writeInput = vi.fn(async () => undefined);
+      const invalidateJsTestCoverageAndResults = vi.fn();
       const harness = renderTerminalTestRunner({
+        invalidateJsTestCoverageAndResults,
         readTestFileIfExists: vi.fn(() => deferred.promise),
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: jsWorkspaceDescriptor(),
       });
-      harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
-        JS_TEST_SOURCE,
-      );
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
 
       act(() => {
         harness.runner().registerActiveTerminalSession(37);
@@ -910,6 +1164,33 @@ it('subtracts two numbers', function () {
 
       harness.rootRef.current = "/other-workspace";
 
+      await act(async () => {
+        deferred.resolve("export default {};");
+        await run;
+      });
+
+      expect(writeInput).not.toHaveBeenCalled();
+      expect(invalidateJsTestCoverageAndResults).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("drops a JS runner probe after a same-root owner switch", async () => {
+      const deferred = createDeferred<string | null>();
+      const writeInput = vi.fn(async () => undefined);
+      const harness = renderTerminalTestRunner({
+        readTestFileIfExists: vi.fn(() => deferred.promise),
+        terminalGateway: createFakeTerminalGateway({ writeInput }),
+        workspaceDescriptor: jsWorkspaceDescriptor(),
+      });
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
+      act(() => harness.runner().registerActiveTerminalSession(37));
+      let run: Promise<void> | null = null;
+      act(() => {
+        run = harness.runner().runTestAt(jsTarget());
+      });
+
+      harness.setOwner(createWorkspaceRuntimeOwner("workspace-b", ROOT));
+      act(() => harness.runner().registerActiveTerminalSession(38));
       await act(async () => {
         deferred.resolve("export default {};");
         await run;
@@ -947,10 +1228,7 @@ it('subtracts two numbers', function () {
         terminalGateway: createFakeTerminalGateway({ writeInput }),
         workspaceDescriptor: phpWorkspaceDescriptor(),
       });
-      harness.activeDocumentRef.current = jsDocument(
-        `${ROOT}/src/sum.test.ts`,
-        JS_TEST_SOURCE,
-      );
+      harness.activeDocumentRef.current = jsDocument(`${ROOT}/src/sum.test.ts`, JS_TEST_SOURCE);
 
       await act(async () => {
         await harness.runner().runJsTestForActiveDocument();

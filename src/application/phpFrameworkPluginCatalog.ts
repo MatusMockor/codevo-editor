@@ -26,6 +26,7 @@ import {
 } from "./phpFrameworkLegacyProviderAdapter";
 import { phpLaravelFrameworkPlugin } from "./phpLaravelFrameworkPlugin";
 import { phpNetteFrameworkPlugin } from "./phpNetteFrameworkPlugin";
+import { phpSymfonyFrameworkPlugin } from "./phpSymfonyFrameworkPlugin";
 
 export interface PhpFrameworkPluginCatalog
   extends ReadonlyArray<PhpFrameworkProvider> {
@@ -141,6 +142,7 @@ export function phpFrameworkPluginContributions<
 export const phpFrameworkPlugins = createPhpFrameworkPluginRegistry([
   phpLaravelFrameworkPlugin,
   phpNetteFrameworkPlugin,
+  phpSymfonyFrameworkPlugin,
 ]);
 
 export const phpFrameworkPluginCatalog =

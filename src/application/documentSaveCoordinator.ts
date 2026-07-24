@@ -384,14 +384,12 @@ export class DocumentSaveCoordinator<TResult = void> {
     lane: SaveLane<TResult>,
     active: ActiveSave,
   ): IssuedWrite {
-    let issuedWrite!: IssuedWrite;
-    const permit: DocumentSaveWritePermit = {
-      granted: true,
-      settle: () => this.settleIssuedWrite(lane, active, issuedWrite),
-    };
-    issuedWrite = {
+    const issuedWrite: IssuedWrite = {
       barrier: saveBarrier(),
-      permit,
+      permit: {
+        granted: true,
+        settle: () => this.settleIssuedWrite(lane, active, issuedWrite),
+      },
       settled: false,
     };
     return issuedWrite;

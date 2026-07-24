@@ -143,7 +143,7 @@ export function useWorkbenchNavigation(
 
       setQuickOpenOpen(false);
     },
-    [forgetRecentFile, openFile],
+    [currentWorkspaceRootRef, forgetRecentFile, openFile, setQuickOpenOpen],
   );
 
   const openRecentFile = useCallback(
@@ -172,7 +172,12 @@ export function useWorkbenchNavigation(
 
       setRecentFilesSwitcherOpen(false);
     },
-    [forgetRecentFile, openFile],
+    [
+      currentWorkspaceRootRef,
+      forgetRecentFile,
+      openFile,
+      setRecentFilesSwitcherOpen,
+    ],
   );
 
   const openClassSearchResult = useCallback(
@@ -196,7 +201,7 @@ export function useWorkbenchNavigation(
         `Opened ${result.name} ${result.relativePath}:${result.lineNumber}:${result.column}`,
       );
     },
-    [openFile],
+    [openFile, setClassOpenOpen, setEditorRevealTarget, setMessage],
   );
 
   const openWorkspaceSymbolResult = useCallback(
@@ -220,7 +225,7 @@ export function useWorkbenchNavigation(
         `Opened ${result.name} ${result.relativePath}:${result.lineNumber}:${result.column}`,
       );
     },
-    [openFile],
+    [openFile, setEditorRevealTarget, setMessage, setWorkspaceSymbolsOpen],
   );
 
   const openPathForNavigation = useCallback(
@@ -254,7 +259,7 @@ export function useWorkbenchNavigation(
 
       return true;
     },
-    [openFile],
+    [currentWorkspaceRootRef, openFile],
   );
 
   const openNavigationTarget = useCallback(
@@ -296,6 +301,8 @@ export function useWorkbenchNavigation(
       currentNavigationLocation,
       openPathForNavigation,
       recordNavigationLocationSnapshot,
+      setEditorRevealTarget,
+      setMessage,
     ],
   );
 
@@ -328,7 +335,7 @@ export function useWorkbenchNavigation(
       path,
       position: { column: position.column, lineNumber: position.lineNumber },
     };
-  }, []);
+  }, [activeDocumentRef, activeEditorPositionRef]);
 
   const goToProblemLocation = useCallback(
     async (location: ProblemLocation | null): Promise<boolean> => {
@@ -348,20 +355,20 @@ export function useWorkbenchNavigation(
 
       return opened;
     },
-    [openNavigationTarget],
+    [activeEditorPositionRef, openNavigationTarget],
   );
 
   const goToNextProblem = useCallback(async (): Promise<boolean> => {
     return goToProblemLocation(
       nextProblemLocation(noticesRef.current, currentProblemLocation()),
     );
-  }, [currentProblemLocation, goToProblemLocation]);
+  }, [currentProblemLocation, goToProblemLocation, noticesRef]);
 
   const goToPreviousProblem = useCallback(async (): Promise<boolean> => {
     return goToProblemLocation(
       previousProblemLocation(noticesRef.current, currentProblemLocation()),
     );
-  }, [currentProblemLocation, goToProblemLocation]);
+  }, [currentProblemLocation, goToProblemLocation, noticesRef]);
 
   const readNavigationFileContent = useCallback(
     async (
@@ -386,7 +393,7 @@ export function useWorkbenchNavigation(
       throwIfNavigationAborted(signal);
       return content;
     },
-    [workspaceFiles],
+    [activeDocumentRef, documentsRef, workspaceFiles],
   );
 
   const activateSearchEverywhereItem = useCallback(
@@ -442,7 +449,15 @@ export function useWorkbenchNavigation(
         );
       }
     },
-    [commandContextRef, openFile, reportError, setSearchEverywhereOpen],
+    [
+      commandContextRef,
+      currentWorkspaceRootRef,
+      openFile,
+      reportError,
+      setEditorRevealTarget,
+      setMessage,
+      setSearchEverywhereOpen,
+    ],
   );
 
   return {

@@ -78,10 +78,9 @@ export function useExternalFileConflictLifecycle({
 
   const resolveOwnership = useCallback(
     (root: string, path: string): DocumentSaveIdentity | null => {
-      const ownership: DocumentSaveOwnership | null =
-        resolveDocumentSaveOwnership
-          ? resolveDocumentSaveOwnership(root, path)
-          : legacyDocumentSaveIdentity(root, path);
+      const ownership: DocumentSaveOwnership | null = resolveDocumentSaveOwnership
+        ? resolveDocumentSaveOwnership(root, path)
+        : legacyDocumentSaveIdentity(root, path);
       if (!ownership) {
         return null;
       }
@@ -95,17 +94,13 @@ export function useExternalFileConflictLifecycle({
 
   const ownershipKey = useCallback(
     (ownership: DocumentSaveIdentity) =>
-      JSON.stringify([
-        ownership.canonicalRoot,
-        ownership.workspaceRelativePath,
-      ]),
+      JSON.stringify([ownership.canonicalRoot, ownership.workspaceRelativePath]),
     [],
   );
 
   const stateForOwnership = useCallback(
     (ownership: DocumentSaveIdentity) =>
-      cacheRef.current[ownershipKey(ownership)] ??
-      createExternalFileConflictState(),
+      cacheRef.current[ownershipKey(ownership)] ?? createExternalFileConflictState(),
     [ownershipKey],
   );
 
@@ -137,23 +132,16 @@ export function useExternalFileConflictLifecycle({
   }, []);
 
   const reconcileDocumentBaselineRevision = useCallback(
-    (
-      key: string,
-      disk: WorkspaceTextFileSnapshot,
-    ): boolean => {
+    (key: string, disk: WorkspaceTextFileSnapshot): boolean => {
       const currentRoot = currentWorkspaceRootRef.current;
       if (!currentRoot) {
         return false;
       }
 
-      const selectedEntry = Object.entries(documentsRef.current).find(
-        ([, candidate]) => {
-          const candidateOwnership = resolveOwnership(currentRoot, candidate.path);
-          return Boolean(
-            candidateOwnership && ownershipKey(candidateOwnership) === key,
-          );
-        },
-      );
+      const selectedEntry = Object.entries(documentsRef.current).find(([, candidate]) => {
+        const candidateOwnership = resolveOwnership(currentRoot, candidate.path);
+        return Boolean(candidateOwnership && ownershipKey(candidateOwnership) === key);
+      });
       if (!selectedEntry) {
         return false;
       }
@@ -197,16 +185,13 @@ export function useExternalFileConflictLifecycle({
     ],
   );
 
-  const clearOwnershipConflictState = useCallback(
-    (key: string) => {
-      delete pendingReadBaseStateRef.current[key];
-      delete retryEventRef.current[key];
-      delete cacheRef.current[key];
-      delete ownershipRef.current[key];
-      forceRender();
-    },
-    [],
-  );
+  const clearOwnershipConflictState = useCallback((key: string) => {
+    delete pendingReadBaseStateRef.current[key];
+    delete retryEventRef.current[key];
+    delete cacheRef.current[key];
+    delete ownershipRef.current[key];
+    forceRender();
+  }, []);
 
   useEffect(() => {
     disposedRef.current = false;
@@ -242,9 +227,7 @@ export function useExternalFileConflictLifecycle({
         documentsRef.current[path] ??
         Object.values(documentsRef.current).find((candidate) => {
           const candidateOwnership = resolveOwnership(root, candidate.path);
-          return candidateOwnership
-            ? ownershipKey(candidateOwnership) === key
-            : false;
+          return candidateOwnership ? ownershipKey(candidateOwnership) === key : false;
         });
       if (!document || !isDirty(document)) {
         return false;
@@ -255,11 +238,7 @@ export function useExternalFileConflictLifecycle({
         return false;
       }
 
-      if (
-        event.kind !== "modified" &&
-        event.kind !== "deleted" &&
-        event.kind !== "renamed"
-      ) {
+      if (event.kind !== "modified" && event.kind !== "deleted" && event.kind !== "renamed") {
         return false;
       }
 
@@ -269,14 +248,13 @@ export function useExternalFileConflictLifecycle({
       const selfWriteWait = new AbortController();
       selfWriteWaitsRef.current[key] = selfWriteWait;
       selfWriteWaitOwnershipRef.current[key] = eventOwnership;
-      const selfWriteSettlement = event.kind === "modified"
-        ? documentSelfWrites.expectationsForEvent(eventOwnership, {
-            signal: selfWriteWait.signal,
-          })
-        : null;
-      const selfWriteExpectations = selfWriteSettlement
-        ? await selfWriteSettlement
-        : [];
+      const selfWriteSettlement =
+        event.kind === "modified"
+          ? documentSelfWrites.expectationsForEvent(eventOwnership, {
+              signal: selfWriteWait.signal,
+            })
+          : null;
+      const selfWriteExpectations = selfWriteSettlement ? await selfWriteSettlement : [];
       if (selfWriteWaitsRef.current[key] === selfWriteWait) {
         delete selfWriteWaitsRef.current[key];
         delete selfWriteWaitOwnershipRef.current[key];
@@ -285,16 +263,12 @@ export function useExternalFileConflictLifecycle({
         return false;
       }
 
-      const documentAfterSelfWrite = Object.values(
-        documentsRef.current,
-      ).find((candidate) => {
+      const documentAfterSelfWrite = Object.values(documentsRef.current).find((candidate) => {
         const candidateOwnership = resolveOwnership(
           currentWorkspaceRootRef.current ?? "",
           candidate.path,
         );
-        return candidateOwnership
-          ? ownershipKey(candidateOwnership) === key
-          : false;
+        return candidateOwnership ? ownershipKey(candidateOwnership) === key : false;
       });
       if (!documentAfterSelfWrite || !isDirty(documentAfterSelfWrite)) {
         return false;
@@ -307,8 +281,7 @@ export function useExternalFileConflictLifecycle({
         revision: documentAfterSelfWrite.revision,
       };
       const stateBeforeRead =
-        pendingReadBaseStateRef.current[key] ??
-        stateForOwnership(eventOwnership);
+        pendingReadBaseStateRef.current[key] ?? stateForOwnership(eventOwnership);
       pendingReadBaseStateRef.current[key] = stateBeforeRead;
       let pendingReadState: ExternalFileConflictState | null = null;
       if (event.kind !== "deleted") {
@@ -323,10 +296,7 @@ export function useExternalFileConflictLifecycle({
             disk: null,
           },
         });
-        publish(
-          eventOwnership,
-          pendingReadState,
-        );
+        publish(eventOwnership, pendingReadState);
       }
       let disk: {
         content: string;
@@ -336,10 +306,7 @@ export function useExternalFileConflictLifecycle({
 
       if (event.kind !== "deleted") {
         try {
-          const snapshot = await readWorkspaceTextFileSnapshot(
-            workspaceFiles,
-            event.path,
-          );
+          const snapshot = await readWorkspaceTextFileSnapshot(workspaceFiles, event.path);
           disk = {
             content: snapshot.content,
             path: event.path,
@@ -358,9 +325,7 @@ export function useExternalFileConflictLifecycle({
           currentWorkspaceRootRef.current ?? "",
           candidate.path,
         );
-        return candidateOwnership
-          ? ownershipKey(candidateOwnership) === key
-          : false;
+        return candidateOwnership ? ownershipKey(candidateOwnership) === key : false;
       });
       if (
         disposedRef.current ||
@@ -375,19 +340,12 @@ export function useExternalFileConflictLifecycle({
         event.kind === "modified" &&
         disk &&
         selfWriteExpectations.some((expectation) =>
-          documentSelfWrites.consumeMatchingSnapshot(
-            eventOwnership,
-            expectation,
-            disk,
-          )
+          documentSelfWrites.consumeMatchingSnapshot(eventOwnership, expectation, disk),
         )
       ) {
         delete pendingReadBaseStateRef.current[key];
         delete retryEventRef.current[key];
-        if (
-          pendingReadState &&
-          stateForOwnership(eventOwnership) === pendingReadState
-        ) {
+        if (pendingReadState && stateForOwnership(eventOwnership) === pendingReadState) {
           publish(eventOwnership, stateBeforeRead);
         }
         return false;
@@ -407,10 +365,7 @@ export function useExternalFileConflictLifecycle({
         reconcileDocumentBaselineRevision(key, disk)
       ) {
         clearOwnershipConflictState(key);
-        if (
-          stateBeforeRead.status === "resolving" &&
-          stateBeforeRead.action === "retryRead"
-        ) {
+        if (stateBeforeRead.status === "resolving" && stateBeforeRead.action === "retryRead") {
           return "resolved";
         }
         return false;
@@ -451,17 +406,12 @@ export function useExternalFileConflictLifecycle({
   );
 
   const hasConflict = useCallback(
-    (root: string | null, path: string) =>
-      Boolean(root && stateFor(root, path).conflict),
+    (root: string | null, path: string) => Boolean(root && stateFor(root, path).conflict),
     [stateFor],
   );
 
   const detectSaveConflict = useCallback(
-    (
-      root: string,
-      document: EditorDocument,
-      disk: WorkspaceTextFileSnapshot | null,
-    ) => {
+    (root: string, document: EditorDocument, disk: WorkspaceTextFileSnapshot | null) => {
       const ownership = resolveOwnership(root, document.path);
       if (!ownership) {
         return;
@@ -501,29 +451,31 @@ export function useExternalFileConflictLifecycle({
         ownership,
         transitionExternalFileConflict(stateForOwnership(ownership), {
           type: "detected",
-          conflict: disk ? {
-            kind: "modified",
-            baseline: {
-              content: document.savedContent,
-              path: document.path,
-              revision: document.revision,
-            },
-            disk: {
-              content: disk.content,
-              path: document.path,
-              revision: disk.revision,
-            },
-          } : {
-            kind: "unreadable",
-            attemptedKind: "modified",
-            attemptedPath: document.path,
-            baseline: {
-              content: document.savedContent,
-              path: document.path,
-              revision: document.revision,
-            },
-            disk: null,
-          },
+          conflict: disk
+            ? {
+                kind: "modified",
+                baseline: {
+                  content: document.savedContent,
+                  path: document.path,
+                  revision: document.revision,
+                },
+                disk: {
+                  content: disk.content,
+                  path: document.path,
+                  revision: disk.revision,
+                },
+              }
+            : {
+                kind: "unreadable",
+                attemptedKind: "modified",
+                attemptedPath: document.path,
+                baseline: {
+                  content: document.savedContent,
+                  path: document.path,
+                  revision: document.revision,
+                },
+                disk: null,
+              },
         }),
       );
     },
@@ -551,8 +503,7 @@ export function useExternalFileConflictLifecycle({
       const sequenceKey = ownershipKey(ownership);
       cancelSelfWriteWait(sequenceKey);
       delete pendingReadBaseStateRef.current[sequenceKey];
-      eventSequenceRef.current[sequenceKey] =
-        (eventSequenceRef.current[sequenceKey] ?? 0) + 1;
+      eventSequenceRef.current[sequenceKey] = (eventSequenceRef.current[sequenceKey] ?? 0) + 1;
       delete retryEventRef.current[sequenceKey];
       if (!cacheRef.current[sequenceKey]) {
         return;
@@ -571,49 +522,45 @@ export function useExternalFileConflictLifecycle({
       const path = `${root.replace(/[\\/]+$/, "")}${separator}${ownership.workspaceRelativePath.replace(/[\\/]+/g, separator)}`;
       const resolved = resolveOwnership(root, path);
       return Boolean(
-        resolved &&
-          workspaceRootKeysEqual(resolved.canonicalRoot, ownership.canonicalRoot),
+        resolved && workspaceRootKeysEqual(resolved.canonicalRoot, ownership.canonicalRoot),
       );
     },
     [resolveOwnership],
   );
 
-  const clearRoot = useCallback((root: string) => {
-    for (const [key, ownership] of Object.entries(
-      selfWriteWaitOwnershipRef.current,
-    )) {
-      if (!ownershipBelongsToRoot(root, ownership)) {
-        continue;
+  const clearRoot = useCallback(
+    (root: string) => {
+      for (const [key, ownership] of Object.entries(selfWriteWaitOwnershipRef.current)) {
+        if (!ownershipBelongsToRoot(root, ownership)) {
+          continue;
+        }
+        eventSequenceRef.current[key] = (eventSequenceRef.current[key] ?? 0) + 1;
+        cancelSelfWriteWait(key);
       }
-      eventSequenceRef.current[key] =
-        (eventSequenceRef.current[key] ?? 0) + 1;
-      cancelSelfWriteWait(key);
-    }
-    for (const [key, ownership] of Object.entries(ownershipRef.current)) {
-      if (!ownershipBelongsToRoot(root, ownership)) {
-        continue;
+      for (const [key, ownership] of Object.entries(ownershipRef.current)) {
+        if (!ownershipBelongsToRoot(root, ownership)) {
+          continue;
+        }
+        documentSelfWrites.clearRoot(ownership.canonicalRoot);
+        eventSequenceRef.current[key] = (eventSequenceRef.current[key] ?? 0) + 1;
+        cancelSelfWriteWait(key);
+        delete pendingReadBaseStateRef.current[key];
+        delete retryEventRef.current[key];
+        delete cacheRef.current[key];
+        delete ownershipRef.current[key];
       }
-      documentSelfWrites.clearRoot(ownership.canonicalRoot);
-      eventSequenceRef.current[key] =
-        (eventSequenceRef.current[key] ?? 0) + 1;
-      cancelSelfWriteWait(key);
-      delete pendingReadBaseStateRef.current[key];
-      delete retryEventRef.current[key];
-      delete cacheRef.current[key];
-      delete ownershipRef.current[key];
-    }
-    documentSelfWrites.clearRoot(root);
-    forceRender();
-  }, [cancelSelfWriteWait, documentSelfWrites, ownershipBelongsToRoot]);
+      documentSelfWrites.clearRoot(root);
+      forceRender();
+    },
+    [cancelSelfWriteWait, documentSelfWrites, ownershipBelongsToRoot],
+  );
 
   const hasConflictsForRoot = useCallback(
     (root: string) =>
       Object.entries(cacheRef.current).some(([key, state]) => {
         const ownership = ownershipRef.current[key];
         return Boolean(
-          ownership &&
-            ownershipBelongsToRoot(root, ownership) &&
-            state.conflict !== null,
+          ownership && ownershipBelongsToRoot(root, ownership) && state.conflict !== null,
         );
       }),
     [ownershipBelongsToRoot],
@@ -680,13 +627,8 @@ export function useExternalFileConflictLifecycle({
         if (!currentRoot || !currentDocument) {
           return false;
         }
-        const currentOwnership = resolveOwnership(
-          currentRoot,
-          currentDocument.path,
-        );
-        return Boolean(
-          currentOwnership && ownershipKey(currentOwnership) === actionKey,
-        );
+        const currentOwnership = resolveOwnership(currentRoot, currentDocument.path);
+        return Boolean(currentOwnership && ownershipKey(currentOwnership) === actionKey);
       };
 
       const finishWrite = (
@@ -698,22 +640,16 @@ export function useExternalFileConflictLifecycle({
           return;
         }
         const capturedDocument = documentsRef.current[activePath];
-        const selectedEntry: [string, EditorDocument] | undefined =
-          capturedDocument
-            ? [activePath, capturedDocument]
-            : Object.entries(documentsRef.current).find(([, candidate]) => {
-                const currentRoot = currentWorkspaceRootRef.current;
-                if (!currentRoot) {
-                  return false;
-                }
-                const ownership = resolveOwnership(
-                  currentRoot,
-                  candidate.path,
-                );
-                return Boolean(
-                  ownership && ownershipKey(ownership) === actionKey,
-                );
-              });
+        const selectedEntry: [string, EditorDocument] | undefined = capturedDocument
+          ? [activePath, capturedDocument]
+          : Object.entries(documentsRef.current).find(([, candidate]) => {
+              const currentRoot = currentWorkspaceRootRef.current;
+              if (!currentRoot) {
+                return false;
+              }
+              const ownership = resolveOwnership(currentRoot, candidate.path);
+              return Boolean(ownership && ownershipKey(ownership) === actionKey);
+            });
         if (!selectedEntry) {
           return;
         }
@@ -744,7 +680,9 @@ export function useExternalFileConflictLifecycle({
         const live = documentsRef.current[activePath];
         const expectedRevision = conflict.disk?.revision;
         if (conflict.kind !== "modified" || !live || !expectedRevision) {
-          failAction("Overwrite is available only for a modified file with a trusted disk revision.");
+          failAction(
+            "Overwrite is available only for a modified file with a trusted disk revision.",
+          );
           return;
         }
         try {
@@ -886,10 +824,7 @@ export function useExternalFileConflictLifecycle({
       if (requested === "followRename") {
         const nextPath = conflict.disk.path;
         const targetDocument = documentsRef.current[nextPath];
-        if (
-          targetDocument &&
-          (isDirty(targetDocument) || hasConflict(workspaceRoot, nextPath))
-        ) {
+        if (targetDocument && (isDirty(targetDocument) || hasConflict(workspaceRoot, nextPath))) {
           publish(
             actionOwnership,
             transitionExternalFileConflict(resolving, {
@@ -914,11 +849,7 @@ export function useExternalFileConflictLifecycle({
         nextDocuments[nextPath] = followed;
         documentsRef.current = nextDocuments;
         openPathsRef.current = Array.from(
-          new Set(
-            openPathsRef.current.map((path) =>
-              path === activePath ? nextPath : path,
-            ),
-          ),
+          new Set(openPathsRef.current.map((path) => (path === activePath ? nextPath : path))),
         );
         activeDocumentRef.current = followed;
         setDocuments(nextDocuments);
@@ -934,6 +865,7 @@ export function useExternalFileConflictLifecycle({
     [
       activeDocumentRef,
       activePath,
+      currentWorkspaceRootRef,
       documentsRef,
       hasConflict,
       handleFileChange,
@@ -980,9 +912,7 @@ export function useExternalFileConflictLifecycle({
     ? Object.entries(cacheRef.current).filter(([key, state]) => {
         const ownership = ownershipRef.current[key];
         return Boolean(
-          ownership &&
-            ownershipBelongsToRoot(workspaceRoot, ownership) &&
-            state.conflict,
+          ownership && ownershipBelongsToRoot(workspaceRoot, ownership) && state.conflict,
         );
       }).length
     : 0;

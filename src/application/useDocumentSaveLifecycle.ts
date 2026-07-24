@@ -13,16 +13,9 @@ import type { LocalHistoryGateway } from "../domain/localHistory";
 import { isJavaScriptTypeScriptLanguageServerDocument } from "../domain/languageServerDocumentSync";
 import type { WorkspaceSettings } from "../domain/settings";
 import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
-import {
-  isDirty,
-  readWorkspaceTextFileSnapshot,
-  workspaceRelativePath,
-} from "../domain/workspace";
+import { isDirty, readWorkspaceTextFileSnapshot, workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  ActiveDocumentSaveStore,
-  type DocumentSaveTarget,
-} from "./activeDocumentSaveStore";
+import { ActiveDocumentSaveStore, type DocumentSaveTarget } from "./activeDocumentSaveStore";
 import {
   DocumentSaveCoordinator,
   type DocumentSaveInvalidationScope,
@@ -38,10 +31,7 @@ import {
   runDocumentSaveParticipants,
   type DocumentSaveParticipant,
 } from "./documentSaveParticipants";
-import {
-  DocumentSaveService,
-  type DocumentSaveResult,
-} from "./documentSaveService";
+import { DocumentSaveService, type DocumentSaveResult } from "./documentSaveService";
 import type { DocumentSelfWriteLease } from "./documentSelfWriteCoordinator";
 
 export type { DocumentSaveResult } from "./documentSaveService";
@@ -64,14 +54,8 @@ export interface DocumentSaveLifecycleDependencies {
   workspaceFiles: WorkspaceFileGateway;
   resolveDocumentSaveOwnership?: ResolveDocumentSaveOwnership;
 
-  formattedContentForSave: (
-    document: EditorDocument,
-    requestedRoot: string,
-  ) => Promise<string>;
-  optimizedImportsContentForSave: (
-    document: EditorDocument,
-    content: string,
-  ) => string;
+  formattedContentForSave: (document: EditorDocument, requestedRoot: string) => Promise<string>;
+  optimizedImportsContentForSave: (document: EditorDocument, content: string) => string;
   organizedImportsContentForSave: (
     document: EditorDocument,
     content: string,
@@ -111,6 +95,7 @@ export interface DocumentSaveLifecycleDependencies {
   ) => void;
   runEslintAnalysisOnSave: (rootPath: string) => void;
   runPhpstanAnalysisOnSave: (rootPath: string) => void;
+  onDidSaveDocument?: (rootPath: string, document: EditorDocument) => void;
   saveParticipants?: readonly DocumentSaveParticipant[];
 }
 
@@ -166,13 +151,14 @@ export function useDocumentSaveLifecycle(
     detectSaveConflict = () => {},
     runEslintAnalysisOnSave,
     runPhpstanAnalysisOnSave,
+    onDidSaveDocument = () => undefined,
     saveParticipants,
   } = dependencies;
-  const documentSaveCoordinatorRef =
-    useRef<DocumentSaveCoordinator<DocumentSaveResult> | null>(null);
+  const documentSaveCoordinatorRef = useRef<DocumentSaveCoordinator<DocumentSaveResult> | null>(
+    null,
+  );
   if (!documentSaveCoordinatorRef.current) {
-    documentSaveCoordinatorRef.current =
-      new DocumentSaveCoordinator<DocumentSaveResult>();
+    documentSaveCoordinatorRef.current = new DocumentSaveCoordinator<DocumentSaveResult>();
   }
   const documentSaveCoordinator = documentSaveCoordinatorRef.current;
   const documentSaveCoordinatorEffectGenerationRef = useRef(0);
@@ -190,17 +176,15 @@ export function useDocumentSaveLifecycle(
     }
   }, []);
 
-  useEffect(
-    () => clearAnalysisOnSaveTimers,
-    [clearAnalysisOnSaveTimers, workspaceRoot],
-  );
+  useEffect(() => clearAnalysisOnSaveTimers, [clearAnalysisOnSaveTimers, workspaceRoot]);
 
   useEffect(() => {
-    const generation = ++documentSaveCoordinatorEffectGenerationRef.current;
+    const effectGenerationRef = documentSaveCoordinatorEffectGenerationRef;
+    const generation = ++effectGenerationRef.current;
 
     return () => {
       queueMicrotask(() => {
-        if (documentSaveCoordinatorEffectGenerationRef.current !== generation) {
+        if (effectGenerationRef.current !== generation) {
           return;
         }
 
@@ -212,8 +196,7 @@ export function useDocumentSaveLifecycle(
   const scheduleAnalysisOnSave = useCallback(
     (document: EditorDocument, requestedRoot: string) => {
       if (
-        (workspaceSettings.eslintAnalyseOnSave ||
-          workspaceSettings.eslintFixOnSave) &&
+        (workspaceSettings.eslintAnalyseOnSave || workspaceSettings.eslintFixOnSave) &&
         isJavaScriptTypeScriptLanguageServerDocument(document)
       ) {
         if (eslintAnalysisOnSaveTimerRef.current !== null) {
@@ -221,32 +204,19 @@ export function useDocumentSaveLifecycle(
         }
         eslintAnalysisOnSaveTimerRef.current = window.setTimeout(() => {
           eslintAnalysisOnSaveTimerRef.current = null;
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            )
-          ) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             return;
           }
           runEslintAnalysisOnSave(requestedRoot);
         }, 500);
       }
-      if (
-        workspaceSettings.phpstanAnalyseOnSave &&
-        document.language === "php"
-      ) {
+      if (workspaceSettings.phpstanAnalyseOnSave && document.language === "php") {
         if (phpstanAnalysisOnSaveTimerRef.current !== null) {
           window.clearTimeout(phpstanAnalysisOnSaveTimerRef.current);
         }
         phpstanAnalysisOnSaveTimerRef.current = window.setTimeout(() => {
           phpstanAnalysisOnSaveTimerRef.current = null;
-          if (
-            !workspaceRootKeysEqual(
-              currentWorkspaceRootRef.current,
-              requestedRoot,
-            )
-          ) {
+          if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
             return;
           }
           runPhpstanAnalysisOnSave(requestedRoot);
@@ -264,11 +234,7 @@ export function useDocumentSaveLifecycle(
   );
 
   const organizedContentForSaveWithParticipants = useCallback(
-    async (
-      document: EditorDocument,
-      content: string,
-      requestedRoot: string,
-    ): Promise<string> => {
+    async (document: EditorDocument, content: string, requestedRoot: string): Promise<string> => {
       const organizedContent = await organizedImportsContentForSave(
         document,
         content,
@@ -281,10 +247,7 @@ export function useDocumentSaveLifecycle(
       const requestToken = workspaceRequestTokenRef.current;
       const isStale = () =>
         workspaceRequestTokenRef.current !== requestToken ||
-        !workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          requestedRoot,
-        ) ||
+        !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot) ||
         documentsRef.current[document.path] !== document;
       const participantsRun = await runDocumentSaveParticipants({
         participants: saveParticipants,
@@ -326,11 +289,7 @@ export function useDocumentSaveLifecycle(
   // thrown. The absolute path is converted to a workspace-relative path so the
   // snapshot lands in the requested workspace's bucket only.
   const captureLocalHistorySnapshot = useCallback(
-    async (
-      requestedRoot: string,
-      absolutePath: string,
-      content: string,
-    ): Promise<void> => {
+    async (requestedRoot: string, absolutePath: string, content: string): Promise<void> => {
       const relativePath = workspaceRelativePath(requestedRoot, absolutePath);
 
       if (!relativePath) {
@@ -338,11 +297,7 @@ export function useDocumentSaveLifecycle(
       }
 
       try {
-        await localHistoryGateway.recordSnapshot(
-          requestedRoot,
-          relativePath,
-          content,
-        );
+        await localHistoryGateway.recordSnapshot(requestedRoot, relativePath, content);
       } catch (error) {
         console.error("Local History snapshot failed", error);
       }
@@ -378,17 +333,11 @@ export function useDocumentSaveLifecycle(
       }
       if (result.status === "conflict") {
         detectSaveConflict(requestedRoot, result.document, result.snapshot);
-        setMessage(
-          "The file changed on disk. Review the conflict before saving.",
-        );
+        setMessage("The file changed on disk. Review the conflict before saving.");
         return;
       }
       if (result.status === "partial" || result.status === "failed") {
-        reportErrorForActiveWorkspaceRoot(
-          requestedRoot,
-          "Save File",
-          result.error,
-        );
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "Save File", result.error);
         return;
       }
       if (result.status !== "saved" || !result.contentIsCurrent) {
@@ -396,20 +345,12 @@ export function useDocumentSaveLifecycle(
       }
 
       setMessage(`Saved ${result.document.name}`);
-      if (
-        result.persistence === "unchanged" &&
-        result.contentChanged === false
-      ) {
+      if (result.persistence === "unchanged" && result.contentChanged === false) {
         return;
       }
       scheduleAnalysisOnSave(result.document, requestedRoot);
     },
-    [
-      detectSaveConflict,
-      reportErrorForActiveWorkspaceRoot,
-      scheduleAnalysisOnSave,
-      setMessage,
-    ],
+    [detectSaveConflict, reportErrorForActiveWorkspaceRoot, scheduleAnalysisOnSave, setMessage],
   );
 
   const performDocumentSave = useCallback(
@@ -426,8 +367,7 @@ export function useDocumentSaveLifecycle(
       const service = new DocumentSaveService({
         workspaceFiles,
         saveStore: activeDocumentSaveStore,
-        invalidatePrefetch: (path) =>
-          filePrefetchCacheRef.current.invalidate(path),
+        invalidatePrefetch: (path) => filePrefetchCacheRef.current.invalidate(path),
         captureLocalHistorySnapshot,
         formattedContentForSave,
         optimizedImportsContentForSave,
@@ -442,18 +382,14 @@ export function useDocumentSaveLifecycle(
       if (!lease.isCurrent()) {
         return result;
       }
-      if (
-        workspaceRequestTokenRef.current !== identity.workspaceRequestToken
-      ) {
+      if (workspaceRequestTokenRef.current !== identity.workspaceRequestToken) {
         return result;
       }
-      if (
-        !workspaceRootKeysEqual(
-          currentWorkspaceRootRef.current,
-          identity.requestedRoot,
-        )
-      ) {
+      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, identity.requestedRoot)) {
         return result;
+      }
+      if (result.status === "saved" && result.persistence === "written") {
+        onDidSaveDocument(identity.requestedRoot, result.document);
       }
       presentSaveResult(identity.requestedRoot, result);
       return result;
@@ -466,6 +402,7 @@ export function useDocumentSaveLifecycle(
       hasExternalFileConflict,
       beginDocumentSelfWrite,
       optimizedImportsContentForSave,
+      onDidSaveDocument,
       organizedContentForSaveWithParticipants,
       presentSaveResult,
       resolveEditorConfigForFile,
@@ -494,9 +431,8 @@ export function useDocumentSaveLifecycle(
       if (!ownership) {
         return { status: "stale" };
       }
-      const outcome = await documentSaveCoordinator.request(
-        ownership,
-        (lease) => performDocumentSave(identity, lease),
+      const outcome = await documentSaveCoordinator.request(ownership, (lease) =>
+        performDocumentSave(identity, lease),
       );
       if (outcome.status !== "saved") {
         return { status: "stale" };
@@ -522,34 +458,27 @@ export function useDocumentSaveLifecycle(
     await saveDocument(document.path);
   }, [activeDocumentRef, saveDocument]);
 
-  const runWithDocumentSaveExclusion =
-    useCallback<RunWithDocumentSaveExclusion>(
-      (scope, operation) => {
-        const resolvedScope = resolveDocumentSaveInvalidationScope(
-          scope,
-          resolveDocumentSaveOwnership,
-        );
-        if (!resolvedScope) {
-          return Promise.reject(documentSaveOwnershipResolutionError(scope));
-        }
+  const runWithDocumentSaveExclusion = useCallback<RunWithDocumentSaveExclusion>(
+    (scope, operation) => {
+      const resolvedScope = resolveDocumentSaveInvalidationScope(
+        scope,
+        resolveDocumentSaveOwnership,
+      );
+      if (!resolvedScope) {
+        return Promise.reject(documentSaveOwnershipResolutionError(scope));
+      }
 
-        return documentSaveCoordinator.runWithExclusion(
-          resolvedScope,
-          operation,
-        );
-      },
-      [documentSaveCoordinator, resolveDocumentSaveOwnership],
-    );
+      return documentSaveCoordinator.runWithExclusion(resolvedScope, operation);
+    },
+    [documentSaveCoordinator, resolveDocumentSaveOwnership],
+  );
 
   const requestOwnerDocumentSave = useCallback(
     async (
       ownership: DocumentSaveOwnership,
       operation: (lease: DocumentSaveLease) => Promise<DocumentSaveResult>,
     ): Promise<DocumentSaveResult> => {
-      const outcome = await documentSaveCoordinator.request(
-        ownership,
-        operation,
-      );
+      const outcome = await documentSaveCoordinator.request(ownership, operation);
       if (outcome.status !== "saved") {
         return { status: "stale" };
       }
@@ -569,10 +498,7 @@ export function useDocumentSaveLifecycle(
         return Promise.reject(documentSaveOwnershipResolutionError(scope));
       }
 
-      return documentSaveCoordinator.runWithIssuedWriteDrain(
-        resolvedScope,
-        operation,
-      );
+      return documentSaveCoordinator.runWithIssuedWriteDrain(resolvedScope, operation);
     },
     [documentSaveCoordinator, resolveDocumentSaveOwnership],
   );
@@ -596,11 +522,7 @@ export function useDocumentSaveLifecycle(
       return;
     }
 
-    if (
-      !activeDocument ||
-      activeDocument.readOnly ||
-      !isDirty(activeDocument)
-    ) {
+    if (!activeDocument || activeDocument.readOnly || !isDirty(activeDocument)) {
       return;
     }
 
@@ -655,8 +577,6 @@ function resolveDocumentSaveInvalidationScope(
   return { kind: scope.kind, ...ownership };
 }
 
-function documentSaveOwnershipResolutionError(
-  scope: DocumentSaveInvalidationScope,
-): Error {
+function documentSaveOwnershipResolutionError(scope: DocumentSaveInvalidationScope): Error {
   return new Error(`Cannot resolve document save ${scope.kind} ownership.`);
 }

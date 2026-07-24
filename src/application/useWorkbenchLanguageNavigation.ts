@@ -1,9 +1,4 @@
-import {
-  useCallback,
-  useRef,
-  useState,
-  type MutableRefObject,
-} from "react";
+import { useCallback, useRef, useState, type MutableRefObject } from "react";
 import type { NavigationLocation } from "../domain/navigation";
 import {
   implementationChooserTitle,
@@ -51,9 +46,7 @@ interface OpenNavigationOptions {
 
 export interface WorkbenchImplementationChooserState {
   implementationChooser: ImplementationChooserState | null;
-  setImplementationChooser: (
-    chooser: ImplementationChooserState | null,
-  ) => void;
+  setImplementationChooser: (chooser: ImplementationChooserState | null) => void;
 }
 
 export interface WorkbenchLanguageNavigationDependencies {
@@ -67,27 +60,15 @@ export interface WorkbenchLanguageNavigationDependencies {
   isLanguageServerDocumentRequestLeaseCurrent: (
     lease: LanguageServerDocumentRequestLease,
   ) => boolean;
-  flushPendingJavaScriptTypeScriptDocumentChange: (
-    path: string,
-  ) => Promise<void>;
-  goToContextualPhpDefinition: (
-    request?: NavigationRequest,
-  ) => Promise<boolean>;
+  flushPendingJavaScriptTypeScriptDocumentChange: (path: string) => Promise<void>;
+  goToContextualPhpDefinition: (request?: NavigationRequest) => Promise<boolean>;
   goToIndexedPhpImplementation: (
     position?: EditorPosition,
     request?: NavigationRequest,
   ) => Promise<boolean>;
-  goToIndexedSymbolDefinition: (
-    request?: NavigationRequest,
-  ) => Promise<boolean>;
-  identifierAtEditorPosition: (
-    source: string,
-    position: EditorPosition,
-  ) => string | null;
-  documentOffsetAtEditorPosition: (
-    source: string,
-    position: EditorPosition,
-  ) => number;
+  goToIndexedSymbolDefinition: (request?: NavigationRequest) => Promise<boolean>;
+  identifierAtEditorPosition: (source: string, position: EditorPosition) => string | null;
+  documentOffsetAtEditorPosition: (source: string, position: EditorPosition) => number;
   isJavaScriptTypeScriptLanguageServerSessionActiveForRoot: (
     rootPath: string,
     sessionId: number,
@@ -105,10 +86,7 @@ export interface WorkbenchLanguageNavigationDependencies {
   languageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   languageServerRuntimeStatusRoot: string | null;
   latencyTrackerForRoot: (rootPath: string) => LatencyTracker;
-  openPathForNavigation: (
-    path: string,
-    options?: OpenNavigationOptions,
-  ) => Promise<boolean>;
+  openPathForNavigation: (path: string, options?: OpenNavigationOptions) => Promise<boolean>;
   provideBladeDefinition: (
     source: string,
     offset: number,
@@ -139,14 +117,10 @@ export interface WorkbenchLanguageNavigationDependencies {
     error: unknown,
   ) => void;
   currentNavigationLocation: () => NavigationLocation | null;
-  recordNavigationLocationSnapshot: (
-    location: NavigationLocation | null,
-  ) => void;
+  recordNavigationLocationSnapshot: (location: NavigationLocation | null) => void;
   resolveCurrentWorkspaceRuntimeOwner: () => WorkspaceRuntimeOwner | null;
   setEditorRevealTarget: (target: EditorRevealTarget | null) => void;
-  setImplementationChooser: (
-    chooser: ImplementationChooserState | null,
-  ) => void;
+  setImplementationChooser: (chooser: ImplementationChooserState | null) => void;
   setMessage: (message: string | null) => void;
   workspaceFiles: WorkspaceFileGateway;
   workspaceRoot: string | null;
@@ -182,8 +156,7 @@ export interface WorkbenchLanguageNavigation {
   openImplementationTarget: (target: ImplementationTarget) => Promise<void>;
 }
 
-export function useWorkbenchImplementationChooserState():
-  WorkbenchImplementationChooserState {
+export function useWorkbenchImplementationChooserState(): WorkbenchImplementationChooserState {
   const [implementationChooser, setImplementationChooser] =
     useState<ImplementationChooserState | null>(null);
 
@@ -233,9 +206,7 @@ export function useWorkbenchLanguageNavigation(
     workspaceFiles,
     workspaceRoot,
   } = dependencies;
-  const implementationChooserCommitPredicateRef = useRef<
-    (() => boolean) | null
-  >(null);
+  const implementationChooserCommitPredicateRef = useRef<(() => boolean) | null>(null);
 
   const implementationTargetsFromLocations = useCallback(
     async (
@@ -254,8 +225,7 @@ export function useWorkbenchLanguageNavigation(
 
         if (path) {
           try {
-            source =
-              documents[path]?.content ?? (await workspaceFiles.readTextFile(path));
+            source = documents[path]?.content ?? (await workspaceFiles.readTextFile(path));
           } catch {
             source = null;
           }
@@ -319,9 +289,7 @@ export function useWorkbenchLanguageNavigation(
 
       recordNavigationLocationSnapshot(previousLocation);
       setEditorRevealTarget({ path, position });
-      setMessage(
-        `Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`,
-      );
+      setMessage(`Opened ${label} ${getFileName(path)}:${position.lineNumber}:${position.column}`);
       return true;
     },
     [
@@ -335,16 +303,13 @@ export function useWorkbenchLanguageNavigation(
 
   const openImplementationTarget = useCallback(
     async (target: ImplementationTarget) => {
-      const ownerFence = captureWorkspaceRuntimeOwnerFence(
-        resolveCurrentWorkspaceRuntimeOwner,
-      );
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
       if (!ownerFence) {
         return;
       }
 
-      const chooserShouldCommit =
-        implementationChooserCommitPredicateRef.current;
+      const chooserShouldCommit = implementationChooserCommitPredicateRef.current;
       const shouldCommit = () => {
         if (!ownerFence.isCurrent()) {
           return false;
@@ -363,10 +328,7 @@ export function useWorkbenchLanguageNavigation(
         target.label,
         {
           readOnly: workspaceRoot
-            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                workspaceRoot,
-                target.path,
-              )
+            ? shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(workspaceRoot, target.path)
             : false,
           shouldCommit,
         },
@@ -388,456 +350,416 @@ export function useWorkbenchLanguageNavigation(
     ],
   );
 
-  const goToLanguageServerLocation = useCallback(async (
-    feature: Extract<
-      LanguageServerFeature,
-      "declaration" | "definition" | "implementation" | "typeDefinition"
-    >,
-    label: string,
-    ownerFence: WorkspaceRuntimeOwnerFence,
-    requestedPosition?: EditorPosition,
-  ): Promise<boolean> => {
-    const document = activeDocumentRef.current;
-    const requestedRoot = workspaceRoot;
-    const runtimeStatus = languageServerRuntimeStatus;
-    const runtimeStatusRoot = languageServerRuntimeStatusRoot;
+  const goToLanguageServerLocation = useCallback(
+    async (
+      feature: Extract<
+        LanguageServerFeature,
+        "declaration" | "definition" | "implementation" | "typeDefinition"
+      >,
+      label: string,
+      ownerFence: WorkspaceRuntimeOwnerFence,
+      requestedPosition?: EditorPosition,
+    ): Promise<boolean> => {
+      const document = activeDocumentRef.current;
+      const requestedRoot = workspaceRoot;
+      const runtimeStatus = languageServerRuntimeStatus;
+      const runtimeStatusRoot = languageServerRuntimeStatusRoot;
 
-    if (!document || !requestedRoot || !isLanguageServerDocument(document)) {
-      return false;
-    }
-
-    if (
-      !isRunningLanguageServerForWorkspace(
-        runtimeStatus,
-        runtimeStatusRoot,
-        requestedRoot,
-      )
-    ) {
-      return false;
-    }
-
-    if (!canUseLanguageServerFeature(runtimeStatus.capabilities, feature)) {
-      return false;
-    }
-
-    const requestedSessionId = runtimeStatus.sessionId;
-    const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      return false;
-    }
-
-    const requestedPath = document.path;
-    const isRequestedSessionActive = () =>
-      ownerFence.isCurrent() &&
-      isLanguageServerSessionActiveForRoot(
-        requestedRoot,
-        requestedSessionId,
-        ownerFence.owner,
-      );
-
-    if (feature === "implementation") {
-      implementationChooserCommitPredicateRef.current = null;
-      setImplementationChooser(null);
-    }
-
-    try {
-      const documentLease = await requestLanguageServerDocumentLease(
-        requestedRoot,
-        requestedPath,
-      );
-
-      if (!documentLease) {
+      if (!document || !requestedRoot || !isLanguageServerDocument(document)) {
         return false;
       }
 
-      const isDocumentRequestCurrent = () =>
-        isRequestedSessionActive() &&
-        isLanguageServerDocumentRequestLeaseCurrent(documentLease);
-
-      if (!isDocumentRequestCurrent()) {
+      if (!isRunningLanguageServerForWorkspace(runtimeStatus, runtimeStatusRoot, requestedRoot)) {
         return false;
       }
 
-      if (activeDocumentRef.current?.path !== requestedPath) {
+      if (!canUseLanguageServerFeature(runtimeStatus.capabilities, feature)) {
         return false;
       }
 
-      const locations =
-        feature === "definition"
-          ? await measureLatency(
-              latencyTrackerForRoot(requestedRoot),
-              "definition",
-              () =>
-                languageServerFeaturesGateway[feature](
-                  requestedRoot,
-                  toLanguageServerTextDocumentPosition(
-                    requestedPath,
-                    editorPosition,
-                  ),
-                ),
-            )
-          : await languageServerFeaturesGateway[feature](
-              requestedRoot,
-              toLanguageServerTextDocumentPosition(
-                requestedPath,
-                editorPosition,
-              ),
-            );
+      const requestedSessionId = runtimeStatus.sessionId;
+      const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
-      if (!isDocumentRequestCurrent()) {
+      if (!editorPosition) {
         return false;
       }
 
-      const symbolName = identifierAtEditorPosition(
-        document.content,
-        editorPosition,
-      );
+      const requestedPath = document.path;
+      const isRequestedSessionActive = () =>
+        ownerFence.isCurrent() &&
+        isLanguageServerSessionActiveForRoot(requestedRoot, requestedSessionId, ownerFence.owner);
 
-      if (feature === "implementation" && locations.length > 1) {
-        const targets = await implementationTargetsFromLocations(
-          locations,
-          isDocumentRequestCurrent,
+      if (feature === "implementation") {
+        implementationChooserCommitPredicateRef.current = null;
+        setImplementationChooser(null);
+      }
+
+      try {
+        const documentLease = await requestLanguageServerDocumentLease(
+          requestedRoot,
+          requestedPath,
         );
+
+        if (!documentLease) {
+          return false;
+        }
+
+        const isDocumentRequestCurrent = () =>
+          isRequestedSessionActive() && isLanguageServerDocumentRequestLeaseCurrent(documentLease);
 
         if (!isDocumentRequestCurrent()) {
           return false;
         }
 
-        if (targets.length > 1) {
-          implementationChooserCommitPredicateRef.current =
-            isDocumentRequestCurrent;
-          setImplementationChooser({
-            targets,
-            title: implementationChooserTitle(symbolName),
-          });
-          return true;
+        if (activeDocumentRef.current?.path !== requestedPath) {
+          return false;
         }
 
-        const [onlyTarget] = targets;
+        const locations =
+          feature === "definition"
+            ? await measureLatency(latencyTrackerForRoot(requestedRoot), "definition", () =>
+                languageServerFeaturesGateway[feature](
+                  requestedRoot,
+                  toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+                ),
+              )
+            : await languageServerFeaturesGateway[feature](
+                requestedRoot,
+                toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+              );
 
-        if (onlyTarget) {
+        if (!isDocumentRequestCurrent()) {
+          return false;
+        }
+
+        const symbolName = identifierAtEditorPosition(document.content, editorPosition);
+
+        if (feature === "implementation" && locations.length > 1) {
+          const targets = await implementationTargetsFromLocations(
+            locations,
+            isDocumentRequestCurrent,
+          );
+
           if (!isDocumentRequestCurrent()) {
             return false;
           }
 
-          const opened = await openNavigationTargetPath(
-            onlyTarget.path,
-            onlyTarget.position,
-            onlyTarget.label,
-            {
-              readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-                requestedRoot,
-                onlyTarget.path,
-              ),
-              shouldCommit: isDocumentRequestCurrent,
-            },
-            ownerFence,
-          );
-
-          if (!opened || !isRequestedSessionActive()) {
-            return false;
+          if (targets.length > 1) {
+            implementationChooserCommitPredicateRef.current = isDocumentRequestCurrent;
+            setImplementationChooser({
+              targets,
+              title: implementationChooserTitle(symbolName),
+            });
+            return true;
           }
 
-          setImplementationChooser(null);
-          return true;
+          const [onlyTarget] = targets;
+
+          if (onlyTarget) {
+            if (!isDocumentRequestCurrent()) {
+              return false;
+            }
+
+            const opened = await openNavigationTargetPath(
+              onlyTarget.path,
+              onlyTarget.position,
+              onlyTarget.label,
+              {
+                readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+                  requestedRoot,
+                  onlyTarget.path,
+                ),
+                shouldCommit: isDocumentRequestCurrent,
+              },
+              ownerFence,
+            );
+
+            if (!opened || !isRequestedSessionActive()) {
+              return false;
+            }
+
+            setImplementationChooser(null);
+            return true;
+          }
         }
+
+        const [target] = locations;
+
+        if (!target) {
+          return false;
+        }
+
+        if (!isRequestedSessionActive()) {
+          return false;
+        }
+
+        const targetPath = pathFromLanguageServerUri(target.uri);
+
+        if (!targetPath) {
+          setMessage(`Could not open ${label} target.`);
+          return false;
+        }
+
+        const previousLocation = currentNavigationLocation();
+        const opened = await openPathForNavigation(targetPath, {
+          shouldCommit: isDocumentRequestCurrent,
+        });
+
+        if (!opened) {
+          return false;
+        }
+
+        if (!isRequestedSessionActive()) {
+          return false;
+        }
+
+        recordNavigationLocationSnapshot(previousLocation);
+        const targetPosition = toEditorPosition(target.range.start);
+        setEditorRevealTarget({
+          path: targetPath,
+          position: targetPosition,
+        });
+        setMessage(
+          `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+        );
+        return true;
+      } catch (error) {
+        if (!isRequestedSessionActive()) {
+          return false;
+        }
+
+        reportLanguageServerErrorForActiveWorkspaceRoot(requestedRoot, error);
+        return false;
       }
+    },
+    [
+      activeDocumentRef,
+      activeEditorPositionRef,
+      identifierAtEditorPosition,
+      implementationTargetsFromLocations,
+      isLanguageServerDocumentRequestLeaseCurrent,
+      isLanguageServerSessionActiveForRoot,
+      languageServerFeaturesGateway,
+      languageServerRuntimeStatus,
+      languageServerRuntimeStatusRoot,
+      latencyTrackerForRoot,
+      openNavigationTargetPath,
+      openPathForNavigation,
+      currentNavigationLocation,
+      recordNavigationLocationSnapshot,
+      requestLanguageServerDocumentLease,
+      reportLanguageServerErrorForActiveWorkspaceRoot,
+      setEditorRevealTarget,
+      setImplementationChooser,
+      setMessage,
+      workspaceRoot,
+    ],
+  );
 
-      const [target] = locations;
+  const goToJavaScriptTypeScriptLanguageServerLocation = useCallback(
+    async (
+      feature: Extract<
+        LanguageServerFeature,
+        "declaration" | "definition" | "implementation" | "sourceDefinition" | "typeDefinition"
+      >,
+      label: string,
+      ownerFence: WorkspaceRuntimeOwnerFence,
+      requestedPosition?: EditorPosition,
+    ): Promise<boolean> => {
+      const document = activeDocumentRef.current;
+      const requestedRoot = workspaceRoot;
+      const runtimeStatus = javaScriptTypeScriptLanguageServerRuntimeStatus;
+      const runtimeStatusRoot = javaScriptTypeScriptLanguageServerRuntimeStatusRoot;
 
-      if (!target) {
+      if (!document || !requestedRoot || !isJavaScriptTypeScriptLanguageServerDocument(document)) {
         return false;
       }
 
-      if (!isRequestedSessionActive()) {
+      if (!isRunningLanguageServerForWorkspace(runtimeStatus, runtimeStatusRoot, requestedRoot)) {
         return false;
       }
 
-      const targetPath = pathFromLanguageServerUri(target.uri);
-
-      if (!targetPath) {
-        setMessage(`Could not open ${label} target.`);
+      if (!canUseLanguageServerFeature(runtimeStatus.capabilities, feature)) {
         return false;
       }
 
-      const previousLocation = currentNavigationLocation();
-      const opened = await openPathForNavigation(targetPath, {
-        shouldCommit: isDocumentRequestCurrent,
-      });
+      const requestedSessionId = runtimeStatus.sessionId;
+      const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
 
-      if (!opened) {
+      if (!editorPosition) {
         return false;
       }
 
-      if (!isRequestedSessionActive()) {
-        return false;
-      }
-
-      recordNavigationLocationSnapshot(previousLocation);
-      const targetPosition = toEditorPosition(target.range.start);
-      setEditorRevealTarget({
-        path: targetPath,
-        position: targetPosition,
-      });
-      setMessage(
-        `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
-      );
-      return true;
-    } catch (error) {
-      if (!isRequestedSessionActive()) {
-        return false;
-      }
-
-      reportLanguageServerErrorForActiveWorkspaceRoot(requestedRoot, error);
-      return false;
-    }
-  }, [
-    activeDocumentRef,
-    activeEditorPositionRef,
-    implementationTargetsFromLocations,
-    isLanguageServerDocumentRequestLeaseCurrent,
-    isLanguageServerSessionActiveForRoot,
-    languageServerFeaturesGateway,
-    languageServerRuntimeStatus,
-    languageServerRuntimeStatusRoot,
-    latencyTrackerForRoot,
-    openNavigationTargetPath,
-    openPathForNavigation,
-    currentNavigationLocation,
-    recordNavigationLocationSnapshot,
-    requestLanguageServerDocumentLease,
-    reportLanguageServerErrorForActiveWorkspaceRoot,
-    setEditorRevealTarget,
-    setImplementationChooser,
-    setMessage,
-    workspaceRoot,
-  ]);
-
-  const goToJavaScriptTypeScriptLanguageServerLocation = useCallback(async (
-    feature: Extract<
-      LanguageServerFeature,
-      | "declaration"
-      | "definition"
-      | "implementation"
-      | "sourceDefinition"
-      | "typeDefinition"
-    >,
-    label: string,
-    ownerFence: WorkspaceRuntimeOwnerFence,
-    requestedPosition?: EditorPosition,
-  ): Promise<boolean> => {
-    const document = activeDocumentRef.current;
-    const requestedRoot = workspaceRoot;
-    const runtimeStatus = javaScriptTypeScriptLanguageServerRuntimeStatus;
-    const runtimeStatusRoot = javaScriptTypeScriptLanguageServerRuntimeStatusRoot;
-
-    if (
-      !document ||
-      !requestedRoot ||
-      !isJavaScriptTypeScriptLanguageServerDocument(document)
-    ) {
-      return false;
-    }
-
-    if (
-      !isRunningLanguageServerForWorkspace(
-        runtimeStatus,
-        runtimeStatusRoot,
-        requestedRoot,
-      )
-    ) {
-      return false;
-    }
-
-    if (!canUseLanguageServerFeature(runtimeStatus.capabilities, feature)) {
-      return false;
-    }
-
-    const requestedSessionId = runtimeStatus.sessionId;
-    const editorPosition = requestedPosition ?? activeEditorPositionRef.current;
-
-    if (!editorPosition) {
-      return false;
-    }
-
-    const requestedPath = document.path;
-    const isRequestedJavaScriptTypeScriptSessionActive = () =>
-      ownerFence.isCurrent() &&
-      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
-        requestedRoot,
-        requestedSessionId,
-        ownerFence.owner,
-      );
-
-    if (feature === "implementation") {
-      implementationChooserCommitPredicateRef.current = null;
-      setImplementationChooser(null);
-    }
-
-    try {
-      await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      if (activeDocumentRef.current?.path !== requestedPath) {
-        return false;
-      }
-
-      const locations =
-        await javaScriptTypeScriptLanguageServerFeaturesGateway[feature](
+      const requestedPath = document.path;
+      const isRequestedJavaScriptTypeScriptSessionActive = () =>
+        ownerFence.isCurrent() &&
+        isJavaScriptTypeScriptLanguageServerSessionActiveForRoot(
           requestedRoot,
-          toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
+          requestedSessionId,
+          ownerFence.owner,
         );
 
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
+      if (feature === "implementation") {
+        implementationChooserCommitPredicateRef.current = null;
+        setImplementationChooser(null);
       }
 
-      const symbolName = identifierAtEditorPosition(
-        document.content,
-        editorPosition,
-      );
+      try {
+        await flushPendingJavaScriptTypeScriptDocumentChange(requestedPath);
 
-      if (feature === "implementation" && locations.length > 1) {
-        const targets = await implementationTargetsFromLocations(
-          locations,
-          isRequestedJavaScriptTypeScriptSessionActive,
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return false;
+        }
+
+        if (activeDocumentRef.current?.path !== requestedPath) {
+          return false;
+        }
+
+        const locations = await javaScriptTypeScriptLanguageServerFeaturesGateway[feature](
+          requestedRoot,
+          toLanguageServerTextDocumentPosition(requestedPath, editorPosition),
         );
 
         if (!isRequestedJavaScriptTypeScriptSessionActive()) {
           return false;
         }
 
-        if (targets.length > 1) {
-          implementationChooserCommitPredicateRef.current =
-            isRequestedJavaScriptTypeScriptSessionActive;
-          setImplementationChooser({
-            targets,
-            title: implementationChooserTitle(symbolName),
-          });
-          return true;
-        }
+        const symbolName = identifierAtEditorPosition(document.content, editorPosition);
 
-        const [onlyTarget] = targets;
-
-        if (onlyTarget) {
-          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-            return false;
-          }
-
-          const previousLocation = currentNavigationLocation();
-          const opened = await openPathForNavigation(onlyTarget.path, {
-            readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-              requestedRoot,
-              onlyTarget.path,
-            ),
-            shouldCommit: isRequestedJavaScriptTypeScriptSessionActive,
-          });
-
-          if (!opened) {
-            return false;
-          }
-
-          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-            return false;
-          }
-
-          recordNavigationLocationSnapshot(previousLocation);
-          setImplementationChooser(null);
-          setEditorRevealTarget({
-            path: onlyTarget.path,
-            position: onlyTarget.position,
-          });
-          const targetPosition = onlyTarget.position;
-          setMessage(
-            `Opened ${onlyTarget.label} ${getFileName(onlyTarget.path)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+        if (feature === "implementation" && locations.length > 1) {
+          const targets = await implementationTargetsFromLocations(
+            locations,
+            isRequestedJavaScriptTypeScriptSessionActive,
           );
-          return true;
+
+          if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+            return false;
+          }
+
+          if (targets.length > 1) {
+            implementationChooserCommitPredicateRef.current =
+              isRequestedJavaScriptTypeScriptSessionActive;
+            setImplementationChooser({
+              targets,
+              title: implementationChooserTitle(symbolName),
+            });
+            return true;
+          }
+
+          const [onlyTarget] = targets;
+
+          if (onlyTarget) {
+            if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+              return false;
+            }
+
+            const previousLocation = currentNavigationLocation();
+            const opened = await openPathForNavigation(onlyTarget.path, {
+              readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+                requestedRoot,
+                onlyTarget.path,
+              ),
+              shouldCommit: isRequestedJavaScriptTypeScriptSessionActive,
+            });
+
+            if (!opened) {
+              return false;
+            }
+
+            if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+              return false;
+            }
+
+            recordNavigationLocationSnapshot(previousLocation);
+            setImplementationChooser(null);
+            setEditorRevealTarget({
+              path: onlyTarget.path,
+              position: onlyTarget.position,
+            });
+            const targetPosition = onlyTarget.position;
+            setMessage(
+              `Opened ${onlyTarget.label} ${getFileName(onlyTarget.path)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+            );
+            return true;
+          }
         }
-      }
 
-      const [target] = locations;
+        const [target] = locations;
 
-      if (!target) {
+        if (!target) {
+          return false;
+        }
+
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return false;
+        }
+
+        const targetPath = pathFromLanguageServerUri(target.uri);
+
+        if (!targetPath) {
+          setMessage(`Could not open ${label} target.`);
+          return false;
+        }
+
+        const previousLocation = currentNavigationLocation();
+        const opened = await openPathForNavigation(targetPath, {
+          readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
+            requestedRoot,
+            targetPath,
+          ),
+          shouldCommit: isRequestedJavaScriptTypeScriptSessionActive,
+        });
+
+        if (!opened) {
+          return false;
+        }
+
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return false;
+        }
+
+        recordNavigationLocationSnapshot(previousLocation);
+        const targetPosition = toEditorPosition(target.range.start);
+        setEditorRevealTarget({
+          path: targetPath,
+          position: targetPosition,
+        });
+        setMessage(
+          `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
+        );
+        return true;
+      } catch (error) {
+        if (!isRequestedJavaScriptTypeScriptSessionActive()) {
+          return false;
+        }
+
+        reportErrorForActiveWorkspaceRoot(requestedRoot, "JavaScript/TypeScript", error);
         return false;
       }
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      const targetPath = pathFromLanguageServerUri(target.uri);
-
-      if (!targetPath) {
-        setMessage(`Could not open ${label} target.`);
-        return false;
-      }
-
-      const previousLocation = currentNavigationLocation();
-      const opened = await openPathForNavigation(targetPath, {
-        readOnly: shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
-          requestedRoot,
-          targetPath,
-        ),
-        shouldCommit: isRequestedJavaScriptTypeScriptSessionActive,
-      });
-
-      if (!opened) {
-        return false;
-      }
-
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      recordNavigationLocationSnapshot(previousLocation);
-      const targetPosition = toEditorPosition(target.range.start);
-      setEditorRevealTarget({
-        path: targetPath,
-        position: targetPosition,
-      });
-      setMessage(
-        `Opened ${label} ${getFileName(targetPath)}:${targetPosition.lineNumber}:${targetPosition.column}`,
-      );
-      return true;
-    } catch (error) {
-      if (!isRequestedJavaScriptTypeScriptSessionActive()) {
-        return false;
-      }
-
-      reportErrorForActiveWorkspaceRoot(
-        requestedRoot,
-        "JavaScript/TypeScript",
-        error,
-      );
-      return false;
-    }
-  }, [
-    activeDocumentRef,
-    activeEditorPositionRef,
-    flushPendingJavaScriptTypeScriptDocumentChange,
-    implementationTargetsFromLocations,
-    isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
-    javaScriptTypeScriptLanguageServerFeaturesGateway,
-    javaScriptTypeScriptLanguageServerRuntimeStatus,
-    javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-    openPathForNavigation,
-    currentNavigationLocation,
-    recordNavigationLocationSnapshot,
-    reportErrorForActiveWorkspaceRoot,
-    setEditorRevealTarget,
-    setImplementationChooser,
-    setMessage,
-    workspaceRoot,
-  ]);
+    },
+    [
+      activeDocumentRef,
+      activeEditorPositionRef,
+      flushPendingJavaScriptTypeScriptDocumentChange,
+      identifierAtEditorPosition,
+      implementationTargetsFromLocations,
+      isJavaScriptTypeScriptLanguageServerSessionActiveForRoot,
+      javaScriptTypeScriptLanguageServerFeaturesGateway,
+      javaScriptTypeScriptLanguageServerRuntimeStatus,
+      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+      openPathForNavigation,
+      currentNavigationLocation,
+      recordNavigationLocationSnapshot,
+      reportErrorForActiveWorkspaceRoot,
+      setEditorRevealTarget,
+      setImplementationChooser,
+      setMessage,
+      workspaceRoot,
+    ],
+  );
 
   const goToDefinition = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
@@ -863,15 +785,10 @@ export function useWorkbenchLanguageNavigation(
     }
 
     if (document?.path.endsWith(".latte") && editorPosition) {
-      const offset = documentOffsetAtEditorPosition(
-        document.content,
-        editorPosition,
-      );
-      const latteDefinition = await provideLatteDefinitionOutcome(
-        document.content,
-        offset,
-        { canNavigate: ownerFence.isCurrent },
-      );
+      const offset = documentOffsetAtEditorPosition(document.content, editorPosition);
+      const latteDefinition = await provideLatteDefinitionOutcome(document.content, offset, {
+        canNavigate: ownerFence.isCurrent,
+      });
 
       if (!ownerFence.isCurrent()) {
         return;
@@ -898,12 +815,11 @@ export function useWorkbenchLanguageNavigation(
       }
     }
 
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "definition",
-        "definition",
-        ownerFence,
-      );
+    const openedJavaScriptTypeScriptTarget = await goToJavaScriptTypeScriptLanguageServerLocation(
+      "definition",
+      "definition",
+      ownerFence,
+    );
 
     if (!ownerFence.isCurrent()) {
       return;
@@ -974,9 +890,7 @@ export function useWorkbenchLanguageNavigation(
   ]);
 
   const goToSourceDefinition = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
@@ -987,26 +901,20 @@ export function useWorkbenchLanguageNavigation(
       "source definition",
       ownerFence,
     );
-  }, [
-    goToJavaScriptTypeScriptLanguageServerLocation,
-    resolveCurrentWorkspaceRuntimeOwner,
-  ]);
+  }, [goToJavaScriptTypeScriptLanguageServerLocation, resolveCurrentWorkspaceRuntimeOwner]);
 
   const goToDeclaration = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
     }
 
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "declaration",
-        "declaration",
-        ownerFence,
-      );
+    const openedJavaScriptTypeScriptTarget = await goToJavaScriptTypeScriptLanguageServerLocation(
+      "declaration",
+      "declaration",
+      ownerFence,
+    );
 
     if (!ownerFence.isCurrent()) {
       return;
@@ -1016,11 +924,7 @@ export function useWorkbenchLanguageNavigation(
       return;
     }
 
-    await goToLanguageServerLocation(
-      "declaration",
-      "declaration",
-      ownerFence,
-    );
+    await goToLanguageServerLocation("declaration", "declaration", ownerFence);
   }, [
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
@@ -1028,20 +932,17 @@ export function useWorkbenchLanguageNavigation(
   ]);
 
   const goToTypeDefinition = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
     }
 
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "typeDefinition",
-        "type definition",
-        ownerFence,
-      );
+    const openedJavaScriptTypeScriptTarget = await goToJavaScriptTypeScriptLanguageServerLocation(
+      "typeDefinition",
+      "type definition",
+      ownerFence,
+    );
 
     if (!ownerFence.isCurrent()) {
       return;
@@ -1051,11 +952,7 @@ export function useWorkbenchLanguageNavigation(
       return;
     }
 
-    await goToLanguageServerLocation(
-      "typeDefinition",
-      "type definition",
-      ownerFence,
-    );
+    await goToLanguageServerLocation("typeDefinition", "type definition", ownerFence);
   }, [
     goToJavaScriptTypeScriptLanguageServerLocation,
     goToLanguageServerLocation,
@@ -1063,20 +960,17 @@ export function useWorkbenchLanguageNavigation(
   ]);
 
   const goToImplementation = useCallback(async () => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+    const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
     if (!ownerFence) {
       return;
     }
 
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
-        "implementation",
-        "implementation",
-        ownerFence,
-      );
+    const openedJavaScriptTypeScriptTarget = await goToJavaScriptTypeScriptLanguageServerLocation(
+      "implementation",
+      "implementation",
+      ownerFence,
+    );
 
     if (!ownerFence.isCurrent()) {
       return;
@@ -1110,55 +1004,55 @@ export function useWorkbenchLanguageNavigation(
     resolveCurrentWorkspaceRuntimeOwner,
   ]);
 
-  const goToImplementationAt = useCallback(async (position: EditorPosition) => {
-    const ownerFence = captureWorkspaceRuntimeOwnerFence(
-      resolveCurrentWorkspaceRuntimeOwner,
-    );
+  const goToImplementationAt = useCallback(
+    async (position: EditorPosition) => {
+      const ownerFence = captureWorkspaceRuntimeOwnerFence(resolveCurrentWorkspaceRuntimeOwner);
 
-    if (!ownerFence) {
-      return;
-    }
+      if (!ownerFence) {
+        return;
+      }
 
-    const openedJavaScriptTypeScriptTarget =
-      await goToJavaScriptTypeScriptLanguageServerLocation(
+      const openedJavaScriptTypeScriptTarget = await goToJavaScriptTypeScriptLanguageServerLocation(
         "implementation",
         "implementation",
         ownerFence,
         position,
       );
 
-    if (!ownerFence.isCurrent()) {
-      return;
-    }
+      if (!ownerFence.isCurrent()) {
+        return;
+      }
 
-    if (openedJavaScriptTypeScriptTarget) {
-      return;
-    }
+      if (openedJavaScriptTypeScriptTarget) {
+        return;
+      }
 
-    const openedLanguageServerTarget = await goToLanguageServerLocation(
-      "implementation",
-      "implementation",
-      ownerFence,
-      position,
-    );
+      const openedLanguageServerTarget = await goToLanguageServerLocation(
+        "implementation",
+        "implementation",
+        ownerFence,
+        position,
+      );
 
-    if (!ownerFence.isCurrent()) {
-      return;
-    }
+      if (!ownerFence.isCurrent()) {
+        return;
+      }
 
-    if (openedLanguageServerTarget) {
-      return;
-    }
+      if (openedLanguageServerTarget) {
+        return;
+      }
 
-    await goToIndexedPhpImplementation(position, {
-      canNavigate: ownerFence.isCurrent,
-    });
-  }, [
-    goToIndexedPhpImplementation,
-    goToJavaScriptTypeScriptLanguageServerLocation,
-    goToLanguageServerLocation,
-    resolveCurrentWorkspaceRuntimeOwner,
-  ]);
+      await goToIndexedPhpImplementation(position, {
+        canNavigate: ownerFence.isCurrent,
+      });
+    },
+    [
+      goToIndexedPhpImplementation,
+      goToJavaScriptTypeScriptLanguageServerLocation,
+      goToLanguageServerLocation,
+      resolveCurrentWorkspaceRuntimeOwner,
+    ],
+  );
 
   return {
     goToDeclaration,
@@ -1192,22 +1086,16 @@ function isLanguageServerStatusForWorkspace(
     return false;
   }
 
-  const rootedStatus =
-    status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
+  const rootedStatus = status.rootPath ?? (status.kind === "stopped" ? statusRoot : null);
 
-  return (
-    Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot)
-  );
+  return Boolean(rootedStatus) && workspaceRootKeysEqual(rootedStatus, workspaceRoot);
 }
 
 function shouldOpenJavaScriptTypeScriptNavigationTargetReadOnly(
   rootPath: string,
   path: string,
 ): boolean {
-  return (
-    isJavaScriptTypeScriptNavigationPath(path) &&
-    !isSessionPathInWorkspace(rootPath, path)
-  );
+  return isJavaScriptTypeScriptNavigationPath(path) && !isSessionPathInWorkspace(rootPath, path);
 }
 
 function isJavaScriptTypeScriptNavigationPath(path: string): boolean {

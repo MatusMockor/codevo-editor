@@ -16,14 +16,10 @@ import {
 } from "../domain/phpNavigation";
 import type { WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import {
-  phpMethodCompletionWithTemplateReturnType,
-} from "./usePhpLaravelRelationResolver";
+import { phpMethodCompletionWithTemplateReturnType } from "./usePhpLaravelRelationResolver";
 import type { PhpFrameworkSourceRegistryContext } from "./usePhpFrameworkSourceRegistries";
 import type { PhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
-import {
-  createPhpFrameworkClassMemberCollectionProviderAdapters,
-} from "./phpFrameworkClassMemberCollectionProviderAdapters";
+import { createPhpFrameworkClassMemberCollectionProviderAdapters } from "./phpFrameworkClassMemberCollectionProviderAdapters";
 import { phpFrameworkMemberCompletionContributions } from "./phpFrameworkMemberCompletionContributions";
 import { createPhpMemberCompletionCollector } from "./phpMemberCompletionContribution";
 import {
@@ -54,9 +50,7 @@ export interface UsePhpClassMemberCollectorsOptions {
   resolvePhpClassReference: (source: string, className: string) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   resolvePhpDeclaredType: (source: string, typeName: string | null) => string | null;
-  resolvePhpFrameworkBoundConcrete: (
-    className: string,
-  ) => Promise<string | null>;
+  resolvePhpFrameworkBoundConcrete: (className: string) => Promise<string | null>;
   workspaceDescriptor: WorkspaceDescriptor | null;
   workspaceRoot: string | null;
 }
@@ -104,14 +98,11 @@ export function usePhpClassMemberCollectors({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpClassMemberCollectorsOptions): PhpClassMemberCollectors {
-  const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>(
-    {},
-  );
+  const phpClassMemberCacheRef = useRef<Record<string, PhpClassMemberCacheEntry>>({});
   const memberCompletionContributionIdentityRef = useRef(
     createPhpMemberCompletionContributionIdentity(),
   );
-  const frameworkProviderSignature =
-    phpFrameworkRuntimeProviderSignature(frameworkRuntime);
+  const frameworkProviderSignature = phpFrameworkRuntimeProviderSignature(frameworkRuntime);
   const activeMemberCompletionContributions = useMemo(
     () =>
       injectedMemberCompletionContributions ??
@@ -119,14 +110,11 @@ export function usePhpClassMemberCollectors({
     [frameworkRuntime, injectedMemberCompletionContributions],
   );
   const memberCompletionCollector = useMemo(
-    () =>
-      createPhpMemberCompletionCollector(activeMemberCompletionContributions),
+    () => createPhpMemberCompletionCollector(activeMemberCompletionContributions),
     [activeMemberCompletionContributions],
   );
   const memberCompletionContributionSignature =
-    memberCompletionContributionIdentityRef.current.signature(
-      activeMemberCompletionContributions,
-    );
+    memberCompletionContributionIdentityRef.current.signature(activeMemberCompletionContributions);
   const memberCollectionStrategy = useMemo(
     () =>
       createPhpFrameworkClassMemberCollectionProviderAdapters({
@@ -147,10 +135,7 @@ export function usePhpClassMemberCollectors({
       genericReferences: ReturnType<typeof phpDocGenericInheritances>,
       inheritedTemplateTypes: ReadonlyMap<string, string> = new Map(),
     ): Promise<ReadonlyMap<string, string>> => {
-      const normalizedTargetClassName = targetClassName
-        .trim()
-        .replace(/^\\+/, "")
-        .toLowerCase();
+      const normalizedTargetClassName = targetClassName.trim().replace(/^\\+/, "").toLowerCase();
 
       if (!normalizedTargetClassName) {
         return new Map();
@@ -162,16 +147,11 @@ export function usePhpClassMemberCollectors({
           genericReference.className,
         );
 
-        if (
-          resolvedTargetClassName?.toLowerCase() !==
-          normalizedTargetClassName
-        ) {
+        if (resolvedTargetClassName?.toLowerCase() !== normalizedTargetClassName) {
           continue;
         }
 
-        for (const path of await resolvePhpClassSourcePaths(
-          resolvedTargetClassName,
-        )) {
+        for (const path of await resolvePhpClassSourcePaths(resolvedTargetClassName)) {
           try {
             const targetSource = await readNavigationFileContent(path);
             const templateNames = phpDocTemplateNames(targetSource);
@@ -180,17 +160,14 @@ export function usePhpClassMemberCollectors({
             templateNames.forEach((templateName, index) => {
               const genericType = genericReference.genericTypes[index];
               const inheritedGenericType = genericType
-                ? inheritedTemplateTypes.get(genericType.toLowerCase()) ?? null
+                ? (inheritedTemplateTypes.get(genericType.toLowerCase()) ?? null)
                 : null;
               const resolvedGenericType =
                 inheritedGenericType ??
                 (genericType ? resolvePhpClassReference(source, genericType) : null);
 
               if (resolvedGenericType) {
-                templateTypes.set(
-                  templateName.toLowerCase(),
-                  resolvedGenericType,
-                );
+                templateTypes.set(templateName.toLowerCase(), resolvedGenericType);
               }
             });
 
@@ -205,11 +182,7 @@ export function usePhpClassMemberCollectors({
 
       return new Map();
     },
-    [
-      readNavigationFileContent,
-      resolvePhpClassReference,
-      resolvePhpClassSourcePaths,
-    ],
+    [readNavigationFileContent, resolvePhpClassReference, resolvePhpClassSourcePaths],
   );
 
   const resolvePhpGenericTemplateTypesForInheritedClass = useCallback(
@@ -330,10 +303,7 @@ export function usePhpClassMemberCollectors({
             continue;
           }
 
-          let completion = phpMethodCompletionWithTemplateReturnType(
-            method,
-            templateTypes,
-          );
+          let completion = phpMethodCompletionWithTemplateReturnType(method, templateTypes);
 
           if (options.includeNonPublicMembers) {
             completion = { ...completion };
@@ -387,22 +357,17 @@ export function usePhpClassMemberCollectors({
               const resolvedTraitName = resolvePhpClassName(content, traitName);
 
               if (resolvedTraitName) {
-                const traitTemplateTypes =
-                  await resolvePhpGenericTemplateTypesForInheritedClass(
-                    content,
-                    resolvedTraitName,
-                    templateTypes,
-                  );
+                const traitTemplateTypes = await resolvePhpGenericTemplateTypesForInheritedClass(
+                  content,
+                  resolvedTraitName,
+                  templateTypes,
+                );
 
                 if (!isRequestedRootActive()) {
                   return;
                 }
 
-                await collectMethods(
-                  resolvedTraitName,
-                  traitTemplateTypes,
-                  declaringClassDepth,
-                );
+                await collectMethods(resolvedTraitName, traitTemplateTypes, declaringClassDepth);
 
                 if (!isRequestedRootActive()) {
                   return;
@@ -414,12 +379,11 @@ export function usePhpClassMemberCollectors({
               const resolvedMixinName = resolvePhpClassName(content, mixinName);
 
               if (resolvedMixinName) {
-                const mixinTemplateTypes =
-                  await resolvePhpGenericTemplateTypesForMixinClass(
-                    content,
-                    resolvedMixinName,
-                    templateTypes,
-                  );
+                const mixinTemplateTypes = await resolvePhpGenericTemplateTypesForMixinClass(
+                  content,
+                  resolvedMixinName,
+                  templateTypes,
+                );
 
                 if (!isRequestedRootActive()) {
                   return;
@@ -438,10 +402,7 @@ export function usePhpClassMemberCollectors({
             }
 
             for (const superTypeName of phpSuperTypeReferences(content)) {
-              const resolvedSuperTypeName = resolvePhpClassName(
-                content,
-                superTypeName,
-              );
+              const resolvedSuperTypeName = resolvePhpClassName(content, superTypeName);
 
               if (resolvedSuperTypeName) {
                 const superTypeTemplateTypes =
@@ -484,8 +445,7 @@ export function usePhpClassMemberCollectors({
         return [];
       }
 
-      const boundConcreteClassName =
-        await resolvePhpFrameworkBoundConcrete(className);
+      const boundConcreteClassName = await resolvePhpFrameworkBoundConcrete(className);
 
       if (!isRequestedRootActive()) {
         return [];
@@ -502,6 +462,7 @@ export function usePhpClassMemberCollectors({
       return Array.from(completions.values());
     },
     [
+      currentWorkspaceRootRef,
       readPhpClassMembersFromPath,
       resolvePhpFrameworkBoundConcrete,
       resolvePhpGenericTemplateTypesForInheritedClass,
@@ -544,10 +505,7 @@ export function usePhpClassMemberCollectors({
         }
 
         try {
-          const { content } = await readPhpClassMembersFromPath(
-            path,
-            normalizedClassName,
-          );
+          const { content } = await readPhpClassMembersFromPath(path, normalizedClassName);
 
           if (!isRequestedRootActive()) {
             return [];
@@ -584,6 +542,7 @@ export function usePhpClassMemberCollectors({
       return Array.from(completions.values());
     },
     [
+      currentWorkspaceRootRef,
       readPhpClassMembersFromPath,
       resolvePhpClassSourcePaths,
       memberCollectionStrategy,
@@ -643,10 +602,7 @@ export function usePhpClassMemberCollectors({
           }
 
           try {
-            const { content } = await readPhpClassMembersFromPath(
-              path,
-              normalizedClassName,
-            );
+            const { content } = await readPhpClassMembersFromPath(path, normalizedClassName);
 
             if (!isRequestedRootActive()) {
               return;
@@ -716,6 +672,7 @@ export function usePhpClassMemberCollectors({
       return Array.from(completions.values());
     },
     [
+      currentWorkspaceRootRef,
       readPhpClassMembersFromPath,
       resolvePhpClassSourcePaths,
       memberCollectionStrategy,
@@ -746,9 +703,7 @@ function phpClassMemberCacheKey(
   return `${path}#${className.trim().replace(/^\\+/, "").toLowerCase()}#${frameworkProviderSignature}#${memberCompletionContributionSignature}#${migrationSourcesSignature}#${includeNonPublicMembers ? "all" : "public"}`;
 }
 
-export function phpMethodCompletionSemanticIdentity(
-  completion: PhpMethodCompletion,
-): string {
+export function phpMethodCompletionSemanticIdentity(completion: PhpMethodCompletion): string {
   return JSON.stringify([
     completion.kind ?? "method",
     completion.name.toLowerCase(),
@@ -757,9 +712,7 @@ export function phpMethodCompletionSemanticIdentity(
   ]);
 }
 
-export function phpMethodCompletionReconciliationIdentity(
-  completion: PhpMethodCompletion,
-): string {
+export function phpMethodCompletionReconciliationIdentity(completion: PhpMethodCompletion): string {
   return phpMethodCompletionSemanticIdentity({
     ...completion,
     kind: completion.kind === "scope" ? undefined : completion.kind,

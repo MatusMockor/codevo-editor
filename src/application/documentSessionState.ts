@@ -8,10 +8,7 @@ import {
   normalizeEditorGroupsState,
   type EditorGroupsState,
 } from "../domain/editorGroups";
-import {
-  DEFAULT_WORKSPACE_EDITOR_GROUP_ID,
-  WORKSPACE_SESSION_VERSION,
-} from "../domain/settings";
+import { DEFAULT_WORKSPACE_EDITOR_GROUP_ID, WORKSPACE_SESSION_VERSION } from "../domain/settings";
 import {
   isPersistableEditorDocumentPath,
   restoredActivePath,
@@ -76,16 +73,12 @@ export function documentSessionPathTransitionForOpenedPath({
 
   return {
     nextActivePath: path,
-    nextOpenPaths: mappedOpenPaths.includes(path)
-      ? mappedOpenPaths
-      : [...mappedOpenPaths, path],
+    nextOpenPaths: mappedOpenPaths.includes(path) ? mappedOpenPaths : [...mappedOpenPaths, path],
     nextPreviewPath: null,
   };
 }
 
-export function replaceableDocumentSessionPreview<
-  Document extends DocumentSessionDocument,
->(
+export function replaceableDocumentSessionPreview<Document extends DocumentSessionDocument>(
   activeDocument: Document | null,
   documents: Record<string, Document>,
   openPaths: string[],
@@ -148,17 +141,16 @@ export function currentWorkspaceSessionForEditorGroups(
   const groups = Object.fromEntries(
     Object.entries(editor.groups).map(([groupId, group]) => {
       const visiblePaths = editorGroupVisiblePaths(group).filter(
-        (path) => isPersistableEditorDocumentPath(path) &&
+        (path) =>
+          isPersistableEditorDocumentPath(path) &&
           isSessionPathInWorkspace(rootPath, path) &&
           (!restorablePaths || restorablePaths.has(path)),
       );
-      const previewPath = group.previewPath && visiblePaths.includes(group.previewPath)
-        ? group.previewPath
-        : null;
+      const previewPath =
+        group.previewPath && visiblePaths.includes(group.previewPath) ? group.previewPath : null;
       const openPaths = visiblePaths.filter((path) => path !== previewPath);
-      const activePath = group.activePath && visiblePaths.includes(group.activePath)
-        ? group.activePath
-        : null;
+      const activePath =
+        group.activePath && visiblePaths.includes(group.activePath) ? group.activePath : null;
 
       return [groupId, { activePath, openPaths, previewPath }];
     }),
@@ -175,9 +167,7 @@ export function currentWorkspaceSessionForEditorGroups(
           return viewState ? [[path, viewState]] : [];
         }),
       );
-      return Object.keys(groupViewStates).length > 0
-        ? [[groupId, groupViewStates]]
-        : [];
+      return Object.keys(groupViewStates).length > 0 ? [[groupId, groupViewStates]] : [];
     }),
   );
   const session: WorkspaceSessionState = {
@@ -206,40 +196,38 @@ export async function restoreWorkspaceSession<Document>(
   session: WorkspaceSessionState,
   readDocument: (path: string) => Promise<Document>,
 ): Promise<RestoredWorkspaceSession<Document>> {
-  const editor = normalizeEditorGroupsState(
-    session.editor,
-    DEFAULT_WORKSPACE_EDITOR_GROUP_ID,
-  );
-  const eligiblePaths = Array.from(new Set(
-    Object.values(editor.groups)
-      .flatMap(editorGroupVisiblePaths)
-      .filter((path) => isPersistableEditorDocumentPath(path) &&
-        isSessionPathInWorkspace(rootPath, path)),
-  ));
-  const readResults = await Promise.all(eligiblePaths.map(async (path) => {
-    try {
-      return { document: await readDocument(path), path, restored: true as const };
-    } catch {
-      return { path, restored: false as const };
-    }
-  }));
-  const documents = Object.fromEntries(
-    readResults.flatMap((result) =>
-      result.restored ? [[result.path, result.document]] : [],
+  const editor = normalizeEditorGroupsState(session.editor, DEFAULT_WORKSPACE_EDITOR_GROUP_ID);
+  const eligiblePaths = Array.from(
+    new Set(
+      Object.values(editor.groups)
+        .flatMap(editorGroupVisiblePaths)
+        .filter(
+          (path) =>
+            isPersistableEditorDocumentPath(path) && isSessionPathInWorkspace(rootPath, path),
+        ),
     ),
   );
-  const failedPaths = readResults.flatMap((result) =>
-    result.restored ? [] : [result.path],
+  const readResults = await Promise.all(
+    eligiblePaths.map(async (path) => {
+      try {
+        return { document: await readDocument(path), path, restored: true as const };
+      } catch {
+        return { path, restored: false as const };
+      }
+    }),
   );
+  const documents = Object.fromEntries(
+    readResults.flatMap((result) => (result.restored ? [[result.path, result.document]] : [])),
+  );
+  const failedPaths = readResults.flatMap((result) => (result.restored ? [] : [result.path]));
 
   const restoredPaths = new Set(Object.keys(documents));
   const groups = Object.fromEntries(
     Object.entries(editor.groups).map(([groupId, group]) => {
       const originalVisiblePaths = editorGroupVisiblePaths(group);
       const visiblePaths = originalVisiblePaths.filter((path) => restoredPaths.has(path));
-      const previewPath = group.previewPath && restoredPaths.has(group.previewPath)
-        ? group.previewPath
-        : null;
+      const previewPath =
+        group.previewPath && restoredPaths.has(group.previewPath) ? group.previewPath : null;
       const openPaths = visiblePaths.filter((path) => path !== previewPath);
       const activePath = restoredActivePath(group.activePath, visiblePaths);
       return [groupId, { activePath, openPaths, previewPath }];
@@ -283,7 +271,13 @@ export function persistedBottomPanelView(
     return "problems";
   }
 
-  if (view === "debug") {
+  if (
+    view === "debug" ||
+    view === "expressRoutes" ||
+    view === "nette" ||
+    view === "packages" ||
+    view === "symfony"
+  ) {
     return "problems";
   }
 
@@ -302,10 +296,7 @@ export function workspaceSessionsEqual(
   );
 }
 
-function workspaceSessionEditorsEqual(
-  left: EditorGroupsState,
-  right: EditorGroupsState,
-): boolean {
+function workspaceSessionEditorsEqual(left: EditorGroupsState, right: EditorGroupsState): boolean {
   const leftGroupIds = Object.keys(left.groups);
   const rightGroupIds = Object.keys(right.groups);
   if (
@@ -319,13 +310,13 @@ function workspaceSessionEditorsEqual(
   return leftGroupIds.every((groupId) => {
     const leftGroup = left.groups[groupId];
     const rightGroup = right.groups[groupId];
-    return Boolean(rightGroup) &&
+    return (
+      Boolean(rightGroup) &&
       leftGroup.activePath === rightGroup.activePath &&
       leftGroup.previewPath === rightGroup.previewPath &&
       leftGroup.openPaths.length === rightGroup.openPaths.length &&
-      leftGroup.openPaths.every((path, index) =>
-        path === rightGroup.openPaths[index]
-      );
+      leftGroup.openPaths.every((path, index) => path === rightGroup.openPaths[index])
+    );
   });
 }
 
@@ -355,10 +346,12 @@ function workspaceSessionViewStatesEqual(
   }
   return leftEntries.every(([path, viewState]) => {
     const other = right?.[path];
-    return other?.line === viewState.line &&
+    return (
+      other?.line === viewState.line &&
       other.column === viewState.column &&
       other.scrollTop === viewState.scrollTop &&
-      numberListsEqual(other.foldedLines, viewState.foldedLines);
+      numberListsEqual(other.foldedLines, viewState.foldedLines)
+    );
   });
 }
 
@@ -372,10 +365,7 @@ function numberListsEqual(left?: number[], right?: number[]): boolean {
   );
 }
 
-export function isSessionPathInWorkspace(
-  rootPath: string,
-  path: string,
-): boolean {
+export function isSessionPathInWorkspace(rootPath: string, path: string): boolean {
   const root = normalizedSessionPath(rootPath);
   const candidate = normalizedSessionPath(path);
 
@@ -418,10 +408,7 @@ function normalizedSessionPath(path: string): string {
       segments.push(segment);
       continue;
     }
-    if (
-      segments.length > protectedSegmentCount &&
-      segments[segments.length - 1] !== ".."
-    ) {
+    if (segments.length > protectedSegmentCount && segments[segments.length - 1] !== "..") {
       segments.pop();
       continue;
     }

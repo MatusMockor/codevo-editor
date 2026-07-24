@@ -96,6 +96,7 @@ describe("usePhpFrameworkResolution", () => {
     expect(phpFrameworkPluginCatalog.map((provider) => provider.id)).toEqual([
       "laravel",
       "nette",
+      "symfony",
     ]);
   });
 
@@ -119,6 +120,24 @@ describe("usePhpFrameworkResolution", () => {
       harness.api().activePhpFrameworkProviders.map((provider) => provider.id),
     ).toEqual(["symfony"]);
     expect(harness.api().phpFrameworkRuntimeContext.profile).toBe("generic");
+
+    harness.unmount();
+  });
+
+  it("resolves a Symfony descriptor through the shipped provider", () => {
+    const harness = renderHook({
+      workspaceDescriptor: phpDescriptor(["symfony/framework-bundle"]),
+    });
+    const api = harness.api();
+
+    expect(api.phpFrameworkRuntimeContext.hasProvider("symfony")).toBe(true);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("laravel")).toBe(false);
+    expect(api.phpFrameworkRuntimeContext.hasProvider("nette")).toBe(false);
+    expect(api.phpFrameworkRuntimeContext.profile).toBe("generic");
+    expect(api.activePhpFrameworkProviders.map(({ id }) => id)).toEqual([
+      "symfony",
+    ]);
+    expect(api.activeFrameworkActivityLabel).toBe("Symfony");
 
     harness.unmount();
   });

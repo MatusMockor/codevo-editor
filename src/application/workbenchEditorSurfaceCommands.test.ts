@@ -9,9 +9,7 @@ import { workbenchEditorSurfaceCommands } from "./workbenchEditorSurfaceCommands
 
 describe("workbenchEditorSurfaceCommands", () => {
   it("returns editor surface commands in registry order with metadata and shortcuts", () => {
-    const shortcut = vi.fn(
-      (commandId: KeymapCommandId) => `shortcut:${commandId}`,
-    );
+    const shortcut = vi.fn((commandId: KeymapCommandId) => `shortcut:${commandId}`);
     const commands = createCommands({ shortcut });
 
     expect(
@@ -71,10 +69,46 @@ describe("workbenchEditorSurfaceCommands", () => {
         shortcut: "shortcut:editor.formatSelection",
       },
       {
+        id: "editor.action.organizeImports",
+        title: "Organize Imports",
+        category: "Editor",
+        shortcut: "shortcut:editor.action.organizeImports",
+      },
+      {
+        id: "typescript.sortImports",
+        title: "Sort Imports",
+        category: "TypeScript",
+        shortcut: "shortcut:typescript.sortImports",
+      },
+      {
+        id: "javascript.sortImports",
+        title: "Sort Imports",
+        category: "JavaScript",
+        shortcut: "shortcut:javascript.sortImports",
+      },
+      {
+        id: "typescript.removeUnusedImports",
+        title: "Remove Unused Imports",
+        category: "TypeScript",
+        shortcut: "shortcut:typescript.removeUnusedImports",
+      },
+      {
+        id: "javascript.removeUnusedImports",
+        title: "Remove Unused Imports",
+        category: "JavaScript",
+        shortcut: "shortcut:javascript.removeUnusedImports",
+      },
+      {
         id: "editor.quickFix",
         title: "Context Actions",
         category: "Editor",
         shortcut: "shortcut:editor.quickFix",
+      },
+      {
+        id: "editor.action.refactor",
+        title: "Refactor",
+        category: "Editor",
+        shortcut: "shortcut:editor.action.refactor",
       },
       {
         id: "editor.nextChange",
@@ -97,39 +131,31 @@ describe("workbenchEditorSurfaceCommands", () => {
   it("keeps every editor surface command in the production registry", () => {
     const registeredIds = new Set(createCommands().map(({ id }) => id));
 
-    expect(
-      editorSurfaceCommandIds.filter((id) => !registeredIds.has(id)),
-    ).toEqual([]);
+    expect(editorSurfaceCommandIds.filter((id) => !registeredIds.has(id))).toEqual([]);
   });
 
   it("enables save only for dirty active documents", () => {
     const save = commandById("editor.save", createCommands());
 
     expect(save.isEnabled(context({ hasActiveDocument: false }))).toBe(false);
-    expect(
-      save.isEnabled(
-        context({ hasActiveDocument: true, activeDocumentDirty: false }),
-      ),
-    ).toBe(false);
-    expect(
-      save.isEnabled(
-        context({ hasActiveDocument: true, activeDocumentDirty: true }),
-      ),
-    ).toBe(true);
+    expect(save.isEnabled(context({ hasActiveDocument: true, activeDocumentDirty: false }))).toBe(
+      false,
+    );
+    expect(save.isEnabled(context({ hasActiveDocument: true, activeDocumentDirty: true }))).toBe(
+      true,
+    );
   });
 
   it("enables close from the injected active-surface state", () => {
     expect(
-      commandById(
-        "editor.closeTab",
-        createCommands({ canCloseActiveSurface: false }),
-      ).isEnabled(context({})),
+      commandById("editor.closeTab", createCommands({ canCloseActiveSurface: false })).isEnabled(
+        context({}),
+      ),
     ).toBe(false);
     expect(
-      commandById(
-        "editor.closeTab",
-        createCommands({ canCloseActiveSurface: true }),
-      ).isEnabled(context({})),
+      commandById("editor.closeTab", createCommands({ canCloseActiveSurface: true })).isEnabled(
+        context({}),
+      ),
     ).toBe(true);
   });
 
@@ -158,45 +184,124 @@ describe("workbenchEditorSurfaceCommands", () => {
       const withRunner = commandById(
         commandId,
         createCommands({
+          javaScriptTypeScriptImportLanguage: commandId.startsWith("javascript.")
+            ? "javascript"
+            : "typescript",
           editorSurfaceCommandRunner: vi.fn() as EditorSurfaceCommandRunner,
         }),
       );
 
-      expect(
-        withoutRunner.isEnabled(context({ hasActiveDocument: true })),
-      ).toBe(false);
-      expect(withRunner.isEnabled(context({ hasActiveDocument: false }))).toBe(
-        false,
-      );
-      expect(withRunner.isEnabled(context({ hasActiveDocument: true }))).toBe(
-        true,
-      );
+      expect(withoutRunner.isEnabled(context({ hasActiveDocument: true }))).toBe(false);
+      expect(withRunner.isEnabled(context({ hasActiveDocument: false }))).toBe(false);
+      expect(withRunner.isEnabled(context({ hasActiveDocument: true }))).toBe(true);
     },
   );
 
   it("uses the live runner capability without bypassing the registry", () => {
     const editorSurfaceCommandRunner = vi.fn() as EditorSurfaceCommandRunner;
-    editorSurfaceCommandRunner.isEnabled = vi.fn(
-      (commandId) => commandId !== "editor.nextChange",
-    );
+    editorSurfaceCommandRunner.isEnabled = vi.fn((commandId) => commandId !== "editor.nextChange");
     const commands = createCommands({ editorSurfaceCommandRunner });
 
     expect(
-      commandById("editor.nextChange", commands).isEnabled(
-        context({ hasActiveDocument: true }),
-      ),
+      commandById("editor.nextChange", commands).isEnabled(context({ hasActiveDocument: true })),
     ).toBe(false);
     expect(
       commandById("editor.previousChange", commands).isEnabled(
         context({ hasActiveDocument: true }),
       ),
     ).toBe(true);
-    expect(editorSurfaceCommandRunner.isEnabled).toHaveBeenCalledWith(
-      "editor.nextChange",
+    expect(editorSurfaceCommandRunner.isEnabled).toHaveBeenCalledWith("editor.nextChange");
+    expect(editorSurfaceCommandRunner.isEnabled).toHaveBeenCalledWith("editor.previousChange");
+  });
+
+  it.each([
+    "editor.action.organizeImports",
+    "typescript.sortImports",
+    "javascript.sortImports",
+    "typescript.removeUnusedImports",
+    "javascript.removeUnusedImports",
+  ] as const)("enables %s only for a managed JS/TS document", (commandId) => {
+    const runner = vi.fn() as EditorSurfaceCommandRunner;
+    const unavailable = commandById(
+      commandId,
+      createCommands({
+        canRunJavaScriptTypeScriptImportActions: false,
+        editorSurfaceCommandRunner: runner,
+      }),
     );
-    expect(editorSurfaceCommandRunner.isEnabled).toHaveBeenCalledWith(
-      "editor.previousChange",
+    const available = commandById(
+      commandId,
+      createCommands({
+        canRunJavaScriptTypeScriptImportActions: true,
+        javaScriptTypeScriptImportLanguage: commandId.startsWith("javascript.")
+          ? "javascript"
+          : "typescript",
+        editorSurfaceCommandRunner: runner,
+      }),
     );
+
+    expect(unavailable.isEnabled(context({ hasActiveDocument: true }))).toBe(false);
+    expect(available.isEnabled(context({ hasActiveDocument: true }))).toBe(true);
+  });
+
+  it("keeps language-specific import commands out of the other managed language", () => {
+    const commands = createCommands({
+      canRunJavaScriptTypeScriptImportActions: true,
+      editorSurfaceCommandRunner: vi.fn() as EditorSurfaceCommandRunner,
+      javaScriptTypeScriptImportLanguage: "javascript",
+    });
+
+    expect(
+      commandById("javascript.sortImports", commands).isEnabled(
+        context({ hasActiveDocument: true }),
+      ),
+    ).toBe(true);
+    expect(
+      commandById("typescript.sortImports", commands).isEnabled(
+        context({ hasActiveDocument: true }),
+      ),
+    ).toBe(false);
+    expect(
+      commandById("editor.action.organizeImports", commands).isEnabled(
+        context({ hasActiveDocument: true }),
+      ),
+    ).toBe(true);
+  });
+
+  it("enables Refactor only for a live managed JS/TS document", () => {
+    const runner = vi.fn() as EditorSurfaceCommandRunner;
+    runner.isEnabled = vi.fn(() => true);
+    const unavailable = commandById(
+      "editor.action.refactor",
+      createCommands({
+        canRunJavaScriptTypeScriptRefactors: false,
+        editorSurfaceCommandRunner: runner,
+      }),
+    );
+    const available = commandById(
+      "editor.action.refactor",
+      createCommands({
+        canRunJavaScriptTypeScriptRefactors: true,
+        editorSurfaceCommandRunner: runner,
+      }),
+    );
+    const staleScope = {
+      documentPath: "/workspace/src/old.ts",
+      modelIdentity: {},
+      ownerKey: null,
+      surfaceIdentity: {},
+    };
+    runner.isEnabled = vi.fn((_id, scope) => scope !== staleScope);
+
+    expect(unavailable.isEnabled(context({ hasActiveDocument: true }))).toBe(false);
+    expect(available.isEnabled(context({ hasActiveDocument: false }))).toBe(false);
+    expect(available.isEnabled(context({ hasActiveDocument: true }))).toBe(true);
+    expect(
+      available.isEnabled({
+        ...context({ hasActiveDocument: true }),
+        editorSurfaceScope: staleScope,
+      }),
+    ).toBe(false);
   });
 
   it("invokes the exact injected callbacks and returns their values directly", () => {
@@ -236,6 +341,9 @@ function createCommands(
     saveActiveDocument: vi.fn(),
     closeActiveSurface: vi.fn(),
     canReopenClosedDocument: false,
+    canRunJavaScriptTypeScriptImportActions: true,
+    canRunJavaScriptTypeScriptRefactors: true,
+    javaScriptTypeScriptImportLanguage: "typescript",
     reopenClosedDocument: vi.fn(),
     ...overrides,
   });

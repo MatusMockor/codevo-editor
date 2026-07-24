@@ -377,7 +377,6 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
   it("saves through the transaction before closing", async () => {
     const path = `${ROOT}/dirty.php`;
     const calls: string[] = [];
-    let harness!: Harness;
     const saveDocument = vi.fn(async (): Promise<DocumentSaveResult> => {
       calls.push("save");
       const live = harness.documentsRef.current[path]!;
@@ -385,7 +384,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       harness.documentsRef.current = { [path]: saved };
       return { status: "saved", document: saved, contentIsCurrent: true };
     });
-    harness = renderLifecycle(
+    const harness = renderLifecycle(
       stateWithPaths([path]),
       { [path]: document(path, "edited", "saved") },
       {
@@ -406,7 +405,6 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
 
   it("closes against the authoritative live revision after Save", async () => {
     const path = `${ROOT}/dirty-revision.php`;
-    let harness!: Harness;
     const savedRevision = revision("2");
     const saveDocument = vi.fn(async (): Promise<DocumentSaveResult> => {
       const live = harness.documentsRef.current[path]!;
@@ -422,7 +420,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         contentIsCurrent: true,
       };
     });
-    harness = renderLifecycle(
+    const harness = renderLifecycle(
       stateWithPaths([path]),
       {
         [path]: {
@@ -454,7 +452,6 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       openPaths: [],
       previewPath: path,
     });
-    let harness!: Harness;
     const saveDocument = vi.fn(async (): Promise<DocumentSaveResult> => {
       const live = harness.documentsRef.current[path]!;
       const saved = { ...live, savedContent: live.content };
@@ -465,7 +462,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       );
       return { status: "saved", document: saved, contentIsCurrent: true };
     });
-    harness = renderLifecycle(
+    const harness = renderLifecycle(
       previewState,
       { [path]: document(path, "edited", "saved") },
       {
@@ -633,7 +630,6 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     const first = `${ROOT}/alias-a.php`;
     const second = `${ROOT}/alias-b.php`;
     const state = stateWithPaths([first, second]);
-    let harness!: Harness;
     const saveDocument = vi.fn(async (): Promise<DocumentSaveResult> => {
       const firstSaved = document(first, "edited", "edited");
       harness.documentsRef.current = {
@@ -646,7 +642,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         contentIsCurrent: true,
       };
     });
-    harness = renderLifecycle(
+    const harness = renderLifecycle(
       state,
       {
         [first]: document(first, "edited", "saved"),
@@ -862,7 +858,6 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
 
   it("revalidates a successful save against the acknowledged live document", async () => {
     const path = `${ROOT}/dirty.php`;
-    let harness!: Harness;
     const saveDocument = vi.fn(async (): Promise<DocumentSaveResult> => {
       const acknowledged = document(path, "edited", "edited");
       harness.documentsRef.current = {
@@ -874,7 +869,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
         contentIsCurrent: true,
       };
     });
-    harness = renderLifecycle(
+    const harness = renderLifecycle(
       stateWithPaths([path]),
       { [path]: document(path, "edited", "saved") },
       {
@@ -926,7 +921,6 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
     const first = `${ROOT}/a.php`;
     const second = `${ROOT}/b.php`;
     const state = stateWithPaths([first, second]);
-    let harness!: Harness;
     const saveDocument = vi.fn(async (path: string): Promise<DocumentSaveResult> => {
       if (path === first) {
         const saved = document(first, "edited", "edited");
@@ -938,7 +932,7 @@ describe("useWorkbenchEditorGroupCloseLifecycle", () => {
       }
       return { status: "failed", error: new Error("disk full") };
     });
-    harness = renderLifecycle(
+    const harness = renderLifecycle(
       state,
       {
         [first]: document(first, "edited", "saved"),

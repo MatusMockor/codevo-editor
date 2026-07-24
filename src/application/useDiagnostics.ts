@@ -24,7 +24,7 @@ import {
   javaScriptTypeScriptDiagnosticNoticeGroup,
   localPhpDiagnosticsFromSource,
   PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX,
-  phpLocalDiagnosticNoticeGroup,
+  phpLocalDiagnosticFileIdentity,
 } from "./diagnosticNotices";
 import {
   languageServerDiagnosticNoticeGroup,
@@ -376,7 +376,7 @@ export function useDiagnostics(
         workspaceRootKeysEqual(currentWorkspaceRootRef.current, executionRoot)
       );
     },
-    [],
+    [currentWorkspaceRootRef],
   );
   const replaceEslintDiagnostics = useCallback(
     (rootPath: string, notices: WorkbenchNotice[]) => {
@@ -407,14 +407,14 @@ export function useDiagnostics(
         ),
       );
     },
-    [],
+    [setNotices],
   );
 
   const clearEslintDiagnosticsForRoot = useCallback((rootPath: string) => {
     setNotices((current) =>
       replaceWorkbenchNoticeGroup(current, `eslint:${rootPath}`, []),
     );
-  }, []);
+  }, [setNotices]);
 
   const replacePhpstanDiagnostics = useCallback(
     (rootPath: string, notices: WorkbenchNotice[]) => {
@@ -445,14 +445,14 @@ export function useDiagnostics(
         ),
       );
     },
-    [],
+    [setNotices],
   );
 
   const clearPhpstanDiagnosticsForRoot = useCallback((rootPath: string) => {
     setNotices((current) =>
       replaceWorkbenchNoticeGroup(current, `phpstan:${rootPath}`, []),
     );
-  }, []);
+  }, [setNotices]);
 
   const clearLanguageServerDiagnostics = useCallback(() => {
     setLanguageServerDiagnosticsByPath({});
@@ -461,7 +461,7 @@ export function useDiagnostics(
         (notice) => !notice.groupKey?.startsWith("language-server-diagnostics:"),
       ),
     );
-  }, []);
+  }, [setLanguageServerDiagnosticsByPath, setNotices]);
 
   const resetLanguageServerDiagnosticsContentForRoot = useCallback(
     (
@@ -495,7 +495,12 @@ export function useDiagnostics(
 
       clearLanguageServerDiagnostics();
     },
-    [clearLanguageServerDiagnostics, isDiagnosticsOwnerVisible],
+    [
+      clearLanguageServerDiagnostics,
+      isDiagnosticsOwnerVisible,
+      languageServerDiagnosticsByRootRef,
+      languageServerDiagnosticsCoalescerRef,
+    ],
   );
 
   const restoreLanguageServerDiagnosticsForRoot = useCallback(
@@ -511,7 +516,11 @@ export function useDiagnostics(
         : {};
       setLanguageServerDiagnosticsByPath({ ...cachedDiagnostics });
     },
-    [restoreDiagnosticsOwner],
+    [
+      languageServerDiagnosticsByRootRef,
+      restoreDiagnosticsOwner,
+      setLanguageServerDiagnosticsByPath,
+    ],
   );
 
   const updateLanguageServerDiagnosticsForRoot = useCallback(
@@ -551,7 +560,12 @@ export function useDiagnostics(
         setLanguageServerDiagnosticsByPath(nextByPath);
       }
     },
-    [isDiagnosticsOwnerRevisionCurrent, isDiagnosticsOwnerVisible],
+    [
+      isDiagnosticsOwnerRevisionCurrent,
+      isDiagnosticsOwnerVisible,
+      languageServerDiagnosticsByRootRef,
+      setLanguageServerDiagnosticsByPath,
+    ],
   );
 
   const clearLanguageServerDiagnosticsForRoot = useCallback(
@@ -612,7 +626,7 @@ export function useDiagnostics(
           !notice.groupKey?.startsWith("javascript-typescript-diagnostics:"),
       ),
     );
-  }, []);
+  }, [setJavaScriptTypeScriptDiagnosticsByPath, setNotices]);
 
   const resetJavaScriptTypeScriptDiagnosticsContentForRoot = useCallback(
     (
@@ -651,6 +665,8 @@ export function useDiagnostics(
     [
       clearJavaScriptTypeScriptLanguageServerDiagnostics,
       isDiagnosticsOwnerVisible,
+      javaScriptTypeScriptDiagnosticsByRootRef,
+      javaScriptTypeScriptDiagnosticsCoalescerRef,
     ],
   );
 
@@ -662,7 +678,7 @@ export function useDiagnostics(
           !notice.groupKey?.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX),
       ),
     );
-  }, []);
+  }, [setNotices, setPhpLocalDiagnosticsByPath]);
 
   const restoreJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
     (
@@ -679,7 +695,11 @@ export function useDiagnostics(
         : {};
       setJavaScriptTypeScriptDiagnosticsByPath({ ...cachedDiagnostics });
     },
-    [restoreDiagnosticsOwner],
+    [
+      javaScriptTypeScriptDiagnosticsByRootRef,
+      restoreDiagnosticsOwner,
+      setJavaScriptTypeScriptDiagnosticsByPath,
+    ],
   );
 
   const updateJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
@@ -726,7 +746,12 @@ export function useDiagnostics(
         setJavaScriptTypeScriptDiagnosticsByPath(nextByPath);
       }
     },
-    [isDiagnosticsOwnerRevisionCurrent, isDiagnosticsOwnerVisible],
+    [
+      isDiagnosticsOwnerRevisionCurrent,
+      isDiagnosticsOwnerVisible,
+      javaScriptTypeScriptDiagnosticsByRootRef,
+      setJavaScriptTypeScriptDiagnosticsByPath,
+    ],
   );
 
   const clearJavaScriptTypeScriptDiagnosticsForRoot = useCallback(
@@ -795,11 +820,12 @@ export function useDiagnostics(
       return next;
     });
 
-    const phpLocalGroupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
+    const phpLocalGroupKey = phpLocalDiagnosticFileIdentity(diagnosticPath)?.groupKey;
+    if (!phpLocalGroupKey) return;
     setNotices((current) =>
       current.filter((notice) => notice.groupKey !== phpLocalGroupKey),
     );
-  }, []);
+  }, [setNotices, setPhpLocalDiagnosticsByPath]);
 
   const clearLanguageServerDiagnosticsForPath = useCallback(
     (
@@ -906,7 +932,16 @@ export function useDiagnostics(
         ),
       );
     },
-    [clearPhpLocalDiagnosticsForPath, isDiagnosticsOwnerVisible],
+    [
+      clearPhpLocalDiagnosticsForPath,
+      isDiagnosticsOwnerVisible,
+      javaScriptTypeScriptDiagnosticsByRootRef,
+      languageServerDiagnosticsByRootRef,
+      setFrameworkDiagnosticsByPath,
+      setJavaScriptTypeScriptDiagnosticsByPath,
+      setLanguageServerDiagnosticsByPath,
+      setNotices,
+    ],
   );
 
   const updateLocalPhpDiagnostics = useCallback(
@@ -921,6 +956,12 @@ export function useDiagnostics(
           currentWorkspaceRootRef.current,
           diagnosticPath,
         );
+        return;
+      }
+
+      const identity = phpLocalDiagnosticFileIdentity(diagnosticPath);
+      if (!identity) {
+        clearPhpLocalDiagnosticsForPath(diagnosticPath);
         return;
       }
 
@@ -943,8 +984,7 @@ export function useDiagnostics(
         };
       });
 
-      const uri = fileUriFromPath(diagnosticPath);
-      const groupKey = phpLocalDiagnosticNoticeGroup(diagnosticPath);
+      const { groupKey, uri } = identity;
       const diagnosticNotices = capDiagnosticNotices(
         diagnostics.map((diagnostic) =>
           createWorkbenchNotice(
@@ -968,8 +1008,19 @@ export function useDiagnostics(
         ),
       );
     },
-    [clearLanguageServerDiagnosticsForPath, isExternallyRemovedDocumentPath],
+    [
+      clearPhpLocalDiagnosticsForPath,
+      clearLanguageServerDiagnosticsForPath,
+      currentWorkspaceRootRef,
+      isExternallyRemovedDocumentPath,
+      setNotices,
+      setPhpLocalDiagnosticsByPath,
+    ],
   );
+
+  const activeDocumentPath = activeDocument?.path;
+  const activeDocumentContent = activeDocument?.content;
+  const activeDocumentLanguage = activeDocument?.language;
 
   useEffect(() => {
     phpLocalDiagnosticRetryTimersRef.current.forEach((timer) =>
@@ -977,17 +1028,26 @@ export function useDiagnostics(
     );
     phpLocalDiagnosticRetryTimersRef.current = [];
 
-    const document = activeDocument;
     const generation = phpLocalDiagnosticValidationGenerationRef.current + 1;
     phpLocalDiagnosticValidationGenerationRef.current = generation;
 
-    if (!document || document.language !== "php") {
-      if (document?.path) {
-        updateLocalPhpDiagnostics(document.path, []);
+    if (
+      activeDocumentPath === undefined ||
+      activeDocumentContent === undefined ||
+      activeDocumentLanguage !== "php"
+    ) {
+      if (activeDocumentPath) {
+        updateLocalPhpDiagnostics(activeDocumentPath, []);
       }
 
       return;
     }
+
+    const document = {
+      path: activeDocumentPath,
+      content: activeDocumentContent,
+      language: activeDocumentLanguage,
+    };
 
     let disposed = false;
     let applied = false;
@@ -1096,9 +1156,13 @@ export function useDiagnostics(
       phpLocalDiagnosticRetryTimersRef.current = [];
     };
   }, [
-    activeDocument?.content,
-    activeDocument?.language,
-    activeDocument?.path,
+    activeDocumentContent,
+    activeDocumentLanguage,
+    activeDocumentPath,
+    activeDocumentRef,
+    phpLocalDiagnosticRetryTimersRef,
+    phpLocalDiagnosticValidationGenerationRef,
+    phpLocalSyntaxDiagnosticsGateway,
     updateLocalPhpDiagnostics,
   ]);
 
@@ -1135,7 +1199,12 @@ export function useDiagnostics(
           // to own language-server failures.
         });
     },
-    [updateLocalPhpDiagnostics],
+    [
+      activeDocumentRef,
+      documentsRef,
+      phpLocalSyntaxDiagnosticsGateway,
+      updateLocalPhpDiagnostics,
+    ],
   );
 
   const applyLanguageServerDiagnostics = useCallback(
@@ -1346,13 +1415,19 @@ export function useDiagnostics(
       });
     },
     [
+      appSettingsRef,
       clearLanguageServerDiagnosticsForPath,
+      contextualDiagnosticsFilterRef,
+      currentWorkspaceRootRef,
       diagnosticsOwnerRevision,
       isDiagnosticsOwnerRevisionCurrent,
       isDiagnosticsOwnerVisible,
       isLanguageServerSessionCurrentForRoot,
       isExternallyRemovedDocumentPath,
+      languageServerRuntimeStatusByRootRef,
+      lastAppliedDiagnosticVersionByUriRef,
       reportLanguageServerErrorForActiveWorkspaceRoot,
+      setNotices,
       updateLanguageServerDiagnosticsForRoot,
     ],
   );
@@ -1500,8 +1575,13 @@ export function useDiagnostics(
       }
     },
     [
+      appSettingsRef,
+      currentWorkspaceRootRef,
       diagnosticsOwnerRevision,
       isDiagnosticsOwnerVisible,
+      javaScriptTypeScriptLastAppliedDiagnosticVersionByUriRef,
+      javaScriptTypeScriptRuntimeStatusByRootRef,
+      setNotices,
       updateJavaScriptTypeScriptDiagnosticsForRoot,
       workspaceSettingsForRoot,
     ],

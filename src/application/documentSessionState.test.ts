@@ -18,57 +18,41 @@ import type { EditorGroupsState } from "../domain/editorGroups";
 
 describe("documentSessionState", () => {
   it("restores the requested active path when it is still available", () => {
-    expect(
-      restoredActivePath("/workspace/B.php", [
-        "/workspace/A.php",
-        "/workspace/B.php",
-      ]),
-    ).toBe("/workspace/B.php");
+    expect(restoredActivePath("/workspace/B.php", ["/workspace/A.php", "/workspace/B.php"])).toBe(
+      "/workspace/B.php",
+    );
   });
 
   it("falls back to the first restored path when the active path is unavailable", () => {
-    expect(
-      restoredActivePath("/workspace/Missing.php", ["/workspace/A.php"]),
-    ).toBe("/workspace/A.php");
+    expect(restoredActivePath("/workspace/Missing.php", ["/workspace/A.php"])).toBe(
+      "/workspace/A.php",
+    );
     expect(restoredActivePath(null, [])).toBeNull();
   });
 
   it("filters transient diff documents from persisted workspace sessions", () => {
     expect(isPersistableEditorDocumentPath("/workspace/A.php")).toBe(true);
-    expect(
-      isPersistableEditorDocumentPath("mockor-git-diff:worktree:/workspace/A.php"),
-    ).toBe(false);
-    expect(
-      isPersistableEditorDocumentPath(
-        "mockor-git-history-diff:/workspace/A.php",
-      ),
-    ).toBe(false);
+    expect(isPersistableEditorDocumentPath("mockor-git-diff:worktree:/workspace/A.php")).toBe(
+      false,
+    );
+    expect(isPersistableEditorDocumentPath("mockor-git-history-diff:/workspace/A.php")).toBe(false);
   });
 
   it("explicitly excludes Markdown preview paths from persistence", () => {
-    expect(
-      isPersistableEditorDocumentPath(
-        "mockor-markdown-preview:/workspace/README.md",
-      ),
-    ).toBe(false);
+    expect(isPersistableEditorDocumentPath("mockor-markdown-preview:/workspace/README.md")).toBe(
+      false,
+    );
   });
 
   it("leaves real filesystem image paths eligible for document-backed filtering", () => {
-    expect(
-      isPersistableEditorDocumentPath("/workspace/assets/screenshot.png"),
-    ).toBe(true);
+    expect(isPersistableEditorDocumentPath("/workspace/assets/screenshot.png")).toBe(true);
   });
 
   it("keeps session paths scoped to the workspace root", () => {
-    expect(isSessionPathInWorkspace("/workspace", "/workspace/src/A.php")).toBe(
-      true,
-    );
+    expect(isSessionPathInWorkspace("/workspace", "/workspace/src/A.php")).toBe(true);
     expect(isSessionPathInWorkspace("/workspace/", "/workspace")).toBe(true);
-    expect(
-      isSessionPathInWorkspace("C:\\workspace", "C:\\workspace\\src\\A.php"),
-    ).toBe(true);
-    expect(isSessionPathInWorkspace("/workspace", "/workspace-other/A.php"))
-      .toBe(false);
+    expect(isSessionPathInWorkspace("C:\\workspace", "C:\\workspace\\src\\A.php")).toBe(true);
+    expect(isSessionPathInWorkspace("/workspace", "/workspace-other/A.php")).toBe(false);
   });
 
   it("lexically resolves dot segments before checking project isolation", () => {
@@ -105,12 +89,9 @@ describe("documentSessionState", () => {
   });
 
   it("keeps UNC authorities immutable during lexical traversal", () => {
-    expect(
-      isSessionPathInWorkspace(
-        "\\\\server\\share",
-        "\\\\server\\share\\project\\A.ts",
-      ),
-    ).toBe(true);
+    expect(isSessionPathInWorkspace("\\\\server\\share", "\\\\server\\share\\project\\A.ts")).toBe(
+      true,
+    );
     expect(
       isSessionPathInWorkspace(
         "\\\\foreign-server\\foreign-share",
@@ -322,6 +303,10 @@ describe("documentSessionState", () => {
   it("persists transient bottom panel views as problems", () => {
     expect(persistedBottomPanelView("terminal")).toBe("problems");
     expect(persistedBottomPanelView("debug")).toBe("problems");
+    expect(persistedBottomPanelView("expressRoutes")).toBe("problems");
+    expect(persistedBottomPanelView("packages")).toBe("problems");
+    expect(persistedBottomPanelView("nette")).toBe("problems");
+    expect(persistedBottomPanelView("symfony")).toBe("problems");
     expect(persistedBottomPanelView("runtime")).toBe("runtime");
   });
 
@@ -385,17 +370,13 @@ describe("documentSessionState", () => {
       },
     );
     const reads: string[] = [];
-    const restored = await restoreWorkspaceSession(
-      "/workspace",
-      session,
-      async (path) => {
-        reads.push(path);
-        if (path.endsWith("missing.ts")) {
-          throw new Error("missing");
-        }
-        return { path };
-      },
-    );
+    const restored = await restoreWorkspaceSession("/workspace", session, async (path) => {
+      reads.push(path);
+      if (path.endsWith("missing.ts")) {
+        throw new Error("missing");
+      }
+      return { path };
+    });
 
     expect(reads.sort()).toEqual([
       "/workspace/left.ts",
@@ -421,8 +402,7 @@ describe("documentSessionState", () => {
 
   it("does not restore a UNC traversal alias from a foreign authority", async () => {
     const validPath = "\\\\foreign-server\\foreign-share\\Valid.ts";
-    const traversalPath =
-      "\\\\server\\share\\..\\..\\foreign-server\\foreign-share\\Secret.ts";
+    const traversalPath = "\\\\server\\share\\..\\..\\foreign-server\\foreign-share\\Secret.ts";
     const reads: string[] = [];
     const restored = await restoreWorkspaceSession(
       "\\\\foreign-server\\foreign-share",

@@ -1,11 +1,7 @@
 import type { EditorPosition } from "../domain/languageServerFeatures";
-import {
-  provideNeonCompletions as provideNeonCompletionsFromProvider,
-} from "./neonCompletionProvider";
+import { provideNeonCompletions as provideNeonCompletionsFromProvider } from "./neonCompletionProvider";
 import type { NeonCompletionItem } from "./neonCompletionItems";
-import {
-  provideNeonDefinition as provideNeonDefinitionFromProvider,
-} from "./neonDefinitionProvider";
+import { provideNeonDefinition as provideNeonDefinitionFromProvider } from "./neonDefinitionProvider";
 import {
   type NeonIntelligence,
   type NeonIntelligenceDependencies,
@@ -18,6 +14,9 @@ import {
   type NeonConfigInFlight,
 } from "./neonProjectConfigDiscovery";
 import { providePhpNetteInjectionDefinition as providePhpNetteInjectionDefinitionFromProvider } from "./phpNetteInjectionDefinitionProvider";
+import type { NeonCrossFileRepository } from "./neonCrossFileSymbolSweep";
+import { provideNeonSemanticDiagnostics as provideNeonSemanticDiagnosticsFromProvider } from "./neonSemanticDiagnosticsProvider";
+import type { NeonSemanticDiagnostic } from "../domain/neonSemanticDiagnostics";
 
 /**
  * Builds the NEON intelligence API from an accessor to the current dependencies
@@ -41,11 +40,7 @@ export function createNeonIntelligence(
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean> => {
-    const context = createNeonRequestContext(
-      getDependencies(),
-      configCache,
-      configInFlight,
-    );
+    const context = createNeonRequestContext(getDependencies(), configCache, configInFlight);
 
     if (!context) {
       return false;
@@ -58,11 +53,7 @@ export function createNeonIntelligence(
     source: string,
     position: EditorPosition,
   ): Promise<NeonCompletionItem[]> => {
-    const context = createNeonRequestContext(
-      getDependencies(),
-      configCache,
-      configInFlight,
-    );
+    const context = createNeonRequestContext(getDependencies(), configCache, configInFlight);
 
     if (!context) {
       return [];
@@ -76,32 +67,40 @@ export function createNeonIntelligence(
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean> => {
-    const context = createNeonRequestContext(
-      getDependencies(),
-      configCache,
-      configInFlight,
-    );
+    const context = createNeonRequestContext(getDependencies(), configCache, configInFlight);
 
     if (!context) {
       return false;
     }
 
-    return providePhpNetteInjectionDefinitionFromProvider(
-      context,
-      source,
-      offset,
-      request,
-    );
+    return providePhpNetteInjectionDefinitionFromProvider(context, source, offset, request);
   };
 
   const invalidateNeonConfigForPath = (rootPath: string, path: string): void => {
     invalidateNeonConfigCacheForPath(configCache, configInFlight, rootPath, path);
   };
 
+  const provideNeonSemanticDiagnostics = async (
+    repository: NeonCrossFileRepository,
+  ): Promise<readonly NeonSemanticDiagnostic[] | null> => {
+    const dependencies = getDependencies();
+    const context = createNeonRequestContext(dependencies, configCache, configInFlight);
+    if (!context) return [];
+    if (
+      repository.rootPath !== context.requestedRoot ||
+      !context.isRequestedRootActive() ||
+      repository.isCurrent?.() === false
+    ) {
+      return null;
+    }
+    return provideNeonSemanticDiagnosticsFromProvider(repository);
+  };
+
   return {
     invalidateNeonConfigForPath,
     provideNeonCompletions,
     provideNeonDefinition,
+    provideNeonSemanticDiagnostics,
     providePhpNetteInjectionDefinition,
   };
 }

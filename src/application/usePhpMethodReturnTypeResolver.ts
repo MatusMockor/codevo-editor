@@ -44,21 +44,12 @@ export interface UsePhpMethodReturnTypeResolverOptions {
     path: string,
     className: string,
   ) => Promise<PhpClassMemberReadResult>;
-  resolvePhpClassReference: (
-    source: string,
-    className: string,
-  ) => string | null;
+  resolvePhpClassReference: (source: string, className: string) => string | null;
   resolvePhpClassSourcePaths: (className: string) => Promise<string[]>;
   resolvePhpEloquentBuilderModelTypeRef: MutableRefObject<
-    (
-      source: string,
-      position: EditorPosition,
-      expression: string,
-    ) => Promise<string | null>
+    (source: string, position: EditorPosition, expression: string) => Promise<string | null>
   >;
-  resolvePhpFrameworkBoundConcrete: (
-    className: string,
-  ) => Promise<string | null>;
+  resolvePhpFrameworkBoundConcrete: (className: string) => Promise<string | null>;
   resolvePhpFrameworkReturnTypeReference: (
     source: string,
     typeName: string | null,
@@ -113,21 +104,13 @@ export function usePhpMethodReturnTypeResolver({
       createPhpFrameworkMethodReturnTypeStrategyAdapters({
         frameworkRuntime,
         isWorkspaceCurrent: () =>
-          workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            workspaceRoot,
-          ),
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, workspaceRoot),
         readPhpClassSource: async (path, className) =>
           (await readPhpClassMembersFromPath(path, className)).content,
         resolvePhpClassSourcePaths,
         resolvePhpFrameworkBuilderModelType: (source, position, expression) =>
-          resolvePhpEloquentBuilderModelTypeRef.current(
-            source,
-            position,
-            expression,
-          ),
-        resolvePhpFrameworkProjectMorphMapModelType:
-          resolvePhpFrameworkProjectMorphMapModelType,
+          resolvePhpEloquentBuilderModelTypeRef.current(source, position, expression),
+        resolvePhpFrameworkProjectMorphMapModelType: resolvePhpFrameworkProjectMorphMapModelType,
       }),
     [
       currentWorkspaceRootRef,
@@ -160,17 +143,14 @@ export function usePhpMethodReturnTypeResolver({
 
       const normalizedClassName = className.trim().replace(/^\\+/, "");
       const visitedKey = normalizedClassName.toLowerCase();
-      const normalizedLateStaticClassName = lateStaticClassName
-        .trim()
-        .replace(/^\\+/, "");
+      const normalizedLateStaticClassName = lateStaticClassName.trim().replace(/^\\+/, "");
       if (!normalizedClassName || visitedClassNames.has(visitedKey)) {
         return null;
       }
 
       visitedClassNames.add(visitedKey);
 
-      const facadeTargetClassName =
-        returnTypeStrategy.facadeTargetClassName(normalizedClassName);
+      const facadeTargetClassName = returnTypeStrategy.facadeTargetClassName(normalizedClassName);
 
       if (facadeTargetClassName) {
         return resolvePhpMethodReturnType(
@@ -183,33 +163,24 @@ export function usePhpMethodReturnTypeResolver({
         );
       }
 
-      const resolveKnownFrameworkReturnType = async (): Promise<
-        string | null
-      > => {
-        const knownReturnType =
-          await returnTypeStrategy.knownClassMethodReturnType({
-            ...(callExpression ? { callExpression } : {}),
-            className: normalizedLateStaticClassName || normalizedClassName,
-            methodName,
-          });
+      const resolveKnownFrameworkReturnType = async (): Promise<string | null> => {
+        const knownReturnType = await returnTypeStrategy.knownClassMethodReturnType({
+          ...(callExpression ? { callExpression } : {}),
+          className: normalizedLateStaticClassName || normalizedClassName,
+          methodName,
+        });
 
         return isRequestedRootActive() ? knownReturnType : null;
       };
 
-      const resolveBoundConcreteReturnType = async (): Promise<
-        string | null
-      > => {
-        const boundConcreteClassName =
-          await resolvePhpFrameworkBoundConcrete(normalizedClassName);
+      const resolveBoundConcreteReturnType = async (): Promise<string | null> => {
+        const boundConcreteClassName = await resolvePhpFrameworkBoundConcrete(normalizedClassName);
 
         if (!isRequestedRootActive()) {
           return null;
         }
 
-        if (
-          !boundConcreteClassName ||
-          boundConcreteClassName.toLowerCase() === visitedKey
-        ) {
+        if (!boundConcreteClassName || boundConcreteClassName.toLowerCase() === visitedKey) {
           return null;
         }
 
@@ -235,10 +206,7 @@ export function usePhpMethodReturnTypeResolver({
       ): Promise<string | null> => {
         const constructedClassName =
           phpNewExpressionClassName(expression) ??
-          phpFrameworkContainerExpressionClassName(
-            expression,
-            frameworkProviders,
-          );
+          phpFrameworkContainerExpressionClassName(expression, frameworkProviders);
 
         if (constructedClassName) {
           return resolvePhpClassReference(ownerSource, constructedClassName);
@@ -263,33 +231,28 @@ export function usePhpMethodReturnTypeResolver({
           const resolvedReceiverType = constructedReceiverType
             ? resolvePhpClassReference(ownerSource, constructedReceiverType)
             : null;
-          const frameworkReturnType =
-            phpFrameworkMethodCallReturnTypeFromSource(
-              ownerSource,
-              methodCall.methodName,
-              resolvedReceiverType,
-              methodCall.receiverExpression,
-              frameworkProviders,
-              expression,
-            );
+          const frameworkReturnType = phpFrameworkMethodCallReturnTypeFromSource(
+            ownerSource,
+            methodCall.methodName,
+            resolvedReceiverType,
+            methodCall.receiverExpression,
+            frameworkProviders,
+            expression,
+          );
           const resolvedFrameworkReturnType = frameworkReturnType
-            ? resolvePhpFrameworkReturnTypeReference(
-                ownerSource,
-                frameworkReturnType,
-              )
+            ? resolvePhpFrameworkReturnTypeReference(ownerSource, frameworkReturnType)
             : null;
 
           if (resolvedFrameworkReturnType) {
             return resolvedFrameworkReturnType;
           }
 
-          const strategyReturnType =
-            await returnTypeStrategy.methodCallReturnType({
-              methodName: methodCall.methodName,
-              ownerSource,
-              receiverExpression: methodCall.receiverExpression,
-              receiverType: resolvedReceiverType,
-            });
+          const strategyReturnType = await returnTypeStrategy.methodCallReturnType({
+            methodName: methodCall.methodName,
+            ownerSource,
+            receiverExpression: methodCall.receiverExpression,
+            receiverType: resolvedReceiverType,
+          });
 
           if (strategyReturnType) {
             return strategyReturnType;
@@ -310,10 +273,7 @@ export function usePhpMethodReturnTypeResolver({
         const staticCall = phpStaticCallExpression(expression);
 
         if (staticCall) {
-          const className = resolvePhpClassReference(
-            ownerSource,
-            staticCall.className,
-          );
+          const className = resolvePhpClassReference(ownerSource, staticCall.className);
 
           const strategyReturnType = returnTypeStrategy.staticCallReturnType({
             className,
@@ -325,37 +285,27 @@ export function usePhpMethodReturnTypeResolver({
           }
 
           return className
-            ? resolvePhpMethodReturnType(
-                className,
-                staticCall.methodName,
-                visitedClassNames,
-              )
+            ? resolvePhpMethodReturnType(className, staticCall.methodName, visitedClassNames)
             : null;
         }
 
         return null;
       };
 
-      for (const path of await resolvePhpClassSourcePaths(
-        normalizedClassName,
-      )) {
+      for (const path of await resolvePhpClassSourcePaths(normalizedClassName)) {
         if (!isRequestedRootActive()) {
           return null;
         }
 
         try {
-          const { content, members } = await readPhpClassMembersFromPath(
-            path,
-            normalizedClassName,
-          );
+          const { content, members } = await readPhpClassMembersFromPath(path, normalizedClassName);
 
           if (!isRequestedRootActive()) {
             return null;
           }
 
           const method = members.find(
-            (candidate) =>
-              candidate.name.toLowerCase() === methodName.toLowerCase(),
+            (candidate) => candidate.name.toLowerCase() === methodName.toLowerCase(),
           );
           const methodReturnExpressions = method
             ? phpMethodReturnExpressions(content, method.name)
@@ -370,19 +320,16 @@ export function usePhpMethodReturnTypeResolver({
             : null;
 
           if (returnType) {
-            const strategyReturnType =
-              await returnTypeStrategy.resolveDeclaredMethodReturnType({
-                ...(callExpression ? { callExpression } : {}),
-                declaringClassName: normalizedClassName,
-                lateStaticClassName:
-                  normalizedLateStaticClassName || normalizedClassName,
-                methodName,
-                methodReturnExpressions,
-                rawReturnType: method?.returnType ?? null,
-                resolvedReturnType: returnType,
-                resolveTypeReference: (typeName) =>
-                  resolvePhpClassReference(content, typeName),
-              });
+            const strategyReturnType = await returnTypeStrategy.resolveDeclaredMethodReturnType({
+              ...(callExpression ? { callExpression } : {}),
+              declaringClassName: normalizedClassName,
+              lateStaticClassName: normalizedLateStaticClassName || normalizedClassName,
+              methodName,
+              methodReturnExpressions,
+              rawReturnType: method?.returnType ?? null,
+              resolvedReturnType: returnType,
+              resolveTypeReference: (typeName) => resolvePhpClassReference(content, typeName),
+            });
 
             if (!isRequestedRootActive()) {
               return null;
@@ -393,10 +340,7 @@ export function usePhpMethodReturnTypeResolver({
 
           if (method) {
             for (const expression of methodReturnExpressions) {
-              const expressionReturnType = await resolveReturnExpressionType(
-                content,
-                expression,
-              );
+              const expressionReturnType = await resolveReturnExpressionType(content, expression);
 
               if (!isRequestedRootActive()) {
                 return null;
@@ -409,10 +353,7 @@ export function usePhpMethodReturnTypeResolver({
           }
 
           for (const traitName of phpTraitClassNames(content)) {
-            const resolvedTraitName = resolvePhpClassReference(
-              content,
-              traitName,
-            );
+            const resolvedTraitName = resolvePhpClassReference(content, traitName);
             const traitTemplateTypes = resolvedTraitName
               ? await resolvePhpGenericTemplateTypesForInheritedClass(
                   content,
@@ -446,10 +387,7 @@ export function usePhpMethodReturnTypeResolver({
           }
 
           for (const mixinName of phpMixinClassNames(content)) {
-            const resolvedMixinName = resolvePhpClassReference(
-              content,
-              mixinName,
-            );
+            const resolvedMixinName = resolvePhpClassReference(content, mixinName);
             const mixinTemplateTypes = resolvedMixinName
               ? await resolvePhpGenericTemplateTypesForMixinClass(
                   content,
@@ -483,21 +421,17 @@ export function usePhpMethodReturnTypeResolver({
           }
 
           for (const superTypeName of phpSuperTypeReferences(content)) {
-            const resolvedSuperTypeName = resolvePhpClassReference(
-              content,
-              superTypeName,
-            );
+            const resolvedSuperTypeName = resolvePhpClassReference(content, superTypeName);
 
             if (!resolvedSuperTypeName) {
               continue;
             }
 
-            const superTypeTemplateTypes =
-              await resolvePhpGenericTemplateTypesForInheritedClass(
-                content,
-                resolvedSuperTypeName,
-                templateTypes,
-              );
+            const superTypeTemplateTypes = await resolvePhpGenericTemplateTypesForInheritedClass(
+              content,
+              resolvedSuperTypeName,
+              templateTypes,
+            );
 
             if (!isRequestedRootActive()) {
               return null;
@@ -547,7 +481,6 @@ export function usePhpMethodReturnTypeResolver({
     },
     [
       currentWorkspaceRootRef,
-      frameworkRuntime,
       frameworkProviders,
       typeExtensions,
       readPhpClassMembersFromPath,

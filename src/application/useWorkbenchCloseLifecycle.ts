@@ -1,15 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import {
-  listen,
-  type UnlistenFn as TauriUnlistenFn,
-} from "@tauri-apps/api/event";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  type MutableRefObject,
-} from "react";
+import { listen, type UnlistenFn as TauriUnlistenFn } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import type { EditorConfigFile } from "../domain/editorConfig";
 import { createEditorSessionOwnerKey } from "../domain/editorSessionOwnerKey";
 import type { AppSettings } from "../domain/settings";
@@ -18,15 +9,9 @@ import type { ProjectRuntimeStopResult } from "../domain/workspaceRuntimeLifecyc
 import type { WorkspaceIdentityDescriptor } from "../infrastructure/tauriWorkspaceIdentityGateway";
 import { isDirty } from "../domain/workspace";
 import type { CloseCompletion } from "../domain/dirtyClose";
-import {
-  normalizedWorkspaceRootKey,
-  workspaceRootKeysEqual,
-} from "../domain/workspaceRootKey";
+import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { CloseCoordinator } from "./closeCoordinator";
-import type {
-  DocumentSaveLease,
-  RunWithDocumentSaveExclusion,
-} from "./documentSaveCoordinator";
+import type { DocumentSaveLease, RunWithDocumentSaveExclusion } from "./documentSaveCoordinator";
 import {
   createDirtyCloseDocumentDescriptor,
   type DirtyCloseDecisionPort,
@@ -68,8 +53,7 @@ export interface WorkbenchDirtyCloseIdentity {
   readonly saveTarget: CapturedOwnerDocumentSaveTarget;
 }
 
-export type WorkbenchDirtyCloseTarget =
-  CapturedDirtyCloseTarget<WorkbenchDirtyCloseIdentity>;
+export type WorkbenchDirtyCloseTarget = CapturedDirtyCloseTarget<WorkbenchDirtyCloseIdentity>;
 
 export interface WorkspaceCloseSessionPort {
   current: () => {
@@ -89,17 +73,11 @@ export interface WorkbenchCloseLifecycleDependencies {
   dirtyCount: number;
 
   appSettingsRef: MutableRefObject<AppSettings>;
-  workspaceStateCacheRef: MutableRefObject<
-    Record<string, CachedWorkspaceDirtyState>
-  >;
+  workspaceStateCacheRef: MutableRefObject<Record<string, CachedWorkspaceDirtyState>>;
   resolveCachedWorkspaceState?: WorkspaceStateCache["resolveCachedWorkspaceState"];
   forgetCachedWorkspaceState?: WorkspaceStateCache["forgetCachedWorkspaceState"];
-  workspaceIdentityByRootRef: MutableRefObject<
-    Record<string, WorkspaceIdentityDescriptor>
-  >;
-  editorConfigCacheRef: MutableRefObject<
-    Record<string, Record<string, EditorConfigFile | null>>
-  >;
+  workspaceIdentityByRootRef: MutableRefObject<Record<string, WorkspaceIdentityDescriptor>>;
+  editorConfigCacheRef: MutableRefObject<Record<string, Record<string, EditorConfigFile | null>>>;
   openWorkspaceRequestPathRef: MutableRefObject<string | null>;
   openWorkspaceRequestTokenRef: MutableRefObject<number>;
   openFileRequestTokenRef: MutableRefObject<number>;
@@ -125,31 +103,20 @@ export interface WorkbenchCloseLifecycleDependencies {
   ) => WorkspaceCloseOwnership | void;
   runWithDocumentSaveExclusion: RunWithDocumentSaveExclusion;
   persistAppSettings: (nextSettings: AppSettings) => Promise<void>;
-  closeSyncedLanguageServerDocumentsForRoot: (
-    rootPath: string,
-  ) => Promise<void>;
-  closeSyncedJavaScriptTypeScriptDocumentsForRoot: (
-    rootPath: string,
-  ) => Promise<void>;
+  closeSyncedLanguageServerDocumentsForRoot: (rootPath: string) => Promise<void>;
+  closeSyncedJavaScriptTypeScriptDocumentsForRoot: (rootPath: string) => Promise<void>;
   stopProjectRuntimes: (
     rootPath?: string,
     ownership?: WorkspaceCloseOwnership,
   ) => Promise<ProjectRuntimeStopResult>;
   forgetLanguageServerRuntimeStatuses: (rootPath: string) => void;
   forgetLatencyTrackerForRoot: (rootPath: string) => void;
-  unregisterWorkspace: (
-    workspaceId: string,
-  ) => Promise<WorkspaceIdentityReleaseOutcome | void>;
+  unregisterWorkspace: (workspaceId: string) => Promise<WorkspaceIdentityReleaseOutcome | void>;
   clearExternalFileConflictsForRoot: (rootPath: string) => void;
   invalidateWorkspaceResourceCachesForRoot: (rootPath: string) => void;
   workspaceHasExternalFileConflicts: (rootPath: string) => boolean;
-  openWorkspacePath: (
-    path: string,
-    options?: OpenWorkspacePathOptions,
-  ) => Promise<void>;
-  clearActiveWorkspace: (
-    options?: ClearActiveWorkspaceOptions,
-  ) => Promise<void>;
+  openWorkspacePath: (path: string, options?: OpenWorkspacePathOptions) => Promise<void>;
+  clearActiveWorkspace: (options?: ClearActiveWorkspaceOptions) => Promise<void>;
   persistWorkspaceSession?: (rootPath: string) => Promise<void>;
   reportError: (source: string, error: unknown) => void;
 }
@@ -187,18 +154,8 @@ export function useWorkbenchCloseLifecycle(
     workspaceRoot,
     appSettingsRef,
     workspaceStateCacheRef,
-    resolveCachedWorkspaceState = (rootPath, identity) =>
-      resolveCachedWorkspaceStateFallback(
-        workspaceStateCacheRef.current,
-        rootPath,
-        identity,
-      ),
     forgetCachedWorkspaceState = (rootPath, identity) =>
-      forgetCachedWorkspaceStateFallback(
-        workspaceStateCacheRef.current,
-        rootPath,
-        identity,
-      ),
+      forgetCachedWorkspaceStateFallback(workspaceStateCacheRef.current, rootPath, identity),
     workspaceIdentityByRootRef,
     openWorkspaceRequestPathRef,
     openWorkspaceRequestTokenRef,
@@ -223,7 +180,6 @@ export function useWorkbenchCloseLifecycle(
     unregisterWorkspace,
     clearExternalFileConflictsForRoot,
     invalidateWorkspaceResourceCachesForRoot,
-    workspaceHasExternalFileConflicts,
     openWorkspacePath,
     clearActiveWorkspace,
     persistWorkspaceSession = async () => undefined,
@@ -231,12 +187,8 @@ export function useWorkbenchCloseLifecycle(
   } = dependencies;
   const closeCoordinator = useMemo(() => new CloseCoordinator(), []);
   const nativeCloseInFlightRef = useRef(false);
-  const workspaceCloseInFlightRef = useRef(
-    new Map<string, Promise<void>>(),
-  );
-  const nativeCloseRequestRef = useRef<(payload: unknown) => void>(
-    () => undefined,
-  );
+  const workspaceCloseInFlightRef = useRef(new Map<string, Promise<void>>());
+  const nativeCloseRequestRef = useRef<(payload: unknown) => void>(() => undefined);
 
   const persistCurrentWorkspaceSession = useCallback(async () => {
     if (!workspaceRoot) {
@@ -251,10 +203,7 @@ export function useWorkbenchCloseLifecycle(
   }, [persistWorkspaceSession, reportError, workspaceRoot]);
 
   const confirmNativeShutdown = useCallback(
-    async (
-      kind: NativeCloseKind,
-      scopeIsCurrent: CloseScopeGuard,
-    ): Promise<boolean> => {
+    async (kind: NativeCloseKind, scopeIsCurrent: CloseScopeGuard): Promise<boolean> => {
       await persistCurrentWorkspaceSession();
       if (!scopeIsCurrent()) {
         return false;
@@ -266,174 +215,165 @@ export function useWorkbenchCloseLifecycle(
     [persistCurrentWorkspaceSession],
   );
 
-  const targetIsCurrent = useCallback((
-    target: WorkbenchDirtyCloseTarget,
-    expectedDocument: EditorDocument,
-  ) => {
-    if (!isWorkspaceRuntimeOwnerCurrent(target.owner)) {
-      return false;
-    }
-
-    const repository = ownerDocumentSaveRepository.resolve({
-      ...target.identity.saveTarget,
-      document: expectedDocument,
-    });
-    return repository?.isCurrent() === true;
-  }, [isWorkspaceRuntimeOwnerCurrent, ownerDocumentSaveRepository]);
-
-  const executeDirtyClose = useCallback(async (
-    captureTargets: () => readonly WorkbenchDirtyCloseTarget[] | null,
-    roots: readonly string[],
-    scope: "workspace" | "quit",
-    commit: CloseCommit,
-  ): Promise<CloseCompletion> => {
-    const targets = captureTargets();
-    if (!targets) {
-      return "blocked";
-    }
-
-    const capturedTargets = new Map(
-      targets.map((target) => [target.targetId, target]),
-    );
-    const expectedDocuments = new Map<string, EditorDocument>();
-    const closeScopeIsCurrent = (requireClean: boolean): boolean => {
-      const currentTargets = captureTargets();
-      if (!currentTargets) {
+  const targetIsCurrent = useCallback(
+    (target: WorkbenchDirtyCloseTarget, expectedDocument: EditorDocument) => {
+      if (!isWorkspaceRuntimeOwnerCurrent(target.owner)) {
         return false;
       }
 
-      for (const currentTarget of currentTargets) {
-        const capturedTarget = capturedTargets.get(currentTarget.targetId);
-        if (!capturedTarget) {
-          return false;
-        }
-
-        const expected = expectedDocuments.get(currentTarget.targetId) ??
-          capturedTarget.identity.saveTarget.document;
-        if (currentTarget.identity.saveTarget.document !== expected) {
-          return false;
-        }
-      }
-
-      for (const target of targets) {
-        const expected = expectedDocuments.get(target.targetId) ??
-          target.identity.saveTarget.document;
-        if (!targetIsCurrent(target, expected)) {
-          return false;
-        }
-        if (requireClean && isDirty(expected)) {
-          return false;
-        }
-      }
-
-      return true;
-    };
-    const commitConditionally = async (
-      requireClean: boolean,
-    ): Promise<CloseCompletion> => runWithWorkspaceSaveExclusions(
-      uniqueNormalizedWorkspaceRoots([...roots]),
-      runWithDocumentSaveExclusion,
-      async () => {
-        if (!closeScopeIsCurrent(requireClean)) {
-          return "stale";
-        }
-
-        const committed = await commit(
-          () => closeScopeIsCurrent(requireClean),
-        );
-        return committed ? "closed" : "stale";
-      },
-    );
-
-    if (targets.length === 0) {
-      return commitConditionally(false);
-    }
-
-    let decision;
-    try {
-      decision = await dirtyCloseDecisionPort.decideDirtyClose({
-        scope,
-        documents: targets.map(workbenchDirtyCloseDocumentDescriptor),
-        documentNames: targets.map(
-          (target) => target.identity.saveTarget.document.name,
-        ),
+      const repository = ownerDocumentSaveRepository.resolve({
+        ...target.identity.saveTarget,
+        document: expectedDocument,
       });
-    } catch (error) {
-      reportError("Application", error);
-      return "blocked";
-    }
-    if (decision === "cancel") {
-      return "cancelled";
-    }
-    if (decision === "discard") {
-      return commitConditionally(false);
-    }
+      return repository?.isCurrent() === true;
+    },
+    [isWorkspaceRuntimeOwnerCurrent, ownerDocumentSaveRepository],
+  );
 
-    const transaction = new DirtyCloseSaveTransaction<
-      WorkbenchDirtyCloseIdentity,
-      void
-    >({
-      saveTarget: async (target) => {
-        const repository = ownerDocumentSaveRepository.resolve(
-          target.identity.saveTarget,
-        );
-        if (!repository) {
-          return { status: "stale" };
+  const executeDirtyClose = useCallback(
+    async (
+      captureTargets: () => readonly WorkbenchDirtyCloseTarget[] | null,
+      roots: readonly string[],
+      scope: "workspace" | "quit",
+      commit: CloseCommit,
+    ): Promise<CloseCompletion> => {
+      const targets = captureTargets();
+      if (!targets) {
+        return "blocked";
+      }
+
+      const capturedTargets = new Map(targets.map((target) => [target.targetId, target]));
+      const expectedDocuments = new Map<string, EditorDocument>();
+      const closeScopeIsCurrent = (requireClean: boolean): boolean => {
+        const currentTargets = captureTargets();
+        if (!currentTargets) {
+          return false;
         }
-        const result = await requestOwnerDocumentSave(
-          target.identity.ownership,
-          (lease) => ownerResolvingDocumentSaveService.saveDocument({
-            target: target.identity.saveTarget,
-            lease,
-          }),
+
+        for (const currentTarget of currentTargets) {
+          const capturedTarget = capturedTargets.get(currentTarget.targetId);
+          if (!capturedTarget) {
+            return false;
+          }
+
+          const expected =
+            expectedDocuments.get(currentTarget.targetId) ??
+            capturedTarget.identity.saveTarget.document;
+          if (currentTarget.identity.saveTarget.document !== expected) {
+            return false;
+          }
+        }
+
+        for (const target of targets) {
+          const expected =
+            expectedDocuments.get(target.targetId) ?? target.identity.saveTarget.document;
+          if (!targetIsCurrent(target, expected)) {
+            return false;
+          }
+          if (requireClean && isDirty(expected)) {
+            return false;
+          }
+        }
+
+        return true;
+      };
+      const commitConditionally = async (requireClean: boolean): Promise<CloseCompletion> =>
+        runWithWorkspaceSaveExclusions(
+          uniqueNormalizedWorkspaceRoots([...roots]),
+          runWithDocumentSaveExclusion,
+          async () => {
+            if (!closeScopeIsCurrent(requireClean)) {
+              return "stale";
+            }
+
+            const committed = await commit(() => closeScopeIsCurrent(requireClean));
+            return committed ? "closed" : "stale";
+          },
         );
-        if (result.status === "saved") {
-          const acknowledgedDocument = repository.currentDocument();
-          if (!acknowledgedDocument) {
+
+      if (targets.length === 0) {
+        return commitConditionally(false);
+      }
+
+      let decision;
+      try {
+        decision = await dirtyCloseDecisionPort.decideDirtyClose({
+          scope,
+          documents: targets.map(workbenchDirtyCloseDocumentDescriptor),
+          documentNames: targets.map((target) => target.identity.saveTarget.document.name),
+        });
+      } catch (error) {
+        reportError("Application", error);
+        return "blocked";
+      }
+      if (decision === "cancel") {
+        return "cancelled";
+      }
+      if (decision === "discard") {
+        return commitConditionally(false);
+      }
+
+      const transaction = new DirtyCloseSaveTransaction<WorkbenchDirtyCloseIdentity, void>({
+        saveTarget: async (target) => {
+          const repository = ownerDocumentSaveRepository.resolve(target.identity.saveTarget);
+          if (!repository) {
             return { status: "stale" };
           }
-          expectedDocuments.set(target.targetId, acknowledgedDocument);
-        }
-        return result;
-      },
-      isOwnerCurrent: isWorkspaceRuntimeOwnerCurrent,
-      revalidateTarget: (target) => {
-        const expected = expectedDocuments.get(target.targetId) ??
-          target.identity.saveTarget.document;
-        if (!targetIsCurrent(target, expected)) {
-          return { status: "stale" };
-        }
+          const result = await requestOwnerDocumentSave(target.identity.ownership, (lease) =>
+            ownerResolvingDocumentSaveService.saveDocument({
+              target: target.identity.saveTarget,
+              lease,
+            }),
+          );
+          if (result.status === "saved") {
+            const acknowledgedDocument = repository.currentDocument();
+            if (!acknowledgedDocument) {
+              return { status: "stale" };
+            }
+            expectedDocuments.set(target.targetId, acknowledgedDocument);
+          }
+          return result;
+        },
+        isOwnerCurrent: isWorkspaceRuntimeOwnerCurrent,
+        revalidateTarget: (target) => {
+          const expected =
+            expectedDocuments.get(target.targetId) ?? target.identity.saveTarget.document;
+          if (!targetIsCurrent(target, expected)) {
+            return { status: "stale" };
+          }
 
-        return { status: "current", clean: !isDirty(expected) };
-      },
-      commitCloseConditionally: async () => {
-        const completion = await commitConditionally(true);
-        if (completion === "closed") {
-          return { status: "committed", result: undefined };
-        }
+          return { status: "current", clean: !isDirty(expected) };
+        },
+        commitCloseConditionally: async () => {
+          const completion = await commitConditionally(true);
+          if (completion === "closed") {
+            return { status: "committed", result: undefined };
+          }
 
-        const target = targets[0];
-        if (!target) {
-          throw new Error("Dirty close target disappeared before commit");
-        }
-        return { status: "stale", target, reason: "target-replaced" };
-      },
-    });
-    const result = await transaction.execute({ targets });
-    if (result.status === "blocked") {
-      reportDirtyCloseSaveFailure(result, targets.length, reportError);
-    }
-    return result.status === "closed" ? "closed" : result.status;
-  }, [
-    dirtyCloseDecisionPort,
-    isWorkspaceRuntimeOwnerCurrent,
-    ownerResolvingDocumentSaveService,
-    ownerDocumentSaveRepository,
-    reportError,
-    requestOwnerDocumentSave,
-    runWithDocumentSaveExclusion,
-    targetIsCurrent,
-  ]);
+          const target = targets[0];
+          if (!target) {
+            throw new Error("Dirty close target disappeared before commit");
+          }
+          return { status: "stale", target, reason: "target-replaced" };
+        },
+      });
+      const result = await transaction.execute({ targets });
+      if (result.status === "blocked") {
+        reportDirtyCloseSaveFailure(result, targets.length, reportError);
+      }
+      return result.status === "closed" ? "closed" : result.status;
+    },
+    [
+      dirtyCloseDecisionPort,
+      isWorkspaceRuntimeOwnerCurrent,
+      ownerResolvingDocumentSaveService,
+      ownerDocumentSaveRepository,
+      reportError,
+      requestOwnerDocumentSave,
+      runWithDocumentSaveExclusion,
+      targetIsCurrent,
+    ],
+  );
 
   const requestApplicationShutdown = useCallback(
     (shutdown: CloseCommit, errorSource: string) => {
@@ -446,27 +386,18 @@ export function useWorkbenchCloseLifecycle(
         ...appSettingsRef.current.workspaceTabs,
         workspaceRoot,
       ]);
-      void executeDirtyClose(
-        () => captureDirtyCloseTargets(null),
-        roots,
-        "quit",
-        shutdown,
-      ).then((completion) => {
-        if (completion !== "closed") {
-          nativeCloseInFlightRef.current = false;
-        }
-      }).catch((error) => {
+      void executeDirtyClose(() => captureDirtyCloseTargets(null), roots, "quit", shutdown)
+        .then((completion) => {
+          if (completion !== "closed") {
+            nativeCloseInFlightRef.current = false;
+          }
+        })
+        .catch((error) => {
           nativeCloseInFlightRef.current = false;
           reportError(errorSource, error);
         });
     },
-    [
-      appSettingsRef,
-      captureDirtyCloseTargets,
-      executeDirtyClose,
-      reportError,
-      workspaceRoot,
-    ],
+    [appSettingsRef, captureDirtyCloseTargets, executeDirtyClose, reportError, workspaceRoot],
   );
 
   nativeCloseRequestRef.current = (payload) => {
@@ -517,8 +448,8 @@ export function useWorkbenchCloseLifecycle(
       if (!unlisten) {
         return;
       }
-      void invoke("set_native_close_listener_ready", { ready: false }).catch(
-        (error) => reportError("Application", error),
+      void invoke("set_native_close_listener_ready", { ready: false }).catch((error) =>
+        reportError("Application", error),
       );
     };
   }, [reportError]);
@@ -537,9 +468,7 @@ export function useWorkbenchCloseLifecycle(
 
       if (identityDescriptor) {
         try {
-          const releaseOutcome = await unregisterWorkspace(
-            identityDescriptor.workspaceId,
-          );
+          const releaseOutcome = await unregisterWorkspace(identityDescriptor.workspaceId);
           if (releaseOutcome === "deferred") {
             return "identity-release-deferred";
           }
@@ -598,11 +527,7 @@ export function useWorkbenchCloseLifecycle(
       }
 
       forgetCachedWorkspaceState(tabPath, identityDescriptor);
-      const resourceRoots = workspaceResourceRoots(
-        tabPath,
-        targetRootPath,
-        identityDescriptor,
-      );
+      const resourceRoots = workspaceResourceRoots(tabPath, targetRootPath, identityDescriptor);
       for (const rootPath of resourceRoots) {
         if (!ownership.isCurrent() || !scopeIsCurrent()) {
           return "stale";
@@ -613,9 +538,7 @@ export function useWorkbenchCloseLifecycle(
       }
 
       if (identityDescriptor) {
-        for (const [rootPath, descriptor] of Object.entries(
-          workspaceIdentityByRootRef.current,
-        )) {
+        for (const [rootPath, descriptor] of Object.entries(workspaceIdentityByRootRef.current)) {
           if (descriptor.workspaceId !== identityDescriptor.workspaceId) {
             continue;
           }
@@ -645,10 +568,7 @@ export function useWorkbenchCloseLifecycle(
   );
 
   const restoreSettingsAfterIdentityReleaseFailure = useCallback(
-    async (
-      settings: AppSettings,
-      ownership: WorkspaceCloseOwnership,
-    ): Promise<void> => {
+    async (settings: AppSettings, ownership: WorkspaceCloseOwnership): Promise<void> => {
       if (!ownership.isCurrent()) {
         return;
       }
@@ -667,17 +587,13 @@ export function useWorkbenchCloseLifecycle(
       const currentSettings = appSettingsRef.current;
       const currentTabs = currentSettings.workspaceTabs;
       const tabPath =
-        workspaceTabPathForIdentity(
-          currentTabs,
-          path,
-          workspaceIdentityByRootRef.current,
-        ) ?? path;
+        workspaceTabPathForIdentity(currentTabs, path, workspaceIdentityByRootRef.current) ?? path;
       const activeSession = workspaceCloseSession.current();
       const activeRootPath = activeSession.activeRoot;
-      const identityDescriptor = workspaceIdentityForPaths(
-        workspaceIdentityByRootRef.current,
-        [tabPath, path],
-      );
+      const identityDescriptor = workspaceIdentityForPaths(workspaceIdentityByRootRef.current, [
+        tabPath,
+        path,
+      ]);
       const activeIdentityDescriptor = workspaceIdentityForPaths(
         workspaceIdentityByRootRef.current,
         activeRootPath ? [activeRootPath] : [],
@@ -686,12 +602,10 @@ export function useWorkbenchCloseLifecycle(
         workspaceRootKeysEqual(tabPath, activeRootPath) ||
         Boolean(
           identityDescriptor &&
-            activeIdentityDescriptor &&
-            identityDescriptor.workspaceId ===
-              activeIdentityDescriptor.workspaceId,
+          activeIdentityDescriptor &&
+          identityDescriptor.workspaceId === activeIdentityDescriptor.workspaceId,
         );
-      const targetRootPath =
-        closingActiveWorkspace && activeRootPath ? activeRootPath : tabPath;
+      const targetRootPath = closingActiveWorkspace && activeRootPath ? activeRootPath : tabPath;
       const nextTabs = workspaceTabsWithoutPath(currentTabs, path);
 
       if (nextTabs.length === currentTabs.length) {
@@ -704,10 +618,7 @@ export function useWorkbenchCloseLifecycle(
 
       if (
         workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, tabPath) ||
-        workspaceRootKeysEqual(
-          openWorkspaceRequestPathRef.current,
-          targetRootPath,
-        )
+        workspaceRootKeysEqual(openWorkspaceRequestPathRef.current, targetRootPath)
       ) {
         openWorkspaceRequestTokenRef.current += 1;
         openWorkspaceRequestPathRef.current = null;
@@ -718,10 +629,7 @@ export function useWorkbenchCloseLifecycle(
           return false;
         }
 
-        const nextRecentPath = workspaceRootKeysEqual(
-          currentSettings.recentWorkspacePath,
-          tabPath,
-        )
+        const nextRecentPath = workspaceRootKeysEqual(currentSettings.recentWorkspacePath, tabPath)
           ? (activeRootPath ?? nextTabs[nextTabs.length - 1] ?? null)
           : currentSettings.recentWorkspacePath;
 
@@ -737,10 +645,7 @@ export function useWorkbenchCloseLifecycle(
         }
 
         if (!ownership.isCurrent() || !scopeIsCurrent()) {
-          await restoreSettingsAfterIdentityReleaseFailure(
-            currentSettings,
-            ownership,
-          );
+          await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
           return false;
         }
 
@@ -752,10 +657,7 @@ export function useWorkbenchCloseLifecycle(
           scopeIsCurrent,
         );
         if (disposalResult === "stale") {
-          await restoreSettingsAfterIdentityReleaseFailure(
-            currentSettings,
-            ownership,
-          );
+          await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
           return false;
         }
         if (
@@ -766,10 +668,7 @@ export function useWorkbenchCloseLifecycle(
           return disposalResult === "disposed";
         }
 
-        await restoreSettingsAfterIdentityReleaseFailure(
-          currentSettings,
-          ownership,
-        );
+        await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
         return false;
       }
 
@@ -808,10 +707,7 @@ export function useWorkbenchCloseLifecycle(
       }
 
       if (!ownership.isCurrent() || !scopeIsCurrent()) {
-        await restoreSettingsAfterIdentityReleaseFailure(
-          currentSettings,
-          ownership,
-        );
+        await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
         return false;
       }
 
@@ -823,10 +719,7 @@ export function useWorkbenchCloseLifecycle(
         scopeIsCurrent,
       );
       if (disposalResult === "stale") {
-        await restoreSettingsAfterIdentityReleaseFailure(
-          currentSettings,
-          ownership,
-        );
+        await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
         return false;
       }
       if (
@@ -834,10 +727,7 @@ export function useWorkbenchCloseLifecycle(
         disposalResult === "identity-release-deferred" ||
         disposalResult === "runtime-stop-incomplete"
       ) {
-        await restoreSettingsAfterIdentityReleaseFailure(
-          currentSettings,
-          ownership,
-        );
+        await restoreSettingsAfterIdentityReleaseFailure(currentSettings, ownership);
         return false;
       }
 
@@ -872,54 +762,51 @@ export function useWorkbenchCloseLifecycle(
       persistAppSettings,
       persistWorkspaceSession,
       reportError,
-      resolveCachedWorkspaceState,
       restoreSettingsAfterIdentityReleaseFailure,
       workspaceCloseSession,
       workspaceIdentityByRootRef,
-      workspaceHasExternalFileConflicts,
     ],
   );
 
-  const closeWorkspaceTabOperation = useCallback(async (
-    path: string,
-  ): Promise<CloseCompletion> => {
-    const tabPath = workspaceTabPathForIdentity(
-      appSettingsRef.current.workspaceTabs,
-      path,
-      workspaceIdentityByRootRef.current,
-    ) ?? path;
-    const identity = workspaceIdentityForPaths(
-      workspaceIdentityByRootRef.current,
-      [tabPath, path],
-    );
-    const activeRoot = workspaceCloseSession.current().activeRoot;
-    const activeIdentity = workspaceIdentityForPaths(
-      workspaceIdentityByRootRef.current,
-      activeRoot ? [activeRoot] : [],
-    );
-    const closingActive = workspaceRootKeysEqual(tabPath, activeRoot) ||
-      Boolean(
-        identity &&
-        activeIdentity &&
-        identity.workspaceId === activeIdentity.workspaceId,
+  const closeWorkspaceTabOperation = useCallback(
+    async (path: string): Promise<CloseCompletion> => {
+      const tabPath =
+        workspaceTabPathForIdentity(
+          appSettingsRef.current.workspaceTabs,
+          path,
+          workspaceIdentityByRootRef.current,
+        ) ?? path;
+      const identity = workspaceIdentityForPaths(workspaceIdentityByRootRef.current, [
+        tabPath,
+        path,
+      ]);
+      const activeRoot = workspaceCloseSession.current().activeRoot;
+      const activeIdentity = workspaceIdentityForPaths(
+        workspaceIdentityByRootRef.current,
+        activeRoot ? [activeRoot] : [],
       );
-    const targetRoot = closingActive && activeRoot ? activeRoot : tabPath;
-    const roots = workspaceResourceRoots(tabPath, targetRoot, identity);
+      const closingActive =
+        workspaceRootKeysEqual(tabPath, activeRoot) ||
+        Boolean(identity && activeIdentity && identity.workspaceId === activeIdentity.workspaceId);
+      const targetRoot = closingActive && activeRoot ? activeRoot : tabPath;
+      const roots = workspaceResourceRoots(tabPath, targetRoot, identity);
 
-    return executeDirtyClose(
-      () => captureDirtyCloseTargets(targetRoot),
-      roots,
-      "workspace",
-      (scopeIsCurrent) => commitWorkspaceTabClose(tabPath, scopeIsCurrent),
-    );
-  }, [
-    appSettingsRef,
-    captureDirtyCloseTargets,
-    commitWorkspaceTabClose,
-    executeDirtyClose,
-    workspaceCloseSession,
-    workspaceIdentityByRootRef,
-  ]);
+      return executeDirtyClose(
+        () => captureDirtyCloseTargets(targetRoot),
+        roots,
+        "workspace",
+        (scopeIsCurrent) => commitWorkspaceTabClose(tabPath, scopeIsCurrent),
+      );
+    },
+    [
+      appSettingsRef,
+      captureDirtyCloseTargets,
+      commitWorkspaceTabClose,
+      executeDirtyClose,
+      workspaceCloseSession,
+      workspaceIdentityByRootRef,
+    ],
+  );
 
   const closeWorkspaceTab = useCallback(
     (path: string) => {
@@ -928,12 +815,11 @@ export function useWorkbenchCloseLifecycle(
           appSettingsRef.current.workspaceTabs,
           path,
           workspaceIdentityByRootRef.current,
-        ) ??
-        path;
-      const identityDescriptor = workspaceIdentityForPaths(
-        workspaceIdentityByRootRef.current,
-        [tabPath, path],
-      );
+        ) ?? path;
+      const identityDescriptor = workspaceIdentityForPaths(workspaceIdentityByRootRef.current, [
+        tabPath,
+        path,
+      ]);
       const closeKeys = workspaceCloseKeys(tabPath, identityDescriptor);
       const inFlight = closeKeys
         .map((key) => workspaceCloseInFlightRef.current.get(key))
@@ -942,27 +828,23 @@ export function useWorkbenchCloseLifecycle(
         return inFlight.then(() => undefined);
       }
 
-      const operation = closeWorkspaceTabOperation(tabPath).then(
-        () => undefined,
-      ).finally(() => {
-        for (const key of closeKeys) {
-          if (workspaceCloseInFlightRef.current.get(key) !== operation) {
-            continue;
-          }
+      const operation = closeWorkspaceTabOperation(tabPath)
+        .then(() => undefined)
+        .finally(() => {
+          for (const key of closeKeys) {
+            if (workspaceCloseInFlightRef.current.get(key) !== operation) {
+              continue;
+            }
 
-          workspaceCloseInFlightRef.current.delete(key);
-        }
-      });
+            workspaceCloseInFlightRef.current.delete(key);
+          }
+        });
       for (const key of closeKeys) {
         workspaceCloseInFlightRef.current.set(key, operation);
       }
       return operation;
     },
-    [
-      appSettingsRef,
-      closeWorkspaceTabOperation,
-      workspaceIdentityByRootRef,
-    ],
+    [appSettingsRef, closeWorkspaceTabOperation, workspaceIdentityByRootRef],
   );
 
   const quitApplication = useCallback(() => {
@@ -1015,13 +897,12 @@ function stopRuntimeForOwnedClose(
   return stopProjectRuntimes(rootPath, ownership);
 }
 
-function workbenchDirtyCloseDocumentDescriptor(
-  target: WorkbenchDirtyCloseTarget,
-) {
+function workbenchDirtyCloseDocumentDescriptor(target: WorkbenchDirtyCloseTarget) {
   const ownership = target.identity.ownership;
-  const relativePath = "workspaceRelativePath" in ownership
-    ? ownership.workspaceRelativePath
-    : workspaceRelativePath(ownership.rootPath, ownership.path);
+  const relativePath =
+    "workspaceRelativePath" in ownership
+      ? ownership.workspaceRelativePath
+      : workspaceRelativePath(ownership.rootPath, ownership.path);
 
   return createDirtyCloseDocumentDescriptor(
     target.targetId,
@@ -1039,9 +920,8 @@ function reportDirtyCloseSaveFailure(
   const failed = workbenchDirtyCloseDocumentDescriptor(result.target);
   const savedCount = result.savedTargets?.length ?? 0;
   const location = `${failed.workspaceLabel} / ${failed.relativePath}`;
-  const prefix = savedCount > 0
-    ? `Saved ${savedCount} of ${targetCount} files.`
-    : "No files were saved.";
+  const prefix =
+    savedCount > 0 ? `Saved ${savedCount} of ${targetCount} files.` : "No files were saved.";
   reportError(
     "Save",
     new Error(
@@ -1135,28 +1015,6 @@ function workspaceCloseKeys(
   return [...new Set(keys)];
 }
 
-function resolveCachedWorkspaceStateFallback(
-  cache: Record<string, CachedWorkspaceDirtyState>,
-  rootPath: string,
-  identity?: WorkspaceIdentityDescriptor | null,
-): CachedWorkspaceDirtyState | null {
-  if (!identity) {
-    return cache[normalizedWorkspaceRootKey(rootPath)] ?? null;
-  }
-
-  const identityKey = createEditorSessionOwnerKey(
-    identity.workspaceId,
-    identity.canonicalRoot,
-  );
-  return (
-    matchingCachedWorkspaceState(cache[identityKey], identity) ??
-    Object.values(cache).find(
-      (cached) => matchingCachedWorkspaceState(cached, identity) !== null,
-    ) ??
-    null
-  );
-}
-
 function forgetCachedWorkspaceStateFallback(
   cache: Record<string, CachedWorkspaceDirtyState>,
   rootPath: string,
@@ -1204,23 +1062,15 @@ function workspaceTabsWithoutPath(tabs: string[], path: string): string[] {
   return tabs.filter((tabPath) => !workspaceRootKeysEqual(tabPath, path));
 }
 
-function workspaceTabPathForPath(
-  tabs: string[],
-  path: string | null | undefined,
-): string | null {
+function workspaceTabPathForPath(tabs: string[], path: string | null | undefined): string | null {
   return tabs.find((tabPath) => workspaceRootKeysEqual(tabPath, path)) ?? null;
 }
 
-function workspaceTabIndexForPath(
-  tabs: string[],
-  path: string | null | undefined,
-): number {
+function workspaceTabIndexForPath(tabs: string[], path: string | null | undefined): number {
   return tabs.findIndex((tabPath) => workspaceRootKeysEqual(tabPath, path));
 }
 
-function uniqueNormalizedWorkspaceRoots(
-  paths: Array<string | null | undefined>,
-): string[] {
+function uniqueNormalizedWorkspaceRoots(paths: Array<string | null | undefined>): string[] {
   const roots: string[] = [];
 
   for (const path of paths) {
@@ -1247,11 +1097,6 @@ function runWithWorkspaceSaveExclusions<T>(
   }
 
   return runWithDocumentSaveExclusion({ kind: "workspace", rootPath }, () =>
-    runWithWorkspaceSaveExclusions(
-      roots,
-      runWithDocumentSaveExclusion,
-      operation,
-      index + 1,
-    ),
+    runWithWorkspaceSaveExclusions(roots, runWithDocumentSaveExclusion, operation, index + 1),
   );
 }

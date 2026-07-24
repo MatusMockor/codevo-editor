@@ -1,14 +1,8 @@
-import type { NodePackageManager } from "../domain/packageManagerDetection";
-import {
-  isPackageScriptName,
-  type PackageScript,
-} from "../domain/packageScripts";
+import { isPackageScriptName, type PackageScript } from "../domain/packageScripts";
 import type { Command } from "./commandRegistry";
 
 interface WorkbenchScriptCommandsOptions {
   composerScripts: readonly PackageScript[];
-  npmScripts: readonly PackageScript[];
-  npmPackageManager?: NodePackageManager;
   runInActiveTerminal(command: string): void;
 }
 
@@ -20,8 +14,6 @@ interface ScriptRunner {
 
 export function workbenchScriptCommands({
   composerScripts,
-  npmScripts,
-  npmPackageManager = "npm",
   runInActiveTerminal,
 }: WorkbenchScriptCommandsOptions): Command[] {
   const composerRunner: ScriptRunner = {
@@ -29,16 +21,7 @@ export function workbenchScriptCommands({
     label: "composer",
     terminalCommandFor: (name) => `composer run-script ${name}`,
   };
-  const npmRunner: ScriptRunner = {
-    idNamespace: "npm",
-    label: npmPackageManager,
-    terminalCommandFor: (name) => `${npmPackageManager} run ${name}`,
-  };
-
-  return [
-    ...commandsForScripts(composerRunner, composerScripts, runInActiveTerminal),
-    ...commandsForScripts(npmRunner, npmScripts, runInActiveTerminal),
-  ];
+  return commandsForScripts(composerRunner, composerScripts, runInActiveTerminal);
 }
 
 function commandsForScripts(

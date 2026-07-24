@@ -8,10 +8,7 @@ import {
 import type { Bookmark } from "../domain/bookmarks";
 import type { BottomPanelView } from "../domain/bottomPanel";
 import type { Breakpoint } from "../domain/debug";
-import type {
-  IndexHealthLogEntry,
-  IndexProgressState,
-} from "../domain/indexProgress";
+import type { IndexHealthLogEntry, IndexProgressState } from "../domain/indexProgress";
 import type { NavigationHistory } from "../domain/navigation";
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { RecentLocation } from "../domain/recentLocations";
@@ -59,10 +56,7 @@ export interface WorkspaceStateCacheDependencies {
     indexHealthLogs: IndexHealthLogEntry[],
   ) => void;
   restoreHistory: (history: NavigationHistory) => void;
-  restoreEditorSurface: (
-    rootPath: string,
-    snapshot: EditorSurfaceSnapshot,
-  ) => void;
+  restoreEditorSurface: (rootPath: string, snapshot: EditorSurfaceSnapshot) => void;
   setBookmarks: Dispatch<SetStateAction<Bookmark[]>>;
   setBottomPanelView: Dispatch<SetStateAction<BottomPanelView>>;
   setBottomPanelVisible: Dispatch<SetStateAction<boolean>>;
@@ -72,18 +66,14 @@ export interface WorkspaceStateCacheDependencies {
   setRecentFiles: Dispatch<SetStateAction<RecentFileEntry[]>>;
   setRecentLocations: Dispatch<SetStateAction<RecentLocation[]>>;
   setSidebarView: Dispatch<SetStateAction<SidebarView>>;
-  setWorkspaceIdentityDescriptor: Dispatch<
-    SetStateAction<WorkspaceIdentityDescriptor | null>
-  >;
+  setWorkspaceIdentityDescriptor: Dispatch<SetStateAction<WorkspaceIdentityDescriptor | null>>;
   sidebarView: SidebarView;
   snapshotEditorSurface: (rootPath: string) => EditorSurfaceSnapshot;
   workspaceIdentityDescriptor: WorkspaceIdentityDescriptor | null;
 }
 
 export interface WorkspaceStateCache {
-  workspaceStateCacheRef: MutableRefObject<
-    Record<string, CachedWorkspaceWorkbenchState>
-  >;
+  workspaceStateCacheRef: MutableRefObject<Record<string, CachedWorkspaceWorkbenchState>>;
   cacheCurrentWorkspaceState: (rootPath: string) => void;
   resolveCachedWorkspaceState: (
     rootPath: string,
@@ -97,10 +87,7 @@ export interface WorkspaceStateCache {
     rootPath: string,
     identity?: WorkspaceIdentityDescriptor | null,
   ) => void;
-  restoreCachedWorkspaceState: (
-    rootPath: string,
-    cached: CachedWorkspaceWorkbenchState,
-  ) => void;
+  restoreCachedWorkspaceState: (rootPath: string, cached: CachedWorkspaceWorkbenchState) => void;
   clearWorkspaceStateCache: () => void;
 }
 
@@ -139,9 +126,7 @@ export function useWorkspaceStateCache(
     workspaceIdentityDescriptor,
   } = dependencies;
 
-  const workspaceStateCacheRef = useRef<
-    Record<string, CachedWorkspaceWorkbenchState>
-  >({});
+  const workspaceStateCacheRef = useRef<Record<string, CachedWorkspaceWorkbenchState>>({});
 
   const coalesceWorkspaceStateCache = useCallback(
     (
@@ -155,8 +140,7 @@ export function useWorkspaceStateCache(
       const cache = workspaceStateCacheRef.current;
       const identityState = cache[identityKey];
       const matchingAliases = Object.entries(cache).filter(
-        ([key, cached]) =>
-          key !== identityKey && cachedStateHasWorkspaceId(cached, identity),
+        ([key, cached]) => key !== identityKey && cachedStateHasWorkspaceId(cached, identity),
       );
       const requestedKey = normalizedWorkspaceRootKey(requestedRootPath);
       const selectedKey = normalizedWorkspaceRootKey(identity.selectedPath);
@@ -200,9 +184,7 @@ export function useWorkspaceStateCache(
   const forgetCachedWorkspaceState = useCallback(
     (rootPath: string, identity?: WorkspaceIdentityDescriptor | null) => {
       if (!identity) {
-        delete workspaceStateCacheRef.current[
-          normalizedWorkspaceRootKey(rootPath)
-        ];
+        delete workspaceStateCacheRef.current[normalizedWorkspaceRootKey(rootPath)];
         return;
       }
 
@@ -274,9 +256,7 @@ export function useWorkspaceStateCache(
       setEntriesByDirectory(cached.entriesByDirectory);
       setExpandedDirectories(new Set(cached.expandedDirectories));
       restoreCachedIndexState(cached.indexProgress, cached.indexHealthLogs);
-      setManuallyCollapsedDirectories(
-        new Set(cached.manuallyCollapsedDirectories),
-      );
+      setManuallyCollapsedDirectories(new Set(cached.manuallyCollapsedDirectories));
       restoreEditorSurface(rootPath, cached.editorSurface);
       setRecentFiles(cached.recentFiles);
       setRecentLocations(cached.recentLocations);
@@ -332,6 +312,12 @@ export function workspaceIdentityStateCacheKey(
   return `workspace-id:${JSON.stringify(workspaceId)}`;
 }
 
+export function shouldRunInitialIndexScan(
+  cachedWorkspaceState: CachedWorkspaceWorkbenchState | null,
+): boolean {
+  return cachedWorkspaceState?.indexProgress.status !== "completed";
+}
+
 function cachedStateHasWorkspaceId(
   cached: CachedWorkspaceWorkbenchState,
   identity: WorkspaceIdentityDescriptor,
@@ -341,11 +327,8 @@ function cachedStateHasWorkspaceId(
     return false;
   }
 
-  return workspaceIdentityStateCacheKey(
-    cachedIdentity.workspaceId,
-    cachedIdentity.canonicalRoot,
-  ) === workspaceIdentityStateCacheKey(
-    identity.workspaceId,
-    identity.canonicalRoot,
+  return (
+    workspaceIdentityStateCacheKey(cachedIdentity.workspaceId, cachedIdentity.canonicalRoot) ===
+    workspaceIdentityStateCacheKey(identity.workspaceId, identity.canonicalRoot)
   );
 }

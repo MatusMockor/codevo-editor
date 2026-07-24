@@ -38,38 +38,14 @@ export interface PhpDiagnosticContextFilterDependencies {
   ensurePhpFrameworkSourceCollectionsLoaded(rootPath: string): Promise<void>;
   frameworkRuntime: PhpFrameworkRuntimeContext;
   isPhpPath(path: string): boolean;
-  phpClassHasLaravelDynamicWhere(
-    className: string,
-    methodName: string,
-  ): Promise<boolean>;
-  phpClassHasLaravelLocalScope(
-    className: string,
-    methodName: string,
-  ): Promise<boolean>;
-  phpClassHierarchyHasMethod(
-    className: string,
-    methodName: string,
-  ): Promise<boolean>;
-  phpClassHierarchyHasProperty(
-    className: string,
-    propertyName: string,
-  ): Promise<boolean>;
-  phpClassHierarchyHasStaticMethod(
-    className: string,
-    methodName: string,
-  ): Promise<boolean>;
-  phpTraitHostConstantExists(
-    traitClassName: string,
-    constantName: string,
-  ): Promise<boolean>;
-  phpTraitHostMethodExists(
-    traitClassName: string,
-    methodName: string,
-  ): Promise<boolean>;
-  phpTraitHostPropertyExists(
-    traitClassName: string,
-    propertyName: string,
-  ): Promise<boolean>;
+  phpClassHasLaravelDynamicWhere(className: string, methodName: string): Promise<boolean>;
+  phpClassHasLaravelLocalScope(className: string, methodName: string): Promise<boolean>;
+  phpClassHierarchyHasMethod(className: string, methodName: string): Promise<boolean>;
+  phpClassHierarchyHasProperty(className: string, propertyName: string): Promise<boolean>;
+  phpClassHierarchyHasStaticMethod(className: string, methodName: string): Promise<boolean>;
+  phpTraitHostConstantExists(traitClassName: string, constantName: string): Promise<boolean>;
+  phpTraitHostMethodExists(traitClassName: string, methodName: string): Promise<boolean>;
+  phpTraitHostPropertyExists(traitClassName: string, propertyName: string): Promise<boolean>;
   phpTraitHostPropertyMethodExists(
     traitClassName: string,
     propertyName: string,
@@ -119,10 +95,13 @@ export function usePhpDiagnosticContextFilter(
     resolvePhpEloquentBuilderModelType,
     resolvePhpExpressionType,
   } = dependencies;
-  const resolvePhpBuilderModelType =
-    resolvePhpFrameworkBuilderModelType ??
-    resolvePhpEloquentBuilderModelType ??
-    (async () => null);
+  const resolvePhpBuilderModelType = useMemo(
+    () =>
+      resolvePhpFrameworkBuilderModelType ??
+      resolvePhpEloquentBuilderModelType ??
+      (async () => null),
+    [resolvePhpEloquentBuilderModelType, resolvePhpFrameworkBuilderModelType],
+  );
   const frameworkProviders = frameworkRuntime.providers;
   const diagnosticContextStrategy = useMemo(
     () =>
@@ -131,11 +110,8 @@ export function usePhpDiagnosticContextFilter(
         frameworkRuntime,
         phpClassHasDynamicBuilderFinder: phpClassHasLaravelDynamicWhere,
         phpClassHasNamedBuilderScope: phpClassHasLaravelLocalScope,
-        resolvePhpFrameworkBuilderModelType: async (
-          source,
-          position,
-          expression,
-        ) => resolvePhpBuilderModelType(source, position, expression),
+        resolvePhpFrameworkBuilderModelType: async (source, position, expression) =>
+          resolvePhpBuilderModelType(source, position, expression),
       }),
     [
       ensurePhpFrameworkSourceCollectionsLoaded,
@@ -171,21 +147,14 @@ export function usePhpDiagnosticContextFilter(
       const contextualMemberProperties = new Set<string>();
 
       for (const diagnostic of diagnostics) {
-        const staticMethodContext = phpUnresolvedStaticMethodDiagnosticContext(
-          source,
-          diagnostic,
-        );
+        const staticMethodContext = phpUnresolvedStaticMethodDiagnosticContext(source, diagnostic);
 
         if (staticMethodContext) {
-          const resolvedClassName = resolvePhpClassReference(
-            source,
-            staticMethodContext.className,
-          );
-          const hasProviderStaticMethod =
-            await diagnosticContextStrategy.staticMethodExists({
-              className: resolvedClassName,
-              methodName: staticMethodContext.methodName,
-            });
+          const resolvedClassName = resolvePhpClassReference(source, staticMethodContext.className);
+          const hasProviderStaticMethod = await diagnosticContextStrategy.staticMethodExists({
+            className: resolvedClassName,
+            methodName: staticMethodContext.methodName,
+          });
           const hasContextualExistingStaticMethod = resolvedClassName
             ? await phpClassHierarchyHasStaticMethod(
                 resolvedClassName,
@@ -195,50 +164,36 @@ export function usePhpDiagnosticContextFilter(
 
           if (hasProviderStaticMethod || hasContextualExistingStaticMethod) {
             contextualExistingMethods.add(
-              phpMethodDiagnosticKey(
-                staticMethodContext.className,
-                staticMethodContext.methodName,
-              ),
+              phpMethodDiagnosticKey(staticMethodContext.className, staticMethodContext.methodName),
             );
           }
         }
 
-        const memberMethodContext = phpUnresolvedMemberMethodDiagnosticContext(
-          source,
-          diagnostic,
-        );
+        const memberMethodContext = phpUnresolvedMemberMethodDiagnosticContext(source, diagnostic);
 
         if (memberMethodContext) {
           const diagnosticPosition = diagnosticPositionFromDiagnostic(diagnostic);
-          const hasProviderMemberMethod =
-            await diagnosticContextStrategy.memberMethodExists({
-              methodName: memberMethodContext.methodName,
-              position: diagnosticPosition,
-              receiverExpression: memberMethodContext.receiverExpression,
-              source,
-            });
+          const hasProviderMemberMethod = await diagnosticContextStrategy.memberMethodExists({
+            methodName: memberMethodContext.methodName,
+            position: diagnosticPosition,
+            receiverExpression: memberMethodContext.receiverExpression,
+            source,
+          });
           const receiverType = await resolvePhpExpressionType(
             source,
             diagnosticPosition,
             memberMethodContext.receiverExpression,
           );
           const hasContextualExistingMemberMethod = receiverType
-            ? await phpClassHierarchyHasMethod(
-                receiverType,
-                memberMethodContext.methodName,
-              )
+            ? await phpClassHierarchyHasMethod(receiverType, memberMethodContext.methodName)
             : false;
           const receiverPropertyAccess =
             phpCurrentTypeKind(source) === "trait"
-              ? phpPropertyAccessExpression(
-                  memberMethodContext.receiverExpression,
-                )
+              ? phpPropertyAccessExpression(memberMethodContext.receiverExpression)
               : null;
           const traitClassName =
             receiverPropertyAccess &&
-            phpNormalizedReceiverExpressionIsThis(
-              receiverPropertyAccess.receiverExpression,
-            )
+            phpNormalizedReceiverExpressionIsThis(receiverPropertyAccess.receiverExpression)
               ? phpCurrentClassName(source)
               : null;
           const hasContextualTraitHostPropertyMethod =
@@ -264,8 +219,10 @@ export function usePhpDiagnosticContextFilter(
           }
         }
 
-        const memberPropertyContext =
-          phpUnresolvedMemberPropertyDiagnosticContext(source, diagnostic);
+        const memberPropertyContext = phpUnresolvedMemberPropertyDiagnosticContext(
+          source,
+          diagnostic,
+        );
 
         if (memberPropertyContext) {
           const diagnosticPosition = diagnosticPositionFromDiagnostic(diagnostic);
@@ -275,10 +232,7 @@ export function usePhpDiagnosticContextFilter(
             memberPropertyContext.receiverExpression,
           );
           const hasContextualProperty = receiverType
-            ? await phpClassHierarchyHasProperty(
-                receiverType,
-                memberPropertyContext.propertyName,
-              )
+            ? await phpClassHierarchyHasProperty(receiverType, memberPropertyContext.propertyName)
             : false;
 
           if (hasContextualProperty) {
@@ -291,10 +245,7 @@ export function usePhpDiagnosticContextFilter(
           }
         }
 
-        const traitMethodContext = phpTraitHostMethodDiagnosticContext(
-          source,
-          diagnostic,
-        );
+        const traitMethodContext = phpTraitHostMethodDiagnosticContext(source, diagnostic);
 
         if (traitMethodContext) {
           const traitClassName = resolveTraitClassName(
@@ -303,12 +254,7 @@ export function usePhpDiagnosticContextFilter(
             resolvePhpClassReference,
           );
 
-          if (
-            await phpTraitHostMethodExists(
-              traitClassName,
-              traitMethodContext.methodName,
-            )
-          ) {
+          if (await phpTraitHostMethodExists(traitClassName, traitMethodContext.methodName)) {
             contextualTraitHostMethods.add(
               phpTraitHostMethodDiagnosticKey(
                 traitMethodContext.traitName,
@@ -316,18 +262,12 @@ export function usePhpDiagnosticContextFilter(
               ),
             );
             contextualTraitHostMethods.add(
-              phpTraitHostMethodDiagnosticKey(
-                traitClassName,
-                traitMethodContext.methodName,
-              ),
+              phpTraitHostMethodDiagnosticKey(traitClassName, traitMethodContext.methodName),
             );
           }
         }
 
-        const traitConstantContext = phpTraitHostConstantDiagnosticContext(
-          source,
-          diagnostic,
-        );
+        const traitConstantContext = phpTraitHostConstantDiagnosticContext(source, diagnostic);
 
         if (traitConstantContext) {
           const traitClassName = resolveTraitClassName(
@@ -336,12 +276,7 @@ export function usePhpDiagnosticContextFilter(
             resolvePhpClassReference,
           );
 
-          if (
-            await phpTraitHostConstantExists(
-              traitClassName,
-              traitConstantContext.constantName,
-            )
-          ) {
+          if (await phpTraitHostConstantExists(traitClassName, traitConstantContext.constantName)) {
             contextualTraitHostConstants.add(
               phpTraitHostConstantDiagnosticKey(
                 traitConstantContext.traitName,
@@ -349,18 +284,12 @@ export function usePhpDiagnosticContextFilter(
               ),
             );
             contextualTraitHostConstants.add(
-              phpTraitHostConstantDiagnosticKey(
-                traitClassName,
-                traitConstantContext.constantName,
-              ),
+              phpTraitHostConstantDiagnosticKey(traitClassName, traitConstantContext.constantName),
             );
           }
         }
 
-        const traitPropertyContext = phpTraitHostPropertyDiagnosticContext(
-          source,
-          diagnostic,
-        );
+        const traitPropertyContext = phpTraitHostPropertyDiagnosticContext(source, diagnostic);
 
         if (traitPropertyContext) {
           const traitClassName = resolveTraitClassName(
@@ -369,12 +298,7 @@ export function usePhpDiagnosticContextFilter(
             resolvePhpClassReference,
           );
 
-          if (
-            await phpTraitHostPropertyExists(
-              traitClassName,
-              traitPropertyContext.propertyName,
-            )
-          ) {
+          if (await phpTraitHostPropertyExists(traitClassName, traitPropertyContext.propertyName)) {
             contextualTraitHostProperties.add(
               phpTraitHostPropertyDiagnosticKey(
                 traitPropertyContext.traitName,
@@ -382,10 +306,7 @@ export function usePhpDiagnosticContextFilter(
               ),
             );
             contextualTraitHostProperties.add(
-              phpTraitHostPropertyDiagnosticKey(
-                traitClassName,
-                traitPropertyContext.propertyName,
-              ),
+              phpTraitHostPropertyDiagnosticKey(traitClassName, traitPropertyContext.propertyName),
             );
           }
         }
@@ -394,9 +315,7 @@ export function usePhpDiagnosticContextFilter(
       const workspaceRoot = currentWorkspaceRoot();
 
       if (workspaceRoot) {
-        diagnosticContextStrategy.ensureFrameworkSourceCollectionsLoaded(
-          workspaceRoot,
-        );
+        diagnosticContextStrategy.ensureFrameworkSourceCollectionsLoaded(workspaceRoot);
       }
 
       const { workspaceSources } = currentPhpFrameworkSourceContext();
@@ -460,10 +379,7 @@ function frameworkSourceContextFromSources(
 function resolveTraitClassName(
   source: string,
   traitName: string,
-  resolvePhpClassReference: (
-    source: string,
-    className: string,
-  ) => string | null,
+  resolvePhpClassReference: (source: string, className: string) => string | null,
 ): string {
   const normalizedTraitName = traitName.replace(/^\\+/, "");
 
@@ -474,8 +390,6 @@ function resolveTraitClassName(
   return resolvePhpClassReference(source, traitName) ?? normalizedTraitName;
 }
 
-function phpNormalizedReceiverExpressionIsThis(
-  receiverExpression: string,
-): boolean {
+function phpNormalizedReceiverExpressionIsThis(receiverExpression: string): boolean {
   return receiverExpression.trim().replace(/\?->/g, "->") === "$this";
 }

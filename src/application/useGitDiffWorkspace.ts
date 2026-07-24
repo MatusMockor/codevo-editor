@@ -452,18 +452,11 @@ export function useGitDiffWorkspace(
         }
         reportError("Git Diff", error);
       } finally {
-        if (
-          !workspaceRootKeysEqual(
-            currentWorkspaceRootRef.current,
-            owningWorkspaceRoot,
-          ) ||
-          gitDiffRequestTokenRef.current !== workspaceRequestToken ||
-          requestTokenByDocumentPathRef.current[document.path] !== requestToken
-        ) {
-          return;
-        }
-
-        if (selectedGitDiffDocumentPathRef.current === document.path) {
+        const requestIsCurrent =
+          workspaceRootKeysEqual(currentWorkspaceRootRef.current, owningWorkspaceRoot) &&
+          gitDiffRequestTokenRef.current === workspaceRequestToken &&
+          requestTokenByDocumentPathRef.current[document.path] === requestToken;
+        if (requestIsCurrent && selectedGitDiffDocumentPathRef.current === document.path) {
           setGitDiffLoading(false);
         }
       }

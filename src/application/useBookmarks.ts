@@ -95,14 +95,14 @@ export function useBookmarks(dependencies: BookmarksDependencies): Bookmarks {
     setBookmarks((current) =>
       toggleBookmark(current, { lineNumber, path: document.path, preview }),
     );
-  }, []);
+  }, [activeDocumentRef, setBookmarks]);
 
   // Toggles a bookmark on the active document's current cursor line (keymap /
   // command entry point — the gutter click uses toggleBookmarkAtLine directly).
   const toggleBookmarkAtCursor = useCallback(() => {
     const lineNumber = activeEditorPositionRef.current?.lineNumber ?? 1;
     toggleBookmarkAtLine(lineNumber);
-  }, [toggleBookmarkAtLine]);
+  }, [activeEditorPositionRef, toggleBookmarkAtLine]);
 
   // The cursor anchor for next/previous bookmark navigation. Uses the active
   // document plus the live editor position so navigation steps relative to where
@@ -118,7 +118,7 @@ export function useBookmarks(dependencies: BookmarksDependencies): Bookmarks {
       lineNumber: activeEditorPositionRef.current?.lineNumber ?? 1,
       path,
     };
-  }, []);
+  }, [activeDocumentRef, activeEditorPositionRef]);
 
   const openBookmark = useCallback(
     (bookmark: Bookmark): Promise<boolean> => {
@@ -157,7 +157,7 @@ export function useBookmarks(dependencies: BookmarksDependencies): Bookmarks {
     }
 
     setBookmarksPanelOpen(true);
-  }, []);
+  }, [currentWorkspaceRootRef]);
 
   const closeBookmarksPanel = useCallback(() => {
     setBookmarksPanelOpen(false);
@@ -169,7 +169,7 @@ export function useBookmarks(dependencies: BookmarksDependencies): Bookmarks {
     }
 
     setBookmarksPanelOpen((open) => !open);
-  }, []);
+  }, [currentWorkspaceRootRef]);
 
   return {
     bookmarksPanelOpen,

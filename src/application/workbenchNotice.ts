@@ -1,56 +1,14 @@
-export type WorkbenchNoticeSeverity = "info" | "warning" | "error";
+import { createWorkbenchNotice, type WorkbenchNotice } from "../domain/workbenchNotice";
+import { JS_TEST_PROBLEM_GROUP_PREFIX } from "../domain/jsTestProblems";
 
-/**
- * Distinguishes special notices that need bespoke presentation from ordinary
- * diagnostics. `overflow` marks the indicator appended by
- * `capDiagnosticNotices` when a document publishes more diagnostics than the
- * panel renders, so the UI can highlight it instead of letting it blend into
- * the regular `info` rows.
- */
-export type WorkbenchNoticeKind = "overflow";
-
-export interface WorkbenchNotice {
-  groupKey?: string;
-  id: string;
-  kind?: WorkbenchNoticeKind;
-  navigationTarget?: WorkbenchNoticeNavigationTarget;
-  severity: WorkbenchNoticeSeverity;
-  source: string;
-  message: string;
-  toastDismissKey?: string;
-}
-
-export interface WorkbenchNoticeNavigationTarget {
-  path: string;
-  range: {
-    end: WorkbenchNoticePosition;
-    start: WorkbenchNoticePosition;
-  };
-}
-
-export interface WorkbenchNoticePosition {
-  column: number;
-  lineNumber: number;
-}
-
-export function createWorkbenchNotice(
-  severity: WorkbenchNoticeSeverity,
-  source: string,
-  message: string,
-  groupKey?: string,
-  navigationTarget?: WorkbenchNoticeNavigationTarget,
-  kind?: WorkbenchNoticeKind,
-): WorkbenchNotice {
-  return {
-    groupKey,
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    kind,
-    message,
-    navigationTarget,
-    severity,
-    source,
-  };
-}
+export {
+  createWorkbenchNotice,
+  type WorkbenchNotice,
+  type WorkbenchNoticeKind,
+  type WorkbenchNoticeNavigationTarget,
+  type WorkbenchNoticePosition,
+  type WorkbenchNoticeSeverity,
+} from "../domain/workbenchNotice";
 
 /**
  * Groups a PHP language server crash notice by workspace root, so the
@@ -58,9 +16,7 @@ export function createWorkbenchNotice(
  * only ever targets the crash for the active project - never another open
  * project tab's runtime.
  */
-export function languageServerCrashNoticeGroupKey(
-  workspaceRoot: string | null,
-): string | null {
+export function languageServerCrashNoticeGroupKey(workspaceRoot: string | null): string | null {
   return workspaceRoot ? `language-server-crash:${workspaceRoot}` : null;
 }
 
@@ -84,9 +40,26 @@ export function replaceWorkbenchNoticeGroup(
   groupKey: string,
   replacements: WorkbenchNotice[],
 ): WorkbenchNotice[] {
+  return [...replacements, ...current.filter((notice) => notice.groupKey !== groupKey)];
+}
+
+export function replaceNodePackageTaskProblemNotices(
+  current: WorkbenchNotice[],
+  replacements: readonly WorkbenchNotice[],
+): WorkbenchNotice[] {
   return [
     ...replacements,
-    ...current.filter((notice) => notice.groupKey !== groupKey),
+    ...current.filter((notice) => !notice.groupKey?.startsWith("node-package-task-problems:")),
+  ];
+}
+
+export function replaceJsTestProblemNotices(
+  current: WorkbenchNotice[],
+  replacements: readonly WorkbenchNotice[],
+): WorkbenchNotice[] {
+  return [
+    ...replacements,
+    ...current.filter((notice) => !notice.groupKey?.startsWith(JS_TEST_PROBLEM_GROUP_PREFIX)),
   ];
 }
 

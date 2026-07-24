@@ -53,6 +53,7 @@ import {
 import {
   nettePresenterLinkDiagnostics,
 } from "./nettePresenterLinkDiagnostics";
+import { netteComponentFactoryDiagnostics } from "./netteComponentFactoryDiagnostics";
 import { nettePresenterLinkDefinitionContext } from "./netteLatteProviderOptions";
 import {
   createNettePresenterMappingGeneration,
@@ -363,12 +364,31 @@ async function provideLattePresenterLinkDiagnostics(
     return [];
   }
 
-  return nettePresenterLinkDiagnostics(
-    nettePresenterLinkDefinitionContext(options, {
-      ...request,
-      currentTemplateRelativePath,
-    }),
+  const context = nettePresenterLinkDefinitionContext(options, {
+    ...request,
+    currentTemplateRelativePath,
+  });
+  const presenterDiagnostics = await nettePresenterLinkDiagnostics(
+    context,
     source,
+  );
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  const componentDiagnostics = await netteComponentFactoryDiagnostics(
+    context,
+    source,
+  );
+
+  if (!context.isRequestedRootActive()) {
+    return [];
+  }
+
+  return [...presenterDiagnostics, ...componentDiagnostics].sort(
+    (left, right) =>
+      left.line - right.line || left.character - right.character,
   );
 }
 

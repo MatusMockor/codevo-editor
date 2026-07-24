@@ -326,7 +326,7 @@ describe("resolveLatteFilterDefinition", () => {
   });
 
   it("opens the resolved project callable while the root stays active", async () => {
-    let active = true;
+    const active = true;
     const context = makeContext({
       active: () => active,
       configSource: CROSS_FILE_CALLABLE_CONFIG_SOURCE,

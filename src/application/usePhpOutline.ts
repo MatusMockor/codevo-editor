@@ -177,11 +177,9 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
       setPhpTree(emptyPhpTree());
       reportError("PHP Tree", error);
     } finally {
-      if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-        return;
+      if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+        setPhpTreeLoading(false);
       }
-
-      setPhpTreeLoading(false);
     }
   }, [
     currentWorkspaceRootRef,
@@ -318,15 +316,13 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
         }));
         reportError("PHP File Outline", error);
       } finally {
-        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
-          return;
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
+          setLoadingPhpFileOutlinePaths((current) => {
+            const next = new Set(current);
+            next.delete(path);
+            return next;
+          });
         }
-
-        setLoadingPhpFileOutlinePaths((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
       }
     },
     [
@@ -453,15 +449,13 @@ export function usePhpOutline(deps: PhpOutlineDependencies): PhpOutline {
         }));
         reportError("PHP Inherited Structure", error);
       } finally {
-        if (!isRequestedRootActive()) {
-          return;
+        if (isRequestedRootActive()) {
+          setLoadingInheritedPhpFileOutlinePaths((current) => {
+            const next = new Set(current);
+            next.delete(path);
+            return next;
+          });
         }
-
-        setLoadingInheritedPhpFileOutlinePaths((current) => {
-          const next = new Set(current);
-          next.delete(path);
-          return next;
-        });
       }
     },
     [

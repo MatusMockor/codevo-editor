@@ -73,11 +73,7 @@ export interface WorkspaceTodosDependencies {
   workspaceFiles: WorkspaceFileGateway;
   currentWorkspaceRootRef: MutableRefObject<string | null>;
   workspaceRoot: string | null;
-  openNavigationTarget: (
-    path: string,
-    position: EditorPosition,
-    label: string,
-  ) => Promise<boolean>;
+  openNavigationTarget: (path: string, position: EditorPosition, label: string) => Promise<boolean>;
   relativeWorkspacePath: (workspaceRoot: string, path: string) => string;
 }
 
@@ -99,9 +95,7 @@ export interface WorkspaceTodos {
  * the panel-local state so a switched-away tab's late scan can never
  * repopulate another tab's panel.
  */
-export function useWorkspaceTodos(
-  dependencies: WorkspaceTodosDependencies,
-): WorkspaceTodos {
+export function useWorkspaceTodos(dependencies: WorkspaceTodosDependencies): WorkspaceTodos {
   const {
     workspaceFiles,
     currentWorkspaceRootRef,
@@ -227,7 +221,7 @@ export function useWorkspaceTodos(
 
       return todos;
     },
-    [relativeWorkspacePath, workspaceFiles],
+    [currentWorkspaceRootRef, relativeWorkspacePath, workspaceFiles],
   );
 
   const refreshWorkspaceTodos = useCallback(async (): Promise<void> => {
@@ -256,7 +250,7 @@ export function useWorkspaceTodos(
 
     setWorkspaceTodos(todos);
     setWorkspaceTodosLoading(false);
-  }, [collectWorkspaceTodos, workspaceRoot]);
+  }, [collectWorkspaceTodos, currentWorkspaceRootRef, workspaceRoot]);
 
   const openWorkspaceTodo = useCallback(
     async (todo: WorkspaceTodo): Promise<boolean> => {

@@ -451,6 +451,26 @@ describe("useDocumentSync - PHP (phpactor) family", () => {
     expect(harness.warmUp).toHaveBeenCalledWith(ROOT, document.path, SESSION);
   });
 
+  it("rebinds document ownership when the injected workspace-root ref changes", async () => {
+    const harness = createHarness();
+    const rendered = renderDocumentSync(harness.deps);
+    const document = phpDocument();
+
+    await rendered.api().syncOpenDocument(document);
+    expect(rendered.api().isLanguageServerDocumentSynced(document.path)).toBe(
+      true,
+    );
+
+    rendered.rerender({
+      ...harness.deps,
+      currentWorkspaceRootRef: ref<string | null>(OTHER_ROOT),
+    });
+
+    expect(rendered.api().isLanguageServerDocumentSynced(document.path)).toBe(
+      false,
+    );
+  });
+
   it("assigns a new lifecycle identity when the same path closes and reopens", async () => {
     const harness = createHarness();
     const { api } = renderDocumentSync(harness.deps);

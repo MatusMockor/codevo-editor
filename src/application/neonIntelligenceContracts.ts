@@ -2,6 +2,8 @@ import type { EditorPosition } from "../domain/languageServerFeatures";
 import type { ImplementationTarget } from "../domain/implementationTargets";
 import type { PhpMethodCompletion } from "../domain/phpMethodCompletions";
 import type { NeonCompletionItem } from "./neonCompletionItems";
+import type { NeonCrossFileRepository } from "./neonCrossFileSymbolSweep";
+import type { NeonSemanticDiagnostic } from "../domain/neonSemanticDiagnostics";
 import type { NavigationRequest } from "./navigationRequest";
 import type { PhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
 
@@ -42,15 +44,8 @@ export interface NeonIntelligenceDependencies {
     options?: { shouldCommit?: () => boolean },
   ): Promise<boolean>;
   readFileContent(path: string): Promise<string>;
-  searchClassNames(
-    rootPath: string,
-    prefix: string,
-    maxResults: number,
-  ): Promise<string[]>;
-  setImplementationChooser(chooser: {
-    targets: ImplementationTarget[];
-    title: string;
-  }): void;
+  searchClassNames(rootPath: string, prefix: string, maxResults: number): Promise<string[]>;
+  setImplementationChooser(chooser: { targets: ImplementationTarget[]; title: string }): void;
   resolvePhpReceiverCompletions(
     source: string,
     position: EditorPosition,
@@ -72,13 +67,13 @@ export interface NeonIntelligence {
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
-  provideNeonCompletions(
-    source: string,
-    position: EditorPosition,
-  ): Promise<NeonCompletionItem[]>;
+  provideNeonCompletions(source: string, position: EditorPosition): Promise<NeonCompletionItem[]>;
   provideNeonDefinition(
     source: string,
     offset: number,
     request?: NavigationRequest,
   ): Promise<boolean>;
+  provideNeonSemanticDiagnostics(
+    repository: NeonCrossFileRepository,
+  ): Promise<readonly NeonSemanticDiagnostic[] | null>;
 }

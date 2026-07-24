@@ -21,12 +21,14 @@ export function useWorkbenchFrameworkIntelligence(
   const blade = useBladeIntelligence(dependencies.blade);
   const latte = useLatteIntelligence(dependencies.latte);
   const neon = useNeonIntelligence(dependencies.neon);
+  const invalidateLatteNeonConfigForPath = latte.invalidateNeonConfigForPath;
+  const invalidateNeonNeonConfigForPath = neon.invalidateNeonConfigForPath;
   const invalidateNeonConfigForPath = useCallback(
     (rootPath: string, path: string) => {
-      latte.invalidateNeonConfigForPath(rootPath, path);
-      neon.invalidateNeonConfigForPath(rootPath, path);
+      invalidateLatteNeonConfigForPath(rootPath, path);
+      invalidateNeonNeonConfigForPath(rootPath, path);
     },
-    [latte.invalidateNeonConfigForPath, neon.invalidateNeonConfigForPath],
+    [invalidateLatteNeonConfigForPath, invalidateNeonNeonConfigForPath],
   );
 
   const isPhpFrameworkStringCompletionContext = useCallback(

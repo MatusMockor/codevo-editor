@@ -184,7 +184,13 @@ export function useFileHistory(
         }
       }
     },
-    [gitGateway, reportError, workspaceRoot],
+    [
+      activeDocumentRef,
+      currentWorkspaceRootRef,
+      gitGateway,
+      reportError,
+      workspaceRoot,
+    ],
   );
 
   // Opens the file history panel for the active document. The requested root and
@@ -262,6 +268,8 @@ export function useFileHistory(
       }
     }
   }, [
+    activeDocumentRef,
+    currentWorkspaceRootRef,
     gitGateway,
     reportError,
     resolveGitRepositoryTarget,

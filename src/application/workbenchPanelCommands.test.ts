@@ -18,6 +18,10 @@ const enabledContext: CommandContext = {
 describe("workbenchPanelCommands", () => {
   it("returns panel commands in registry order with metadata", () => {
     const commands = workbenchPanelCommands({
+      canShowExpressRoutes: true,
+      canShowNette: true,
+      canShowSymfony: true,
+      openExpressRoutesPanel: vi.fn(),
       shortcut: (commandId) => `shortcut:${commandId}`,
       openCommandsPalette: vi.fn(),
       showBottomPanelView: vi.fn(),
@@ -50,6 +54,24 @@ describe("workbenchPanelCommands", () => {
         id: "panel.showIndex",
         title: "Show Index",
         category: "Index",
+        shortcut: undefined,
+      },
+      {
+        id: "panel.showExpressRoutes",
+        title: "Show Express Routes",
+        category: "Workbench",
+        shortcut: undefined,
+      },
+      {
+        id: "panel.showNette",
+        title: "Show Nette",
+        category: "PHP",
+        shortcut: undefined,
+      },
+      {
+        id: "panel.showSymfony",
+        title: "Show Symfony",
+        category: "PHP",
         shortcut: undefined,
       },
       {
@@ -89,6 +111,9 @@ describe("workbenchPanelCommands", () => {
     const shortcut = vi.fn((commandId: string) => `shortcut:${commandId}`);
 
     workbenchPanelCommands({
+      canShowExpressRoutes: true,
+      canShowSymfony: true,
+      openExpressRoutesPanel: vi.fn(),
       shortcut,
       openCommandsPalette: vi.fn(),
       showBottomPanelView: vi.fn(),
@@ -117,9 +142,19 @@ describe("workbenchPanelCommands", () => {
       refreshWorkspaceTodos: vi.fn(),
     });
 
-    expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual(
-      [true, true, true, true, false, false, true, true],
-    );
+    expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+    ]);
   });
 
   it("enables workspace commands when a workspace is present", () => {
@@ -136,12 +171,38 @@ describe("workbenchPanelCommands", () => {
       true,
       true,
       true,
+      false,
+      false,
+      false,
       true,
       true,
       true,
       true,
       true,
     ]);
+  });
+
+  it("opens Express routes for an eligible workspace without an active document", async () => {
+    const openExpressRoutesPanel = vi.fn();
+    const command = workbenchPanelCommands({
+      canShowExpressRoutes: true,
+      openExpressRoutesPanel,
+      shortcut: () => "",
+      openCommandsPalette: vi.fn(),
+      showBottomPanelView: vi.fn(),
+      toggleBottomPanel: vi.fn(),
+      toggleTodoPanel: vi.fn(),
+      refreshWorkspaceTodos: vi.fn(),
+    }).find((candidate) => candidate.id === "panel.showExpressRoutes");
+
+    const workspaceWithoutDocument = {
+      ...enabledContext,
+      hasActiveDocument: false,
+    };
+    expect(command?.isEnabled(disabledContext)).toBe(false);
+    expect(command?.isEnabled(workspaceWithoutDocument)).toBe(true);
+    await command?.run(workspaceWithoutDocument);
+    expect(openExpressRoutesPanel).toHaveBeenCalledOnce();
   });
 
   it("invokes the injected callbacks", async () => {
@@ -164,18 +225,21 @@ describe("workbenchPanelCommands", () => {
     }
 
     expect(openCommandsPalette).toHaveBeenCalledTimes(1);
-    expect(showBottomPanelView.mock.calls.map(([view]) => view)).toEqual<
-      BottomPanelView[]
-    >(["problems", "index", "terminal", "runtime"]);
+    expect(showBottomPanelView.mock.calls.map(([view]) => view)).toEqual<BottomPanelView[]>([
+      "problems",
+      "index",
+      "nette",
+      "symfony",
+      "terminal",
+      "runtime",
+    ]);
     expect(toggleBottomPanel).toHaveBeenCalledTimes(1);
     expect(toggleTodoPanel).toHaveBeenCalledTimes(1);
     expect(refreshWorkspaceTodos).toHaveBeenCalledTimes(1);
   });
 
   it("does not await TODO refresh from the command body", () => {
-    const refreshWorkspaceTodos = vi.fn(
-      () => new Promise<void>(() => undefined),
-    );
+    const refreshWorkspaceTodos = vi.fn(() => new Promise<void>(() => undefined));
     const refreshCommand = workbenchPanelCommands({
       shortcut: () => "",
       openCommandsPalette: vi.fn(),

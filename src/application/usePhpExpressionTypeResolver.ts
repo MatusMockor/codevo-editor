@@ -48,41 +48,25 @@ export type PhpFrameworkModelCarrierTypeResolver = (
 ) => Promise<string | null>;
 
 export interface UsePhpExpressionTypeResolverOptions {
-  collectPhpMethodsForClass: (
-    className: string,
-  ) => Promise<PhpMethodCompletion[]>;
+  collectPhpMethodsForClass: (className: string) => Promise<PhpMethodCompletion[]>;
   frameworkRuntime: PhpFrameworkRuntimeContext;
-  phpClassHasDynamicBuilderFinder: (
-    className: string,
-    methodName: string,
-  ) => Promise<boolean>;
-  phpClassHasNamedBuilderScope: (
-    className: string,
-    methodName: string,
-  ) => Promise<boolean>;
+  phpClassHasDynamicBuilderFinder: (className: string, methodName: string) => Promise<boolean>;
+  phpClassHasNamedBuilderScope: (className: string, methodName: string) => Promise<boolean>;
   resolvePhpClassPropertyOrRelationType: (
     className: string,
     propertyName: string,
     includeCollectionRelations?: boolean,
   ) => Promise<string | null>;
-  resolvePhpClassReference: (
-    source: string,
-    className: string,
-  ) => string | null;
+  resolvePhpClassReference: (source: string, className: string) => string | null;
   resolvePhpBuilderModelType: PhpFrameworkModelCarrierTypeResolver;
-  resolvePhpFrameworkBoundConcrete: (
-    className: string,
-  ) => Promise<string | null>;
+  resolvePhpFrameworkBoundConcrete: (className: string) => Promise<string | null>;
   resolvePhpFrameworkReturnTypeReference: (
     source: string,
     typeName: string | null,
   ) => string | null;
   resolvePhpCollectionModelType: PhpFrameworkModelCarrierTypeResolver;
   resolvePhpMethodReturnType: PhpMethodReturnTypeResolver;
-  resolvePhpSemanticTypeReference: (
-    source: string,
-    typeName: string | null,
-  ) => string | null;
+  resolvePhpSemanticTypeReference: (source: string, typeName: string | null) => string | null;
 }
 
 export function usePhpExpressionTypeResolver({
@@ -175,10 +159,7 @@ export function usePhpExpressionTypeResolver({
         const boundReceiverType = receiverType
           ? await resolvePhpFrameworkBoundConcrete(receiverType)
           : null;
-        if (
-          !boundReceiverType ||
-          boundReceiverType.toLowerCase() === receiverType?.toLowerCase()
-        ) {
+        if (!boundReceiverType || boundReceiverType.toLowerCase() === receiverType?.toLowerCase()) {
           return null;
         }
 
@@ -192,15 +173,9 @@ export function usePhpExpressionTypeResolver({
         );
       };
 
-      const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(
-        expression.trim(),
-      );
+      const variableMatch = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(expression.trim());
       const assignmentExpression = variableMatch?.[1]
-        ? phpAssignmentExpressionForVariableBefore(
-            source,
-            position,
-            variableMatch[1],
-          )
+        ? phpAssignmentExpressionForVariableBefore(source, position, variableMatch[1])
         : null;
 
       if (
@@ -217,12 +192,9 @@ export function usePhpExpressionTypeResolver({
 
         const frameworkAssignmentType = resolvePhpFrameworkReturnTypeReference(
           source,
-          phpReceiverExpressionTypeInSource(
-            source,
-            position,
-            assignmentExpression,
-            { typeExtensions },
-          ),
+          phpReceiverExpressionTypeInSource(source, position, assignmentExpression, {
+            typeExtensions,
+          }),
         );
 
         if (frameworkAssignmentType) {
@@ -241,12 +213,9 @@ export function usePhpExpressionTypeResolver({
         }
       }
 
-      const directType = phpReceiverExpressionTypeInSource(
-        source,
-        position,
-        expression,
-        { typeExtensions },
-      );
+      const directType = phpReceiverExpressionTypeInSource(source, position, expression, {
+        typeExtensions,
+      });
 
       if (directType) {
         return resolvePhpSemanticTypeReference(source, directType);
@@ -271,12 +240,7 @@ export function usePhpExpressionTypeResolver({
         resolveBuilderModelType: () =>
           resolvePhpBuilderModelType(source, position, expression, depth + 1),
         resolveCollectionElementType: (receiverExpression) =>
-          resolvePhpCollectionModelType(
-            source,
-            position,
-            receiverExpression,
-            depth + 1,
-          ),
+          resolvePhpCollectionModelType(source, position, receiverExpression, depth + 1),
         source,
         variableName: variableMatch?.[1] ?? null,
       });
@@ -287,10 +251,7 @@ export function usePhpExpressionTypeResolver({
 
       const constructedClassName =
         phpNewExpressionClassName(expression) ??
-        phpFrameworkContainerExpressionClassName(
-          expression,
-          frameworkProviders,
-        );
+        phpFrameworkContainerExpressionClassName(expression, frameworkProviders);
 
       if (constructedClassName) {
         return resolvePhpClassReference(source, constructedClassName);
@@ -299,10 +260,7 @@ export function usePhpExpressionTypeResolver({
       const classStringCall = phpClassStringCallExpression(expression);
 
       if (classStringCall) {
-        const argumentType = resolvePhpClassReference(
-          source,
-          classStringCall.argumentClassName,
-        );
+        const argumentType = resolvePhpClassReference(source, classStringCall.argumentClassName);
         let returnsArgumentType = false;
 
         if (classStringCall.kind === "functionCall") {
@@ -313,15 +271,9 @@ export function usePhpExpressionTypeResolver({
         }
 
         if (classStringCall.kind === "staticCall") {
-          const ownerType = resolvePhpClassReference(
-            source,
-            classStringCall.className,
-          );
+          const ownerType = resolvePhpClassReference(source, classStringCall.className);
           returnsArgumentType = ownerType
-            ? await phpClassMethodReturnsClassStringArgument(
-                ownerType,
-                classStringCall.methodName,
-              )
+            ? await phpClassMethodReturnsClassStringArgument(ownerType, classStringCall.methodName)
             : false;
         }
 
@@ -376,10 +328,7 @@ export function usePhpExpressionTypeResolver({
           depth + 1,
         );
         const propertyType = receiverType
-          ? await resolvePhpClassPropertyOrRelationType(
-              receiverType,
-              propertyAccess.propertyName,
-            )
+          ? await resolvePhpClassPropertyOrRelationType(receiverType, propertyAccess.propertyName)
           : null;
 
         if (propertyType) {
@@ -426,10 +375,7 @@ export function usePhpExpressionTypeResolver({
           : null;
         let boundReceiverReturnType: string | null = null;
 
-        if (
-          boundReceiverType &&
-          boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()
-        ) {
+        if (boundReceiverType && boundReceiverType.toLowerCase() !== receiverType?.toLowerCase()) {
           boundReceiverReturnType = await resolvePhpMethodReturnType(
             boundReceiverType,
             methodCall.methodName,
@@ -460,11 +406,10 @@ export function usePhpExpressionTypeResolver({
           return resolvedFrameworkReturnType;
         }
 
-        const strategyReceiverReturnType =
-          expressionTypeStrategy.receiverMethodCallType({
-            methodName: methodCall.methodName,
-            receiverType,
-          });
+        const strategyReceiverReturnType = expressionTypeStrategy.receiverMethodCallType({
+          methodName: methodCall.methodName,
+          receiverType,
+        });
 
         if (strategyReceiverReturnType) {
           return strategyReceiverReturnType;
@@ -487,10 +432,7 @@ export function usePhpExpressionTypeResolver({
       const staticCall = phpStaticCallExpression(expression);
 
       if (staticCall) {
-        const className = resolvePhpClassReference(
-          source,
-          staticCall.className,
-        );
+        const className = resolvePhpClassReference(source, staticCall.className);
 
         const strategyReturnType = await expressionTypeStrategy.staticCallType({
           className,
@@ -501,20 +443,18 @@ export function usePhpExpressionTypeResolver({
           return strategyReturnType;
         }
 
-        return className
-          ? resolvePhpMethodReturnType(className, staticCall.methodName)
-          : null;
+        return className ? resolvePhpMethodReturnType(className, staticCall.methodName) : null;
       }
 
       return null;
     },
     [
       expressionTypeStrategy,
-      frameworkRuntime,
       frameworkProviders,
       typeExtensions,
       resolvePhpClassReference,
       resolvePhpClassPropertyOrRelationType,
+      resolvePhpBuilderModelType,
       phpClassMethodReturnsClassStringArgument,
       resolvePhpCollectionModelType,
       resolvePhpFrameworkBoundConcrete,
@@ -531,24 +471,16 @@ interface PhpExpressionVariableTypeStrategyContext {
   frameworkProviders: readonly PhpFrameworkProvider[];
   position: EditorPosition;
   resolveBuilderModelType: () => Promise<string | null>;
-  resolveCollectionElementType: (
-    receiverExpression: string,
-  ) => Promise<string | null>;
+  resolveCollectionElementType: (receiverExpression: string) => Promise<string | null>;
   source: string;
   variableName: string | null;
 }
 
 interface PhpExpressionTypeStrategy {
-  methodCallType: (
-    context: PhpExpressionMethodCallStrategyContext,
-  ) => Promise<string | null>;
+  methodCallType: (context: PhpExpressionMethodCallStrategyContext) => Promise<string | null>;
   receiverMethodCallType: PhpFrameworkModelFluentExpressionTypeAdapter["receiverMethodCallType"];
-  staticCallType: (
-    context: PhpExpressionStaticCallStrategyContext,
-  ) => Promise<string | null>;
-  variableType: (
-    context: PhpExpressionVariableTypeStrategyContext,
-  ) => Promise<string | null>;
+  staticCallType: (context: PhpExpressionStaticCallStrategyContext) => Promise<string | null>;
+  variableType: (context: PhpExpressionVariableTypeStrategyContext) => Promise<string | null>;
 }
 
 interface PhpExpressionTypeStrategyOptions {
@@ -603,54 +535,35 @@ function createPhpExpressionTypeStrategy({
         await modelBuilderTransitionExpressionTypeAdapter.methodCallType({
           methodName: methodCall.methodName,
           resolveCollectionTerminalModelType: () =>
-            terminalModelRecoveryExpressionTypeAdapter.collectionTerminalModelType(
-              {
-                receiverExpression: methodCall.receiverExpression,
-                resolveCollectionModelType: () =>
-                  resolvePhpCollectionModelType(
-                    source,
-                    position,
-                    methodCall.receiverExpression,
-                    depth + 1,
-                  ),
-                resolveExpressionType: (candidateExpression) =>
-                  resolvePhpExpressionType(
-                    source,
-                    position,
-                    candidateExpression,
-                    depth + 1,
-                  ),
-              },
-            ),
+            terminalModelRecoveryExpressionTypeAdapter.collectionTerminalModelType({
+              receiverExpression: methodCall.receiverExpression,
+              resolveCollectionModelType: () =>
+                resolvePhpCollectionModelType(
+                  source,
+                  position,
+                  methodCall.receiverExpression,
+                  depth + 1,
+                ),
+              resolveExpressionType: (candidateExpression) =>
+                resolvePhpExpressionType(source, position, candidateExpression, depth + 1),
+            }),
           resolveModelFactoryModelType: () =>
             resolvePhpBuilderModelType(source, position, expression, depth + 1),
           resolveBuilderTerminalModelType: () =>
-            terminalModelRecoveryExpressionTypeAdapter.builderTerminalModelType(
-              {
-                receiverExpression: methodCall.receiverExpression,
-                resolveBuilderModelType: () =>
-                  resolvePhpBuilderModelType(
-                    source,
-                    position,
-                    methodCall.receiverExpression,
-                    depth + 1,
-                  ),
-                resolveExpressionType: (candidateExpression) =>
-                  resolvePhpExpressionType(
-                    source,
-                    position,
-                    candidateExpression,
-                    depth + 1,
-                  ),
-              },
-            ),
+            terminalModelRecoveryExpressionTypeAdapter.builderTerminalModelType({
+              receiverExpression: methodCall.receiverExpression,
+              resolveBuilderModelType: () =>
+                resolvePhpBuilderModelType(
+                  source,
+                  position,
+                  methodCall.receiverExpression,
+                  depth + 1,
+                ),
+              resolveExpressionType: (candidateExpression) =>
+                resolvePhpExpressionType(source, position, candidateExpression, depth + 1),
+            }),
           resolveBuilderModelType: () =>
-            resolvePhpBuilderModelType(
-              source,
-              position,
-              methodCall.receiverExpression,
-              depth + 1,
-            ),
+            resolvePhpBuilderModelType(source, position, methodCall.receiverExpression, depth + 1),
           resolveCollectionModelType: () =>
             resolvePhpCollectionModelType(
               source,
@@ -664,29 +577,22 @@ function createPhpExpressionTypeStrategy({
         return modelBuilderTransitionMethodCallType;
       }
 
-      const databaseMethodCallType =
-        await databaseExpressionTypeAdapter.methodCallType({
-          methodName: methodCall.methodName,
-          resolveReceiverType,
-        });
+      const databaseMethodCallType = await databaseExpressionTypeAdapter.methodCallType({
+        methodName: methodCall.methodName,
+        resolveReceiverType,
+      });
 
       if (databaseMethodCallType) {
         return databaseMethodCallType;
       }
 
-      const builderMagicMethodCallType =
-        await builderMagicExpressionTypeAdapter.methodCallType({
-          methodName: methodCall.methodName,
-          resolveBuilderModelType: () =>
-            resolvePhpBuilderModelType(
-              source,
-              position,
-              methodCall.receiverExpression,
-              depth + 1,
-            ),
-          resolveReceiverType,
-          source,
-        });
+      const builderMagicMethodCallType = await builderMagicExpressionTypeAdapter.methodCallType({
+        methodName: methodCall.methodName,
+        resolveBuilderModelType: () =>
+          resolvePhpBuilderModelType(source, position, methodCall.receiverExpression, depth + 1),
+        resolveReceiverType,
+        source,
+      });
 
       if (builderMagicMethodCallType) {
         return builderMagicMethodCallType;
@@ -694,8 +600,7 @@ function createPhpExpressionTypeStrategy({
 
       return null;
     },
-    receiverMethodCallType:
-      modelFluentExpressionTypeAdapter.receiverMethodCallType,
+    receiverMethodCallType: modelFluentExpressionTypeAdapter.receiverMethodCallType,
     staticCallType: async ({ className, staticCall }) => {
       const modelBuilderTransitionStaticCallType =
         await modelBuilderTransitionExpressionTypeAdapter.staticCallType({
@@ -707,21 +612,19 @@ function createPhpExpressionTypeStrategy({
         return modelBuilderTransitionStaticCallType;
       }
 
-      const databaseStaticCallType =
-        databaseExpressionTypeAdapter.staticCallType({
-          className,
-          methodName: staticCall.methodName,
-        });
+      const databaseStaticCallType = databaseExpressionTypeAdapter.staticCallType({
+        className,
+        methodName: staticCall.methodName,
+      });
 
       if (databaseStaticCallType) {
         return databaseStaticCallType;
       }
 
-      const builderMagicStaticCallType =
-        await builderMagicExpressionTypeAdapter.staticCallType({
-          className,
-          methodName: staticCall.methodName,
-        });
+      const builderMagicStaticCallType = await builderMagicExpressionTypeAdapter.staticCallType({
+        className,
+        methodName: staticCall.methodName,
+      });
 
       if (builderMagicStaticCallType) {
         return builderMagicStaticCallType;
@@ -737,9 +640,7 @@ function createPhpExpressionTypeStrategy({
         return queryCallbackVariableType;
       }
 
-      return collectionCallbackVariableExpressionTypeAdapter.variableType(
-        context,
-      );
+      return collectionCallbackVariableExpressionTypeAdapter.variableType(context);
     },
   };
 }

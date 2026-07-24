@@ -72,7 +72,23 @@ function renderNavigation(
     root.render(<Harness />);
   });
 
-  return { api: () => api as WorkbenchNavigation, deps, host, openFile, root };
+  const rerender = (
+    nextOverrides: Partial<WorkbenchNavigationDependencies> = {},
+  ) => {
+    Object.assign(deps, nextOverrides);
+    act(() => {
+      root.render(<Harness />);
+    });
+  };
+
+  return {
+    api: () => api as WorkbenchNavigation,
+    deps,
+    host,
+    openFile,
+    rerender,
+    root,
+  };
 }
 
 function actionItem(
@@ -97,6 +113,38 @@ function actionItem(
 }
 
 describe("useWorkbenchNavigation Search Everywhere actions", () => {
+  it("uses updated dependencies while preserving callbacks across equivalent rerenders", async () => {
+    const previousSetMessage = vi.fn();
+    const nextSetMessage = vi.fn();
+    const harness = renderNavigation({ setMessage: previousSetMessage });
+    const initialCallback = harness.api().openClassSearchResult;
+
+    harness.rerender();
+    expect(harness.api().openClassSearchResult).toBe(initialCallback);
+
+    harness.rerender({ setMessage: nextSetMessage });
+    expect(harness.api().openClassSearchResult).not.toBe(initialCallback);
+
+    await act(async () => {
+      await harness.api().openClassSearchResult({
+        column: 3,
+        containerName: null,
+        fullyQualifiedName: "App\\Services\\Service",
+        kind: "class",
+        lineNumber: 4,
+        name: "Service",
+        path: `${ROOT}/app/Services/Service.php`,
+        relativePath: "app/Services/Service.php",
+      });
+    });
+
+    expect(previousSetMessage).not.toHaveBeenCalled();
+    expect(nextSetMessage).toHaveBeenCalledWith(
+      "Opened Service app/Services/Service.php:4:3",
+    );
+    harness.root.unmount();
+  });
+
   it("closes first, invokes once, and waits for command completion", async () => {
     const events: string[] = [];
     let resolveRun: (() => void) | undefined;

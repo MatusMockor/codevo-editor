@@ -1,11 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { parsePhpClassStructure } from "../domain/phpClassStructure";
 import { phpCurrentTypeKind } from "../domain/phpNavigation";
 import type { ProjectSymbolSearchGateway } from "../domain/projectSymbols";
-import {
-  type IntelligenceMode,
-  type WorkspaceDescriptor,
-} from "../domain/workspace";
+import { type IntelligenceMode, type WorkspaceDescriptor } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { phpChangeSignatureCodeAction } from "./phpChangeSignatureCodeAction";
 import { buildPhpCreateClassCodeAction } from "./phpCreateClassWorkspaceCodeAction";
@@ -14,10 +11,7 @@ import {
   collectPhpClassScopedCodeActions,
   collectPhpFileScopedCodeActions,
 } from "./phpCodeActionLocalCollector";
-import type {
-  PhpCodeActionDescriptor,
-  PhpCodeActionRange,
-} from "./phpCodeActionTypes";
+import type { PhpCodeActionDescriptor, PhpCodeActionRange } from "./phpCodeActionTypes";
 import { orderPhpCodeActions } from "./phpCodeActionOrdering";
 import {
   collectPhpWorkspaceCodeActions,
@@ -81,31 +75,28 @@ export function usePhpCodeActions({
   workspaceDescriptor,
   workspaceRoot,
 }: UsePhpCodeActionsOptions): UsePhpCodeActionsResult {
-  const phpCreateClassCodeAction = useCallback(
-    buildPhpCreateClassCodeAction({
-      readTestFileIfExists,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    }),
-    [
-      readTestFileIfExists,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    ],
+  const phpCreateClassCodeAction = useMemo(
+    () =>
+      buildPhpCreateClassCodeAction({
+        readTestFileIfExists,
+        resolvePhpClassSourcePaths,
+        workspaceDescriptor,
+        workspaceRoot,
+      }),
+    [readTestFileIfExists, resolvePhpClassSourcePaths, workspaceDescriptor, workspaceRoot],
   );
 
-  const phpCreateMemberCodeAction = useCallback(
-    buildPhpCreateMemberWorkspaceCodeAction({
-      getOpenDocumentSyncVersion: (path) =>
-        workspaceRoot ? getPhpDocumentSyncVersion(workspaceRoot, path) : null,
-      readOpenDocumentContent,
-      readTestFileIfExists,
-      resolvePhpClassSourcePaths,
-      workspaceDescriptor,
-      workspaceRoot,
-    }),
+  const phpCreateMemberCodeAction = useMemo(
+    () =>
+      buildPhpCreateMemberWorkspaceCodeAction({
+        getOpenDocumentSyncVersion: (path) =>
+          workspaceRoot ? getPhpDocumentSyncVersion(workspaceRoot, path) : null,
+        readOpenDocumentContent,
+        readTestFileIfExists,
+        resolvePhpClassSourcePaths,
+        workspaceDescriptor,
+        workspaceRoot,
+      }),
     [
       getPhpDocumentSyncVersion,
       readOpenDocumentContent,
@@ -130,14 +121,10 @@ export function usePhpCodeActions({
       }
 
       const structure =
-        phpCurrentTypeKind(source) === "class"
-          ? parsePhpClassStructure(source)
-          : null;
+        phpCurrentTypeKind(source) === "class" ? parsePhpClassStructure(source) : null;
       const actions = [
         ...collectPhpFileScopedCodeActions(source, range),
-        ...(structure
-          ? collectPhpClassScopedCodeActions(source, range, structure)
-          : []),
+        ...(structure ? collectPhpClassScopedCodeActions(source, range, structure) : []),
       ];
       const changeSignatureAction = phpChangeSignatureCodeAction({
         offset: range.start,
@@ -175,6 +162,7 @@ export function usePhpCodeActions({
       activeDocumentPath,
       collectPhpAbstractMembersToImplement,
       collectPhpOverridableParentMethods,
+      currentWorkspaceRootRef,
       frameworkCodeActionContributions,
       intelligenceMode,
       phpCreateClassCodeAction,

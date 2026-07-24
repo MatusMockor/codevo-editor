@@ -11,6 +11,7 @@ import {
   suspiciousPhpBareIdentifierDiagnostics,
 } from "../domain/phpSyntaxDiagnostics";
 import type { LanguageServerDiagnostic } from "../domain/languageServerDiagnostics";
+import { JS_TEST_PROBLEM_GROUP_PREFIX } from "../domain/jsTestProblems";
 import {
   languageServerDiagnosticNoticeMessage,
   languageServerDiagnosticNoticeSeverity,
@@ -59,7 +60,9 @@ export function isCappableDiagnosticNotice(notice: WorkbenchNotice): boolean {
   return (
     groupKey.startsWith("language-server-diagnostics:") ||
     groupKey.startsWith("javascript-typescript-diagnostics:") ||
-    groupKey.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX)
+    groupKey.startsWith(PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX) ||
+    groupKey.startsWith("node-package-task-problems:") ||
+    groupKey.startsWith(JS_TEST_PROBLEM_GROUP_PREFIX)
   );
 }
 
@@ -88,6 +91,20 @@ export function phpLocalDiagnosticNoticeGroup(path: string): string {
   return `${PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX}${fileUriFromPath(path)}`;
 }
 
+export function phpLocalDiagnosticFileIdentity(
+  path: string,
+): Readonly<{ groupKey: string; uri: string }> | null {
+  try {
+    const uri = fileUriFromPath(path);
+    return Object.freeze({
+      groupKey: `${PHP_LOCAL_DIAGNOSTIC_NOTICE_GROUP_PREFIX}${uri}`,
+      uri,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function localPhpDiagnosticsFromSource(
   source: string,
   syntaxDiagnostics: Array<{
@@ -99,9 +116,7 @@ export function localPhpDiagnosticsFromSource(
   }>,
 ): LanguageServerDiagnostic[] {
   const localSyntaxDiagnostics = [
-    ...(syntaxDiagnostics.length === 0
-      ? structuralPhpSyntaxDiagnostics(source)
-      : []),
+    ...(syntaxDiagnostics.length === 0 ? structuralPhpSyntaxDiagnostics(source) : []),
     ...suspiciousPhpBareIdentifierDiagnostics(source),
   ];
   const inspectionDiagnostics = phpInspectionDiagnostics(source);
@@ -172,11 +187,7 @@ export function activePhpLocalDiagnosticNotices(
     return [];
   }
 
-  return activeLocalDiagnosticNotices(
-    document.path,
-    diagnosticsByPath[document.path] ?? [],
-    "PHP",
-  );
+  return activeLocalDiagnosticNotices(document.path, diagnosticsByPath[document.path] ?? [], "PHP");
 }
 
 export function activeDotenvLocalDiagnosticNotices(
@@ -209,10 +220,10 @@ export function composeEffectiveDiagnosticNotices({
     return notices;
   }
 
-  const groupKey = phpLocalDiagnosticNoticeGroup(activeDocument.path);
-  const withoutActiveLocalDiagnostics = notices.filter(
-    (notice) => notice.groupKey !== groupKey,
-  );
+  const identity = phpLocalDiagnosticFileIdentity(activeDocument.path);
+  if (!identity) return notices;
+  const { groupKey } = identity;
+  const withoutActiveLocalDiagnostics = notices.filter((notice) => notice.groupKey !== groupKey);
 
   if (activeDocument.language === "dotenv") {
     if (activeDotenvDiagnosticNotices.length === 0) {
@@ -250,8 +261,9 @@ function activeLocalDiagnosticNotices(
     return [];
   }
 
-  const uri = fileUriFromPath(path);
-  const groupKey = phpLocalDiagnosticNoticeGroup(path);
+  const identity = phpLocalDiagnosticFileIdentity(path);
+  if (!identity) return [];
+  const { groupKey, uri } = identity;
 
   return capDiagnosticNotices(
     diagnostics.map((diagnostic) =>
@@ -264,7 +276,6 @@ function activeLocalDiagnosticNotices(
       ),
     ),
     DIAGNOSTIC_NOTICES_PER_DOCUMENT_LIMIT,
-    (hiddenCount) =>
-      buildDiagnosticOverflowNotice(fallbackSource, groupKey, hiddenCount),
+    (hiddenCount) => buildDiagnosticOverflowNotice(fallbackSource, groupKey, hiddenCount),
   );
 }

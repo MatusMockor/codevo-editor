@@ -8,16 +8,11 @@ import {
 import type { LanguageServerRuntimeStatus } from "../domain/languageServerRuntime";
 import { isMarkdownDocument, type MarkdownPreviewTab } from "../domain/markdownPreview";
 import type { NavigationHistory } from "../domain/navigation";
-import type { NodePackageManager } from "../domain/packageManagerDetection";
 import type { PackageScript } from "../domain/packageScripts";
-import {
-  shortcutForCommand,
-  type KeymapCommandId,
-} from "../domain/keymap";
+import type { NodePackageScript } from "../domain/nodePackageScripts";
+import { shortcutForCommand, type KeymapCommandId } from "../domain/keymap";
 import type { WorkspaceTrustState } from "../domain/trust";
-import type {
-  AppSettings,
-} from "../domain/settings";
+import type { AppSettings } from "../domain/settings";
 import type {
   EditorDocument,
   ImageTab,
@@ -29,9 +24,10 @@ import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfac
 import type { EditorGroupsState, EditorSplitDirection } from "../domain/editorGroups";
 import type { EditorMenuCommandRunner } from "../domain/editorMenuCommand";
 import type { EditorSurfaceCommandRunner } from "../domain/editorSurfaceCommand";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { StepKind } from "../domain/debug";
 import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
-import { CommandRegistry, type Command } from "./commandRegistry";
+import { CommandRegistry, type Command, type CommandContext } from "./commandRegistry";
 import { workbenchArtisanCommands } from "./workbenchArtisanCommands";
 import {
   isDebuggableNodeScriptPath,
@@ -54,6 +50,7 @@ import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 import { workbenchIndexCommands } from "./workbenchIndexCommands";
 import { workbenchLanguageNavigationCommands } from "./workbenchLanguageNavigationCommands";
 import { workbenchLanguagePanelCommands } from "./workbenchLanguagePanelCommands";
+import { canUseActiveDocumentLanguageServerFeature } from "./workbenchLanguageServerCommandEnablement";
 import { workbenchMarkdownCommands } from "./workbenchMarkdownCommands";
 import { workbenchNavigationHistoryCommands } from "./workbenchNavigationHistoryCommands";
 import { workbenchPanelCommands } from "./workbenchPanelCommands";
@@ -63,6 +60,12 @@ import { workbenchPhpstanCommands } from "./workbenchPhpstanCommands";
 import { workbenchPintCommands } from "./workbenchPintCommands";
 import { workbenchProblemNavigationCommands } from "./workbenchProblemNavigationCommands";
 import { workbenchScriptCommands } from "./workbenchScriptCommands";
+import { workbenchNodePackageScriptCommands } from "./workbenchNodePackageScriptCommands";
+import { workbenchNodeRunCommands } from "./workbenchNodeRunCommands";
+import {
+  workbenchVscodeProcessTaskCommands,
+  type WorkbenchVscodeProcessTaskCommandsOptions,
+} from "./workbenchVscodeProcessTaskCommands";
 import { workbenchSmartCommands } from "./workbenchSmartCommands";
 import { workbenchPhpTreeCommands } from "./workbenchPhpTreeCommands";
 import { workbenchWorkspaceFileCommands } from "./workbenchWorkspaceFileCommands";
@@ -72,8 +75,6 @@ import { workbenchEslintCommands } from "./workbenchEslintCommands";
 interface ActivePackageScripts {
   composerScripts: PackageScript[];
   hasArtisan: boolean;
-  npmPackageManager: NodePackageManager;
-  npmScripts: PackageScript[];
 }
 
 type CommandRun = Command["run"];
@@ -87,10 +88,36 @@ interface UseWorkbenchCommandRegistryOptions {
   activeImage: ImageTab | null;
   activeMarkdownPreview: MarkdownPreviewTab | null;
   activePackageScripts: ActivePackageScripts | null | undefined;
+  nodePackageScriptsWorkbench: {
+    readonly available: boolean;
+    readonly pending: boolean;
+    readonly scripts: readonly NodePackageScript[];
+    runSelectedScript?(
+      capture: NonNullable<CommandContext["npmRunSelectedScriptCapture"]>,
+    ): boolean;
+    run(script: NodePackageScript): void;
+    stop(): void;
+  };
+  nodeRunWithoutDebugging: {
+    readonly canRun: boolean;
+    readonly canStop: boolean;
+    readonly configurationLauncher: {
+      readonly busy: boolean;
+      readonly pickerOpen: boolean;
+      canOpenPicker(): boolean;
+      openPicker(): void;
+    };
+    readonly pending: boolean;
+    run(): void;
+    stop(): void;
+  };
+  vscodeProcessTasksWorkbench: WorkbenchVscodeProcessTaskCommandsOptions;
   activePhpstanBufferClean: boolean;
   activateWorkspaceTab(root: string): unknown;
   appSettings: AppSettings;
   canReopenClosedDocument: boolean;
+  canShowNette: boolean;
+  canShowSymfony: boolean;
   canRewordSelectedGitCommit(): boolean;
   canSearchClassOpenSymbols: boolean;
   cherryPickSelectedGitCommit: CommandRun;
@@ -101,10 +128,111 @@ interface UseWorkbenchCommandRegistryOptions {
   createDirectory: CommandRun;
   createFile: CommandRun;
   createGitBranch: CommandRun;
-  debugSnapshot: DebuggerSessionSnapshot;
+  configureNodeLaunchConfigurations: CommandRun;
+  debugState: {
+    breakpointBulkMutationPending: boolean;
+    breakpointCounts: {
+      readonly disabled: number;
+      readonly enabled: number;
+    };
+    canRestartDebug(): boolean;
+    canRunToCursor: boolean;
+    canToggleBreakpointsActivated(): boolean;
+    consoleSurface: {
+      readonly canClear: boolean;
+      clear(): void;
+      focus(): void;
+    };
+    configurationLauncher: {
+      readonly busy: boolean;
+      readonly pickerOpen: boolean;
+      canOpenPicker(): boolean;
+      openPicker(): void;
+    };
+    copyValue: {
+      canCopyEvaluatePath(): boolean;
+      canCopyValue(): boolean;
+      copyEvaluatePath(): Promise<boolean>;
+      copyValue(): Promise<boolean>;
+    };
+    addToWatch: {
+      canAddToWatch(): boolean;
+      addToWatch(): boolean;
+    };
+    setValue: {
+      canBeginEdit(): boolean;
+      beginEdit(): boolean;
+    };
+    debugRestartPending: boolean;
+    debugCompoundStartPending: boolean;
+    debugControlPending: boolean;
+    debugStopPending: boolean;
+    debugSessionAttached: boolean;
+    disconnectDebug: CommandRun;
+    debugStartPending: boolean;
+    disableAllBreakpoints: CommandRun;
+    enableAllBreakpoints: CommandRun;
+    toggleBreakpointsActivated(): Promise<boolean>;
+    removeAllBreakpoints: CommandRun;
+    restartDebug: CommandRun;
+    runToCursor: CommandRun;
+    snapshot: DebuggerSessionSnapshot;
+  };
+  debugWatchAtCursor: {
+    addToWatchAtCursor(): boolean;
+    canAddAtCursor(): boolean;
+  };
+  jsTestDebugAtCursor: {
+    canDebugAtCursor(): boolean;
+    debugAtCursor(): Promise<boolean>;
+  };
+  jsTestRerunLastRun: {
+    canCancelTestRun(): boolean;
+    canRerunFailedTests(): boolean;
+    canRerunLastRun(): boolean;
+    cancelTestRun(): Promise<boolean>;
+    rerunFailedTests(): Promise<boolean>;
+    rerunLastRun(): Promise<boolean>;
+  };
+  jsTestRunSelection: {
+    canRunAtCursor(): boolean;
+    runAtCursor(): Promise<boolean>;
+    canRunCurrentFile(): boolean;
+    runCurrentFile(): Promise<boolean>;
+  };
+  debugEvaluateInConsole: {
+    canEvaluateInConsole(): boolean;
+    evaluateInConsole(): boolean;
+  };
+  debugBreakpointNavigation: {
+    canGoToNextBreakpoint(): boolean;
+    canGoToPreviousBreakpoint(): boolean;
+    goToNextBreakpoint(): boolean;
+    goToPreviousBreakpoint(): boolean;
+  };
+  debugInlineBreakpoint: {
+    addInlineBreakpoint(): boolean;
+    canAddInlineBreakpoint(): boolean;
+  };
+  debugCopyStackTrace: {
+    canCopyStackTrace(): boolean;
+    copyStackTrace(): boolean;
+  };
+  debugCallStackNavigation: {
+    canSelectCallStackFrame(): boolean;
+    selectCallStackTop(): boolean;
+    selectCallStackBottom(): boolean;
+    selectCallStackUp(): boolean;
+    selectCallStackDown(): boolean;
+  };
+  debugRestartFrame: {
+    canRestartFrame(): boolean;
+    restartFrame(): boolean;
+  };
   deleteActiveDocument: CommandRun;
   disableEslintRuleAtCursor: CommandRun;
   openDebugPanel: CommandRun;
+  attachNodeDebug: CommandRun;
   pauseDebug: CommandRun;
   startOrContinueDebug: CommandRun;
   startPhpListenDebug: CommandRun;
@@ -146,9 +274,7 @@ interface UseWorkbenchCommandRegistryOptions {
     statusRoot: string | null,
     workspaceRoot: string | null | undefined,
   ): boolean;
-  isNavigationCommandScopeCurrent(
-    scope: EditorSurfaceCommandInvocationScope,
-  ): boolean;
+  isNavigationCommandScopeCurrent(scope: EditorSurfaceCommandInvocationScope): boolean;
   javaScriptTypeScriptLanguageServerRuntimeStatus: LanguageServerRuntimeStatus | null;
   javaScriptTypeScriptLanguageServerRuntimeStatusRoot: string | null;
   languageServerPlan: LanguageServerPlan | null;
@@ -162,6 +288,7 @@ interface UseWorkbenchCommandRegistryOptions {
   openAppearanceSettingsPanel: CommandRun;
   openArtisanMakePalette: CommandRun;
   openArtisanRoutesPanel: CommandRun;
+  openExpressRoutesPanel: CommandRun;
   openCallHierarchy: CommandRun;
   openFileHistory(): Promise<void>;
   openFileReferencesPanel: CommandRun;
@@ -208,7 +335,7 @@ interface UseWorkbenchCommandRegistryOptions {
   setPaletteOpen(open: boolean): void;
   setQuickOpenOpen(open: boolean): void;
   setRecentFilesSwitcherOpen(open: boolean): void;
-  setSidebarView(view: "git" | "php"): void;
+  setSidebarView(view: "git" | "php" | "scripts"): void;
   setTextSearchOpen(open: boolean): void;
   setWorkspaceSymbolsOpen(open: boolean): void;
   showBottomPanelView: Parameters<typeof workbenchPanelCommands>[0]["showBottomPanelView"];
@@ -244,24 +371,40 @@ export function useWorkbenchCommandRegistry(
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
+    nodePackageScriptsWorkbench,
+    nodeRunWithoutDebugging,
+    vscodeProcessTasksWorkbench,
     activePhpstanBufferClean,
     activateWorkspaceTab,
     appSettings,
     canReopenClosedDocument,
+    canShowNette,
+    canShowSymfony,
     canRewordSelectedGitCommit,
     canSearchClassOpenSymbols,
     cherryPickSelectedGitCommit,
     closeActiveEditorGroup,
     closeActiveEditorGroupSurface,
-    closeDocument,
     commitGitChanges,
     createDirectory,
     createFile,
     createGitBranch,
-    debugSnapshot,
+    configureNodeLaunchConfigurations,
+    debugState,
+    debugWatchAtCursor,
+    jsTestDebugAtCursor,
+    jsTestRerunLastRun,
+    jsTestRunSelection,
+    debugEvaluateInConsole,
+    debugBreakpointNavigation,
+    debugInlineBreakpoint,
+    debugCopyStackTrace,
+    debugCallStackNavigation,
+    debugRestartFrame,
     deleteActiveDocument,
     disableEslintRuleAtCursor,
     openDebugPanel,
+    attachNodeDebug,
     pauseDebug,
     startOrContinueDebug,
     startPhpListenDebug,
@@ -313,6 +456,7 @@ export function useWorkbenchCommandRegistry(
     openAppearanceSettingsPanel,
     openArtisanMakePalette,
     openArtisanRoutesPanel,
+    openExpressRoutesPanel,
     openCallHierarchy,
     openFileHistory,
     openFileReferencesPanel,
@@ -449,32 +593,96 @@ export function useWorkbenchCommandRegistry(
     }).forEach((command) => registry.register(command));
 
     workbenchJsTestCommands({
+      canCancelTestRun: jsTestRerunLastRun.canCancelTestRun,
+      canDebugAtCursor: jsTestDebugAtCursor.canDebugAtCursor,
+      canRerunFailedTests: jsTestRerunLastRun.canRerunFailedTests,
+      canRerunLastRun: jsTestRerunLastRun.canRerunLastRun,
+      canRunAtCursor: jsTestRunSelection.canRunAtCursor,
+      canRunCurrentFile: jsTestRunSelection.canRunCurrentFile,
+      debugAtCursor: async () => {
+        await jsTestDebugAtCursor.debugAtCursor();
+      },
+      cancelTestRun: jsTestRerunLastRun.cancelTestRun,
       hasJsWorkspace: Boolean(workspaceDescriptor?.javaScriptTypeScript),
       isActiveDocumentJsTest,
+      runAtCursor: async () => {
+        await jsTestRunSelection.runAtCursor();
+      },
+      runCurrentFile: async () => {
+        await jsTestRunSelection.runCurrentFile();
+      },
       runTestForActiveDocument: runJsTestForActiveDocument,
       runAllTestsForActiveDocument: runAllJsTestsForActiveDocument,
       openTestResultsPanel: openJsTestResultsPanel,
+      rerunFailedTests: jsTestRerunLastRun.rerunFailedTests,
+      rerunLastRun: jsTestRerunLastRun.rerunLastRun,
+      shortcut,
     }).forEach((command) => registry.register(command));
 
     workbenchDebugCommands({
+      attachNodeDebug,
+      breakpointBulkMutationPending: debugState.breakpointBulkMutationPending,
+      breakpointCounts: debugState.breakpointCounts,
+      configurationLauncher: debugState.configurationLauncher,
+      configureNodeLaunchConfigurations,
+      canRestartDebug: debugState.canRestartDebug(),
+      canRunToCursor: debugState.canRunToCursor,
+      canToggleBreakpointsActivated: debugState.canToggleBreakpointsActivated(),
+      canClearDebugConsole: debugState.consoleSurface.canClear,
+      debugRestartPending: debugState.debugRestartPending,
+      debugCompoundStartPending: debugState.debugCompoundStartPending,
+      debugControlPending: debugState.debugControlPending,
+      debugStopPending: debugState.debugStopPending,
+      debugSessionAttached: debugState.debugSessionAttached,
+      debugStartPending: debugState.debugStartPending,
+      debugWatchAtCursor,
+      debugEvaluateInConsole,
+      debugBreakpointNavigation,
+      debugInlineBreakpoint,
+      debugCopyValue: debugState.copyValue,
+      debugAddToWatch: debugState.addToWatch,
+      debugCopyStackTrace,
+      debugCallStackNavigation,
+      debugRestartFrame,
+      debugSetVariable: debugState.setValue,
+      disableAllBreakpoints: debugState.disableAllBreakpoints,
+      enableAllBreakpoints: debugState.enableAllBreakpoints,
+      toggleBreakpointsActivated: async () => {
+        await debugState.toggleBreakpointsActivated();
+      },
       shortcut,
       hasJsWorkspace: Boolean(workspaceDescriptor?.javaScriptTypeScript),
       hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
       isActiveDocumentDebuggable:
         (Boolean(workspaceDescriptor?.javaScriptTypeScript) &&
-          (isActiveDocumentJsTest ||
-            isDebuggableNodeScriptPath(activeDocument?.path ?? ""))) ||
+          (isActiveDocumentJsTest || isDebuggableNodeScriptPath(activeDocument?.path ?? ""))) ||
         (Boolean(workspaceDescriptor?.php) &&
           isDebuggablePhpScriptPath(activeDocument?.path ?? "")),
       isWorkspaceTrusted: workspaceTrust?.trusted === true,
-      snapshot: debugSnapshot,
+      snapshot: debugState.snapshot,
       openDebugPanel,
+      clearDebugConsole: debugState.consoleSurface.clear,
+      focusDebugConsole: debugState.consoleSurface.focus,
       pauseDebug,
+      restartDebug: debugState.restartDebug,
+      runToCursor: debugState.runToCursor,
+      removeAllBreakpoints: debugState.removeAllBreakpoints,
       startOrContinueDebug,
       startPhpListenDebug,
       stepDebug,
       stopDebug,
+      disconnectDebug: debugState.disconnectDebug,
       toggleBreakpointAtCursor: toggleDebugBreakpointAtCursor,
+    }).forEach((command) => registry.register(command));
+
+    workbenchNodeRunCommands({
+      canRun: nodeRunWithoutDebugging.canRun,
+      canStop: nodeRunWithoutDebugging.canStop,
+      configurationLauncher: nodeRunWithoutDebugging.configurationLauncher,
+      pending: nodeRunWithoutDebugging.pending,
+      run: nodeRunWithoutDebugging.run,
+      shortcut,
+      stop: nodeRunWithoutDebugging.stop,
     }).forEach((command) => registry.register(command));
 
     workbenchPhpstanCommands({
@@ -492,15 +700,13 @@ export function useWorkbenchCommandRegistry(
       isRunning: pintRunning,
       isWorkspaceTrusted: workspaceTrust?.trusted === true,
       hasActivePhpDocument:
-        activeDocument?.language === "php" &&
-        activeDocument.path.endsWith(".php"),
+        activeDocument?.language === "php" && activeDocument.path.endsWith(".php"),
       formatChangedFiles: formatChangedFilesWithPint,
       formatActiveFile: formatActiveFileWithPint,
     }).forEach((command) => registry.register(command));
 
     workbenchEslintCommands({
-      hasPackageJson:
-        workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson === true,
+      hasPackageJson: workspaceDescriptor?.javaScriptTypeScript?.hasPackageJson === true,
       isRunning: eslintAnalysisRunning,
       runEslintAnalysis,
       hasFixesForActiveFile: activeEslintFixes.length > 0,
@@ -513,10 +719,21 @@ export function useWorkbenchCommandRegistry(
 
     workbenchScriptCommands({
       composerScripts: activePackageScripts?.composerScripts ?? [],
-      npmPackageManager: activePackageScripts?.npmPackageManager ?? "npm",
-      npmScripts: activePackageScripts?.npmScripts ?? [],
       runInActiveTerminal,
     }).forEach((command) => registry.register(command));
+
+    workbenchNodePackageScriptCommands({
+      enabled: nodePackageScriptsWorkbench.available,
+      pending: nodePackageScriptsWorkbench.pending,
+      scripts: nodePackageScriptsWorkbench.scripts,
+      runSelectedScript: nodePackageScriptsWorkbench.runSelectedScript,
+      run: nodePackageScriptsWorkbench.run,
+      stop: nodePackageScriptsWorkbench.stop,
+    }).forEach((command) => registry.register(command));
+
+    workbenchVscodeProcessTaskCommands(vscodeProcessTasksWorkbench).forEach((command) =>
+      registry.register(command),
+    );
 
     workbenchArtisanCommands({
       hasArtisan: activePackageScripts?.hasArtisan ?? false,
@@ -551,11 +768,11 @@ export function useWorkbenchCommandRegistry(
 
     scopedNavigationCommands(
       workbenchNavigationHistoryCommands({
-      shortcut,
-      canNavigateBackward: navigationHistory.backStack.length > 0,
-      canNavigateForward: navigationHistory.forwardStack.length > 0,
-      navigateBackward,
-      navigateForward: navigateForwardInHistory,
+        shortcut,
+        canNavigateBackward: navigationHistory.backStack.length > 0,
+        canNavigateForward: navigationHistory.forwardStack.length > 0,
+        navigateBackward,
+        navigateForward: navigateForwardInHistory,
       }),
       isNavigationCommandScopeCurrent,
       navigationCommandScope,
@@ -565,17 +782,46 @@ export function useWorkbenchCommandRegistry(
       shortcut,
       canCloseActiveSurface: Boolean(
         activeDocument ||
-          activeImage ||
-          activeMarkdownPreview ||
-          selectedGitChange ||
-          gitDiffLoading ||
-          isTauri(),
+        activeImage ||
+        activeMarkdownPreview ||
+        selectedGitChange ||
+        gitDiffLoading ||
+        isTauri(),
       ),
       saveActiveDocument,
       closeActiveSurface: closeActiveEditorGroupSurface,
       canReopenClosedDocument,
       reopenClosedDocument,
       editorSurfaceCommandRunner,
+      canRunJavaScriptTypeScriptImportActions:
+        activeDocumentLanguage?.isJavaScriptTypeScriptLanguageServerDocument === true &&
+        canUseActiveDocumentLanguageServerFeature({
+          activeDocument: activeDocumentLanguage,
+          feature: "codeAction",
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        }),
+      canRunJavaScriptTypeScriptRefactors:
+        activeDocumentLanguage?.isJavaScriptTypeScriptLanguageServerDocument === true &&
+        canUseActiveDocumentLanguageServerFeature({
+          activeDocument: activeDocumentLanguage,
+          feature: "codeAction",
+          javaScriptTypeScriptLanguageServerRuntimeStatus,
+          javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+          languageServerRuntimeStatus,
+          languageServerRuntimeStatusRoot,
+          workspaceRoot,
+        }),
+      javaScriptTypeScriptImportLanguage:
+        activeDocument?.language === "javascript" || activeDocument?.language === "javascriptreact"
+          ? "javascript"
+          : activeDocument?.language === "typescript" ||
+              activeDocument?.language === "typescriptreact"
+            ? "typescript"
+            : null,
     }).forEach((command) => registry.register(command));
 
     workbenchEditMenuCommands({
@@ -603,37 +849,35 @@ export function useWorkbenchCommandRegistry(
 
     scopedNavigationCommands(
       workbenchLanguageNavigationCommands({
-      shortcut,
-      activeDocument: activeDocumentLanguage,
-      goToDefinition,
-      goToSourceDefinition,
-      goToDeclaration,
-      goToTypeDefinition,
-      goToImplementation,
-      goToSuperMethod,
+        shortcut,
+        activeDocument: activeDocumentLanguage,
+        goToDefinition,
+        goToSourceDefinition,
+        goToDeclaration,
+        goToTypeDefinition,
+        goToImplementation,
+        goToSuperMethod,
       }),
       isNavigationCommandScopeCurrent,
       navigationCommandScope,
     ).forEach((command) => registry.register(command));
 
-    appearanceCommands.editorCommands.forEach((command) =>
-      registry.register(command),
-    );
+    appearanceCommands.editorCommands.forEach((command) => registry.register(command));
 
     scopedNavigationCommands(
       workbenchLanguagePanelCommands({
-      shortcut,
-      activeDocument: activeDocumentLanguage,
-      languageServerRuntimeStatus,
-      languageServerRuntimeStatusRoot,
-      javaScriptTypeScriptLanguageServerRuntimeStatus,
-      javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
-      workspaceRoot,
-      openFileStructure,
-      openCallHierarchy,
-      openTypeHierarchy,
-      openReferencesPanel,
-      openFileReferencesPanel,
+        shortcut,
+        activeDocument: activeDocumentLanguage,
+        languageServerRuntimeStatus,
+        languageServerRuntimeStatusRoot,
+        javaScriptTypeScriptLanguageServerRuntimeStatus,
+        javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
+        workspaceRoot,
+        openFileStructure,
+        openCallHierarchy,
+        openTypeHierarchy,
+        openReferencesPanel,
+        openFileReferencesPanel,
       }),
       isNavigationCommandScopeCurrent,
       navigationCommandScope,
@@ -664,11 +908,13 @@ export function useWorkbenchCommandRegistry(
       canRewordSelectedGitCommit,
     }).forEach((command) => registry.register(command));
 
-    appearanceCommands.workbenchCommands.forEach((command) =>
-      registry.register(command),
-    );
+    appearanceCommands.workbenchCommands.forEach((command) => registry.register(command));
 
     workbenchPanelCommands({
+      canShowExpressRoutes: canShowWorkspaceExpressRoutes(workspaceRoot, workspaceDescriptor),
+      canShowNette,
+      canShowSymfony,
+      openExpressRoutesPanel,
       shortcut,
       openCommandsPalette: () => {
         setClassOpenOpen(false);
@@ -734,19 +980,35 @@ export function useWorkbenchCommandRegistry(
     activeImage,
     activeMarkdownPreview,
     activePackageScripts,
+    nodePackageScriptsWorkbench,
+    nodeRunWithoutDebugging,
+    vscodeProcessTasksWorkbench,
     openArtisanMakePalette,
     openArtisanRoutesPanel,
+    openExpressRoutesPanel,
     openPhpTestResultsPanel,
     activateWorkspaceTab,
     appSettings.keymap,
     appSettings.recentWorkspacePaths,
     appSettings.workspaceTabs,
     canReopenClosedDocument,
+    canShowNette,
+    canShowSymfony,
     closeActiveEditorGroup,
     closeActiveEditorGroupSurface,
-    closeDocument,
-    debugSnapshot,
+    debugState,
+    debugWatchAtCursor,
+    jsTestDebugAtCursor,
+    jsTestRerunLastRun,
+    jsTestRunSelection,
+    debugEvaluateInConsole,
+    debugBreakpointNavigation,
+    debugInlineBreakpoint,
+    debugCopyStackTrace,
+    debugCallStackNavigation,
+    debugRestartFrame,
     openDebugPanel,
+    attachNodeDebug,
     pauseDebug,
     startOrContinueDebug,
     startPhpListenDebug,
@@ -759,6 +1021,7 @@ export function useWorkbenchCommandRegistry(
     splitActiveEditorGroup,
     createDirectory,
     createFile,
+    configureNodeLaunchConfigurations,
     deleteActiveDocument,
     generateTestForActiveDocument,
     goToTestForActiveDocument,
@@ -794,6 +1057,8 @@ export function useWorkbenchCommandRegistry(
     goToSuperMethod,
     goToTypeDefinition,
     gitDiffLoading,
+    goToNextProblem,
+    goToPreviousProblem,
     navigateBackward,
     navigateForwardInHistory,
     openCallHierarchy,
@@ -855,6 +1120,7 @@ export function useWorkbenchCommandRegistry(
     resetEditorFontSize,
     indexProgress,
     intelligenceMode,
+    isLanguageServerActiveForWorkspace,
     javaScriptTypeScriptLanguageServerRuntimeStatus,
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     languageServerPlan,
@@ -864,8 +1130,27 @@ export function useWorkbenchCommandRegistry(
     workspaceDescriptor,
     workspaceRoot,
     phpTools,
+    setClassOpenOpen,
+    setLanguageServerSetupOpen,
+    setPaletteOpen,
+    setQuickOpenOpen,
+    setRecentFilesSwitcherOpen,
+    setSidebarView,
+    setTextSearchOpen,
+    setWorkspaceSymbolsOpen,
     workspaceTrust,
   ]);
+}
+
+export function canShowWorkspaceExpressRoutes(
+  workspaceRoot: string | null | undefined,
+  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
+): boolean {
+  return Boolean(
+    workspaceRoot &&
+    workspaceDescriptor?.javaScriptTypeScript &&
+    workspaceRootKeysEqual(workspaceRoot, workspaceDescriptor.rootPath),
+  );
 }
 
 const scopedNavigationCommandIds = new Set([

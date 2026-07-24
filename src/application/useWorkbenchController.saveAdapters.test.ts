@@ -9,9 +9,9 @@ import type { EditorDocument, WorkspaceFileGateway } from "../domain/workspace";
 import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { OwnerResolvingDocumentSaveService } from "./ownerResolvingDocumentSaveService";
 import {
-  loadWorkbenchEditorConfigFile,
   ownerDocumentSavePipelineContextFor,
 } from "./useWorkbenchController";
+import { loadWorkbenchEditorConfigFile } from "./useWorkbenchEditorConfigCoordinator";
 import type { CachedWorkspaceWorkbenchState } from "./useWorkspaceStateCache";
 import { WorkbenchOwnerDocumentSaveAdapters } from "./workbenchOwnerDocumentSaveAdapters";
 

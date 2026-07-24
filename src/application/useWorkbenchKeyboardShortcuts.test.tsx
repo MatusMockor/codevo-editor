@@ -20,8 +20,457 @@ const commandContext: CommandContext = {
   hasActiveDocument: false,
   hasWorkspace: true,
 };
+const TEST_EDITOR_SURFACE_IDENTITY = {};
 
 describe("useWorkbenchKeyboardShortcuts", () => {
+  it("dispatches Refactor exactly once only from Monaco text focus", () => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Editor",
+      id: "editor.action.refactor",
+      isEnabled: () => true,
+      run,
+      title: "Refactor",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: { ...appSettings.keymap, "editor.action.refactor": "Cmd+Shift+R" },
+      },
+      commandRegistry: registry,
+    });
+    const monaco = createMonacoTextInput();
+    const outside = document.createElement("input");
+    document.body.append(outside);
+
+    expect(
+      dispatchKeyboardEventFrom(outside, { key: "r", metaKey: true, shiftKey: true })
+        .defaultPrevented,
+    ).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    expect(
+      dispatchKeyboardEventFrom(monaco.input, { key: "r", metaKey: true, shiftKey: true })
+        .defaultPrevented,
+    ).toBe(true);
+    expect(run).toHaveBeenCalledOnce();
+
+    outside.remove();
+    monaco.editor.remove();
+    harness.unmount();
+  });
+
+  it.each([
+    ["testing.runAtCursor", "Run Test at Cursor", "c"],
+    ["testing.runCurrentFile", "Run Tests in Current File", "f"],
+  ] as const)(
+    "keeps the global testing prefix outside Monaco without dispatching editor-scoped %s",
+    (commandId, title, secondKey) => {
+      const run = vi.fn();
+      const registry = new CommandRegistry();
+      registry.register({
+        category: "Test",
+        id: commandId,
+        isEnabled: () => true,
+        run,
+        title,
+      });
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, [commandId]: `Cmd+; ${secondKey.toUpperCase()}` },
+        },
+        commandRegistry: registry,
+      });
+      const monaco = createMonacoTextInput();
+      const outside = document.createElement("input");
+      document.body.append(outside);
+
+      expect(dispatchKeyboardEventFrom(outside, { key: ";", metaKey: true }).defaultPrevented).toBe(
+        true,
+      );
+      expect(dispatchKeyboardEventFrom(outside, { key: secondKey }).defaultPrevented).toBe(true);
+      expect(run).not.toHaveBeenCalled();
+
+      expect(
+        dispatchKeyboardEventFrom(monaco.input, { key: ";", metaKey: true }).defaultPrevented,
+      ).toBe(true);
+      expect(dispatchKeyboardEventFrom(monaco.input, { key: secondKey }).defaultPrevented).toBe(
+        true,
+      );
+      expect(run).toHaveBeenCalledOnce();
+
+      outside.remove();
+      monaco.editor.remove();
+      harness.unmount();
+    },
+  );
+
+  it("runs the Debug Test at Cursor chord exactly once in the same Monaco editor", () => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "testing.debugAtCursor",
+      isEnabled: () => true,
+      run,
+      title: "Debug Test at Cursor",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+      },
+      commandRegistry: registry,
+    });
+    const { editor, input } = createMonacoTextInput();
+
+    const first = dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
+    expect(first.defaultPrevented).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+
+    const second = dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
+    expect(second.defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledOnce();
+
+    editor.remove();
+    harness.unmount();
+  });
+
+  it("consumes the global testing prefix without dispatching Debug at Cursor outside Monaco", () => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "testing.debugAtCursor",
+      isEnabled: () => true,
+      run,
+      title: "Debug Test at Cursor",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+      },
+      commandRegistry: registry,
+    });
+    const input = document.createElement("input");
+    document.body.append(input);
+
+    expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
+      true,
+    );
+    expect(dispatchKeyboardEventFrom(input, { key: "c", metaKey: true }).defaultPrevented).toBe(
+      true,
+    );
+    expect(run).not.toHaveBeenCalled();
+
+    input.remove();
+    harness.unmount();
+  });
+
+  it("dispatches the global Rerun Last Run chord outside Monaco text focus", () => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "testing.reRunLastRun",
+      isEnabled: () => true,
+      run,
+      title: "Rerun Last Run",
+    });
+    const harness = renderHook({ commandRegistry: registry });
+    const input = document.createElement("input");
+    document.body.append(input);
+
+    expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
+      true,
+    );
+    expect(dispatchKeyboardEventFrom(input, { key: "l" }).defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledOnce();
+
+    input.remove();
+    harness.unmount();
+  });
+
+  it("honors a Rerun Last Run chord override and resets to its default chord", () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "testing.reRunLastRun",
+      isEnabled: () => true,
+      run,
+      title: "Rerun Last Run",
+    });
+    const defaults = defaultAppSettings();
+    const overridden = {
+      ...defaults,
+      keymap: { ...defaults.keymap, "testing.reRunLastRun": "Cmd+K L" },
+    };
+    const actions = createActions();
+    const detector = createDoubleShiftDetectorStub();
+    const render = (appSettings: typeof defaults) => {
+      act(() => {
+        root.render(
+          <HookHarness
+            actions={actions}
+            appSettings={appSettings}
+            commandRegistry={registry}
+            doubleShiftDetector={detector}
+            runCommand={(id, context = commandContext) => executeCommand(registry, id, context)}
+          />,
+        );
+      });
+    };
+
+    render(overridden);
+    expect(dispatchKeyboardEvent({ key: "k", metaKey: true }).defaultPrevented).toBe(true);
+    expect(dispatchKeyboardEvent({ key: "l" }).defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    dispatchKeyboardEvent({ key: "k", metaKey: true });
+    render(defaults);
+    expect(dispatchKeyboardEvent({ key: "l" }).defaultPrevented).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(true);
+    expect(dispatchKeyboardEvent({ key: "l" }).defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    act(() => root.unmount());
+  });
+
+  it.each([
+    {
+      commandId: "testing.reRunFailTests",
+      second: { key: "e" },
+      title: "Rerun Failed Tests",
+    },
+    {
+      commandId: "testing.cancelRun",
+      second: { key: "x", metaKey: true },
+      title: "Cancel Test Run",
+    },
+  ] as const)(
+    "dispatches the global $title chord outside Monaco text focus",
+    ({ commandId, second, title }) => {
+      const run = vi.fn();
+      const registry = new CommandRegistry();
+      registry.register({
+        category: "Test",
+        id: commandId,
+        isEnabled: () => true,
+        run,
+        title,
+      });
+      const harness = renderHook({ commandRegistry: registry });
+      const input = document.createElement("input");
+      document.body.append(input);
+
+      expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
+        true,
+      );
+      expect(dispatchKeyboardEventFrom(input, second).defaultPrevented).toBe(true);
+      expect(run).toHaveBeenCalledOnce();
+
+      input.remove();
+      harness.unmount();
+    },
+  );
+
+  it.each([
+    {
+      commandId: "testing.reRunFailTests",
+      defaultSecond: { key: "e" },
+      override: "Cmd+K E",
+      overrideSecond: { key: "e" },
+      title: "Rerun Failed Tests",
+    },
+    {
+      commandId: "testing.cancelRun",
+      defaultSecond: { key: "x", metaKey: true },
+      override: "Cmd+K Cmd+X",
+      overrideSecond: { key: "x", metaKey: true },
+      title: "Cancel Test Run",
+    },
+  ] as const)(
+    "honors a global $title override and resets to its default chord",
+    ({ commandId, defaultSecond, override, overrideSecond, title }) => {
+      const host = document.createElement("div");
+      const root = createRoot(host);
+      const run = vi.fn();
+      const registry = new CommandRegistry();
+      registry.register({
+        category: "Test",
+        id: commandId,
+        isEnabled: () => true,
+        run,
+        title,
+      });
+      const defaults = defaultAppSettings();
+      const overridden = {
+        ...defaults,
+        keymap: { ...defaults.keymap, [commandId]: override },
+      };
+      const actions = createActions();
+      const detector = createDoubleShiftDetectorStub();
+      const render = (appSettings: typeof defaults) => {
+        act(() => {
+          root.render(
+            <HookHarness
+              actions={actions}
+              appSettings={appSettings}
+              commandRegistry={registry}
+              doubleShiftDetector={detector}
+              runCommand={(id, context = commandContext) => executeCommand(registry, id, context)}
+            />,
+          );
+        });
+      };
+
+      render(overridden);
+      expect(dispatchKeyboardEvent({ key: "k", metaKey: true }).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent(overrideSecond).defaultPrevented).toBe(true);
+      expect(run).toHaveBeenCalledTimes(1);
+
+      dispatchKeyboardEvent({ key: "k", metaKey: true });
+      render(defaults);
+      expect(dispatchKeyboardEvent(overrideSecond).defaultPrevented).toBe(false);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent(defaultSecond).defaultPrevented).toBe(true);
+      expect(run).toHaveBeenCalledTimes(2);
+
+      act(() => root.unmount());
+    },
+  );
+
+  it("cancels a pending editor chord across editor replacement and wrong second strokes", () => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "testing.debugAtCursor",
+      isEnabled: () => true,
+      run,
+      title: "Debug Test at Cursor",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+      },
+      commandRegistry: registry,
+    });
+    const firstEditor = createMonacoTextInput();
+    const secondEditor = createMonacoTextInput();
+
+    dispatchKeyboardEventFrom(firstEditor.input, { key: ";", metaKey: true });
+    expect(
+      dispatchKeyboardEventFrom(secondEditor.input, { key: "c", metaKey: true }).defaultPrevented,
+    ).toBe(false);
+    dispatchKeyboardEventFrom(firstEditor.input, { key: ";", metaKey: true });
+    expect(
+      dispatchKeyboardEventFrom(firstEditor.input, { key: "z", metaKey: true }).defaultPrevented,
+    ).toBe(true);
+    dispatchKeyboardEventFrom(firstEditor.input, { key: "c", metaKey: true });
+    expect(run).not.toHaveBeenCalled();
+
+    firstEditor.editor.remove();
+    secondEditor.editor.remove();
+    harness.unmount();
+  });
+
+  it("revokes a pending editor chord on Escape and window blur", () => {
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "testing.debugAtCursor",
+      isEnabled: () => true,
+      run,
+      title: "Debug Test at Cursor",
+    });
+    const appSettings = defaultAppSettings();
+    const harness = renderHook({
+      appSettings: {
+        ...appSettings,
+        keymap: { ...appSettings.keymap, "testing.debugAtCursor": "Cmd+; Cmd+C" },
+      },
+      commandRegistry: registry,
+    });
+    const { editor, input } = createMonacoTextInput();
+
+    dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
+    dispatchKeyboardEventFrom(input, { key: "Escape" });
+    dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
+    dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
+    window.dispatchEvent(new Event("blur"));
+    dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
+
+    expect(run).not.toHaveBeenCalled();
+
+    editor.remove();
+    harness.unmount();
+  });
+
+  it("revokes a pending chord across observed keymap and editor A-B-A transitions", () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const run = vi.fn();
+    const registry = new CommandRegistry();
+    registry.register({
+      category: "Test",
+      id: "testing.debugAtCursor",
+      isEnabled: () => true,
+      run,
+      title: "Debug Test at Cursor",
+    });
+    const settingsA = defaultAppSettings();
+    settingsA.keymap["testing.debugAtCursor"] = "Cmd+; Cmd+C";
+    const settingsB = {
+      ...settingsA,
+      keymap: { ...settingsA.keymap, "testing.debugAtCursor": "Cmd+K Cmd+C" },
+    };
+    const identityA = {};
+    const identityB = {};
+    const actions = createActions();
+    const detector = createDoubleShiftDetectorStub();
+    const render = (appSettings: typeof settingsA, editorSurfaceIdentity: object) => {
+      act(() => {
+        root.render(
+          <HookHarness
+            actions={actions}
+            appSettings={appSettings}
+            commandRegistry={registry}
+            doubleShiftDetector={detector}
+            editorSurfaceIdentity={editorSurfaceIdentity}
+            runCommand={(id, context = commandContext) => executeCommand(registry, id, context)}
+          />,
+        );
+      });
+    };
+    const { editor, input } = createMonacoTextInput();
+
+    render(settingsA, identityA);
+    dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
+    render(settingsB, identityB);
+    render(settingsA, identityA);
+    dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
+
+    expect(run).not.toHaveBeenCalled();
+
+    editor.remove();
+    act(() => root.unmount());
+  });
+
   it.each([
     {
       commandId: "editor.splitRight",
@@ -108,10 +557,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     const event = dispatchKeyboardEvent({ key: ",", metaKey: true });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(runCommand).toHaveBeenCalledWith(
-      "workbench.openSettings",
-      commandContext,
-    );
+    expect(runCommand).toHaveBeenCalledWith("workbench.openSettings", commandContext);
 
     harness.unmount();
   });
@@ -457,10 +903,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(runCommand).toHaveBeenCalledWith(
-      "workbench.searchEverywhere",
-      commandContext,
-    );
+    expect(runCommand).toHaveBeenCalledWith("workbench.searchEverywhere", commandContext);
 
     harness.unmount();
   });
@@ -554,7 +997,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
-  it("keeps dispatcher conflict precedence when commands share F12", () => {
+  it("gives the later catalog command precedence when commands share F12", () => {
     const definition = vi.fn();
     const save = vi.fn();
     const settings = vi.fn();
@@ -596,8 +1039,8 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     const event = dispatchKeyboardEvent({ key: "F12" });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(save).toHaveBeenCalledTimes(1);
-    expect(settings).not.toHaveBeenCalled();
+    expect(settings).toHaveBeenCalledTimes(1);
+    expect(save).not.toHaveBeenCalled();
     expect(definition).not.toHaveBeenCalled();
 
     harness.unmount();
@@ -675,12 +1118,14 @@ function HookHarness({
   appSettings,
   commandRegistry,
   doubleShiftDetector,
+  editorSurfaceIdentity = TEST_EDITOR_SURFACE_IDENTITY,
   runCommand,
 }: {
   actions: KeyboardShortcutTestActions;
   appSettings: ReturnType<typeof defaultAppSettings>;
   commandRegistry: CommandRegistry;
   doubleShiftDetector: DoubleShiftDetector;
+  editorSurfaceIdentity?: object;
   runCommand: CommandExecutionRunner;
 }) {
   useWorkbenchKeyboardShortcuts({
@@ -690,15 +1135,15 @@ function HookHarness({
     commandContext,
     commandRegistry,
     doubleShiftDetectorRef: ref(doubleShiftDetector),
+    editorSurfaceIdentity,
+    keymap: appSettings.keymap,
     runCommand,
   });
 
   return null;
 }
 
-function createActions(
-  overrides: Partial<KeyboardShortcutTestActions> = {},
-) {
+function createActions(overrides: Partial<KeyboardShortcutTestActions> = {}) {
   return {
     ...createActionsBase(),
     ...overrides,
@@ -745,9 +1190,7 @@ function commandShortcutCase(
   };
 }
 
-function createDoubleShiftDetectorStub(
-  handleKeyDownResult = false,
-): DoubleShiftDetector {
+function createDoubleShiftDetectorStub(handleKeyDownResult = false): DoubleShiftDetector {
   return {
     handleKeyDown: vi.fn(() => handleKeyDownResult),
     reset: vi.fn(),
@@ -763,6 +1206,29 @@ function dispatchKeyboardEvent(init: KeyboardEventInit & { key: string }) {
 
   window.dispatchEvent(event);
   return event;
+}
+
+function dispatchKeyboardEventFrom(
+  target: Element,
+  init: KeyboardEventInit & { key: string },
+): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function createMonacoTextInput(): { editor: HTMLDivElement; input: HTMLTextAreaElement } {
+  const editor = document.createElement("div");
+  editor.className = "monaco-editor";
+  const input = document.createElement("textarea");
+  input.className = "inputarea";
+  editor.append(input);
+  document.body.append(editor);
+  return { editor, input };
 }
 
 function ref<T>(current: T) {

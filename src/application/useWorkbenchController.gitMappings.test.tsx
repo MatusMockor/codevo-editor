@@ -374,6 +374,7 @@ function buildDependencies({
     subscribeDiagnostics: vi.fn(async () => () => undefined),
   });
   const terminalGateway: TerminalGateway = {
+    acknowledgeStart: vi.fn(async () => undefined),
     listProfiles: vi.fn(async () => []),
     resize: vi.fn(async () => undefined),
     start: vi.fn(async () => ({ kind: "stopped" as const, sessionId: 1 })),

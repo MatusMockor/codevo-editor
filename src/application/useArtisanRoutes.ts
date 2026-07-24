@@ -42,8 +42,8 @@ export function useArtisanRoutes({
   const [queries, setQueries] = useState<Record<string, string>>({});
   const currentRootRef = useRef(rootPath);
   currentRootRef.current = rootPath;
-  const state = rootPath ? states[rootPath] ?? emptyState : emptyState;
-  const query = rootPath ? queries[rootPath] ?? "" : "";
+  const state = rootPath ? (states[rootPath] ?? emptyState) : emptyState;
+  const query = rootPath ? (queries[rootPath] ?? "") : "";
 
   const refresh = useCallback(async () => {
     const requestedRoot = rootPath;
@@ -136,11 +136,11 @@ export function useArtisanRoutes({
     [rootPath],
   );
 
-  const routes = state.result?.status === "ok" ? state.result.routes : [];
-  const filteredRoutes = useMemo(
-    () => filterArtisanRoutes(routes, query),
-    [query, routes],
+  const routes = useMemo(
+    () => (state.result?.status === "ok" ? state.result.routes : []),
+    [state.result],
   );
+  const filteredRoutes = useMemo(() => filterArtisanRoutes(routes, query), [query, routes]);
 
   return {
     clear,
@@ -152,7 +152,6 @@ export function useArtisanRoutes({
     routes,
     setQuery,
     total: state.result?.status === "ok" ? state.result.total : 0,
-    unavailable:
-      state.result?.status === "unavailable" ? state.result.message : null,
+    unavailable: state.result?.status === "unavailable" ? state.result.message : null,
   };
 }

@@ -6,10 +6,7 @@ import type { PhpProjectDescriptor } from "../domain/workspace";
 import { describe, expect, it } from "vitest";
 
 import { createPhpFrameworkIntelligence } from "./phpFrameworkIntelligence";
-import {
-  composePhpFrameworkPluginCatalog,
-  phpFrameworkPlugins,
-} from "./phpFrameworkPluginCatalog";
+import { composePhpFrameworkPluginCatalog, phpFrameworkPlugins } from "./phpFrameworkPluginCatalog";
 import type { PhpFrameworkPlugin } from "./phpFrameworkPlugin";
 import {
   phpFrameworkLegacyFeatures,
@@ -18,9 +15,7 @@ import {
 import { resolvePhpFrameworkProfile } from "./phpFrameworkResolution";
 import { createPhpFrameworkRuntimeContext } from "./phpFrameworkRuntimeContext";
 
-function phpProjectDescriptor(
-  packageNames: readonly string[],
-): PhpProjectDescriptor {
+function phpProjectDescriptor(packageNames: readonly string[]): PhpProjectDescriptor {
   return {
     classmapRoots: [],
     hasComposer: true,
@@ -55,9 +50,7 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.capabilities.providerSignature).toBe("laravel");
     expect(intelligence.capabilities.supports("routes")).toBe(true);
     expect(intelligence.capabilities.supports("views")).toBe(true);
-    expect(intelligence.capabilities.supports("eloquentModelSemantics")).toBe(
-      true,
-    );
+    expect(intelligence.capabilities.supports("eloquentModelSemantics")).toBe(true);
     expect(intelligence.hasProvider("laravel")).toBe(true);
     expect(intelligence.hasProvider("nette")).toBe(false);
   });
@@ -76,9 +69,7 @@ describe("createPhpFrameworkIntelligence", () => {
     expect(intelligence.capabilities.providerSignature).toBe("nette");
     expect(intelligence.capabilities.supports("routes")).toBe(false);
     expect(intelligence.capabilities.supports("stringLiterals")).toBe(true);
-    expect(intelligence.capabilities.supports("latteTemplateIntelligence")).toBe(
-      true,
-    );
+    expect(intelligence.capabilities.supports("latteTemplateIntelligence")).toBe(true);
     expect(intelligence.hasProvider("laravel")).toBe(false);
     expect(intelligence.hasProvider("nette")).toBe(true);
   });
@@ -111,35 +102,29 @@ describe("createPhpFrameworkIntelligence", () => {
   });
 
   it("exposes an injected third plugin capability without leaking project state", () => {
-    const symfony = projectPhpFrameworkLegacyProvider({
-      appliesTo: (php) =>
-        php.packages.some(({ name }) => name === "symfony/framework-bundle"),
-      id: "symfony",
-      presentation: { activityLabel: "Symfony" },
+    const cakePhp = projectPhpFrameworkLegacyProvider({
+      appliesTo: (php) => php.packages.some(({ name }) => name === "cakephp/cakephp"),
+      id: "cakephp",
+      presentation: { activityLabel: "CakePHP" },
     });
-    const symfonyPlugin: PhpFrameworkPlugin = {
+    const cakePhpPlugin: PhpFrameworkPlugin = {
       capabilityDefinitions: [
         definePhpFrameworkCapability(
-          "symfonyTemplateIntelligence",
+          "cakePhpTemplateIntelligence",
           (project: PhpFrameworkPluginProject) =>
             Boolean(phpFrameworkLegacyFeatures(project)?.templating),
         ),
       ],
-      ...symfony,
+      ...cakePhp,
       forProject: (php) =>
         projectPhpFrameworkLegacyProvider({
-          ...symfony.provider,
-          templating: php.packages.some(
-            ({ name }) => name === "symfony/twig-bundle",
-          )
+          ...cakePhp.provider,
+          templating: php.packages.some(({ name }) => name === "cakephp/plugin-installer")
             ? { completionInsertText: ({ name }) => name }
             : undefined,
         }),
     };
-    const catalog = composePhpFrameworkPluginCatalog([
-      ...phpFrameworkPlugins,
-      symfonyPlugin,
-    ]);
+    const catalog = composePhpFrameworkPluginCatalog([...phpFrameworkPlugins, cakePhpPlugin]);
     const runtimeFor = (packages: readonly string[]) =>
       createPhpFrameworkRuntimeContext(
         createPhpFrameworkIntelligence(
@@ -147,15 +132,12 @@ describe("createPhpFrameworkIntelligence", () => {
         ),
       );
 
-    const enabled = runtimeFor([
-      "symfony/framework-bundle",
-      "symfony/twig-bundle",
-    ]);
-    const disabled = runtimeFor(["symfony/framework-bundle"]);
+    const enabled = runtimeFor(["cakephp/cakephp", "cakephp/plugin-installer"]);
+    const disabled = runtimeFor(["cakephp/cakephp"]);
 
-    expect(enabled.hasProvider("symfony")).toBe(true);
-    expect(enabled.supports("symfonyTemplateIntelligence")).toBe(true);
-    expect(disabled.hasProvider("symfony")).toBe(true);
-    expect(disabled.supports("symfonyTemplateIntelligence")).toBe(false);
+    expect(enabled.hasProvider("cakephp")).toBe(true);
+    expect(enabled.supports("cakePhpTemplateIntelligence")).toBe(true);
+    expect(disabled.hasProvider("cakephp")).toBe(true);
+    expect(disabled.supports("cakePhpTemplateIntelligence")).toBe(false);
   });
 });

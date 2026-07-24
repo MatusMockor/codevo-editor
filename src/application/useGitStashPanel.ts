@@ -50,9 +50,7 @@ export interface GitStashPanel {
  * and shows the selected stash's diff. Save/apply/pop are reversible; drop is
  * destructive and is gated behind an explicit confirmation in its handler.
  */
-export function useGitStashPanel(
-  dependencies: GitStashPanelDependencies,
-): GitStashPanel {
+export function useGitStashPanel(dependencies: GitStashPanelDependencies): GitStashPanel {
   const {
     gitGateway,
     currentWorkspaceRootRef,
@@ -67,9 +65,7 @@ export function useGitStashPanel(
   const [gitStashEntries, setGitStashEntries] = useState<GitStashEntry[]>([]);
   const [gitStashLoading, setGitStashLoading] = useState(false);
   const [gitStashMessage, setGitStashMessage] = useState("");
-  const [gitStashSelectedIndex, setGitStashSelectedIndex] = useState<
-    number | null
-  >(null);
+  const [gitStashSelectedIndex, setGitStashSelectedIndex] = useState<number | null>(null);
   const [gitStashDiff, setGitStashDiff] = useState<string | null>(null);
   const [gitStashDiffLoading, setGitStashDiffLoading] = useState(false);
   // Per-request tokens for the git stash panel: the list-load request and the
@@ -130,7 +126,7 @@ export function useGitStashPanel(
         setGitStashLoading(false);
       }
     }
-  }, [gitGateway, reportError, workspaceRoot]);
+  }, [currentWorkspaceRootRef, gitGateway, reportError, workspaceRoot]);
 
   const openGitStashPanel = useCallback(async () => {
     const requestedRoot = currentWorkspaceRootRef.current ?? workspaceRoot;
@@ -149,7 +145,7 @@ export function useGitStashPanel(
     setGitStashPanelOpen(true);
 
     await refreshGitStashes();
-  }, [refreshGitStashes, workspaceRoot]);
+  }, [currentWorkspaceRootRef, refreshGitStashes, workspaceRoot]);
 
   // Loads the diff for a selected stash. The requested root and stash index are
   // captured up front; after the await we re-check the active root and the diff
@@ -192,7 +188,7 @@ export function useGitStashPanel(
         }
       }
     },
-    [gitGateway, reportError, workspaceRoot],
+    [currentWorkspaceRootRef, gitGateway, reportError, workspaceRoot],
   );
 
   const saveGitStash = useCallback(
@@ -209,9 +205,7 @@ export function useGitStashPanel(
       try {
         await gitGateway.stashSave(requestedRoot, trimmed);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -222,20 +216,24 @@ export function useGitStashPanel(
         await refreshGitStashes();
         await refreshGitStatus();
       } catch (error) {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git Stash", error);
         }
       } finally {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitStashLoading(false);
         }
       }
     },
-    [gitGateway, refreshGitStashes, refreshGitStatus, reportError, workspaceRoot],
+    [
+      currentWorkspaceRootRef,
+      gitGateway,
+      refreshGitStashes,
+      refreshGitStatus,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
   );
 
   const applyGitStash = useCallback(
@@ -251,29 +249,23 @@ export function useGitStashPanel(
       try {
         await gitGateway.stashApply(requestedRoot, index);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
         setMessage("Applied stash to working tree");
         await refreshGitStatus();
       } catch (error) {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git Stash", error);
         }
       } finally {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitStashLoading(false);
         }
       }
     },
-    [gitGateway, refreshGitStatus, reportError, workspaceRoot],
+    [currentWorkspaceRootRef, gitGateway, refreshGitStatus, reportError, setMessage, workspaceRoot],
   );
 
   const popGitStash = useCallback(
@@ -289,9 +281,7 @@ export function useGitStashPanel(
       try {
         await gitGateway.stashPop(requestedRoot, index);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -301,20 +291,24 @@ export function useGitStashPanel(
         await refreshGitStashes();
         await refreshGitStatus();
       } catch (error) {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git Stash", error);
         }
       } finally {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitStashLoading(false);
         }
       }
     },
-    [gitGateway, refreshGitStashes, refreshGitStatus, reportError, workspaceRoot],
+    [
+      currentWorkspaceRootRef,
+      gitGateway,
+      refreshGitStashes,
+      refreshGitStatus,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
   );
 
   // Dropping a stash is DESTRUCTIVE and irreversible, so it is gated behind an
@@ -329,11 +323,7 @@ export function useGitStashPanel(
         return;
       }
 
-      if (
-        !prompter.confirm(
-          "Drop this stash? This permanently discards the stashed changes.",
-        )
-      ) {
+      if (!prompter.confirm("Drop this stash? This permanently discards the stashed changes.")) {
         return;
       }
 
@@ -342,9 +332,7 @@ export function useGitStashPanel(
       try {
         await gitGateway.stashDrop(requestedRoot, index);
 
-        if (
-          !workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (!workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           return;
         }
 
@@ -353,20 +341,24 @@ export function useGitStashPanel(
         setMessage("Dropped stash");
         await refreshGitStashes();
       } catch (error) {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           reportError("Git Stash", error);
         }
       } finally {
-        if (
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)
-        ) {
+        if (workspaceRootKeysEqual(currentWorkspaceRootRef.current, requestedRoot)) {
           setGitStashLoading(false);
         }
       }
     },
-    [gitGateway, prompter, refreshGitStashes, reportError, workspaceRoot],
+    [
+      currentWorkspaceRootRef,
+      gitGateway,
+      prompter,
+      refreshGitStashes,
+      reportError,
+      setMessage,
+      workspaceRoot,
+    ],
   );
 
   return {

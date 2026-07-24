@@ -1359,9 +1359,9 @@ describe("useDocumentLifecycle", () => {
     });
 
     it("restarts the full pipeline when typing occurs during EditorConfig resolution", async () => {
-      const firstEditorConfig = createDeferred<{}>();
+      const firstEditorConfig = createDeferred<object>();
       const resolveEditorConfigForFile = vi
-        .fn<() => Promise<{}>>()
+        .fn<() => Promise<object>>()
         .mockImplementationOnce(() => firstEditorConfig.promise)
         .mockImplementation(async () => ({}));
       const activeDocument = editorDocument(

@@ -241,6 +241,21 @@ describe("useDocumentSaveLifecycle", () => {
     harness.unmount();
   });
 
+  it("reports a successfully written document for cache invalidation", async () => {
+    const onDidSaveDocument = vi.fn();
+    const harness = renderLifecycle({ onDidSaveDocument });
+
+    await act(async () => {
+      await harness.lifecycle().saveDocument(PATH);
+    });
+
+    expect(onDidSaveDocument).toHaveBeenCalledExactlyOnceWith(
+      ROOT,
+      expect.objectContaining({ content: "edited", path: PATH }),
+    );
+    harness.unmount();
+  });
+
   it("returns conflict details while keeping conflict presentation in the hook", async () => {
     const snapshot = { content: "disk", revision: null };
     const detectSaveConflict = vi.fn();

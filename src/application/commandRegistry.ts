@@ -1,20 +1,6 @@
-import type { EditorSurfaceCommandInvocationScope } from "../domain/editorSurfaceCommand";
+import type { Command, CommandContext } from "../domain/command";
 
-export interface CommandContext {
-  hasWorkspace: boolean;
-  hasActiveDocument: boolean;
-  activeDocumentDirty: boolean;
-  editorSurfaceScope?: EditorSurfaceCommandInvocationScope;
-}
-
-export interface Command {
-  id: string;
-  title: string;
-  category: string;
-  shortcut?: string;
-  isEnabled(context: CommandContext): boolean;
-  run(context?: CommandContext): void | Promise<void>;
-}
+export type { Command, CommandContext } from "../domain/command";
 
 export type CommandExecutionOutcome = "missing" | "disabled" | "executed";
 

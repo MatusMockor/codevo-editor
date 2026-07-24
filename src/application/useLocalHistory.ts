@@ -227,7 +227,7 @@ export function useLocalHistory(
 
       return workspaceRootKeysEqual(currentWorkspaceRootRef.current, root);
     },
-    [resolveCurrentWorkspaceRuntimeOwner],
+    [currentWorkspaceRootRef, resolveCurrentWorkspaceRuntimeOwner],
   );
 
   const currentLocalHistoryContext = useCallback(
@@ -255,7 +255,7 @@ export function useLocalHistory(
 
       return context;
     },
-    [localHistoryOwnerIsCurrent],
+    [activeDocumentRef, localHistoryOwnerIsCurrent],
   );
 
   const localHistoryContextIsRetained = useCallback(
@@ -292,7 +292,7 @@ export function useLocalHistory(
 
       return localHistoryOwnerIsCurrent(context.owner, context.root);
     },
-    [localHistoryOwnerIsCurrent],
+    [activeDocumentRef, localHistoryOwnerIsCurrent],
   );
 
   const resolveCurrentLocalHistoryRepository = useCallback(
@@ -313,7 +313,11 @@ export function useLocalHistory(
         document,
       });
     },
-    [localHistoryContextIsRetained, ownerDocumentSaveRepository],
+    [
+      activeDocumentRef,
+      localHistoryContextIsRetained,
+      ownerDocumentSaveRepository,
+    ],
   );
 
   // Current live content of the local-history panel's file: the open editor
@@ -520,6 +524,7 @@ export function useLocalHistory(
       }
     }
   }, [
+    activeDocumentRef,
     localHistoryGateway,
     localHistoryOwnerIsCurrent,
     reportError,
@@ -807,6 +812,7 @@ export function useLocalHistory(
       reportErrorForActiveWorkspaceRoot,
       requestOwnerDocumentSave,
       resolveCurrentLocalHistoryRepository,
+      setMessage,
       syncSavedDocument,
       syncSavedJavaScriptTypeScriptDocument,
       writeOwnerDocument,
