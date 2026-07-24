@@ -18,6 +18,7 @@ describe("useDebugConsole", () => {
     output: readonly DebugOutputLine[];
     owner: DebugEvaluationOwner | null;
     resultOwner?: Omit<DebugConsoleResultOwner, "epoch"> | null;
+    sessionId: number | null;
   };
 
   function Harness() {
@@ -37,6 +38,7 @@ describe("useDebugConsole", () => {
       evaluate: vi.fn().mockResolvedValue(null),
       output: [],
       owner: { sessionId: 7, pauseGeneration: 1 },
+      sessionId: 7,
     };
   });
 
@@ -65,6 +67,29 @@ describe("useDebugConsole", () => {
     expect(current.state.entries).toHaveLength(3);
   });
 
+  it("does not duplicate retained output when a trimmed burst drops the previous cursor", () => {
+    const retained = Array.from({ length: 5_000 }, (_, index) => ({
+      stream: "stdout" as const,
+      text: `retained-${index}`,
+    }));
+    options.output = retained;
+    render();
+    const sequenceAfterInitialOutput = current.state.nextSequence;
+
+    const newLine = { stream: "stderr" as const, text: "new-after-trim" };
+    options = {
+      ...options,
+      output: [...retained.slice(0, -1), newLine],
+    };
+    render();
+
+    expect(current.state.nextSequence).toBe(sequenceAfterInitialOutput + 1);
+    expect(current.state.entries[current.state.entries.length - 1]).toMatchObject({
+      kind: "stderr",
+      text: "new-after-trim",
+    });
+  });
+
   it("records pending and settled entries chronologically around process output", async () => {
     let resolve!: (value: DebugVariable) => void;
     options.evaluate = vi.fn(
@@ -91,6 +116,35 @@ describe("useDebugConsole", () => {
       "pending",
       "stdout",
       "result",
+    ]);
+  });
+
+  it("keeps session output live after Continue removes the pause owner", () => {
+    const beforeContinue = { stream: "stdout" as const, text: "before continue" };
+    options.output = [beforeContinue];
+    render();
+
+    options = {
+      ...options,
+      owner: null,
+      output: [
+        beforeContinue,
+        { stream: "stdout" as const, text: "server starting boot" },
+        { stream: "stderr" as const, text: "watch notice" },
+      ],
+    };
+    render();
+
+    expect(current.state.owner).toEqual({ sessionId: 7, pauseGeneration: 0 });
+    expect(current.state.entries.map((entry) => entry.kind)).toEqual([
+      "stdout",
+      "stdout",
+      "stderr",
+    ]);
+    expect(current.state.entries.map((entry) => ("text" in entry ? entry.text : ""))).toEqual([
+      "before continue",
+      "server starting boot",
+      "watch notice",
     ]);
   });
 
@@ -251,6 +305,7 @@ describe("useDebugConsole", () => {
     options = {
       ...options,
       owner: { sessionId: 8, pauseGeneration: 1 },
+      sessionId: 8,
       output: [
         { stream: "stdout", text: "new one" },
         { stream: "stderr", text: "new two" },
@@ -270,7 +325,7 @@ describe("useDebugConsole", () => {
     render();
     expect(current.state.entries).toHaveLength(1);
 
-    options = { ...options, owner: null, output: [] };
+    options = { ...options, owner: null, output: [], sessionId: null };
     render();
     expect(current.state.entries).toEqual([]);
 
@@ -278,6 +333,7 @@ describe("useDebugConsole", () => {
       ...options,
       owner: { sessionId: 7, pauseGeneration: 2 },
       output: [line],
+      sessionId: 7,
     };
     render();
     expect(current.state.entries).toHaveLength(1);

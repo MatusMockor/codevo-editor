@@ -11733,6 +11733,45 @@ function store($request): void
     expect(backedHint.kind).toBeUndefined();
   });
 
+  it.each([
+    ["disabled", false],
+    ["not advertised", undefined],
+  ] as const)(
+    "returns the original PHP InlayHint when resolve is %s",
+    async (_description, inlayHintResolve) => {
+      const registered = createRegisteredProviders();
+      const sourceHint: LanguageServerInlayHint = {
+        data: { id: "type" },
+        kind: null,
+        label: ": mixed",
+        paddingLeft: true,
+        paddingRight: false,
+        position: { character: 5, line: 1 },
+        tooltip: null,
+      };
+      const gateway = featuresGateway();
+      const flushPendingDocumentChange = vi.fn(async () => undefined);
+      const reportError = vi.fn();
+      registerLanguageServerMonacoProviders(
+        registered.monaco,
+        providerContext({
+          featuresGateway: gateway,
+          flushPendingDocumentChange,
+          reportError,
+          runtimeStatus: runningStatus({ inlayHintResolve }),
+        }),
+      );
+      const backedHint = backedInlayHint(sourceHint);
+
+      await expect(
+        registered.inlayHintsProvider.resolveInlayHint(backedHint),
+      ).resolves.toBe(backedHint);
+      expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+      expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
+      expect(reportError).not.toHaveBeenCalled();
+    },
+  );
+
   it("does not provide PHP InlayHint when capability is disabled or root is stale", async () => {
     const registered = createRegisteredProviders();
     const disabledGateway = featuresGateway();
@@ -14455,6 +14494,7 @@ function runningStatus(
       hover: true,
       implementation: true,
       inlayHint: true,
+      inlayHintResolve: true,
       linkedEditingRange: true,
       onTypeFormatting: true,
       prepareRename: true,

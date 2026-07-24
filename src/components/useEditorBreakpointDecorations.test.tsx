@@ -93,7 +93,7 @@ describe("useEditorBreakpointDecorations", () => {
     const host = document.createElement("div");
     const root = createRoot(host);
     let version = 1;
-    let contentListener: (() => void) | null = null;
+    let contentListener: ((event: TestContentChangeEvent) => void) | null = null;
     let nextDecorationId = 1;
     const ranges = new Map<string, TestRange>();
     const model = {
@@ -112,7 +112,7 @@ describe("useEditorBreakpointDecorations", () => {
         });
       },
       getModel: () => model,
-      onDidChangeModelContent(listener: () => void) {
+      onDidChangeModelContent(listener: (event: TestContentChangeEvent) => void) {
         contentListener = listener;
         return {
           dispose: () => {
@@ -158,7 +158,7 @@ describe("useEditorBreakpointDecorations", () => {
     ranges.set(inlineAId!, new TestRange(2, 6, 2, 6));
     ranges.set(inlineBId!, new TestRange(2, 9, 2, 9));
     version = 2;
-    act(() => contentListener?.());
+    act(() => contentListener?.({ changes: [], isFlush: false }));
 
     expect(relocateBreakpoint).toHaveBeenCalledTimes(2);
     const [candidateA, candidateB] = relocateBreakpoint.mock.calls.map(([candidate]) => candidate);
@@ -183,10 +183,78 @@ describe("useEditorBreakpointDecorations", () => {
     expect(candidateB.isCurrent()).toBe(false);
   });
 
+  it("re-anchors instead of persisting a controlled full-model replacement", () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    let contentListener: ((event: TestContentChangeEvent) => void) | null = null;
+    const oldContent = "one\ntwo\nthree\n";
+    const nextContent = "one\ntwo changed\nthree\n";
+    const ranges = new Map<string, TestRange>();
+    const model = {
+      getDecorationRange: (id: string) => ranges.get(id) ?? null,
+      getLineCount: () => 6,
+      getLineMaxColumn: () => 20,
+      getVersionId: () => 2,
+    } as unknown as Monaco.editor.ITextModel;
+    const editor = {
+      deltaDecorations(oldIds: string[], decorations: { range: TestRange }[]) {
+        oldIds.forEach((id) => ranges.delete(id));
+        return decorations.map(({ range }, index) => {
+          const id = `flush-${index}`;
+          ranges.set(id, range);
+          return id;
+        });
+      },
+      getModel: () => model,
+      onDidChangeModelContent(listener: (event: TestContentChangeEvent) => void) {
+        contentListener = listener;
+        return { dispose: () => (contentListener = null) };
+      },
+    } as unknown as Monaco.editor.IStandaloneCodeEditor;
+    const relocateBreakpoint = vi.fn(async () => true);
+
+    function Harness({ content }: { content: string }) {
+      useEditorBreakpointDecorations(
+        editor,
+        testMonaco(),
+        "/workspace/app.ts",
+        model,
+        [{ enabled: true, filePath: "/workspace/app.ts", id: "line", lineNumber: 3 }],
+        {
+          authoritativeContent: content,
+          relocateBreakpoint,
+          workspaceOwnerKey: "owner-a",
+          workspaceRoot: "/workspace",
+        },
+      );
+      return null;
+    }
+
+    act(() => root.render(<Harness content={oldContent} />));
+    act(() => root.render(<Harness content={nextContent} />));
+    ranges.set("flush-0", new TestRange(6, 1, 6, 1));
+    act(() =>
+      contentListener?.({
+        changes: [
+          {
+            range: { startColumn: 1, startLineNumber: 1 },
+            rangeLength: oldContent.length,
+            text: nextContent,
+          },
+        ],
+        isFlush: false,
+      }),
+    );
+
+    expect(relocateBreakpoint).not.toHaveBeenCalled();
+    expect(ranges.get("flush-0")).toEqual(new TestRange(3, 1, 3, 1));
+    act(() => root.unmount());
+  });
+
   it("preserves explicit inline column one instead of converting it to a line breakpoint", () => {
     const host = document.createElement("div");
     const root = createRoot(host);
-    let listener: (() => void) | null = null;
+    let listener: ((event: TestContentChangeEvent) => void) | null = null;
     const ranges = new Map<string, TestRange>();
     const model = {
       getDecorationRange: (id: string) => ranges.get(id) ?? null,
@@ -204,7 +272,7 @@ describe("useEditorBreakpointDecorations", () => {
         });
       },
       getModel: () => model,
-      onDidChangeModelContent(next: () => void) {
+      onDidChangeModelContent(next: (event: TestContentChangeEvent) => void) {
         listener = next;
         return { dispose: () => (listener = null) };
       },
@@ -237,12 +305,21 @@ describe("useEditorBreakpointDecorations", () => {
     }
     act(() => root.render(<Harness />));
     ranges.set("id-0", new TestRange(1, 1, 1, 1));
-    act(() => listener?.());
+    act(() => listener?.({ changes: [], isFlush: false }));
     const candidate = relocateBreakpoint.mock.calls[0]?.[0];
     expect(candidate).toHaveProperty("columnNumber", 1);
     act(() => root.unmount());
   });
 });
+
+interface TestContentChangeEvent {
+  readonly changes: readonly {
+    readonly range: { readonly startColumn: number; readonly startLineNumber: number };
+    readonly rangeLength: number;
+    readonly text: string;
+  }[];
+  readonly isFlush: boolean;
+}
 
 class TestRange {
   constructor(

@@ -26,6 +26,13 @@ export interface LanguageServerCapabilities {
   formatting: boolean;
   implementation: boolean;
   inlayHint: boolean;
+  /**
+   * Whether the negotiated server supports `inlayHint/resolve`.
+   *
+   * Optional for wire compatibility with runtime-status snapshots produced by
+   * older editor backends. Consumers must treat an absent value as `false`.
+   */
+  inlayHintResolve?: boolean;
   linkedEditingRange: boolean;
   onTypeFormatting: boolean;
   prepareRename: boolean;
@@ -352,6 +359,7 @@ export function emptyLanguageServerCapabilities(): LanguageServerCapabilities {
     hover: false,
     implementation: false,
     inlayHint: false,
+    inlayHintResolve: false,
     linkedEditingRange: false,
     onTypeFormatting: false,
     prepareRename: false,

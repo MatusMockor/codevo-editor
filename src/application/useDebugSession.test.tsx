@@ -2456,8 +2456,15 @@ describe("useDebugSession", () => {
         seq: 1,
         payload: { kind: "started", sessionId: 19 },
       });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 19,
+        seq: 2,
+        payload: { kind: "output", stream: "stdout", text: "premature user output" },
+      });
     });
     expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+    expect(ui.hook().output).toEqual([]);
 
     let accepted: number | null = null;
     await act(async () => {
@@ -2468,6 +2475,178 @@ describe("useDebugSession", () => {
     expect(accepted).toBe(19);
     expect(harness.stop).not.toHaveBeenCalled();
     expect(ui.hook().snapshot.state).toEqual({ kind: "running", sessionId: 19 });
+    ui.unmount();
+  });
+
+  it("replays a breakpoint stop that arrives while descriptor confirmation is pending", async () => {
+    const harness = createGateway();
+    const confirmation = deferred<void>();
+    const descriptor: DebugStartDescriptor = {
+      adapterKind: "node",
+      confirmStart: () => confirmation.promise,
+      restartLaunch: null,
+      targetKind: "node-configured-script",
+      start: async () => ({ kind: "ok", sessionId: 19 }),
+    };
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    let pending!: Promise<number | null>;
+    act(() => {
+      pending = ui.hook().startDebugDescriptorSessionAccepted(descriptor);
+    });
+    await act(async () => Promise.resolve());
+
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 19,
+        seq: 1,
+        payload: { kind: "started", sessionId: 19 },
+      });
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 19,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 7 },
+      });
+    });
+    expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+
+    await act(async () => {
+      confirmation.resolve();
+      await expect(pending).resolves.toBe(19);
+    });
+
+    expect(ui.hook().snapshot).toEqual({
+      state: {
+        kind: "stopped",
+        sessionId: 19,
+        reason: "breakpoint",
+        frames: [frame],
+        topFrame: frame,
+      },
+      lastSeq: 2,
+    });
+    expect(ui.hook().pauseGeneration).toBe(7);
+    expect(harness.stop).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
+  it("does not let foreign session events evict an exact pending confirmation stop", async () => {
+    const harness = createGateway();
+    const confirmation = deferred<void>();
+    const descriptor: DebugStartDescriptor = {
+      adapterKind: "node",
+      confirmStart: () => confirmation.promise,
+      restartLaunch: null,
+      targetKind: "node-configured-script",
+      start: async () => ({ kind: "ok", sessionId: 19 }),
+    };
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    let pending!: Promise<number | null>;
+    act(() => {
+      pending = ui.hook().startDebugDescriptorSessionAccepted(descriptor);
+    });
+    await act(async () => Promise.resolve());
+
+    act(() => {
+      harness.emit({
+        rootPath: "/workspace/one",
+        sessionId: 19,
+        seq: 2,
+        payload: { kind: "stopped", reason: "breakpoint", frames: [frame], pauseGeneration: 7 },
+      });
+      for (let seq = 1; seq <= 33; seq += 1) {
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 99,
+          seq,
+          payload: { kind: "resumed" },
+        });
+      }
+    });
+    expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+
+    await act(async () => {
+      confirmation.resolve();
+      await expect(pending).resolves.toBe(19);
+    });
+
+    expect(ui.hook().snapshot).toEqual({
+      state: {
+        kind: "stopped",
+        sessionId: 19,
+        reason: "breakpoint",
+        frames: [frame],
+        topFrame: frame,
+      },
+      lastSeq: 2,
+    });
+    expect(ui.hook().pauseGeneration).toBe(7);
+    expect(harness.stop).not.toHaveBeenCalled();
+    ui.unmount();
+  });
+
+  it("replays only the exact session breakpoint verification after confirmation", async () => {
+    const harness = createGateway();
+    const confirmation = deferred<void>();
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    await act(async () => {
+      await ui.hook().toggleBreakpoint("/workspace/one/index.js", 4);
+    });
+    const created = ui.hook().breakpoints[0] as Breakpoint;
+    const descriptor: DebugStartDescriptor = {
+      adapterKind: "node",
+      confirmStart: () => confirmation.promise,
+      restartLaunch: null,
+      targetKind: "node-configured-script",
+      start: async () => {
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 99,
+          seq: 1,
+          payload: {
+            kind: "breakpointsVerified",
+            filePath: created.filePath,
+            breakpoints: [{ ...created, verified: true }],
+          },
+        });
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 19,
+          seq: 2,
+          payload: {
+            kind: "breakpointsVerified",
+            filePath: created.filePath,
+            breakpoints: [{ ...created, verified: true }],
+          },
+        });
+        harness.emit({
+          rootPath: "/workspace/one",
+          sessionId: 19,
+          seq: 3,
+          payload: { kind: "output", stream: "stdout", text: "still hidden" },
+        });
+        return { kind: "ok", sessionId: 19 };
+      },
+    };
+    let pending!: Promise<number | null>;
+    act(() => {
+      pending = ui.hook().startDebugDescriptorSessionAccepted(descriptor);
+    });
+    await act(async () => Promise.resolve());
+
+    expect(ui.hook().breakpoints[0]?.verified).not.toBe(true);
+    expect(ui.hook().output).toEqual([]);
+
+    await act(async () => {
+      confirmation.resolve();
+      await expect(pending).resolves.toBe(19);
+    });
+
+    expect(ui.hook().breakpoints).toEqual([
+      expect.objectContaining({ id: created.id, verified: true }),
+    ]);
+    expect(ui.hook().output).toEqual([]);
     ui.unmount();
   });
 
@@ -2493,6 +2672,70 @@ describe("useDebugSession", () => {
     expect(confirmStart).toHaveBeenCalledExactlyOnceWith("/workspace/one", 19);
     expect(harness.stop).toHaveBeenCalledExactlyOnceWith(19);
     expect(accepted).toBeNull();
+    expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+    ui.unmount();
+  });
+
+  it("honors Stop received while a descriptor confirmation is pending", async () => {
+    const harness = createGateway();
+    const confirmation = deferred<void>();
+    const confirmStart = vi
+      .fn<NonNullable<DebugStartDescriptor["confirmStart"]>>()
+      .mockReturnValueOnce(confirmation.promise);
+    const descriptor: DebugStartDescriptor = {
+      adapterKind: "node",
+      confirmStart,
+      restartLaunch: null,
+      targetKind: "node-configured-script",
+      start: async () => ({ kind: "ok", sessionId: 19 }),
+    };
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    let pending!: Promise<number | null>;
+    act(() => {
+      pending = ui.hook().startDebugDescriptorSessionAccepted(descriptor);
+    });
+    await act(async () => Promise.resolve());
+
+    await act(async () => ui.hook().stopDebug());
+    expect(harness.stop).not.toHaveBeenCalled();
+
+    await act(async () => {
+      confirmation.resolve();
+      await expect(pending).resolves.toBeNull();
+    });
+
+    expect(confirmStart).toHaveBeenCalledExactlyOnceWith("/workspace/one", 19);
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(19);
+    expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
+    ui.unmount();
+  });
+
+  it("rechecks a descriptor lease after confirmation before adopting the session", async () => {
+    const harness = createGateway();
+    const confirmation = deferred<void>();
+    let authorized = true;
+    const descriptor: DebugStartDescriptor = {
+      adapterKind: "node",
+      confirmStart: () => confirmation.promise,
+      isStartAuthorized: () => authorized,
+      restartLaunch: null,
+      targetKind: "node-configured-script",
+      start: async () => ({ kind: "ok", sessionId: 19 }),
+    };
+    const ui = renderHook(harness.gateway, "/workspace/one");
+    let pending!: Promise<number | null>;
+    act(() => {
+      pending = ui.hook().startDebugDescriptorSessionAccepted(descriptor);
+    });
+    await act(async () => Promise.resolve());
+
+    authorized = false;
+    await act(async () => {
+      confirmation.resolve();
+      await expect(pending).resolves.toBeNull();
+    });
+
+    expect(harness.stop).toHaveBeenCalledExactlyOnceWith(19);
     expect(ui.hook().snapshot.state).toEqual({ kind: "inactive" });
     ui.unmount();
   });

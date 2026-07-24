@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Breakpoint,
   DebugCompoundLaunchTarget,
+  DebugEvent,
   DebugExceptionPauseMode,
   DebugLaunchTarget,
   DebugSetBreakpointsActiveRequest,
@@ -9,9 +10,16 @@ import type {
   StepKind,
 } from "../domain/debug";
 import { debuggerSessionId } from "../domain/debug";
-import { breakpointsForDebugSession } from "../domain/debugBreakpointPolicy";
-import { countBreakpoints, sequentialBreakpointIdFactory } from "../domain/debugBreakpoints";
-import type { DebuggerSessionSnapshot } from "../domain/debugSessionState";
+import {
+  breakpointsForDebugSession,
+  isBreakpointPathSupported,
+} from "../domain/debugBreakpointPolicy";
+import {
+  applyVerification,
+  countBreakpoints,
+  sequentialBreakpointIdFactory,
+} from "../domain/debugBreakpoints";
+import { reduceDebuggerSnapshot, type DebuggerSessionSnapshot } from "../domain/debugSessionState";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type {
   DebugOutputLine,
@@ -64,6 +72,7 @@ import {
   legacyDebugStartDescriptor,
   type DebugStartDescriptor,
 } from "./debugStartDescriptor";
+import { confirmDebugStart } from "./debugStartConfirmation";
 import {
   emptyBreakpoints,
   emptyCompoundSessionIds,
@@ -155,6 +164,7 @@ export function useWorkbenchDebugSession({
   const mountedRef = useRef(true);
   const pendingStartKeysRef = useRef(new Set<string>());
   const pendingConfirmedStartKeysRef = useRef(new Set<string>());
+  const pendingConfirmedStartEventsRef = useRef(new Map<string, Map<number, DebugEvent[]>>());
   const pendingStopKeysRef = useRef(new Set<string>());
   const pendingActiveStopsRef = useRef(new Map<string, PendingActiveStop>());
   const pendingRestartsRef = useRef(new Map<string, PendingRestart>());
@@ -317,6 +327,33 @@ export function useWorkbenchDebugSession({
     workspaceRoot,
   });
 
+  const applyBreakpointsVerifiedEvent = useCallback(
+    (event: DebugEvent) => {
+      if (event.payload.kind !== "breakpointsVerified") return;
+      const key = normalizedWorkspaceRootKey(event.rootPath);
+      const adapterKind =
+        adapterKindForSession(event.rootPath, event.sessionId) ??
+        pendingBreakpointAdaptersRef.current[key] ??
+        null;
+      if (
+        adapterKind === null ||
+        !isBreakpointPathSupported(event.rootPath, adapterKind, event.payload.filePath)
+      ) {
+        return;
+      }
+      breakpointSynchronizationRef.current.begin(key, event.sessionId, event.payload.filePath);
+      commitBreakpoints(
+        key,
+        applyVerification(
+          breakpointsByRootRef.current[key] ?? [],
+          event.payload.filePath,
+          event.payload.breakpoints,
+        ),
+      );
+    },
+    [adapterKindForSession, commitBreakpoints],
+  );
+
   const activeControlSessionIdRef = useRef<() => number | null>(() => null);
   const {
     activatedFor: breakpointsActivatedFor,
@@ -401,12 +438,10 @@ export function useWorkbenchDebugSession({
   useDebugSessionEventProjection({
     activeCompoundRef,
     adapterKindForSession,
+    applyBreakpointsVerifiedEvent,
     adoptBreakpointsActivation,
     adoptExceptionPauseSession,
-    breakpointSynchronizationRef,
-    breakpointsByRootRef,
     clearBreakpointsActivation,
-    commitBreakpoints,
     compoundCoordinatorRef,
     compoundProjectionRef,
     currentWorkspaceIdRef,
@@ -416,7 +451,7 @@ export function useWorkbenchDebugSession({
     isWorkspaceTrusted,
     mountedRef,
     observeRestartFrameEvent,
-    pendingBreakpointAdaptersRef,
+    pendingConfirmedStartEventsRef,
     pendingConfirmedStartKeysRef,
     pendingRestartsRef,
     pendingStartKeysRef,
@@ -481,14 +516,13 @@ export function useWorkbenchDebugSession({
           ),
           policy.mode,
         );
-        const stale =
-          !isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) ||
-          !trustedWorkspace(isWorkspaceTrusted) ||
-          !startDescriptorAuthorized(descriptor);
-        const stopRequested = pendingStopKeysRef.current.delete(key);
-
         if (status.kind !== "ok") {
-          if (stale || !mountedRef.current) {
+          if (
+            !isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) ||
+            !trustedWorkspace(isWorkspaceTrusted) ||
+            !startDescriptorAuthorized(descriptor) ||
+            !mountedRef.current
+          ) {
             return;
           }
 
@@ -496,30 +530,19 @@ export function useWorkbenchDebugSession({
           return;
         }
 
-        if (stale || stopRequested || !mountedRef.current) {
-          await gateway.stop(status.sessionId);
-          return;
-        }
-        if (descriptor.confirmStart) {
-          try {
-            if (!startDescriptorAuthorized(descriptor)) {
-              await gateway.stop(status.sessionId);
-              return;
-            }
-            await descriptor.confirmStart(requestedRoot, status.sessionId);
-          } catch {
-            await gateway.stop(status.sessionId);
-            return;
-          }
-          if (
-            !isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) ||
-            !trustedWorkspace(isWorkspaceTrusted) ||
-            !startDescriptorAuthorized(descriptor)
-          ) {
-            await gateway.stop(status.sessionId);
-            return;
-          }
-        }
+        const accepted = await confirmDebugStart({
+          descriptor,
+          gateway,
+          isAuthorized: () =>
+            isExactWorkspaceOwnerCurrent(requestedRoot, requestedWorkspaceId) &&
+            trustedWorkspace(isWorkspaceTrusted) &&
+            startDescriptorAuthorized(descriptor),
+          isMounted: () => mountedRef.current,
+          rootPath: requestedRoot,
+          sessionId: status.sessionId,
+          takeStopRequest: () => pendingStopKeysRef.current.delete(key),
+        });
+        if (!accepted) return;
         const existing = snapshotsRef.current[key] ?? inactiveSnapshot;
         const supersededSessionId =
           existing.state.kind === "terminated" ? null : debuggerSessionId(existing.state);
@@ -565,6 +588,30 @@ export function useWorkbenchDebugSession({
           snapshotsRef.current = updated;
           setSnapshots(updated);
         }
+        const pendingConfirmedEvents =
+          pendingConfirmedStartEventsRef.current.get(key)?.get(status.sessionId) ?? [];
+        pendingConfirmedStartEventsRef.current.delete(key);
+        let replayedSnapshot = snapshotsRef.current[key] ?? inactiveSnapshot;
+        for (const event of pendingConfirmedEvents) {
+          if (event.sessionId !== status.sessionId) continue;
+          const next = reduceDebuggerSnapshot(replayedSnapshot, event);
+          if (next === replayedSnapshot) continue;
+          replayedSnapshot = next;
+          if (event.payload.kind === "stopped") {
+            setPauseGeneration(key, event.payload.pauseGeneration);
+          } else if (event.payload.kind === "resumed" || event.payload.kind === "terminated") {
+            setPauseGeneration(key, 0);
+          } else if (event.payload.kind === "breakpointsVerified") {
+            applyBreakpointsVerifiedEvent(event);
+          }
+        }
+        if (replayedSnapshot !== snapshotsRef.current[key]) {
+          snapshotsRef.current = {
+            ...snapshotsRef.current,
+            [key]: replayedSnapshot,
+          };
+          setSnapshots(snapshotsRef.current);
+        }
         const acceptance = classifyDebugStartAcceptance(
           snapshotsRef.current[key] ?? inactiveSnapshot,
           status.sessionId,
@@ -595,6 +642,8 @@ export function useWorkbenchDebugSession({
         adoptExceptionPauseSession(requestedRoot, status.sessionId, policy.adapterKind);
         return status.sessionId;
       } finally {
+        pendingStopKeysRef.current.delete(key);
+        pendingConfirmedStartEventsRef.current.delete(key);
         pendingConfirmedStartKeysRef.current.delete(key);
         pendingStartKeysRef.current.delete(key);
         const nextPendingAdapters = { ...pendingBreakpointAdaptersRef.current };
@@ -608,6 +657,7 @@ export function useWorkbenchDebugSession({
     [
       adoptExceptionPauseSession,
       adoptBreakpointsActivation,
+      applyBreakpointsVerifiedEvent,
       exceptionPauseStartPolicyForAdapter,
       gateway,
       isExactWorkspaceOwnerCurrent,

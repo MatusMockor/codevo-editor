@@ -6,11 +6,13 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsString,
     fs, io,
     path::Path,
 };
 
 const NPM_PACKAGE_VERSION_FALLBACK_LIMIT: usize = 512;
+const ROOT_SOURCE_DETECTION_ENTRY_LIMIT: usize = 512;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,8 +120,14 @@ fn detect_javascript_typescript_project(
     let has_package_json = package_json_path.is_file();
     let has_tsconfig = root.join("tsconfig.json").is_file();
     let has_jsconfig = root.join("jsconfig.json").is_file();
+    let has_project_configuration = has_package_json || has_tsconfig || has_jsconfig;
+    let root_source_kind = if has_project_configuration {
+        None
+    } else {
+        detect_root_javascript_typescript_source(root)
+    };
 
-    if !has_package_json && !has_tsconfig && !has_jsconfig {
+    if !has_project_configuration && root_source_kind.is_none() {
         return None;
     }
 
@@ -164,12 +172,67 @@ fn detect_javascript_typescript_project(
         frameworks: detect_frameworks(&dependencies),
         type_script_dependency_version: type_script_dependency_version.clone(),
         uses_type_script: has_tsconfig
+            || root_source_kind == Some(JavaScriptTypeScriptSourceKind::TypeScript)
             || workspace_type_script_version.is_some()
             || type_script_dependency_version.is_some()
             || dependencies.contains("typescript")
             || dependencies.iter().any(|name| name.starts_with("@types/")),
         workspace_type_script_version,
     })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JavaScriptTypeScriptSourceKind {
+    JavaScript,
+    TypeScript,
+}
+
+fn detect_root_javascript_typescript_source(root: &Path) -> Option<JavaScriptTypeScriptSourceKind> {
+    let entries = fs::read_dir(root).ok()?;
+    detect_javascript_typescript_source_file_names(entries.map(|entry| {
+        entry.ok().map(|entry| {
+            let is_file = entry
+                .file_type()
+                .map(|file_type| file_type.is_file())
+                .unwrap_or(false);
+            (entry.file_name(), is_file)
+        })
+    }))
+}
+
+fn detect_javascript_typescript_source_file_names(
+    entries: impl IntoIterator<Item = Option<(OsString, bool)>>,
+) -> Option<JavaScriptTypeScriptSourceKind> {
+    let mut entries = entries
+        .into_iter()
+        .take(ROOT_SOURCE_DETECTION_ENTRY_LIMIT)
+        .flatten()
+        .collect::<Vec<_>>();
+    entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut detected = None;
+    for (file_name, is_file) in entries {
+        if !is_file {
+            continue;
+        }
+        let Some(extension) = Path::new(&file_name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+        else {
+            continue;
+        };
+        match extension.to_ascii_lowercase().as_str() {
+            "ts" | "tsx" | "mts" | "cts" => {
+                return Some(JavaScriptTypeScriptSourceKind::TypeScript);
+            }
+            "js" | "jsx" | "mjs" | "cjs" => {
+                detected = Some(JavaScriptTypeScriptSourceKind::JavaScript);
+            }
+            _ => {}
+        }
+    }
+
+    detected
 }
 
 fn npm_package_descriptors(root: &Path, package_json: &Value) -> Vec<NpmPackageDescriptor> {
@@ -420,11 +483,12 @@ fn detect_frameworks(dependencies: &BTreeSet<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        npm_package_descriptors, ComposerWorkspaceDetector, WorkspaceDetector,
-        NPM_PACKAGE_VERSION_FALLBACK_LIMIT,
+        detect_javascript_typescript_source_file_names, npm_package_descriptors,
+        ComposerWorkspaceDetector, JavaScriptTypeScriptSourceKind, WorkspaceDetector,
+        NPM_PACKAGE_VERSION_FALLBACK_LIMIT, ROOT_SOURCE_DETECTION_ENTRY_LIMIT,
     };
     use serde_json::{json, Map, Value};
-    use std::{fs, time::SystemTime};
+    use std::{ffi::OsString, fs, time::SystemTime};
 
     #[test]
     fn detects_absence_of_php_composer_project() {
@@ -741,6 +805,91 @@ mod tests {
         assert!(js_ts.has_tsconfig);
         assert_eq!(js_ts.package_name, None);
         assert_eq!(js_ts.frameworks, Vec::<String>::new());
+        assert!(js_ts.uses_type_script);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn detects_root_javascript_source_without_package_or_project_config() {
+        let root = create_temp_dir("workspace-root-javascript-only");
+        fs::write(root.join("server.js"), "console.log('ready');").expect("write source");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor.js_ts.expect("js ts descriptor");
+
+        assert!(descriptor.php.is_none());
+        assert!(!js_ts.has_package_json);
+        assert!(!js_ts.has_tsconfig);
+        assert!(!js_ts.has_jsconfig);
+        assert_eq!(js_ts.package_name, None);
+        assert_eq!(js_ts.frameworks, Vec::<String>::new());
+        assert!(!js_ts.uses_type_script);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn package_manifest_skips_configless_root_source_fallback() {
+        let root = create_temp_dir("workspace-package-skips-root-source");
+        fs::write(root.join("package.json"), r#"{ "name": "plain-js" }"#).expect("write package");
+        fs::write(root.join("source.mts"), "export const ready = true;").expect("write source");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor.js_ts.expect("js ts descriptor");
+
+        assert!(js_ts.has_package_json);
+        assert!(!js_ts.has_tsconfig);
+        assert!(!js_ts.has_jsconfig);
+        assert!(
+            !js_ts.uses_type_script,
+            "root source fallback must not influence an explicitly configured project"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn configless_root_source_detection_stops_at_the_entry_limit() {
+        let entries = (0..ROOT_SOURCE_DETECTION_ENTRY_LIMIT)
+            .map(|index| Some((OsString::from(format!("file-{index:03}.txt")), true)))
+            .chain(std::iter::once(Some((OsString::from("server.ts"), true))));
+
+        assert_eq!(
+            detect_javascript_typescript_source_file_names(entries),
+            None
+        );
+    }
+
+    #[test]
+    fn configless_root_source_detection_is_order_independent_within_the_bound() {
+        let forward = [
+            Some((OsString::from("server.js"), true)),
+            Some((OsString::from("worker.ts"), true)),
+        ];
+        let reverse = [forward[1].clone(), forward[0].clone()];
+
+        assert_eq!(
+            detect_javascript_typescript_source_file_names(forward),
+            Some(JavaScriptTypeScriptSourceKind::TypeScript)
+        );
+        assert_eq!(
+            detect_javascript_typescript_source_file_names(reverse),
+            Some(JavaScriptTypeScriptSourceKind::TypeScript)
+        );
+    }
+
+    #[test]
+    fn root_typescript_source_marks_configless_workspace_as_typescript() {
+        let root = create_temp_dir("workspace-root-typescript-only");
+        fs::write(root.join("server.mts"), "export const ready = true;").expect("write source");
+
+        let detector = ComposerWorkspaceDetector::default();
+        let descriptor = detector.detect(&root).expect("detect workspace");
+        let js_ts = descriptor.js_ts.expect("js ts descriptor");
+
+        assert!(!js_ts.has_package_json);
+        assert!(!js_ts.has_tsconfig);
+        assert!(!js_ts.has_jsconfig);
         assert!(js_ts.uses_type_script);
         fs::remove_dir_all(root).expect("cleanup");
     }

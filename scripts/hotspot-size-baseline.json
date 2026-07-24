@@ -20,16 +20,16 @@
       "structuralTokens": 10277
     },
     "src-tauri/src/lib.rs": {
-      "rawLines": 10199,
-      "structuralTokens": 59238
+      "rawLines": 10256,
+      "structuralTokens": 59441
     },
     "src-tauri/src/lsp_features.rs": {
       "rawLines": 4503,
       "structuralTokens": 25032
     },
     "src-tauri/src/lsp_session.rs": {
-      "rawLines": 8364,
-      "structuralTokens": 42527
+      "rawLines": 8368,
+      "structuralTokens": 42544
     },
     "src-tauri/src/lsp.rs": {
       "rawLines": 2364,
@@ -61,15 +61,15 @@
     },
     "src/components/EditorSurface.tsx": {
       "rawLines": 5348,
-      "structuralTokens": 22417
+      "structuralTokens": 22413
     },
     "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
-      "rawLines": 3902,
-      "structuralTokens": 17430
+      "rawLines": 3913,
+      "structuralTokens": 17469
     },
     "src/components/languageServerMonacoProviders.ts": {
-      "rawLines": 5896,
-      "structuralTokens": 11810
+      "rawLines": 5907,
+      "structuralTokens": 11849
     },
     "src/components/SettingsDialog.tsx": {
       "rawLines": 1762,

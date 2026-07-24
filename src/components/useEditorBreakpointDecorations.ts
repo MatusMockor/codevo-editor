@@ -11,6 +11,7 @@ export function useEditorBreakpointDecorations(
   modelIdentity: Monaco.editor.ITextModel | null,
   breakpoints: readonly Breakpoint[],
   relocation: {
+    readonly authoritativeContent?: string;
     readonly relocateBreakpoint?: (
       candidate: DebugBreakpointRelocationCandidate,
     ) => Promise<boolean>;
@@ -19,6 +20,21 @@ export function useEditorBreakpointDecorations(
   } = {},
 ) {
   const ids = useRef<string[]>([]);
+  const authoritativeContentRef = useRef(relocation.authoritativeContent);
+  const pendingControlledReplacementRef = useRef<{
+    readonly nextContent: string;
+    readonly previousLength: number;
+  } | null>(null);
+  if (
+    relocation.authoritativeContent !== undefined &&
+    authoritativeContentRef.current !== relocation.authoritativeContent
+  ) {
+    pendingControlledReplacementRef.current = {
+      nextContent: relocation.authoritativeContent,
+      previousLength: authoritativeContentRef.current?.length ?? 0,
+    };
+    authoritativeContentRef.current = relocation.authoritativeContent;
+  }
   useEffect(() => {
     if (
       !editor ||
@@ -33,33 +49,61 @@ export function useEditorBreakpointDecorations(
       ids.current = editor.deltaDecorations(ids.current, []);
       return;
     }
-    const lineCount = modelIdentity.getLineCount();
-    const decoratedBreakpoints = candidates.filter(({ columnNumber, lineNumber }) => {
-      if (!Number.isInteger(lineNumber) || lineNumber < 1 || lineNumber > lineCount) {
-        return false;
-      }
-      return (
-        columnNumber === undefined ||
-        (Number.isInteger(columnNumber) &&
-          columnNumber >= 1 &&
-          columnNumber <= modelIdentity.getLineMaxColumn(lineNumber))
-      );
-    });
-    ids.current = editor.deltaDecorations(
-      ids.current,
-      decoratedBreakpoints.map((breakpoint) => toBreakpointDecoration(monaco, breakpoint)),
-    );
+    const validBreakpoints = () => {
+      const lineCount = modelIdentity.getLineCount();
+      return candidates.filter(({ columnNumber, lineNumber }) => {
+        if (!Number.isInteger(lineNumber) || lineNumber < 1 || lineNumber > lineCount) {
+          return false;
+        }
+        return (
+          columnNumber === undefined ||
+          (Number.isInteger(columnNumber) &&
+            columnNumber >= 1 &&
+            columnNumber <= modelIdentity.getLineMaxColumn(lineNumber))
+        );
+      });
+    };
     let current = true;
-    const trackedByBreakpointId = new Map(
-      decoratedBreakpoints.map((breakpoint, index) => [breakpoint.id, ids.current[index]] as const),
-    );
-    const contentSubscription = editor.onDidChangeModelContent(() => {
+    let trackedBreakpoints: readonly Breakpoint[] = [];
+    const trackedByBreakpointId = new Map<string, string | undefined>();
+    const anchorDecorations = () => {
+      trackedBreakpoints = validBreakpoints();
+      ids.current = editor.deltaDecorations(
+        ids.current,
+        trackedBreakpoints.map((breakpoint) => toBreakpointDecoration(monaco, breakpoint)),
+      );
+      trackedByBreakpointId.clear();
+      trackedBreakpoints.forEach((breakpoint, index) => {
+        trackedByBreakpointId.set(breakpoint.id, ids.current[index]);
+      });
+    };
+    anchorDecorations();
+    const contentSubscription = editor.onDidChangeModelContent((event) => {
+      const pendingControlledReplacement = pendingControlledReplacementRef.current;
+      pendingControlledReplacementRef.current = null;
+      const change = event.changes.length === 1 ? event.changes[0] : null;
+      const isControlledFullReplacement =
+        pendingControlledReplacement !== null &&
+        change !== null &&
+        change.range.startLineNumber === 1 &&
+        change.range.startColumn === 1 &&
+        change.rangeLength === pendingControlledReplacement.previousLength &&
+        change.text === pendingControlledReplacement.nextContent;
+      // Monaco emits a flush when the workbench replaces the complete model
+      // after an external reload. The React wrapper can also express the same
+      // controlled full-buffer sync as executeEdits(forceMoveMarkers: true).
+      // Both can collapse tracked decorations to EOF; re-anchor from the
+      // authoritative breakpoint snapshot instead of persisting that movement.
+      if (event.isFlush || isControlledFullReplacement) {
+        anchorDecorations();
+        return;
+      }
       const relocateBreakpoint = relocation.relocateBreakpoint;
       const workspaceOwnerKey = relocation.workspaceOwnerKey;
       const workspaceRoot = relocation.workspaceRoot;
       if (!relocateBreakpoint || !workspaceOwnerKey || !workspaceRoot) return;
       const modelVersion = modelIdentity.getVersionId();
-      for (const breakpoint of decoratedBreakpoints) {
+      for (const breakpoint of trackedBreakpoints) {
         const decorationId = trackedByBreakpointId.get(breakpoint.id);
         const range = decorationId ? modelIdentity.getDecorationRange(decorationId) : null;
         if (!decorationId || !range) continue;

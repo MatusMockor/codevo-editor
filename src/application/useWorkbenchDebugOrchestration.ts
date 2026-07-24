@@ -235,6 +235,9 @@ export function useWorkbenchDebugOrchestration({
   vscodeProcessTasks,
   openDocuments = [],
 }: WorkbenchDebugOrchestrationOptions) {
+  const workspaceFilesRef = useRef(workspaceFiles);
+  workspaceFilesRef.current = workspaceFiles;
+  const hasBoundedNodeLaunchConfigurationRead = workspaceFiles.readTextFileBounded !== undefined;
   const debugDocumentsRef = useRef({ activeDocumentRef, openDocuments });
   debugDocumentsRef.current = { activeDocumentRef, openDocuments };
   const isExactDebugDocumentClean = useCallback(
@@ -329,6 +332,7 @@ export function useWorkbenchDebugOrchestration({
     evaluations: debugWatches.evaluations,
     setExpression: debugSession.setWatchExpression,
   });
+  const debugSessionState = snapshot.state;
   const debugConsole = useDebugConsole({
     evaluate: debugSession.evaluate,
     output: debugSession.output,
@@ -349,6 +353,7 @@ export function useWorkbenchDebugOrchestration({
             workspaceOwnerKey: debugSession.pauseOwner.workspaceOwnerKey,
           }
         : null,
+    sessionId: debugSessionState.kind === "inactive" ? null : debugSessionState.sessionId,
   });
   const debugConsoleCompletions = useDebugConsoleCompletions({
     complete: debugSession.completeDebugConsole,
@@ -356,7 +361,6 @@ export function useWorkbenchDebugOrchestration({
     inspectionOwner: debugSession.inspectionOwner,
     workspaceOwnerKey: workspaceId,
   });
-  const debugSessionState = snapshot.state;
   const debugInlineValueContext = useMemo(
     () =>
       createDebugInlineValueContext({
@@ -398,13 +402,16 @@ export function useWorkbenchDebugOrchestration({
   });
   const nodeLaunchConfigurationReads = useMemo(
     () => ({
-      readDirectory: workspaceFiles.readDirectory,
-      readFile: workspaceFiles.readTextFile,
-      ...(workspaceFiles.readTextFileBounded
-        ? { readFileBounded: workspaceFiles.readTextFileBounded }
+      readDirectory: (path: string) => workspaceFilesRef.current.readDirectory(path),
+      readFile: (path: string) => workspaceFilesRef.current.readTextFile(path),
+      ...(hasBoundedNodeLaunchConfigurationRead
+        ? {
+            readFileBounded: (path: string, maxBytes: number) =>
+              workspaceFilesRef.current.readTextFileBounded!(path, maxBytes),
+          }
         : {}),
     }),
-    [workspaceFiles.readDirectory, workspaceFiles.readTextFile, workspaceFiles.readTextFileBounded],
+    [hasBoundedNodeLaunchConfigurationRead],
   );
   const nodeDebugTaskComposition = useNodeDebugPreLaunchComposition({
     debugGateway,

@@ -122,7 +122,9 @@ describe("loadNodeLaunchConfigurations", () => {
       diagnostics: [],
     });
 
-    expect(readDirectory).toHaveBeenNthCalledWith(2, CONFIG_DIRECTORY);
+    expect(readDirectory).toHaveBeenNthCalledWith(1, ROOT);
+    expect(readDirectory).toHaveBeenNthCalledWith(2, ROOT);
+    expect(readDirectory).toHaveBeenNthCalledWith(3, CONFIG_DIRECTORY);
     expect(readFile).toHaveBeenCalledWith(CONFIG_PATH);
     expect(readDirectory).not.toHaveBeenCalledWith("/outside/forged");
     expect(readFile).not.toHaveBeenCalledWith("/outside/secret.json");
@@ -202,15 +204,20 @@ describe("loadNodeLaunchConfigurations", () => {
     expect(readDirectory).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps .codevo authoritative and never reads .vscode when both files exist", async () => {
+  it("keeps .vscode authoritative and never reads .codevo when both files exist", async () => {
     const readFileBounded = vi.fn(async (path: string) => {
-      if (path.includes("/.vscode/")) throw new Error("VS Code fallback must not be read");
+      if (path.includes("/.codevo/")) throw new Error("Codevo fallback must not be read");
       return {
         status: "ok" as const,
         content: JSON.stringify({
-          version: 1,
+          version: "0.2.0",
           configurations: [
-            { name: "Codevo API", target: { kind: "script", path: "src/server.ts" } },
+            {
+              type: "node",
+              request: "launch",
+              name: "VS Code API",
+              program: "src/server.ts",
+            },
           ],
         }),
       };
@@ -227,18 +234,21 @@ describe("loadNodeLaunchConfigurations", () => {
 
     expect(result).toMatchObject({
       kind: "loaded",
-      configurations: [{ name: "Codevo API" }],
-      entries: [{ source: "codevo", configuration: { name: "Codevo API" } }],
+      configurations: [{ name: "VS Code API" }],
+      entries: [{ source: "vscode", configuration: { name: "VS Code API" } }],
       diagnostics: [],
     });
     expect(readFileBounded).toHaveBeenCalledOnce();
-    expect(readFileBounded).toHaveBeenCalledWith(CONFIG_PATH, NODE_LAUNCH_CONFIGURATION_MAX_BYTES);
+    expect(readFileBounded).toHaveBeenCalledWith(
+      `${ROOT}/.vscode/launch.json`,
+      NODE_LAUNCH_CONFIGURATION_MAX_BYTES,
+    );
   });
 
-  it("does not hide an invalid .codevo file behind a valid VS Code fallback", async () => {
+  it("does not hide an invalid .vscode file behind a valid Codevo fallback", async () => {
     const readFile = vi.fn(async (path: string) => {
-      if (path === CONFIG_PATH) return "{";
-      throw new Error("VS Code fallback must not be read");
+      if (path === `${ROOT}/.vscode/launch.json`) return "{";
+      throw new Error("Codevo fallback must not be read");
     });
 
     await expect(
@@ -249,12 +259,12 @@ describe("loadNodeLaunchConfigurations", () => {
       ),
     ).resolves.toMatchObject({
       kind: "invalid",
-      message: expect.stringContaining(".codevo/launch.json"),
+      message: expect.stringContaining(".vscode/launch.json"),
     });
     expect(readFile).toHaveBeenCalledOnce();
   });
 
-  it("imports VS Code entries, diagnostics, and private lifecycle task metadata only when .codevo is absent", async () => {
+  it("imports VS Code entries, diagnostics, and private lifecycle task metadata", async () => {
     const vscodePath = `${ROOT}/.vscode/launch.json`;
     const source = `{
       "version": "0.2.0",
@@ -369,7 +379,58 @@ describe("loadNodeLaunchConfigurations", () => {
     expect(entry.nativeWatch).not.toHaveProperty("runtime");
   });
 
-  it("falls back when .codevo exists but its launch.json file is absent", async () => {
+  it("loads the exact minimal VS Code native-watch configuration without a Codevo file", async () => {
+    const vscodePath = `${ROOT}/.vscode/launch.json`;
+    const readFile = vi.fn(async (path: string) => {
+      expect(path).toBe(vscodePath);
+      return JSON.stringify({
+        version: "0.2.0",
+        configurations: [
+          {
+            type: "node",
+            request: "launch",
+            name: "Watch server",
+            program: "server.js",
+            runtimeArgs: ["--watch"],
+          },
+        ],
+      });
+    });
+
+    await expect(
+      loadNodeLaunchConfigurations(
+        ROOT,
+        { readDirectory: vscodeConfigurationDirectories, readFile },
+        () => true,
+      ),
+    ).resolves.toMatchObject({
+      kind: "loaded",
+      configurations: [
+        {
+          name: "Watch server",
+          target: { kind: "script", path: "server.js" },
+        },
+      ],
+      entries: [
+        {
+          source: "vscode",
+          configuration: {
+            name: "Watch server",
+            target: { kind: "script", path: "server.js" },
+          },
+          nativeWatch: {
+            kind: "native-node-watch",
+            scriptPath: "server.js",
+            watch: true,
+          },
+        },
+      ],
+      diagnostics: [],
+    });
+    expect(readFile).toHaveBeenCalledOnce();
+  });
+
+  it("loads authoritative .vscode without probing an available Codevo fallback", async () => {
     const source = JSON.stringify({
       version: "0.2.0",
       configurations: [
@@ -413,11 +474,11 @@ describe("loadNodeLaunchConfigurations", () => {
         },
       ],
     });
-    expect(readDirectory).toHaveBeenCalledWith(CONFIG_DIRECTORY);
+    expect(readDirectory).not.toHaveBeenCalledWith(CONFIG_DIRECTORY);
     expect(readDirectory).toHaveBeenCalledWith(`${ROOT}/.vscode`);
   });
 
-  it("propagates invalid and stale VS Code fallback results", async () => {
+  it("propagates invalid and stale authoritative VS Code results", async () => {
     const invalidReads = {
       readDirectory: vscodeConfigurationDirectories,
       readFile: async () => "{}",

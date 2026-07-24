@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DebugVariable } from "../domain/debug";
 import {
   createDebugConsoleState,
@@ -14,6 +14,7 @@ export interface UseDebugConsoleOptions {
   output: readonly DebugOutputLine[];
   owner: DebugEvaluationOwner | null;
   resultOwner?: Omit<DebugConsoleResultOwner, "epoch"> | null;
+  sessionId: number | null;
 }
 
 export interface UseDebugConsoleResult {
@@ -28,10 +29,23 @@ export function useDebugConsole({
   output,
   owner,
   resultOwner = null,
+  sessionId,
 }: UseDebugConsoleOptions): UseDebugConsoleResult {
-  const [state, setState] = useState(() => createDebugConsoleState(owner));
+  const ownerPauseGeneration = owner?.sessionId === sessionId ? owner.pauseGeneration : null;
+  const consoleOwner = useMemo(
+    () =>
+      sessionId === null
+        ? null
+        : ownerPauseGeneration === null
+          ? { sessionId, pauseGeneration: 0 }
+          : { sessionId, pauseGeneration: ownerPauseGeneration },
+    [ownerPauseGeneration, sessionId],
+  );
+  const [state, setState] = useState(() => createDebugConsoleState(consoleOwner));
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
+  const consoleOwnerRef = useRef(consoleOwner);
+  consoleOwnerRef.current = consoleOwner;
   const resultOwnerRef = useRef<DebugConsoleResultOwner | null>(null);
   const resultOwnerAuthorityRef = useRef<{
     readonly epoch: number;
@@ -50,48 +64,50 @@ export function useDebugConsole({
       }
     : null;
   resultOwnerRef.current = currentResultOwner;
-  const sessionId = owner?.sessionId ?? null;
-  const pauseGeneration = owner?.pauseGeneration ?? null;
   const outputCursorRef = useRef<{
     lastLine: DebugOutputLine | null;
+    seenLines: WeakSet<DebugOutputLine>;
     sessionId: number | null;
-  }>({ lastLine: null, sessionId: owner?.sessionId ?? null });
+  }>({ lastLine: null, seenLines: new WeakSet(), sessionId });
   const requestIdRef = useRef(0);
 
   useEffect(() => {
-    const nextOwner =
-      sessionId === null || pauseGeneration === null ? null : { sessionId, pauseGeneration };
-    setState((current) => reduceDebugConsoleState(current, { type: "own", owner: nextOwner }));
-  }, [pauseGeneration, sessionId]);
+    setState((current) => reduceDebugConsoleState(current, { type: "own", owner: consoleOwner }));
+  }, [consoleOwner]);
 
   useEffect(() => {
-    if (sessionId === null || pauseGeneration === null) {
-      outputCursorRef.current = { lastLine: null, sessionId: null };
+    if (sessionId === null || consoleOwner === null) {
+      outputCursorRef.current = { lastLine: null, seenLines: new WeakSet(), sessionId: null };
       return;
     }
-    const outputOwner = { sessionId, pauseGeneration };
     const cursor = outputCursorRef.current;
     if (cursor.sessionId !== sessionId) {
       cursor.sessionId = sessionId;
       cursor.lastLine = null;
+      cursor.seenLines = new WeakSet();
     }
     const previousIndex = cursor.lastLine ? output.lastIndexOf(cursor.lastLine) : -1;
     const start = previousIndex + 1;
     cursor.lastLine = output[output.length - 1] ?? null;
-    if (start === output.length) return;
+    const unseenOutput = output.slice(start).filter((line) => {
+      if (cursor.seenLines.has(line)) return false;
+      cursor.seenLines.add(line);
+      return true;
+    });
+    if (unseenOutput.length === 0) return;
     setState((current) =>
-      output.slice(start).reduce(
+      unseenOutput.reduce(
         (next, line) =>
           reduceDebugConsoleState(next, {
             type: "output",
-            owner: outputOwner,
+            owner: consoleOwner,
             stream: line.stream,
             text: line.text,
           }),
         current,
       ),
     );
-  }, [output, pauseGeneration, sessionId]);
+  }, [consoleOwner, output, sessionId]);
 
   const submit = useCallback(
     async (expression: string) => {
@@ -153,7 +169,7 @@ export function useDebugConsole({
   );
 
   const clear = useCallback(() => {
-    const currentOwner = ownerRef.current;
+    const currentOwner = consoleOwnerRef.current;
     if (currentOwner)
       setState((current) =>
         reduceDebugConsoleState(current, { type: "clear", owner: currentOwner }),

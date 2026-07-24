@@ -591,13 +591,13 @@ function EditorSurfaceComponent({
   });
   const [monacoApi, setMonacoApi] = useState<typeof Monaco | null>(null);
   const [editorApi, setEditorApi] = useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const editorSessionOwnerKey = useMemo(() => {
-    if (!workspaceRoot) {
-      return null;
-    }
-
-    return createWorkspaceEditorSessionOwnerKey(workspaceRoot, workspaceIdentityDescriptor);
-  }, [workspaceIdentityDescriptor, workspaceRoot]);
+  const editorSessionOwnerKey = useMemo(
+    () =>
+      workspaceRoot
+        ? createWorkspaceEditorSessionOwnerKey(workspaceRoot, workspaceIdentityDescriptor)
+        : null,
+    [workspaceIdentityDescriptor, workspaceRoot],
+  );
   const breakpointModel = editorApi?.getModel();
   const currentBreakpointModel =
     breakpointModel &&
@@ -614,8 +614,9 @@ function EditorSurfaceComponent({
     currentBreakpointModel,
     breakpoints,
     {
+      authoritativeContent: activeDocumentContent,
       relocateBreakpoint: resolvedBreakpointActions.relocateBreakpoint,
-      workspaceOwnerKey: editorSessionOwnerKey,
+      workspaceOwnerKey: workspaceIdentityDescriptor?.workspaceId,
       workspaceRoot,
     },
   );
@@ -634,7 +635,7 @@ function EditorSurfaceComponent({
     rootPath: workspaceRoot,
     workspaceId: workspaceIdentityDescriptor?.workspaceId ?? null,
   });
-  const surfaceIdentityRef = useRef<object>({});
+  const surfaceIdentityRef = useRef({});
   const activeDocumentRef = useRef(activeDocument);
   const workspaceRootRef = useRef(workspaceRoot);
   activeDocumentRef.current = activeDocument;

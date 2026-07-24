@@ -36,6 +36,11 @@ pub(super) fn parse_capabilities(value: &Value) -> Result<LanguageServerCapabili
         formatting: is_capability_enabled(capabilities.get("documentFormattingProvider")),
         implementation: is_capability_enabled(capabilities.get("implementationProvider")),
         inlay_hint: is_capability_enabled(capabilities.get("inlayHintProvider")),
+        inlay_hint_resolve: capabilities
+            .get("inlayHintProvider")
+            .and_then(|provider| provider.get("resolveProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         linked_editing_range: is_capability_enabled(capabilities.get("linkedEditingRangeProvider")),
         on_type_formatting: is_capability_enabled(
             capabilities.get("documentOnTypeFormattingProvider"),
@@ -239,6 +244,26 @@ mod tests {
             .expect("capabilities");
             assert!(capabilities.code_action);
             assert_eq!(capabilities.code_action_resolve, expected);
+        }
+    }
+
+    #[test]
+    fn inlay_hint_resolve_requires_the_object_flag() {
+        for (provider, expected_provider, expected_resolve) in [
+            (json!({ "resolveProvider": true }), true, true),
+            (json!({ "resolveProvider": false }), true, false),
+            (json!({}), true, false),
+            (json!(true), true, false),
+            (json!(false), false, false),
+            (json!(null), false, false),
+        ] {
+            let capabilities = parse_capabilities(&json!({
+                "result": { "capabilities": { "inlayHintProvider": provider } }
+            }))
+            .expect("capabilities");
+
+            assert_eq!(capabilities.inlay_hint, expected_provider);
+            assert_eq!(capabilities.inlay_hint_resolve, expected_resolve);
         }
     }
 

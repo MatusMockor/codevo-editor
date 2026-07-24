@@ -275,13 +275,36 @@ impl SpawnedWatchProcess {
 
 impl WatchSupervisorProcess for SpawnedWatchProcess {
     fn poll(&mut self) -> SupervisorPoll {
-        match self.child.try_wait() {
-            Ok(Some(status)) => {
-                self.reaped = true;
-                SupervisorPoll::Exited(status.code())
+        #[cfg(unix)]
+        {
+            match observe_exit_without_reaping(&self.child) {
+                Ok(false) => SupervisorPoll::Running,
+                Ok(true) => {
+                    // Keep the leader waitable while the complete generation is
+                    // terminated. Reaping it first would release the PGID and
+                    // could leave a descendant behind or signal a reused group.
+                    self.signal_group(libc::SIGKILL);
+                    match self.child.wait() {
+                        Ok(status) => {
+                            self.reaped = true;
+                            SupervisorPoll::Exited(status.code())
+                        }
+                        Err(_) => SupervisorPoll::Failed,
+                    }
+                }
+                Err(_) => SupervisorPoll::Failed,
             }
-            Ok(None) => SupervisorPoll::Running,
-            Err(_) => SupervisorPoll::Failed,
+        }
+        #[cfg(not(unix))]
+        {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    self.reaped = true;
+                    SupervisorPoll::Exited(status.code())
+                }
+                Ok(None) => SupervisorPoll::Running,
+                Err(_) => SupervisorPoll::Failed,
+            }
         }
     }
 
@@ -301,6 +324,29 @@ impl WatchSupervisorProcess for SpawnedWatchProcess {
                 status.code()
             }
             Err(_) => None,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn observe_exit_without_reaping(child: &Child) -> io::Result<bool> {
+    loop {
+        let mut information = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                information.as_mut_ptr(),
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            let information = unsafe { information.assume_init() };
+            return Ok(unsafe { information.si_pid() } != 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
         }
     }
 }
@@ -443,9 +489,7 @@ impl SpawnedNodeInspector {
     where
         Controller: WatchSupervisorController + Send + 'static,
     {
-        let Self {
-            child, endpoints, ..
-        } = self;
+        let (child, endpoints) = self.into_watch_supervisor_parts();
         let endpoint_cancellation = endpoints.cancellation_handle();
         let worker_cancellation = cancellation.clone();
         // Construct the fail-safe process owner before thread creation. If

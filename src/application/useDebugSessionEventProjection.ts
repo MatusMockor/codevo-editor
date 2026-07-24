@@ -1,16 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { Breakpoint, DebugEvent, DebugGateway } from "../domain/debug";
+import type { DebugEvent, DebugGateway } from "../domain/debug";
 import { debuggerSessionId } from "../domain/debug";
-import { isBreakpointPathSupported } from "../domain/debugBreakpointPolicy";
-import { applyVerification } from "../domain/debugBreakpoints";
 import {
   reduceDebuggerSnapshot,
   startingDebuggerSnapshot,
   type DebuggerSessionSnapshot,
 } from "../domain/debugSessionState";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type { DebugBreakpointSynchronization } from "./debugBreakpointSynchronization";
 import {
   MAX_PENDING_DEBUG_COMPOUND_PROJECTION_EVENTS,
   type DebugCompoundSessionProjection,
@@ -26,6 +23,9 @@ import type { NodeDebugCompoundSessionCoordinator } from "./nodeDebugCompoundSes
 
 const OUTPUT_LINE_CAP = 5000;
 const OUTPUT_TRIM_THRESHOLD = 5500;
+const PENDING_CONFIRMED_START_EVENT_CAP = 32;
+
+export type PendingConfirmedStartEvents = Map<string, Map<number, DebugEvent[]>>;
 
 interface PendingRestartProjection {
   readonly attempt: { readonly sessionId: number };
@@ -39,16 +39,14 @@ interface WorkspaceOwnerEpoch {
 export interface DebugSessionEventProjectionBindings {
   readonly activeCompoundRef: MutableRefObject<ActiveDebugCompound | null>;
   readonly adapterKindForSession: (rootPath: string, sessionId: number) => ActiveDebugAdapterKind;
+  readonly applyBreakpointsVerifiedEvent: (event: DebugEvent) => void;
   readonly adoptBreakpointsActivation: (key: string, sessionId: number) => void;
   readonly adoptExceptionPauseSession: (
     rootPath: string,
     sessionId: number,
     adapterKind: "node" | "php",
   ) => void;
-  readonly breakpointSynchronizationRef: MutableRefObject<DebugBreakpointSynchronization>;
-  readonly breakpointsByRootRef: MutableRefObject<Record<string, Breakpoint[]>>;
   readonly clearBreakpointsActivation: (key: string, sessionId: number) => void;
-  readonly commitBreakpoints: (key: string, list: Breakpoint[]) => void;
   readonly compoundCoordinatorRef: MutableRefObject<NodeDebugCompoundSessionCoordinator>;
   readonly compoundProjectionRef: MutableRefObject<DebugCompoundSessionProjection>;
   readonly currentWorkspaceIdRef: MutableRefObject<string | null>;
@@ -58,7 +56,7 @@ export interface DebugSessionEventProjectionBindings {
   readonly isWorkspaceTrusted: () => boolean;
   readonly mountedRef: MutableRefObject<boolean>;
   readonly observeRestartFrameEvent: (event: DebugEvent) => void;
-  readonly pendingBreakpointAdaptersRef: MutableRefObject<Record<string, "node" | "php">>;
+  readonly pendingConfirmedStartEventsRef: MutableRefObject<PendingConfirmedStartEvents>;
   readonly pendingConfirmedStartKeysRef: MutableRefObject<Set<string>>;
   readonly pendingRestartsRef: MutableRefObject<Map<string, PendingRestartProjection>>;
   readonly pendingStartKeysRef: MutableRefObject<Set<string>>;
@@ -78,8 +76,13 @@ export interface DebugSessionEventProjectionBindings {
 export function useDebugSessionEventProjection(
   bindings: DebugSessionEventProjectionBindings,
 ): void {
+  const bindingsRef = useRef(bindings);
+  bindingsRef.current = bindings;
+  const gateway = bindings.gateway;
+
   useEffect(() => {
-    const unsubscribe = bindings.gateway.subscribe((event) => {
+    const unsubscribe = gateway.subscribe((event) => {
+      const bindings = bindingsRef.current;
       if (typeof event?.payload?.kind !== "string") {
         return;
       }
@@ -217,15 +220,26 @@ export function useDebugSessionEventProjection(
       }
       const existing = bindings.snapshotsRef.current[key] ?? inactiveSnapshot;
       // A native-watch session is deliberately registered while Node is still
-      // held at --inspect-brk. Its backend `started` event may arrive before
-      // the start IPC response and therefore before the exact clean-target
-      // lease has been rechecked and confirmed. Do not let that transport
-      // event adopt the session early; the start owner publishes the running
-      // snapshot only after the single-use confirmation succeeds.
-      if (
-        event.payload.kind === "started" &&
-        bindings.pendingConfirmedStartKeysRef.current.has(key)
-      ) {
+      // held at --inspect-brk. Events may arrive before the exact clean-target
+      // lease has been rechecked and confirmed. Lifecycle events are retained
+      // in a small bounded queue; the start owner replays only its exact
+      // session after successful confirmation. User output remains hidden.
+      if (bindings.pendingConfirmedStartKeysRef.current.has(key)) {
+        if (
+          event.payload.kind === "stopped" ||
+          event.payload.kind === "resumed" ||
+          event.payload.kind === "terminated" ||
+          event.payload.kind === "breakpointsVerified"
+        ) {
+          const pendingBySession =
+            bindings.pendingConfirmedStartEventsRef.current.get(key) ??
+            new Map<number, DebugEvent[]>();
+          const pending = pendingBySession.get(event.sessionId) ?? [];
+          if (pending.length >= PENDING_CONFIRMED_START_EVENT_CAP) pending.shift();
+          pending.push(event);
+          pendingBySession.set(event.sessionId, pending);
+          bindings.pendingConfirmedStartEventsRef.current.set(key, pendingBySession);
+        }
         return;
       }
       const seed =
@@ -281,25 +295,7 @@ export function useDebugSessionEventProjection(
       }
 
       if (payload.kind === "breakpointsVerified") {
-        const adapterKind =
-          bindings.adapterKindForSession(event.rootPath, event.sessionId) ??
-          bindings.pendingBreakpointAdaptersRef.current[key] ??
-          null;
-        if (
-          adapterKind === null ||
-          !isBreakpointPathSupported(event.rootPath, adapterKind, payload.filePath)
-        ) {
-          return;
-        }
-        bindings.breakpointSynchronizationRef.current.begin(key, event.sessionId, payload.filePath);
-        bindings.commitBreakpoints(
-          key,
-          applyVerification(
-            bindings.breakpointsByRootRef.current[key] ?? [],
-            payload.filePath,
-            payload.breakpoints,
-          ),
-        );
+        bindings.applyBreakpointsVerifiedEvent(event);
         return;
       }
 
@@ -313,17 +309,5 @@ export function useDebugSessionEventProjection(
     });
 
     return unsubscribe;
-  }, [
-    bindings.adapterKindForSession,
-    bindings.adoptBreakpointsActivation,
-    bindings.adoptExceptionPauseSession,
-    bindings.clearBreakpointsActivation,
-    bindings.commitBreakpoints,
-    bindings.finalizeExactSession,
-    bindings.gateway,
-    bindings.isExactWorkspaceOwnerCurrent,
-    bindings.isWorkspaceTrusted,
-    bindings.observeRestartFrameEvent,
-    bindings.setPauseGeneration,
-  ]);
+  }, [gateway]);
 }

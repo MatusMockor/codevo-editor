@@ -52,4 +52,37 @@ describe("native Node watch clean target lease", () => {
 
     expect(lease?.isCurrent(replaced, [replaced])).toBe(false);
   });
+
+  it("fails closed for case and filesystem-identity aliases of the target", () => {
+    const clean = document();
+    const caseAlias = document("/workspace/Server.js");
+    expect(createNativeNodeWatchCleanTargetLease(PATH, clean, [clean, caseAlias])).toBeNull();
+
+    const symlinkAlias = document("/workspace/linked-server.js");
+    expect(createNativeNodeWatchCleanTargetLease(PATH, clean, [clean, symlinkAlias])).toBeNull();
+  });
+
+  it("fails closed when only a filesystem alias of the target is open", () => {
+    const alias = document("/workspace/linked-server.js");
+
+    expect(createNativeNodeWatchCleanTargetLease(PATH, alias, [alias])).toBeNull();
+  });
+
+  it("keeps an exact lease stale after the target is saved during admission", () => {
+    const clean = document();
+    const lease = createNativeNodeWatchCleanTargetLease(PATH, clean, [clean]);
+    const savedDuringAdmission = {
+      ...clean,
+      content: "saved during admission",
+      savedContent: "saved during admission",
+      revision: {
+        ...clean.revision!,
+        size: "saved during admission".length,
+        modifiedNanoseconds: 1,
+        contentHash: "sha256:saved-during-admission",
+      },
+    };
+
+    expect(lease?.isCurrent(savedDuringAdmission, [savedDuringAdmission])).toBe(false);
+  });
 });

@@ -43,6 +43,7 @@ use std::time::{Duration, Instant};
 use tungstenite::{Error as WebSocketError, Message, WebSocket};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const PROCESS_GROUP_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -166,6 +167,63 @@ fn descriptor_bound_watch_spawn_cannot_be_redirected_by_root_path_replacement() 
     drop(replacement);
 }
 
+#[test]
+fn spawned_watch_owner_reaps_process_group_during_unwind() {
+    let Some(runtime) = supported_watch_runtime_or_skip("watch process unwind ownership") else {
+        return;
+    };
+    let workspace = TempWatchWorkspace::new();
+    let script = workspace.0.join("server.js");
+    fs::write(&script, "setInterval(() => {}, 1000);\n").expect("write unwind target");
+    let retained = fs::File::open(&workspace.0).expect("retain unwind workspace");
+    let launch = build_native_node_watch_launch_plan_for_test(
+        &workspace.0,
+        "server.js".to_string(),
+        u8::try_from(runtime.major_version).expect("bounded managed Node major"),
+    )
+    .expect("build unwind launch");
+
+    let root_key = workspace.0.to_string_lossy().into_owned();
+    let registry = Arc::new(DebugSessionRegistry::new());
+    registry.activate_root(&root_key);
+    let captured_emitter = Arc::new(Mutex::new(None));
+    let emitter_capture = Arc::clone(&captured_emitter);
+    registry
+        .start_session(
+            &root_key,
+            Arc::new(WatchEventSink::default()),
+            move |emitter| {
+                *lock_recover(&emitter_capture) = Some(emitter);
+                Ok(Box::new(InertWatchHarnessAdapter))
+            },
+        )
+        .expect("capture unwind emitter");
+    let emitter = lock_recover(&captured_emitter)
+        .take()
+        .expect("unwind emitter");
+    let startup_is_current: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(|| true);
+    let process = spawn_node_inspector_descriptor_bound(
+        &launch,
+        retained,
+        emitter,
+        Arc::clone(&startup_is_current),
+    )
+    .expect("spawn unwind watch owner");
+    process
+        .ensure_unambiguous(startup_is_current.as_ref())
+        .expect("one unwind inspector endpoint");
+    let process_group_id =
+        i32::try_from(process.process_id_for_test()).expect("unwind process group");
+
+    let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _owned_process = process;
+        panic!("exercise spawned watch unwind cleanup");
+    }));
+    assert!(unwind.is_err());
+    wait_for_process_group_exit(process_group_id, PROCESS_GROUP_EXIT_TIMEOUT);
+    assert!(registry.deactivate_root(&root_key));
+}
+
 struct RootReplacementGuard {
     moved: PathBuf,
     original: PathBuf,
@@ -225,6 +283,7 @@ fn private_registry_factory_keeps_one_session_across_native_target_generations_a
         .expect("confirm pending native watch launch");
 
     let first = wait_for_marker(&marker, 1);
+    wait_for_output(&sink, session_id, "watch-output 1");
     write_revision(&dependency, 2);
     let second = wait_for_marker_with_events(&marker, 2, &sink, &Arc::new(Mutex::new(Vec::new())));
     assert_ne!(first.pid, second.pid);
@@ -446,7 +505,7 @@ fn production_watch_stack_replays_breakpoint_into_fresh_target_and_reaps_group()
     process
         .ensure_unambiguous(startup_is_current.as_ref())
         .expect("one production watch inspector endpoint");
-    let supervisor_pid = process.child.id();
+    let supervisor_pid = process.process_id_for_test();
     let process_group_id = i32::try_from(supervisor_pid).expect("supervisor PID");
     assert_eq!(
         process_group(supervisor_pid),
@@ -816,7 +875,7 @@ fn write_target(script: &Path) {
 fn write_debug_target(script: &Path) {
     fs::write(
         script,
-        "const fs = require('node:fs');\nconst revision = require('./revision.js');\nfs.writeFileSync('target.json', JSON.stringify({ pid: process.pid, revision }));\nfunction checkpoint() {\n  const observed = revision;\n  return observed;\n}\nif (revision === 1) checkpoint();\nelse setTimeout(checkpoint, 250);\nsetInterval(() => {}, 1000);\n",
+        "const fs = require('node:fs');\nconst revision = require('./revision.js');\nfs.writeFileSync('target.json', JSON.stringify({ pid: process.pid, revision })); console.log('watch-output', revision);\nfunction checkpoint() {\n  const observed = revision;\n  return observed;\n}\nif (revision === 1) checkpoint();\nelse setTimeout(checkpoint, 250);\nsetInterval(() => {}, 1000);\n",
     )
     .expect("write production watch debug target");
 }
@@ -1260,6 +1319,27 @@ fn wait_for_terminated_event(sink: &WatchEventSink, session_id: u64) {
     }
 }
 
+fn wait_for_output(sink: &WatchEventSink, session_id: u64, expected: &str) {
+    let deadline = Instant::now() + PROBE_TIMEOUT;
+    loop {
+        if lock_recover(&sink.0).iter().any(|event| {
+            event.session_id == session_id
+                && matches!(
+                    &event.payload,
+                    DebugEventPayload::Output { text, .. } if text == expected
+                )
+        }) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for native Node watch output `{expected}`: {:?}",
+            lock_recover(&sink.0).as_slice()
+        );
+        thread::sleep(POLL_INTERVAL);
+    }
+}
+
 fn watch_breakpoint(file_path: &str) -> DebugBreakpoint {
     DebugBreakpoint {
         id: "watch-reconnect-breakpoint".to_string(),
@@ -1348,6 +1428,23 @@ fn process_group(pid: u32) -> i32 {
         "unable to inspect process group for PID {pid}"
     );
     process_group
+}
+
+fn process_group_is_running(process_group_id: i32) -> bool {
+    let result = unsafe { libc::kill(-process_group_id, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn wait_for_process_group_exit(process_group_id: i32, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while process_group_is_running(process_group_id) {
+        assert!(
+            Instant::now() < deadline,
+            "native Node watch process group {process_group_id} survived owner cleanup for \
+             {timeout:?}"
+        );
+        thread::sleep(POLL_INTERVAL);
+    }
 }
 
 fn wait_for_process_exit(pid: u32, timeout: Duration) {

@@ -132,6 +132,7 @@ const REQUIRED_BOOLEAN_CAPABILITIES = [
 const OPTIONAL_BOOLEAN_CAPABILITIES = [
   "didCreateFiles",
   "didDeleteFiles",
+  "inlayHintResolve",
   "willCreateFiles",
   "willDeleteFiles",
 ] as const satisfies readonly (keyof LanguageServerRuntimeCapabilities)[];

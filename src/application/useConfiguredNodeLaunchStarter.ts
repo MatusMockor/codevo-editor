@@ -55,9 +55,14 @@ export function useConfiguredNodeLaunchStarter({
       const result = await loadConfiguredNodeLaunch({
         workspaceRoot,
         documentPath,
-        readDirectory: workspaceFiles.readDirectory,
-        readFile: workspaceFiles.readTextFile,
-        readFileBounded: workspaceFiles.readTextFileBounded,
+        readDirectory: (path) => workspaceFiles.readDirectory(path),
+        readFile: (path) => workspaceFiles.readTextFile(path),
+        ...(workspaceFiles.readTextFileBounded
+          ? {
+              readFileBounded: (path, maxBytes) =>
+                workspaceFiles.readTextFileBounded!(path, maxBytes),
+            }
+          : {}),
         isCurrent: remainsAdmitted,
       });
       if (result.kind === "stale") return true;

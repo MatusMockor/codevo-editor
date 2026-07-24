@@ -101,18 +101,17 @@ export async function loadNodeLaunchConfigurations(
   { readDirectory, readFile, readFileBounded }: NodeLaunchConfigurationReads,
   isCurrent: () => boolean,
 ): Promise<NodeLaunchConfigurationsLoadResult> {
-  const codevo = await loadCodevoNodeLaunchConfigurations(
-    workspaceRoot,
-    { readDirectory, readFile, readFileBounded },
-    isCurrent,
-  );
-  if (codevo.kind !== "none") return codevo;
   const vscode = await loadVscodeNodeLaunchConfigurations(
     workspaceRoot,
     { readDirectory, readFile, readFileBounded },
     isCurrent,
   );
-  return importedVscodeResult(vscode);
+  if (vscode.kind !== "none") return importedVscodeResult(vscode);
+  return loadCodevoNodeLaunchConfigurations(
+    workspaceRoot,
+    { readDirectory, readFile, readFileBounded },
+    isCurrent,
+  );
 }
 
 async function loadCodevoNodeLaunchConfigurations(

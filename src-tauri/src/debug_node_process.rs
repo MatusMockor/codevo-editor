@@ -19,8 +19,8 @@ use std::time::Duration;
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct SpawnedNodeInspector {
-    child: Child,
-    endpoints: InspectorEndpointFeed,
+    child: Option<Child>,
+    endpoints: Option<InspectorEndpointFeed>,
     pub(crate) process: DebugProcessHandle,
     pub(crate) ws_url: String,
 }
@@ -234,8 +234,8 @@ fn spawn_node_inspector_with_workspace_directory(
     drop(stderr_pump);
     discovery_output_budget.complete_startup();
     Ok(SpawnedNodeInspector {
-        child,
-        endpoints: endpoint_feed,
+        child: Some(child),
+        endpoints: Some(endpoint_feed),
         process,
         ws_url,
     })
@@ -285,7 +285,9 @@ impl SpawnedNodeInspector {
         startup_is_current: &(dyn Fn() -> bool + Send + Sync),
     ) -> Result<(), String> {
         ensure_no_additional_inspector_endpoint(
-            &self.endpoints,
+            self.endpoints
+                .as_ref()
+                .expect("spawned Node inspector endpoint ownership"),
             &self.ws_url,
             INSPECTOR_AMBIGUITY_WINDOW,
             startup_is_current,
@@ -294,21 +296,64 @@ impl SpawnedNodeInspector {
     }
 
     pub(crate) fn terminate_and_wait(&mut self) {
-        self.endpoints.cancel();
-        self.process.terminate();
-        let _ = self.child.wait();
+        self.kill_group_and_reap();
+    }
+
+    fn kill_group_and_reap(&mut self) {
+        if let Some(endpoints) = self.endpoints.take() {
+            endpoints.cancel();
+        }
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        #[cfg(unix)]
+        if let Ok(process_group_id) = i32::try_from(child.id()) {
+            unsafe {
+                libc::kill(-process_group_id, libc::SIGKILL);
+            }
+        }
+        let _ = child.kill();
+        loop {
+            match child.wait() {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Ok(_) | Err(_) => break,
+            }
+        }
+    }
+
+    fn into_watch_supervisor_parts(mut self) -> (Child, InspectorEndpointFeed) {
+        let child = self
+            .child
+            .take()
+            .expect("spawned Node inspector process ownership");
+        let endpoints = self
+            .endpoints
+            .take()
+            .expect("spawned Node inspector endpoint ownership");
+        (child, endpoints)
+    }
+
+    #[cfg(test)]
+    fn process_id_for_test(&self) -> u32 {
+        self.child
+            .as_ref()
+            .expect("spawned Node inspector process ownership")
+            .id()
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn spawn_waiter_with_endpoint_feed(
-        self,
+        mut self,
         finish: Box<dyn FnOnce(Option<i32>) + Send>,
     ) -> InspectorEndpointFeed {
-        let Self {
-            mut child,
-            endpoints,
-            ..
-        } = self;
+        let mut child = self
+            .child
+            .take()
+            .expect("spawned Node inspector process ownership");
+        let endpoints = self
+            .endpoints
+            .take()
+            .expect("spawned Node inspector endpoint ownership");
         let cancellation = endpoints.cancellation_handle();
         thread::spawn(move || {
             let exit_code = child.wait().ok().and_then(|status| status.code());
@@ -320,6 +365,12 @@ impl SpawnedNodeInspector {
 
     pub(crate) fn spawn_waiter(self, finish: Box<dyn FnOnce(Option<i32>) + Send>) {
         drop(self.spawn_waiter_with_endpoint_feed(finish));
+    }
+}
+
+impl Drop for SpawnedNodeInspector {
+    fn drop(&mut self) {
+        self.kill_group_and_reap();
     }
 }
 

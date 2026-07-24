@@ -1972,6 +1972,17 @@ async function resolveInlayHint(
     return hint;
   }
 
+  const runtimeStatus = runningRuntimeStatusForRoot(
+    context,
+    backedHint.__workspaceRoot,
+  );
+  if (
+    runtimeStatus?.sessionId !== backedHint.__languageServerSessionId ||
+    runtimeStatus.capabilities.inlayHintResolve !== true
+  ) {
+    return hint;
+  }
+
   try {
     await context.flushPendingDocumentChange(backedHint.__sourcePath);
 

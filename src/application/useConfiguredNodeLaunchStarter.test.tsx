@@ -131,6 +131,29 @@ describe("useConfiguredNodeLaunchStarter", () => {
     });
   });
 
+  it("preserves the real gateway receiver while loading a direct VS Code F5 launch", async () => {
+    const workspaceFiles = new ReceiverSensitiveWorkspaceReads();
+    const startDebug = vi.fn(async () => true);
+    const ui = renderStarter({ startDebug, workspaceFiles });
+
+    await act(async () => expect(await ui.start()(ROOT, DOCUMENT, WORKSPACE_ID)).toBe(true));
+
+    expect(workspaceFiles.calls).toEqual([
+      ["directory", ROOT],
+      ["directory", `${ROOT}/.vscode`],
+      ["bounded", `${ROOT}/.vscode/launch.json`, 262_144],
+    ]);
+    expect(startDebug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launch: expect.objectContaining({
+          kind: "node-configured-script",
+          scriptPath: DOCUMENT,
+        }),
+        preLaunchTask: null,
+      }),
+    );
+  });
+
   it("starts the only imported VS Code npm target through direct F5", async () => {
     const startDebug = vi.fn(async () => true);
     const ui = renderStarter({
@@ -431,4 +454,48 @@ async function vscodeConfigDirectories(path: string) {
   return path === ROOT
     ? [{ kind: "directory" as const, name: ".vscode", path: `${ROOT}/.vscode` }]
     : [{ kind: "file" as const, name: "launch.json", path: `${ROOT}/.vscode/launch.json` }];
+}
+
+class ReceiverSensitiveWorkspaceReads {
+  readonly calls: unknown[][] = [];
+  readonly #receiver = "workspace-reads";
+
+  async readDirectory(path: string) {
+    this.assertReceiver();
+    this.calls.push(["directory", path]);
+    return vscodeConfigDirectories(path);
+  }
+
+  async readTextFile(path: string) {
+    this.assertReceiver();
+    this.calls.push(["file", path]);
+    return this.source();
+  }
+
+  async readTextFileBounded(path: string, maxBytes: number) {
+    this.assertReceiver();
+    this.calls.push(["bounded", path, maxBytes]);
+    return { status: "ok" as const, content: this.source() };
+  }
+
+  private source() {
+    return JSON.stringify({
+      version: "0.2.0",
+      configurations: [
+        {
+          type: "node",
+          request: "launch",
+          name: "Watch server",
+          program: "src/server.js",
+          runtimeArgs: ["--watch"],
+        },
+      ],
+    });
+  }
+
+  private assertReceiver() {
+    if (this.#receiver !== "workspace-reads") {
+      throw new Error("Workspace read method lost its receiver.");
+    }
+  }
 }

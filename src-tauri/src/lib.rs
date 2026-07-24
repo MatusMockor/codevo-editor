@@ -3334,6 +3334,20 @@ fn lsp_status_supports_code_action_resolve(status: &LanguageServerRuntimeStatus)
     )
 }
 
+/// Whether the running server explicitly advertises
+/// `inlayHintProvider.resolveProvider`.
+///
+/// `inlayHintProvider: true` enables hint discovery but does not imply support
+/// for `inlayHint/resolve`. Keep resolution fail-closed so servers such as
+/// phpactor do not receive a method they did not advertise.
+fn lsp_status_supports_inlay_hint_resolve(status: &LanguageServerRuntimeStatus) -> bool {
+    matches!(
+        status,
+        LanguageServerRuntimeStatus::Running { capabilities, .. }
+            if capabilities.inlay_hint_resolve
+    )
+}
+
 #[tauri::command]
 async fn text_document_code_action_resolve(
     root_path: String,
@@ -4397,6 +4411,10 @@ async fn text_document_inlay_hint_resolve(
 ) -> Result<LanguageServerInlayHint, String> {
     ensure_lsp_inlay_hint_payload_in_workspace(&root_path, &hint)?;
 
+    if !lsp_status_supports_inlay_hint_resolve(&registry.status(&root_path)) {
+        return Ok(hint);
+    }
+
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_inlay_hint(&hint);
     let Some(result) = registry
@@ -4443,6 +4461,10 @@ async fn javascript_typescript_text_document_inlay_hint_resolve(
     registry: State<'_, JavaScriptTypeScriptLanguageServerRegistry>,
 ) -> Result<LanguageServerInlayHint, String> {
     ensure_lsp_inlay_hint_payload_in_workspace(&root_path, &hint)?;
+
+    if !lsp_status_supports_inlay_hint_resolve(&registry.status(&root_path)) {
+        return Ok(hint);
+    }
 
     let factory = LspTextDocumentFeatureRequestFactory;
     let request = factory.resolve_inlay_hint(&hint);
@@ -5336,7 +5358,8 @@ mod tests {
         get_git_file_hunks, get_git_stash_diff, get_git_stash_list, get_git_status,
         guarded_descriptor_cleanup, guarded_descriptor_cleanup_with_terminal_hook,
         javascript_typescript_did_change_configuration_settings, list_git_branches,
-        lsp_status_supports_code_action_resolve, normalize_path, parse_definition_result,
+        lsp_status_supports_code_action_resolve, lsp_status_supports_inlay_hint_resolve,
+        normalize_path, parse_definition_result,
         parse_javascript_typescript_navigation_locations_result, parse_php_file_outline,
         parse_php_syntax, path_from_file_uri, pull_git_changes, read_directory, read_text_file,
         register_workspace_path_in_registry, rename_git_branch, reveal_path_in_workspace,
@@ -5992,6 +6015,40 @@ mod tests {
             &LanguageServerRuntimeStatus::Starting { session_id: 1 }
         ));
         assert!(!lsp_status_supports_code_action_resolve(
+            &LanguageServerRuntimeStatus::Stopped
+        ));
+    }
+
+    #[test]
+    fn inlay_hint_resolve_is_gated_on_server_resolve_capability() {
+        let running_with_resolve = LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities {
+                inlay_hint: true,
+                inlay_hint_resolve: true,
+                ..LanguageServerCapabilities::default()
+            },
+        };
+        assert!(lsp_status_supports_inlay_hint_resolve(
+            &running_with_resolve
+        ));
+
+        let running_without_resolve = LanguageServerRuntimeStatus::Running {
+            session_id: 1,
+            capabilities: LanguageServerCapabilities {
+                inlay_hint: true,
+                inlay_hint_resolve: false,
+                ..LanguageServerCapabilities::default()
+            },
+        };
+        assert!(!lsp_status_supports_inlay_hint_resolve(
+            &running_without_resolve
+        ));
+
+        assert!(!lsp_status_supports_inlay_hint_resolve(
+            &LanguageServerRuntimeStatus::Starting { session_id: 1 }
+        ));
+        assert!(!lsp_status_supports_inlay_hint_resolve(
             &LanguageServerRuntimeStatus::Stopped
         ));
     }

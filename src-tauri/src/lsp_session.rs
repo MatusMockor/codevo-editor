@@ -130,6 +130,7 @@ pub struct LanguageServerCapabilities {
     pub formatting: bool,
     pub implementation: bool,
     pub inlay_hint: bool,
+    pub inlay_hint_resolve: bool,
     pub linked_editing_range: bool,
     pub on_type_formatting: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4905,6 +4906,7 @@ mod tests {
                     formatting: false,
                     implementation: true,
                     inlay_hint: false,
+                    inlay_hint_resolve: false,
                     linked_editing_range: false,
                     on_type_formatting: false,
                     on_type_formatting_trigger_characters: None,
@@ -4953,6 +4955,7 @@ mod tests {
                 formatting: true,
                 implementation: false,
                 inlay_hint: true,
+                inlay_hint_resolve: true,
                 linked_editing_range: true,
                 on_type_formatting: true,
                 on_type_formatting_trigger_characters: Some(vec![
@@ -5002,6 +5005,7 @@ mod tests {
                     "formatting": true,
                     "implementation": false,
                     "inlayHint": true,
+                    "inlayHintResolve": true,
                     "linkedEditingRange": true,
                     "onTypeFormatting": true,
                     "onTypeFormattingTriggerCharacters": ["}", ";", "\n"],

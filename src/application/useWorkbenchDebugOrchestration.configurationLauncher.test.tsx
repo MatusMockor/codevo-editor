@@ -195,13 +195,9 @@ describe("workbench named Node debug configuration composition", () => {
     );
   });
 
-  it("exposes the application launcher with exact reactive guards and existing ports", () => {
+  it("exposes the application launcher with bound reactive read ports", async () => {
     const root = createRoot(document.createElement("div"));
-    const workspaceReads = {
-      readDirectory: vi.fn(),
-      readTextFile: vi.fn(),
-      readTextFileBounded: vi.fn(),
-    };
+    const workspaceReads = new ReceiverSensitiveWorkspaceReads();
     const isWorkspaceCurrent = vi.fn(() => true);
     const isWorkspaceTrusted = vi.fn(() => true);
     const serverReadyExternalUrlOpener = { openExternal: vi.fn(async () => undefined) };
@@ -263,13 +259,23 @@ describe("workbench named Node debug configuration composition", () => {
       startDebug: expect.any(Function),
       workspaceId: "workspace-id",
       workspaceReads: {
-        readDirectory: workspaceReads.readDirectory,
-        readFile: workspaceReads.readTextFile,
-        readFileBounded: workspaceReads.readTextFileBounded,
+        readDirectory: expect.any(Function),
+        readFile: expect.any(Function),
+        readFileBounded: expect.any(Function),
       },
       workspaceTrusted: true,
     });
     const firstReads = mocks.useNodeDebugConfigurationLauncher.mock.lastCall![0].workspaceReads;
+    await expect(firstReads.readDirectory("/workspace")).resolves.toEqual([]);
+    await expect(firstReads.readFile("/workspace/.vscode/launch.json")).resolves.toBe("{}");
+    await expect(
+      firstReads.readFileBounded?.("/workspace/.vscode/launch.json", 262_144),
+    ).resolves.toEqual({ status: "ok", content: "{}" });
+    expect(workspaceReads.calls).toEqual([
+      ["directory", "/workspace"],
+      ["file", "/workspace/.vscode/launch.json"],
+      ["bounded", "/workspace/.vscode/launch.json", 262_144],
+    ]);
     act(() => root.render(<Harness />));
     expect(mocks.useNodeDebugConfigurationLauncher.mock.lastCall![0].workspaceReads).toBe(
       firstReads,
@@ -626,4 +632,33 @@ function deferred<T>() {
     resolve = accept;
   });
   return { promise, resolve };
+}
+
+class ReceiverSensitiveWorkspaceReads {
+  readonly calls: unknown[][] = [];
+  readonly #receiver = "workspace-reads";
+
+  async readDirectory(path: string) {
+    this.assertReceiver();
+    this.calls.push(["directory", path]);
+    return [];
+  }
+
+  async readTextFile(path: string) {
+    this.assertReceiver();
+    this.calls.push(["file", path]);
+    return "{}";
+  }
+
+  async readTextFileBounded(path: string, maxBytes: number) {
+    this.assertReceiver();
+    this.calls.push(["bounded", path, maxBytes]);
+    return { status: "ok" as const, content: "{}" };
+  }
+
+  private assertReceiver() {
+    if (this.#receiver !== "workspace-reads") {
+      throw new Error("Workspace read method lost its receiver.");
+    }
+  }
 }

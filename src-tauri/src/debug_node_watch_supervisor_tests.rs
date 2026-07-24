@@ -6,6 +6,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
+#[cfg(unix)]
+use std::{os::unix::process::CommandExt, process::Command, time::Instant};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Event {
@@ -296,7 +298,7 @@ fn cancellation_revokes_controller_then_terminates_and_hard_kills_group() {
 }
 
 #[test]
-fn natural_supervisor_exit_finishes_without_signalling_process_group() {
+fn observed_supervisor_exit_finishes_after_process_generation_is_owned() {
     let (controller, endpoints, disconnects, mut process, mut clock, events) =
         harness(["supervisor"], [], [], [SupervisorPoll::Exited(Some(17))]);
 
@@ -320,6 +322,41 @@ fn natural_supervisor_exit_finishes_without_signalling_process_group() {
         *events.borrow(),
         vec![Event::Seed, Event::SupervisorExited, Event::EndpointCancel]
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn natural_leader_exit_kills_descendants_before_reaping_generation() {
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", "sleep 30 & exit 17"]).process_group(0);
+    let child = command.spawn().expect("spawn natural-exit process group");
+    let process_group_id = i32::try_from(child.id()).expect("process group");
+    let mut process = SpawnedWatchProcess::new(child);
+    let deadline = Instant::now() + Duration::from_secs(2);
+
+    let exit_code = loop {
+        match process.poll() {
+            SupervisorPoll::Exited(exit_code) => break exit_code,
+            SupervisorPoll::Running if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            outcome => panic!("process generation did not exit cleanly: {outcome:?}"),
+        }
+    };
+
+    assert_eq!(exit_code, Some(17));
+    let group_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let result = unsafe { libc::kill(-process_group_id, 0) };
+        if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            break;
+        }
+        assert!(
+            Instant::now() < group_deadline,
+            "descendant process group remained observable after leader reap"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

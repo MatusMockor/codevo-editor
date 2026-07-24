@@ -425,7 +425,9 @@ describe("useNodeDebugConfigurationLauncher", () => {
     await act(async () => Promise.resolve());
 
     expect(openDebugPanel).toHaveBeenCalledTimes(2);
-    expect(workspaceReads.readDirectory).toHaveBeenCalledTimes(2);
+    // One authoritative .vscode probe plus the legacy .codevo root/file fallback,
+    // with no duplicate sequence from the second picker open.
+    expect(workspaceReads.readDirectory).toHaveBeenCalledTimes(3);
     await act(async () => pending.resolve(defaultSource()));
     expect(ui.hook().state).toEqual({ kind: "ready" });
     ui.unmount();

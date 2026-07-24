@@ -285,6 +285,58 @@ describe("DebugPanel", () => {
     expect(button("Start selected Node launch configuration").disabled).toBe(true);
   });
 
+  it("offers load and start controls for a configless JavaScript workspace capability", () => {
+    const onLoad = vi.fn();
+    const onStartSelected = vi.fn();
+    render({
+      hasJavaScriptTypeScriptWorkspace: true,
+      nodeLaunchConfigurations: {
+        busy: false,
+        choices: [],
+        error: null,
+        onLoad,
+        onRefresh: vi.fn(),
+        onSelect: vi.fn(),
+        onStartSelected,
+        selectedName: null,
+        state: "idle",
+      },
+    });
+
+    expect(
+      host.querySelector('[role="group"][aria-label="Node launch configuration controls"]'),
+    ).not.toBeNull();
+    expect(button("Load Node launch configurations").disabled).toBe(false);
+    act(() => button("Load Node launch configurations").click());
+    expect(onLoad).toHaveBeenCalledOnce();
+
+    render({
+      hasJavaScriptTypeScriptWorkspace: true,
+      nodeLaunchConfigurations: {
+        busy: false,
+        choices: [
+          {
+            default: true,
+            name: "Watch server",
+            source: "vscode",
+            targetKind: "script",
+          },
+        ],
+        error: null,
+        onLoad,
+        onRefresh: vi.fn(),
+        onSelect: vi.fn(),
+        onStartSelected,
+        selectedName: "Watch server",
+        state: "ready",
+      },
+    });
+
+    expect(button("Start selected Node launch configuration").disabled).toBe(false);
+    act(() => button("Start selected Node launch configuration").click());
+    expect(onStartSelected).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["an explicit stop", { debugStopPending: true }],
     ["a restart", { debugRestartPending: true }],

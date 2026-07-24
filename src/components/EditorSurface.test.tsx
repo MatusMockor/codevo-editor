@@ -9,6 +9,7 @@ import type {
   CommandExecutionOutcome,
   CommandExecutionRunner,
 } from "../application/commandRegistry";
+import type { DebugBreakpointRelocationCandidate } from "../application/debugSessionContracts";
 import type {
   EditorPosition,
   EditorRevealTarget,
@@ -43,6 +44,7 @@ import {
 interface FakeModel {
   dispose?: ReturnType<typeof vi.fn>;
   getEOL?: ReturnType<typeof vi.fn>;
+  getDecorationRange?: ReturnType<typeof vi.fn>;
   setEOL?: ReturnType<typeof vi.fn>;
   updateOptions?: ReturnType<typeof vi.fn>;
   getLineContent?: ReturnType<typeof vi.fn>;
@@ -5405,6 +5407,91 @@ class InvoiceServiceTest extends TestCase
         }),
       ]),
     );
+  });
+
+  it("relocates a tracked breakpoint with the exact workspace ID after edits above it", async () => {
+    const activeDocument: EditorDocument = {
+      content: "const one = 1;\nconst two = 2;\nconst three = 3;\n",
+      language: "typescript",
+      name: "main.ts",
+      path: "/workspace/src/main.ts",
+      savedContent: "",
+    };
+    let version = 1;
+    const ranges = new Map<string, { startColumn: number; startLineNumber: number }>();
+    const model: FakeModel = {
+      getDecorationRange: vi.fn((id: string) => ranges.get(id) ?? null),
+      getLineContent: vi.fn(() => "const value = true;"),
+      getLineCount: vi.fn(() => 4),
+      getLineMaxColumn: vi.fn(() => 20),
+      getVersionId: vi.fn(() => version),
+      uri: { fsPath: activeDocument.path, path: activeDocument.path },
+    };
+    const monaco = createMonaco(model);
+    const editor = createEditor(model);
+    editor.deltaDecorations.mockImplementation(
+      (
+        _oldDecorations: string[],
+        decorations: Array<{
+          range: { startColumn: number; startLineNumber: number };
+        }>,
+      ) =>
+        decorations.map(({ range }, index) => {
+          const id = `breakpoint-${index}`;
+          ranges.set(id, range);
+          return id;
+        }),
+    );
+    editorSurfaceMocks.editor = editor;
+    editorSurfaceMocks.monaco = monaco;
+    const relocateBreakpoint = vi.fn(
+      async (_candidate: DebugBreakpointRelocationCandidate) => true,
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(EditorSurface, {
+          ...memoGuardProps(activeDocument),
+          breakpointActions: { relocateBreakpoint },
+          breakpoints: [
+            {
+              enabled: true,
+              filePath: activeDocument.path,
+              id: "bp-1",
+              lineNumber: 3,
+            },
+          ],
+          workspaceIdentityDescriptor: {
+            canonicalRoot: "/workspace",
+            caseSensitive: true,
+            policy: { caseSensitive: true, unicodeNormalization: "none" },
+            selectedPath: "/workspace",
+            unicodeNormalizationPolicy: "preserved",
+            workspaceId: "workspace-id",
+          },
+          workspaceRoot: "/workspace",
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    ranges.set("breakpoint-0", { startColumn: 1, startLineNumber: 4 });
+    version = 2;
+    await act(async () => {
+      editor.modelContentChangeHandler?.({
+        changes: [{ range: { startLineNumber: 1 }, text: "// inserted\n" }],
+      });
+      await Promise.resolve();
+    });
+
+    expect(relocateBreakpoint).toHaveBeenCalledOnce();
+    expect(relocateBreakpoint.mock.calls[0]?.[0]).toMatchObject({
+      breakpointId: "bp-1",
+      filePath: activeDocument.path,
+      lineNumber: 4,
+      workspaceOwnerKey: "workspace-id",
+      workspaceRoot: "/workspace",
+    });
   });
 
   it("toggles a breakpoint on a plain line-numbers gutter click", async () => {

@@ -4972,6 +4972,73 @@ describe("registerJavaScriptTypeScriptLanguageServerMonacoProviders", () => {
     expect(hints.hints[0].label[0].location.uri.toString()).toBe(workspaceModelUri(rootPath, path));
   });
 
+  it.each([
+    ["advertised", true, true],
+    ["disabled", false, false],
+    ["absent", undefined, false],
+  ] as const)(
+    "resolves TypeScript inlay hints only when resolve support is %s",
+    async (_description, inlayHintResolve, shouldResolve) => {
+      const monaco = createMonaco();
+      const gateway = featuresGateway({
+        inlayHints: [
+          {
+            data: { hintId: 1 },
+            kind: 1,
+            label: ": Account",
+            paddingLeft: true,
+            paddingRight: false,
+            position: { character: 10, line: 0 },
+            tooltip: null,
+          },
+        ],
+      });
+      const flushPendingDocumentChange = vi.fn(async () => undefined);
+      const reportError = vi.fn();
+      const runtimeStatus = runningStatus({ inlayHintResolve });
+
+      if (runtimeStatus.kind === "running" && inlayHintResolve === undefined) {
+        delete runtimeStatus.capabilities.inlayHintResolve;
+      }
+
+      registerJavaScriptTypeScriptLanguageServerMonacoProviders(
+        monaco as any,
+        providerContext({
+          featuresGateway: gateway,
+          flushPendingDocumentChange,
+          getRuntimeStatus: () => runtimeStatus,
+          reportError,
+        }),
+      );
+      const provider = (monaco.languages.registerInlayHintsProvider as any).mock.calls[0][1];
+      const hints = await provider.provideInlayHints(
+        textModel(),
+        new monaco.Range(1, 1, 1, 20),
+      );
+      const originalHint = hints.hints[0];
+      flushPendingDocumentChange.mockClear();
+      vi.mocked(gateway.resolveInlayHint).mockClear();
+
+      const resolvedHint = await provider.resolveInlayHint(originalHint);
+
+      if (shouldResolve) {
+        expect(flushPendingDocumentChange).toHaveBeenCalledWith(
+          "/project/src/user.ts",
+        );
+        expect(gateway.resolveInlayHint).toHaveBeenCalledWith(
+          "/project",
+          expect.objectContaining({ data: { hintId: 1 } }),
+        );
+        expect(resolvedHint).not.toBe(originalHint);
+      } else {
+        expect(flushPendingDocumentChange).not.toHaveBeenCalled();
+        expect(gateway.resolveInlayHint).not.toHaveBeenCalled();
+        expect(resolvedHint).toBe(originalHint);
+      }
+      expect(reportError).not.toHaveBeenCalled();
+    },
+  );
+
   it("persists edit-bearing TypeScript code actions through the workspace applier", async () => {
     const monaco = createMonaco();
     const model = textModel();
@@ -5862,6 +5929,7 @@ function runningStatus(
       hover: true,
       implementation: true,
       inlayHint: true,
+      inlayHintResolve: true,
       linkedEditingRange: true,
       onTypeFormatting: true,
       prepareRename: true,

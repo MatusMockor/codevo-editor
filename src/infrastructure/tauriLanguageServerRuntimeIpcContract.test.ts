@@ -73,6 +73,24 @@ describe("language-server runtime Tauri IPC contract", () => {
     );
   });
 
+  it("validates the optional inlay-hint resolve capability", () => {
+    const capabilities = {
+      ...emptyLanguageServerCapabilities(),
+      inlayHintResolve: "yes",
+    };
+
+    expect(() =>
+      decodeLanguageServerRuntimeStatus({
+        capabilities,
+        kind: "running",
+        rootPath: "/workspace",
+        sessionId: 4,
+      }),
+    ).toThrow(
+      "running.capabilities.inlayHintResolve must be a boolean when present",
+    );
+  });
+
   it("validates the runtime log response", () => {
     expect(decodeLanguageServerRuntimeLogPath("/tmp/runtime.log")).toBe("/tmp/runtime.log");
     expect(() => decodeLanguageServerRuntimeLogPath({ path: "/tmp/runtime.log" })).toThrow(
