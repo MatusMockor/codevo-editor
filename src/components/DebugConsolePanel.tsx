@@ -1,8 +1,24 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ComponentProps,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import type { UseDebugConsoleResult } from "../application/useDebugConsole";
 import type { DebugConsoleFocusRequest } from "../application/useDebugConsoleSurfaceCommands";
 import type { DebugCopyValueCandidate } from "../application/debugCopyValue";
-import type { DebugInspectionOwner } from "../domain/debugVariablePages";
+import type { DebugVariable } from "../domain/debug";
+import {
+  selectDebugVariableExpansion,
+  type DebugInspectionOwner,
+  type DebugVariableExpansionState,
+  type DebugVariablePagesState,
+} from "../domain/debugVariablePages";
 import { ContextMenu } from "./ContextMenu";
 import {
   debugCopyValueCandidateForNode,
@@ -14,6 +30,7 @@ import {
 } from "./debugCopyValueSurface";
 
 const MAX_VISIBLE_COMPLETION_ITEMS = 100;
+const MAX_DEBUG_CONSOLE_RESULT_ROWS = 500;
 
 export interface DebugConsoleCompletionItem {
   readonly detail?: string | null;
@@ -47,6 +64,13 @@ const styles: Record<string, CSSProperties> = {
     padding: "4px 8px",
   },
   entry: { whiteSpace: "pre-wrap" },
+  disclosure: {
+    background: "transparent",
+    border: 0,
+    color: "inherit",
+    font: "inherit",
+    padding: "0 3px 0 0",
+  },
   error: { color: "var(--status-error, #ef4444)" },
   input: {
     background: "transparent",
@@ -61,6 +85,18 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
   },
   muted: { color: "var(--text-muted)" },
+  variableRow: {
+    alignItems: "baseline",
+    cursor: "default",
+    display: "flex",
+    gap: 3,
+    overflow: "hidden",
+    paddingBottom: 2,
+    paddingRight: 8,
+    paddingTop: 2,
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
   completionDetail: {
     color: "var(--text-muted)",
     marginLeft: 12,
@@ -107,8 +143,10 @@ export function DebugConsolePanel({
   onDismiss,
   onFocusRequestHandled,
   onInputChanged,
+  onLoadVariablePage,
   onRequest,
   inspectionOwner = null,
+  variablePages,
   workspaceOwnerKey = null,
 }: {
   completion?: DebugConsoleCompletionModel | null;
@@ -123,14 +161,17 @@ export function DebugConsolePanel({
   onDismiss?(): void;
   onFocusRequestHandled?(request: DebugConsoleFocusRequest): void;
   onInputChanged?(request: DebugConsoleCompletionRequest): void;
+  onLoadVariablePage?(owner: DebugInspectionOwner, variablesReference: number, start: number): void;
   onRequest?(request: DebugConsoleCompletionRequest): void;
   inspectionOwner?: DebugInspectionOwner | null;
+  variablePages?: DebugVariablePagesState;
   workspaceOwnerKey?: string | null;
 }) {
   const [value, setValue] = useState("");
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [completionOpen, setCompletionOpen] = useState(false);
   const [activeCompletionIndex, setActiveCompletionIndex] = useState(0);
+  const [expandedResultIds, setExpandedResultIds] = useState<ReadonlySet<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<{
     readonly candidate: DebugCopyValueCandidate;
     readonly invoker: HTMLElement;
@@ -171,6 +212,11 @@ export function DebugConsolePanel({
     setCompletionOpen(false);
     setActiveCompletionIndex(0);
   }, [sessionId]);
+  const resultOwnerEpoch = console.resultOwner?.epoch ?? null;
+  const inspectionPauseGeneration = inspectionOwner?.pauseGeneration ?? null;
+  useEffect(() => {
+    setExpandedResultIds(new Set());
+  }, [inspectionPauseGeneration, resultOwnerEpoch, sessionId, workspaceOwnerKey]);
   useEffect(() => {
     setActiveCompletionIndex((current) =>
       Math.min(current, Math.max(0, visibleCompletionItems.length - 1)),
@@ -358,6 +404,36 @@ export function DebugConsolePanel({
       setValue(next >= history.length ? "" : (history[next] ?? ""));
     }
   };
+  const setResultExpanded = (
+    id: string,
+    expanded: boolean,
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    ancestors: readonly number[],
+    depth: number,
+  ) => {
+    const expansion = variablePages
+      ? selectDebugVariableExpansion(variablePages, owner, variablesReference, ancestors, depth)
+      : { kind: "stale" as const };
+    if (
+      expansion.kind === "stale" ||
+      expansion.kind === "leaf" ||
+      expansion.kind === "circular" ||
+      expansion.kind === "limit"
+    ) {
+      return;
+    }
+    setExpandedResultIds((current) => {
+      const next = new Set(current);
+      if (expanded) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    if (expanded && expansion.kind === "idle") {
+      onLoadVariablePage?.(owner, variablesReference, 0);
+    }
+  };
+  const childBudget = { count: 0, exhausted: false };
   return (
     <>
       <div id="debug-console-warning" style={styles.warning}>
@@ -394,93 +470,190 @@ export function DebugConsolePanel({
                   )
                 : null;
             const copyable = copyCandidate !== null;
+            const resultInspectionOwner =
+              entry.kind === "result"
+                ? consoleResultInspectionOwner(
+                    entry,
+                    console.resultOwner,
+                    inspectionOwner,
+                    workspaceOwnerKey,
+                  )
+                : null;
+            const expansion =
+              entry.kind === "result" &&
+              entry.variablesReference > 0 &&
+              resultInspectionOwner &&
+              variablePages &&
+              onLoadVariablePage
+                ? selectDebugVariableExpansion(
+                    variablePages,
+                    resultInspectionOwner,
+                    entry.variablesReference,
+                  )
+                : null;
+            const expandable = expansion ? isExpandableResultState(expansion) : false;
+            const expanded = expandable && expandedResultIds.has(entry.id);
+            const toggleResult = () => {
+              if (
+                entry.kind !== "result" ||
+                !resultInspectionOwner ||
+                !expandable ||
+                !variablePages ||
+                !onLoadVariablePage
+              ) {
+                return;
+              }
+              setResultExpanded(
+                entry.id,
+                !expanded,
+                resultInspectionOwner,
+                entry.variablesReference,
+                [],
+                0,
+              );
+            };
             return (
-              <div
-                aria-haspopup={copyable ? "menu" : undefined}
-                aria-label={copyable ? "Debug console evaluation result" : undefined}
-                data-kind={entry.kind}
-                data-stream={
-                  entry.kind === "stdout" || entry.kind === "stderr" ? entry.kind : undefined
-                }
-                data-testid={
-                  entry.kind === "stdout" || entry.kind === "stderr"
-                    ? "debug-output-line"
-                    : entry.kind === "result" || entry.kind === "error"
-                      ? "debug-evaluation"
+              <Fragment key={entry.id}>
+                <div
+                  aria-expanded={expandable ? expanded : undefined}
+                  aria-haspopup={copyable ? "menu" : undefined}
+                  aria-label={
+                    entry.kind === "result" && (copyable || expandable)
+                      ? "Debug console evaluation result"
                       : undefined
-                }
-                key={entry.id}
-                onBlur={
-                  copyable
-                    ? () => {
-                        if (focusedResultIdRef.current !== entry.id) return;
-                        focusedResultCandidateRef.current = null;
-                        focusedResultIdRef.current = null;
-                        publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
-                      }
-                    : undefined
-                }
-                onContextMenu={
-                  copyCandidate
-                    ? (event) => {
-                        event.preventDefault();
-                        focusedResultCandidateRef.current = copyCandidate;
-                        focusedResultIdRef.current = entry.id;
-                        publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
-                        setContextMenu({
-                          candidate: copyCandidate,
-                          invoker: event.currentTarget,
-                          position: { x: event.clientX, y: event.clientY },
-                        });
-                      }
-                    : undefined
-                }
-                onFocus={
-                  copyCandidate
-                    ? () => {
-                        focusedResultCandidateRef.current = copyCandidate;
-                        focusedResultIdRef.current = entry.id;
-                        publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
-                      }
-                    : undefined
-                }
-                onKeyDown={
-                  copyCandidate
-                    ? (event) => {
-                        if (isLocalDebugCopyShortcut(event)) {
+                  }
+                  data-kind={entry.kind}
+                  data-stream={
+                    entry.kind === "stdout" || entry.kind === "stderr" ? entry.kind : undefined
+                  }
+                  data-testid={
+                    entry.kind === "stdout" || entry.kind === "stderr"
+                      ? "debug-output-line"
+                      : entry.kind === "result" || entry.kind === "error"
+                        ? "debug-evaluation"
+                        : undefined
+                  }
+                  onBlur={
+                    copyable
+                      ? () => {
+                          if (focusedResultIdRef.current !== entry.id) return;
+                          focusedResultCandidateRef.current = null;
+                          focusedResultIdRef.current = null;
+                          publishDebugCopyValueCandidate(copyDisplayedValueSurface, null);
+                        }
+                      : undefined
+                  }
+                  onContextMenu={
+                    copyCandidate
+                      ? (event) => {
+                          event.preventDefault();
+                          focusedResultCandidateRef.current = copyCandidate;
+                          focusedResultIdRef.current = entry.id;
                           publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
-                          if (runDebugCopyDisplayedValue(copyDisplayedValueSurface)) {
-                            event.preventDefault();
-                          }
-                          return;
+                          setContextMenu({
+                            candidate: copyCandidate,
+                            invoker: event.currentTarget,
+                            position: { x: event.clientX, y: event.clientY },
+                          });
                         }
-                        if (
-                          event.key !== "ContextMenu" &&
-                          !(event.shiftKey && event.key === "F10")
-                        ) {
-                          return;
+                      : undefined
+                  }
+                  onFocus={
+                    copyCandidate
+                      ? () => {
+                          focusedResultCandidateRef.current = copyCandidate;
+                          focusedResultIdRef.current = entry.id;
+                          publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
                         }
-                        event.preventDefault();
+                      : undefined
+                  }
+                  onKeyDown={(event) => {
+                    if (copyCandidate) {
+                      if (isLocalDebugCopyShortcut(event)) {
                         publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
-                        const bounds = event.currentTarget.getBoundingClientRect();
-                        setContextMenu({
-                          candidate: copyCandidate,
-                          invoker: event.currentTarget,
-                          position: { x: bounds.left + 8, y: bounds.top + 8 },
-                        });
+                        if (runDebugCopyDisplayedValue(copyDisplayedValueSurface)) {
+                          event.preventDefault();
+                        }
+                        return;
                       }
-                    : undefined
-                }
-                role={copyable ? "group" : undefined}
-                style={
-                  entry.kind === "stderr" || entry.kind === "error"
-                    ? { ...styles.entry, ...styles.error }
-                    : styles.entry
-                }
-                tabIndex={copyable ? 0 : undefined}
-              >
-                {formatEntry(entry)}
-              </div>
+                    }
+                    if (expandable && event.key === "ArrowRight" && !expanded) {
+                      event.preventDefault();
+                      toggleResult();
+                      return;
+                    }
+                    if (expandable && event.key === "ArrowLeft" && expanded) {
+                      event.preventDefault();
+                      toggleResult();
+                      return;
+                    }
+                    if (expandable && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      toggleResult();
+                      return;
+                    }
+                    if (
+                      !copyCandidate ||
+                      (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
+                    ) {
+                      return;
+                    }
+                    event.preventDefault();
+                    publishDebugCopyValueCandidate(copyDisplayedValueSurface, copyCandidate);
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    setContextMenu({
+                      candidate: copyCandidate,
+                      invoker: event.currentTarget,
+                      position: { x: bounds.left + 8, y: bounds.top + 8 },
+                    });
+                  }}
+                  role={copyable || expandable ? "group" : undefined}
+                  style={
+                    entry.kind === "stderr" || entry.kind === "error"
+                      ? { ...styles.entry, ...styles.error }
+                      : styles.entry
+                  }
+                  tabIndex={copyable || expandable ? 0 : undefined}
+                >
+                  {expandable ? (
+                    <button
+                      aria-label={`${expanded ? "Collapse" : "Expand"} debug console result`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleResult();
+                      }}
+                      style={styles.disclosure}
+                      tabIndex={-1}
+                      type="button"
+                    >
+                      <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+                    </button>
+                  ) : null}
+                  {formatEntry(entry)}
+                </div>
+                {entry.kind === "result" &&
+                expanded &&
+                expansion &&
+                resultInspectionOwner &&
+                variablePages &&
+                onLoadVariablePage ? (
+                  <div aria-label="Debug console result variables" role="tree">
+                    {renderResultExpansion({
+                      ancestors: [],
+                      budget: childBudget,
+                      depth: 0,
+                      expandedIds: expandedResultIds,
+                      expansion,
+                      id: entry.id,
+                      onLoadVariablePage,
+                      owner: resultInspectionOwner,
+                      setExpanded: setResultExpanded,
+                      variablePages,
+                      variablesReference: entry.variablesReference,
+                    })}
+                  </div>
+                ) : null}
+              </Fragment>
             );
           })
         )}
@@ -650,6 +823,260 @@ function consoleResultOwnersEqual(
     entryOwner.pauseGeneration === owner.pauseGeneration &&
     entryOwner.frameId === owner.frameId
   );
+}
+
+function consoleResultInspectionOwner(
+  entry: Extract<UseDebugConsoleResult["state"]["entries"][number], { readonly kind: "result" }>,
+  currentResultOwner: UseDebugConsoleResult["resultOwner"],
+  owner: DebugInspectionOwner | null,
+  workspaceOwnerKey: string | null,
+): DebugInspectionOwner | null {
+  if (
+    !entry.resultOwner ||
+    !currentResultOwner ||
+    !owner ||
+    entry.resultOwner.epoch !== currentResultOwner.epoch ||
+    entry.resultOwner.rootKey !== currentResultOwner.rootKey ||
+    entry.resultOwner.workspaceOwnerKey !== currentResultOwner.workspaceOwnerKey ||
+    entry.resultOwner.sessionId !== currentResultOwner.sessionId ||
+    entry.resultOwner.pauseGeneration !== currentResultOwner.pauseGeneration ||
+    entry.resultOwner.frameId !== currentResultOwner.frameId ||
+    entry.resultOwner.workspaceOwnerKey !== workspaceOwnerKey ||
+    entry.resultOwner.rootKey !== owner.rootKey ||
+    entry.resultOwner.sessionId !== owner.sessionId ||
+    entry.resultOwner.pauseGeneration !== owner.pauseGeneration ||
+    entry.resultOwner.frameId !== owner.frameId
+  ) {
+    return null;
+  }
+  return owner;
+}
+
+function isExpandableResultState(expansion: DebugVariableExpansionState): boolean {
+  return (
+    expansion.kind !== "stale" &&
+    expansion.kind !== "leaf" &&
+    expansion.kind !== "circular" &&
+    expansion.kind !== "limit"
+  );
+}
+
+interface ResultExpansionRenderOptions {
+  readonly ancestors: readonly number[];
+  readonly budget: { count: number; exhausted: boolean };
+  readonly depth: number;
+  readonly expandedIds: ReadonlySet<string>;
+  readonly expansion: DebugVariableExpansionState;
+  readonly id: string;
+  readonly onLoadVariablePage: NonNullable<
+    ComponentProps<typeof DebugConsolePanel>["onLoadVariablePage"]
+  >;
+  readonly owner: DebugInspectionOwner;
+  readonly setExpanded: (
+    id: string,
+    expanded: boolean,
+    owner: DebugInspectionOwner,
+    variablesReference: number,
+    ancestors: readonly number[],
+    depth: number,
+  ) => void;
+  readonly variablePages: DebugVariablePagesState;
+  readonly variablesReference: number;
+}
+
+function renderResultExpansion(options: ResultExpansionRenderOptions): ReactNode {
+  const {
+    ancestors,
+    budget,
+    depth,
+    expandedIds,
+    expansion,
+    id,
+    onLoadVariablePage,
+    owner,
+    setExpanded,
+    variablePages,
+    variablesReference,
+  } = options;
+  const rows: ReactNode[] = [];
+  const variables = "variables" in expansion ? expansion.variables : [];
+  for (let index = 0; index < variables.length; index += 1) {
+    if (budget.count >= MAX_DEBUG_CONSOLE_RESULT_ROWS) {
+      if (!budget.exhausted) {
+        budget.exhausted = true;
+        rows.push(resultStatusRow(`${id}/limit`, depth + 2, "Display limit reached"));
+      }
+      break;
+    }
+    const variable = variables[index]!;
+    const variableId = `${id}/${index}:${variable.name}`;
+    budget.count += 1;
+    rows.push(
+      renderResultVariable({
+        ancestors: [...ancestors, variablesReference],
+        budget,
+        depth: depth + 1,
+        expandedIds,
+        id: variableId,
+        key: variableId,
+        onLoadVariablePage,
+        owner,
+        setExpanded,
+        variable,
+        variablePages,
+      }),
+    );
+  }
+  if (budget.count >= MAX_DEBUG_CONSOLE_RESULT_ROWS) return rows;
+  if (expansion.kind === "idle" || expansion.kind === "loading") {
+    rows.push(resultStatusRow(`${id}/loading`, depth + 2, "Loading…"));
+  } else if (expansion.kind === "error") {
+    rows.push(
+      resultLoadRow(
+        `${id}/retry:${expansion.nextStart}`,
+        depth + 2,
+        `Retry: ${expansion.message}`,
+        () => onLoadVariablePage(owner, variablesReference, expansion.nextStart),
+      ),
+    );
+  } else if (expansion.kind === "ready" && expansion.nextStart !== null) {
+    const nextStart = expansion.nextStart;
+    rows.push(
+      resultLoadRow(`${id}/more:${nextStart}`, depth + 2, "Load more", () =>
+        onLoadVariablePage(owner, variablesReference, nextStart),
+      ),
+    );
+  }
+  return rows;
+}
+
+function renderResultVariable({
+  ancestors,
+  budget,
+  depth,
+  expandedIds,
+  id,
+  key,
+  onLoadVariablePage,
+  owner,
+  setExpanded,
+  variable,
+  variablePages,
+}: {
+  readonly ancestors: readonly number[];
+  readonly budget: { count: number; exhausted: boolean };
+  readonly depth: number;
+  readonly expandedIds: ReadonlySet<string>;
+  readonly id: string;
+  readonly key: string;
+  readonly onLoadVariablePage: ResultExpansionRenderOptions["onLoadVariablePage"];
+  readonly owner: DebugInspectionOwner;
+  readonly setExpanded: ResultExpansionRenderOptions["setExpanded"];
+  readonly variable: DebugVariable;
+  readonly variablePages: DebugVariablePagesState;
+}): ReactNode {
+  const expansion = selectDebugVariableExpansion(
+    variablePages,
+    owner,
+    variable.variablesReference,
+    ancestors,
+    depth,
+  );
+  const expandable = isExpandableResultState(expansion);
+  const expanded = expandable && expandedIds.has(id);
+  const toggle = () =>
+    setExpanded(id, !expanded, owner, variable.variablesReference, ancestors, depth);
+  return (
+    <Fragment key={key}>
+      <div
+        aria-expanded={expandable ? expanded : undefined}
+        aria-level={depth + 1}
+        data-testid="debug-console-variable"
+        onClick={expandable ? toggle : undefined}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight" && expandable && !expanded) {
+            event.preventDefault();
+            toggle();
+          } else if (event.key === "ArrowLeft" && expandable && expanded) {
+            event.preventDefault();
+            toggle();
+          } else if (expandable && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            toggle();
+          }
+        }}
+        role="treeitem"
+        style={{ ...styles.variableRow, paddingLeft: 8 + depth * 12 }}
+        tabIndex={0}
+      >
+        {expandable ? (
+          <button
+            aria-label={`${expanded ? "Collapse" : "Expand"} debug console variable ${variable.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggle();
+            }}
+            style={styles.disclosure}
+            tabIndex={-1}
+            type="button"
+          >
+            <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          </button>
+        ) : (
+          <span aria-hidden="true"> </span>
+        )}
+        <span>{variable.name}:</span>
+        <span>{formatVariableValue(variable)}</span>
+      </div>
+      {expanded
+        ? renderResultExpansion({
+            ancestors,
+            budget,
+            depth,
+            expandedIds,
+            expansion,
+            id,
+            onLoadVariablePage,
+            owner,
+            setExpanded,
+            variablePages,
+            variablesReference: variable.variablesReference,
+          })
+        : null}
+    </Fragment>
+  );
+}
+
+function resultStatusRow(id: string, ariaLevel: number, label: string): ReactNode {
+  return (
+    <div
+      aria-level={ariaLevel}
+      key={id}
+      role="treeitem"
+      style={{ ...styles.variableRow, ...styles.muted, paddingLeft: 8 + (ariaLevel - 1) * 12 }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function resultLoadRow(id: string, ariaLevel: number, label: string, load: () => void): ReactNode {
+  return (
+    <div
+      aria-level={ariaLevel}
+      key={id}
+      role="treeitem"
+      style={{ ...styles.variableRow, paddingLeft: 8 + (ariaLevel - 1) * 12 }}
+    >
+      <button onClick={load} style={styles.disclosure} type="button">
+        {label}
+      </button>
+    </div>
+  );
+}
+
+function formatVariableValue(variable: DebugVariable): string {
+  return variable.type ? `${variable.value} (${variable.type})` : variable.value;
 }
 
 function formatEntry(entry: UseDebugConsoleResult["state"]["entries"][number]): string {

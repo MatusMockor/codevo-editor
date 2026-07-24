@@ -13,6 +13,11 @@ import {
   type DebugConsoleState,
 } from "../domain/debugConsoleState";
 import {
+  createDebugVariablePagesState,
+  reduceDebugVariablePages,
+  type DebugVariablePagesState,
+} from "../domain/debugVariablePages";
+import {
   DebugConsolePanel,
   type DebugConsoleCompletionModel,
   type DebugConsoleCompletionReplacement,
@@ -60,7 +65,7 @@ const INSPECTION_OWNER = {
   rootKey: "/workspace",
 };
 
-function settledConsole(value = "captured-value"): UseDebugConsoleResult {
+function settledConsole(value = "captured-value", variablesReference = 0): UseDebugConsoleResult {
   let state = createDebugConsoleState(OWNER);
   state = reduceDebugConsoleState(state, {
     expression: "sideEffecting()",
@@ -72,7 +77,7 @@ function settledConsole(value = "captured-value"): UseDebugConsoleResult {
   state = reduceDebugConsoleState(state, {
     owner: OWNER,
     requestId: "request-1",
-    result: { status: "ok", value, variablesReference: 0 },
+    result: { status: "ok", value, variablesReference },
     type: "evaluation-settled",
   });
   return consoleResult(state);
@@ -123,6 +128,7 @@ describe("DebugConsolePanel completions", () => {
     console = consoleResult(),
     copyDisplayedValueSurface,
     inspectionOwner,
+    onLoadVariablePage,
     onAccept = vi.fn<
       (
         ...parameters: Parameters<NonNullable<ComponentProps<typeof DebugConsolePanel>["onAccept"]>>
@@ -131,15 +137,18 @@ describe("DebugConsolePanel completions", () => {
     onDismiss = vi.fn(),
     onInputChanged = vi.fn(),
     onRequest = vi.fn(),
+    variablePages,
   }: {
     completionModel?: DebugConsoleCompletionModel | null;
     console?: UseDebugConsoleResult;
     copyDisplayedValueSurface?: DebugCopyDisplayedValueSurface;
     inspectionOwner?: ComponentProps<typeof DebugConsolePanel>["inspectionOwner"];
+    onLoadVariablePage?: ComponentProps<typeof DebugConsolePanel>["onLoadVariablePage"];
     onAccept?: NonNullable<ComponentProps<typeof DebugConsolePanel>["onAccept"]>;
     onDismiss?: () => void;
     onInputChanged?: NonNullable<ComponentProps<typeof DebugConsolePanel>["onInputChanged"]>;
     onRequest?: NonNullable<ComponentProps<typeof DebugConsolePanel>["onRequest"]> | null;
+    variablePages?: DebugVariablePagesState;
   } = {}) {
     act(() => {
       root.render(
@@ -149,10 +158,13 @@ describe("DebugConsolePanel completions", () => {
           copyDisplayedValueSurface={copyDisplayedValueSurface}
           enabled
           inspectionOwner={inspectionOwner}
+          onLoadVariablePage={onLoadVariablePage}
           onAccept={onAccept}
           onDismiss={onDismiss}
           onInputChanged={onInputChanged}
           onRequest={onRequest ?? undefined}
+          variablePages={variablePages}
+          workspaceOwnerKey="workspace-owner"
         />,
       );
     });
@@ -209,6 +221,168 @@ describe("DebugConsolePanel completions", () => {
         ?.click(),
     );
     expect(copy.copyDisplayedValueFromMenu).toHaveBeenCalledOnce();
+  });
+
+  it("lazily expands paged result children, nested references, and load-more rows", () => {
+    const onLoadVariablePage = vi.fn();
+    let variablePages = createDebugVariablePagesState(INSPECTION_OWNER);
+    const rendered = render({
+      console: settledConsole("Object", 41),
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage,
+      variablePages,
+    });
+    const result = host.querySelector<HTMLElement>('[data-kind="result"]')!;
+    const disclosure = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Expand debug console result"]',
+    )!;
+
+    act(() => disclosure.click());
+
+    expect(onLoadVariablePage).toHaveBeenCalledExactlyOnceWith(INSPECTION_OWNER, 41, 0);
+    expect(result.getAttribute("aria-expanded")).toBe("true");
+    expect(host.textContent).toContain("Loading…");
+
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "request",
+      owner: INSPECTION_OWNER,
+      variablesReference: 41,
+      start: 0,
+      requestId: "page-1",
+    });
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "resolve",
+      owner: INSPECTION_OWNER,
+      variablesReference: 41,
+      start: 0,
+      requestId: "page-1",
+      result: {
+        variablesReference: 41,
+        start: 0,
+        variables: [
+          { name: "nested", value: "Object", type: "object", variablesReference: 42 },
+          { name: "count", value: "2", type: "number", variablesReference: 0 },
+        ],
+        nextStart: 2,
+      },
+    });
+    render({ ...rendered, inspectionOwner: INSPECTION_OWNER, onLoadVariablePage, variablePages });
+
+    expect(host.querySelector('[data-testid="debug-console-variable"]')?.textContent).toContain(
+      "nested",
+    );
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Collapse debug console result"]')!
+        .click(),
+    );
+    expect(host.querySelector('[data-testid="debug-console-variable"]')).toBeNull();
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    expect(onLoadVariablePage.mock.calls.filter(([, reference]) => reference === 41)).toHaveLength(
+      1,
+    );
+    act(() =>
+      host
+        .querySelector<HTMLButtonElement>('[aria-label="Expand debug console variable nested"]')!
+        .click(),
+    );
+    expect(onLoadVariablePage).toHaveBeenLastCalledWith(INSPECTION_OWNER, 42, 0);
+
+    act(() => {
+      const loadMore = Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent === "Load more",
+      );
+      loadMore?.click();
+    });
+    expect(onLoadVariablePage).toHaveBeenLastCalledWith(INSPECTION_OWNER, 41, 2);
+  });
+
+  it("fails closed and clears expanded result children when the pause owner changes", () => {
+    const onLoadVariablePage = vi.fn();
+    let variablePages = createDebugVariablePagesState(INSPECTION_OWNER);
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "request",
+      owner: INSPECTION_OWNER,
+      variablesReference: 41,
+      start: 0,
+      requestId: "page-1",
+    });
+    variablePages = reduceDebugVariablePages(variablePages, {
+      type: "resolve",
+      owner: INSPECTION_OWNER,
+      variablesReference: 41,
+      start: 0,
+      requestId: "page-1",
+      result: {
+        variablesReference: 41,
+        start: 0,
+        variables: [{ name: "old", value: "1", variablesReference: 0 }],
+        nextStart: null,
+      },
+    });
+    const debugConsole = settledConsole("Object", 41);
+    render({
+      console: debugConsole,
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage,
+      variablePages,
+    });
+    act(() =>
+      host.querySelector<HTMLButtonElement>('[aria-label="Expand debug console result"]')!.click(),
+    );
+    expect(host.textContent).toContain("old");
+
+    const nextOwner = { ...INSPECTION_OWNER, pauseGeneration: 2 };
+    render({
+      console: debugConsole,
+      inspectionOwner: nextOwner,
+      onLoadVariablePage,
+      variablePages: createDebugVariablePagesState(nextOwner),
+    });
+
+    expect(host.querySelector('[aria-label="Expand debug console result"]')).toBeNull();
+    expect(host.querySelector('[data-testid="debug-console-variable"]')).toBeNull();
+    expect(onLoadVariablePage).not.toHaveBeenCalled();
+  });
+
+  it("mirrors variable-tree keyboard expansion without breaking local Copy Value", () => {
+    const copy = displayedValueSurface();
+    const onLoadVariablePage = vi.fn();
+    render({
+      console: settledConsole("Object", 41),
+      copyDisplayedValueSurface: copy.surface,
+      inspectionOwner: INSPECTION_OWNER,
+      onLoadVariablePage,
+      variablePages: createDebugVariablePagesState(INSPECTION_OWNER),
+    });
+    const result = host.querySelector<HTMLElement>('[data-kind="result"]')!;
+
+    act(() => {
+      result.focus();
+      result.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "ArrowRight",
+        }),
+      );
+    });
+    expect(onLoadVariablePage).toHaveBeenCalledExactlyOnceWith(INSPECTION_OWNER, 41, 0);
+    expect(result.getAttribute("aria-expanded")).toBe("true");
+
+    act(() =>
+      result.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          key: "c",
+        }),
+      ),
+    );
+    expect(copy.copyDisplayedValue).toHaveBeenCalledOnce();
   });
 
   it.each(["mouse", "keyboard"] as const)(
