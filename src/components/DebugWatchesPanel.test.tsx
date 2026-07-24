@@ -13,6 +13,7 @@ import type {
 } from "../application/debugSessionContracts";
 import type { DebugVariable } from "../domain/debug";
 import type { DebugInspectionOwner } from "../domain/debugVariablePages";
+import { DEBUG_VARIABLE_TREE_ROW_HEIGHT } from "./DebugVariableTree";
 import { DebugWatchesPanel, type DebugWatchesPanelProps } from "./DebugWatchesPanel";
 import type { DebugCopyValueSurface } from "./debugCopyValueSurface";
 import type {
@@ -339,13 +340,35 @@ describe("DebugWatchesPanel", () => {
     });
     act(() => treeItem("Expand a").click());
     act(() => treeItem("Expand b").click());
-    expect(host.querySelectorAll('[role="treeitem"]')).toHaveLength(500);
-    expect(host.querySelectorAll('[aria-label="Display limit reached"]')).toHaveLength(2);
+    const valueTrees = [
+      ...host.querySelectorAll<HTMLElement>('[role="tree"][aria-label$=" value"]'),
+    ];
+    const modeledRows = valueTrees.reduce((total, tree) => {
+      const group = tree.querySelector<HTMLElement>(':scope > [role="group"]');
+      return total + Number.parseFloat(group?.style.height ?? "0") / DEBUG_VARIABLE_TREE_ROW_HEIGHT;
+    }, definitions.length);
+    expect(modeledRows).toBe(500);
+    for (const tree of valueTrees) {
+      const rootRow = tree.querySelector<HTMLElement>('[role="treeitem"]');
+      act(() =>
+        rootRow?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "End" })),
+      );
+      expect(tree.querySelector('[aria-label="Display limit reached"]')).not.toBeNull();
+    }
 
     act(() => button("Edit watch a").click());
     expect(host.querySelector('[role="tree"][aria-label="a value"]')).toBeNull();
-    expect(host.querySelectorAll('[role="treeitem"]')).toHaveLength(500);
-    expect(host.querySelectorAll('[aria-label="Display limit reached"]')).toHaveLength(1);
+    const remainingTree = host.querySelector<HTMLElement>('[role="tree"][aria-label="b value"]');
+    const remainingGroup = remainingTree?.querySelector<HTMLElement>(':scope > [role="group"]');
+    expect(
+      definitions.length +
+        Number.parseFloat(remainingGroup?.style.height ?? "0") / DEBUG_VARIABLE_TREE_ROW_HEIGHT,
+    ).toBe(500);
+    const remainingRoot = remainingTree?.querySelector<HTMLElement>('[role="treeitem"]');
+    act(() =>
+      remainingRoot?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "End" })),
+    );
+    expect(remainingTree?.querySelector('[aria-label="Display limit reached"]')).not.toBeNull();
   });
 
   it("adds with Enter, validates input, and restores focus after Escape", () => {

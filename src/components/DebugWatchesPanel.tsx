@@ -103,6 +103,12 @@ const styles: Record<string, CSSProperties> = {
   },
   message: { color: "var(--text-muted)", padding: 8 },
   muted: { color: "var(--text-muted)" },
+  nestedTree: {
+    display: "flex",
+    flexDirection: "column",
+    maxHeight: 360,
+    overflow: "hidden",
+  },
   row: {
     alignItems: "center",
     borderBottom: "1px solid var(--border-subtle)",
@@ -646,29 +652,32 @@ export function DebugWatchesPanel({
                       valueEditor?.rowId !== definition.id &&
                       (evaluation.result.variablesReference ?? 0) > 0 ? (
                         variableRowBudget > 0 ? (
-                          <DebugVariableTree
-                            ariaLabel={`${definition.expression} value`}
-                            copyValueSurface={copyValueSurface}
-                            maxRows={variableRowBudget}
-                            onLoadPage={onLoadVariablePage}
-                            roots={[
-                              {
-                                id: definition.id,
-                                label: definition.expression,
-                                owner: evaluation.owner,
-                                evaluateName: definition.expression,
-                                adapterEvaluateName: evaluation.result.evaluateName,
-                                variablesReference: evaluation.result.variablesReference ?? 0,
-                                value: evaluation.result.value,
-                                type: evaluation.result.type,
-                              },
-                            ]}
-                            setVariableSurface={mutationEnabled ? setVariableSurface : undefined}
-                            variablePages={variablePages}
-                            variableMutationRows={
-                              mutationEnabled ? variableMutationRows : undefined
-                            }
-                          />
+                          <div style={styles.nestedTree}>
+                            <DebugVariableTree
+                              ariaLabel={`${definition.expression} value`}
+                              copyValueSurface={copyValueSurface}
+                              maxRows={variableRowBudget}
+                              onLoadPage={onLoadVariablePage}
+                              roots={[
+                                {
+                                  id: definition.id,
+                                  label: definition.expression,
+                                  owner: evaluation.owner,
+                                  evaluateName: definition.expression,
+                                  adapterEvaluateName: evaluation.result.evaluateName,
+                                  variablesReference: evaluation.result.variablesReference ?? 0,
+                                  value: evaluation.result.value,
+                                  type: evaluation.result.type,
+                                },
+                              ]}
+                              setVariableSurface={mutationEnabled ? setVariableSurface : undefined}
+                              variablePages={variablePages}
+                              variableMutationRows={
+                                mutationEnabled ? variableMutationRows : undefined
+                              }
+                              virtualizeRows
+                            />
+                          </div>
                         ) : (
                           <span role="status" style={styles.muted}>
                             Variable display limit reached
