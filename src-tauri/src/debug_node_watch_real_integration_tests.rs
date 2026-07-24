@@ -1326,7 +1326,8 @@ fn wait_for_output(sink: &WatchEventSink, session_id: u64, expected: &str) {
             event.session_id == session_id
                 && matches!(
                     &event.payload,
-                    DebugEventPayload::Output { text, .. } if text == expected
+                    DebugEventPayload::Output { text, .. }
+                        if strip_ansi_escape_sequences(text) == expected
                 )
         }) {
             return;
@@ -1338,6 +1339,24 @@ fn wait_for_output(sink: &WatchEventSink, session_id: u64, expected: &str) {
         );
         thread::sleep(POLL_INTERVAL);
     }
+}
+
+fn strip_ansi_escape_sequences(value: &str) -> String {
+    let mut stripped = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\u{1b}' && characters.peek() == Some(&'[') {
+            characters.next();
+            for sequence_character in characters.by_ref() {
+                if ('@'..='~').contains(&sequence_character) {
+                    break;
+                }
+            }
+        } else {
+            stripped.push(character);
+        }
+    }
+    stripped
 }
 
 fn watch_breakpoint(file_path: &str) -> DebugBreakpoint {
